@@ -81,6 +81,18 @@ describe('mockBatch', () => {
 		expect(result.newItems.map((i) => i.term)).toEqual(['la cuenta', 'pedir']);
 	});
 
+	it('carries a conversational instruction on exactly one canned multiple-choice challenge', () => {
+		// Exercises the UI path for the instruction heading in practice mode,
+		// while every other challenge falls back to the component's default.
+		const withInstruction = result.challenges.filter(
+			(c) => c.type === 'multiple-choice' && c.instruction
+		);
+		expect(withInstruction).toHaveLength(1);
+		expect(
+			withInstruction[0].type === 'multiple-choice' ? withInstruction[0].instruction : undefined
+		).toBe('What is the customer asking for?');
+	});
+
 	it('carries no romanization at all for a Latin-script target', () => {
 		for (const item of result.newItems) {
 			expect('romanization' in item).toBe(false);

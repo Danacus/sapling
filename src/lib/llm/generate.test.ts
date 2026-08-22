@@ -244,6 +244,13 @@ describe('buildBatchPrompt', () => {
 		expect(system).toContain("Say: 'the fish stall is to the right'");
 		expect(system).toContain('exactly one option may be correct');
 	});
+
+	it('lets the model choose the multiple-choice instruction heading', () => {
+		const system = messages[0].content;
+		expect(system).toContain('instruction');
+		expect(system).toContain('Pick the best reply');
+		expect(system).toContain('default meaning-question heading fits');
+	});
 });
 
 describe('generateBatch', () => {
@@ -532,6 +539,31 @@ describe('resolveBatch', () => {
 		const parsed = parseBatch(JSON.stringify(goodBatch));
 		const resolved = resolveBatch(parsed, { newId: idFactory(), now: () => 0 });
 		expect(JSON.stringify(resolved)).not.toContain('omanization');
+	});
+
+	it('copies a multiple-choice instruction, omitting it when null', () => {
+		const parsed = parseBatch(
+			JSON.stringify({
+				challenges: [
+					{ ...mc('i1', 'el perro'), instruction: 'Pick the best reply' },
+					{ ...mc('i2', 'leer'), instruction: null }
+				],
+				newItems: []
+			})
+		);
+		const resolved = resolveBatch(parsed, { newId: idFactory(), now: () => 0 });
+		const [withInstruction, withoutInstruction] = resolved.challenges;
+
+		expect(
+			withInstruction.type === 'multiple-choice' ? withInstruction.instruction : undefined
+		).toBe('Pick the best reply');
+		expect(
+			withoutInstruction.type === 'multiple-choice' && 'instruction' in withoutInstruction
+		).toBe(false);
+
+		for (const challenge of resolved.challenges) {
+			expect(challengeSchema.safeParse(challenge).success).toBe(true);
+		}
 	});
 
 	it('drops a misaligned optionsRomanization instead of the whole challenge', () => {

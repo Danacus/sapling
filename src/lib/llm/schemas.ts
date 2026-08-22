@@ -49,6 +49,8 @@ export const generatedMultipleChoiceSchema = z.object({
 	type: z.literal('multiple-choice'),
 	prompt: nonEmpty,
 	promptRomanization: z.string().nullish(),
+	/** Heading above the prompt; null when the UI's default heading fits. */
+	instruction: z.string().nullish(),
 	/**
 	 * Exactly four options. Declared as a length-constrained array rather than a
 	 * tuple: tuples emit `prefixItems`, which several structured-output
@@ -137,6 +139,7 @@ export const multipleChoiceChallengeSchema = z.object({
 	type: z.literal('multiple-choice'),
 	prompt: nonEmpty,
 	promptRomanization: z.string().optional(),
+	instruction: z.string().optional(),
 	options: z.tuple([z.string(), z.string(), z.string(), z.string()]),
 	/** Index-aligned with `options` when present; the resolver guarantees the length. */
 	optionsRomanization: z.array(z.string()).length(4).optional(),

@@ -86,6 +86,12 @@ export interface MultipleChoiceChallenge extends ChallengeBase {
 	prompt: string;
 	/** Romanization of `prompt`, when the prompt is in the target script. */
 	promptRomanization?: string;
+	/**
+	 * Heading shown above the prompt, e.g. "What does this mean?" or "Pick the
+	 * best reply". The generator picks it to match what the challenge actually
+	 * asks; absent means the UI falls back to its own default heading.
+	 */
+	instruction?: string;
 	/** Exactly four options. */
 	options: [string, string, string, string];
 	/**

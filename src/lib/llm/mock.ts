@@ -98,6 +98,10 @@ function spanishRestaurant(): Fixture {
 				type: 'multiple-choice',
 				direction: 'toNative',
 				prompt: '¿Nos trae la cuenta, por favor?',
+				// Exercises the instruction field: this is a dialogue turn, not a
+				// bare vocabulary lookup, so the default "What does this mean?"
+				// heading undersells it.
+				instruction: 'What is the customer asking for?',
 				options: [
 					'Could you bring us the bill, please?',
 					'Could we see the menu, please?',

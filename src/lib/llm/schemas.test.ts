@@ -3,7 +3,8 @@ import {
 	batchJsonSchema,
 	challengeSchema,
 	generatedBatchSchema,
-	generatedChallengeSchema
+	generatedChallengeSchema,
+	multipleChoiceChallengeSchema
 } from './schemas';
 
 type JsonNode = Record<string, unknown>;
@@ -140,6 +141,45 @@ describe('generatedBatchSchema', () => {
 		// defect must not cost us a challenge we already paid for.
 		const wonky = { ...validBatch.challenges[0], optionsRomanization: ['a', 'b'] };
 		expect(generatedChallengeSchema.safeParse(wonky).success).toBe(true);
+	});
+
+	describe('multiple-choice instruction', () => {
+		it('accepts an instruction and round-trips it', () => {
+			const withInstruction = { ...validBatch.challenges[0], instruction: 'Pick the best reply' };
+			const parsed = generatedChallengeSchema.safeParse(withInstruction);
+			expect(parsed.success).toBe(true);
+			expect(
+				parsed.success && parsed.data.type === 'multiple-choice' && parsed.data.instruction
+			).toBe('Pick the best reply');
+		});
+
+		it('tolerates a null or omitted instruction', () => {
+			expect(generatedChallengeSchema.safeParse(validBatch.challenges[0]).success).toBe(true);
+			const withNull = { ...validBatch.challenges[0], instruction: null };
+			expect(generatedChallengeSchema.safeParse(withNull).success).toBe(true);
+		});
+
+		it('the stored schema tolerates an absent instruction and accepts a present one', () => {
+			const base = {
+				id: 'c1',
+				type: 'multiple-choice' as const,
+				direction: 'toNative' as const,
+				prompt: 'el perro',
+				options: ['the dog', 'the cat', 'the bread', 'the house'] as [
+					string,
+					string,
+					string,
+					string
+				],
+				correctIndex: 0,
+				itemIds: ['i1']
+			};
+			expect(multipleChoiceChallengeSchema.safeParse(base).success).toBe(true);
+			expect(
+				multipleChoiceChallengeSchema.safeParse({ ...base, instruction: 'Pick the best reply' })
+					.success
+			).toBe(true);
+		});
 	});
 
 	it('rejects match-pairs: it is generated locally, never by the model', () => {

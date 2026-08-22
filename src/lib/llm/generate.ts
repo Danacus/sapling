@@ -168,7 +168,7 @@ const SYSTEM_PROMPT = [
 	'Shape: {"challenges":[Challenge],"newItems":[{"term","meaning","romanization","notes"}]}',
 	'Every Challenge has: type, direction ("toTarget"=produce the target language, "toNative"=produce the native language), itemIds, explanation (one short sentence or null).',
 	'Types:',
-	'multiple-choice {prompt, options:[4 strings], correctIndex:0-3, promptRomanization, optionsRomanization} e.g. {"type":"multiple-choice","direction":"toNative","prompt":"el perro","options":["the dog","the cat","the bread","the house"],"correctIndex":0,"itemIds":["i1"],"explanation":null}',
+	'multiple-choice {prompt, options:[4 strings], correctIndex:0-3, promptRomanization, optionsRomanization, instruction} e.g. {"type":"multiple-choice","direction":"toNative","prompt":"el perro","options":["the dog","the cat","the bread","the house"],"correctIndex":0,"itemIds":["i1"],"explanation":null,"instruction":null}',
 	'cloze {sentence (must contain ___), acceptedAnswers, wordBank (4-6 candidate words or null), translationHint, sentenceRomanization} e.g. {"type":"cloze","direction":"toTarget","sentence":"Yo ___ un libro.","acceptedAnswers":["leo"],"wordBank":["leo","como","bebo","corro"],"translationHint":"I read a book.","itemIds":["i2"],"explanation":"leer -> leo in the first person."}',
 	'typed-translation {prompt, acceptedAnswers, promptRomanization} e.g. {"type":"typed-translation","direction":"toTarget","prompt":"the water is cold","acceptedAnswers":["el agua esta fria","el agua está fría"],"itemIds":["new:0"],"explanation":null}',
 	'Rules:',
@@ -181,6 +181,7 @@ const SYSTEM_PROMPT = [
 	'- Answerable from what is shown alone: the prompt, plus the challenge type, must uniquely determine the answer. Never an open question whose answer depends on facts you never state — directions, prices, names, times, opinions, anything from an imagined scene the learner cannot see.',
 	'- In a situational dialogue either give the exact line to produce ("Say: \'the fish stall is to the right\'") or make acceptedAnswers cover every plausible alternative reply.',
 	'- Multiple-choice: exactly one option may be correct given the prompt; if two options would both answer it, rewrite the prompt.',
+	'- instruction: a short heading, in the NATIVE language, matched to what the challenge actually asks — "What does this mean?" for a plain meaning question, "Pick the best reply" or "How would you answer?" for a conversational turn; null when the default meaning-question heading fits.',
 	'- newItems must fit the learner level; term in the target language, meaning in the native language, notes only for gender/irregularity/register.',
 	'- Exactly newItemSlots entries in newItems, and every one of them must be used by at least one challenge.',
 	'Difficulty calibration:',
@@ -468,7 +469,8 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
 				...optionalString('promptRomanization', generated.promptRomanization),
 				options: [a, b, c, d],
 				...(optionsRomanization ? { optionsRomanization } : {}),
-				correctIndex: generated.correctIndex
+				correctIndex: generated.correctIndex,
+				...optionalString('instruction', generated.instruction)
 			});
 		} else if (generated.type === 'cloze') {
 			const wordBank = generated.wordBank?.filter((w) => w.trim().length > 0);

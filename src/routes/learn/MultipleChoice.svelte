@@ -33,7 +33,10 @@
 		shownAt = Date.now();
 	});
 
-	const askedIn = $derived(challenge.direction === 'toTarget' ? 'Pick the translation' : 'What does this mean?');
+	const askedIn = $derived(
+		challenge.instruction ??
+			(challenge.direction === 'toTarget' ? 'Pick the translation' : 'What does this mean?')
+	);
 
 	function select(index: number): void {
 		if (locked) return;
