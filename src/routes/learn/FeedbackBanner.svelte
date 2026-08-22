@@ -25,6 +25,7 @@
 		xp,
 		nativeLanguage,
 		targetLanguage,
+		skipped = false,
 		last = false,
 		oncontinue
 	}: {
@@ -39,6 +40,12 @@
 		xp: number;
 		nativeLanguage: string;
 		targetLanguage: string;
+		/**
+		 * The learner pressed "Too hard — skip" rather than answering. Still a
+		 * `wrong` verdict everywhere else; it only changes what the banner says,
+		 * because "Not quite" is the wrong thing to tell someone who never tried.
+		 */
+		skipped?: boolean;
 		/** Renders "Finish" instead of "Continue" on the last challenge. */
 		last?: boolean;
 		oncontinue: () => void;
@@ -52,10 +59,19 @@
 	let questionInput = $state<HTMLInputElement | null>(null);
 
 	const headline = $derived(
-		verdict === 'correct' ? 'Correct!' : verdict === 'almost' ? 'Almost — we counted it.' : 'Not quite.'
+		skipped
+			? correctAnswer
+				? 'Skipped — the answer was:'
+				: 'Skipped.'
+			: verdict === 'correct'
+				? 'Correct!'
+				: verdict === 'almost'
+					? 'Almost — we counted it.'
+					: 'Not quite.'
 	);
 
 	const detail = $derived.by(() => {
+		if (skipped) return correctAnswer;
 		if (verdict === 'almost') {
 			const form = closestAccepted || correctAnswer;
 			return form ? `Correct form: ${form}` : '';
@@ -126,7 +142,7 @@
 		<div class="head">
 			<div class="verdict">
 				<span class="mark" aria-hidden="true">
-					{verdict === 'correct' ? '✓' : verdict === 'almost' ? '≈' : '✕'}
+					{skipped ? '↷' : verdict === 'correct' ? '✓' : verdict === 'almost' ? '≈' : '✕'}
 				</span>
 				<div class="text">
 					<p class="headline">{headline}</p>

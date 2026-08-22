@@ -107,6 +107,17 @@ export async function takeNextChallenge(): Promise<Challenge | undefined> {
 		.first();
 }
 
+/**
+ * Looks challenges up by id, answered ones included — `markChallengeDone` only
+ * flips a status, it never deletes. Used to turn a result log entry back into
+ * the words it exercised. Ids that no longer exist are simply absent.
+ */
+export async function getChallengesByIds(ids: string[]): Promise<Challenge[]> {
+	if (ids.length === 0) return [];
+	const rows = await db.challenges.bulkGet(ids);
+	return rows.filter((row): row is ChallengeRow => row !== undefined);
+}
+
 /** Marks a challenge as answered so it leaves the queue. */
 export async function markChallengeDone(id: string): Promise<void> {
 	await db.challenges.update(id, { status: 'done' });

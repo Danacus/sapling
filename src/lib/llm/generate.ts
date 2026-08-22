@@ -12,6 +12,7 @@
  * The caller persists the result.
  */
 
+import { getModel } from '$lib/db/settings';
 import type { Challenge, KnowledgeItem, Profile } from '$lib/types';
 import { chatCompletion, LlmError } from './client';
 import type { ChatMessage, FetchLike, TokenUsage } from './client';
@@ -39,9 +40,44 @@ export interface ReviewItemRef {
 
 export interface RecentMistake {
 	term: string;
-	/** What the learner answered. */
+	/** What the learner answered; `'(skipped)'` when they gave up on it. */
 	gave: string;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Progress reporting                                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The coarse phases a refill goes through, in the order they normally fire.
+ *
+ * They exist for one reason: generation takes seconds and the learner deserves
+ * to see *which* second is being spent where — above all whether it is the API
+ * call. `queue-check`, `select-items` and `save` are emitted by the session
+ * engine, the rest by {@link generateBatch} (and by the mock, so practice mode
+ * walks the same list, just instantly).
+ */
+export type ProgressStepId =
+	| 'queue-check'
+	| 'select-items'
+	| 'build-prompt'
+	| 'request'
+	| 'validate'
+	| 'retry'
+	| 'save';
+
+/**
+ * One step *starting*. Duration is the caller's business: it times each step
+ * from this event to the next one (and the last one to the promise resolving).
+ */
+export interface ProgressStep {
+	id: ProgressStepId;
+	/** Human-readable, already written for display. */
+	label: string;
+}
+
+/** Callback threaded through the refill so the UI can show a live step log. */
+export type OnProgress = (step: ProgressStep) => void;
 
 export type BatchProfile = Pick<
 	Profile,
@@ -55,6 +91,12 @@ export interface BatchArgs {
 	/** How many brand-new items the batch may introduce. */
 	newItemSlots: number;
 	recentMistakes?: RecentMistake[];
+	/**
+	 * Share of recent reviews the learner got right, 0..1 — the difficulty dial
+	 * for the batch (see the calibration rules in the system prompt). Absent on
+	 * day one, when there is no history to judge by.
+	 */
+	recentAccuracy?: number;
 	/** Overrides the derived challenge count. */
 	count?: number;
 	/**
@@ -75,6 +117,8 @@ export interface BatchOptions {
 	newId?: () => string;
 	/** Injectable clock in epoch ms; defaults to `Date.now()`. */
 	now?: () => number;
+	/** Called as each generation step starts; see {@link ProgressStep}. */
+	onProgress?: OnProgress;
 }
 
 export interface BatchResult {
@@ -94,8 +138,9 @@ export interface BatchResult {
 
 /**
  * The system prompt. Written for tokens, not for looks: no pleasantries, one
- * inline example per challenge type, rules as bare imperatives. Roughly 950
- * prompt tokens (up from ~480 before the voice and romanization blocks below),
+ * inline example per challenge type, rules as bare imperatives. Roughly 1050
+ * prompt tokens (up from ~480 before the voice, romanization and calibration
+ * blocks below),
  * unchanged across every call, so it caches well on providers that support
  * prompt caching — and it buys back more than it costs: better challenges mean
  * fewer regenerated batches, and the romanization rules keep grading local.
@@ -130,6 +175,12 @@ const SYSTEM_PROMPT = [
 	'- Cloze sentences use only vocabulary at or below the learner level, keep one blank, and translationHint is the whole sentence in the native language.',
 	'- newItems must fit the learner level; term in the target language, meaning in the native language, notes only for gender/irregularity/register.',
 	'- Exactly newItemSlots entries in newItems, and every one of them must be used by at least one challenge.',
+	'Difficulty calibration:',
+	'- recentAccuracy (0-1, share of recent answers the learner got right) and recentMistakes are their current form; calibrate the batch to them.',
+	'- recentAccuracy below 0.7: favour recognition — multiple-choice and cloze WITH a wordBank — keep answers to one or two words, and avoid full-sentence typed-translation.',
+	'- recentAccuracy above 0.85: lean into production — typed-translation and cloze without a wordBank, longer sentences.',
+	'- Every term in recentMistakes gets one more challenge in this batch, EASIER than last time and in a different format from the one it was failed in.',
+	'- gave "(skipped)" means the format was too demanding for that term: re-practise it with a recognition format.',
 	'Voice:',
 	'- Conversation, not flashcards: every prompt, sentence and translation is a line someone would really say — a dialogue turn, a question put to the learner, a request, a reaction, an opinion. Never an isolated textbook statement.',
 	'- With a "topic", EVERY challenge happens inside that scenario: cloze sentences are turns of that dialogue, translations are things you would really say there, newItems are words the scenario needs. "interests" then only colour word choice, never the sentence frame.',
@@ -169,6 +220,9 @@ export function buildBatchPrompt(args: BatchArgs): ChatMessage[] {
 		newItemSlots,
 		reviewItems: reviewItems.map((i) => ({ id: i.id, t: i.term, m: i.meaning }))
 	};
+	if (args.recentAccuracy !== undefined && Number.isFinite(args.recentAccuracy)) {
+		payload.recentAccuracy = Math.round(args.recentAccuracy * 100) / 100;
+	}
 	if (args.recentMistakes?.length) {
 		payload.recentMistakes = args.recentMistakes.map((m) => ({ t: m.term, gave: m.gave }));
 	}
@@ -429,7 +483,10 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
  * Remember: returned `newItems` carry `fsrsCard: null` for the caller to fill.
  */
 export async function generateBatch(args: BatchArgs, opts: BatchOptions = {}): Promise<BatchResult> {
+	const progress = opts.onProgress;
+	progress?.({ id: 'build-prompt', label: 'Building the prompt' });
 	const messages = buildBatchPrompt(args);
+	const model = opts.model?.trim() || getModel();
 	const requested =
 		args.count ?? defaultChallengeCount(args.reviewItems.length, args.newItemSlots);
 	// A two-challenge batch can never reach five; do not demand the impossible.
@@ -445,6 +502,9 @@ export async function generateBatch(args: BatchArgs, opts: BatchOptions = {}): P
 				? messages
 				: [...messages, { role: 'user', content: CORRECTIVE_INSTRUCTION }];
 
+		if (attempt > 0) progress?.({ id: 'retry', label: 'Retrying generation' });
+		progress?.({ id: 'request', label: `Waiting for ${model}` });
+
 		const completion = await chatCompletion({
 			messages: attemptMessages,
 			model: opts.model,
@@ -456,6 +516,8 @@ export async function generateBatch(args: BatchArgs, opts: BatchOptions = {}): P
 		});
 		usage.promptTokens += completion.usage.promptTokens;
 		usage.completionTokens += completion.usage.completionTokens;
+
+		progress?.({ id: 'validate', label: 'Validating challenges' });
 
 		let resolved: ResolvedBatch;
 		try {

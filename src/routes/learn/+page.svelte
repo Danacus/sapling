@@ -30,10 +30,12 @@
 		takeNextChallenge
 	} from '$lib/db';
 	import { LlmError, isMockMode, makeMatchPairsChallenge } from '$lib/llm';
+	import type { ProgressStep } from '$lib/llm';
 	import {
 		MATCH_PAIRS_EVERY,
 		MATCH_PAIRS_XP,
 		SESSION_LENGTH,
+		SKIP_ANSWER,
 		applyResult,
 		bankSessionXp,
 		comboAfter,
@@ -61,15 +63,6 @@
 	import MatchPairs from './MatchPairs.svelte';
 	import MultipleChoice from './MultipleChoice.svelte';
 	import TypedTranslation from './TypedTranslation.svelte';
-
-	/** Lines rotated under the spinner so a slow model call still feels alive. */
-	const PREP_LINES = [
-		'Picking words you are about to forget…',
-		'Writing sentences you might actually say…',
-		'Hiding the answers…',
-		'Sharpening the distractors…',
-		'Warming up the streak counter…'
-	];
 
 	/** Conversational scenarios offered on the topic screen. */
 	const TOPIC_SUGGESTIONS = [
@@ -138,9 +131,46 @@
 
 	let showQuitConfirm = $state(false);
 	let leaving = $state(false);
-	let prepLine = $state(0);
 	let toast = $state<{ id: number; amount: number } | null>(null);
 	let toastSeq = 0;
+
+	/** When the current challenge was first shown; used for a skip's response time. */
+	let challengeShownAt = Date.now();
+
+	/* Preparing screen -------------------------------------------------------- */
+
+	/**
+	 * One step of the refill, as reported by `runRefillIfNeeded`. `endedAt` is
+	 * filled in when the *next* step starts (or when the refill finishes), which
+	 * is what makes the list honest about where the seconds went — especially
+	 * whether they went into the model call.
+	 */
+	interface PrepStep {
+		label: string;
+		startedAt: number;
+		endedAt?: number;
+	}
+
+	let prepSteps = $state<PrepStep[]>([]);
+	/** Ticks while preparing, so the running step's counter moves. */
+	let prepNow = $state(Date.now());
+	/** Total refill time, shown briefly once the session starts. */
+	let prepTotalMs = $state<number | null>(null);
+
+	/** Closes whichever step is still open at `at`. */
+	function closeOpenStep(steps: PrepStep[], at: number): PrepStep[] {
+		return steps.map((step) => (step.endedAt === undefined ? { ...step, endedAt: at } : step));
+	}
+
+	function recordPrepStep(step: ProgressStep): void {
+		const at = Date.now();
+		prepNow = at;
+		prepSteps = [...closeOpenStep(prepSteps, at), { label: step.label, startedAt: at }];
+	}
+
+	function stepSeconds(step: PrepStep): string {
+		return (((step.endedAt ?? prepNow) - step.startedAt) / 1000).toFixed(1);
+	}
 
 	/**
 	 * The in-flight `applyResult`. Never dropped on the floor: the UI advances
@@ -164,7 +194,7 @@
 
 	$effect(() => {
 		if (phase !== 'preparing') return;
-		const timer = setInterval(() => (prepLine = (prepLine + 1) % PREP_LINES.length), 1900);
+		const timer = setInterval(() => (prepNow = Date.now()), 100);
 		return () => clearInterval(timer);
 	});
 
@@ -224,7 +254,10 @@
 	async function boot(topic: string | undefined, opts: { skipRefill: boolean }): Promise<void> {
 		phase = 'preparing';
 		errorMessage = '';
-		prepLine = 0;
+		prepSteps = [];
+		prepTotalMs = null;
+		const prepStartedAt = Date.now();
+		prepNow = prepStartedAt;
 
 		try {
 			if (!profile) {
@@ -248,12 +281,22 @@
 				newWords = [];
 				plannedLlm = Math.min(SESSION_LENGTH, await queuedCount());
 			} else {
-				const info = await runRefillIfNeeded(profile, topic ? { topic } : {});
+				const info = await runRefillIfNeeded(profile, {
+					onProgress: recordPrepStep,
+					...(topic ? { topic } : {})
+				});
 				mock = info.mock || isMockMode();
 				items = info.items;
 				newWords = info.newItems;
 				plannedLlm = Math.min(SESSION_LENGTH, info.queuedAfter);
 				setCurrentTopic(topic);
+
+				// Close the last step and keep the total around for a few seconds, so
+				// "that felt long" can be checked against a number. Never blocking.
+				const finishedAt = Date.now();
+				prepSteps = closeOpenStep(prepSteps, finishedAt);
+				prepTotalMs = finishedAt - prepStartedAt;
+				setTimeout(() => (prepTotalMs = null), 5000);
 			}
 
 			phase = 'playing';
@@ -298,7 +341,7 @@
 			const match = makeMatchPairsChallenge(items);
 			if (match) {
 				lastMatchAfter = llmAnswered;
-				current = match;
+				show(match);
 				return;
 			}
 		}
@@ -310,7 +353,12 @@
 			await finish();
 			return;
 		}
-		current = next;
+		show(next);
+	}
+
+	function show(challenge: Challenge): void {
+		challengeShownAt = Date.now();
+		current = challenge;
 	}
 
 	function correctAnswerFor(challenge: Challenge): string {
@@ -371,6 +419,24 @@
 			now: Date.now()
 		}).catch(() => {
 			// A failed write must not eat the session; the answer is already scored.
+		});
+	}
+
+	/**
+	 * "Too hard — skip": an answer event like any other, with the verdict a skip
+	 * honestly deserves. `wrong` costs the combo and pays nothing, and
+	 * `applyResult` grades the item FSRS-`Again` — which is exactly "I could not
+	 * produce this". The word then travels into the next batch prompt as a
+	 * `recentMistakes` entry with `gave: '(skipped)'`, asking the model for an
+	 * easier format next time.
+	 */
+	function skipCurrent(): void {
+		const challenge = current;
+		if (!challenge || feedback || challenge.type === 'match-pairs') return;
+		handleAnswer({
+			answerGiven: SKIP_ANSWER,
+			verdict: 'wrong',
+			responseMs: Date.now() - challengeShownAt
 		});
 	}
 
@@ -553,9 +619,20 @@
 		<div class="centered" role="status" aria-live="polite">
 			<Spinner />
 			<h1 class="prep-title">Preparing your session…</h1>
-			{#key prepLine}
-				<p class="prep-line" in:fade={{ duration: motionMs(320) }}>{PREP_LINES[prepLine]}</p>
-			{/key}
+			<ul class="prep-steps">
+				{#each prepSteps as step, index (index)}
+					{@const done = step.endedAt !== undefined}
+					<li class:done>
+						{#if done}
+							<span class="prep-mark" aria-hidden="true">✓</span>
+						{:else}
+							<span class="prep-mark prep-spinner" aria-hidden="true"></span>
+						{/if}
+						<span class="prep-label">{step.label}</span>
+						<span class="prep-secs">{stepSeconds(step)}s</span>
+					</li>
+				{/each}
+			</ul>
 		</div>
 	{:else if phase === 'error'}
 		<div class="centered">
@@ -673,6 +750,12 @@
 			{/if}
 		</header>
 
+		{#if prepTotalMs !== null}
+			<p class="prep-total" transition:fade={{ duration: motionMs(200) }}>
+				Lesson ready in {(prepTotalMs / 1000).toFixed(1)}s
+			</p>
+		{/if}
+
 		{#if mock}
 			<p class="mock-banner">
 				Practice mode — add your OpenRouter key in <a href="/settings">Settings</a> for personalized
@@ -702,6 +785,12 @@
 						{:else}
 							<MatchPairs challenge={current} onanswer={handleAnswer} />
 						{/if}
+
+						{#if current.type !== 'match-pairs' && !feedback}
+							<button type="button" class="btn btn-ghost skip-btn" onclick={skipCurrent}>
+								Too hard — skip
+							</button>
+						{/if}
 					</div>
 				{/key}
 			{:else}
@@ -718,6 +807,7 @@
 				closestAccepted={feedback.closestAccepted}
 				explanation={feedback.explanation}
 				xp={feedback.xp}
+				skipped={feedback.answerGiven === SKIP_ANSWER}
 				{nativeLanguage}
 				{targetLanguage}
 				last={isLastStep}
@@ -857,10 +947,83 @@
 		font-size: 1.3rem;
 	}
 
-	.prep-line {
-		margin: 0;
-		min-height: 1.5em;
+	.prep-steps {
+		display: flex;
+		flex-direction: column;
+		gap: 0.3rem;
+		width: 100%;
+		max-width: 20rem;
+		margin: 0.25rem 0 0;
+		padding: 0;
+		list-style: none;
+		font-size: 0.85rem;
 		color: var(--text-muted);
+		text-align: left;
+	}
+
+	.prep-steps li {
+		display: flex;
+		align-items: baseline;
+		gap: 0.5rem;
+	}
+
+	.prep-steps li.done {
+		opacity: 0.65;
+	}
+
+	.prep-mark {
+		flex: 0 0 1rem;
+		font-weight: 900;
+	}
+
+	.prep-spinner {
+		align-self: center;
+		width: 0.7rem;
+		height: 0.7rem;
+		border: 2px solid var(--border);
+		border-top-color: var(--primary);
+		border-radius: 50%;
+		animation: ll-step-spin 0.8s linear infinite;
+	}
+
+	@keyframes ll-step-spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.prep-spinner {
+			animation-duration: 2.4s;
+		}
+	}
+
+	.prep-steps li.done .prep-mark {
+		color: var(--primary);
+	}
+
+	.prep-label {
+		flex: 1;
+		min-width: 0;
+		overflow-wrap: anywhere;
+	}
+
+	.prep-steps li:not(.done) .prep-label {
+		color: var(--text);
+		font-weight: 700;
+	}
+
+	.prep-secs {
+		flex: 0 0 auto;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.prep-total {
+		margin: 0;
+		font-size: 0.78rem;
+		font-weight: 700;
+		color: var(--text-muted);
+		text-align: center;
 	}
 
 	/* Error ---------------------------------------------------------------- */
@@ -1000,6 +1163,19 @@
 		display: flex;
 		flex-direction: column;
 		width: 100%;
+	}
+
+	/* Deliberately quiet: an escape hatch, not an invitation. */
+	.skip-btn {
+		align-self: center;
+		margin-top: 1rem;
+		padding: 0.5rem 0.9rem;
+		font-size: 0.82rem;
+		opacity: 0.75;
+	}
+
+	.skip-btn:hover {
+		opacity: 1;
 	}
 
 	/* Quit confirmation ---------------------------------------------------- */

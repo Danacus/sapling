@@ -12,7 +12,7 @@ import {
 	resolveBatch,
 	stripFences
 } from './generate';
-import type { BatchArgs } from './generate';
+import type { BatchArgs, ProgressStep } from './generate';
 import { challengeSchema } from './schemas';
 
 const args: BatchArgs = {
@@ -158,10 +158,37 @@ describe('buildBatchPrompt', () => {
 	it('includes recent mistakes when supplied', () => {
 		const withMistakes = buildBatchPrompt({
 			...args,
-			recentMistakes: [{ term: 'leer', gave: 'lees' }]
+			recentMistakes: [
+				{ term: 'leer', gave: 'lees' },
+				{ term: 'temprano', gave: '(skipped)' }
+			]
 		});
 		const payload = JSON.parse(withMistakes[1].content) as Record<string, unknown>;
-		expect(payload.recentMistakes).toEqual([{ t: 'leer', gave: 'lees' }]);
+		expect(payload.recentMistakes).toEqual([
+			{ t: 'leer', gave: 'lees' },
+			{ t: 'temprano', gave: '(skipped)' }
+		]);
+	});
+
+	it('includes recentAccuracy, rounded to two decimals', () => {
+		const payload = JSON.parse(
+			buildBatchPrompt({ ...args, recentAccuracy: 0.666666 })[1].content
+		) as Record<string, unknown>;
+		expect(payload.recentAccuracy).toBe(0.67);
+	});
+
+	it('omits recentAccuracy when there is no history to report', () => {
+		expect(JSON.parse(messages[1].content)).not.toHaveProperty('recentAccuracy');
+	});
+
+	it('states the difficulty-calibration rules in the system message', () => {
+		const system = messages[0].content;
+		expect(system).toContain('recentAccuracy');
+		expect(system).toContain('recentMistakes');
+		expect(system).toContain('0.7');
+		expect(system).toContain('0.85');
+		expect(system).toContain('wordBank');
+		expect(system).toContain('(skipped)');
 	});
 
 	it('caps the derived count', () => {
@@ -297,6 +324,32 @@ describe('generateBatch', () => {
 			kind: 'bad-response'
 		});
 		expect(scripted.calls).toBe(2);
+	});
+
+	it('reports its progress steps in order, naming the model it waits on', async () => {
+		const scripted = scriptedFetch([JSON.stringify(goodBatch)]);
+		const steps: ProgressStep[] = [];
+		await generateBatch(args, { ...callOpts(scripted.fetchFn), onProgress: (s) => steps.push(s) });
+
+		expect(steps.map((s) => s.id)).toEqual(['build-prompt', 'request', 'validate']);
+		expect(steps[1].label).toContain('test/model');
+		for (const step of steps) expect(step.label.length).toBeGreaterThan(0);
+	});
+
+	it('reports the retry step only when the corrective retry fires', async () => {
+		const thin = { challenges: [mc('i1', 'el perro')], newItems: [] };
+		const scripted = scriptedFetch([JSON.stringify(thin), JSON.stringify(goodBatch)]);
+		const steps: ProgressStep[] = [];
+		await generateBatch(args, { ...callOpts(scripted.fetchFn), onProgress: (s) => steps.push(s) });
+
+		expect(steps.map((s) => s.id)).toEqual([
+			'build-prompt',
+			'request',
+			'validate',
+			'retry',
+			'request',
+			'validate'
+		]);
 	});
 
 	it('does not demand five challenges from a two-challenge batch', async () => {

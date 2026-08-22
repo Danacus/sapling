@@ -18,14 +18,16 @@ import {
 	addXp,
 	enqueueChallenges,
 	getAllItems,
+	getChallengesByIds,
 	getItem,
 	markChallengeDone,
 	queuedCount,
+	recentResults,
 	updateItemAfterReview,
 	upsertItems
 } from '$lib/db';
 import { getBatch, isMockMode } from '$lib/llm';
-import type { BatchArgs, RecentMistake, TokenUsage } from '$lib/llm';
+import type { BatchArgs, OnProgress, RecentMistake, TokenUsage } from '$lib/llm';
 import {
 	accuracyFromHistory,
 	gradeFromResult,
@@ -34,7 +36,14 @@ import {
 	selectSessionItems,
 	type FsrsCardState
 } from '$lib/srs';
-import type { Challenge, KnowledgeItem, Profile, Stats, Verdict } from '$lib/types';
+import type {
+	Challenge,
+	ChallengeResult,
+	KnowledgeItem,
+	Profile,
+	Stats,
+	Verdict
+} from '$lib/types';
 
 /* -------------------------------------------------------------------------- */
 /* Tuning                                                                      */
@@ -61,6 +70,22 @@ export const COMBO_THRESHOLD = 3;
 /** Ceiling on the per-answer combo bonus. */
 export const MAX_COMBO_BONUS = 10;
 
+/**
+ * `answerGiven` written when the learner presses "Too hard — skip".
+ *
+ * It is a `wrong` answer in every respect (no XP, combo broken, FSRS `Again`) —
+ * "I could not produce it" is exactly what `Again` encodes. The literal string
+ * also travels into the next batch prompt as a `recentMistakes.gave` value,
+ * where it means "that format was too demanding for this word".
+ */
+export const SKIP_ANSWER = '(skipped)';
+
+/** How many trouble words are worth carrying into the next batch prompt. */
+export const MAX_RECENT_MISTAKES = 8;
+
+/** How far back {@link runRefillIfNeeded} reads the result log for those. */
+export const RECENT_RESULTS_WINDOW = 30;
+
 /* -------------------------------------------------------------------------- */
 /* The component contract                                                      */
 /* -------------------------------------------------------------------------- */
@@ -73,7 +98,10 @@ export const MAX_COMBO_BONUS = 10;
  * and what to say about it.
  */
 export interface AnswerEvent {
-	/** Exactly what the learner produced, for the result log and escalation. */
+	/**
+	 * Exactly what the learner produced, for the result log and escalation, or
+	 * {@link SKIP_ANSWER} when they gave up on the challenge.
+	 */
 	answerGiven: string;
 	verdict: Verdict;
 	/** Milliseconds from "challenge shown" to "answer submitted". */
@@ -206,13 +234,69 @@ export interface RefillPlan {
 	recentAccuracy: number | undefined;
 }
 
+/**
+ * Turns the answer log back into "you got these wrong lately" hints.
+ *
+ * A `ChallengeResult` only records *which challenge* was missed, so the words
+ * behind it have to be recovered: result → challenge row → `itemIds` → item
+ * terms. Anything that no longer resolves (a challenge or item the learner
+ * deleted) is skipped silently — a missing hint is not worth an error.
+ *
+ * `results` are expected newest-first (as {@link recentResults} returns them);
+ * only the first mistake per term survives, so the list stays short and recent.
+ * Match-pairs rounds are ignored: they are free recognition filler, never
+ * evidence that a word is hard.
+ *
+ * Pure: no clock, no database.
+ */
+export function deriveRecentMistakes(
+	results: ChallengeResult[],
+	challenges: Challenge[],
+	items: KnowledgeItem[],
+	limit: number = MAX_RECENT_MISTAKES
+): RecentMistake[] {
+	const challengeById = new Map(challenges.map((challenge) => [challenge.id, challenge]));
+	const termById = new Map(items.map((item) => [item.id, item.term]));
+
+	const out: RecentMistake[] = [];
+	const seen = new Set<string>();
+
+	for (const result of results) {
+		if (out.length >= limit) break;
+		if (result.verdict !== 'wrong') continue;
+
+		const challenge = challengeById.get(result.challengeId);
+		if (!challenge || challenge.type === 'match-pairs') continue;
+
+		const gave = result.answerGiven.trim() || '(no answer)';
+		for (const itemId of challenge.itemIds) {
+			if (out.length >= limit) break;
+			const term = termById.get(itemId)?.trim();
+			if (!term) continue;
+			const key = termKey(term);
+			if (seen.has(key)) continue;
+			seen.add(key);
+			out.push({ term, gave });
+		}
+	}
+
+	return out;
+}
+
 export interface PlanRefillOptions {
 	/** Cap on due items pulled into one batch. Defaults to the SRS default (12). */
 	maxItems?: number;
 	/** Challenges requested. Defaults to {@link BATCH_TARGET}. */
 	count?: number;
-	/** Optional "you got these wrong lately" hints for the prompt. */
+	/**
+	 * Ready-made "you got these wrong lately" hints. Takes precedence over
+	 * {@link recentResults}/{@link recentChallenges}, which are the usual input.
+	 */
 	recentMistakes?: RecentMistake[];
+	/** Answer log, newest first; fed to {@link deriveRecentMistakes}. */
+	recentResults?: ChallengeResult[];
+	/** The challenge rows those results point at, in any order. */
+	recentChallenges?: Challenge[];
 	/**
 	 * Free-form scenario for this session, e.g. `'ordering in a restaurant'`.
 	 * Blank/whitespace-only is treated the same as absent — the key is only
@@ -242,6 +326,10 @@ export function planRefill(
 
 	const topic = opts.topic?.trim();
 
+	const recentMistakes =
+		opts.recentMistakes ??
+		deriveRecentMistakes(opts.recentResults ?? [], opts.recentChallenges ?? [], items);
+
 	const args: BatchArgs = {
 		profile: {
 			nativeLanguage: profile.nativeLanguage,
@@ -256,7 +344,13 @@ export function planRefill(
 		})),
 		newItemSlots,
 		count: opts.count ?? BATCH_TARGET,
-		...(opts.recentMistakes?.length ? { recentMistakes: opts.recentMistakes } : {}),
+		// Both are difficulty dials for the prompt: how the learner is doing, and
+		// which words they are currently losing. Omitted when there is nothing to
+		// say, so a day-one batch pays no tokens for them.
+		...(recentAccuracy === undefined
+			? {}
+			: { recentAccuracy: Math.round(recentAccuracy * 100) / 100 }),
+		...(recentMistakes.length ? { recentMistakes } : {}),
 		...(topic ? { topic } : {})
 	};
 
@@ -293,6 +387,12 @@ export interface RunRefillOptions {
 	count?: number;
 	/** Forwarded to {@link planRefill}; see {@link PlanRefillOptions.topic}. */
 	topic?: string;
+	/**
+	 * Called as each phase of the refill starts, so the learn screen can show
+	 * what is being waited on. Steps are reported, not measured: the caller times
+	 * each one from its event to the next.
+	 */
+	onProgress?: OnProgress;
 }
 
 /** Case/whitespace-insensitive key used to tell whether two terms name the same word. */
@@ -368,6 +468,9 @@ export async function runRefillIfNeeded(
 	opts: RunRefillOptions = {}
 ): Promise<RefillInfo> {
 	const now = opts.now ?? Date.now();
+	const progress = opts.onProgress;
+
+	progress?.({ id: 'queue-check', label: 'Checking your queue' });
 	const queuedBefore = await queuedCount();
 	const mock = isMockMode();
 
@@ -384,14 +487,30 @@ export async function runRefillIfNeeded(
 		};
 	}
 
+	progress?.({ id: 'select-items', label: 'Selecting review words' });
 	const items = await getAllItems();
+
+	// The trouble list for the prompt: recent misses, resolved back to the words
+	// they exercised. Done rows stay in the challenges table, so this is a plain
+	// lookup — bounded by RECENT_RESULTS_WINDOW so it stays one cheap read.
+	const results = await recentResults(RECENT_RESULTS_WINDOW);
+	const missed = results.filter((result) => result.verdict === 'wrong');
+	const recentChallenges = await getChallengesByIds([
+		...new Set(missed.map((result) => result.challengeId))
+	]);
+
 	const plan = planRefill(items, profile, now, {
+		recentResults: missed,
+		recentChallenges,
 		...(opts.maxItems === undefined ? {} : { maxItems: opts.maxItems }),
 		...(opts.count === undefined ? {} : { count: opts.count }),
 		...(opts.topic === undefined ? {} : { topic: opts.topic })
 	});
 
-	const batch = await getBatch(plan.args, opts.signal ? { signal: opts.signal } : {});
+	const batch = await getBatch(plan.args, {
+		...(opts.signal ? { signal: opts.signal } : {}),
+		...(progress ? { onProgress: progress } : {})
+	});
 
 	// The model can re-propose a word the learner already knows (it only sees
 	// due items, not the whole collection); drop those before they fork the
@@ -406,6 +525,7 @@ export async function runRefillIfNeeded(
 		fsrsCard: newCardState(now)
 	}));
 
+	progress?.({ id: 'save', label: 'Saving your lesson' });
 	await upsertItems(newItems);
 	await enqueueChallenges(challenges);
 

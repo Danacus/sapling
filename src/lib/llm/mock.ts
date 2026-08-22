@@ -321,6 +321,12 @@ function mockIdFactory(): () => string {
  * to initialize.
  */
 export function mockBatch(args: BatchArgs, opts: BatchOptions = {}): BatchResult {
+	// Same step sequence as the real path, so the learn screen's progress log is
+	// identical in practice mode — every step simply lands instantly.
+	opts.onProgress?.({ id: 'build-prompt', label: 'Building the prompt' });
+	opts.onProgress?.({ id: 'request', label: 'Waiting for practice-mode content' });
+	opts.onProgress?.({ id: 'validate', label: 'Validating challenges' });
+
 	const resolved = resolveBatch(parseBatch(mockBatchCompletion(args)), {
 		newId: opts.newId ?? mockIdFactory(),
 		now: opts.now ?? (() => 0),

@@ -15,17 +15,21 @@
 import { describe, expect, it } from 'vitest';
 
 import { getBatch, isMockMode, makeMatchPairsChallenge } from '$lib/llm';
-import { newCardState, reviewCard, Grade } from '$lib/srs';
-import type { Challenge, KnowledgeItem, Profile, Verdict } from '$lib/types';
+import type { ProgressStep } from '$lib/llm';
+import { gradeFromResult, newCardState, reviewCard, Grade } from '$lib/srs';
+import type { Challenge, ChallengeResult, KnowledgeItem, Profile, Verdict } from '$lib/types';
 import {
 	BATCH_TARGET,
 	COMBO_THRESHOLD,
 	MATCH_PAIRS_EVERY,
 	MATCH_PAIRS_XP,
 	MAX_COMBO_BONUS,
+	MAX_RECENT_MISTAKES,
 	SESSION_LENGTH,
+	SKIP_ANSWER,
 	comboAfter,
 	dedupeNewItems,
+	deriveRecentMistakes,
 	planRefill,
 	remapItemIds,
 	sessionSummary,
@@ -269,6 +273,170 @@ describe('planRefill', () => {
 	});
 });
 
+/* -------------------------------------------------------------------------- */
+
+describe('deriveRecentMistakes', () => {
+	/** A typed-translation challenge exercising `itemIds`. */
+	function challenge(id: string, itemIds: string[]): Challenge {
+		return {
+			id,
+			type: 'typed-translation',
+			direction: 'toTarget',
+			prompt: 'p',
+			acceptedAnswers: ['a'],
+			itemIds
+		};
+	}
+
+	function result(challengeId: string, verdict: Verdict, answerGiven: string): ChallengeResult {
+		return { challengeId, verdict, answerGiven, at: NOW };
+	}
+
+	const items = [item('a', -DAY), item('b', -DAY), item('c', -DAY)];
+
+	it('resolves a wrong result back to the term it exercised', () => {
+		const mistakes = deriveRecentMistakes(
+			[result('c1', 'wrong', 'lees')],
+			[challenge('c1', ['a'])],
+			items
+		);
+		expect(mistakes).toEqual([{ term: 'term-a', gave: 'lees' }]);
+	});
+
+	it('carries a skip through as its own kind of mistake', () => {
+		const mistakes = deriveRecentMistakes(
+			[result('c1', 'wrong', SKIP_ANSWER)],
+			[challenge('c1', ['a'])],
+			items
+		);
+		expect(mistakes).toEqual([{ term: 'term-a', gave: '(skipped)' }]);
+	});
+
+	it('ignores accepted answers and match-pairs rounds', () => {
+		const match: Challenge = {
+			id: 'm1',
+			type: 'match-pairs',
+			direction: 'toNative',
+			pairs: [{ a: 'term-a', b: 'meaning-a' }],
+			itemIds: ['a']
+		};
+		const mistakes = deriveRecentMistakes(
+			[
+				result('c1', 'correct', 'leo'),
+				result('c2', 'almost', 'leo'),
+				result('m1', 'wrong', 'x')
+			],
+			[challenge('c1', ['a']), challenge('c2', ['b']), match],
+			items
+		);
+		expect(mistakes).toEqual([]);
+	});
+
+	it('skips silently when the challenge row or the item is gone', () => {
+		const mistakes = deriveRecentMistakes(
+			[result('vanished', 'wrong', 'x'), result('c1', 'wrong', 'y')],
+			[challenge('c1', ['deleted-item'])],
+			items
+		);
+		expect(mistakes).toEqual([]);
+	});
+
+	it('keeps only the most recent entry per term and caps the list', () => {
+		const results = [
+			result('c1', 'wrong', 'newest'),
+			result('c2', 'wrong', 'older') // same item
+		];
+		const mistakes = deriveRecentMistakes(
+			results,
+			[challenge('c1', ['a']), challenge('c2', ['a'])],
+			items
+		);
+		expect(mistakes).toEqual([{ term: 'term-a', gave: 'newest' }]);
+
+		const many = Array.from({ length: 20 }, (_, i) => result(`c${i}`, 'wrong', `g${i}`));
+		const manyChallenges = Array.from({ length: 20 }, (_, i) =>
+			challenge(`c${i}`, [`i${i}`])
+		);
+		const manyItems = Array.from({ length: 20 }, (_, i) => item(`i${i}`, -DAY));
+		expect(deriveRecentMistakes(many, manyChallenges, manyItems)).toHaveLength(
+			MAX_RECENT_MISTAKES
+		);
+	});
+
+	it('labels a blank answer rather than sending an empty string', () => {
+		const mistakes = deriveRecentMistakes(
+			[result('c1', 'wrong', '   ')],
+			[challenge('c1', ['a'])],
+			items
+		);
+		expect(mistakes).toEqual([{ term: 'term-a', gave: '(no answer)' }]);
+	});
+});
+
+describe('planRefill difficulty feedback', () => {
+	function challenge(id: string, itemIds: string[]): Challenge {
+		return {
+			id,
+			type: 'typed-translation',
+			direction: 'toTarget',
+			prompt: 'p',
+			acceptedAnswers: ['a'],
+			itemIds
+		};
+	}
+
+	it('derives recentMistakes from the result log and the challenges behind it', () => {
+		const items = [item('a', -DAY), item('b', -DAY)];
+		const plan = planRefill(items, profile(), NOW, {
+			recentResults: [
+				{ challengeId: 'c1', verdict: 'wrong', answerGiven: SKIP_ANSWER, at: NOW - 1000 },
+				{ challengeId: 'c2', verdict: 'wrong', answerGiven: 'tarde', at: NOW - 2000 }
+			],
+			recentChallenges: [challenge('c1', ['a']), challenge('c2', ['b'])]
+		});
+
+		expect(plan.args.recentMistakes).toEqual([
+			{ term: 'term-a', gave: '(skipped)' },
+			{ term: 'term-b', gave: 'tarde' }
+		]);
+	});
+
+	it('reports recent accuracy to the prompt, rounded to two decimals', () => {
+		const history = [
+			{ at: NOW - DAY, grade: Grade.Good },
+			{ at: NOW - DAY, grade: Grade.Again },
+			{ at: NOW - DAY, grade: Grade.Again }
+		];
+		const plan = planRefill([item('a', -DAY, history)], profile(), NOW);
+
+		expect(plan.recentAccuracy).toBeCloseTo(1 / 3);
+		expect(plan.args.recentAccuracy).toBe(0.33);
+	});
+
+	it('omits recentAccuracy on day one, when there is no history', () => {
+		expect(planRefill([], profile(), NOW).args).not.toHaveProperty('recentAccuracy');
+	});
+});
+
+describe('a skipped challenge', () => {
+	it('is worth nothing, breaks the combo and grades FSRS Again', () => {
+		expect(xpFor('wrong', 5)).toBe(0);
+		expect(comboAfter('wrong', 5)).toBe(0);
+		// Whatever the response time, a skip is "I could not produce it".
+		expect(gradeFromResult('wrong', 200)).toBe(Grade.Again);
+		expect(gradeFromResult('wrong')).toBe(Grade.Again);
+	});
+
+	it('counts as a wrong answer in the session summary', () => {
+		const summary = sessionSummary([
+			{ challengeId: 'a', type: 'cloze', verdict: 'correct', xp: 10, itemIds: ['i1'] },
+			{ challengeId: 'b', type: 'cloze', verdict: 'wrong', xp: 0, itemIds: ['i2'] }
+		]);
+		expect(summary.wrong).toBe(1);
+		expect(summary.accuracy).toBe(0.5);
+	});
+});
+
 describe('dedupeNewItems', () => {
 	it('drops a proposed item whose term matches an existing one case/whitespace-insensitively, and remaps its id', () => {
 		const existing = item('e1', -DAY);
@@ -359,6 +527,12 @@ describe('planRefill → getBatch (mock mode)', () => {
 
 		// Mock mode spends nothing.
 		expect(batch.usage).toEqual({ promptTokens: 0, completionTokens: 0 });
+	});
+
+	it('walks the same progress steps as the real path, instantly', async () => {
+		const steps: ProgressStep[] = [];
+		await getBatch(planRefill([], profile(), NOW).args, { onProgress: (s) => steps.push(s) });
+		expect(steps.map((s) => s.id)).toEqual(['build-prompt', 'request', 'validate']);
 	});
 
 	it('covers every gradeable challenge type the session renders', async () => {
