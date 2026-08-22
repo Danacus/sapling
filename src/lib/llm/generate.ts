@@ -134,7 +134,7 @@ const SYSTEM_PROMPT = [
 	'- Conversation, not flashcards: every prompt, sentence and translation is a line someone would really say — a dialogue turn, a question put to the learner, a request, a reaction, an opinion. Never an isolated textbook statement.',
 	'- With a "topic", EVERY challenge happens inside that scenario: cloze sentences are turns of that dialogue, translations are things you would really say there, newItems are words the scenario needs. "interests" then only colour word choice, never the sentence frame.',
 	'- Banned: "I like <interest>", "<interest> is fun", any sentence whose only content is that the learner likes their interest, and reusing a sentence frame twice in one batch. Vary speaker, question vs statement, and register for the level.',
-	'- explanation: one line of usage or culture (register, politeness, word order) when non-obvious; null when it would only restate the answer.',
+	'- explanation: one line of usage or culture (register, politeness, word order) when non-obvious, written in the NATIVE language (target-language words may be quoted inside it); null when it would only restate the answer.',
 	'Romanization, for target languages NOT written in the Latin script only:',
 	'- Give a Latin reading for every target-script string: promptRomanization, optionsRomanization (one per option, same order), sentenceRomanization (whole sentence), newItems.romanization. Use pinyin with tone marks for Mandarin, romaji for Japanese, revised romanization for Korean, the standard scheme otherwise.',
 	'- A field whose string is already in the native language is null.',
