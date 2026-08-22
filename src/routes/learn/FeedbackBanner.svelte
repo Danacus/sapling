@@ -6,6 +6,10 @@
   was generated. "Explain" is opt-in, one call, and carries just this one
   challenge plus the learner's own question — which is the whole point of
   grading locally first.
+
+  That call can also *win*: when the model agrees a `wrong` answer should have
+  counted it replies `overturn: true`, the banner repaints green and
+  `onoverturn` lets the page pay the XP and fix the SRS card.
 -->
 <script lang="ts">
 	import { fly, slide } from 'svelte/transition';
@@ -27,7 +31,9 @@
 		targetLanguage,
 		skipped = false,
 		last = false,
-		oncontinue
+		overturned = false,
+		oncontinue,
+		onoverturn
 	}: {
 		challenge: Challenge;
 		verdict: Verdict;
@@ -48,7 +54,18 @@
 		skipped?: boolean;
 		/** Renders "Finish" instead of "Continue" on the last challenge. */
 		last?: boolean;
+		/**
+		 * The session accepted this answer after an escalation overturned the
+		 * grade. Owned by the page (it also owes XP, the summary and an SRS
+		 * review); the banner just repaints itself green.
+		 */
+		overturned?: boolean;
 		oncontinue: () => void;
+		/**
+		 * Fired once when the model agrees a `wrong` answer should have counted.
+		 * The page decides what that is worth.
+		 */
+		onoverturn?: () => void;
 	} = $props();
 
 	let showExplain = $state(false);
@@ -58,19 +75,25 @@
 	let askError = $state('');
 	let questionInput = $state<HTMLInputElement | null>(null);
 
+	/** What the banner paints as, once a dispute has been won. */
+	const shownVerdict = $derived(overturned ? 'correct' : verdict);
+
 	const headline = $derived(
-		skipped
-			? correctAnswer
-				? 'Skipped — the answer was:'
-				: 'Skipped.'
-			: verdict === 'correct'
-				? 'Correct!'
-				: verdict === 'almost'
-					? 'Almost — we counted it.'
-					: 'Not quite.'
+		overturned
+			? 'Accepted — your answer counts.'
+			: skipped
+				? correctAnswer
+					? 'Skipped — the answer was:'
+					: 'Skipped.'
+				: verdict === 'correct'
+					? 'Correct!'
+					: verdict === 'almost'
+						? 'Almost — we counted it.'
+						: 'Not quite.'
 	);
 
 	const detail = $derived.by(() => {
+		if (overturned) return correctAnswer ? `Also fine: ${correctAnswer}` : '';
 		if (skipped) return correctAnswer;
 		if (verdict === 'almost') {
 			const form = closestAccepted || correctAnswer;
@@ -95,6 +118,9 @@
 				...(question.trim() ? { userQuestion: question.trim() } : {})
 			});
 			answer = result.answer;
+			// A dispute can only *win* something back: 'almost' already counted, and
+			// 'correct' has nothing to fix. Fired once — the page ignores repeats.
+			if (result.overturn && verdict === 'wrong' && !overturned) onoverturn?.();
 		} catch (cause) {
 			askError =
 				cause instanceof LlmError
@@ -133,7 +159,7 @@
 <svelte:window {onkeydown} />
 
 <div
-	class="banner {verdict}"
+	class="banner {shownVerdict}"
 	role="status"
 	aria-live="polite"
 	transition:fly={{ y: 220, duration: motionMs(260) }}
@@ -142,7 +168,15 @@
 		<div class="head">
 			<div class="verdict">
 				<span class="mark" aria-hidden="true">
-					{skipped ? '↷' : verdict === 'correct' ? '✓' : verdict === 'almost' ? '≈' : '✕'}
+					{overturned
+						? '✓'
+						: skipped
+							? '↷'
+							: verdict === 'correct'
+								? '✓'
+								: verdict === 'almost'
+									? '≈'
+									: '✕'}
 				</span>
 				<div class="text">
 					<p class="headline">{headline}</p>
@@ -179,10 +213,12 @@
 					<p class="ask-error" role="alert">{askError}</p>
 				{:else if answer}
 					<p class="answer">{answer}</p>
-				{:else}
+				{:else if verdict === 'wrong' && !overturned}
 					<p class="ask-hint">
-						Disagree with the grade? Say so — "I think I was right" works fine.
+						Think you were right? Ask — a justified answer gets your grade fixed.
 					</p>
+				{:else}
+					<p class="ask-hint">Ask anything about this challenge — "why not …?" works fine.</p>
 				{/if}
 			</div>
 		{/if}

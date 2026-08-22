@@ -26,7 +26,12 @@ export async function getBatch(args: BatchArgs, opts: BatchOptions = {}): Promis
 	return generateBatch(args, opts);
 }
 
-/** One follow-up explanation, mock-aware in the same way as {@link getBatch}. */
+/**
+ * One follow-up explanation, mock-aware in the same way as {@link getBatch}.
+ *
+ * `overturn` comes back `true` when the model judges the learner's answer
+ * should have counted; the mock never overturns.
+ */
 export async function getEscalation(
 	args: EscalationArgs,
 	opts: EscalationOptions = {}
@@ -58,9 +63,16 @@ export {
 	ANSWER_WORD_LIMIT,
 	DEFAULT_QUESTION,
 	buildEscalationPrompt,
-	escalate
+	escalate,
+	escalationReplySchema,
+	parseEscalationReply
 } from './escalation';
-export type { EscalationArgs, EscalationOptions, EscalationResult } from './escalation';
+export type {
+	EscalationArgs,
+	EscalationOptions,
+	EscalationReply,
+	EscalationResult
+} from './escalation';
 
 export {
 	CORRECTIVE_INSTRUCTION,

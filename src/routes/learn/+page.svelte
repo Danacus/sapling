@@ -36,6 +36,7 @@
 		MATCH_PAIRS_XP,
 		SESSION_LENGTH,
 		SKIP_ANSWER,
+		applyOverturn,
 		applyResult,
 		bankSessionXp,
 		comboAfter,
@@ -86,6 +87,8 @@
 		closestAccepted?: string;
 		explanation?: string;
 		xp: number;
+		/** An escalation overturned a `wrong` grade; see {@link overturnCurrent}. */
+		overturned?: boolean;
 	}
 
 	let phase = $state<Phase>('topic');
@@ -420,6 +423,52 @@
 		}).catch(() => {
 			// A failed write must not eat the session; the answer is already scored.
 		});
+	}
+
+	/**
+	 * The learner disputed a `wrong` grade and the explain call agreed with them
+	 * (`overturn: true`). Everything the original answer cost is handed back:
+	 *
+	 * - **Banner**: repaints as accepted (`FeedbackBanner`'s `overturned`).
+	 * - **XP**: paid at `xpFor('correct', combo)` minus the 0 already scored.
+	 * - **Summary**: the logged answer flips to `correct`, so `sessionSummary`
+	 *   recomputes correct/wrong and accuracy on its own.
+	 * - **SRS**: `applyOverturn` writes one `Good` review per item, chained
+	 *   *after* the original write so it lands on top of the `Again`.
+	 *
+	 * What it deliberately does **not** do: restore the combo. The streak broke
+	 * live, on screen, and un-breaking it would retro-pay every answer since —
+	 * so the overturned answer is paid at the base rate (combo is 0 here) and
+	 * the next correct answer starts a fresh streak. Nor does it rewrite the
+	 * result log: the learner really did answer this at the time, and the entry
+	 * is history, not score.
+	 */
+	function overturnCurrent(): void {
+		const fb = feedback;
+		if (!fb || fb.overturned || fb.verdict !== 'wrong') return;
+
+		// `combo` is 0 here — the wrong answer reset it, and no answer has been
+		// taken since (the banner is still up). Written as a lookup anyway so the
+		// XP always matches whatever the combo rules say at this moment.
+		const gained = Math.max(0, xpFor('correct', combo) - fb.xp);
+
+		feedback = { ...fb, overturned: true, xp: fb.xp + gained };
+
+		answers = answers.map((answer) =>
+			answer.challengeId === fb.challenge.id
+				? { ...answer, verdict: 'correct', xp: answer.xp + gained }
+				: answer
+		);
+
+		if (gained > 0) toast = { id: ++toastSeq, amount: gained };
+
+		// After the pending `applyResult`: the Again review must already be on the
+		// card before the compensating Good review goes on top of it.
+		pendingWrite = pendingWrite
+			.then(() => applyOverturn(fb.challenge, Date.now()))
+			.catch(() => {
+				// A failed write must not eat the session; the XP is already scored.
+			});
 	}
 
 	/**
@@ -811,7 +860,9 @@
 				{nativeLanguage}
 				{targetLanguage}
 				last={isLastStep}
+				overturned={feedback.overturned ?? false}
 				oncontinue={() => void continueSession()}
+				onoverturn={overturnCurrent}
 			/>
 		{/if}
 

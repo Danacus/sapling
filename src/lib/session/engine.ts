@@ -29,6 +29,7 @@ import {
 import { getBatch, isMockMode } from '$lib/llm';
 import type { BatchArgs, OnProgress, RecentMistake, TokenUsage } from '$lib/llm';
 import {
+	Grade,
 	accuracyFromHistory,
 	gradeFromResult,
 	newCardState,
@@ -595,6 +596,38 @@ export async function applyResult(challenge: Challenge, outcome: AnswerOutcome):
 	// Ephemeral match-pairs rounds were never enqueued; Dexie's `update` on a
 	// missing key is a no-op, so this stays a single unconditional call.
 	await markChallengeDone(challenge.id);
+}
+
+/**
+ * Compensating review for an answer the escalation overturned: the learner was
+ * graded `wrong`, disputed it, and the model agreed the answer should have
+ * counted (see `escalate`'s `overturn`).
+ *
+ * Every item on the challenge gets one `Good` review, exactly as if the answer
+ * had been accepted in the first place.
+ *
+ * **This does not undo the `Again` review {@link applyResult} already wrote.**
+ * FSRS has no inverse — the lapse it recorded stays on the card, and the item
+ * lands where a "failed then recalled" pair would rather than where a clean
+ * pass would. That is deliberate: a dispute is rare, and a card that is
+ * slightly too conservative beats leaving a genuinely-known word stuck in
+ * relearning. The result log entry is likewise left alone; only the card moves.
+ *
+ * Match-pairs is skipped for the same reason as in {@link applyResult}: those
+ * rounds never touch SRS state at all.
+ */
+export async function applyOverturn(challenge: Challenge, now: number = Date.now()): Promise<void> {
+	if (challenge.type === 'match-pairs') return;
+
+	for (const itemId of challenge.itemIds) {
+		const item = await getItem(itemId);
+		if (!item) continue;
+		const card = (item.fsrsCard as FsrsCardState | null | undefined) ?? newCardState(now);
+		await updateItemAfterReview(itemId, reviewCard(card, Grade.Good, now), {
+			at: now,
+			grade: Grade.Good
+		});
+	}
 }
 
 /**

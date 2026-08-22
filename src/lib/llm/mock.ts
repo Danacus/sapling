@@ -192,7 +192,9 @@ function mandarinRestaurant(): Fixture {
 				type: 'cloze',
 				direction: 'toTarget',
 				sentence: '你好，请给我一份___。',
-				sentenceRomanization: 'Nǐ hǎo, qǐng gěi wǒ yī fèn càidān.',
+				// The gap survives romanization: writing "càidān" here would show the
+				// learner the very word they are being asked for.
+				sentenceRomanization: 'Nǐ hǎo, qǐng gěi wǒ yī fèn ___.',
 				acceptedAnswers: ['菜单', 'càidān', 'caidan'],
 				wordBank: ['菜单', '筷子', '茶', '水'],
 				translationHint: 'Hello, could I have a menu, please?',
@@ -335,13 +337,19 @@ export function mockBatch(args: BatchArgs, opts: BatchOptions = {}): BatchResult
 	return { challenges: resolved.challenges, newItems: resolved.newItems, usage: NO_USAGE };
 }
 
-/** A canned escalation reply, in the shape the UI renders. */
+/**
+ * A canned escalation reply, in the shape the UI renders.
+ *
+ * `overturn` is always false: only a real model can judge whether a disputed
+ * answer deserves the grade, and a mock that flipped grades would quietly
+ * corrupt SRS state for anyone practising without a key.
+ */
 export function escalateMock(args: EscalationArgs): EscalationResult {
 	const answer = [
 		`(mock answer — no API key set, so nothing was sent to OpenRouter)`,
 		`Your answer "${args.answerGiven || '—'}" was graded "${args.verdict}".`,
 		'The expected form differs in one detail, usually the verb ending or a missing article.',
-		`With a key configured this paragraph would be a real explanation in ${args.nativeLanguage}, under 120 words.`
+		`With a key configured this paragraph would be a real explanation in ${args.nativeLanguage}, under 120 words — and a justified dispute could overturn the grade.`
 	].join(' ');
-	return { answer, usage: NO_USAGE };
+	return { answer, overturn: false, usage: NO_USAGE };
 }

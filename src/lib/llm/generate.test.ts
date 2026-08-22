@@ -225,6 +225,25 @@ describe('buildBatchPrompt', () => {
 		// The rule that keeps grading local and free for non-Latin scripts.
 		expect(system).toContain('acceptedAnswers must ALSO list the romanized form');
 	});
+
+	it('requires a cloze romanization to keep the ___ gap', () => {
+		const system = messages[0].content;
+		expect(system).toContain('sentenceRomanization mirrors the cloze sentence INCLUDING the ___');
+		expect(system).toContain('never write the reading of the blanked word');
+		// Shown, not just told.
+		expect(system).toContain('Nǐ hǎo, qǐng gěi wǒ yī fèn ___.');
+	});
+
+	it('demands challenges that are answerable from what is shown', () => {
+		const system = messages[0].content;
+		// The user's complaint: "where is the fish stall?" with an answer only the
+		// model could know.
+		expect(system).toContain('Answerable from what is shown alone');
+		expect(system).toContain('uniquely determine the answer');
+		expect(system).toMatch(/facts you never state/i);
+		expect(system).toContain("Say: 'the fish stall is to the right'");
+		expect(system).toContain('exactly one option may be correct');
+	});
 });
 
 describe('generateBatch', () => {
@@ -420,7 +439,7 @@ describe('resolveBatch', () => {
 						type: 'cloze',
 						direction: 'toTarget',
 						sentence: '请给我一份___。',
-						sentenceRomanization: 'Qǐng gěi wǒ yī fèn càidān.',
+						sentenceRomanization: 'Qǐng gěi wǒ yī fèn ___.',
 						acceptedAnswers: ['菜单', 'càidān', 'caidan'],
 						translationHint: 'Please give me a menu.',
 						itemIds: ['new:0']
@@ -454,13 +473,59 @@ describe('resolveBatch', () => {
 		// A null romanization becomes an absent key, not `undefined`.
 		expect(mc.type === 'multiple-choice' && 'promptRomanization' in mc).toBe(false);
 		expect(cloze.type === 'cloze' && cloze.sentenceRomanization).toBe(
-			'Qǐng gěi wǒ yī fèn càidān.'
+			'Qǐng gěi wǒ yī fèn ___.'
 		);
 		expect(typed.type === 'typed-translation' && typed.promptRomanization).toBe('mǎidān');
 
 		for (const challenge of resolved.challenges) {
 			expect(challengeSchema.safeParse(challenge).success).toBe(true);
 		}
+	});
+
+	/**
+	 * The user's complaint: with romanization on, the pinyin under a cloze
+	 * spelled out the word the blank was hiding. A reading that lost the gap has
+	 * romanized the answer along with everything else, so it is dropped.
+	 */
+	describe('the cloze romanization gap guard', () => {
+		function clozeBatch(sentence: string, sentenceRomanization: string) {
+			return JSON.stringify({
+				challenges: [
+					{
+						type: 'cloze',
+						direction: 'toTarget',
+						sentence,
+						sentenceRomanization,
+						acceptedAnswers: ['菜单'],
+						translationHint: 'Please give me a menu.',
+						itemIds: ['i1']
+					}
+				],
+				newItems: []
+			});
+		}
+
+		function resolveCloze(sentence: string, sentenceRomanization: string) {
+			const resolved = resolveBatch(parseBatch(clozeBatch(sentence, sentenceRomanization)), {
+				newId: idFactory(),
+				now: () => 0
+			});
+			const [challenge] = resolved.challenges;
+			return challenge?.type === 'cloze' ? challenge : undefined;
+		}
+
+		it('keeps a reading that still carries the gap', () => {
+			const cloze = resolveCloze('请给我一份___。', 'Qǐng gěi wǒ yī fèn ___.');
+			expect(cloze?.sentenceRomanization).toBe('Qǐng gěi wǒ yī fèn ___.');
+		});
+
+		it('strips a reading that spells the blanked word out', () => {
+			const cloze = resolveCloze('请给我一份___。', 'Qǐng gěi wǒ yī fèn càidān.');
+			// The challenge survives; only the spoiler goes.
+			expect(cloze).toBeDefined();
+			expect('sentenceRomanization' in (cloze ?? {})).toBe(false);
+			expect(cloze?.sentence).toBe('请给我一份___。');
+		});
 	});
 
 	it('leaves romanization keys off entirely for a Latin-script batch', () => {

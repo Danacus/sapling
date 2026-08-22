@@ -151,9 +151,10 @@ describe('the Mandarin fixtures', () => {
 			'chá'
 		]);
 
+		// The reading keeps the gap: it must not spell out the blanked word.
 		const cloze = result.challenges.find((c) => c.type === 'cloze' && c.sentenceRomanization);
 		expect(cloze?.type === 'cloze' && cloze.sentenceRomanization).toBe(
-			'Nǐ hǎo, qǐng gěi wǒ yī fèn càidān.'
+			'Nǐ hǎo, qǐng gěi wǒ yī fèn ___.'
 		);
 	});
 
@@ -188,6 +189,8 @@ describe('escalateMock', () => {
 		});
 		expect(result.answer).toContain('almost');
 		expect(result.usage).toEqual({ promptTokens: 0, completionTokens: 0 });
+		// The mock is in no position to judge a dispute, so it never overturns.
+		expect(result.overturn).toBe(false);
 	});
 });
 
@@ -217,5 +220,6 @@ describe('the facade', () => {
 			}
 		);
 		expect(result.answer).toContain('mock answer');
+		expect(result.overturn).toBe(false);
 	});
 });

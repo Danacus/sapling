@@ -6,11 +6,19 @@
  * batch has been generated, and it is never triggered automatically. Context is
  * kept to the bare minimum — the one challenge, the one answer, the question —
  * so a typical escalation costs a few hundred tokens.
+ *
+ * The reply is structured (`{answer, overturn}`) rather than prose, because a
+ * dispute can actually win: `overturn: true` tells the session to re-grade the
+ * answer as correct. That is why the criterion for it is spelled out in the
+ * prompt and why {@link parseEscalationReply} refuses to guess.
  */
+
+import { z } from 'zod';
 
 import type { Challenge } from '$lib/types';
 import { chatCompletion } from './client';
 import type { ChatMessage, FetchLike, TokenUsage } from './client';
+import { stripFences } from './generate';
 
 export interface EscalationArgs {
 	challenge: Challenge;
@@ -31,11 +39,26 @@ export interface EscalationOptions {
 	signal?: AbortSignal;
 }
 
-export interface EscalationResult {
+/** What the model is asked to return, once parsed. */
+export interface EscalationReply {
 	/** Plain text, in the learner's native language. */
 	answer: string;
+	/**
+	 * True when the learner's answer should have been graded correct after all.
+	 * The session acts on this: see `applyOverturn` in `$lib/session/engine`.
+	 */
+	overturn: boolean;
+}
+
+export interface EscalationResult extends EscalationReply {
 	usage: TokenUsage;
 }
+
+/** The reply envelope. Anything else falls back to prose (see {@link parseEscalationReply}). */
+export const escalationReplySchema = z.object({
+	answer: z.string(),
+	overturn: z.boolean()
+});
 
 /** Used when the learner taps "explain" without typing a question. */
 export const DEFAULT_QUESTION =
@@ -48,9 +71,11 @@ export const ANSWER_WORD_LIMIT = 120;
 export function buildEscalationPrompt(args: EscalationArgs): ChatMessage[] {
 	const system = [
 		`You are a precise language tutor. The learner speaks ${args.nativeLanguage} and is learning ${args.targetLanguage}.`,
-		`Write your reply in ${args.nativeLanguage}, as plain text, at most ${ANSWER_WORD_LIMIT} words.`,
-		'Answer exactly what was asked and nothing else. No greeting, no praise, no encouragement, no restating the question, no markdown.',
-		'If the learner is right that their answer should count, say so plainly.'
+		'Reply with one JSON object and nothing else, no markdown fences: {"answer": string, "overturn": boolean}.',
+		`"answer": your reply in ${args.nativeLanguage}, plain text, at most ${ANSWER_WORD_LIMIT} words. Answer exactly what was asked and nothing else. No greeting, no praise, no encouragement, no restating the question, no markdown.`,
+		'"overturn": true ONLY when the answer the learner gave should genuinely have been accepted as correct for the challenge exactly as it was shown — a valid alternative translation, a synonym, or an acceptable register or spelling variant that the accepted answers simply missed.',
+		'Never overturn out of politeness, encouragement, or because the learner insists. If their answer changes the meaning, is ungrammatical, or answers a different question than the one asked, "overturn" is false and the explanation says why.',
+		'When you overturn, "answer" states plainly that their answer counts and why it is valid.'
 	].join(' ');
 
 	const user = [
@@ -68,6 +93,29 @@ export function buildEscalationPrompt(args: EscalationArgs): ChatMessage[] {
 	];
 }
 
+/**
+ * Reads one escalation completion.
+ *
+ * Defensive on purpose: the reply drives a *grade change*, so anything that is
+ * not unambiguously `{"answer","overturn"}` degrades to the old behaviour —
+ * the raw text shown as the explanation, and no overturn. Fences and chatter
+ * around the object are stripped first ({@link stripFences}), because cheap
+ * models add them however the prompt is worded.
+ */
+export function parseEscalationReply(raw: string): EscalationReply {
+	const text = raw.trim();
+	try {
+		const parsed = escalationReplySchema.safeParse(JSON.parse(stripFences(text)));
+		if (parsed.success) {
+			const answer = parsed.data.answer.trim();
+			if (answer) return { answer, overturn: parsed.data.overturn };
+		}
+	} catch {
+		/* not JSON at all; fall through to the prose fallback */
+	}
+	return { answer: text, overturn: false };
+}
+
 /** Asks the model the learner's follow-up question about one graded answer. */
 export async function escalate(
 	args: EscalationArgs,
@@ -79,10 +127,10 @@ export async function escalate(
 		apiKey: opts.apiKey,
 		signal: opts.signal,
 		fetchFn: opts.fetchFn,
-		// ~120 words of prose, with headroom for accented scripts.
+		// ~120 words plus the JSON envelope, with headroom for accented scripts.
 		maxTokens: 400,
 		temperature: 0.3
 	});
 
-	return { answer: completion.content.trim(), usage: completion.usage };
+	return { ...parseEscalationReply(completion.content), usage: completion.usage };
 }

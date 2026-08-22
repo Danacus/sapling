@@ -145,7 +145,12 @@ export interface BatchResult {
  * prompt caching — and it buys back more than it costs: better challenges mean
  * fewer regenerated batches, and the romanization rules keep grading local.
  *
- * Two blocks earn their keep beyond the bare schema:
+ * Three blocks earn their keep beyond the bare schema:
+ *
+ * - **Answerability.** Left to itself the model writes scene-dependent prompts
+ *   ("where is the fish stall?") whose expected answer comes from a scene the
+ *   learner was never shown. The rule forces every prompt to determine its own
+ *   answer, or to spell the line out.
  *
  * - **Voice.** Left to itself the model writes flashcard prose — "I like to
  *   cook", "Cooking is fun" — one bland declarative per interest. The voice
@@ -172,7 +177,10 @@ const SYSTEM_PROMPT = [
 	'- Distractors must be plausible: same part of speech and register, never synonyms of the answer, never obviously absurd.',
 	'- acceptedAnswers must be exhaustive: with and without accents, with and without the article, contractions, and every common synonym or word order a learner might type.',
 	'- Mix direction across the batch.',
-	'- Cloze sentences use only vocabulary at or below the learner level, keep one blank, and translationHint is the whole sentence in the native language.',
+	'- Cloze sentences use only vocabulary at or below the learner level, keep one blank, and translationHint is the whole sentence in the native language. If sentenceRomanization is given it must keep the ___ gap (see Romanization).',
+	'- Answerable from what is shown alone: the prompt, plus the challenge type, must uniquely determine the answer. Never an open question whose answer depends on facts you never state — directions, prices, names, times, opinions, anything from an imagined scene the learner cannot see.',
+	'- In a situational dialogue either give the exact line to produce ("Say: \'the fish stall is to the right\'") or make acceptedAnswers cover every plausible alternative reply.',
+	'- Multiple-choice: exactly one option may be correct given the prompt; if two options would both answer it, rewrite the prompt.',
 	'- newItems must fit the learner level; term in the target language, meaning in the native language, notes only for gender/irregularity/register.',
 	'- Exactly newItemSlots entries in newItems, and every one of them must be used by at least one challenge.',
 	'Difficulty calibration:',
@@ -188,6 +196,7 @@ const SYSTEM_PROMPT = [
 	'- explanation: one line of usage or culture (register, politeness, word order) when non-obvious, written in the NATIVE language (target-language words may be quoted inside it); null when it would only restate the answer.',
 	'Romanization, for target languages NOT written in the Latin script only:',
 	'- Give a Latin reading for every target-script string: promptRomanization, optionsRomanization (one per option, same order), sentenceRomanization (whole sentence), newItems.romanization. Use pinyin with tone marks for Mandarin, romaji for Japanese, revised romanization for Korean, the standard scheme otherwise.',
+	'- sentenceRomanization mirrors the cloze sentence INCLUDING the ___ gap: romanize only the words that are visible, leave ___ exactly where it stands, and never write the reading of the blanked word — that hands the learner the answer. e.g. sentence "你好，请给我一份___。" -> sentenceRomanization "Nǐ hǎo, qǐng gěi wǒ yī fèn ___."',
 	'- A field whose string is already in the native language is null.',
 	'- For typed answers (cloze without wordBank, typed-translation toTarget) acceptedAnswers must ALSO list the romanized form with AND without tone/accent marks, e.g. ["你好","nǐ hǎo","ni hao"].',
 	'- If the target language uses the Latin script, every romanization field is null.'
@@ -336,6 +345,27 @@ function optionalString<K extends string>(
 	return trimmed ? ({ [key]: trimmed } as Record<K, string>) : {};
 }
 
+/** The blank a cloze sentence is built around. */
+const CLOZE_GAP = '___';
+
+/**
+ * Keeps a cloze's `sentenceRomanization` only when it still hides the answer.
+ *
+ * A reading that dropped the `___` has, in practice, romanized the blanked word
+ * along with the rest of the sentence — so a learner with romanization switched
+ * on is handed the answer they were asked to produce. The reading is worth much
+ * less than the challenge, so the field goes and the challenge stays.
+ */
+function clozeRomanization(
+	sentence: string,
+	romanization: string | null | undefined
+): Partial<Record<'sentenceRomanization', string>> {
+	const trimmed = undefinedIfBlank(romanization);
+	if (!trimmed) return {};
+	if (sentence.includes(CLOZE_GAP) && !trimmed.includes(CLOZE_GAP)) return {};
+	return { sentenceRomanization: trimmed };
+}
+
 /**
  * Keeps a romanization array only when it lines up with the strings it
  * annotates, one non-blank entry each. A misaligned array would put the wrong
@@ -446,7 +476,7 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
 				...base,
 				type: 'cloze',
 				sentence: generated.sentence,
-				...optionalString('sentenceRomanization', generated.sentenceRomanization),
+				...clozeRomanization(generated.sentence, generated.sentenceRomanization),
 				acceptedAnswers: generated.acceptedAnswers,
 				...(wordBank && wordBank.length > 1 ? { wordBank } : {}),
 				translationHint: generated.translationHint
