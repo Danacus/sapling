@@ -456,6 +456,7 @@
 
 		<section class="card">
 			<h2>Speech</h2>
+			<p class="hint test-bench-link"><a href="/tts-test">Test voices →</a></p>
 
 			<div class="field">
 				<span class="label" id="tts-engine-label">Voice engine</span>
@@ -835,6 +836,20 @@
 
 	.preload-progress {
 		margin-top: 0.9rem;
+	}
+
+	.test-bench-link {
+		margin: -0.5rem 0 1rem;
+	}
+
+	.test-bench-link a {
+		color: var(--primary-strong);
+		font-weight: 700;
+		text-decoration: none;
+	}
+
+	.test-bench-link a:hover {
+		text-decoration: underline;
 	}
 
 	.model-field {

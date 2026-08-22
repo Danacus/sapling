@@ -34,6 +34,13 @@ import { cancelWebSpeech, speakWithWebSpeech, webSpeechAvailable } from './websp
 
 export type { TtsEngine, TtsVoice } from './prefs';
 export type { TtsProgress } from './sherpa';
+/**
+ * Subscribes to Kokoro's model-download progress (see `preloadKokoro`, which
+ * uses the same hook). Exposed directly for callers — such as the TTS
+ * test-bench — that want live progress during an ordinary {@link speak} call
+ * rather than a separate explicit preload.
+ */
+export { onSherpaProgress } from './sherpa';
 export type { KokoroSpeaker } from './languages';
 export {
 	getTtsEngine,
