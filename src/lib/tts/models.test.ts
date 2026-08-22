@@ -8,7 +8,9 @@ import {
 	MODEL_CACHE_NAME,
 	RUNTIME_ARTIFACTS,
 	RUNTIME_DOWNLOAD_BYTES,
-	RUNTIME_SCRIPTS
+	RUNTIME_SCRIPT_FILES,
+	ttsAssetUrl,
+	WORKER_SCRIPT_FILE
 } from './models';
 
 describe('runtime artifacts', () => {
@@ -35,13 +37,19 @@ describe('runtime artifacts', () => {
 		);
 	});
 
-	it('loads the vendored glue from our own origin, wrapper first', () => {
+	it('loads the vendored glue wrapper-first', () => {
 		// The wrapper defines createOfflineTts, which the glue's
 		// onRuntimeInitialized callback needs the moment it fires.
-		expect(RUNTIME_SCRIPTS).toEqual([
-			'/tts/sherpa-onnx-tts.js',
-			'/tts/sherpa-onnx-wasm-main-tts.js'
+		expect(RUNTIME_SCRIPT_FILES).toEqual([
+			'sherpa-onnx-tts.js',
+			'sherpa-onnx-wasm-main-tts.js'
 		]);
+	});
+
+	it('serves the worker verbatim from static/, not through Vite', () => {
+		// A Vite-bundled classic worker is an IIFE in `pnpm build` but ESM in
+		// `vite dev`, which breaks dev only. This file is copied as-is.
+		expect(WORKER_SCRIPT_FILE).toBe('sherpa-worker.js');
 	});
 
 	it('uses a dedicated cache bucket so clearing it cannot touch app data', () => {
@@ -53,6 +61,19 @@ describe('runtime artifacts', () => {
 		// ONNX runtime (sherpa-onnx#2236), which is silence, not speech.
 		expect(KOKORO_MODEL_ID).toContain('kokoro-multi-lang-v1_1');
 		expect(KOKORO_MODEL_ID).toContain('fp32');
+	});
+});
+
+describe('ttsAssetUrl', () => {
+	it('points at static/tts on the app\'s own origin', () => {
+		expect(ttsAssetUrl('sherpa-worker.js')).toBe('/tts/sherpa-worker.js');
+		expect(ttsAssetUrl(RUNTIME_SCRIPT_FILES[0])).toBe('/tts/sherpa-onnx-tts.js');
+	});
+
+	it('respects a SvelteKit base path', () => {
+		// `base` is '' today, but a sub-path deploy must not silently 404 the
+		// worker and leave speech dead.
+		expect(ttsAssetUrl('sherpa-worker.js', '/learn')).toBe('/learn/tts/sherpa-worker.js');
 	});
 });
 

@@ -12,8 +12,55 @@
  * see the module note there.
  */
 
-import type { SherpaRequest, SherpaResponse } from './sherpa.worker';
+import { base } from '$app/paths';
+
+import {
+	artifactUrl,
+	MODEL_CACHE_NAME,
+	RUNTIME_ARTIFACTS,
+	RUNTIME_SCRIPT_FILES,
+	ttsAssetUrl,
+	WORKER_SCRIPT_FILE
+} from './models';
 import { encodeWav } from './wav';
+
+// -- The worker protocol ----------------------------------------------------
+//
+// `static/tts/sherpa-worker.js` is plain JavaScript (it has to be a classic
+// worker — see the note in `models.ts`), so the contract between the two sides
+// is typed here and only here. Keep the two in step by hand.
+
+/** Everything environment-specific the worker needs, sent with `init`. */
+export interface SherpaConfig {
+	artifacts: { file: string; url: string; bytes: number }[];
+	scripts: string[];
+	cacheName: string;
+}
+
+/** Main thread → worker. */
+export type SherpaRequest =
+	| { type: 'init'; config: SherpaConfig }
+	| { type: 'generate'; id: number; text: string; speakerId: number; speed: number };
+
+/** Worker → main thread. */
+export type SherpaResponse =
+	| { type: 'progress'; file: string; loaded: number; total: number }
+	| { type: 'ready'; sampleRate: number; numSpeakers: number }
+	| { type: 'audio'; id: number; samples: Float32Array; sampleRate: number }
+	| { type: 'failed'; id?: number; message: string };
+
+/** Resolves `models.ts` against the deployed base path, once per boot. */
+function workerConfig(): SherpaConfig {
+	return {
+		artifacts: RUNTIME_ARTIFACTS.map((artifact) => ({
+			file: artifact.file,
+			url: artifactUrl(artifact.file),
+			bytes: artifact.bytes
+		})),
+		scripts: RUNTIME_SCRIPT_FILES.map((file) => ttsAssetUrl(file, base)),
+		cacheName: MODEL_CACHE_NAME
+	};
+}
 
 /**
  * One file's download progress. Kept structurally identical to what the old
@@ -132,7 +179,9 @@ export function initSherpa(): Promise<void> {
 		readyReject = reject;
 
 		try {
-			worker = new Worker(new URL('./sherpa.worker.ts', import.meta.url));
+			// A classic worker, served verbatim from static/ — deliberately not a
+			// Vite-bundled module worker; see the note on WORKER_SCRIPT_FILE.
+			worker = new Worker(ttsAssetUrl(WORKER_SCRIPT_FILE, base));
 		} catch (cause) {
 			reject(cause instanceof Error ? cause : new Error(String(cause)));
 			ready = null;
@@ -141,7 +190,7 @@ export function initSherpa(): Promise<void> {
 
 		worker.onmessage = (event: MessageEvent) => handle(event.data as SherpaResponse);
 		worker.onerror = (event) => teardown(new Error(event.message || 'the speech worker crashed'));
-		post({ type: 'init' });
+		post({ type: 'init', config: workerConfig() });
 	});
 
 	// Do not remember a failure forever: a dropped connection should not

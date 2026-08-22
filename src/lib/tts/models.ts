@@ -10,6 +10,7 @@
  *
  * | file | where it lives | why |
  * | --- | --- | --- |
+ * | `sherpa-worker.js` | vendored in `static/tts/` | 9 KB classic worker that drives it all |
  * | `sherpa-onnx-tts.js` | vendored in `static/tts/` | 26 KB hand-written C-API wrapper |
  * | `sherpa-onnx-wasm-main-tts.js` | vendored in `static/tts/` | 121 KB Emscripten glue |
  * | `sherpa-onnx-wasm-main-tts.wasm` | fetched at runtime | 11.9 MB |
@@ -84,11 +85,35 @@ export const RUNTIME_DOWNLOAD_BYTES = RUNTIME_ARTIFACTS.reduce(
 	0
 );
 
-/** The vendored JS that `importScripts` pulls in, relative to the site root. */
-export const RUNTIME_SCRIPTS: readonly string[] = [
-	'/tts/sherpa-onnx-tts.js',
-	'/tts/sherpa-onnx-wasm-main-tts.js'
+/**
+ * The vendored JS the worker `importScripts`, in load order — the C-API wrapper
+ * first, because it must define `createOfflineTts` before the glue finishes
+ * instantiating and calls `onRuntimeInitialized`.
+ */
+export const RUNTIME_SCRIPT_FILES: readonly string[] = [
+	'sherpa-onnx-tts.js',
+	'sherpa-onnx-wasm-main-tts.js'
 ];
+
+/**
+ * The worker itself. It lives in `static/` rather than `src/` because it must
+ * be a *classic* worker (`importScripts` does not exist in module workers), and
+ * a classic worker built from a TS module is bundled to an IIFE by `pnpm build`
+ * but served as ESM by `vite dev` — which threw `Cannot use import statement
+ * outside a module` in dev only. Served verbatim, the two modes cannot diverge.
+ */
+export const WORKER_SCRIPT_FILE = 'sherpa-worker.js';
+
+/**
+ * URL of one file in `static/tts/`.
+ *
+ * `base` is SvelteKit's configured base path (`''` unless the app is deployed
+ * under a sub-path); it is threaded through rather than assumed so a future
+ * `paths.base` cannot silently break the worker.
+ */
+export function ttsAssetUrl(file: string, base = ''): string {
+	return `${base}/tts/${file}`;
+}
 
 /** Download URL for one artifact, pinned to {@link BUNDLE_REVISION}. */
 export function artifactUrl(file: string, revision: string = BUNDLE_REVISION): string {
