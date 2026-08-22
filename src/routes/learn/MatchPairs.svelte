@@ -9,15 +9,42 @@
   pop; a wrong pair shakes and both tiles deselect. Mistakes are counted, and a
   round finished with at least one mistake reports 'almost' instead of
   'correct' — that only affects XP, never SRS (see `applyResult`).
+
+  Matching is by *text*, not by which pair object a tile happened to come
+  from: two tiles count as a match whenever their texts form any valid pair in
+  `challenge.pairs` (case/whitespace-insensitive), not only the one they were
+  built from. The generator now guarantees no duplicate labels on either side,
+  but this makes identical labels interchangeable if one ever slips through
+  rather than making some correct-looking pair unmatchable.
 -->
 <script lang="ts">
 	import type { AnswerEvent } from '$lib/session/engine';
 	import type { MatchPairsChallenge } from '$lib/types';
+	import { getShowRomanization } from '$lib/ui/prefs';
 
 	let {
 		challenge,
 		onanswer
 	}: { challenge: MatchPairsChallenge; onanswer: (event: AnswerEvent) => void } = $props();
+
+	/** Read once — the toggle lives in Settings, not mid-session. */
+	const showRomanization = getShowRomanization();
+
+	/** Case/whitespace-insensitive text key, for matching tiles by content. */
+	function textKey(text: string): string {
+		return text.trim().toLowerCase().replace(/\s+/g, ' ');
+	}
+
+	/**
+	 * True when `leftText` (a left-column tile) and `rightText` (a right-column
+	 * tile) form a valid pair anywhere in `challenge.pairs` — not necessarily
+	 * the specific pair either tile was built from.
+	 */
+	function isValidPair(leftText: string, rightText: string): boolean {
+		const left = textKey(leftText);
+		const right = textKey(rightText);
+		return challenge.pairs.some((p) => textKey(p.a) === left && textKey(p.b) === right);
+	}
 
 	/** How long a wrong pair stays visibly wrong before it resets. */
 	const SHAKE_MS = 460;
@@ -25,9 +52,14 @@
 	const FINISH_MS = 420;
 
 	interface Tile {
-		/** Index into `challenge.pairs` — the identity a match is checked against. */
+		/**
+		 * Index into `challenge.pairs` this tile was built from — a stable
+		 * per-tile identity (unique within its own column), *not* the only
+		 * pair index it is allowed to match against. See {@link isValidPair}.
+		 */
 		pair: number;
 		text: string;
+		rom?: string;
 	}
 
 	function shuffled(tiles: Tile[]): Tile[] {
@@ -41,14 +73,24 @@
 
 	// Both columns are shuffled independently, otherwise the answer is the
 	// identity mapping and the exercise is a row-by-row read.
-	const left = $derived(shuffled(challenge.pairs.map((p, pair) => ({ pair, text: p.a }))));
-	const right = $derived(shuffled(challenge.pairs.map((p, pair) => ({ pair, text: p.b }))));
+	const left = $derived(
+		shuffled(challenge.pairs.map((p, pair) => ({ pair, text: p.a, rom: p.aRom })))
+	);
+	const right = $derived(
+		shuffled(challenge.pairs.map((p, pair) => ({ pair, text: p.b, rom: p.bRom })))
+	);
 
-	let matched = $state<number[]>([]);
+	// Left and right tiles are tracked as separate "consumed" sets: a
+	// cross-pair match (text-equivalent but built from different original
+	// pairs) locks in one specific tile on each side, not a single shared
+	// pair index.
+	let matchedLeft = $state<number[]>([]);
+	let matchedRight = $state<number[]>([]);
 	let selectedLeft = $state<number | null>(null);
 	let selectedRight = $state<number | null>(null);
 	let wrong = $state<{ left: number; right: number } | null>(null);
-	let popped = $state<number | null>(null);
+	let poppedLeft = $state<number | null>(null);
+	let poppedRight = $state<number | null>(null);
 	let mistakes = $state(0);
 	let busy = $state(false);
 	let done = $state(false);
@@ -62,11 +104,13 @@
 
 	$effect(() => {
 		void challenge.id;
-		matched = [];
+		matchedLeft = [];
+		matchedRight = [];
 		selectedLeft = null;
 		selectedRight = null;
 		wrong = null;
-		popped = null;
+		poppedLeft = null;
+		poppedRight = null;
 		mistakes = 0;
 		busy = false;
 		done = false;
@@ -78,24 +122,38 @@
 		};
 	});
 
-	const remaining = $derived(challenge.pairs.length - matched.length);
+	const remaining = $derived(challenge.pairs.length - matchedLeft.length);
 
-	function isMatched(pair: number): boolean {
-		return matched.includes(pair);
+	function isMatchedLeft(pair: number): boolean {
+		return matchedLeft.includes(pair);
+	}
+
+	function isMatchedRight(pair: number): boolean {
+		return matchedRight.includes(pair);
 	}
 
 	function resolve(): void {
 		if (selectedLeft === null || selectedRight === null) return;
 
-		if (selectedLeft === selectedRight) {
-			const pair = selectedLeft;
-			matched = [...matched, pair];
-			popped = pair;
+		// Text equivalence, not object identity: any selected left+right pair
+		// whose texts form a valid pair anywhere in `challenge.pairs` counts,
+		// so two tiles carrying the same label (should one ever slip past the
+		// generator's dedupe) are interchangeable rather than unmatchable.
+		if (isValidPair(challenge.pairs[selectedLeft].a, challenge.pairs[selectedRight].b)) {
+			const leftPair = selectedLeft;
+			const rightPair = selectedRight;
+			matchedLeft = [...matchedLeft, leftPair];
+			matchedRight = [...matchedRight, rightPair];
+			poppedLeft = leftPair;
+			poppedRight = rightPair;
 			selectedLeft = null;
 			selectedRight = null;
-			later(() => (popped = null), 400);
+			later(() => {
+				poppedLeft = null;
+				poppedRight = null;
+			}, 400);
 
-			if (matched.length === challenge.pairs.length && !done) {
+			if (matchedLeft.length === challenge.pairs.length && !done) {
 				done = true;
 				busy = true;
 				later(finish, FINISH_MS);
@@ -125,13 +183,13 @@
 	}
 
 	function tapLeft(pair: number): void {
-		if (busy || done || isMatched(pair)) return;
+		if (busy || done || isMatchedLeft(pair)) return;
 		selectedLeft = selectedLeft === pair ? null : pair;
 		resolve();
 	}
 
 	function tapRight(pair: number): void {
-		if (busy || done || isMatched(pair)) return;
+		if (busy || done || isMatchedRight(pair)) return;
 		selectedRight = selectedRight === pair ? null : pair;
 		resolve();
 	}
@@ -152,14 +210,17 @@
 					type="button"
 					class="tile"
 					class:selected={selectedLeft === tile.pair}
-					class:matched={isMatched(tile.pair)}
-					class:ll-pop={popped === tile.pair}
+					class:matched={isMatchedLeft(tile.pair)}
+					class:ll-pop={poppedLeft === tile.pair}
 					class:ll-shake={wrong?.left === tile.pair}
-					disabled={isMatched(tile.pair) || done}
+					disabled={isMatchedLeft(tile.pair) || done}
 					aria-pressed={selectedLeft === tile.pair}
 					onclick={() => tapLeft(tile.pair)}
 				>
-					{tile.text}
+					<span>{tile.text}</span>
+					{#if showRomanization && tile.rom}
+						<span class="rom">{tile.rom}</span>
+					{/if}
 				</button>
 			{/each}
 		</div>
@@ -170,14 +231,17 @@
 					type="button"
 					class="tile"
 					class:selected={selectedRight === tile.pair}
-					class:matched={isMatched(tile.pair)}
-					class:ll-pop={popped === tile.pair}
+					class:matched={isMatchedRight(tile.pair)}
+					class:ll-pop={poppedRight === tile.pair}
 					class:ll-shake={wrong?.right === tile.pair}
-					disabled={isMatched(tile.pair) || done}
+					disabled={isMatchedRight(tile.pair) || done}
 					aria-pressed={selectedRight === tile.pair}
 					onclick={() => tapRight(tile.pair)}
 				>
-					{tile.text}
+					<span>{tile.text}</span>
+					{#if showRomanization && tile.rom}
+						<span class="rom">{tile.rom}</span>
+					{/if}
 				</button>
 			{/each}
 		</div>

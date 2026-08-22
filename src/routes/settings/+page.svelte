@@ -16,6 +16,7 @@
 	} from '$lib/db';
 	import type { Profile } from '$lib/types';
 	import InlineStatus from '$lib/ui/InlineStatus.svelte';
+	import { getShowRomanization, setShowRomanization } from '$lib/ui/prefs';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	type Status = 'idle' | 'saved' | 'error';
@@ -38,6 +39,9 @@
 	let savingGoal = $state(false);
 	let goalStatus = $state<Status>('idle');
 	let goalMessage = $state('');
+
+	// Display -----------------------------------------------------------------------
+	let showRomanization = $state(true);
 
 	// LLM: API key ----------------------------------------------------------------
 	let apiKeySet = $state(false);
@@ -83,6 +87,7 @@
 
 				apiKeySet = getApiKey() !== undefined;
 				modelInput = getModel();
+				showRomanization = getShowRomanization();
 
 				usagePromptTokens = readUsage('ll.usage.promptTokens');
 				usageCompletionTokens = readUsage('ll.usage.completionTokens');
@@ -159,6 +164,11 @@
 		apiKeyInput = '';
 		apiKeyMessage = 'Key cleared';
 		flash((value) => (apiKeyStatus = value));
+	}
+
+	function toggleRomanization() {
+		showRomanization = !showRomanization;
+		setShowRomanization(showRomanization);
 	}
 
 	function saveModelChoice() {
@@ -331,6 +341,30 @@
 					{savingGoal ? 'Saving…' : 'Save goal'}
 				</button>
 				<InlineStatus status={goalStatus} message={goalMessage} />
+			</div>
+		</section>
+
+		<section class="card">
+			<h2>Display</h2>
+			<div class="switch-row">
+				<div class="switch-copy">
+					<span class="label">Show pronunciation (romanization)</span>
+					<p class="hint">
+						Pinyin, romaji and the like under words written in a non-Latin script. Only shows up
+						for languages that need it.
+					</p>
+				</div>
+				<button
+					type="button"
+					class="switch"
+					class:on={showRomanization}
+					role="switch"
+					aria-checked={showRomanization}
+					aria-label="Show pronunciation (romanization)"
+					onclick={toggleRomanization}
+				>
+					<span class="switch-thumb"></span>
+				</button>
 			</div>
 		</section>
 
@@ -556,6 +590,67 @@
 		border-color: var(--primary);
 		background: var(--primary-soft);
 		color: var(--text);
+	}
+
+	.switch-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+	}
+
+	.switch-copy {
+		min-width: 0;
+	}
+
+	.switch-copy .label {
+		display: block;
+		margin-bottom: 0.3rem;
+	}
+
+	.switch-copy .hint {
+		margin: 0;
+	}
+
+	.switch {
+		flex: 0 0 auto;
+		position: relative;
+		width: 3rem;
+		height: 1.75rem;
+		padding: 0;
+		border: 2px solid var(--border);
+		border-radius: 999px;
+		background: var(--surface-alt);
+		cursor: pointer;
+		transition:
+			background 0.15s ease,
+			border-color 0.15s ease;
+	}
+
+	.switch:focus-visible {
+		outline: none;
+		box-shadow: var(--ring);
+	}
+
+	.switch.on {
+		border-color: var(--primary);
+		background: var(--primary);
+	}
+
+	.switch-thumb {
+		position: absolute;
+		top: 1px;
+		left: 1px;
+		width: 1.25rem;
+		height: 1.25rem;
+		border-radius: 999px;
+		background: var(--surface);
+		box-shadow: 0 1px 3px rgb(16 24 40 / 20%);
+		transition: transform 0.15s ease;
+	}
+
+	.switch.on .switch-thumb {
+		transform: translateX(1.25rem);
 	}
 
 	.model-field {

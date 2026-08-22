@@ -11,11 +11,15 @@
 <script lang="ts">
 	import type { AnswerEvent } from '$lib/session/engine';
 	import type { MultipleChoiceChallenge } from '$lib/types';
+	import { getShowRomanization } from '$lib/ui/prefs';
 
 	let {
 		challenge,
 		onanswer
 	}: { challenge: MultipleChoiceChallenge; onanswer: (event: AnswerEvent) => void } = $props();
+
+	/** Read once — the toggle lives in Settings, not mid-session. */
+	const showRomanization = getShowRomanization();
 
 	/** Reset per challenge: `challenge.id` is the tracked read. */
 	let selected = $state<number | null>(null);
@@ -68,6 +72,9 @@
 <div class="mc">
 	<p class="asked">{askedIn}</p>
 	<p class="prompt">{challenge.prompt}</p>
+	{#if showRomanization && challenge.promptRomanization}
+		<p class="rom">{challenge.promptRomanization}</p>
+	{/if}
 
 	<div class="options" role="radiogroup" aria-label="Answer options">
 		{#each challenge.options as option, index (index)}
@@ -81,7 +88,12 @@
 				onclick={() => select(index)}
 			>
 				<span class="key" aria-hidden="true">{index + 1}</span>
-				<span class="label">{option}</span>
+				<span class="label">
+					<span>{option}</span>
+					{#if showRomanization && challenge.optionsRomanization?.[index]}
+						<span class="rom">{challenge.optionsRomanization[index]}</span>
+					{/if}
+				</span>
 			</button>
 		{/each}
 	</div>
@@ -118,6 +130,16 @@
 		line-height: 1.15;
 		letter-spacing: -0.015em;
 		overflow-wrap: anywhere;
+	}
+
+	/* When romanization follows the prompt, it owns the trailing space instead. */
+	.prompt:has(+ :global(.rom)) {
+		margin-bottom: 0.2rem;
+	}
+
+	.prompt + :global(.rom) {
+		margin-bottom: 1.3rem;
+		font-size: 1rem;
 	}
 
 	.options {

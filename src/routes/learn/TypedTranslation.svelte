@@ -9,7 +9,11 @@
 <script lang="ts">
 	import type { AnswerEvent } from '$lib/session/engine';
 	import type { TypedTranslationChallenge } from '$lib/types';
+	import { getShowRomanization } from '$lib/ui/prefs';
 	import { validateAnswer } from '$lib/validate';
+
+	/** Read once — the toggle lives in Settings, not mid-session. */
+	const showRomanization = getShowRomanization();
 
 	let {
 		challenge,
@@ -71,6 +75,9 @@
 <div class="typed">
 	<p class="asked">{asked}</p>
 	<p class="prompt">{challenge.prompt}</p>
+	{#if showRomanization && challenge.promptRomanization}
+		<p class="rom prompt-rom">{challenge.promptRomanization}</p>
+	{/if}
 
 	<textarea
 		bind:this={input}
@@ -113,6 +120,16 @@
 		line-height: 1.2;
 		letter-spacing: -0.015em;
 		overflow-wrap: anywhere;
+	}
+
+	/* When romanization follows the prompt, it owns the trailing space instead. */
+	.prompt:has(+ .prompt-rom) {
+		margin-bottom: 0.2rem;
+	}
+
+	.prompt-rom {
+		margin-bottom: 1.3rem;
+		font-size: 1rem;
 	}
 
 	.answer {

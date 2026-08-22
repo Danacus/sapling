@@ -219,6 +219,23 @@ a {
 	color: var(--text-muted);
 }
 
+/*
+  Romanization (pinyin, romaji, ...): a muted secondary line under
+  target-script text. Shared across every challenge type and the item lists
+  so a non-Latin target language always reads the same way. Absent entirely
+  (no element rendered) whenever the field is undefined or the learner has
+  turned the setting off — this class never changes layout on its own.
+*/
+.rom {
+	display: block;
+	margin-top: 0.15rem;
+	color: var(--text);
+	opacity: 0.6;
+	font-size: 0.78em;
+	font-weight: 600;
+	letter-spacing: 0.01em;
+}
+
 /* Layout helpers ----------------------------------------------------------- */
 
 .card {

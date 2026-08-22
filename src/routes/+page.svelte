@@ -5,9 +5,13 @@
 	import { isDue, retrievability, type FsrsCardState } from '$lib/srs';
 	import type { KnowledgeItem, Profile, Stats } from '$lib/types';
 	import ProgressBar from '$lib/ui/ProgressBar.svelte';
+	import { getShowRomanization } from '$lib/ui/prefs';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	const WEAK_PREVIEW_COUNT = 10;
+
+	/** Read once — the toggle lives in Settings, not mid-page. */
+	const showRomanization = getShowRomanization();
 
 	let loading = $state(true);
 	let loadError = $state('');
@@ -158,6 +162,9 @@
 						<li class="word-row">
 							<div class="word-text">
 								<span class="term">{entry.item.term}</span>
+								{#if showRomanization && entry.item.romanization}
+									<span class="rom">{entry.item.romanization}</span>
+								{/if}
 								<span class="meaning">{entry.item.meaning}</span>
 							</div>
 							<div class="word-bar">
@@ -327,6 +334,12 @@
 
 	.term {
 		font-weight: 800;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.word-text :global(.rom) {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;

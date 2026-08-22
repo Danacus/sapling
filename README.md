@@ -17,6 +17,16 @@ to [OpenRouter](https://openrouter.ai) with your own API key.
 - **Content written for you.** Challenges are generated from your level, your
   interests and — crucially — the exact words your spaced-repetition schedule
   says you are about to forget.
+- **Per-session topics.** Before a session starts you can name a scenario —
+  "ordering in a restaurant", "asking for directions" — and that batch's
+  dialogue leans into it; leave it blank to just review. Recent topics and a
+  handful of suggested ones (plus a couple drawn from your interests) are
+  offered as chips, and the last few you typed are remembered on the device.
+- **Romanization for non-Latin scripts.** Learning Mandarin, Japanese or
+  another language not written in the Latin alphabet gets you a pinyin/romaji
+  reading under every target-script string — prompts, options, sentences and
+  match-pairs tiles alike — with nothing to configure. Latin-script languages
+  never see the field at all. Turn it off in Settings if you don't want it.
 - **Forgiving grading.** A missing accent or a one-character typo is graded
   "almost", counted as correct, and shown the right form. Grading is local,
   instant and free.
@@ -89,7 +99,9 @@ src/lib/llm/          OpenRouter client, batch generation, escalation, and the
                       offline mock. Touches no database.
 src/lib/session/      Session rules: refill planning, XP/combo, applying an
                       answer. The bridge between the four modules above.
-src/lib/ui/           Shared presentational bits (spinner, progress bar).
+src/lib/ui/           Shared presentational bits (spinner, progress bar) plus
+                      lightweight display preferences in localStorage
+                      (romanization toggle, recent session topics).
 src/routes/           Dashboard, onboarding, settings, and the session screen
                       (`/learn`) with its four challenge components.
 ```

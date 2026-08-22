@@ -16,12 +16,16 @@
 <script lang="ts">
 	import type { AnswerEvent } from '$lib/session/engine';
 	import type { ClozeChallenge } from '$lib/types';
+	import { getShowRomanization } from '$lib/ui/prefs';
 	import { validateAnswer } from '$lib/validate';
 
 	let {
 		challenge,
 		onanswer
 	}: { challenge: ClozeChallenge; onanswer: (event: AnswerEvent) => void } = $props();
+
+	/** Read once — the toggle lives in Settings, not mid-session. */
+	const showRomanization = getShowRomanization();
 
 	const GAP = '___';
 
@@ -120,6 +124,9 @@
 		{/if}
 		<span>{parts.after}</span>
 	</p>
+	{#if showRomanization && challenge.sentenceRomanization}
+		<p class="rom sentence-rom">{challenge.sentenceRomanization}</p>
+	{/if}
 
 	<p class="hint translation">{challenge.translationHint}</p>
 
@@ -213,6 +220,11 @@
 	.gap:disabled {
 		cursor: default;
 		opacity: 0.8;
+	}
+
+	.sentence-rom {
+		margin: 0 0 0.6rem;
+		font-size: 1rem;
 	}
 
 	.translation {

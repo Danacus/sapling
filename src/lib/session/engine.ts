@@ -213,6 +213,12 @@ export interface PlanRefillOptions {
 	count?: number;
 	/** Optional "you got these wrong lately" hints for the prompt. */
 	recentMistakes?: RecentMistake[];
+	/**
+	 * Free-form scenario for this session, e.g. `'ordering in a restaurant'`.
+	 * Blank/whitespace-only is treated the same as absent — the key is only
+	 * added to {@link BatchArgs} when it carries real content.
+	 */
+	topic?: string;
 }
 
 /**
@@ -234,6 +240,8 @@ export function planRefill(
 		...(opts.maxItems === undefined ? {} : { maxItems: opts.maxItems })
 	});
 
+	const topic = opts.topic?.trim();
+
 	const args: BatchArgs = {
 		profile: {
 			nativeLanguage: profile.nativeLanguage,
@@ -248,7 +256,8 @@ export function planRefill(
 		})),
 		newItemSlots,
 		count: opts.count ?? BATCH_TARGET,
-		...(opts.recentMistakes?.length ? { recentMistakes: opts.recentMistakes } : {})
+		...(opts.recentMistakes?.length ? { recentMistakes: opts.recentMistakes } : {}),
+		...(topic ? { topic } : {})
 	};
 
 	return { args, reviewItems, newItemSlots, recentAccuracy };
@@ -282,6 +291,64 @@ export interface RunRefillOptions {
 	force?: boolean;
 	maxItems?: number;
 	count?: number;
+	/** Forwarded to {@link planRefill}; see {@link PlanRefillOptions.topic}. */
+	topic?: string;
+}
+
+/** Case/whitespace-insensitive key used to tell whether two terms name the same word. */
+function termKey(term: string): string {
+	return term.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/** What {@link dedupeNewItems} decided about one batch of freshly proposed vocabulary. */
+export interface DedupeResult {
+	/** Proposed items that are genuinely new — safe to persist. */
+	newItems: KnowledgeItem[];
+	/** Proposed-item id → existing item id, for every proposed item dropped as a duplicate. */
+	idRemap: Map<string, string>;
+}
+
+/**
+ * Filters newly proposed vocabulary against what the learner already has.
+ *
+ * The LLM only sees *due* items, so nothing stops it from re-proposing a word
+ * the learner already knows under a fresh id (a different due item nudged the
+ * model toward a word it had already taught). Persisting that would fork the
+ * vocabulary into two entries with separate SRS histories, so any proposed
+ * item whose `term` matches an existing item case/whitespace-insensitively is
+ * dropped here instead, with its id remapped to the existing item's.
+ *
+ * Pure: no clock, no database.
+ */
+export function dedupeNewItems(
+	existingItems: KnowledgeItem[],
+	proposed: KnowledgeItem[]
+): DedupeResult {
+	const existingByTerm = new Map<string, KnowledgeItem>();
+	for (const item of existingItems) existingByTerm.set(termKey(item.term), item);
+
+	const newItems: KnowledgeItem[] = [];
+	const idRemap = new Map<string, string>();
+	for (const item of proposed) {
+		const existing = existingByTerm.get(termKey(item.term));
+		if (existing) idRemap.set(item.id, existing.id);
+		else newItems.push(item);
+	}
+	return { newItems, idRemap };
+}
+
+/**
+ * Rewrites every `itemIds` entry through `idRemap`, so challenges that
+ * referenced a proposed item {@link dedupeNewItems} dropped now point at the
+ * existing item instead. A no-op (same array, not a copy) when the remap is
+ * empty, which is the common case.
+ */
+export function remapItemIds(challenges: Challenge[], idRemap: Map<string, string>): Challenge[] {
+	if (idRemap.size === 0) return challenges;
+	return challenges.map((challenge) => ({
+		...challenge,
+		itemIds: challenge.itemIds.map((id) => idRemap.get(id) ?? id)
+	}));
 }
 
 /**
@@ -320,26 +387,33 @@ export async function runRefillIfNeeded(
 	const items = await getAllItems();
 	const plan = planRefill(items, profile, now, {
 		...(opts.maxItems === undefined ? {} : { maxItems: opts.maxItems }),
-		...(opts.count === undefined ? {} : { count: opts.count })
+		...(opts.count === undefined ? {} : { count: opts.count }),
+		...(opts.topic === undefined ? {} : { topic: opts.topic })
 	});
 
 	const batch = await getBatch(plan.args, opts.signal ? { signal: opts.signal } : {});
 
+	// The model can re-propose a word the learner already knows (it only sees
+	// due items, not the whole collection); drop those before they fork the
+	// vocabulary, and point any challenge that referenced one at the real item.
+	const { newItems: proposed, idRemap } = dedupeNewItems(items, batch.newItems);
+	const challenges = remapItemIds(batch.challenges, idRemap);
+
 	// The LLM layer leaves `fsrsCard` null on purpose; give every new word a
 	// real, due-now card before it reaches the database.
-	const newItems: KnowledgeItem[] = batch.newItems.map((item) => ({
+	const newItems: KnowledgeItem[] = proposed.map((item) => ({
 		...item,
 		fsrsCard: newCardState(now)
 	}));
 
 	await upsertItems(newItems);
-	await enqueueChallenges(batch.challenges);
+	await enqueueChallenges(challenges);
 
 	return {
 		refilled: true,
 		queuedBefore,
 		queuedAfter: await queuedCount(),
-		addedChallenges: batch.challenges.length,
+		addedChallenges: challenges.length,
 		newItems,
 		usage: batch.usage,
 		mock,

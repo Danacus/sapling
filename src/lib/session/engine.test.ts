@@ -25,7 +25,9 @@ import {
 	MAX_COMBO_BONUS,
 	SESSION_LENGTH,
 	comboAfter,
+	dedupeNewItems,
 	planRefill,
+	remapItemIds,
 	sessionSummary,
 	wantsMatchRound,
 	xpFor,
@@ -238,6 +240,17 @@ describe('planRefill', () => {
 		);
 	});
 
+	it('includes a trimmed topic in the batch args when one is given', () => {
+		const plan = planRefill([], profile(), NOW, { topic: '  ordering in a restaurant  ' });
+		expect(plan.args.topic).toBe('ordering in a restaurant');
+	});
+
+	it('omits topic entirely when absent or blank', () => {
+		expect(planRefill([], profile(), NOW).args).not.toHaveProperty('topic');
+		expect(planRefill([], profile(), NOW, { topic: '   ' }).args).not.toHaveProperty('topic');
+		expect(planRefill([], profile(), NOW, { topic: '' }).args).not.toHaveProperty('topic');
+	});
+
 	it('is pure: it does not mutate the items it is given', () => {
 		const items = [item('a', -DAY), item('b', +DAY)];
 		const snapshot = structuredClone(items);
@@ -253,6 +266,67 @@ describe('planRefill', () => {
 			NOW
 		);
 		expect(plan.args.reviewItems).toEqual([]);
+	});
+});
+
+describe('dedupeNewItems', () => {
+	it('drops a proposed item whose term matches an existing one case/whitespace-insensitively, and remaps its id', () => {
+		const existing = item('e1', -DAY);
+		const proposed: KnowledgeItem = { ...item('new1', 0), term: '  Term-E1  ' };
+
+		const { newItems, idRemap } = dedupeNewItems([existing], [proposed]);
+
+		expect(newItems).toEqual([]);
+		expect(idRemap.get('new1')).toBe('e1');
+	});
+
+	it('keeps a genuinely new item and leaves the remap empty', () => {
+		const existing = item('e1', -DAY);
+		const proposed = item('new1', 0);
+
+		const { newItems, idRemap } = dedupeNewItems([existing], [proposed]);
+
+		expect(newItems).toEqual([proposed]);
+		expect(idRemap.size).toBe(0);
+	});
+
+	it('is pure: it does not mutate either list it is given', () => {
+		const existing = [item('e1', -DAY)];
+		const proposed = [item('new1', 0), { ...item('new2', 0), term: 'Term-E1' }];
+		const existingSnapshot = structuredClone(existing);
+		const proposedSnapshot = structuredClone(proposed);
+
+		dedupeNewItems(existing, proposed);
+
+		expect(existing).toEqual(existingSnapshot);
+		expect(proposed).toEqual(proposedSnapshot);
+	});
+});
+
+describe('remapItemIds', () => {
+	function challenge(id: string, itemIds: string[]): Challenge {
+		return {
+			id,
+			type: 'typed-translation',
+			direction: 'toTarget',
+			prompt: 'p',
+			acceptedAnswers: ['a'],
+			itemIds
+		};
+	}
+
+	it('rewrites itemIds through the remap, leaving unmapped ids untouched', () => {
+		const idRemap = new Map([['dup', 'real']]);
+		const challenges = [challenge('c1', ['dup', 'other'])];
+
+		const remapped = remapItemIds(challenges, idRemap);
+
+		expect(remapped[0].itemIds).toEqual(['real', 'other']);
+	});
+
+	it('is a no-op (same array) when the remap is empty', () => {
+		const challenges = [challenge('c1', ['x'])];
+		expect(remapItemIds(challenges, new Map())).toBe(challenges);
 	});
 });
 

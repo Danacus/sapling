@@ -16,11 +16,12 @@
 	import { goto } from '$app/navigation';
 	import { fade, fly, scale } from 'svelte/transition';
 
-	import { getProfile, getStats, localDay, takeNextChallenge } from '$lib/db';
+	import { getProfile, getStats, localDay, queuedCount, takeNextChallenge } from '$lib/db';
 	import { LlmError, isMockMode, makeMatchPairsChallenge } from '$lib/llm';
 	import {
 		MATCH_PAIRS_EVERY,
 		MATCH_PAIRS_XP,
+		REFILL_THRESHOLD,
 		SESSION_LENGTH,
 		applyResult,
 		bankSessionXp,
@@ -35,6 +36,7 @@
 	} from '$lib/session/engine';
 	import { motionMs } from '$lib/session/motion';
 	import type { Challenge, KnowledgeItem, Profile, Stats, Verdict } from '$lib/types';
+	import { addRecentTopic, getRecentTopics, getShowRomanization } from '$lib/ui/prefs';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	import Cloze from './Cloze.svelte';
@@ -52,7 +54,19 @@
 		'Warming up the streak counter…'
 	];
 
-	type Phase = 'preparing' | 'error' | 'playing' | 'summary';
+	/** Conversational scenarios offered on the topic screen. */
+	const TOPIC_SUGGESTIONS = [
+		'Ordering in a restaurant',
+		'Talking about your hobbies',
+		'Making plans with a friend',
+		'Asking for directions',
+		'Small talk with a colleague',
+		'At the market',
+		'Introducing yourself',
+		'Talking about your weekend'
+	];
+
+	type Phase = 'topic' | 'preparing' | 'error' | 'playing' | 'summary';
 
 	interface Feedback {
 		challenge: Challenge;
@@ -64,10 +78,23 @@
 		xp: number;
 	}
 
-	let phase = $state<Phase>('preparing');
+	let phase = $state<Phase>('topic');
 	let errorMessage = $state('');
 	let profile = $state<Profile | undefined>(undefined);
 	let mock = $state(false);
+
+	/* Topic screen ------------------------------------------------------------ */
+	let topicInput = $state('');
+	let recentTopics = $state<string[]>([]);
+	/** How many challenges were already queued when the topic screen loaded. */
+	let queuedAtTopicScreen = $state(0);
+	/** The topic actually used to boot the session, carried across a retry. */
+	let sessionTopic = $state<string | undefined>(undefined);
+
+	const topicChips = $derived([
+		...TOPIC_SUGGESTIONS,
+		...(profile?.interests ?? []).slice(0, 2).map((interest) => `Chatting about ${interest}`)
+	]);
 
 	/** Every known item; the pool the free match-pairs rounds are drawn from. */
 	let items = $state<KnowledgeItem[]>([]);
@@ -109,7 +136,7 @@
 	$effect(() => {
 		if (booted || !browser) return;
 		booted = true;
-		void boot();
+		void loadTopicScreen();
 	});
 
 	$effect(() => {
@@ -118,23 +145,46 @@
 		return () => clearInterval(timer);
 	});
 
-	async function boot(): Promise<void> {
+	/** Loads what the topic screen needs, then shows it. Skipped straight past if there is no profile yet. */
+	async function loadTopicScreen(): Promise<void> {
+		const loaded = await getProfile();
+		if (!loaded) {
+			// The layout sends profile-less visitors to onboarding; nothing to do.
+			return;
+		}
+		profile = loaded;
+		recentTopics = getRecentTopics();
+		queuedAtTopicScreen = await queuedCount();
+		phase = 'topic';
+	}
+
+	/** "Start" / Enter on the topic screen: banks the topic, then boots the session. */
+	function startWithTopic(): void {
+		const trimmed = topicInput.trim();
+		if (trimmed) recentTopics = addRecentTopic(trimmed);
+		sessionTopic = trimmed || undefined;
+		void boot(sessionTopic);
+	}
+
+	async function boot(topic?: string): Promise<void> {
 		phase = 'preparing';
 		errorMessage = '';
 		prepLine = 0;
 
 		try {
-			const loaded = await getProfile();
-			if (!loaded) {
-				// The layout sends profile-less visitors to onboarding; nothing to do.
-				return;
+			if (!profile) {
+				const loaded = await getProfile();
+				if (!loaded) {
+					// The layout sends profile-less visitors to onboarding; nothing to do.
+					return;
+				}
+				profile = loaded;
 			}
-			profile = loaded;
 
 			const stats = await getStats();
 			todayXpBefore = stats.history.find((e) => e.day === localDay(Date.now()))?.xp ?? 0;
 
-			const info = await runRefillIfNeeded(loaded);
+			const info = await runRefillIfNeeded(profile, topic ? { topic } : {});
 			mock = info.mock || isMockMode();
 			items = info.items;
 			newWords = info.newItems;
@@ -343,6 +393,9 @@
 	const targetLanguage = $derived(profile?.targetLanguage ?? '');
 	const nativeLanguage = $derived(profile?.nativeLanguage ?? '');
 	const isLastStep = $derived(llmAnswered >= SESSION_LENGTH || stepsDone >= totalSteps);
+
+	/** Read once — the toggle lives in Settings, not mid-session. */
+	const showRomanization = getShowRomanization();
 </script>
 
 <svelte:head>
@@ -350,7 +403,65 @@
 </svelte:head>
 
 <main class="shell">
-	{#if phase === 'preparing'}
+	{#if phase === 'topic'}
+		<div class="centered">
+			<div class="card topic-card">
+				<h1>What do you want to talk about today?</h1>
+				<p class="hint">Optional — pick or type a scenario and today's lesson leans into it.</p>
+
+				<input
+					class="input topic-input"
+					type="text"
+					bind:value={topicInput}
+					placeholder="e.g. checking into a hotel…"
+					autocomplete="off"
+					aria-label="Session topic"
+					onkeydown={(event) => {
+						if (event.key === 'Enter') {
+							event.preventDefault();
+							startWithTopic();
+						}
+					}}
+				/>
+
+				<div class="chip-row">
+					{#each topicChips as chip (chip)}
+						<button
+							type="button"
+							class="chip"
+							class:selected={topicInput.trim().toLowerCase() === chip.toLowerCase()}
+							onclick={() => (topicInput = chip)}
+						>
+							{chip}
+						</button>
+					{/each}
+				</div>
+
+				{#if recentTopics.length > 0}
+					<div class="recent">
+						<p class="recent-label">Recent</p>
+						<div class="chip-row">
+							{#each recentTopics as recent (recent)}
+								<button type="button" class="chip" onclick={() => (topicInput = recent)}>
+									{recent}
+								</button>
+							{/each}
+						</div>
+					</div>
+				{/if}
+
+				{#if queuedAtTopicScreen >= REFILL_THRESHOLD}
+					<p class="hint leftover-hint">
+						You have leftover challenges from last time; new topic applies once those run out.
+					</p>
+				{/if}
+
+				<button type="button" class="btn btn-primary btn-block start-btn" onclick={startWithTopic}>
+					{topicInput.trim() ? 'Start' : 'Skip — just review'}
+				</button>
+			</div>
+		</div>
+	{:else if phase === 'preparing'}
 		<div class="centered" role="status" aria-live="polite">
 			<Spinner />
 			<h1 class="prep-title">Preparing your session…</h1>
@@ -365,7 +476,9 @@
 				<h1>We couldn't build a lesson</h1>
 				<p class="error-message" role="alert">{errorMessage}</p>
 				<div class="error-actions">
-					<button type="button" class="btn btn-primary" onclick={() => void boot()}>Retry</button>
+					<button type="button" class="btn btn-primary" onclick={() => void boot(sessionTopic)}>
+						Retry
+					</button>
 					<a class="btn btn-ghost" href="/">Back</a>
 				</div>
 			</div>
@@ -425,7 +538,12 @@
 							<ul>
 								{#each learnedWords as word (word.id)}
 									<li>
-										<span class="term">{word.term}</span>
+										<div class="word-text">
+											<span class="term">{word.term}</span>
+											{#if showRomanization && word.romanization}
+												<span class="rom">{word.romanization}</span>
+											{/if}
+										</div>
 										<span class="meaning">{word.meaning}</span>
 									</li>
 								{/each}
@@ -558,6 +676,76 @@
 		flex: 1;
 		min-height: 60dvh;
 		text-align: center;
+	}
+
+	/* Topic ------------------------------------------------------------------ */
+
+	.topic-card {
+		text-align: center;
+	}
+
+	.topic-input {
+		margin: 1.1rem 0 1rem;
+	}
+
+	.chip-row {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: 0.5rem;
+	}
+
+	.chip {
+		padding: 0.4rem 0.85rem;
+		border: 2px solid var(--border);
+		border-radius: 999px;
+		background: var(--surface);
+		color: var(--text-muted);
+		font: inherit;
+		font-size: 0.85rem;
+		font-weight: 700;
+		cursor: pointer;
+		transition:
+			border-color 0.15s ease,
+			background 0.15s ease,
+			color 0.15s ease;
+	}
+
+	.chip:hover {
+		border-color: var(--border-strong);
+		color: var(--text);
+	}
+
+	.chip:focus-visible {
+		outline: none;
+		box-shadow: var(--ring);
+	}
+
+	.chip.selected {
+		border-color: var(--accent);
+		background: var(--accent-soft);
+		color: var(--text);
+	}
+
+	.recent {
+		margin-top: 1.1rem;
+	}
+
+	.recent-label {
+		margin: 0 0 0.5rem;
+		font-size: 0.78rem;
+		font-weight: 800;
+		letter-spacing: 0.07em;
+		text-transform: uppercase;
+		color: var(--text-muted);
+	}
+
+	.leftover-hint {
+		margin-top: 1.1rem;
+	}
+
+	.start-btn {
+		margin-top: 1.5rem;
 	}
 
 	/* Preparing ------------------------------------------------------------ */
@@ -861,8 +1049,18 @@
 		background: var(--surface-alt);
 	}
 
+	.new-words .word-text {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+	}
+
 	.new-words .term {
 		font-weight: 800;
+		overflow-wrap: anywhere;
+	}
+
+	.new-words .word-text :global(.rom) {
 		overflow-wrap: anywhere;
 	}
 
