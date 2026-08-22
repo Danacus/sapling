@@ -1,0 +1,236 @@
+/**
+ * App-wide base styles: design tokens, resets and the shared button/input
+ * vocabulary. Imported once from `src/routes/+layout.svelte`.
+ *
+ * Colors are exposed as custom properties so a later design pass can retheme
+ * the app without touching components.
+ */
+
+:root {
+	/* Palette --------------------------------------------------------------- */
+	--bg: #f7f8fa;
+	--surface: #ffffff;
+	--surface-alt: #f0f2f5;
+	--border: #e2e6ec;
+	--border-strong: #cdd4de;
+
+	--text: #1b2330;
+	--text-muted: #667085;
+	--text-inverse: #ffffff;
+
+	--primary: #58cc02;
+	--primary-strong: #46a302;
+	--primary-soft: #e8f7d9;
+	--accent: #1cb0f6;
+	--accent-soft: #e2f4fe;
+	--warn: #ffc800;
+	--danger: #ff4b4b;
+
+	/* Shape & motion -------------------------------------------------------- */
+	--radius-sm: 8px;
+	--radius: 14px;
+	--radius-lg: 20px;
+	--shadow: 0 10px 30px rgb(16 24 40 / 8%);
+	--ring: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent);
+
+	--font: 'Nunito', 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+
+	color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--bg: #121620;
+		--surface: #1b2130;
+		--surface-alt: #232a3b;
+		--border: #2c3446;
+		--border-strong: #3b465c;
+
+		--text: #eef2f8;
+		--text-muted: #98a3b6;
+		--text-inverse: #0f1319;
+
+		--primary: #5fd311;
+		--primary-strong: #4bb003;
+		--primary-soft: #1f3216;
+		--accent: #38bdf8;
+		--accent-soft: #14293a;
+		--warn: #ffd24a;
+		--danger: #ff6b6b;
+
+		--shadow: 0 12px 34px rgb(0 0 0 / 45%);
+
+		color-scheme: dark;
+	}
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	height: 100%;
+}
+
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--text);
+	font-family: var(--font);
+	font-size: 16px;
+	line-height: 1.5;
+	-webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+	margin: 0 0 0.4em;
+	line-height: 1.2;
+	font-weight: 800;
+	letter-spacing: -0.01em;
+}
+
+p {
+	margin: 0 0 1em;
+}
+
+a {
+	color: var(--accent);
+	font-weight: 700;
+}
+
+/* Buttons ------------------------------------------------------------------ */
+
+.btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.5rem;
+	padding: 0.85rem 1.5rem;
+	border: 0;
+	border-radius: var(--radius);
+	background: var(--surface-alt);
+	color: var(--text);
+	font: inherit;
+	font-weight: 800;
+	letter-spacing: 0.02em;
+	text-transform: uppercase;
+	font-size: 0.9rem;
+	cursor: pointer;
+	transition:
+		transform 0.08s ease,
+		filter 0.15s ease,
+		background 0.15s ease;
+}
+
+.btn:hover:not(:disabled) {
+	filter: brightness(0.97);
+}
+
+.btn:active:not(:disabled) {
+	transform: translateY(2px);
+}
+
+.btn:focus-visible {
+	outline: none;
+	box-shadow: var(--ring);
+}
+
+.btn:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.btn-primary {
+	background: var(--primary);
+	color: var(--text-inverse);
+	box-shadow: 0 4px 0 var(--primary-strong);
+}
+
+.btn-primary:active:not(:disabled) {
+	box-shadow: 0 2px 0 var(--primary-strong);
+}
+
+.btn-ghost {
+	background: transparent;
+	color: var(--text-muted);
+}
+
+.btn-ghost:hover:not(:disabled) {
+	background: var(--surface-alt);
+	color: var(--text);
+}
+
+.btn-block {
+	width: 100%;
+}
+
+/* Form controls ------------------------------------------------------------ */
+
+.field {
+	display: block;
+	margin-bottom: 1.1rem;
+	text-align: left;
+}
+
+.field > .label {
+	display: block;
+	margin-bottom: 0.35rem;
+	font-weight: 800;
+	font-size: 0.8rem;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--text-muted);
+}
+
+.input {
+	width: 100%;
+	padding: 0.8rem 1rem;
+	border: 2px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--surface);
+	color: var(--text);
+	font: inherit;
+	transition:
+		border-color 0.15s ease,
+		box-shadow 0.15s ease;
+}
+
+.input::placeholder {
+	color: var(--text-muted);
+	opacity: 0.7;
+}
+
+.input:focus {
+	outline: none;
+	border-color: var(--accent);
+	box-shadow: var(--ring);
+}
+
+.hint {
+	margin: 0.35rem 0 0;
+	font-size: 0.85rem;
+	color: var(--text-muted);
+}
+
+/* Layout helpers ----------------------------------------------------------- */
+
+.card {
+	width: 100%;
+	max-width: 34rem;
+	padding: 2rem;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+	background: var(--surface);
+	box-shadow: var(--shadow);
+}
+
+@media (max-width: 480px) {
+	.card {
+		padding: 1.25rem;
+	}
+}
