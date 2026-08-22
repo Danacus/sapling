@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 
-	import { getAllItems, getProfile, getStats, localDay } from '$lib/db';
+	import { getAllItems, getProfile, getStats, localDay, queuedCount } from '$lib/db';
 	import { isDue, retrievability, type FsrsCardState } from '$lib/srs';
 	import type { KnowledgeItem, Profile, Stats } from '$lib/types';
 	import ProgressBar from '$lib/ui/ProgressBar.svelte';
@@ -20,6 +20,7 @@
 	let stats = $state<Stats | undefined>(undefined);
 	let now = $state(Date.now());
 	let showAllWeak = $state(false);
+	let queued = $state(0);
 
 	$effect(() => {
 		if (!browser) return;
@@ -28,12 +29,13 @@
 		loading = true;
 		loadError = '';
 
-		Promise.all([getProfile(), getAllItems(), getStats()])
-			.then(([loadedProfile, loadedItems, loadedStats]) => {
+		Promise.all([getProfile(), getAllItems(), getStats(), queuedCount()])
+			.then(([loadedProfile, loadedItems, loadedStats, loadedQueued]) => {
 				if (cancelled) return;
 				profile = loadedProfile;
 				items = loadedItems;
 				stats = loadedStats;
+				queued = loadedQueued;
 				now = Date.now();
 				loading = false;
 			})
@@ -140,7 +142,11 @@
 
 		<section class="card start-card">
 			<a class="btn btn-primary btn-block start-btn" href="/learn">Start session</a>
-			{#if items.length === 0}
+			{#if queued > 0}
+				<p class="hint centered">
+					{queued} challenge{queued === 1 ? '' : 's'} waiting — pick up where you left off
+				</p>
+			{:else if items.length === 0}
 				<p class="hint centered">
 					Your first session will introduce your first words in {targetLanguage}.
 				</p>

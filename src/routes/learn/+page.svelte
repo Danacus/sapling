@@ -2,9 +2,13 @@
   The session screen — the part of the app people actually spend time in.
 
   Shape of a session:
-    boot → refill the queue (one batched LLM call) → play up to 12 generated
-    challenges, slipping a free locally-built match-pairs round in after every
-    4th → summary.
+    boot decides between two paths. A leftover queue (the learner quit mid-
+    session last time) offers a choice — continue it as-is, no topic prompt
+    and no refill, ending gracefully whenever it runs dry; or clear it and
+    fall into the topic picker. An empty queue goes straight to the topic
+    picker. Either way that's: topic → refill the queue (one batched LLM
+    call) → play up to 12 generated challenges, slipping a free
+    locally-built match-pairs round in after every 4th → summary.
 
   Rules and writes live in `$lib/session/engine`; this file owns pacing, motion
   and everything the learner sees. The one invariant worth stating: a challenge
@@ -16,12 +20,19 @@
 	import { goto } from '$app/navigation';
 	import { fade, fly, scale } from 'svelte/transition';
 
-	import { getProfile, getStats, localDay, queuedCount, takeNextChallenge } from '$lib/db';
+	import {
+		clearQueue,
+		getAllItems,
+		getProfile,
+		getStats,
+		localDay,
+		queuedCount,
+		takeNextChallenge
+	} from '$lib/db';
 	import { LlmError, isMockMode, makeMatchPairsChallenge } from '$lib/llm';
 	import {
 		MATCH_PAIRS_EVERY,
 		MATCH_PAIRS_XP,
-		REFILL_THRESHOLD,
 		SESSION_LENGTH,
 		applyResult,
 		bankSessionXp,
@@ -36,7 +47,13 @@
 	} from '$lib/session/engine';
 	import { motionMs } from '$lib/session/motion';
 	import type { Challenge, KnowledgeItem, Profile, Stats, Verdict } from '$lib/types';
-	import { addRecentTopic, getRecentTopics, getShowRomanization } from '$lib/ui/prefs';
+	import {
+		addRecentTopic,
+		getCurrentTopic,
+		getRecentTopics,
+		getShowRomanization,
+		setCurrentTopic
+	} from '$lib/ui/prefs';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	import Cloze from './Cloze.svelte';
@@ -66,7 +83,7 @@
 		'Talking about your weekend'
 	];
 
-	type Phase = 'topic' | 'preparing' | 'error' | 'playing' | 'summary';
+	type Phase = 'choice' | 'topic' | 'preparing' | 'error' | 'playing' | 'summary';
 
 	interface Feedback {
 		challenge: Challenge;
@@ -83,13 +100,19 @@
 	let profile = $state<Profile | undefined>(undefined);
 	let mock = $state(false);
 
+	/* Choice screen (leftover queue) ------------------------------------------ */
+	/** Challenges left over from a previous session, as seen at boot. */
+	let leftoverCount = $state(0);
+	/** The topic those leftovers were generated for, if any was recorded. */
+	let leftoverTopic = $state<string | undefined>(undefined);
+
 	/* Topic screen ------------------------------------------------------------ */
 	let topicInput = $state('');
 	let recentTopics = $state<string[]>([]);
-	/** How many challenges were already queued when the topic screen loaded. */
-	let queuedAtTopicScreen = $state(0);
 	/** The topic actually used to boot the session, carried across a retry. */
 	let sessionTopic = $state<string | undefined>(undefined);
+	/** Whether the in-flight/retryable boot should skip the refill (continue path). */
+	let skipRefill = $state(false);
 
 	const topicChips = $derived([
 		...TOPIC_SUGGESTIONS,
@@ -136,7 +159,7 @@
 	$effect(() => {
 		if (booted || !browser) return;
 		booted = true;
-		void loadTopicScreen();
+		void loadBootScreen();
 	});
 
 	$effect(() => {
@@ -145,17 +168,48 @@
 		return () => clearInterval(timer);
 	});
 
-	/** Loads what the topic screen needs, then shows it. Skipped straight past if there is no profile yet. */
-	async function loadTopicScreen(): Promise<void> {
+	/**
+	 * Decides which screen greets the learner: a leftover queue offers a
+	 * choice between resuming it and starting fresh; an empty one goes
+	 * straight to the topic picker, which *is* the "new session" path there.
+	 * Skipped straight past if there is no profile yet.
+	 */
+	async function loadBootScreen(): Promise<void> {
 		const loaded = await getProfile();
 		if (!loaded) {
 			// The layout sends profile-less visitors to onboarding; nothing to do.
 			return;
 		}
 		profile = loaded;
+
+		const queued = await queuedCount();
+		if (queued > 0) {
+			leftoverCount = queued;
+			leftoverTopic = getCurrentTopic();
+			phase = 'choice';
+		} else {
+			showTopicScreen();
+		}
+	}
+
+	function showTopicScreen(): void {
 		recentTopics = getRecentTopics();
-		queuedAtTopicScreen = await queuedCount();
+		topicInput = '';
 		phase = 'topic';
+	}
+
+	/** "Continue session" on the choice screen: plays the existing queue as-is. */
+	function continueLeftoverSession(): void {
+		sessionTopic = leftoverTopic;
+		skipRefill = true;
+		void boot(leftoverTopic, { skipRefill: true });
+	}
+
+	/** "New session" on the choice screen: drops the leftovers, then the topic picker takes over. */
+	async function startNewSession(): Promise<void> {
+		await clearQueue();
+		setCurrentTopic(undefined);
+		showTopicScreen();
 	}
 
 	/** "Start" / Enter on the topic screen: banks the topic, then boots the session. */
@@ -163,10 +217,11 @@
 		const trimmed = topicInput.trim();
 		if (trimmed) recentTopics = addRecentTopic(trimmed);
 		sessionTopic = trimmed || undefined;
-		void boot(sessionTopic);
+		skipRefill = false;
+		void boot(sessionTopic, { skipRefill: false });
 	}
 
-	async function boot(topic?: string): Promise<void> {
+	async function boot(topic: string | undefined, opts: { skipRefill: boolean }): Promise<void> {
 		phase = 'preparing';
 		errorMessage = '';
 		prepLine = 0;
@@ -184,11 +239,22 @@
 			const stats = await getStats();
 			todayXpBefore = stats.history.find((e) => e.day === localDay(Date.now()))?.xp ?? 0;
 
-			const info = await runRefillIfNeeded(profile, topic ? { topic } : {});
-			mock = info.mock || isMockMode();
-			items = info.items;
-			newWords = info.newItems;
-			plannedLlm = Math.min(SESSION_LENGTH, info.queuedAfter);
+			if (opts.skipRefill) {
+				// Continuing a leftover queue: no topic prompt, no LLM call — just
+				// play what's already there. The session ends gracefully (existing
+				// dry-queue path in `advance`) whenever it runs out.
+				mock = isMockMode();
+				items = await getAllItems();
+				newWords = [];
+				plannedLlm = Math.min(SESSION_LENGTH, await queuedCount());
+			} else {
+				const info = await runRefillIfNeeded(profile, topic ? { topic } : {});
+				mock = info.mock || isMockMode();
+				items = info.items;
+				newWords = info.newItems;
+				plannedLlm = Math.min(SESSION_LENGTH, info.queuedAfter);
+				setCurrentTopic(topic);
+			}
 
 			phase = 'playing';
 			await advance();
@@ -403,7 +469,35 @@
 </svelte:head>
 
 <main class="shell">
-	{#if phase === 'topic'}
+	{#if phase === 'choice'}
+		<div class="centered">
+			<div class="card choice-card">
+				<h1>Pick up where you left off?</h1>
+				<p class="hint">
+					{#if leftoverTopic}
+						You have {leftoverCount} challenge{leftoverCount === 1 ? '' : 's'} left from “{leftoverTopic}”.
+					{:else}
+						You have {leftoverCount} challenge{leftoverCount === 1 ? '' : 's'} waiting in your queue.
+					{/if}
+				</p>
+
+				<button
+					type="button"
+					class="btn btn-primary btn-block choice-btn"
+					onclick={continueLeftoverSession}
+				>
+					Continue session · {leftoverCount} left
+				</button>
+				<button
+					type="button"
+					class="btn btn-ghost btn-block choice-btn"
+					onclick={() => void startNewSession()}
+				>
+					New session
+				</button>
+			</div>
+		</div>
+	{:else if phase === 'topic'}
 		<div class="centered">
 			<div class="card topic-card">
 				<h1>What do you want to talk about today?</h1>
@@ -450,12 +544,6 @@
 					</div>
 				{/if}
 
-				{#if queuedAtTopicScreen >= REFILL_THRESHOLD}
-					<p class="hint leftover-hint">
-						You have leftover challenges from last time; new topic applies once those run out.
-					</p>
-				{/if}
-
 				<button type="button" class="btn btn-primary btn-block start-btn" onclick={startWithTopic}>
 					{topicInput.trim() ? 'Start' : 'Skip — just review'}
 				</button>
@@ -476,7 +564,11 @@
 				<h1>We couldn't build a lesson</h1>
 				<p class="error-message" role="alert">{errorMessage}</p>
 				<div class="error-actions">
-					<button type="button" class="btn btn-primary" onclick={() => void boot(sessionTopic)}>
+					<button
+						type="button"
+						class="btn btn-primary"
+						onclick={() => void boot(sessionTopic, { skipRefill })}
+					>
 						Retry
 					</button>
 					<a class="btn btn-ghost" href="/">Back</a>
@@ -678,6 +770,20 @@
 		text-align: center;
 	}
 
+	/* Choice (leftover queue) ------------------------------------------------- */
+
+	.choice-card {
+		text-align: center;
+	}
+
+	.choice-btn {
+		margin-top: 1rem;
+	}
+
+	.choice-btn:first-of-type {
+		margin-top: 1.5rem;
+	}
+
 	/* Topic ------------------------------------------------------------------ */
 
 	.topic-card {
@@ -738,10 +844,6 @@
 		letter-spacing: 0.07em;
 		text-transform: uppercase;
 		color: var(--text-muted);
-	}
-
-	.leftover-hint {
-		margin-top: 1.1rem;
 	}
 
 	.start-btn {

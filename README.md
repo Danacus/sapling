@@ -22,6 +22,9 @@ to [OpenRouter](https://openrouter.ai) with your own API key.
   dialogue leans into it; leave it blank to just review. Recent topics and a
   handful of suggested ones (plus a couple drawn from your interests) are
   offered as chips, and the last few you typed are remembered on the device.
+  If you quit a session early, `/learn` opens to a small choice instead: keep
+  going on the leftover queue (no new topic, no refill — it just plays out),
+  or clear it and pick a new topic.
 - **Romanization for non-Latin scripts.** Learning Mandarin, Japanese or
   another language not written in the Latin alphabet gets you a pinyin/romaji
   reading under every target-script string — prompts, options, sentences and

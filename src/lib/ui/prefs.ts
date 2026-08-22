@@ -10,6 +10,7 @@
 
 const SHOW_ROMANIZATION_KEY = 'll.showRomanization';
 const RECENT_TOPICS_KEY = 'll.recentTopics';
+const CURRENT_TOPIC_KEY = 'll.currentTopic';
 
 /** At most this many recent topics are remembered. */
 export const MAX_RECENT_TOPICS = 5;
@@ -78,4 +79,35 @@ export function addRecentTopic(topic: string): string[] {
 	}
 
 	return updated;
+}
+
+/**
+ * The topic the *currently queued* challenges were generated for, so a
+ * resumed session can say what it is resuming. `undefined` means either no
+ * topic was given (a "just review" session) or the queue has since been
+ * cleared.
+ */
+export function getCurrentTopic(): string | undefined {
+	if (!hasStorage()) return undefined;
+	try {
+		return localStorage.getItem(CURRENT_TOPIC_KEY) ?? undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Records the topic a freshly booted session used, or clears it (pass
+ * `undefined`/blank) for a topicless session or once the queue it described
+ * has been cleared.
+ */
+export function setCurrentTopic(topic: string | undefined): void {
+	if (!hasStorage()) return;
+	const trimmed = topic?.trim();
+	try {
+		if (trimmed) localStorage.setItem(CURRENT_TOPIC_KEY, trimmed);
+		else localStorage.removeItem(CURRENT_TOPIC_KEY);
+	} catch {
+		/* ignore: storage unavailable */
+	}
 }
