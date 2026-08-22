@@ -168,6 +168,36 @@ describe('buildBatchPrompt', () => {
 		expect(defaultChallengeCount(2, 2)).toBe(8);
 		expect(defaultChallengeCount(40, 5)).toBe(MAX_BATCH_CHALLENGES);
 	});
+
+	it('threads the session topic into the user message, ahead of interests', () => {
+		const withTopic = buildBatchPrompt({ ...args, topic: 'ordering in a restaurant' });
+		const raw = withTopic[1].content;
+		expect(raw).toContain('ordering in a restaurant');
+
+		const payload = JSON.parse(raw) as Record<string, unknown>;
+		expect(payload.topic).toBe('ordering in a restaurant');
+		const keys = Object.keys(payload);
+		expect(keys.indexOf('topic')).toBeLessThan(keys.indexOf('interests'));
+	});
+
+	it('omits the topic key entirely when there is none', () => {
+		expect(JSON.parse(messages[1].content)).not.toHaveProperty('topic');
+		const blank = buildBatchPrompt({ ...args, topic: '   ' });
+		expect(JSON.parse(blank[1].content)).not.toHaveProperty('topic');
+	});
+
+	it('states the conversational and romanization rules in the system message', () => {
+		const system = messages[0].content;
+		// The user's complaint: interests produced "I like to cook" sentences.
+		expect(system).toContain('I like <interest>');
+		expect(system).toContain('topic');
+		expect(system).toContain('promptRomanization');
+		expect(system).toContain('optionsRomanization');
+		expect(system).toContain('sentenceRomanization');
+		expect(system).toContain('pinyin');
+		// The rule that keeps grading local and free for non-Latin scripts.
+		expect(system).toContain('acceptedAnswers must ALSO list the romanized form');
+	});
 });
 
 describe('generateBatch', () => {
@@ -318,6 +348,85 @@ describe('resolveBatch', () => {
 	it('rejects a completion whose envelope is the wrong shape', () => {
 		expect(() => parseBatch('{"challenges":"nope"}')).toThrow(LlmError);
 	});
+
+	it('copies romanization onto built KnowledgeItems and challenges', () => {
+		const parsed = parseBatch(
+			JSON.stringify({
+				challenges: [
+					{
+						type: 'multiple-choice',
+						direction: 'toTarget',
+						prompt: 'the menu',
+						promptRomanization: null,
+						options: ['菜单', '筷子', '服务员', '茶'],
+						optionsRomanization: ['càidān', 'kuàizi', 'fúwùyuán', 'chá'],
+						correctIndex: 0,
+						itemIds: ['new:0']
+					},
+					{
+						type: 'cloze',
+						direction: 'toTarget',
+						sentence: '请给我一份___。',
+						sentenceRomanization: 'Qǐng gěi wǒ yī fèn càidān.',
+						acceptedAnswers: ['菜单', 'càidān', 'caidan'],
+						translationHint: 'Please give me a menu.',
+						itemIds: ['new:0']
+					},
+					{
+						type: 'typed-translation',
+						direction: 'toNative',
+						prompt: '买单',
+						promptRomanization: 'mǎidān',
+						acceptedAnswers: ['the bill'],
+						itemIds: ['new:1']
+					}
+				],
+				newItems: [
+					{ term: '菜单', meaning: 'the menu', romanization: 'càidān' },
+					{ term: '买单', meaning: 'to pay the bill', romanization: '  mǎidān  ' }
+				]
+			})
+		);
+		const resolved = resolveBatch(parsed, { newId: idFactory(), now: () => 0 });
+
+		expect(resolved.newItems.map((i) => i.romanization)).toEqual(['càidān', 'mǎidān']);
+
+		const [mc, cloze, typed] = resolved.challenges;
+		expect(mc.type === 'multiple-choice' && mc.optionsRomanization).toEqual([
+			'càidān',
+			'kuàizi',
+			'fúwùyuán',
+			'chá'
+		]);
+		// A null romanization becomes an absent key, not `undefined`.
+		expect(mc.type === 'multiple-choice' && 'promptRomanization' in mc).toBe(false);
+		expect(cloze.type === 'cloze' && cloze.sentenceRomanization).toBe(
+			'Qǐng gěi wǒ yī fèn càidān.'
+		);
+		expect(typed.type === 'typed-translation' && typed.promptRomanization).toBe('mǎidān');
+
+		for (const challenge of resolved.challenges) {
+			expect(challengeSchema.safeParse(challenge).success).toBe(true);
+		}
+	});
+
+	it('leaves romanization keys off entirely for a Latin-script batch', () => {
+		const parsed = parseBatch(JSON.stringify(goodBatch));
+		const resolved = resolveBatch(parsed, { newId: idFactory(), now: () => 0 });
+		expect(JSON.stringify(resolved)).not.toContain('omanization');
+	});
+
+	it('drops a misaligned optionsRomanization instead of the whole challenge', () => {
+		const parsed = parseBatch(
+			JSON.stringify({
+				challenges: [{ ...mc('i1', 'el perro'), optionsRomanization: ['a', 'b'] }],
+				newItems: []
+			})
+		);
+		const resolved = resolveBatch(parsed, { newId: idFactory(), now: () => 0 });
+		expect(resolved.challenges).toHaveLength(1);
+		expect(resolved.challenges[0]).not.toHaveProperty('optionsRomanization');
+	});
 });
 
 describe('makeMatchPairsChallenge', () => {
@@ -355,5 +464,80 @@ describe('makeMatchPairsChallenge', () => {
 	it('ignores items missing a term or meaning', () => {
 		const broken = [...items.slice(0, 3), { ...items[3], meaning: '  ' }];
 		expect(makeMatchPairsChallenge(broken)).toBeUndefined();
+	});
+
+	it('carries the term romanization as aRom when the item has one', () => {
+		const zhItems: KnowledgeItem[] = [
+			{ term: '菜单', meaning: 'the menu', romanization: 'càidān' },
+			{ term: '买单', meaning: 'to pay the bill', romanization: 'mǎidān' },
+			{ term: '筷子', meaning: 'chopsticks', romanization: 'kuàizi' },
+			{ term: '茶', meaning: 'tea', romanization: 'chá' }
+		].map((partial, i) => ({
+			id: `z${i}`,
+			kind: 'vocab' as const,
+			fsrsCard: null,
+			introducedAt: 0,
+			history: [],
+			...partial
+		}));
+
+		const challenge = makeMatchPairsChallenge(zhItems, () => 0.5);
+		expect(challengeSchema.safeParse(challenge).success).toBe(true);
+		const pairs = challenge?.type === 'match-pairs' ? challenge.pairs : [];
+		for (const pair of pairs) {
+			expect(pair.aRom).toBe(zhItems.find((i) => i.term === pair.a)?.romanization);
+			// `b` is already in the native language, so it never gets a reading.
+			expect('bRom' in pair).toBe(false);
+		}
+		// Latin-script items add no romanization keys at all.
+		expect(JSON.stringify(makeMatchPairsChallenge(items, () => 0.5))).not.toContain('Rom');
+	});
+
+	describe('duplicate tile labels', () => {
+		/** Two identical tiles are unplayable: the learner has to guess which twin is which. */
+		const withMeaningClash: KnowledgeItem[] = [
+			...items,
+			{
+				id: 'k5',
+				kind: 'vocab',
+				term: 'pronto',
+				// A synonym of k0: distinct term, same meaning tile.
+				meaning: 'meaning-0',
+				fsrsCard: null,
+				introducedAt: 0,
+				history: []
+			}
+		];
+
+		it('never emits the same label twice on either side', () => {
+			for (let seed = 0; seed < 20; seed++) {
+				const challenge = makeMatchPairsChallenge(withMeaningClash, () => seed / 20);
+				const pairs = challenge?.type === 'match-pairs' ? challenge.pairs : [];
+				expect(pairs.length).toBeGreaterThanOrEqual(4);
+				expect(new Set(pairs.map((p) => p.a)).size).toBe(pairs.length);
+				expect(new Set(pairs.map((p) => p.b)).size).toBe(pairs.length);
+			}
+		});
+
+		it('matches collisions case- and whitespace-insensitively', () => {
+			const shouty = [
+				...items.slice(0, 5),
+				{ ...items[0], id: 'k9', term: '  PERRO  ', meaning: 'the hound' }
+			];
+			for (let seed = 0; seed < 20; seed++) {
+				const challenge = makeMatchPairsChallenge(shouty, () => seed / 20);
+				const pairs = challenge?.type === 'match-pairs' ? challenge.pairs : [];
+				const keys = pairs.map((p) => p.a.trim().toLowerCase());
+				expect(new Set(keys).size).toBe(pairs.length);
+			}
+		});
+
+		it('returns undefined when excluding the collision leaves fewer than four items', () => {
+			const four = [
+				...items.slice(0, 3),
+				{ ...items[3], id: 'k9', term: 'temprano', meaning: 'meaning-0' }
+			];
+			expect(makeMatchPairsChallenge(four, () => 0.5)).toBeUndefined();
+		});
 	});
 });

@@ -57,6 +57,13 @@ export interface BatchArgs {
 	recentMistakes?: RecentMistake[];
 	/** Overrides the derived challenge count. */
 	count?: number;
+	/**
+	 * Free-form scenario for this session, e.g. `'ordering in a restaurant'` or
+	 * `'talking about your hobbies'`. When set, every challenge in the batch is
+	 * a line of dialogue from that situation; the learner's `interests` then only
+	 * colour word choice. Blank/absent means "no scenario", and costs no tokens.
+	 */
+	topic?: string;
 }
 
 export interface BatchOptions {
@@ -87,18 +94,33 @@ export interface BatchResult {
 
 /**
  * The system prompt. Written for tokens, not for looks: no pleasantries, one
- * inline example per challenge type, rules as bare imperatives. Roughly 480
- * prompt tokens, unchanged across every call, so it caches well on providers
- * that support prompt caching.
+ * inline example per challenge type, rules as bare imperatives. Roughly 950
+ * prompt tokens (up from ~480 before the voice and romanization blocks below),
+ * unchanged across every call, so it caches well on providers that support
+ * prompt caching — and it buys back more than it costs: better challenges mean
+ * fewer regenerated batches, and the romanization rules keep grading local.
+ *
+ * Two blocks earn their keep beyond the bare schema:
+ *
+ * - **Voice.** Left to itself the model writes flashcard prose — "I like to
+ *   cook", "Cooking is fun" — one bland declarative per interest. The voice
+ *   rules force dialogue turns, questions and situational phrases instead, and
+ *   name the bland patterns explicitly so they can be refused.
+ * - **Romanization.** Non-Latin scripts are unreadable and untypeable for a
+ *   beginner. The model must supply a Latin reading for every target-script
+ *   string, *and* put the toneless romanization into `acceptedAnswers` so the
+ *   local (free) validator grades "ni hao" as correct without any script-aware
+ *   logic of its own. Latin-script targets omit the fields entirely and pay
+ *   nothing.
  */
 const SYSTEM_PROMPT = [
 	'You are an expert language-course author. Output one JSON object and nothing else: no prose, no markdown fences.',
-	'Shape: {"challenges":[Challenge],"newItems":[{"term","meaning","notes"}]}',
+	'Shape: {"challenges":[Challenge],"newItems":[{"term","meaning","romanization","notes"}]}',
 	'Every Challenge has: type, direction ("toTarget"=produce the target language, "toNative"=produce the native language), itemIds, explanation (one short sentence or null).',
 	'Types:',
-	'multiple-choice {prompt, options:[4 strings], correctIndex:0-3} e.g. {"type":"multiple-choice","direction":"toNative","prompt":"el perro","options":["the dog","the cat","the bread","the house"],"correctIndex":0,"itemIds":["i1"],"explanation":null}',
-	'cloze {sentence (must contain ___), acceptedAnswers, wordBank (4-6 candidate words or null), translationHint} e.g. {"type":"cloze","direction":"toTarget","sentence":"Yo ___ un libro.","acceptedAnswers":["leo"],"wordBank":["leo","como","bebo","corro"],"translationHint":"I read a book.","itemIds":["i2"],"explanation":"leer -> leo in the first person."}',
-	'typed-translation {prompt, acceptedAnswers} e.g. {"type":"typed-translation","direction":"toTarget","prompt":"the water is cold","acceptedAnswers":["el agua esta fria","el agua está fría"],"itemIds":["new:0"],"explanation":null}',
+	'multiple-choice {prompt, options:[4 strings], correctIndex:0-3, promptRomanization, optionsRomanization} e.g. {"type":"multiple-choice","direction":"toNative","prompt":"el perro","options":["the dog","the cat","the bread","the house"],"correctIndex":0,"itemIds":["i1"],"explanation":null}',
+	'cloze {sentence (must contain ___), acceptedAnswers, wordBank (4-6 candidate words or null), translationHint, sentenceRomanization} e.g. {"type":"cloze","direction":"toTarget","sentence":"Yo ___ un libro.","acceptedAnswers":["leo"],"wordBank":["leo","como","bebo","corro"],"translationHint":"I read a book.","itemIds":["i2"],"explanation":"leer -> leo in the first person."}',
+	'typed-translation {prompt, acceptedAnswers, promptRomanization} e.g. {"type":"typed-translation","direction":"toTarget","prompt":"the water is cold","acceptedAnswers":["el agua esta fria","el agua está fría"],"itemIds":["new:0"],"explanation":null}',
 	'Rules:',
 	'- itemIds must reference the given item ids, or "new:<index>" for entries of newItems (0-based). Never invent an id.',
 	'- Produce exactly one challenge object per requested slot; give the same review item different types.',
@@ -106,8 +128,18 @@ const SYSTEM_PROMPT = [
 	'- acceptedAnswers must be exhaustive: with and without accents, with and without the article, contractions, and every common synonym or word order a learner might type.',
 	'- Mix direction across the batch.',
 	'- Cloze sentences use only vocabulary at or below the learner level, keep one blank, and translationHint is the whole sentence in the native language.',
-	'- newItems must fit the learner level and interests; term in the target language, meaning in the native language, notes only for gender/irregularity/register.',
-	'- Exactly newItemSlots entries in newItems, and every one of them must be used by at least one challenge.'
+	'- newItems must fit the learner level; term in the target language, meaning in the native language, notes only for gender/irregularity/register.',
+	'- Exactly newItemSlots entries in newItems, and every one of them must be used by at least one challenge.',
+	'Voice:',
+	'- Conversation, not flashcards: every prompt, sentence and translation is a line someone would really say — a dialogue turn, a question put to the learner, a request, a reaction, an opinion. Never an isolated textbook statement.',
+	'- With a "topic", EVERY challenge happens inside that scenario: cloze sentences are turns of that dialogue, translations are things you would really say there, newItems are words the scenario needs. "interests" then only colour word choice, never the sentence frame.',
+	'- Banned: "I like <interest>", "<interest> is fun", any sentence whose only content is that the learner likes their interest, and reusing a sentence frame twice in one batch. Vary speaker, question vs statement, and register for the level.',
+	'- explanation: one line of usage or culture (register, politeness, word order) when non-obvious; null when it would only restate the answer.',
+	'Romanization, for target languages NOT written in the Latin script only:',
+	'- Give a Latin reading for every target-script string: promptRomanization, optionsRomanization (one per option, same order), sentenceRomanization (whole sentence), newItems.romanization. Use pinyin with tone marks for Mandarin, romaji for Japanese, revised romanization for Korean, the standard scheme otherwise.',
+	'- A field whose string is already in the native language is null.',
+	'- For typed answers (cloze without wordBank, typed-translation toTarget) acceptedAnswers must ALSO list the romanized form with AND without tone/accent marks, e.g. ["你好","nǐ hǎo","ni hao"].',
+	'- If the target language uses the Latin script, every romanization field is null.'
 ].join('\n');
 
 /** Default batch size: two challenges per review item, two per new item. */
@@ -123,10 +155,15 @@ export function buildBatchPrompt(args: BatchArgs): ChatMessage[] {
 	const { profile, reviewItems, newItemSlots } = args;
 	const count = args.count ?? defaultChallengeCount(reviewItems.length, newItemSlots);
 
+	const topic = args.topic?.trim();
+
 	const payload: Record<string, unknown> = {
 		native: profile.nativeLanguage,
 		target: profile.targetLanguage,
 		level: profile.level,
+		// Placed before `interests` on purpose: the scenario outranks the
+		// interests, and models weight earlier keys more heavily.
+		...(topic ? { topic } : {}),
 		interests: profile.interests,
 		challengeCount: Math.min(count, MAX_BATCH_CHALLENGES),
 		newItemSlots,
@@ -231,6 +268,34 @@ function undefinedIfBlank(value: string | null | undefined): string | undefined 
 	return trimmed ? trimmed : undefined;
 }
 
+/**
+ * `{ key: trimmed }` when the value is a non-blank string, `{}` otherwise — so
+ * an optional field is *absent* rather than present-and-undefined. Models emit
+ * `null` for "not applicable" far more often than they omit the key, and a
+ * Latin-script lesson should carry no romanization keys at all.
+ */
+function optionalString<K extends string>(
+	key: K,
+	value: string | null | undefined
+): Partial<Record<K, string>> {
+	const trimmed = undefinedIfBlank(value);
+	return trimmed ? ({ [key]: trimmed } as Record<K, string>) : {};
+}
+
+/**
+ * Keeps a romanization array only when it lines up with the strings it
+ * annotates, one non-blank entry each. A misaligned array would put the wrong
+ * reading under the wrong option, which is worse than showing none.
+ */
+function alignedRomanization(
+	values: string[] | null | undefined,
+	expectedLength: number
+): string[] | undefined {
+	if (!values || values.length !== expectedLength) return undefined;
+	const trimmed = values.map((v) => v.trim());
+	return trimmed.every((v) => v.length > 0) ? trimmed : undefined;
+}
+
 export interface ResolveOptions {
 	newId?: () => string;
 	now?: () => number;
@@ -266,6 +331,7 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
 		kind: 'vocab',
 		term: item.term.trim(),
 		meaning: item.meaning.trim(),
+		...optionalString('romanization', item.romanization),
 		...(undefinedIfBlank(item.notes) ? { notes: undefinedIfBlank(item.notes) } : {}),
 		// Placeholder: the caller initializes real FSRS card state.
 		fsrsCard: null,
@@ -310,11 +376,14 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
 
 		if (generated.type === 'multiple-choice') {
 			const [a, b, c, d] = generated.options;
+			const optionsRomanization = alignedRomanization(generated.optionsRomanization, 4);
 			challenges.push({
 				...base,
 				type: 'multiple-choice',
 				prompt: generated.prompt,
+				...optionalString('promptRomanization', generated.promptRomanization),
 				options: [a, b, c, d],
+				...(optionsRomanization ? { optionsRomanization } : {}),
 				correctIndex: generated.correctIndex
 			});
 		} else if (generated.type === 'cloze') {
@@ -323,6 +392,7 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
 				...base,
 				type: 'cloze',
 				sentence: generated.sentence,
+				...optionalString('sentenceRomanization', generated.sentenceRomanization),
 				acceptedAnswers: generated.acceptedAnswers,
 				...(wordBank && wordBank.length > 1 ? { wordBank } : {}),
 				translationHint: generated.translationHint
@@ -332,6 +402,7 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
 				...base,
 				type: 'typed-translation',
 				prompt: generated.prompt,
+				...optionalString('promptRomanization', generated.promptRomanization),
 				acceptedAnswers: generated.acceptedAnswers
 			});
 		}
@@ -424,11 +495,23 @@ export async function generateBatch(args: BatchArgs, opts: BatchOptions = {}): P
 const MATCH_MIN = 4;
 const MATCH_MAX = 5;
 
+/** Case- and whitespace-insensitive key used to detect colliding tile labels. */
+function tileKey(value: string): string {
+	return value.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
 /**
  * Builds a `match-pairs` challenge locally, for free — no model call, no
  * tokens. Pairs a random handful of already-known items term-to-meaning.
  *
- * Returns `undefined` when there are fewer than four items to draw from.
+ * **Every tile label is unique.** Two items that render the same text on either
+ * side (two synonyms sharing a meaning, two spellings sharing a term) make the
+ * round unplayable: the learner sees two identical tiles and has to guess which
+ * twin belongs to which pair, and a correct guess is graded wrong half the time.
+ * The first item of a colliding group is kept and the rest are skipped, matched
+ * case-insensitively on trimmed text.
+ *
+ * Returns `undefined` when fewer than four collision-free items remain.
  *
  * @param rng Injectable `[0,1)` source so tests (and replays) are deterministic.
  */
@@ -446,15 +529,36 @@ export function makeMatchPairsChallenge(
 		[pool[i], pool[j]] = [pool[j], pool[i]];
 	}
 
-	const max = Math.min(MATCH_MAX, pool.length);
+	// Drop collisions *after* the shuffle, so which twin survives is still
+	// random rather than always the first one in storage order.
+	const seenTerms = new Set<string>();
+	const seenMeanings = new Set<string>();
+	const distinct: KnowledgeItem[] = [];
+	for (const item of pool) {
+		const term = tileKey(item.term);
+		const meaning = tileKey(item.meaning);
+		if (seenTerms.has(term) || seenMeanings.has(meaning)) continue;
+		seenTerms.add(term);
+		seenMeanings.add(meaning);
+		distinct.push(item);
+	}
+	if (distinct.length < MATCH_MIN) return undefined;
+
+	const max = Math.min(MATCH_MAX, distinct.length);
 	const size = max > MATCH_MIN ? MATCH_MIN + Math.floor(rng() * (max - MATCH_MIN + 1)) : MATCH_MIN;
-	const chosen = pool.slice(0, Math.min(size, max));
+	const chosen = distinct.slice(0, Math.min(size, max));
 
 	return {
 		id: makeId(),
 		type: 'match-pairs',
 		direction: 'toNative',
 		itemIds: chosen.map((i) => i.id),
-		pairs: chosen.map((i) => ({ a: i.term.trim(), b: i.meaning.trim() }))
+		// `aRom` carries the term's romanization when the item has one; `b` is
+		// already in the learner's native language, so it never needs one.
+		pairs: chosen.map((i) => ({
+			a: i.term.trim(),
+			b: i.meaning.trim(),
+			...optionalString('aRom', i.romanization)
+		}))
 	};
 }

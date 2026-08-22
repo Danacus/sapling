@@ -6,9 +6,17 @@
  * `parseBatch` + `resolveBatch` — so developing against the mock exercises the
  * real code, not a parallel happy path.
  *
- * Content is Spanish-for-English-speakers, mixed directions, covering
- * multiple-choice, cloze (with and without a word bank) and typed translation,
- * plus two new vocabulary items.
+ * Two fixture sets, chosen by the profile's target language, each a small
+ * restaurant scene so the mock shows off what a topic-driven batch looks like:
+ *
+ * - **Spanish for English speakers** (the default): mixed directions, covering
+ *   multiple-choice, cloze with and without a word bank, and typed translation.
+ * - **Mandarin for English speakers**, selected when the target language names
+ *   Chinese: the same coverage plus pinyin on every target-script string, so
+ *   the romanization UI can be built and eyeballed with no API key. Set the
+ *   target language to "Chinese" in onboarding to get it.
+ *
+ * Both sets introduce exactly two new vocabulary items.
  */
 
 import { getApiKey } from '$lib/db/settings';
@@ -64,56 +72,178 @@ function stripAccents(value: string): string {
 	return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
 
-/** The five canned challenges, all hanging off the two mock `newItems`. */
-function cannedChallenges(): unknown[] {
-	return [
-		{
-			type: 'multiple-choice',
-			direction: 'toNative',
-			prompt: 'la biblioteca',
-			options: ['the library', 'the bookshop', 'the office', 'the kitchen'],
-			correctIndex: 0,
-			itemIds: ['new:0'],
-			explanation: 'A "biblioteca" lends books; a "librería" sells them.'
-		},
-		{
-			type: 'cloze',
-			direction: 'toTarget',
-			sentence: 'Voy a la ___ para leer un libro.',
-			acceptedAnswers: ['biblioteca', 'la biblioteca'],
-			wordBank: ['biblioteca', 'cocina', 'oficina', 'tienda'],
-			translationHint: 'I go to the library to read a book.',
-			itemIds: ['new:0'],
-			explanation: null
-		},
-		{
-			type: 'multiple-choice',
-			direction: 'toTarget',
-			prompt: 'early',
-			options: ['tarde', 'temprano', 'luego', 'ahora'],
-			correctIndex: 1,
-			itemIds: ['new:1'],
-			explanation: null
-		},
-		{
-			type: 'typed-translation',
-			direction: 'toTarget',
-			prompt: 'I get up early',
-			acceptedAnswers: ['me levanto temprano', 'me despierto temprano', 'yo me levanto temprano'],
-			itemIds: ['new:1'],
-			explanation: null
-		},
-		{
-			type: 'cloze',
-			direction: 'toNative',
-			sentence: 'The train leaves ___ in the morning.',
-			acceptedAnswers: ['early'],
-			wordBank: null,
-			translationHint: 'El tren sale temprano por la mañana.',
-			itemIds: ['new:1'],
-			explanation: null
-		}
-	];
+/** One canned fixture set: five challenges hanging off two new items. */
+interface Fixture {
+	challenges: unknown[];
+	newItems: unknown[];
+}
+
+/**
+ * Languages whose mock batch uses the Mandarin fixtures. Matched on the
+ * free-form `targetLanguage` string the learner typed during onboarding, so
+ * "zh", "Chinese" and "Mandarin Chinese" all land on the same set.
+ */
+const MANDARIN_NAMES = /(^|\W)(zh|chinese|mandarin|putonghua|普通话|中文)(\W|$)/i;
+
+/** True when the mock should serve its non-Latin-script (pinyin) fixtures. */
+export function usesMandarinFixtures(targetLanguage: string): boolean {
+	return MANDARIN_NAMES.test(targetLanguage ?? '');
+}
+
+/** Spanish, a restaurant scene: the default mock lesson. */
+function spanishRestaurant(): Fixture {
+	return {
+		challenges: [
+			{
+				type: 'multiple-choice',
+				direction: 'toNative',
+				prompt: '¿Nos trae la cuenta, por favor?',
+				options: [
+					'Could you bring us the bill, please?',
+					'Could we see the menu, please?',
+					'Is this table free?',
+					'Could you bring another chair?'
+				],
+				correctIndex: 0,
+				itemIds: ['new:0'],
+				explanation: 'Waiters are addressed with "usted", hence "trae" rather than "traes".'
+			},
+			{
+				type: 'cloze',
+				direction: 'toTarget',
+				sentence: '¿Nos trae la ___, por favor? Tenemos prisa.',
+				acceptedAnswers: ['cuenta', 'la cuenta'],
+				wordBank: ['cuenta', 'carta', 'propina', 'mesa'],
+				translationHint: 'Could you bring us the bill, please? We are in a hurry.',
+				itemIds: ['new:0'],
+				explanation: null
+			},
+			{
+				type: 'multiple-choice',
+				direction: 'toTarget',
+				prompt: 'to order (food in a restaurant)',
+				options: ['pedir', 'pagar', 'probar', 'servir'],
+				correctIndex: 0,
+				itemIds: ['new:1'],
+				explanation: null
+			},
+			{
+				type: 'typed-translation',
+				direction: 'toTarget',
+				prompt: 'I would like to order the fish, please.',
+				acceptedAnswers: [
+					'quiero pedir el pescado, por favor',
+					'quiero pedir el pescado por favor',
+					'quisiera pedir el pescado, por favor',
+					'quisiera pedir el pescado por favor'
+				],
+				itemIds: ['new:1'],
+				explanation: '"Quisiera" is the polite way to ask; "quiero" is fine but blunter.'
+			},
+			{
+				type: 'cloze',
+				direction: 'toNative',
+				sentence: '"¿Ya saben qué van a pedir?" — "Yes, we are ready to ___."',
+				acceptedAnswers: ['order'],
+				wordBank: null,
+				translationHint: '"¿Ya saben qué van a pedir?" — "Sí, ya podemos pedir."',
+				itemIds: ['new:1'],
+				explanation: null
+			}
+		],
+		newItems: [
+			{ term: 'la cuenta', meaning: 'the bill', romanization: null, notes: 'feminine noun' },
+			{ term: 'pedir', meaning: 'to order', romanization: null, notes: 'stem-changing: pido' }
+		]
+	};
+}
+
+/**
+ * Mandarin, the same restaurant scene, with pinyin on every target-script
+ * string — and, for the typed challenges, toneless pinyin in `acceptedAnswers`
+ * so typing "maidan" grades correct through the ordinary local validator.
+ */
+function mandarinRestaurant(): Fixture {
+	return {
+		challenges: [
+			{
+				type: 'multiple-choice',
+				direction: 'toNative',
+				prompt: '菜单',
+				promptRomanization: 'càidān',
+				options: ['the menu', 'the bill', 'the chopsticks', 'the waiter'],
+				optionsRomanization: null,
+				correctIndex: 0,
+				itemIds: ['new:0'],
+				explanation: null
+			},
+			{
+				type: 'multiple-choice',
+				direction: 'toTarget',
+				prompt: 'Could I see the menu?',
+				promptRomanization: null,
+				options: ['菜单', '筷子', '服务员', '茶'],
+				optionsRomanization: ['càidān', 'kuàizi', 'fúwùyuán', 'chá'],
+				correctIndex: 0,
+				itemIds: ['new:0'],
+				explanation: null
+			},
+			{
+				type: 'cloze',
+				direction: 'toTarget',
+				sentence: '你好，请给我一份___。',
+				sentenceRomanization: 'Nǐ hǎo, qǐng gěi wǒ yī fèn càidān.',
+				acceptedAnswers: ['菜单', 'càidān', 'caidan'],
+				wordBank: ['菜单', '筷子', '茶', '水'],
+				translationHint: 'Hello, could I have a menu, please?',
+				itemIds: ['new:0'],
+				explanation: '份 (fèn) is the measure word for a menu or a portion.'
+			},
+			{
+				type: 'typed-translation',
+				direction: 'toTarget',
+				prompt: 'Excuse me, the bill please.',
+				promptRomanization: null,
+				acceptedAnswers: [
+					'服务员，买单',
+					'买单',
+					'fúwùyuán, mǎidān',
+					'fuwuyuan, maidan',
+					'mǎidān',
+					'maidan'
+				],
+				itemIds: ['new:1'],
+				explanation: 'Calling 服务员 (fúwùyuán) across the room is normal, not rude.'
+			},
+			{
+				type: 'cloze',
+				direction: 'toNative',
+				sentence: '"你们要买单吗?" — "Yes, could we ___ now?"',
+				sentenceRomanization: null,
+				acceptedAnswers: ['pay', 'pay the bill'],
+				wordBank: null,
+				translationHint: '"你们要买单吗？" — "对，我们想买单。"',
+				itemIds: ['new:1'],
+				explanation: null
+			}
+		],
+		newItems: [
+			{ term: '菜单', meaning: 'the menu', romanization: 'càidān', notes: null },
+			{
+				term: '买单',
+				meaning: 'to pay the bill',
+				romanization: 'mǎidān',
+				notes: 'colloquial; 结账 (jiézhàng) is the neutral form'
+			}
+		]
+	};
+}
+
+/** The fixture set for this profile. */
+function fixtureFor(args: BatchArgs): Fixture {
+	return usesMandarinFixtures(args.profile.targetLanguage)
+		? mandarinRestaurant()
+		: spanishRestaurant();
 }
 
 /** Two challenges per review item, so the mock reflects the real batch shape. */
@@ -134,7 +264,9 @@ function reviewChallenges(items: ReviewItemRef[]): unknown[] {
 			type: 'multiple-choice',
 			direction: 'toNative',
 			prompt: item.term,
+			promptRomanization: null,
 			options,
+			optionsRomanization: null,
 			correctIndex,
 			itemIds: [item.id],
 			explanation: null
@@ -143,6 +275,7 @@ function reviewChallenges(items: ReviewItemRef[]): unknown[] {
 			type: 'typed-translation',
 			direction: 'toTarget',
 			prompt: item.meaning,
+			promptRomanization: null,
 			acceptedAnswers: [...new Set([item.term, stripAccents(item.term)])],
 			itemIds: [item.id],
 			explanation: null
@@ -160,20 +293,17 @@ export function mockBatchCompletion(args: BatchArgs): string {
 		args.count ?? defaultChallengeCount(args.reviewItems.length, args.newItemSlots),
 		MAX_BATCH_CHALLENGES
 	);
-	const canned = cannedChallenges();
+	const fixture = fixtureFor(args);
 	const review = reviewChallenges(args.reviewItems);
 
 	// Always keep the canned five: they are what makes the mock cover every
 	// challenge type and both new items.
-	const challenges = [...canned, ...review].slice(0, Math.max(canned.length, count));
+	const challenges = [...fixture.challenges, ...review].slice(
+		0,
+		Math.max(fixture.challenges.length, count)
+	);
 
-	const batch = {
-		challenges,
-		newItems: [
-			{ term: 'la biblioteca', meaning: 'the library', notes: 'feminine noun' },
-			{ term: 'temprano', meaning: 'early', notes: null }
-		]
-	};
+	const batch = { challenges, newItems: fixture.newItems };
 
 	return '```json\n' + JSON.stringify(batch, null, 1) + '\n```';
 }

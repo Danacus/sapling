@@ -48,12 +48,20 @@ const generatedBase = {
 export const generatedMultipleChoiceSchema = z.object({
 	type: z.literal('multiple-choice'),
 	prompt: nonEmpty,
+	promptRomanization: z.string().nullish(),
 	/**
 	 * Exactly four options. Declared as a length-constrained array rather than a
 	 * tuple: tuples emit `prefixItems`, which several structured-output
 	 * implementations reject. The resolver narrows it back to a 4-tuple.
 	 */
 	options: z.array(nonEmpty).length(4),
+	/**
+	 * Deliberately *not* length-constrained: a misaligned romanization array is a
+	 * cosmetic defect, and rejecting the whole challenge over it would throw away
+	 * a challenge we already paid for. The resolver keeps it only when it lines
+	 * up with `options` one-for-one, and drops it silently otherwise.
+	 */
+	optionsRomanization: z.array(nonEmpty).nullish(),
 	correctIndex: z.int().min(0).max(3),
 	...generatedBase
 });
@@ -64,6 +72,8 @@ export const generatedClozeSchema = z.object({
 	sentence: nonEmpty.refine((s) => s.includes('___'), {
 		message: 'sentence must contain a ___ blank'
 	}),
+	/** Romanization of the whole sentence; not required to carry the blank. */
+	sentenceRomanization: z.string().nullish(),
 	acceptedAnswers: z.array(nonEmpty).min(1),
 	wordBank: z.array(nonEmpty).nullish(),
 	translationHint: nonEmpty,
@@ -73,6 +83,7 @@ export const generatedClozeSchema = z.object({
 export const generatedTypedTranslationSchema = z.object({
 	type: z.literal('typed-translation'),
 	prompt: nonEmpty,
+	promptRomanization: z.string().nullish(),
 	acceptedAnswers: z.array(nonEmpty).min(1),
 	...generatedBase
 });
@@ -86,6 +97,8 @@ export const generatedChallengeSchema = z.discriminatedUnion('type', [
 export const generatedItemSchema = z.object({
 	term: nonEmpty,
 	meaning: nonEmpty,
+	/** Latin-script reading of `term`; null for Latin-script target languages. */
+	romanization: z.string().nullish(),
 	notes: z.string().nullish()
 });
 
@@ -123,7 +136,10 @@ const storedBase = {
 export const multipleChoiceChallengeSchema = z.object({
 	type: z.literal('multiple-choice'),
 	prompt: nonEmpty,
+	promptRomanization: z.string().optional(),
 	options: z.tuple([z.string(), z.string(), z.string(), z.string()]),
+	/** Index-aligned with `options` when present; the resolver guarantees the length. */
+	optionsRomanization: z.array(z.string()).length(4).optional(),
 	correctIndex: z.int().min(0).max(3),
 	...storedBase
 });
@@ -131,6 +147,7 @@ export const multipleChoiceChallengeSchema = z.object({
 export const clozeChallengeSchema = z.object({
 	type: z.literal('cloze'),
 	sentence: nonEmpty,
+	sentenceRomanization: z.string().optional(),
 	acceptedAnswers: z.array(z.string()).min(1),
 	wordBank: z.array(z.string()).optional(),
 	translationHint: z.string(),
@@ -140,13 +157,23 @@ export const clozeChallengeSchema = z.object({
 export const typedTranslationChallengeSchema = z.object({
 	type: z.literal('typed-translation'),
 	prompt: nonEmpty,
+	promptRomanization: z.string().optional(),
 	acceptedAnswers: z.array(z.string()).min(1),
 	...storedBase
 });
 
 export const matchPairsChallengeSchema = z.object({
 	type: z.literal('match-pairs'),
-	pairs: z.array(z.object({ a: nonEmpty, b: nonEmpty })).min(2),
+	pairs: z
+		.array(
+			z.object({
+				a: nonEmpty,
+				b: nonEmpty,
+				aRom: z.string().optional(),
+				bRom: z.string().optional()
+			})
+		)
+		.min(2),
 	...storedBase
 });
 

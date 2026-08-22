@@ -86,7 +86,14 @@ export type {
 	ReviewItemRef
 } from './generate';
 
-export { MOCK_FLAG_KEY, escalateMock, isMockMode, mockBatch, setMockMode } from './mock';
+export {
+	MOCK_FLAG_KEY,
+	escalateMock,
+	isMockMode,
+	mockBatch,
+	setMockMode,
+	usesMandarinFixtures
+} from './mock';
 
 export {
 	BATCH_SCHEMA_NAME,

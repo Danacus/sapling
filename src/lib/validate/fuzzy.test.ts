@@ -298,6 +298,44 @@ describe('validateAnswer: edge cases', () => {
 	});
 });
 
+describe('non-Latin scripts and romanized answers', () => {
+	// The generation prompt guarantees that a typed challenge in a non-Latin
+	// script lists the target-script form *and* the romanization with and
+	// without tone marks. That contract is what lets this layer stay
+	// script-agnostic — no pinyin-aware logic lives here.
+	const niHao = ['你好', 'nǐ hǎo', 'ni hao'];
+
+	it('grades toneless pinyin as correct via the guaranteed toneless variant', () => {
+		expect(checkAnswer('ni hao', niHao)).toBe('correct');
+	});
+
+	it('grades tone-marked pinyin and the target script as correct too', () => {
+		expect(checkAnswer('nǐ hǎo', niHao)).toBe('correct');
+		expect(checkAnswer('你好', niHao)).toBe('correct');
+		expect(checkAnswer('Ni Hao', niHao)).toBe('correct');
+	});
+
+	it('still grades toneless pinyin as almost when only the marked form is listed', () => {
+		// The safety net if a model ignores the rule: diacritic folding catches it.
+		expect(checkAnswer('ni hao', ['你好', 'nǐ hǎo'])).toBe('almost');
+	});
+
+	it('leaves CJK text intact through normalize, stripping only punctuation', () => {
+		expect(normalize('你好，世界！')).toBe('你好 世界');
+		expect(normalize('请给我一份菜单。')).toBe('请给我一份菜单');
+	});
+
+	it('measures edit distance in code points, so one wrong character is one edit', () => {
+		expect(editDistance('你好', '你們')).toBe(1);
+		// Three code points: below the typo threshold, so a wrong hanzi is wrong.
+		expect(checkAnswer('你們', ['你好'])).toBe('wrong');
+	});
+
+	it('accepts a romanized answer that differs by a typo as almost', () => {
+		expect(checkAnswer('ni hoa', niHao)).toBe('almost');
+	});
+});
+
 describe('checkAnswer', () => {
 	it('is a thin wrapper returning just the verdict', () => {
 		expect(checkAnswer('hello', ['hello'])).toBe('correct');

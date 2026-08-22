@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { escalateMock, isMockMode, mockBatch, mockBatchCompletion } from './mock';
+import {
+	escalateMock,
+	isMockMode,
+	mockBatch,
+	mockBatchCompletion,
+	usesMandarinFixtures
+} from './mock';
 import { parseBatch, stripFences } from './generate';
 import type { BatchArgs } from './generate';
 import { challengeSchema, generatedBatchSchema } from './schemas';
 import { getEscalation } from './index';
+import { checkChallenge } from '$lib/validate';
 
 const args: BatchArgs = {
 	profile: {
@@ -71,7 +78,15 @@ describe('mockBatch', () => {
 			expect(item.fsrsCard).toBeNull();
 			expect(item.history).toEqual([]);
 		}
-		expect(result.newItems.map((i) => i.term)).toEqual(['la biblioteca', 'temprano']);
+		expect(result.newItems.map((i) => i.term)).toEqual(['la cuenta', 'pedir']);
+	});
+
+	it('carries no romanization at all for a Latin-script target', () => {
+		for (const item of result.newItems) {
+			expect('romanization' in item).toBe(false);
+		}
+		const serialized = JSON.stringify(result.challenges);
+		expect(serialized).not.toContain('Romanization');
 	});
 
 	it('resolves every placeholder and every review reference', () => {
@@ -94,6 +109,64 @@ describe('mockBatch', () => {
 		const cold = mockBatch({ ...args, reviewItems: [] });
 		expect(cold.challenges.length).toBeGreaterThanOrEqual(5);
 		expect(cold.newItems).toHaveLength(2);
+	});
+});
+
+describe('the Mandarin fixtures', () => {
+	const zhArgs: BatchArgs = {
+		...args,
+		profile: { ...args.profile, targetLanguage: 'Chinese' },
+		reviewItems: []
+	};
+
+	it('is selected by the target language, however it was typed', () => {
+		expect(usesMandarinFixtures('Chinese')).toBe(true);
+		expect(usesMandarinFixtures('Mandarin Chinese')).toBe(true);
+		expect(usesMandarinFixtures('zh')).toBe(true);
+		expect(usesMandarinFixtures('Spanish')).toBe(false);
+		expect(usesMandarinFixtures('')).toBe(false);
+	});
+
+	it('passes the strict schema and loses nothing to the real parser', () => {
+		const parsed = parseBatch(mockBatchCompletion(zhArgs));
+		expect(parsed.dropped).toBe(0);
+		const json: unknown = JSON.parse(stripFences(mockBatchCompletion(zhArgs)));
+		expect(generatedBatchSchema.safeParse(json).success).toBe(true);
+	});
+
+	it('produces valid domain challenges with romanization surviving the resolver', () => {
+		const result = mockBatch(zhArgs);
+		for (const challenge of result.challenges) {
+			expect(challengeSchema.safeParse(challenge).success).toBe(true);
+		}
+
+		expect(result.newItems.map((i) => i.romanization)).toEqual(['càidān', 'mǎidān']);
+
+		const mc = result.challenges.filter((c) => c.type === 'multiple-choice');
+		expect(mc.find((c) => c.promptRomanization === 'càidān')).toBeDefined();
+		expect(mc.find((c) => c.optionsRomanization)?.optionsRomanization).toEqual([
+			'càidān',
+			'kuàizi',
+			'fúwùyuán',
+			'chá'
+		]);
+
+		const cloze = result.challenges.find((c) => c.type === 'cloze' && c.sentenceRomanization);
+		expect(cloze?.type === 'cloze' && cloze.sentenceRomanization).toBe(
+			'Nǐ hǎo, qǐng gěi wǒ yī fèn càidān.'
+		);
+	});
+
+	it('accepts a toneless pinyin answer through the ordinary local validator', () => {
+		const result = mockBatch(zhArgs);
+		const typed = result.challenges.find((c) => c.type === 'typed-translation');
+		expect(typed?.type === 'typed-translation' && checkChallenge(typed, 'maidan')).toBe(
+			'correct'
+		);
+	});
+
+	it('is deterministic', () => {
+		expect(mockBatch(zhArgs)).toEqual(mockBatch(zhArgs));
 	});
 });
 

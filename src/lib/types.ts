@@ -44,6 +44,14 @@ export interface KnowledgeItem {
 	term: string;
 	/** The meaning in the learner's native language. */
 	meaning: string;
+	/**
+	 * Latin-script reading of `term`, for target languages that are not written
+	 * in the Latin script (pinyin, romaji, revised romanization, ...).
+	 *
+	 * Absent for Latin-script languages — the generator is told to omit it, so
+	 * those learners never pay tokens for a field they cannot use.
+	 */
+	romanization?: string;
 	/** Optional usage notes, gender, conjugation hints, etc. */
 	notes?: string;
 	/** ts-fsrs `Card`. */
@@ -54,7 +62,17 @@ export interface KnowledgeItem {
 	history: { at: number; grade: number }[];
 }
 
-/** Fields shared by every challenge variant. */
+/**
+ * Fields shared by every challenge variant.
+ *
+ * Romanization note, which applies to every `*Romanization` field below: these
+ * are display-only Latin-script readings, emitted **only** when the target
+ * language is not written in the Latin script. Latin-script languages omit them
+ * entirely — a Spanish challenge carries no romanization key at all — so the
+ * feature costs nothing for the majority case. The UI should render them as a
+ * secondary line under the target-script string when present, and change
+ * nothing when absent.
+ */
 interface ChallengeBase {
 	id: string;
 	direction: Direction;
@@ -66,8 +84,15 @@ interface ChallengeBase {
 export interface MultipleChoiceChallenge extends ChallengeBase {
 	type: 'multiple-choice';
 	prompt: string;
+	/** Romanization of `prompt`, when the prompt is in the target script. */
+	promptRomanization?: string;
 	/** Exactly four options. */
 	options: [string, string, string, string];
+	/**
+	 * Romanization of each option, index-aligned with `options`. Present only
+	 * when the options are in the target script (i.e. `direction: 'toTarget'`).
+	 */
+	optionsRomanization?: string[];
 	/** Index into `options`, 0-3. */
 	correctIndex: number;
 	/** `KnowledgeItem` ids exercised by this challenge. */
@@ -79,6 +104,11 @@ export interface ClozeChallenge extends ChallengeBase {
 	type: 'cloze';
 	/** Sentence containing a `___` placeholder for the blank. */
 	sentence: string;
+	/**
+	 * Romanization of the *whole* sentence, blank included — not just the
+	 * answer. Present only when the sentence is in the target script.
+	 */
+	sentenceRomanization?: string;
 	/** Any of these count as correct (before fuzzy matching). */
 	acceptedAnswers: string[];
 	/** Optional set of draggable/tappable candidate words. */
@@ -92,6 +122,8 @@ export interface ClozeChallenge extends ChallengeBase {
 export interface TypedTranslationChallenge extends ChallengeBase {
 	type: 'typed-translation';
 	prompt: string;
+	/** Romanization of `prompt`, when the prompt is in the target script. */
+	promptRomanization?: string;
 	acceptedAnswers: string[];
 	itemIds: string[];
 }
@@ -99,8 +131,12 @@ export interface TypedTranslationChallenge extends ChallengeBase {
 /** Match terms on the left with their counterparts on the right. */
 export interface MatchPairsChallenge extends ChallengeBase {
 	type: 'match-pairs';
-	/** `a` is one side of the pair, `b` the other. */
-	pairs: { a: string; b: string }[];
+	/**
+	 * `a` is one side of the pair, `b` the other. `aRom`/`bRom` are the
+	 * romanizations of the corresponding side, copied from the source item's
+	 * `romanization` by the local generator — never model-produced.
+	 */
+	pairs: { a: string; b: string; aRom?: string; bRom?: string }[];
 	itemIds: string[];
 }
 
