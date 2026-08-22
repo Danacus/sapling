@@ -15,15 +15,17 @@
 		setModel
 	} from '$lib/db';
 	import {
-		getTtsDevice,
+		formatMb,
 		getTtsEngine,
+		getTtsVoice,
 		kokoroSupports,
+		MANDARIN_SPEAKERS,
 		preloadKokoro,
-		setTtsDevice,
+		RUNTIME_DOWNLOAD_BYTES,
 		setTtsEngine,
-		webgpuAvailable,
-		type TtsDevice,
-		type TtsEngine
+		setTtsVoice,
+		type TtsEngine,
+		type TtsVoice
 	} from '$lib/tts';
 	import type { Profile } from '$lib/types';
 	import InlineStatus from '$lib/ui/InlineStatus.svelte';
@@ -57,8 +59,7 @@
 
 	// Speech ----------------------------------------------------------------------
 	let ttsEngine = $state<TtsEngine>('kokoro');
-	let ttsDevice = $state<TtsDevice>('auto');
-	let hasWebgpu = $state(false);
+	let ttsVoice = $state<TtsVoice>('auto');
 	let preloading = $state(false);
 	/** 0-100 across the model files, or `null` while the size is still unknown. */
 	let preloadPercent = $state<number | null>(null);
@@ -114,8 +115,7 @@
 				showRomanization = getShowRomanization();
 
 				ttsEngine = getTtsEngine();
-				ttsDevice = getTtsDevice();
-				hasWebgpu = webgpuAvailable();
+				ttsVoice = getTtsVoice();
 
 				usagePromptTokens = readUsage('ll.usage.promptTokens');
 				usageCompletionTokens = readUsage('ll.usage.completionTokens');
@@ -135,12 +135,15 @@
 	});
 
 	/**
-	 * Whether Kokoro can actually pronounce what this learner is studying.
-	 * `kokoro-js` only phonemizes English, so everyone else silently gets the
-	 * browser's own voice — worth saying out loud rather than leaving them to
-	 * wonder why the 90 MB download changed nothing.
+	 * Whether Kokoro can actually pronounce what this learner is studying. It
+	 * speaks Mandarin and English; everyone else silently gets the browser's own
+	 * voice — worth saying out loud rather than leaving them to wonder why the
+	 * download changed nothing.
 	 */
 	const kokoroCoversTarget = $derived(kokoroSupports(profile?.targetLanguage));
+
+	/** e.g. "227 MB" — never hard-coded, so the copy cannot drift. */
+	const downloadSize = formatMb(RUNTIME_DOWNLOAD_BYTES);
 
 	function readUsage(key: string): number {
 		try {
@@ -212,20 +215,15 @@
 		setTtsEngine(engine);
 	}
 
-	/**
-	 * Switching device throws the loaded model away (an ONNX session cannot be
-	 * re-targeted), so any previously shown progress is stale too.
-	 */
-	function chooseDevice(device: TtsDevice) {
-		ttsDevice = device;
-		setTtsDevice(device);
-		preloadPercent = null;
-		preloadStatus = 'idle';
+	/** The speaker is a per-generation argument, so nothing has to reload. */
+	function chooseVoice(voice: TtsVoice) {
+		ttsVoice = voice;
+		setTtsVoice(voice);
 	}
 
 	/**
-	 * Downloads and warms up the Kokoro model on demand, so the first word of
-	 * the first lesson is not the thing that waits on ~90 MB.
+	 * Downloads and warms up the Kokoro runtime on demand, so the first word of
+	 * the first lesson is not the thing that waits on a few hundred megabytes.
 	 */
 	async function preloadVoiceModel() {
 		if (preloading) return;
@@ -467,41 +465,45 @@
 					value={ttsEngine}
 					onchange={(event) => chooseEngine(event.currentTarget.value as TtsEngine)}
 				>
-					<option value="kokoro">Kokoro — downloads a ~90 MB model once, then offline</option>
+					<option value="kokoro">Kokoro (neural) — downloads {downloadSize} once, then offline</option
+					>
 					<option value="webspeech">Browser built-in — instant, uses your system voices</option>
 					<option value="off">Off — no audio anywhere</option>
 				</select>
 				{#if ttsEngine === 'kokoro' && profile && !kokoroCoversTarget}
 					<p class="hint">
-						Heads up: the packaged Kokoro model only speaks English, so {profile.targetLanguage} will
-						use your browser's built-in voice regardless.
+						Heads up: Kokoro speaks Mandarin and English, so {profile.targetLanguage} will use your
+						browser's built-in voice regardless.
 					</p>
 				{:else if ttsEngine === 'kokoro'}
 					<p class="hint">
-						The model is cached by your browser after the first download and then runs entirely
-						offline.
+						Kokoro v1.1-zh speaks Mandarin (including sentences that mix in English) and English.
+						Every other language uses your browser's own voices.
 					</p>
 				{/if}
 			</div>
 
 			{#if ttsEngine === 'kokoro'}
 				<div class="field">
-					<span class="label" id="tts-device-label">Kokoro runs on</span>
+					<span class="label" id="tts-voice-label">Mandarin voice</span>
 					<select
 						class="input"
-						aria-labelledby="tts-device-label"
-						value={ttsDevice}
-						onchange={(event) => chooseDevice(event.currentTarget.value as TtsDevice)}
+						aria-labelledby="tts-voice-label"
+						value={ttsVoice}
+						onchange={(event) => chooseVoice(event.currentTarget.value as TtsVoice)}
 					>
-						<option value="auto">Auto (WebGPU if available)</option>
-						<option value="wasm">CPU (WASM)</option>
+						<option value="auto">Default (zf_001, female)</option>
+						{#each MANDARIN_SPEAKERS as speaker (speaker.name)}
+							<option value={speaker.name}>{speaker.label}</option>
+						{/each}
 					</select>
 					<p class="hint">
-						If audio sounds garbled, switch to CPU — some browsers' WebGPU is still buggy (Firefox
-						on Linux especially).
+						Three of the model's 100 Mandarin speakers. English always uses its own voice (Maple, or
+						Vale if your language is set to British English).
 					</p>
 					<p class="hint">
-						{hasWebgpu ? 'WebGPU available' : 'Will run on CPU (WASM) — slower but works'}
+						Runs on your CPU (WASM + SIMD) in a background thread — there is no GPU path, and none
+						is needed for single words and short sentences.
 					</p>
 				</div>
 
@@ -516,6 +518,17 @@
 					</button>
 					<InlineStatus status={preloadStatus} message={preloadMessage} />
 				</div>
+
+				<p class="hint">
+					{downloadSize} in two files (the sherpa-onnx runtime and the Kokoro model), stored in your
+					browser's cache. It happens once per browser profile, and everything works offline
+					afterwards. The model is the full-precision build on purpose — the small quantized one is
+					half the size but produces silence in WebAssembly.
+				</p>
+				<p class="hint">
+					Synthesis takes roughly a second or two per phrase on a laptop CPU, in a background thread,
+					and each clip is remembered for the rest of the session.
+				</p>
 
 				{#if preloading}
 					<div class="preload-progress">

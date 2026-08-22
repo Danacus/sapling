@@ -1,11 +1,6 @@
-# pnpm settings (created by pnpm when kokoro-js was added).
+# pnpm settings.
 #
-# kokoro-js pulls in @huggingface/transformers, which lists native, node-only
-# optional tooling: onnxruntime-node (a native ORT binary), sharp (image
-# codecs) and protobufjs. This app is a browser-only SPA — Vite resolves
-# transformers.js to its web build and none of these are ever loaded — so
-# their install scripts are deliberately not run.
-allowBuilds:
-  onnxruntime-node: false
-  protobufjs: false
-  sharp: false
+# Nothing to configure right now: the speech engine is a prebuilt WebAssembly
+# bundle fetched at runtime (see src/lib/tts/models.ts), not an npm package, so
+# no dependency here has a native install script that needs allowing or
+# blocking. Kept as a placeholder because pnpm recreates it on demand.

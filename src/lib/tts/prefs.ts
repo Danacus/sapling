@@ -9,23 +9,39 @@
 
 const ENGINE_KEY = 'll.ttsEngine';
 const DEVICE_KEY = 'll.ttsDevice';
+const VOICE_KEY = 'll.ttsVoice';
 
-/** Which speech backend to use. `off` silences the app entirely. */
+/**
+ * Which speech backend to use. `off` silences the app entirely.
+ *
+ * `kokoro` has always meant "the good, downloaded, neural one" — it still
+ * does, even though the runtime underneath changed from Transformers.js to
+ * sherpa-onnx. Keeping the stored value means nobody's setting resets.
+ */
 export type TtsEngine = 'kokoro' | 'webspeech' | 'off';
 
 /**
- * Where Kokoro runs. `auto` picks WebGPU when the browser exposes it and
- * falls back to WASM; `wasm` forces the CPU path, which is slower but is the
- * escape hatch for browsers whose WebGPU produces garbled audio (Firefox on
- * Linux, notably).
+ * **Vestigial.** Kokoro used to be able to run on WebGPU; sherpa-onnx's WASM
+ * build is CPU-only, so nothing reads this any more. The accessors stay so an
+ * existing `ll.ttsDevice` value is still readable (and harmless) rather than
+ * being silently reinterpreted if a device choice ever comes back.
  */
 export type TtsDevice = 'auto' | 'wasm';
 
+/**
+ * Which Mandarin voice to synthesize with. `auto` means "whatever the language
+ * mapping picks" — see `languages.ts`, which also explains why English is not
+ * part of this choice.
+ */
+export type TtsVoice = 'auto' | 'zf_001' | 'zf_018' | 'zm_010';
+
 const ENGINES: readonly TtsEngine[] = ['kokoro', 'webspeech', 'off'];
 const DEVICES: readonly TtsDevice[] = ['auto', 'wasm'];
+const VOICES: readonly TtsVoice[] = ['auto', 'zf_001', 'zf_018', 'zm_010'];
 
 export const DEFAULT_TTS_ENGINE: TtsEngine = 'kokoro';
 export const DEFAULT_TTS_DEVICE: TtsDevice = 'auto';
+export const DEFAULT_TTS_VOICE: TtsVoice = 'auto';
 
 function hasStorage(): boolean {
 	return typeof localStorage !== 'undefined';
@@ -60,7 +76,7 @@ export function setTtsEngine(engine: TtsEngine): void {
 	write(ENGINE_KEY, engine);
 }
 
-/** Where Kokoro should run; unrecognised values read as the default. */
+/** Legacy device preference; unrecognised values read as the default. */
 export function getTtsDevice(): TtsDevice {
 	const raw = read(DEVICE_KEY);
 	return DEVICES.includes(raw as TtsDevice) ? (raw as TtsDevice) : DEFAULT_TTS_DEVICE;
@@ -69,4 +85,15 @@ export function getTtsDevice(): TtsDevice {
 export function setTtsDevice(device: TtsDevice): void {
 	if (!DEVICES.includes(device)) return;
 	write(DEVICE_KEY, device);
+}
+
+/** The chosen Mandarin voice; unrecognised values read as the default. */
+export function getTtsVoice(): TtsVoice {
+	const raw = read(VOICE_KEY);
+	return VOICES.includes(raw as TtsVoice) ? (raw as TtsVoice) : DEFAULT_TTS_VOICE;
+}
+
+export function setTtsVoice(voice: TtsVoice): void {
+	if (!VOICES.includes(voice)) return;
+	write(VOICE_KEY, voice);
 }

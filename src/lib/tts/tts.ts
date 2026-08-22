@@ -7,35 +7,42 @@
  *
  * Two engines, picked per call:
  *
- * - **Kokoro** (`kokoro-js`, browser-local Kokoro-82M) for English, loaded
- *   lazily on first use. It is genuinely English-only as packaged — see the
- *   long note in `languages.ts` — so it is never used for anything else.
+ * - **Kokoro** (Kokoro v1.1-zh under the sherpa-onnx WASM runtime, in a Web
+ *   Worker) for Mandarin and English. Real Mandarin, including mixed zh/en
+ *   sentences — see the note in `languages.ts` for exactly what it covers and
+ *   `sherpa.worker.ts` for how the runtime is assembled.
  * - **Web Speech API** for every other language, and as the fallback whenever
- *   Kokoro is unavailable, still loading, or fails.
+ *   Kokoro is unavailable, still downloading, or fails.
  *
- * Synthesized clips are cached in memory per (text, voice) so replaying a
- * word is instant; the model files themselves are cached by Transformers.js
- * in the browser's Cache Storage.
+ * Synthesized clips are cached in memory per (text, speaker) so replaying a
+ * word is instant; the runtime's two big downloads are cached by the worker in
+ * Cache Storage (`ll-tts-models`).
  */
 
 import { audioCacheKey, LruCache } from './cache';
-import { bcp47For, kokoroSupports, kokoroVoiceFor } from './languages';
-import { loadKokoro, onKokoroProgress, resetKokoro, synthesize, type TtsProgress } from './kokoro';
+import { bcp47For, kokoroSpeakerFor, kokoroSupports } from './languages';
+import { initSherpa, onSherpaProgress, synthesize, type TtsProgress } from './sherpa';
 import {
-	getTtsDevice,
 	getTtsEngine,
-	setTtsDevice as writeTtsDevice,
+	getTtsVoice,
 	setTtsEngine as writeTtsEngine,
-	type TtsDevice,
-	type TtsEngine
+	setTtsVoice as writeTtsVoice,
+	type TtsEngine,
+	type TtsVoice
 } from './prefs';
 import { cancelWebSpeech, speakWithWebSpeech, webSpeechAvailable } from './webspeech';
 
-export type { TtsDevice, TtsEngine } from './prefs';
-export type { TtsProgress } from './kokoro';
-export { getTtsEngine, getTtsDevice, DEFAULT_TTS_ENGINE, DEFAULT_TTS_DEVICE } from './prefs';
-export { webgpuAvailable } from './kokoro';
-export { bcp47For, kokoroSupports, KOKORO_MODEL_ID } from './languages';
+export type { TtsEngine, TtsVoice } from './prefs';
+export type { TtsProgress } from './sherpa';
+export type { KokoroSpeaker } from './languages';
+export {
+	getTtsEngine,
+	getTtsVoice,
+	DEFAULT_TTS_ENGINE,
+	DEFAULT_TTS_VOICE
+} from './prefs';
+export { bcp47For, kokoroSupports, kokoroSpeakerFor, MANDARIN_SPEAKERS } from './languages';
+export { KOKORO_MODEL_ID, RUNTIME_DOWNLOAD_BYTES, formatMb } from './models';
 
 /** Roughly a session's worth of replayed words. */
 const AUDIO_CACHE_SIZE = 50;
@@ -58,15 +65,14 @@ export function setTtsEngine(engine: TtsEngine): void {
 }
 
 /**
- * Persists where Kokoro runs. An ONNX session cannot change device, so the
- * loaded model and every clip it produced are thrown away; the next `speak()`
- * rebuilds on the new device.
+ * Persists the Mandarin voice. The model stays loaded — the speaker is just an
+ * argument to each generation — but every cached clip was rendered in the old
+ * voice, so they go.
  */
-export function setTtsDevice(device: TtsDevice): void {
-	if (device === getTtsDevice()) return;
-	writeTtsDevice(device);
+export function setTtsVoice(voice: TtsVoice): void {
+	if (voice === getTtsVoice()) return;
+	writeTtsVoice(voice);
 	stopSpeaking();
-	resetKokoro();
 	audioCache.clear();
 }
 
@@ -96,14 +102,14 @@ export function ttsAvailable(language: string | undefined): boolean {
 }
 
 /**
- * Downloads and warms up the Kokoro model ahead of time (the Settings
+ * Downloads and warms up the Kokoro runtime ahead of time (the Settings
  * button). Resolves when the model is ready; rejects only so the caller can
  * show an error — `speak()` itself never surfaces this.
  */
 export async function preloadKokoro(onProgress?: (progress: TtsProgress) => void): Promise<void> {
-	const unsubscribe = onProgress ? onKokoroProgress(onProgress) : undefined;
+	const unsubscribe = onProgress ? onSherpaProgress(onProgress) : undefined;
 	try {
-		await loadKokoro();
+		await initSherpa();
 	} finally {
 		unsubscribe?.();
 	}
@@ -152,13 +158,13 @@ export async function speak(text: string, language: string): Promise<void> {
 	stopSpeaking();
 
 	if (engine === 'kokoro') {
-		const voice = kokoroVoiceFor(language);
-		if (voice) {
+		const speaker = kokoroSpeakerFor(language);
+		if (speaker) {
 			try {
-				const key = audioCacheKey(phrase, voice);
+				const key = audioCacheKey(phrase, speaker.name);
 				let blob = audioCache.get(key);
 				if (!blob) {
-					blob = await synthesize(phrase, voice);
+					blob = await synthesize(phrase, speaker.id);
 					audioCache.set(key, blob);
 				}
 				await playBlob(blob);

@@ -1,10 +1,11 @@
 /**
- * The Web Speech API backend — the fallback, and the *only* engine for
- * non-English target languages (see the note in `languages.ts`).
+ * The Web Speech API backend — the fallback, and the *only* engine for every
+ * language Kokoro does not cover (see the note in `languages.ts`: that is
+ * everything except Mandarin and English).
  *
  * Quality depends entirely on the voices the learner's OS ships, which is
- * exactly why it beats Kokoro here: a Dutch machine has a real Dutch voice,
- * whereas Kokoro would read Dutch with American English phonemes.
+ * exactly why it beats Kokoro there: a Dutch machine has a real Dutch voice,
+ * whereas Kokoro would read Dutch through an English phonemizer.
  */
 
 /** Whether this browser can speak at all. */

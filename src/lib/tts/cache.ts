@@ -1,9 +1,9 @@
 /**
  * A tiny LRU used to keep synthesized clips around for the length of a
- * session. Kokoro takes a second or two per phrase on WASM, and a learner
+ * session. Kokoro takes a second or two per phrase on the CPU, and a learner
  * replays the same word several times, so re-synthesizing is the one cost
- * worth avoiding. Deliberately in-memory only: the model files are already
- * cached by the browser, and cached *audio* is cheap to rebuild.
+ * worth avoiding. Deliberately in-memory only: the model files are already in
+ * Cache Storage, and cached *audio* is cheap to rebuild.
  */
 
 /** Insertion-ordered map with a hard cap; reading refreshes recency. */

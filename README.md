@@ -32,8 +32,9 @@ to [OpenRouter](https://openrouter.ai) with your own API key.
   never see the field at all. Turn it off in Settings if you don't want it.
 - **Hear it.** Speaker buttons sit next to every bit of target-language text —
   prompts, cloze sentences, the correct answer on the feedback banner, and every
-  word in the dashboard and end-of-session lists. See [Speech](#speech) for the
-  two engines and the trade-off between them.
+  word in the dashboard and end-of-session lists. Mandarin and English get a
+  real neural voice (Kokoro v1.1-zh, in your browser); everything else uses your
+  system voices. See [Speech](#speech).
 - **Forgiving grading.** A missing accent or a one-character typo is graded
   "almost", counted as correct, and shown the right form. Grading is local,
   instant and free.
@@ -106,10 +107,11 @@ src/lib/llm/          OpenRouter client, batch generation, escalation, and the
                       offline mock. Touches no database.
 src/lib/session/      Session rules: refill planning, XP/combo, applying an
                       answer. The bridge between the four modules above.
-src/lib/tts/          Text to speech: Kokoro-82M in the browser (lazily
-                      imported, never in the entry chunk) with the Web Speech
-                      API as fallback. Language→voice mapping and the audio
-                      cache are pure and unit-tested.
+src/lib/tts/          Text to speech: Kokoro v1.1-zh running in a Web Worker on
+                      the sherpa-onnx WASM runtime, with the Web Speech API as
+                      fallback. Language→voice mapping, the audio cache, the
+                      WAV encoder and the artifact URLs are pure and
+                      unit-tested; the worker is the only impure part.
 src/lib/ui/           Shared presentational bits (spinner, progress bar,
                       speaker button) plus lightweight display preferences in
                       localStorage (romanization toggle, recent session
@@ -168,59 +170,77 @@ chosen in **Settings → Speech**:
 
 | Engine | What it is | When it's used |
 | --- | --- | --- |
-| **Kokoro** (default) | [Kokoro-82M](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX) running locally in your browser via [`kokoro-js`](https://www.npmjs.com/package/kokoro-js) | English only — see below |
-| **Browser built-in** | The Web Speech API and whatever voices your OS has | Everything else, always |
+| **Kokoro (neural)** (default) | [Kokoro v1.1-zh](https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh) running locally in a Web Worker on the [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) WebAssembly runtime | Mandarin and English |
+| **Browser built-in** | The Web Speech API and whatever voices your OS has | Every other language, always |
 | **Off** | Silence | Buttons render disabled |
 
 Nothing about speech can break a lesson: every failure — no voice, blocked
-autoplay, a model that won't download — degrades to a `console.warn` and a
-silent no-op.
+autoplay, a model that won't download, a worker that dies — degrades to a
+`console.warn` and a silent no-op, or falls back to the browser voice.
 
-### Kokoro is English-only here
+### What it actually covers
 
-`kokoro-js` ships voice tensors for nine languages, but the packaged library
-registers **only its 28 English voices**, rejects any other voice id outright,
-and hard-codes its phonemizer to `en-us`/`en-gb`. Feeding it Spanish or Chinese
-would read that text with English phonemes and produce confident nonsense, so
-the app doesn't: any non-English target language silently uses the Web Speech
-API instead, which at least uses a voice actually trained for the language.
-Settings says so explicitly when your target language isn't covered.
+Kokoro v1.1-zh is a Mandarin + English model: 100 Mandarin speakers and three
+English ones. sherpa-onnx supplies the Chinese frontend the model needs — a
+lexicon plus a phrase matcher for word segmentation — alongside espeak-ng for
+English, so **sentences that mix the two are handled in one pass** ("我买了 3 个
+apple" comes out right).
 
-This applies to **Mandarin in particular**. Kokoro v1.1-zh exists and is good,
-but its tokenizer expects Bopomofo (ㄅㄆㄇㄈ) plus tone digits from a Chinese
-G2P frontend that `kokoro-js` does not have — and `kokoro-js` fetches its voice
-files from the v1.0 repository regardless of which model id you pass. Supporting
-it would mean bypassing `kokoro-js` entirely.
+Everything else routes to the Web Speech API, which at least uses a voice
+trained for the language. Cantonese and Traditional Chinese are deliberately
+*not* claimed: the model is Mandarin in Simplified script.
 
-### Model download and caching
+**Voices.** Settings offers three of the hundred Mandarin speakers (`zf_001`
+female by default, plus `zf_018` and `zm_010`) under `ll.ttsVoice`. English
+always uses `af_maple`, or `bf_vale` when your target language is British
+English. The choice only applies to Mandarin — an English phrase read by a
+Chinese speaker id would be exactly the wrong thing for a pronunciation aid.
 
-The first time Kokoro is used it downloads the model from Hugging Face:
-**~90 MB** on the CPU path (`q8`), **~330 MB** on the WebGPU path (`fp32`).
-Transformers.js caches every file in the browser's Cache Storage
-(`transformers-cache`), so this happens once per browser profile and the app
-then works offline. There is a **Preload voice model now** button in Settings
-with a progress bar, so the download doesn't happen mid-lesson. Generated audio
-is additionally kept in a small in-memory LRU for the session, so replaying a
-word is instant.
+### What downloads, from where
 
-Note that `pnpm build` emits onnxruntime-web's ~21 MB `.wasm` alongside the app.
-It is only fetched when Kokoro actually runs, but the deployed directory is
-large because of it.
+Two files, fetched on first use and stored in Cache Storage under
+`ll-tts-models`:
 
-### WebGPU, and the garbled-audio escape hatch
+| File | Size |
+| --- | --- |
+| `sherpa-onnx-wasm-main-tts.wasm` | 11.9 MB |
+| `sherpa-onnx-wasm-main-tts.data` (the whole model) | 426.7 MB |
 
-Kokoro runs on WebGPU when the browser exposes `navigator.gpu`, and on CPU
-(WASM) otherwise. Settings shows which one you'll get. **WebGPU always uses
-fp32** — fp16 is a known source of garbled Kokoro output on some GPU/driver
-combinations.
+**≈439 MB, once per browser profile**, after which the app works offline. There
+is a **Preload voice model now** button in Settings with a byte-accurate
+progress bar so the download does not happen mid-lesson. Generated audio is
+additionally kept in a small in-memory LRU for the session, so replaying a word
+is instant.
 
-Even so, some browsers' WebGPU implementations produce garbled audio. If that
-happens, set **Kokoro runs on → CPU (WASM)** in Settings; it is slower but
-correct. The loaded model is thrown away and rebuilt on the next tap.
+The files come from a prebuilt sherpa-onnx WASM pack on the Hugging Face Hub
+([`jiangzhuo9357/sherpa-onnx-tts-models`](https://huggingface.co/datasets/jiangzhuo9357/sherpa-onnx-tts-models),
+directory `wasm-kokoro-fp32`), pinned to one immutable commit — the `.data` file
+is an Emscripten file-package whose byte offsets are baked into the loader JS
+vendored in `static/tts/`, so the two must never drift apart. Each download is
+size-checked against the exact expected byte count before it is used, and a
+cached copy that fails the check is deleted rather than trusted.
 
-Firefox on Linux does not enable WebGPU by default. If you want to try it,
-set `dom.webgpu.enabled` to `true` in `about:config` — but this is exactly the
-combination most likely to need the CPU fallback above.
+### Why 439 MB and not 227 MB
+
+There is a half-size int8 build of the same model. **It does not work**: every
+published int8 Kokoro WASM pack returns all-`NaN` samples from ONNX inference,
+which reaches your ears as silence. That is
+[sherpa-onnx#2236](https://github.com/k2-fsa/sherpa-onnx/issues/2236), it is not
+fixed by building from source, and it was reproduced here in Firefox before
+switching to the full-precision pack. So the app pays for fp32 and gets sound.
+
+### CPU only, and no special hosting
+
+sherpa-onnx's WASM build is single-threaded SIMD on the CPU. There is no WebGPU
+path, and none is needed for single words and short sentences — expect roughly
+a second or two per phrase on a laptop, off the main thread so the UI never
+stalls. Because the build uses no threads it needs no `SharedArrayBuffer` and
+therefore **no COOP/COEP headers**: the production build still deploys to any
+dumb static host.
+
+There is no longer a "runs on" setting (the old `ll.ttsDevice` preference is
+left readable but unused), and the old Firefox/WebGPU garbled-audio caveat is
+gone with it.
 
 ## Deploying
 
@@ -237,3 +257,9 @@ the usual SPA rewrite: serve `index.html` for unknown paths so client-side
 routes resolve. There is nothing to configure server-side, no environment
 variables and no secrets in the bundle — the API key is supplied by each user in
 their own browser.
+
+The build itself is small (well under a megabyte, plus ~140 KB of vendored
+speech-runtime JS in `static/tts/`). The speech model is *not* part of it: it is
+fetched from the Hugging Face Hub at runtime, so your host never serves those
+439 MB. No cross-origin-isolation headers are required either — see
+[Speech](#speech).

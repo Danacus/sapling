@@ -3,10 +3,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
 	DEFAULT_TTS_DEVICE,
 	DEFAULT_TTS_ENGINE,
+	DEFAULT_TTS_VOICE,
 	getTtsDevice,
 	getTtsEngine,
+	getTtsVoice,
 	setTtsDevice,
-	setTtsEngine
+	setTtsEngine,
+	setTtsVoice
 } from './prefs';
 
 /** Minimal in-memory `localStorage`; these tests run in the node environment. */
@@ -65,7 +68,40 @@ describe('tts engine preference', () => {
 	});
 });
 
-describe('tts device preference', () => {
+describe('tts voice preference', () => {
+	it('defaults to auto, meaning "let the language mapping choose"', () => {
+		expect(getTtsVoice()).toBe('auto');
+		expect(DEFAULT_TTS_VOICE).toBe('auto');
+	});
+
+	it('round-trips every curated Mandarin voice', () => {
+		for (const voice of ['zf_001', 'zf_018', 'zm_010', 'auto'] as const) {
+			setTtsVoice(voice);
+			expect(getTtsVoice()).toBe(voice);
+		}
+	});
+
+	it('reads a corrupted or retired voice as the default', () => {
+		localStorage.setItem('ll.ttsVoice', 'af_heart');
+		expect(getTtsVoice()).toBe(DEFAULT_TTS_VOICE);
+	});
+
+	it('refuses to store an unknown voice', () => {
+		setTtsVoice('zm_010');
+		setTtsVoice('zz_999' as never);
+		expect(getTtsVoice()).toBe('zm_010');
+	});
+
+	it('falls back to the default with no storage at all', () => {
+		delete globals.localStorage;
+		expect(getTtsVoice()).toBe(DEFAULT_TTS_VOICE);
+		expect(() => setTtsVoice('zf_018')).not.toThrow();
+	});
+});
+
+// Vestigial since the move to sherpa-onnx (WASM is CPU-only); kept readable so
+// an existing stored value stays inert rather than being reinterpreted.
+describe('tts device preference (legacy)', () => {
 	it('defaults to auto', () => {
 		expect(getTtsDevice()).toBe('auto');
 		expect(DEFAULT_TTS_DEVICE).toBe('auto');
