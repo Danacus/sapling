@@ -25,6 +25,7 @@
 	--accent-soft: #e2f4fe;
 	--warn: #ffc800;
 	--danger: #ff4b4b;
+	--amber: #f5a623;
 
 	/* Shape & motion -------------------------------------------------------- */
 	--radius-sm: 8px;
@@ -57,6 +58,7 @@
 		--accent-soft: #14293a;
 		--warn: #ffd24a;
 		--danger: #ff6b6b;
+		--amber: #f7b84b;
 
 		--shadow: 0 12px 34px rgb(0 0 0 / 45%);
 
