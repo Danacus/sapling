@@ -11,6 +11,7 @@ import Dexie from 'dexie';
 import type { Challenge, ChallengeResult, KnowledgeItem, Profile, Stats } from '$lib/types';
 import { db, SINGLETON_KEY } from './database';
 import type { ChallengeRow } from './database';
+import { toPlain } from './plain';
 
 /* -------------------------------------------------------------------------- */
 /* Profile                                                                     */
@@ -26,7 +27,8 @@ export async function getProfile(): Promise<Profile | undefined> {
 
 /** Creates or replaces the profile. */
 export async function saveProfile(profile: Profile): Promise<void> {
-	await db.profile.put({ ...profile, id: SINGLETON_KEY });
+	const plain = toPlain(profile);
+	await db.profile.put({ ...plain, id: SINGLETON_KEY });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -45,7 +47,7 @@ export async function getItem(id: string): Promise<KnowledgeItem | undefined> {
 /** Inserts or replaces items by `id`. */
 export async function upsertItems(items: KnowledgeItem[]): Promise<void> {
 	if (items.length === 0) return;
-	await db.items.bulkPut(items);
+	await db.items.bulkPut(toPlain(items));
 }
 
 /**
@@ -58,13 +60,15 @@ export async function updateItemAfterReview(
 	fsrsCard: unknown,
 	historyEntry: { at: number; grade: number }
 ): Promise<boolean> {
+	const plainCard = toPlain(fsrsCard);
+	const plainEntry = toPlain(historyEntry);
 	return db.transaction('rw', db.items, async () => {
 		const item = await db.items.get(id);
 		if (!item) return false;
 		await db.items.put({
 			...item,
-			fsrsCard,
-			history: [...item.history, historyEntry]
+			fsrsCard: plainCard,
+			history: [...item.history, plainEntry]
 		});
 		return true;
 	});
@@ -83,7 +87,7 @@ export async function updateItemAfterReview(
 export async function enqueueChallenges(challenges: Challenge[]): Promise<void> {
 	if (challenges.length === 0) return;
 	const now = Date.now();
-	const rows: ChallengeRow[] = challenges.map((challenge, index) => ({
+	const rows: ChallengeRow[] = toPlain(challenges).map((challenge, index) => ({
 		...challenge,
 		status: 'queued',
 		enqueuedAt: now + index
@@ -123,7 +127,7 @@ export async function clearQueue(): Promise<void> {
 /* -------------------------------------------------------------------------- */
 
 export async function addResult(result: ChallengeResult): Promise<void> {
-	await db.results.add({ ...result });
+	await db.results.add(toPlain(result));
 }
 
 /** The most recent results, newest first. */
@@ -265,7 +269,7 @@ export async function importData(json: string): Promise<void> {
 	}
 	if (!isRecord(parsed.stats)) throw new Error('Import failed: malformed stats.');
 
-	const envelope = parsed as unknown as ExportEnvelope;
+	const envelope = toPlain(parsed as unknown as ExportEnvelope);
 
 	await db.transaction('rw', db.profile, db.items, db.stats, async () => {
 		await db.items.clear();
