@@ -6,6 +6,7 @@
 	import type { KnowledgeItem, Profile, Stats } from '$lib/types';
 	import ProgressBar from '$lib/ui/ProgressBar.svelte';
 	import { getShowRomanization } from '$lib/ui/prefs';
+	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	const WEAK_PREVIEW_COUNT = 10;
@@ -56,6 +57,8 @@
 	}
 
 	const targetLanguage = $derived(profile?.targetLanguage?.trim() || 'your new language');
+	/** The real language name — `targetLanguage` above carries a display fallback. */
+	const speechLanguage = $derived(profile?.targetLanguage?.trim() ?? '');
 	const streakDays = $derived(stats?.streakDays ?? 0);
 
 	const dailyGoalXp = $derived(profile?.dailyGoalXp ?? 0);
@@ -167,7 +170,10 @@
 					{#each visibleWeakest as entry (entry.item.id)}
 						<li class="word-row">
 							<div class="word-text">
-								<span class="term">{entry.item.term}</span>
+								<span class="term-row">
+									<span class="term">{entry.item.term}</span>
+									<SpeakButton text={entry.item.term} lang={speechLanguage} size="sm" />
+								</span>
 								{#if showRomanization && entry.item.romanization}
 									<span class="rom">{entry.item.romanization}</span>
 								{/if}
@@ -335,6 +341,13 @@
 	.word-text {
 		display: flex;
 		flex-direction: column;
+		min-width: 0;
+	}
+
+	.term-row {
+		display: flex;
+		align-items: center;
+		gap: 0.15rem;
 		min-width: 0;
 	}
 

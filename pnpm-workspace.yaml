@@ -1,0 +1,11 @@
+# pnpm settings (created by pnpm when kokoro-js was added).
+#
+# kokoro-js pulls in @huggingface/transformers, which lists native, node-only
+# optional tooling: onnxruntime-node (a native ORT binary), sharp (image
+# codecs) and protobufjs. This app is a browser-only SPA — Vite resolves
+# transformers.js to its web build and none of these are ever loaded — so
+# their install scripts are deliberately not run.
+allowBuilds:
+  onnxruntime-node: false
+  protobufjs: false
+  sharp: false

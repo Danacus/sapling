@@ -30,6 +30,10 @@ to [OpenRouter](https://openrouter.ai) with your own API key.
   reading under every target-script string — prompts, options, sentences and
   match-pairs tiles alike — with nothing to configure. Latin-script languages
   never see the field at all. Turn it off in Settings if you don't want it.
+- **Hear it.** Speaker buttons sit next to every bit of target-language text —
+  prompts, cloze sentences, the correct answer on the feedback banner, and every
+  word in the dashboard and end-of-session lists. See [Speech](#speech) for the
+  two engines and the trade-off between them.
 - **Forgiving grading.** A missing accent or a one-character typo is graded
   "almost", counted as correct, and shown the right form. Grading is local,
   instant and free.
@@ -102,9 +106,14 @@ src/lib/llm/          OpenRouter client, batch generation, escalation, and the
                       offline mock. Touches no database.
 src/lib/session/      Session rules: refill planning, XP/combo, applying an
                       answer. The bridge between the four modules above.
-src/lib/ui/           Shared presentational bits (spinner, progress bar) plus
-                      lightweight display preferences in localStorage
-                      (romanization toggle, recent session topics).
+src/lib/tts/          Text to speech: Kokoro-82M in the browser (lazily
+                      imported, never in the entry chunk) with the Web Speech
+                      API as fallback. Language→voice mapping and the audio
+                      cache are pure and unit-tested.
+src/lib/ui/           Shared presentational bits (spinner, progress bar,
+                      speaker button) plus lightweight display preferences in
+                      localStorage (romanization toggle, recent session
+                      topics).
 src/routes/           Dashboard, onboarding, settings, and the session screen
                       (`/learn`) with its four challenge components.
 ```
@@ -151,6 +160,67 @@ From a combo of 3 consecutive non-wrong answers, each answer earns a bonus of
 `2 × (combo − 2)`, capped at +10 — so combo 3 pays +2, combo 7 and beyond pay
 +10. A wrong answer scores nothing and resets the combo. Match-pairs rounds pay
 a flat 5 XP and leave the combo untouched.
+
+## Speech
+
+Tap the 🔊 next to any target-language string and it is read aloud. Two engines,
+chosen in **Settings → Speech**:
+
+| Engine | What it is | When it's used |
+| --- | --- | --- |
+| **Kokoro** (default) | [Kokoro-82M](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX) running locally in your browser via [`kokoro-js`](https://www.npmjs.com/package/kokoro-js) | English only — see below |
+| **Browser built-in** | The Web Speech API and whatever voices your OS has | Everything else, always |
+| **Off** | Silence | Buttons render disabled |
+
+Nothing about speech can break a lesson: every failure — no voice, blocked
+autoplay, a model that won't download — degrades to a `console.warn` and a
+silent no-op.
+
+### Kokoro is English-only here
+
+`kokoro-js` ships voice tensors for nine languages, but the packaged library
+registers **only its 28 English voices**, rejects any other voice id outright,
+and hard-codes its phonemizer to `en-us`/`en-gb`. Feeding it Spanish or Chinese
+would read that text with English phonemes and produce confident nonsense, so
+the app doesn't: any non-English target language silently uses the Web Speech
+API instead, which at least uses a voice actually trained for the language.
+Settings says so explicitly when your target language isn't covered.
+
+This applies to **Mandarin in particular**. Kokoro v1.1-zh exists and is good,
+but its tokenizer expects Bopomofo (ㄅㄆㄇㄈ) plus tone digits from a Chinese
+G2P frontend that `kokoro-js` does not have — and `kokoro-js` fetches its voice
+files from the v1.0 repository regardless of which model id you pass. Supporting
+it would mean bypassing `kokoro-js` entirely.
+
+### Model download and caching
+
+The first time Kokoro is used it downloads the model from Hugging Face:
+**~90 MB** on the CPU path (`q8`), **~330 MB** on the WebGPU path (`fp32`).
+Transformers.js caches every file in the browser's Cache Storage
+(`transformers-cache`), so this happens once per browser profile and the app
+then works offline. There is a **Preload voice model now** button in Settings
+with a progress bar, so the download doesn't happen mid-lesson. Generated audio
+is additionally kept in a small in-memory LRU for the session, so replaying a
+word is instant.
+
+Note that `pnpm build` emits onnxruntime-web's ~21 MB `.wasm` alongside the app.
+It is only fetched when Kokoro actually runs, but the deployed directory is
+large because of it.
+
+### WebGPU, and the garbled-audio escape hatch
+
+Kokoro runs on WebGPU when the browser exposes `navigator.gpu`, and on CPU
+(WASM) otherwise. Settings shows which one you'll get. **WebGPU always uses
+fp32** — fp16 is a known source of garbled Kokoro output on some GPU/driver
+combinations.
+
+Even so, some browsers' WebGPU implementations produce garbled audio. If that
+happens, set **Kokoro runs on → CPU (WASM)** in Settings; it is slower but
+correct. The loaded model is thrown away and rebuilt on the next tap.
+
+Firefox on Linux does not enable WebGPU by default. If you want to try it,
+set `dom.webgpu.enabled` to `true` in `about:config` — but this is exactly the
+combination most likely to need the CPU fallback above.
 
 ## Deploying
 

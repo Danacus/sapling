@@ -10,6 +10,7 @@
 	import type { AnswerEvent } from '$lib/session/engine';
 	import type { TypedTranslationChallenge } from '$lib/types';
 	import { getShowRomanization } from '$lib/ui/prefs';
+	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import { validateAnswer } from '$lib/validate';
 
 	/** Read once — the toggle lives in Settings, not mid-session. */
@@ -48,6 +49,12 @@
 
 	const into = $derived(challenge.direction === 'toTarget' ? targetLanguage : nativeLanguage);
 	const asked = $derived(into ? `Write this in ${into}` : 'Write the translation');
+	/**
+	 * Only worth hearing when the prompt itself is the target language. Going
+	 * the other way, the answer is what's worth hearing — the feedback banner
+	 * speaks it once the learner has committed.
+	 */
+	const promptIsTarget = $derived(challenge.direction === 'toNative');
 	const ready = $derived(typed.trim().length > 0 && !locked);
 
 	function submit(): void {
@@ -74,7 +81,12 @@
 
 <div class="typed">
 	<p class="asked">{asked}</p>
-	<p class="prompt">{challenge.prompt}</p>
+	<p class="prompt">
+		<span>{challenge.prompt}</span>
+		{#if promptIsTarget}
+			<SpeakButton text={challenge.prompt} lang={targetLanguage} />
+		{/if}
+	</p>
 	{#if showRomanization && challenge.promptRomanization}
 		<p class="rom prompt-rom">{challenge.promptRomanization}</p>
 	{/if}
@@ -114,12 +126,19 @@
 	}
 
 	.prompt {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
 		margin: 0 0 1.5rem;
 		font-size: 1.9rem;
 		font-weight: 800;
 		line-height: 1.2;
 		letter-spacing: -0.015em;
 		overflow-wrap: anywhere;
+	}
+
+	.prompt > span {
+		min-width: 0;
 	}
 
 	/* When romanization follows the prompt, it owns the trailing space instead. */

@@ -57,6 +57,7 @@
 		getShowRomanization,
 		setCurrentTopic
 	} from '$lib/ui/prefs';
+	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	import Cloze from './Cloze.svelte';
@@ -757,7 +758,10 @@
 								{#each learnedWords as word (word.id)}
 									<li>
 										<div class="word-text">
-											<span class="term">{word.term}</span>
+											<span class="term-row">
+												<span class="term">{word.term}</span>
+												<SpeakButton text={word.term} lang={targetLanguage} size="sm" />
+											</span>
 											{#if showRomanization && word.romanization}
 												<span class="rom">{word.romanization}</span>
 											{/if}
@@ -821,9 +825,9 @@
 						out:fly={{ x: -40, duration: motionMs(160) }}
 					>
 						{#if current.type === 'multiple-choice'}
-							<MultipleChoice challenge={current} onanswer={handleAnswer} />
+							<MultipleChoice challenge={current} onanswer={handleAnswer} {targetLanguage} />
 						{:else if current.type === 'cloze'}
-							<Cloze challenge={current} onanswer={handleAnswer} />
+							<Cloze challenge={current} onanswer={handleAnswer} {targetLanguage} />
 						{:else if current.type === 'typed-translation'}
 							<TypedTranslation
 								challenge={current}
@@ -1381,6 +1385,13 @@
 	.new-words .word-text {
 		display: flex;
 		flex-direction: column;
+		min-width: 0;
+	}
+
+	.new-words .term-row {
+		display: flex;
+		align-items: center;
+		gap: 0.15rem;
 		min-width: 0;
 	}
 

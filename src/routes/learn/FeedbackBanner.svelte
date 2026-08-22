@@ -17,6 +17,7 @@
 	import { getEscalation, LlmError } from '$lib/llm';
 	import { motionMs } from '$lib/session/motion';
 	import type { Challenge, Verdict } from '$lib/types';
+	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	let {
@@ -103,6 +104,25 @@
 		return '';
 	});
 
+	/**
+	 * The canonical answer, but only when it is in the target language —
+	 * hearing your own native language read back teaches nothing.
+	 *
+	 * Cloze answers are always target-language; the other two types depend on
+	 * the direction. Match rounds have no single answer, so they get nothing.
+	 * `closestAccepted` wins when present because that is the form the learner
+	 * was nearly right about.
+	 */
+	const answerIsTargetLanguage = $derived(
+		challenge.type === 'cloze' ||
+			((challenge.type === 'multiple-choice' || challenge.type === 'typed-translation') &&
+				challenge.direction === 'toTarget')
+	);
+
+	const spokenAnswer = $derived(
+		answerIsTargetLanguage ? (closestAccepted?.trim() || correctAnswer.trim()) : ''
+	);
+
 	async function ask(): Promise<void> {
 		if (asking) return;
 		asking = true;
@@ -181,6 +201,9 @@
 				<div class="text">
 					<p class="headline">{headline}</p>
 					{#if detail}<p class="detail">{detail}</p>{/if}
+					{#if spokenAnswer}
+						<SpeakButton text={spokenAnswer} lang={targetLanguage} label="Hear it" size="sm" />
+					{/if}
 				</div>
 			</div>
 			{#if xp > 0}
@@ -313,6 +336,11 @@
 		margin: 0.15rem 0 0;
 		font-weight: 700;
 		overflow-wrap: anywhere;
+	}
+
+	.text :global(.speak) {
+		margin: 0.2rem 0 0 -0.55rem;
+		color: var(--tone-strong);
 	}
 
 	.xp {

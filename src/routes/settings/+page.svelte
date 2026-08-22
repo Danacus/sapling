@@ -14,9 +14,21 @@
 		setApiKey,
 		setModel
 	} from '$lib/db';
+	import {
+		getTtsDevice,
+		getTtsEngine,
+		kokoroSupports,
+		preloadKokoro,
+		setTtsDevice,
+		setTtsEngine,
+		webgpuAvailable,
+		type TtsDevice,
+		type TtsEngine
+	} from '$lib/tts';
 	import type { Profile } from '$lib/types';
 	import InlineStatus from '$lib/ui/InlineStatus.svelte';
 	import { getShowRomanization, setShowRomanization } from '$lib/ui/prefs';
+	import ProgressBar from '$lib/ui/ProgressBar.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	type Status = 'idle' | 'saved' | 'error';
@@ -42,6 +54,18 @@
 
 	// Display -----------------------------------------------------------------------
 	let showRomanization = $state(true);
+
+	// Speech ----------------------------------------------------------------------
+	let ttsEngine = $state<TtsEngine>('kokoro');
+	let ttsDevice = $state<TtsDevice>('auto');
+	let hasWebgpu = $state(false);
+	let preloading = $state(false);
+	/** 0-100 across the model files, or `null` while the size is still unknown. */
+	let preloadPercent = $state<number | null>(null);
+	let preloadStatus = $state<Status>('idle');
+	let preloadMessage = $state('');
+	/** Bytes seen per file, so the percentage is over the whole download. */
+	let preloadBytes = new Map<string, { loaded: number; total: number }>();
 
 	// LLM: API key ----------------------------------------------------------------
 	let apiKeySet = $state(false);
@@ -89,6 +113,10 @@
 				modelInput = getModel();
 				showRomanization = getShowRomanization();
 
+				ttsEngine = getTtsEngine();
+				ttsDevice = getTtsDevice();
+				hasWebgpu = webgpuAvailable();
+
 				usagePromptTokens = readUsage('ll.usage.promptTokens');
 				usageCompletionTokens = readUsage('ll.usage.completionTokens');
 				usageRequests = readUsage('ll.usage.requests');
@@ -105,6 +133,14 @@
 			cancelled = true;
 		};
 	});
+
+	/**
+	 * Whether Kokoro can actually pronounce what this learner is studying.
+	 * `kokoro-js` only phonemizes English, so everyone else silently gets the
+	 * browser's own voice — worth saying out loud rather than leaving them to
+	 * wonder why the 90 MB download changed nothing.
+	 */
+	const kokoroCoversTarget = $derived(kokoroSupports(profile?.targetLanguage));
 
 	function readUsage(key: string): number {
 		try {
@@ -169,6 +205,58 @@
 	function toggleRomanization() {
 		showRomanization = !showRomanization;
 		setShowRomanization(showRomanization);
+	}
+
+	function chooseEngine(engine: TtsEngine) {
+		ttsEngine = engine;
+		setTtsEngine(engine);
+	}
+
+	/**
+	 * Switching device throws the loaded model away (an ONNX session cannot be
+	 * re-targeted), so any previously shown progress is stale too.
+	 */
+	function chooseDevice(device: TtsDevice) {
+		ttsDevice = device;
+		setTtsDevice(device);
+		preloadPercent = null;
+		preloadStatus = 'idle';
+	}
+
+	/**
+	 * Downloads and warms up the Kokoro model on demand, so the first word of
+	 * the first lesson is not the thing that waits on ~90 MB.
+	 */
+	async function preloadVoiceModel() {
+		if (preloading) return;
+		preloading = true;
+		preloadStatus = 'idle';
+		preloadMessage = '';
+		preloadPercent = null;
+		preloadBytes = new Map();
+
+		try {
+			await preloadKokoro((progress) => {
+				preloadBytes.set(progress.file, { loaded: progress.loaded, total: progress.total });
+				let loaded = 0;
+				let total = 0;
+				for (const entry of preloadBytes.values()) {
+					loaded += entry.loaded;
+					total += entry.total;
+				}
+				preloadPercent = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : null;
+			});
+			preloadPercent = 100;
+			preloadMessage = 'Voice model ready';
+			flash((value) => (preloadStatus = value), 3000);
+		} catch (cause) {
+			preloadPercent = null;
+			preloadMessage =
+				cause instanceof Error ? cause.message : 'Could not download the voice model.';
+			preloadStatus = 'error';
+		} finally {
+			preloading = false;
+		}
 	}
 
 	function saveModelChoice() {
@@ -366,6 +454,85 @@
 					<span class="switch-thumb"></span>
 				</button>
 			</div>
+		</section>
+
+		<section class="card">
+			<h2>Speech</h2>
+
+			<div class="field">
+				<span class="label" id="tts-engine-label">Voice engine</span>
+				<select
+					class="input"
+					aria-labelledby="tts-engine-label"
+					value={ttsEngine}
+					onchange={(event) => chooseEngine(event.currentTarget.value as TtsEngine)}
+				>
+					<option value="kokoro">Kokoro — downloads a ~90 MB model once, then offline</option>
+					<option value="webspeech">Browser built-in — instant, uses your system voices</option>
+					<option value="off">Off — no audio anywhere</option>
+				</select>
+				{#if ttsEngine === 'kokoro' && profile && !kokoroCoversTarget}
+					<p class="hint">
+						Heads up: the packaged Kokoro model only speaks English, so {profile.targetLanguage} will
+						use your browser's built-in voice regardless.
+					</p>
+				{:else if ttsEngine === 'kokoro'}
+					<p class="hint">
+						The model is cached by your browser after the first download and then runs entirely
+						offline.
+					</p>
+				{/if}
+			</div>
+
+			{#if ttsEngine === 'kokoro'}
+				<div class="field">
+					<span class="label" id="tts-device-label">Kokoro runs on</span>
+					<select
+						class="input"
+						aria-labelledby="tts-device-label"
+						value={ttsDevice}
+						onchange={(event) => chooseDevice(event.currentTarget.value as TtsDevice)}
+					>
+						<option value="auto">Auto (WebGPU if available)</option>
+						<option value="wasm">CPU (WASM)</option>
+					</select>
+					<p class="hint">
+						If audio sounds garbled, switch to CPU — some browsers' WebGPU is still buggy (Firefox
+						on Linux especially).
+					</p>
+					<p class="hint">
+						{hasWebgpu ? 'WebGPU available' : 'Will run on CPU (WASM) — slower but works'}
+					</p>
+				</div>
+
+				<div class="actions-row">
+					<button
+						type="button"
+						class="btn btn-primary"
+						onclick={() => void preloadVoiceModel()}
+						disabled={preloading}
+					>
+						{preloading ? 'Downloading…' : 'Preload voice model now'}
+					</button>
+					<InlineStatus status={preloadStatus} message={preloadMessage} />
+				</div>
+
+				{#if preloading}
+					<div class="preload-progress">
+						{#if preloadPercent === null}
+							<Spinner />
+							<p class="hint">Starting the download…</p>
+						{:else}
+							<ProgressBar
+								value={preloadPercent / 100}
+								color="var(--accent)"
+								label="Voice model download progress"
+							/>
+							<p class="hint">{preloadPercent}% downloaded</p>
+						{/if}
+					</div>
+				{/if}
+			{/if}
 		</section>
 
 		<section class="card">
@@ -651,6 +818,10 @@
 
 	.switch.on .switch-thumb {
 		transform: translateX(1.25rem);
+	}
+
+	.preload-progress {
+		margin-top: 0.9rem;
 	}
 
 	.model-field {

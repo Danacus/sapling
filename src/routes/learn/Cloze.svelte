@@ -17,12 +17,18 @@
 	import type { AnswerEvent } from '$lib/session/engine';
 	import type { ClozeChallenge } from '$lib/types';
 	import { getShowRomanization } from '$lib/ui/prefs';
+	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import { validateAnswer } from '$lib/validate';
 
 	let {
 		challenge,
-		onanswer
-	}: { challenge: ClozeChallenge; onanswer: (event: AnswerEvent) => void } = $props();
+		onanswer,
+		targetLanguage = ''
+	}: {
+		challenge: ClozeChallenge;
+		onanswer: (event: AnswerEvent) => void;
+		targetLanguage?: string;
+	} = $props();
 
 	/** Read once — the toggle lives in Settings, not mid-session. */
 	const showRomanization = getShowRomanization();
@@ -65,6 +71,19 @@
 		usesBank ? (pickedIndex === null ? '' : bank[pickedIndex]) : typed.trim()
 	);
 	const ready = $derived(answer.length > 0 && !locked);
+
+	/**
+	 * What the speaker button says.
+	 *
+	 * Before answering it must not give the answer away, so the `___` becomes
+	 * an ellipsis — every TTS engine reads that as a short pause, which is
+	 * exactly the "…and then?" the learner needs. Once the challenge is locked
+	 * the sentence is spoken complete, using the first accepted answer as the
+	 * canonical form.
+	 */
+	const spokenSentence = $derived(
+		challenge.sentence.split(GAP).join(locked ? (challenge.acceptedAnswers[0] ?? '…') : '…')
+	);
 
 	function pick(index: number): void {
 		if (locked) return;
@@ -123,6 +142,7 @@
 			/>
 		{/if}
 		<span>{parts.after}</span>
+		<SpeakButton text={spokenSentence} lang={targetLanguage} />
 	</p>
 	{#if showRomanization && challenge.sentenceRomanization}
 		<p class="rom sentence-rom">{challenge.sentenceRomanization}</p>
@@ -176,6 +196,12 @@
 		letter-spacing: -0.01em;
 		overflow-wrap: anywhere;
 		white-space: pre-wrap;
+	}
+
+	/* The sentence line is baseline-aligned for the inline gap; the speaker
+	   button is an icon, so it centres on the line instead. */
+	.sentence :global(.speak) {
+		align-self: center;
 	}
 
 	.gap {

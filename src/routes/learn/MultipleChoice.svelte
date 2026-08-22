@@ -12,11 +12,17 @@
 	import type { AnswerEvent } from '$lib/session/engine';
 	import type { MultipleChoiceChallenge } from '$lib/types';
 	import { getShowRomanization } from '$lib/ui/prefs';
+	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 
 	let {
 		challenge,
-		onanswer
-	}: { challenge: MultipleChoiceChallenge; onanswer: (event: AnswerEvent) => void } = $props();
+		onanswer,
+		targetLanguage = ''
+	}: {
+		challenge: MultipleChoiceChallenge;
+		onanswer: (event: AnswerEvent) => void;
+		targetLanguage?: string;
+	} = $props();
 
 	/** Read once — the toggle lives in Settings, not mid-session. */
 	const showRomanization = getShowRomanization();
@@ -37,6 +43,14 @@
 		challenge.instruction ??
 			(challenge.direction === 'toTarget' ? 'Pick the translation' : 'What does this mean?')
 	);
+
+	/**
+	 * The prompt is in the target language when the learner is translating
+	 * *out* of it. Options are only worth a speaker button in the other
+	 * direction, and four of them would be noise — the feedback banner reads
+	 * the right answer aloud instead.
+	 */
+	const promptIsTarget = $derived(challenge.direction === 'toNative');
 
 	function select(index: number): void {
 		if (locked) return;
@@ -74,7 +88,12 @@
 
 <div class="mc">
 	<p class="asked">{askedIn}</p>
-	<p class="prompt">{challenge.prompt}</p>
+	<p class="prompt">
+		<span>{challenge.prompt}</span>
+		{#if promptIsTarget}
+			<SpeakButton text={challenge.prompt} lang={targetLanguage} />
+		{/if}
+	</p>
 	{#if showRomanization && challenge.promptRomanization}
 		<p class="rom">{challenge.promptRomanization}</p>
 	{/if}
@@ -127,12 +146,19 @@
 	}
 
 	.prompt {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
 		margin: 0 0 1.5rem;
 		font-size: 1.9rem;
 		font-weight: 800;
 		line-height: 1.15;
 		letter-spacing: -0.015em;
 		overflow-wrap: anywhere;
+	}
+
+	.prompt > span {
+		min-width: 0;
 	}
 
 	/* When romanization follows the prompt, it owns the trailing space instead. */
