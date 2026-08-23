@@ -488,14 +488,19 @@ describe('planRefill', () => {
 		expect(planRefill([], profile({ about: '  ' }), NOW).args.profile).not.toHaveProperty('about');
 	});
 
-	it('sends the whole vocabulary as knownTerms, due or not', () => {
+	it('sends the whole vocabulary as knownItems, due or not', () => {
 		// Only the due slice travels as reviewItems, so without this list the
 		// model re-proposes words the learner already has and the dedupe silently
-		// eats the batch's new-word slots.
+		// eats the batch's new-word slots. Ids ride along for the resolver's
+		// term index; buildBatchPrompt sends only the terms.
 		const items = [item('a', -1 * DAY), item('b', -5 * DAY), item('c', +2 * DAY)];
 		const plan = planRefill(items, profile(), NOW);
 
-		expect(plan.args.knownTerms).toEqual(['term-a', 'term-b', 'term-c']);
+		expect(plan.args.knownItems).toEqual([
+			{ id: 'a', term: 'term-a' },
+			{ id: 'b', term: 'term-b' },
+			{ id: 'c', term: 'term-c' }
+		]);
 	});
 
 	it('sends due items as {id, term, meaning}, most overdue first', () => {

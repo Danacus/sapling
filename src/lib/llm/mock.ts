@@ -26,7 +26,13 @@
 import { getApiKey } from '$lib/db/settings';
 import type { TokenUsage } from './client';
 import type { BatchArgs, BatchOptions, BatchResult, ReviewItemRef } from './generate';
-import { MAX_BATCH_CHALLENGES, defaultChallengeCount, parseBatch, resolveBatch } from './generate';
+import {
+	MAX_BATCH_CHALLENGES,
+	defaultChallengeCount,
+	knownTermIndex,
+	parseBatch,
+	resolveBatch
+} from './generate';
 import type { EscalationArgs, EscalationResult } from './escalation';
 
 /** localStorage flag that forces the mock even when a key is present. */
@@ -365,6 +371,9 @@ export function mockBatch(args: BatchArgs, opts: BatchOptions = {}): BatchResult
 		newId: opts.newId ?? mockIdFactory(),
 		now: opts.now ?? (() => 0),
 		knownItemIds: args.reviewItems.map((i) => i.id),
+		// The fixtures cite ids properly, but the mock walks the real resolve
+		// path — term citations included — so it gets the same index.
+		termToId: knownTermIndex(args),
 		rng: opts.rng ?? mockRng()
 	});
 	return { challenges: resolved.challenges, newItems: resolved.newItems, usage: NO_USAGE };

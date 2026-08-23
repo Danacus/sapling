@@ -120,14 +120,26 @@ export interface BatchArgs {
 	 */
 	topic?: string;
 	/**
-	 * Every term the learner already has, review-due or not. Two jobs: `newItems`
-	 * must not repeat any of them (the model only sees due items otherwise, so it
-	 * re-proposes common words and the dedupe silently eats the batch's new-word
-	 * slots), and sentences should prefer drawing on them, so new material is
-	 * mostly readable instead of full of untracked strangers. Terms only — a few
-	 * hundred words costs well under 1k tokens, paid only on explicit generation.
+	 * Every item the learner already has, review-due or not. Three jobs:
+	 * `newItems` must not repeat any of their terms (the model only sees due
+	 * items otherwise, so it re-proposes common words and the dedupe silently
+	 * eats the batch's new-word slots); sentences should prefer drawing on them,
+	 * so new material is mostly readable instead of full of untracked strangers;
+	 * and a challenge built on one of them may cite it in `itemIds` **by its
+	 * term** — the resolver maps terms back to ids locally.
+	 *
+	 * Only the terms travel in the prompt (a few hundred words costs well under
+	 * 1k tokens, paid only on explicit generation). The ids stay on this side:
+	 * the model never sees them, so it cannot be asked to echo them back — that
+	 * is exactly why term citations must be legal. See {@link knownTermIndex}.
 	 */
-	knownTerms?: string[];
+	knownItems?: KnownItemRef[];
+}
+
+/** One already-known word: the id the app uses, the term the model sees. */
+export interface KnownItemRef {
+	id: string;
+	term: string;
 }
 
 export interface BatchOptions {
@@ -205,7 +217,7 @@ const SYSTEM_PROMPT = [
 	'translate-to-target — type the target language. {promptNative, answers:[TargetText, 1 or more]} e.g. {"type":"translate-to-target","promptNative":"Excuse me, the bill please.","answers":[{"text":"服务员，买单","reading":"fúwùyuán, mǎidān"},{"text":"买单","reading":"mǎidān"}],"itemIds":["i4"],"explanation":null}',
 	'translate-to-native — type the native language. {prompt:TargetText, answersNative:[1 or more]} e.g. {"type":"translate-to-native","prompt":{"text":"la cuenta","reading":null},"answersNative":["the bill","the check"],"itemIds":["i5"],"explanation":null}',
 	'Rules:',
-	'- itemIds must reference the given item ids, or "new:<index>" for entries of newItems (0-based). Never invent an id.',
+	'- itemIds: the id of a reviewItem, "new:<index>" for an entry of newItems (0-based), or — for a challenge built on a word from known — that word exactly as it appears in known. Never invent anything else.',
 	'- Produce exactly one challenge object per requested slot; give the same review item different types.',
 	'- Mix recognition and production across the batch.',
 	'- Distractors must be plausible: same part of speech and register, never synonyms of the correct answer, never obviously absurd. Exactly one of the four may be correct given the prompt; if two would both answer it, rewrite the prompt.',
@@ -262,7 +274,8 @@ export function buildBatchPrompt(args: BatchArgs): ChatMessage[] {
 		challengeCount: Math.min(count, MAX_BATCH_CHALLENGES),
 		newItemSlots,
 		reviewItems: reviewItems.map((i) => ({ id: i.id, t: i.term, m: i.meaning })),
-		...(args.knownTerms?.length ? { known: args.knownTerms } : {})
+		// Terms only — the ids stay local (see `knownItems` and `knownTermIndex`).
+		...(args.knownItems?.length ? { known: args.knownItems.map((i) => i.term) } : {})
 	};
 	if (args.recentAccuracy !== undefined && Number.isFinite(args.recentAccuracy)) {
 		payload.recentAccuracy = Math.round(args.recentAccuracy * 100) / 100;
@@ -386,6 +399,25 @@ const CLOZE_GAP = '___';
 /** Case- and whitespace-insensitive key used to detect colliding labels. */
 function labelKey(value: string): string {
 	return value.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/** Key for matching a model-cited term against the known list; forgiving on case and stray spaces. */
+function termKey(value: string): string {
+	return value.trim().toLowerCase();
+}
+
+/**
+ * The term → id index {@link resolveBatch} uses to honour term citations in
+ * `itemIds`. Built from everything the model saw a term for: the known list
+ * (which travels without ids on purpose) and the review items (whose ids the
+ * model *was* given, but which it sometimes cites by term anyway — the intent
+ * is unambiguous, so honouring it beats dropping a paid-for challenge).
+ */
+export function knownTermIndex(args: BatchArgs): Map<string, string> {
+	const index = new Map<string, string>();
+	for (const item of args.reviewItems) index.set(termKey(item.term), item.id);
+	for (const item of args.knownItems ?? []) index.set(termKey(item.term), item.id);
+	return index;
 }
 
 /** Fisher-Yates over a copy; `rng` is injectable so shuffles can be replayed. */
@@ -539,6 +571,13 @@ export interface ResolveOptions {
 	now?: () => number;
 	/** Ids the model was allowed to reference. Omit to accept any non-`new:` id. */
 	knownItemIds?: Iterable<string>;
+	/**
+	 * Term → item id, for references the model makes *by term*. Known words
+	 * travel to the model as bare terms (their ids never leave this side to keep
+	 * the prompt cheap), so a challenge built on one can only cite the term —
+	 * see {@link knownTermIndex}, which builds this from the batch args.
+	 */
+	termToId?: ReadonlyMap<string, string>;
 	/** Injectable `[0,1)` source for the shuffles; defaults to `Math.random`. */
 	rng?: () => number;
 }
@@ -606,6 +645,13 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
 				if (!item) continue; // Dangling placeholder.
 				usedNewIndexes.add(index);
 				itemIds.push(item.id);
+				continue;
+			}
+			// A term citation: known words reach the model without ids, so "this
+			// challenge is about 护照" can only be said with the word itself.
+			const byTerm = options.termToId?.get(termKey(ref));
+			if (byTerm) {
+				itemIds.push(byTerm);
 				continue;
 			}
 			if (known && !known.has(ref)) continue; // Hallucinated id.
@@ -765,6 +811,7 @@ export async function generateBatch(args: BatchArgs, opts: BatchOptions = {}): P
 	// A two-challenge batch can never reach five; do not demand the impossible.
 	const minimum = Math.min(MIN_BATCH_CHALLENGES, Math.min(requested, MAX_BATCH_CHALLENGES));
 	const knownItemIds = args.reviewItems.map((i) => i.id);
+	const termToId = knownTermIndex(args);
 
 	const usage: TokenUsage = { promptTokens: 0, completionTokens: 0 };
 	let lastError: LlmError | undefined;
@@ -798,6 +845,7 @@ export async function generateBatch(args: BatchArgs, opts: BatchOptions = {}): P
 				newId: opts.newId,
 				now: opts.now,
 				knownItemIds,
+				termToId,
 				rng: opts.rng
 			});
 		} catch (error) {

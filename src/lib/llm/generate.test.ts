@@ -235,17 +235,23 @@ describe('buildBatchPrompt', () => {
 		expect(JSON.parse(messages[1].content)).not.toHaveProperty('recentAccuracy');
 	});
 
-	it('includes the known-vocabulary list when supplied, omits it when empty', () => {
+	it('includes the known-vocabulary terms when supplied — terms only, never the ids', () => {
 		// Without it the model re-proposes words the learner already has, and the
-		// dedupe silently eats the batch's new-word slots.
-		const payload = JSON.parse(
-			buildBatchPrompt({ ...args, knownTerms: ['名字', '做饭', '点菜'] })[1].content
-		) as Record<string, unknown>;
+		// dedupe silently eats the batch's new-word slots. The ids stay local:
+		// they exist for the resolver's term index, not for the prompt.
+		const known = [
+			{ id: 'k1', term: '名字' },
+			{ id: 'k2', term: '做饭' },
+			{ id: 'k3', term: '点菜' }
+		];
+		const content = buildBatchPrompt({ ...args, knownItems: known })[1].content;
+		const payload = JSON.parse(content) as Record<string, unknown>;
 		expect(payload.known).toEqual(['名字', '做饭', '点菜']);
+		expect(content).not.toContain('k1');
 
 		expect(JSON.parse(messages[1].content)).not.toHaveProperty('known');
 		expect(
-			JSON.parse(buildBatchPrompt({ ...args, knownTerms: [] })[1].content)
+			JSON.parse(buildBatchPrompt({ ...args, knownItems: [] })[1].content)
 		).not.toHaveProperty('known');
 	});
 
@@ -429,6 +435,30 @@ describe('generateBatch', () => {
 		const scripted = scriptedFetch([JSON.stringify(hallucinated)]);
 		const result = await generateBatch(args, callOpts(scripted.fetchFn));
 		expect(result.challenges).toHaveLength(6);
+	});
+
+	it('honours itemIds cited by term — known words and review items alike', async () => {
+		// Known words travel to the model as bare terms with no ids at all, so a
+		// challenge built on one can only cite the word itself. Dropping those as
+		// "hallucinated" is what made whole batches come back unusable.
+		const byTerm = {
+			...goodBatch,
+			challenges: [
+				...goodBatch.challenges,
+				recognize('做饭', 'to cook'), // a known word, cited the only way it can be
+				recognize(' El Perro ', 'the dog') // a review item cited by term, sloppily
+			]
+		};
+		const scripted = scriptedFetch([JSON.stringify(byTerm)]);
+		const result = await generateBatch(
+			{ ...args, knownItems: [{ id: 'k9', term: '做饭' }] },
+			callOpts(scripted.fetchFn)
+		);
+
+		expect(result.challenges).toHaveLength(8);
+		const resolved = result.challenges.slice(-2);
+		expect(resolved[0].itemIds).toEqual(['k9']);
+		expect(resolved[1].itemIds).toEqual(['i1']);
 	});
 
 	it('retries once with a corrective instruction, then succeeds', async () => {
