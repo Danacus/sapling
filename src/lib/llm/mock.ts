@@ -289,17 +289,16 @@ function mandarinRestaurant(): Fixture {
 			},
 			{
 				// Segmented per *word*, not per character — 菜单 is one tile. That is
-				// the whole reason the model does the splitting.
+				// the whole reason the model does the splitting. Punctuation rides
+				// the word it touches, never a tile of its own, per the prompt rule.
 				type: 'word-order',
 				promptNative: 'Hello, could I have a menu, please?',
 				words: [
-					{ text: '你好', reading: 'nǐ hǎo' },
-					{ text: '，', reading: ',' },
+					{ text: '你好，', reading: 'nǐ hǎo' },
 					{ text: '请', reading: 'qǐng' },
 					{ text: '给', reading: 'gěi' },
 					{ text: '我', reading: 'wǒ' },
-					{ text: '菜单', reading: 'càidān' },
-					{ text: '。', reading: '.' }
+					{ text: '菜单。', reading: 'càidān' }
 				],
 				distractorWords: [
 					{ text: '筷子', reading: 'kuàizi' },

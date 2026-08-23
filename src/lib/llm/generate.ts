@@ -13,7 +13,7 @@
  */
 
 import { getModel } from '$lib/db/settings';
-import { joinTokens } from '$lib/text';
+import { isPunctuationOnly, joinTokens, mergePunctuationTokens } from '$lib/text';
 import type { Challenge, ClozeChallenge, KnowledgeItem, Profile } from '$lib/types';
 import { foldDiacritics } from '$lib/validate';
 import { chatCompletion, LlmError } from './client';
@@ -229,8 +229,8 @@ const SYSTEM_PROMPT = [
 	'- In a situational dialogue either give the exact line to produce ("Say: \'the fish stall is to the right\'") or make answers cover every plausible alternative reply.',
 	'- instruction: a short heading, in the NATIVE language, matched to what the challenge actually asks — "What does this mean?" for a plain meaning question, "Pick the best reply" or "How would you answer?" for a conversational turn; null when the default meaning-question heading fits.',
 	'- Cloze sentences use only vocabulary at or below the learner level.',
-	'- Segmentation (word-order, spot-error): one tile per WORD, never per character or syllable, and punctuation rides on the tile it touches. For Chinese and Japanese split on word boundaries — 菜单 is one tile, not 菜 + 单. Each tile is a TargetText and carries its own reading under the usual rule.',
-	'- word-order sentences must have exactly one natural order: if the same tiles could be rearranged into a second correct sentence, rewrite it. Keep them to 4-8 tiles. distractorWords are plausible words that fit nowhere in the sentence, never a form of a word already in it.',
+	'- Segmentation (word-order, spot-error): one tile per WORD, never per character or syllable, and punctuation rides on the tile it touches — never a tile of its own ("吗？" is one tile, "？" alone is not a tile). For Chinese and Japanese split on word boundaries — 菜单 is one tile, not 菜 + 单. Each tile is a TargetText and carries its own reading under the usual rule.',
+	'- word-order sentences must have exactly one natural order: if the same tiles could be rearranged into a second correct sentence, rewrite it. Keep them to 4-8 tiles — 8 is a hard limit; past it, shorten the sentence. distractorWords are plausible words that fit nowhere in the sentence, never a form of a word already in it.',
 	'- spot-error: wrongWord must be a real target-language word that is unambiguously wrong in that slot given meaningNative — same part of speech, wrong meaning — never a synonym, a spelling slip or a stylistic quibble. wrongPosition is a 0-based index into words, and wrongWord must differ from the word it replaces.',
 	'- newItems must fit the learner level; term in the target language, meaning in the native language, romanization as in TargetText (null for Latin scripts), notes only for gender/irregularity/register.',
 	'- Exactly newItemSlots entries in newItems, and every one of them must be used by at least one challenge.',
@@ -581,6 +581,14 @@ function clozeWordBank(
  */
 export const MAX_WORD_ORDER_DISTRACTORS = 3;
 
+/**
+ * Ceiling on the whole tray (sentence tiles + distractors). The prompt asks for
+ * 4-8 sentence tiles but models overshoot; when they do, the distractor
+ * allowance shrinks first — the sentence itself is the content we paid for and
+ * cannot be trimmed, but nothing obliges us to pad an oversized one further.
+ */
+export const MAX_WORD_ORDER_TILES = 10;
+
 /** One segmented word: its text and the reading that travels with it. */
 interface Token {
 	text: string;
@@ -817,8 +825,12 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
 
 			case 'word-order': {
 				// Structural: fewer than two real tiles is not a sentence to build,
-				// and a blank tile is a tile that cannot be tapped.
-				const words = tokenize(generated.words);
+				// and a blank tile is a tile that cannot be tapped. Punctuation-only
+				// tiles ("？" as its own tile) are merged into their neighbour first —
+				// forgetting a question mark is not a language mistake, so it must
+				// not be a placeable, gradeable tile.
+				const raw = tokenize(generated.words);
+				const words = raw && mergePunctuationTokens(raw);
 				if (!words || words.length < 2) {
 					dropped++;
 					continue;
@@ -827,14 +839,20 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
 				// Distractors are cosmetic: an oversized list is trimmed, and one that
 				// duplicates a real tile is dropped — it could only ever be used in
 				// place of its twin, which grades correct anyway (text sequence, not
-				// indices), so it is a tile that does nothing.
+				// indices), so it is a tile that does nothing. The allowance shrinks
+				// as the sentence grows, so an overshot sentence is not padded past
+				// MAX_WORD_ORDER_TILES into a search puzzle.
+				const allowance = Math.min(
+					MAX_WORD_ORDER_DISTRACTORS,
+					Math.max(0, MAX_WORD_ORDER_TILES - words.length)
+				);
 				const seen = new Set(words.map((word) => labelKey(word.text)));
 				const distractors: Token[] = [];
 				for (const candidate of generated.distractorWords ?? []) {
-					if (distractors.length >= MAX_WORD_ORDER_DISTRACTORS) break;
+					if (distractors.length >= allowance) break;
 					const token = { text: candidate.text.trim(), reading: readingOf(candidate) };
 					const key = labelKey(token.text);
-					if (!key || seen.has(key)) continue;
+					if (!key || seen.has(key) || isPunctuationOnly(token.text)) continue;
 					seen.add(key);
 					distractors.push(token);
 				}

@@ -1,6 +1,51 @@
 import { describe, expect, it } from 'vitest';
 
-import { joinTokens, usesInterWordSpaces } from './script';
+import {
+	isPunctuationOnly,
+	joinTokens,
+	mergePunctuationTokens,
+	usesInterWordSpaces
+} from './script';
+
+describe('isPunctuationOnly', () => {
+	it('is true for Latin and CJK punctuation, symbols and mixes with whitespace', () => {
+		for (const text of ['?', '？', '。', '¿', '...', '— —', '€']) {
+			expect(isPunctuationOnly(text)).toBe(true);
+		}
+	});
+
+	it('is false for anything containing a word character', () => {
+		for (const text of ['吗？', 'favor?', 'a', '']) {
+			expect(isPunctuationOnly(text)).toBe(false);
+		}
+	});
+});
+
+describe('mergePunctuationTokens', () => {
+	it('merges trailing punctuation into the word before it, keeping its reading', () => {
+		const merged = mergePunctuationTokens([
+			{ text: '吗', reading: 'ma' },
+			{ text: '？', reading: undefined }
+		]);
+		expect(merged).toEqual([{ text: '吗？', reading: 'ma' }]);
+	});
+
+	it('merges leading punctuation into the word after it', () => {
+		expect(mergePunctuationTokens([{ text: '¿' }, { text: 'Nos' }, { text: 'trae' }])).toEqual([
+			{ text: '¿Nos' },
+			{ text: 'trae' }
+		]);
+	});
+
+	it('merges an all-punctuation list to nothing', () => {
+		expect(mergePunctuationTokens([{ text: '¿' }, { text: '?' }])).toEqual([]);
+	});
+
+	it('leaves a list with no punctuation-only tokens untouched', () => {
+		const tokens = [{ text: 'por' }, { text: 'favor?' }];
+		expect(mergePunctuationTokens(tokens)).toEqual(tokens);
+	});
+});
 
 describe('usesInterWordSpaces', () => {
 	it('is true for the scripts that write spaces', () => {

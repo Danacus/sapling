@@ -19,7 +19,7 @@
 -->
 <script lang="ts">
 	import type { AnswerEvent } from '$lib/session/engine';
-	import { joinTokens } from '$lib/text';
+	import { isPunctuationOnly, joinTokens } from '$lib/text';
 	import type { WordOrderChallenge } from '$lib/types';
 	import { getShowRomanization } from '$lib/ui/prefs';
 
@@ -74,10 +74,19 @@
 		placed = placed.filter((_, at) => at !== position);
 	}
 
-	/** Exact sequence equality, by text. See the component note. */
+	/**
+	 * Exact sequence equality, by text. See the component note.
+	 *
+	 * Punctuation-only tiles are ignored on both sides: the resolver no longer
+	 * produces them, but rows generated before it merged punctuation into its
+	 * neighbouring word still carry tiles like "？" — and forgetting one is not
+	 * a language mistake worth failing the arrangement over.
+	 */
 	function isCorrect(): boolean {
-		if (chosen.length !== challenge.answerTokens.length) return false;
-		return chosen.every((text, at) => text === challenge.answerTokens[at]);
+		const chosenWords = chosen.filter((text) => !isPunctuationOnly(text));
+		const answerWords = challenge.answerTokens.filter((text) => !isPunctuationOnly(text));
+		if (chosenWords.length !== answerWords.length) return false;
+		return chosenWords.every((text, at) => text === answerWords[at]);
 	}
 
 	function submit(): void {

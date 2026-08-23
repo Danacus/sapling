@@ -43,6 +43,49 @@ export function usesInterWordSpaces(text: string): boolean {
 }
 
 /**
+ * True when `text` contains nothing but punctuation, symbols and whitespace.
+ *
+ * Such a token is never a *word*: as a word-order tile it is unplaceable
+ * pedagogy (forgetting a trailing "？" is not a language mistake), so the
+ * resolver merges these into their neighbour and grading ignores them.
+ */
+export function isPunctuationOnly(text: string): boolean {
+	return /^[\p{P}\p{S}\s]+$/u.test(text);
+}
+
+/**
+ * Merges punctuation-only tokens into the word they belong to.
+ *
+ * Trailing punctuation clings to the word before it ("favor" + "?" →
+ * "favor?"), leading punctuation to the word after it ("¿" + "Nos" → "¿Nos"),
+ * matching the {@link joinTokens} clinging rules. A token's other fields (its
+ * reading) stay with the word; the punctuation contributes text only. A list
+ * that is *all* punctuation merges to nothing.
+ */
+export function mergePunctuationTokens<T extends { text: string }>(tokens: readonly T[]): T[] {
+	const out: T[] = [];
+	let pendingLead = '';
+	for (const token of tokens) {
+		if (isPunctuationOnly(token.text)) {
+			if (out.length > 0) {
+				const last = out[out.length - 1];
+				out[out.length - 1] = { ...last, text: joinTokens([last.text, token.text]) };
+			} else {
+				pendingLead += token.text.trim();
+			}
+			continue;
+		}
+		if (pendingLead) {
+			out.push({ ...token, text: pendingLead + token.text });
+			pendingLead = '';
+		} else {
+			out.push(token);
+		}
+	}
+	return out;
+}
+
+/**
  * Joins segmented word tokens back into one sentence.
  *
  * The spacing rule is decided once, from *all* the tokens together — a mixed

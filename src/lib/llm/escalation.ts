@@ -128,8 +128,12 @@ export async function escalate(
 		apiKey: opts.apiKey,
 		signal: opts.signal,
 		fetchFn: opts.fetchFn,
-		// ~120 words plus the JSON envelope, with headroom for accented scripts.
-		maxTokens: 400,
+		// Generous on purpose: a truncated reply is a truncated explanation the
+		// learner explicitly asked for, and on models that spend reasoning tokens
+		// against max_tokens a tight cap cuts off mid-thought before the JSON even
+		// starts. Escalation is rare and user-initiated, so the headroom costs
+		// nothing until it is genuinely used.
+		maxTokens: 1500,
 		temperature: 0.3
 	});
 

@@ -6,6 +6,7 @@ import {
 	MAX_ABOUT_CHARS,
 	MAX_BATCH_CHALLENGES,
 	MAX_WORD_ORDER_DISTRACTORS,
+	MAX_WORD_ORDER_TILES,
 	buildBatchPrompt,
 	defaultChallengeCount,
 	generateBatch,
@@ -1017,6 +1018,67 @@ describe('resolveBatch', () => {
 			});
 			// Four real tiles plus MAX_WORD_ORDER_DISTRACTORS.
 			expect(challenge?.tiles).toHaveLength(4 + MAX_WORD_ORDER_DISTRACTORS);
+		});
+
+		it('merges a punctuation-only tile into the word before it', () => {
+			const challenge = resolveWordOrder({
+				words: [
+					{ text: '你', reading: 'nǐ' },
+					{ text: '好', reading: 'hǎo' },
+					{ text: '吗', reading: 'ma' },
+					{ text: '？', reading: null }
+				],
+				distractorWords: null
+			});
+			// "？" is not a tile: forgetting it is not a language mistake.
+			expect(challenge?.answerTokens).toEqual(['你', '好', '吗？']);
+			expect(challenge?.answer).toBe('你好吗？');
+			expect(challenge?.tiles).toHaveLength(3);
+		});
+
+		it('merges leading punctuation into the word after it', () => {
+			const challenge = resolveWordOrder({
+				words: [
+					{ text: '¿', reading: null },
+					{ text: 'Nos', reading: null },
+					{ text: 'trae', reading: null },
+					{ text: 'la', reading: null },
+					{ text: 'cuenta', reading: null },
+					{ text: '?', reading: null }
+				],
+				distractorWords: null
+			});
+			expect(challenge?.answerTokens).toEqual(['¿Nos', 'trae', 'la', 'cuenta?']);
+			expect(challenge?.answer).toBe('¿Nos trae la cuenta?');
+		});
+
+		it('drops a punctuation-only distractor: it is never a word', () => {
+			const challenge = resolveWordOrder({
+				distractorWords: [
+					{ text: '？', reading: null },
+					{ text: 'bebo', reading: null }
+				]
+			});
+			expect(challenge?.tiles).toHaveLength(5);
+			expect(challenge?.tiles).toContain('bebo');
+			expect(challenge?.tiles).not.toContain('？');
+		});
+
+		it('shrinks the distractor allowance so the tray never exceeds MAX_WORD_ORDER_TILES', () => {
+			const words = Array.from({ length: MAX_WORD_ORDER_TILES - 1 }, (_, i) => ({
+				text: `w${i}`,
+				reading: null
+			}));
+			const challenge = resolveWordOrder({
+				words,
+				distractorWords: [
+					{ text: 'd1', reading: null },
+					{ text: 'd2', reading: null },
+					{ text: 'd3', reading: null }
+				]
+			});
+			// Nine sentence tiles leave room for exactly one distractor.
+			expect(challenge?.tiles).toHaveLength(MAX_WORD_ORDER_TILES);
 		});
 
 		it('drops a distractor that duplicates a real tile: it could never be wrong', () => {

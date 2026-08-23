@@ -135,7 +135,7 @@ describe('escalate', () => {
 		// The envelope is asked for in the prompt, not pinned with a JSON schema:
 		// the fallback in `parseEscalationReply` is cheaper than the extra tokens.
 		expect(body.response_format).toBeUndefined();
-		expect(body.max_tokens).toBe(400);
+		expect(body.max_tokens).toBe(1500);
 	});
 
 	it('carries an overturn through to the caller', async () => {

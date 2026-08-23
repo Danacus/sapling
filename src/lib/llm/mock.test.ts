@@ -250,12 +250,13 @@ describe('the Mandarin fixtures', () => {
 
 		const wordOrder = result.challenges.find((c) => c.type === 'word-order');
 		if (wordOrder?.type !== 'word-order') throw new Error('expected a word-order challenge');
-		// 菜单 is one tile, not 菜 + 单 — the whole reason the model segments.
-		expect(wordOrder.answerTokens).toContain('菜单');
+		// 菜单 is one tile, not 菜 + 单 — the whole reason the model segments —
+		// and its sentence-final 。 rides on it rather than being a tile itself.
+		expect(wordOrder.answerTokens).toContain('菜单。');
 		expect(wordOrder.answer).toBe('你好，请给我菜单。');
 		expect(wordOrder.answer).not.toContain(' ');
 		// Readings are Latin, so they stay space-separated whatever the script.
-		expect(wordOrder.answerRomanization).toBe('nǐ hǎo , qǐng gěi wǒ càidān .');
+		expect(wordOrder.answerRomanization).toBe('nǐ hǎo qǐng gěi wǒ càidān');
 		expect(wordOrder.tilesRomanization).toHaveLength(wordOrder.tiles.length);
 
 		const spot = result.challenges.find((c) => c.type === 'spot-error');
