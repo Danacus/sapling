@@ -39,7 +39,7 @@ import {
 	type SyncSnapshot
 } from '$lib/sync/snapshot';
 import { db, SINGLETON_KEY } from './database';
-import type { ChallengeRow } from './database';
+import type { ChallengeRow, OutboxRow } from './database';
 import { defaultStats, localDay, previousDay, statsFromDays } from './day';
 import { toPlain } from './plain';
 
@@ -526,7 +526,13 @@ const SYNC_STATE = {
 	/** Set once genesis synthesis has run; keeps it from ever running twice. */
 	genesisDone: 'genesisDone',
 	/** The apply engine's dedupe bookkeeping (`SyncBookkeeping`). */
-	bookkeeping: 'bookkeeping'
+	bookkeeping: 'bookkeeping',
+	/**
+	 * Epoch ms of the last sync that completed end to end — pushed, pulled and
+	 * applied. Written by `runSync` on success only, so the Settings status line
+	 * says when the device was last actually in step, not when it last tried.
+	 */
+	lastSync: 'lastSync'
 } as const;
 
 /** Reads one `syncState` value, or `undefined` when unset. */
@@ -543,6 +549,30 @@ export async function setSyncState(key: keyof typeof SYNC_STATE, value: unknown)
 /** How many locally produced events are waiting to be pushed. */
 export async function outboxCount(): Promise<number> {
 	return db.outbox.count();
+}
+
+/**
+ * The oldest `limit` outbox rows, in `seq` order — one push batch.
+ *
+ * Rows keep their `seq`, because that is what {@link drainOutbox} deletes by:
+ * the server acknowledges *event ids*, but the local row is identified only by
+ * its auto-increment key (a re-pushed event keeps its id and gets a new row).
+ */
+export async function peekOutbox(limit: number): Promise<OutboxRow[]> {
+	return db.outbox.orderBy('seq').limit(limit).toArray();
+}
+
+/**
+ * Deletes the rows a push has been acknowledged for.
+ *
+ * Called only with the seqs of a batch the server answered 2xx to, which is
+ * what makes a failed push free: the outbox is left exactly as it was, and the
+ * next sync re-pushes it — the server dedupes on event id, so anything that did
+ * land the first time is a no-op the second (docs/sync.md §6).
+ */
+export async function drainOutbox(seqs: number[]): Promise<void> {
+	if (seqs.length === 0) return;
+	await db.outbox.bulkDelete(seqs);
 }
 
 /**
