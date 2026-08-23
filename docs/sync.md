@@ -1,9 +1,9 @@
 # Sapling Sync — design (draft for iteration)
 
-Status: **stable — signed off.** This document is the spec for the first
-Sapling "service": multi-device synchronization of progress, vocabulary, and
-the challenge pool. §11 records the decisions made during iteration;
-implementation follows §12's slices.
+Status: **stable — signed off, and implemented.** This document is the spec
+for the first Sapling "service": multi-device synchronization of progress,
+vocabulary, and the challenge pool. §11 records the decisions made during
+iteration; §12 records all four implementation slices as done.
 
 ## 1. Goals and non-goals
 
@@ -55,19 +55,25 @@ One append-only log per user. Every event:
 
 ```ts
 interface SyncEvent {
-  /** Client-minted UUID; the server dedupes on it (idempotent push). */
+  /** Client-minted RFC 4122 UUID (`crypto.randomUUID()`); the server
+      dedupes on it (idempotent push) and rejects non-UUID ids. */
   id: string;
   /** Stable per-device id (minted once, stored in localStorage). */
   device: string;
   /** Client wall-clock, epoch ms. Ordering key (see §5 on skew). */
   at: number;
   type: string;      // discriminant, see below
-  payload: unknown;  // zod-validated per type on the client
+  /** zod-validated per type on the client; may be `null`, never absent
+      (the server serializes it into a NOT NULL column). */
+  payload: unknown;
 }
 ```
 
-The server wraps each stored event with a monotonically increasing per-user
-`seq` — the pull cursor.
+The server wraps each stored event with a `seq` — the pull cursor. In the
+implementation `seq` is one global `AUTOINCREMENT` counter: strictly
+increasing over the whole table, therefore strictly increasing within any one
+user's subsequence, which is all a cursor needs (and `AUTOINCREMENT`
+specifically, so a delete can never cause rowid reuse and rewind a cursor).
 
 Event types and payloads (client-validated with zod; the server treats
 payloads as opaque):
@@ -76,7 +82,7 @@ payloads as opaque):
 |---------------------|----------------------------------------------------------------|
 | `item-added`        | item content: `id, kind, term, meaning, romanization?, notes?, introducedAt` (no card, no history) |
 | `item-reviewed`     | `itemId, at, grade` — exactly a history entry                  |
-| `review-amended`    | `itemId, at, grade` — replaces the entry with the same `(itemId, at)` (self-assessment re-grade) |
+| `review-amended`    | `itemId, at, grade, replaces?` — the re-grade carries its **own** timestamp (`amendResult` stamps a fresh `now`); `replaces` names the `at` of the entry it supersedes, absent when there was nothing to replace. Cards are re-folded from history timestamps, so the event must describe the history the emitting device actually holds. |
 | `item-updated`      | `itemId, fields` — LWW field patch (romanization backfill, note edits) |
 | `item-deleted`      | `itemId` — tombstone                                           |
 | `challenge-added`   | the full immutable `Challenge` content + `generatedAt, topic?` |
@@ -159,6 +165,14 @@ applying as it goes; both halves retry-safe and interruption-safe (the outbox
 only drains entries the server acknowledged; the cursor only advances after
 apply). Batching at 500 events keeps requests small.
 
+Protocol details settled in implementation: an over-large `limit` is clamped
+to 500 rather than rejected ("give me as much as you'll give" must not fail a
+sync); the body-level `device` on a push is shape-checked only — each event's
+own `device` is authoritative; caps are 500 events/request and 64 KB of
+serialized payload per event (shared constants in `src/lib/sync/events.ts`);
+the pull shape `SyncEvent & { seq }` is exported as `storedSyncEventSchema`
+from the same module.
+
 ## 7. Authentication
 
 **v1: API keys.** Provisioned by the operator (a tiny CLI or SQL insert),
@@ -206,6 +220,15 @@ New `src/lib/sync/` module, following house rules:
   collection) and fully unit-tested in node — the merge rules in §4 are the
   test suite. Dexie touching stays in thin untested wrappers, per the
   project's testing philosophy.
+- **Apply cannot re-capture, by construction**: remote folds are written by
+  exactly one dedicated repository function (`mergeSyncSnapshot`) that never
+  touches the outbox — no `capture:false` flag to forget. It diffs by
+  reference identity (the pure engine returns untouched rows as the same
+  objects), so a three-review merge writes three rows.
+- Counts and sums (`challenge-served`, `result-logged`, `xp-banked`) dedupe
+  by remembered event ids in `syncState` bookkeeping; everything else dedupes
+  from the data it produces. Bookkeeping is stored sorted so identical event
+  sets yield byte-identical snapshots regardless of pull batching.
 - **Engine, not components, calls sync**: a `runSync()` orchestrator (push,
   pull, apply, advance cursor) invoked from three places — a Settings "Sync
   now" button, fire-and-forget after `finish()`/`quit()` banks a session, and
@@ -246,10 +269,15 @@ New `src/lib/sync/` module, following house rules:
 
 ## 12. Implementation slices (once this doc is stable)
 
-1. `server/`: skeleton, auth middleware, event tables, push/pull endpoints,
-   tests. Deployable container.
-2. Client: device id, outbox capture in repositories, genesis synthesis,
-   pure apply engine + tests.
-3. Client: `runSync()` + Settings card + after-session trigger.
-4. Polish: pagination hardening, rate limits, docs (CLAUDE.md + a short
-   self-hosting README in `server/`).
+1. **Done.** `server/`: skeleton, auth middleware, event tables, push/pull
+   endpoints, tests. Deployable container.
+2. **Done.** Client: device id, outbox capture in repositories, genesis
+   synthesis, pure apply engine + tests.
+3. **Done.** Client: `runSync()` (`src/lib/sync/run.ts`) + the Settings
+   "Sync" card (`src/routes/settings/+page.svelte`) + the after-session
+   trigger (`finish()`/`quit()` in `src/routes/learn/+page.svelte`).
+4. **Done.** Polish: pagination hardening, rate limits (both server-side,
+   §6/§8), the on-load trigger (a boot-guarded call in
+   `src/routes/+layout.svelte`, fire-and-forget and outside the
+   per-navigation `$effect`), and docs (this file, `CLAUDE.md`,
+   `server/README.md`).

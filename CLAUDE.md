@@ -16,6 +16,15 @@ nix develop -c pnpm test                               # vitest run (all suites)
 nix develop -c pnpm test src/lib/srs/scheduler.test.ts # single test file
 ```
 
+The sync server in `server/` is a **separate package, deliberately not a workspace member** — its own `package.json`, lockfile, `node_modules` and `pnpm-workspace.yaml`, so the Cloudflare Pages build of the app never sees it. Run its commands from the repo root through the same devShell:
+
+```sh
+nix develop -c bash -c 'cd server && pnpm install'    # once, and after dep changes
+nix develop -c bash -c 'cd server && pnpm test'       # vitest, in-memory SQLite
+nix develop -c bash -c 'cd server && pnpm typecheck'
+nix develop -c bash -c 'cd server && pnpm dev'        # tsx watch on :8787
+```
+
 Nix flakes only see files that are `git add`ed — a brand-new file the flake needs must be staged before `nix develop` picks it up. `pnpm-workspace.yaml` records pnpm's dependency build-script decisions (`allowBuilds`) — an undecided script hard-fails Cloudflare Pages' CI install, so keep decisions explicit there.
 
 ## Deploying
@@ -47,6 +56,7 @@ The `SYSTEM_PROMPT` in `generate.ts` is deliberately token-budgeted and static (
 - `src/lib/srs/` — pure and deterministic: every function takes `now` (epoch ms); card state is a JSON-safe `FsrsCardState` (dates as numbers). Session pacing (new-word rate from recent accuracy) lives here.
 - `src/lib/db/` — repositories are the **only** Dexie access. Every write passes through `toPlain()`, which strips Svelte `$state` Proxies (IndexedDB structured clone throws `DataCloneError` on them — never hand reactive objects to persistence). API key + prefs live in localStorage (`ll.*` keys via `db/settings.ts` and `ui/prefs.ts`), never in IndexedDB and never in the JSON export.
 - `src/lib/session/engine.ts` — the orchestrator: owns session planning (`planSession` — pure, tested), generation (`generateChallenges` → `getBatch` → dedupe/remap → `addToPool`), all DB writes during play (`applyResult`, `applyOverturn`, `reportChallenge`), XP/combo rules and new-vocab dedupe/remap. Components emit answer events; they don't write.
+- `src/lib/sync/events.ts` + `server/` — multi-device sync, specced in **`docs/sync.md`** (read it before touching either side). State is a fold over an append-only event log; the server stores and relays *opaque* events and merges nothing, so every semantic lives client-side. `events.ts` is the envelope schema shared verbatim by both, and is therefore **zod-only and import-free** — no `$lib`, no SvelteKit — because the server compiles it by relative path (`../../src/lib/sync/events.ts`). Per-type payload schemas stay client-side. The server's own contract is in `server/README.md`. `src/lib/sync/run.ts` exports `runSync()` — push, pull, apply, advance cursor; single-flight (overlapping callers share one cycle) and never throws, returning a `SyncOutcome` instead. Called from the Settings "Sync" card, fire-and-forget after `finish()`/`quit()` in `learn/+page.svelte`, and fire-and-forget once on boot in `+layout.svelte`.
 - `src/lib/tts/` — public API `speak(text, lang)`; zh+en use Kokoro v1.1 via sherpa-onnx WASM, everything else Web Speech. **The worker is plain JS at `static/tts/sherpa-worker.js`, deliberately outside Vite** (a bundled TS worker diverged between dev and build); config reaches it via the init message from `sherpa.ts`, with `models.ts` the single source of truth for artifact URLs/sizes. Model files (~439MB fp32) are runtime-fetched from a pinned mirror commit and cached in Cache Storage; the int8 variant is a known upstream NaN/silence bug — don't "optimize" back to it. Audio failures must degrade silently to fallback; sound never blocks gameplay.
 
 ### Testing

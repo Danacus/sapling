@@ -1,0 +1,24 @@
+# pnpm settings for the sync server.
+#
+# This file is also what keeps `server/` a *separate install* from the app:
+# pnpm searches upward for a `pnpm-workspace.yaml`, and without one here it
+# would find the app's and try to fold the server into the app's project graph
+# and lockfile. The app is deployed by Cloudflare Pages from the repo root —
+# the server must be invisible to that build, so it keeps its own lockfile,
+# its own node_modules and its own toolchain.
+#
+# `allowBuilds` records the dependency build-script decisions pnpm >= 10
+# demands (same reason as the app's file: an undecided script is a warning
+# locally and a hard install failure in CI).
+#
+# better-sqlite3 is allowed to build: its install step compiles — or fetches a
+# prebuilt — native binding, and unlike esbuild there is no optionalDependencies
+# fallback to pick up the slack. Denying it yields a package that installs
+# "successfully" and then throws on the first `require`.
+#
+# esbuild (pulled in by tsx and vitest) is denied for the same reason as in the
+# app's file: its platform binary arrives via optionalDependencies and the
+# postinstall is only a sanity check.
+allowBuilds:
+  better-sqlite3: true
+  esbuild: false

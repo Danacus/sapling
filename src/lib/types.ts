@@ -66,8 +66,16 @@ export interface KnowledgeItem {
 	fsrsCard: unknown;
 	/** Epoch milliseconds. */
 	introducedAt: number;
-	/** Review log, newest last. `grade` is the ts-fsrs `Rating`. */
-	history: { at: number; grade: number }[];
+	/**
+	 * Review log, newest last. `grade` is the ts-fsrs `Rating`.
+	 *
+	 * `device` is stamped only while sync is enabled (see `$lib/sync`), and it
+	 * is what makes a merged history dedupe exactly: an entry's identity is
+	 * `(at, device)`, so two devices reviewing the same word in the same
+	 * millisecond stay two reviews rather than collapsing into one. Entries
+	 * without it predate sync on this device and are its own by construction.
+	 */
+	history: { at: number; grade: number; device?: string }[];
 }
 
 /**

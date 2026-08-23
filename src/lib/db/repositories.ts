@@ -4,12 +4,108 @@
  * Signatures speak `$lib/types` only, so callers never import Dexie. Keep the
  * functions thin — they are not unit-tested (IndexedDB is unavailable in the
  * node test environment), so all the logic worth testing lives elsewhere.
+ *
+ * ## Sync capture (docs/sync.md §9)
+ *
+ * Every mutating function below also appends the matching `SyncEvent` to the
+ * `outbox` table **inside its own transaction**, so the materialized view and
+ * the event log can never disagree — a write either lands with its event or not
+ * at all. Capture is gated on {@link syncEnabled}: it is opt-in and starts when
+ * sync is configured, because genesis synthesis has to exist anyway and an
+ * always-on outbox would grow forever on devices that never sync.
+ *
+ * **Nothing on the apply path goes through these functions**, which is how
+ * pulled events can never echo back into the outbox. Remote state is written by
+ * {@link mergeSyncSnapshot} alone — one whole-snapshot write that captures
+ * nothing by construction. That is deliberately *not* a `{capture: false}` flag
+ * on each function: a flag is something a future call site can forget to pass,
+ * and a merged snapshot is anyway not expressible as a sequence of
+ * `upsertItems`/`updateItemAfterReview` calls (the engine rewrites history
+ * entries and re-folds cards wholesale).
  */
 
 import type { Challenge, ChallengeResult, KnowledgeItem, Profile, Stats } from '$lib/types';
+import { getDeviceId, newUuid, syncEnabled } from '$lib/sync/config';
+import {
+	EVENT_TYPES,
+	type SyncEvent,
+	type SyncEventType,
+	type SyncPayloads
+} from '$lib/sync/events';
+import {
+	emptyBookkeeping,
+	type GenesisState,
+	type SyncBookkeeping,
+	type SyncSnapshot
+} from '$lib/sync/snapshot';
 import { db, SINGLETON_KEY } from './database';
-import type { ChallengeRow } from './database';
+import type { ChallengeRow, OutboxRow } from './database';
+import { defaultStats, localDay, previousDay, statsFromDays } from './day';
 import { toPlain } from './plain';
+
+export { localDay, previousDay, statsFromDays } from './day';
+
+/* -------------------------------------------------------------------------- */
+/* Sync capture plumbing                                                       */
+/* -------------------------------------------------------------------------- */
+
+/** Mints one event envelope. `at` is the write's own domain timestamp where it has one. */
+function event<T extends SyncEventType>(type: T, payload: SyncPayloads[T], at: number): SyncEvent {
+	return { id: newUuid(), device: getDeviceId(), at, type, payload };
+}
+
+/**
+ * Appends events to the outbox. Call only from inside the transaction that
+ * performs the corresponding write, and only when {@link syncEnabled} is true.
+ */
+async function capture(events: SyncEvent[]): Promise<void> {
+	if (events.length === 0) return;
+	await db.outbox.bulkAdd(events.map((e) => ({ event: toPlain(e) })));
+}
+
+/** The content half of an item — what `item-added` carries (no card, no history). */
+function itemContent(item: KnowledgeItem): SyncPayloads['item-added'] {
+	return {
+		id: item.id,
+		kind: item.kind,
+		term: item.term,
+		meaning: item.meaning,
+		romanization: item.romanization,
+		notes: item.notes,
+		introducedAt: item.introducedAt
+	};
+}
+
+/**
+ * Strips a pool row's local bookkeeping, leaving the immutable `Challenge`.
+ *
+ * The cast is the price of `challengeContentSchema` being a loose shape check
+ * (see its doc comment): `Challenge` is a union of interfaces and so has no
+ * implicit index signature, even though every one of its members satisfies the
+ * schema. Nothing is lost — the four checked keys are exactly what the merge
+ * reads, and the rest travels verbatim.
+ */
+function challengeContent(row: ChallengeRow): SyncPayloads['challenge-added']['challenge'] {
+	const {
+		generatedAt: _generatedAt,
+		timesServed: _timesServed,
+		lastServedAt: _lastServedAt,
+		reported: _reported,
+		topic: _topic,
+		...challenge
+	} = row;
+	return challenge as SyncPayloads['challenge-added']['challenge'];
+}
+
+/** The mutable content fields — what `item-updated` patches. */
+function itemPatch(item: KnowledgeItem): SyncPayloads['item-updated']['fields'] {
+	return {
+		term: item.term,
+		meaning: item.meaning,
+		romanization: item.romanization,
+		notes: item.notes
+	};
+}
 
 /* -------------------------------------------------------------------------- */
 /* Profile                                                                     */
@@ -24,9 +120,13 @@ export async function getProfile(): Promise<Profile | undefined> {
 }
 
 /** Creates or replaces the profile. */
-export async function saveProfile(profile: Profile): Promise<void> {
+export async function saveProfile(profile: Profile, now: number = Date.now()): Promise<void> {
 	const plain = toPlain(profile);
-	await db.profile.put({ ...plain, id: SINGLETON_KEY });
+	const capturing = syncEnabled();
+	await db.transaction('rw', db.profile, db.outbox, async () => {
+		await db.profile.put({ ...plain, id: SINGLETON_KEY });
+		if (capturing) await capture([event(EVENT_TYPES.profileUpdated, plain, now)]);
+	});
 }
 
 /* -------------------------------------------------------------------------- */
@@ -42,10 +142,37 @@ export async function getItem(id: string): Promise<KnowledgeItem | undefined> {
 	return db.items.get(id);
 }
 
-/** Inserts or replaces items by `id`. */
-export async function upsertItems(items: KnowledgeItem[]): Promise<void> {
+/**
+ * Inserts or replaces items by `id`.
+ *
+ * With capture on this becomes a read-then-write transaction: an id the table
+ * has never seen emits `item-added` (full content), a known one emits
+ * `item-updated` (the mutable fields only). The extra `bulkGet` is what lets
+ * another device tell "the learner met a new word" from "the learner edited a
+ * note", which are different merges.
+ *
+ * Card and history are deliberately *not* captured here. They are derived state
+ * on the receiving side — replayed from `item-reviewed` events — so shipping
+ * them would invite two devices to disagree about a card neither of them folded.
+ */
+export async function upsertItems(items: KnowledgeItem[], now: number = Date.now()): Promise<void> {
 	if (items.length === 0) return;
-	await db.items.bulkPut(toPlain(items));
+	const plain = toPlain(items);
+	const capturing = syncEnabled();
+
+	await db.transaction('rw', db.items, db.outbox, async () => {
+		let events: SyncEvent[] = [];
+		if (capturing) {
+			const existing = await db.items.bulkGet(plain.map((item) => item.id));
+			events = plain.map((item, index) =>
+				existing[index]
+					? event(EVENT_TYPES.itemUpdated, { itemId: item.id, fields: itemPatch(item) }, now)
+					: event(EVENT_TYPES.itemAdded, itemContent(item), now)
+			);
+		}
+		await db.items.bulkPut(plain);
+		if (capturing) await capture(events);
+	});
 }
 
 /**
@@ -55,8 +182,12 @@ export async function upsertItems(items: KnowledgeItem[]): Promise<void> {
  * {@link updateItemAfterReview} — via `applyResult` — skips items that are no
  * longer there. The learner sees the challenge play out, it just grades nothing.
  */
-export async function deleteItem(id: string): Promise<void> {
-	await db.items.delete(id);
+export async function deleteItem(id: string, now: number = Date.now()): Promise<void> {
+	const capturing = syncEnabled();
+	await db.transaction('rw', db.items, db.outbox, async () => {
+		await db.items.delete(id);
+		if (capturing) await capture([event(EVENT_TYPES.itemDeleted, { itemId: id }, now)]);
+	});
 }
 
 /**
@@ -78,14 +209,36 @@ export async function updateItemAfterReview(
 ): Promise<boolean> {
 	const plainCard = toPlain(fsrsCard);
 	const plainEntry = toPlain(historyEntry);
-	return db.transaction('rw', db.items, async () => {
+	const capturing = syncEnabled();
+
+	return db.transaction('rw', db.items, db.outbox, async () => {
 		const item = await db.items.get(id);
 		if (!item) return false;
-		const history =
+
+		const replaced =
 			opts.replaceLast && item.history.length > 0
-				? [...item.history.slice(0, -1), plainEntry]
-				: [...item.history, plainEntry];
+				? item.history[item.history.length - 1]
+				: undefined;
+		const entry = capturing ? { ...plainEntry, device: getDeviceId() } : plainEntry;
+		const history = replaced ? [...item.history.slice(0, -1), entry] : [...item.history, entry];
+
 		await db.items.put({ ...item, fsrsCard: plainCard, history });
+
+		if (capturing) {
+			// A replacement is a re-grade of a review this device already logged,
+			// so it ships as `review-amended` carrying both timestamps — the entry
+			// as it now stands, and the `at` of the entry it displaced. See
+			// `amendPayloadSchema` for why the two differ.
+			await capture([
+				replaced
+					? event(
+							EVENT_TYPES.reviewAmended,
+							{ itemId: id, ...plainEntry, replaces: replaced.at },
+							plainEntry.at
+						)
+					: event(EVENT_TYPES.itemReviewed, { itemId: id, ...plainEntry }, plainEntry.at)
+			]);
+		}
 		return true;
 	});
 }
@@ -116,7 +269,21 @@ export async function addToPool(
 		reported: false,
 		...(trimmed ? { topic: trimmed } : {})
 	}));
-	await db.challenges.bulkPut(rows);
+	const capturing = syncEnabled();
+
+	await db.transaction('rw', db.challenges, db.outbox, async () => {
+		await db.challenges.bulkPut(rows);
+		if (!capturing) return;
+		await capture(
+			rows.map((row) =>
+				event(
+					EVENT_TYPES.challengeAdded,
+					{ challenge: challengeContent(row), generatedAt: row.generatedAt, topic: row.topic },
+					row.generatedAt
+				)
+			)
+		);
+	});
 }
 
 /**
@@ -132,6 +299,11 @@ export async function getPool(): Promise<ChallengeRow[]> {
 	return rows.filter((row) => !row.reported);
 }
 
+/** The whole pool, reported rows included — what sync merges over. */
+export async function getAllChallenges(): Promise<ChallengeRow[]> {
+	return db.challenges.toArray();
+}
+
 /**
  * Stamps a challenge as served: one more play, at `now`.
  *
@@ -143,10 +315,12 @@ export async function getPool(): Promise<ChallengeRow[]> {
  * so `applyResult` can call this unconditionally.
  */
 export async function recordServe(id: string, now: number = Date.now()): Promise<void> {
-	await db.transaction('rw', db.challenges, async () => {
+	const capturing = syncEnabled();
+	await db.transaction('rw', db.challenges, db.outbox, async () => {
 		const row = await db.challenges.get(id);
 		if (!row) return;
 		await db.challenges.put({ ...row, timesServed: row.timesServed + 1, lastServedAt: now });
+		if (capturing) await capture([event(EVENT_TYPES.challengeServed, { challengeId: id }, now)]);
 	});
 }
 
@@ -154,8 +328,12 @@ export async function recordServe(id: string, now: number = Date.now()): Promise
  * Flags a challenge the learner reported as broken. The row stays (results
  * point at it) but {@link getPool} never hands it out again.
  */
-export async function reportChallenge(id: string): Promise<void> {
-	await db.challenges.update(id, { reported: true });
+export async function reportChallenge(id: string, now: number = Date.now()): Promise<void> {
+	const capturing = syncEnabled();
+	await db.transaction('rw', db.challenges, db.outbox, async () => {
+		await db.challenges.update(id, { reported: true });
+		if (capturing) await capture([event(EVENT_TYPES.challengeReported, { challengeId: id }, now)]);
+	});
 }
 
 /**
@@ -174,7 +352,18 @@ export async function getChallengesByIds(ids: string[]): Promise<Challenge[]> {
 /* -------------------------------------------------------------------------- */
 
 export async function addResult(result: ChallengeResult): Promise<void> {
-	await db.results.add(toPlain(result));
+	const plain = toPlain(result);
+	const capturing = syncEnabled();
+	await db.transaction('rw', db.results, db.outbox, async () => {
+		await db.results.add(plain);
+		if (capturing) await capture([event(EVENT_TYPES.resultLogged, plain, plain.at)]);
+	});
+}
+
+/** The whole answer log, oldest first. Used by genesis; the UI wants {@link recentResults}. */
+export async function getAllResults(): Promise<ChallengeResult[]> {
+	const rows = await db.results.orderBy('at').toArray();
+	return rows.map(({ seq: _seq, ...result }) => result);
 }
 
 /** The most recent results, newest first. */
@@ -187,24 +376,6 @@ export async function recentResults(limit: number): Promise<ChallengeResult[]> {
 /* -------------------------------------------------------------------------- */
 /* Stats                                                                       */
 /* -------------------------------------------------------------------------- */
-
-/** `YYYY-MM-DD` for an epoch-milliseconds timestamp, in the local time zone. */
-export function localDay(at: number): string {
-	const date = new Date(at);
-	const month = `${date.getMonth() + 1}`.padStart(2, '0');
-	const day = `${date.getDate()}`.padStart(2, '0');
-	return `${date.getFullYear()}-${month}-${day}`;
-}
-
-/** The local calendar day before `day` (DST-safe: built from local parts). */
-function previousDay(day: string): string {
-	const [year, month, date] = day.split('-').map(Number);
-	return localDay(new Date(year, month - 1, date - 1).getTime());
-}
-
-function defaultStats(): Stats {
-	return { xp: 0, streakDays: 0, lastActiveDay: '', history: [] };
-}
 
 /** Returns the stats row, creating the default one on first access. */
 export async function getStats(): Promise<Stats> {
@@ -228,8 +399,9 @@ export async function getStats(): Promise<Stats> {
  */
 export async function addXp(amount: number, now: number): Promise<Stats> {
 	const day = localDay(now);
+	const capturing = syncEnabled();
 
-	return db.transaction('rw', db.stats, async () => {
+	return db.transaction('rw', db.stats, db.outbox, async () => {
 		const row = await db.stats.get(SINGLETON_KEY);
 		const current = row ? { ...row } : { ...defaultStats(), id: SINGLETON_KEY };
 
@@ -250,6 +422,10 @@ export async function addXp(amount: number, now: number): Promise<Stats> {
 			history
 		};
 		await db.stats.put({ ...next, id: SINGLETON_KEY });
+		// The event carries the *increment*, not the day's running total: §4
+		// sums `xp-banked` amounts per day across devices, so a total would
+		// double-count a device's own earlier sessions.
+		if (capturing) await capture([event(EVENT_TYPES.xpBanked, { day, amount }, now)]);
 		return next;
 	});
 }
@@ -300,6 +476,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  *
  * Throws on malformed input or an unsupported envelope version; the API key and
  * the challenge pool are untouched.
+ *
+ * Deliberately captures **no** sync events, and its transaction deliberately
+ * omits `outbox`/`syncState`: an import is a wholesale replacement of local
+ * state, which the append-only event model has no vocabulary for. A device that
+ * imports a dump and then syncs would need a fresh genesis, not a diff — a
+ * combination worth handling explicitly if it ever comes up, not worth guessing
+ * at now.
  */
 export async function importData(json: string): Promise<void> {
 	let parsed: unknown;
@@ -330,4 +513,178 @@ export async function importData(json: string): Promise<void> {
 
 		await db.stats.put({ ...envelope.stats, id: SINGLETON_KEY });
 	});
+}
+
+/* -------------------------------------------------------------------------- */
+/* Sync: outbox, state, and the non-capturing apply path                       */
+/* -------------------------------------------------------------------------- */
+
+/** localStorage-style `syncState` keys, all in one place. */
+const SYNC_STATE = {
+	/** Server `seq` of the last event this device has pulled *and applied*. */
+	cursor: 'cursor',
+	/** Set once genesis synthesis has run; keeps it from ever running twice. */
+	genesisDone: 'genesisDone',
+	/** The apply engine's dedupe bookkeeping (`SyncBookkeeping`). */
+	bookkeeping: 'bookkeeping',
+	/**
+	 * Epoch ms of the last sync that completed end to end — pushed, pulled and
+	 * applied. Written by `runSync` on success only, so the Settings status line
+	 * says when the device was last actually in step, not when it last tried.
+	 */
+	lastSync: 'lastSync'
+} as const;
+
+/** Reads one `syncState` value, or `undefined` when unset. */
+export async function getSyncState<T>(key: keyof typeof SYNC_STATE): Promise<T | undefined> {
+	const row = await db.syncState.get(SYNC_STATE[key]);
+	return row?.value as T | undefined;
+}
+
+/** Writes one `syncState` value. */
+export async function setSyncState(key: keyof typeof SYNC_STATE, value: unknown): Promise<void> {
+	await db.syncState.put({ key: SYNC_STATE[key], value: toPlain(value) });
+}
+
+/** How many locally produced events are waiting to be pushed. */
+export async function outboxCount(): Promise<number> {
+	return db.outbox.count();
+}
+
+/**
+ * The oldest `limit` outbox rows, in `seq` order — one push batch.
+ *
+ * Rows keep their `seq`, because that is what {@link drainOutbox} deletes by:
+ * the server acknowledges *event ids*, but the local row is identified only by
+ * its auto-increment key (a re-pushed event keeps its id and gets a new row).
+ */
+export async function peekOutbox(limit: number): Promise<OutboxRow[]> {
+	return db.outbox.orderBy('seq').limit(limit).toArray();
+}
+
+/**
+ * Deletes the rows a push has been acknowledged for.
+ *
+ * Called only with the seqs of a batch the server answered 2xx to, which is
+ * what makes a failed push free: the outbox is left exactly as it was, and the
+ * next sync re-pushes it — the server dedupes on event id, so anything that did
+ * land the first time is a no-op the second (docs/sync.md §6).
+ */
+export async function drainOutbox(seqs: number[]): Promise<void> {
+	if (seqs.length === 0) return;
+	await db.outbox.bulkDelete(seqs);
+}
+
+/**
+ * Runs genesis synthesis (docs/sync.md §5) exactly once.
+ *
+ * Reads the whole local state, hands it to `build` — the pure
+ * `synthesizeGenesis` — and enqueues the result, all in one transaction, so a
+ * half-written genesis is impossible. Returns the number of events enqueued, or
+ * `0` if genesis had already run.
+ */
+export async function seedOutbox(build: (state: GenesisState) => SyncEvent[]): Promise<number> {
+	return db.transaction(
+		'rw',
+		[db.profile, db.items, db.challenges, db.results, db.stats, db.outbox, db.syncState],
+		async () => {
+			if (await getSyncState<boolean>('genesisDone')) return 0;
+
+			const [profile, items, pool, results, stats] = await Promise.all([
+				getProfile(),
+				getAllItems(),
+				getAllChallenges(),
+				getAllResults(),
+				getStats()
+			]);
+			const events = build({
+				items,
+				pool,
+				results,
+				days: stats.history,
+				profile: profile ?? null
+			});
+
+			await capture(events);
+			await setSyncState('genesisDone', true);
+			return events.length;
+		}
+	);
+}
+
+/**
+ * The **only** write path for remotely produced state, and the reason no
+ * `{capture: false}` flag exists: `fold` is the pure apply engine, and this
+ * function writes its output straight to the tables without touching `outbox`,
+ * so a pulled event physically cannot echo back into it.
+ *
+ * Load, fold and write-back happen inside one transaction, so a session writing
+ * concurrently cannot be clobbered by a stale read.
+ *
+ * The write-back is a **reference diff**: the pure engine returns the very same
+ * object for anything it did not touch, so `!==` against the loaded snapshot is
+ * an exact — and free — "what changed" test. That keeps a sync that brings in
+ * three reviews to three item writes instead of rewriting the whole table.
+ */
+export async function mergeSyncSnapshot(
+	fold: (before: SyncSnapshot) => SyncSnapshot
+): Promise<void> {
+	await db.transaction(
+		'rw',
+		[db.profile, db.items, db.challenges, db.results, db.stats, db.syncState],
+		async () => {
+			const [profile, items, pool, results, stats] = await Promise.all([
+				getProfile(),
+				getAllItems(),
+				getAllChallenges(),
+				getAllResults(),
+				getStats()
+			]);
+			const before: SyncSnapshot = {
+				items,
+				pool,
+				results,
+				days: stats.history,
+				profile: profile ?? null,
+				bookkeeping: (await getSyncState<SyncBookkeeping>('bookkeeping')) ?? emptyBookkeeping()
+			};
+
+			// Not `toPlain`d: the engine only ever moves already-plain objects
+			// around (rows loaded from Dexie, payloads parsed from JSON), and a
+			// round-trip here would destroy the very reference identity the diff
+			// below depends on.
+			const after = fold(before);
+
+			const changedItems = diffById(before.items, after.items);
+			if (changedItems.puts.length > 0) await db.items.bulkPut(changedItems.puts);
+			if (changedItems.deletes.length > 0) await db.items.bulkDelete(changedItems.deletes);
+
+			const changedPool = diffById(before.pool, after.pool);
+			if (changedPool.puts.length > 0) await db.challenges.bulkPut(changedPool.puts);
+
+			const known = new Set(before.results);
+			const newResults = after.results.filter((result) => !known.has(result));
+			if (newResults.length > 0) await db.results.bulkAdd(newResults);
+
+			if (after.days !== before.days) {
+				await db.stats.put({ ...statsFromDays(after.days), id: SINGLETON_KEY });
+			}
+			if (after.profile !== before.profile && after.profile) {
+				await db.profile.put({ ...after.profile, id: SINGLETON_KEY });
+			}
+			await setSyncState('bookkeeping', after.bookkeeping);
+		}
+	);
+}
+
+/** Rows to write and ids to drop, by reference-identity comparison against `before`. */
+function diffById<T extends { id: string }>(
+	before: T[],
+	after: T[]
+): { puts: T[]; deletes: string[] } {
+	const previous = new Map(before.map((row) => [row.id, row]));
+	const puts = after.filter((row) => previous.get(row.id) !== row);
+	const kept = new Set(after.map((row) => row.id));
+	const deletes = before.filter((row) => !kept.has(row.id)).map((row) => row.id);
+	return { puts, deletes };
 }
