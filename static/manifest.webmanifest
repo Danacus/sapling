@@ -1,6 +1,6 @@
 {
-	"name": "Language Learning",
-	"short_name": "Learn",
+	"name": "Sapling",
+	"short_name": "Sapling",
 	"description": "Gamified, personalized language practice that runs entirely in your browser.",
 	"start_url": "/",
 	"scope": "/",

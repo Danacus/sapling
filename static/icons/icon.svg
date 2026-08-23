@@ -1,6 +1,8 @@
 <!--
-  Source artwork for the PWA / apple-touch icons. Flat, no gradients and no
-  small text, so it survives being rasterised down to 192px and rendered at
+  Source artwork for the PWA / apple-touch icons: a white sapling on the
+  light-theme primary green — the app is called Sapling, and the onboarding
+  levels already speak this language (🌱 → 🌳). Flat, no gradients and no
+  small detail, so it survives being rasterised down to 192px and rendered at
   favicon size. Colors are the light-theme primary/surface tokens from
   src/app.css; keep them in sync if the palette ever moves.
 
@@ -8,9 +10,12 @@
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <rect width="512" height="512" rx="112" fill="#58cc02" />
-  <path
-    d="M148 120h216a52 52 0 0 1 52 52v128a52 52 0 0 1-52 52H244l-72 62a12 12 0 0 1-20-9v-53h-4a52 52 0 0 1-52-52V172a52 52 0 0 1 52-52z"
-    fill="#ffffff" />
-  <rect x="152" y="189" width="208" height="30" rx="15" fill="#58cc02" />
-  <rect x="152" y="253" width="136" height="30" rx="15" fill="#58cc02" />
+  <!-- Stem, gently curved toward the right leaf. -->
+  <path d="M256 400 C 256 352 250 312 256 268" stroke="#ffffff" stroke-width="34" stroke-linecap="round" fill="none" />
+  <!-- Left leaf -->
+  <path d="M251 282 C 190 288 122 258 100 158 C 208 158 254 210 251 282 Z" fill="#ffffff" />
+  <!-- Right leaf -->
+  <path d="M261 282 C 322 288 390 258 412 158 C 304 158 258 210 261 282 Z" fill="#ffffff" />
+  <!-- Soil mound -->
+  <path d="M148 420 a108 64 0 0 1 216 0 Z" fill="#ffffff" />
 </svg>

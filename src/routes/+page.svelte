@@ -126,7 +126,7 @@
 </script>
 
 <svelte:head>
-	<title>{profile ? `Learning ${targetLanguage}` : 'Dashboard'}</title>
+	<title>{profile ? `Sapling · ${targetLanguage}` : 'Sapling'}</title>
 </svelte:head>
 
 <main class="shell">

@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+The app is called **Sapling** (manifest, titles, icon); the repo/package name stays `language-learning`/`language-app`.
+
 ## Commands
 
 Node and pnpm exist **only inside the Nix devShell**. Prefix every command with `nix develop -c` (or enter the shell once with `nix develop`).
