@@ -15,6 +15,7 @@
 -->
 <script lang="ts">
 	import type { AnswerEvent } from '$lib/session/engine';
+	import { speak } from '$lib/tts';
 	import type { ClozeChallenge } from '$lib/types';
 	import { getShowRomanization } from '$lib/ui/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
@@ -72,6 +73,11 @@
 	);
 	const ready = $derived(answer.length > 0 && !locked);
 
+	/** The sentence with the blank filled in by the canonical accepted answer. */
+	const completedSentence = $derived(
+		challenge.sentence.split(GAP).join(challenge.acceptedAnswers[0] ?? '…')
+	);
+
 	/**
 	 * What the speaker button says.
 	 *
@@ -82,7 +88,7 @@
 	 * canonical form.
 	 */
 	const spokenSentence = $derived(
-		challenge.sentence.split(GAP).join(locked ? (challenge.acceptedAnswers[0] ?? '…') : '…')
+		locked ? completedSentence : challenge.sentence.split(GAP).join('…')
 	);
 
 	function pick(index: number): void {
@@ -95,6 +101,11 @@
 		if (!ready) return;
 		locked = true;
 		const { verdict, closestAccepted } = validateAnswer(answer, challenge.acceptedAnswers);
+		// Hearing the sentence whole, right as it is graded, is the point of a
+		// cloze: the gap only becomes a sentence once the answer is in it. The
+		// submit click is the user gesture autoplay policy wants, and `speak`
+		// swallows its own failures — audio never gates the answer going out.
+		void speak(completedSentence, targetLanguage);
 		onanswer({
 			answerGiven: answer,
 			verdict,
@@ -160,7 +171,10 @@
 					disabled={locked}
 					onclick={() => pick(index)}
 				>
-					{word}
+					<span>{word}</span>
+					{#if showRomanization && challenge.wordBankRomanization?.[index]}
+						<span class="rom">{challenge.wordBankRomanization[index]}</span>
+					{/if}
 				</button>
 			{/each}
 		</div>

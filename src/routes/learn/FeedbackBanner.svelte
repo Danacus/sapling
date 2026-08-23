@@ -16,7 +16,9 @@
 
 	import { getEscalation, LlmError } from '$lib/llm';
 	import { motionMs } from '$lib/session/motion';
+	import { Grade } from '$lib/srs';
 	import type { Challenge, Verdict } from '$lib/types';
+	import { getShowRomanization } from '$lib/ui/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
@@ -34,7 +36,8 @@
 		last = false,
 		overturned = false,
 		oncontinue,
-		onoverturn
+		onoverturn,
+		onassess
 	}: {
 		challenge: Challenge;
 		verdict: Verdict;
@@ -67,7 +70,16 @@
 		 * The page decides what that is worth.
 		 */
 		onoverturn?: () => void;
+		/**
+		 * The learner re-rated a correct answer. Fires on every change away from
+		 * the current selection, including back to `Good`; the page re-grades the
+		 * review from its pre-answer state, so the last call wins.
+		 */
+		onassess?: (grade: Grade) => void;
 	} = $props();
+
+	/** Read once — the toggle lives in Settings, not mid-session. */
+	const showRomanization = getShowRomanization();
 
 	let showExplain = $state(false);
 	let question = $state('');
@@ -75,6 +87,36 @@
 	let answer = $state('');
 	let askError = $state('');
 	let questionInput = $state<HTMLInputElement | null>(null);
+
+	/* Self-assessment ------------------------------------------------------- */
+
+	const ASSESS_CHOICES = [
+		{ grade: Grade.Hard, label: 'Hard' },
+		{ grade: Grade.Good, label: 'Good' },
+		{ grade: Grade.Easy, label: 'Easy' }
+	] as const;
+
+	/**
+	 * Only a clean `correct` is worth asking about. `almost` already means "you
+	 * fumbled it" (auto-Hard) and `wrong` means Again; a skip never tried; an
+	 * overturned answer was argued back, not recalled; and match rounds touch no
+	 * card at all.
+	 */
+	const canAssess = $derived(
+		verdict === 'correct' && !skipped && !overturned && challenge.type !== 'match-pairs'
+	);
+
+	/**
+	 * Preselected Good, which is exactly what the answer already scored — so a
+	 * learner who ignores this row gets the neutral default and no extra write.
+	 */
+	let assessed = $state<Grade>(Grade.Good);
+
+	function assess(grade: Grade): void {
+		if (grade === assessed) return;
+		assessed = grade;
+		onassess?.(grade);
+	}
 
 	/** What the banner paints as, once a dispute has been won. */
 	const shownVerdict = $derived(overturned ? 'correct' : verdict);
@@ -119,9 +161,55 @@
 				challenge.direction === 'toTarget')
 	);
 
-	const spokenAnswer = $derived(
-		answerIsTargetLanguage ? (closestAccepted?.trim() || correctAnswer.trim()) : ''
-	);
+	/**
+	 * What the speak button says — always the canonical target-script form, never
+	 * the variant {@link detail} is showing.
+	 *
+	 * The two deliberately diverge. `closestAccepted` is whichever accepted
+	 * variant the learner came nearest to, and for a non-Latin target that is
+	 * routinely a romanization — possibly the tone-stripped one — because
+	 * `acceptedAnswers` carries those on purpose so typing "caidan" grades
+	 * correct. Printing it back is right (it is the form they nearly wrote);
+	 * handing it to a Mandarin voice is not, which is the whole bug: the
+	 * synthesizer reads Latin letters as Latin letters. The resolver pins
+	 * `acceptedAnswers[0]` to the canonical script form (see `answerVariants`),
+	 * so that is what gets spoken.
+	 *
+	 * A cloze speaks the whole sentence with the blank filled rather than the
+	 * bare word: the learner already knows what the word means — what they are
+	 * missing is how it sounds in place, with the rhythm and the sandhi of the
+	 * line around it. Multiple choice needs no such care; its option text is
+	 * already script.
+	 */
+	const spokenAnswer = $derived.by(() => {
+		if (!answerIsTargetLanguage) return '';
+		if (challenge.type === 'multiple-choice') return correctAnswer.trim();
+		if (challenge.type === 'typed-translation') return challenge.acceptedAnswers[0]?.trim() ?? '';
+		if (challenge.type === 'cloze') {
+			const canonical = challenge.acceptedAnswers[0]?.trim();
+			if (!canonical) return '';
+			return challenge.sentence.split('___').join(canonical);
+		}
+		return '';
+	});
+
+	/**
+	 * The Latin reading of the answer the banner is showing — the moment a
+	 * learner is told a word they could not produce is exactly when they need to
+	 * know how to say it. Absent for Latin scripts, for native-language answers,
+	 * and for anything queued before the field existed; each of those simply
+	 * renders no line.
+	 */
+	const answerReading = $derived.by(() => {
+		if (!showRomanization || !answerIsTargetLanguage) return '';
+		if (challenge.type === 'multiple-choice') {
+			return challenge.optionsRomanization?.[challenge.correctIndex] ?? '';
+		}
+		if (challenge.type === 'cloze' || challenge.type === 'typed-translation') {
+			return challenge.answerRomanization ?? '';
+		}
+		return '';
+	});
 
 	async function ask(): Promise<void> {
 		if (asking) return;
@@ -200,7 +288,10 @@
 				</span>
 				<div class="text">
 					<p class="headline">{headline}</p>
-					{#if detail}<p class="detail">{detail}</p>{/if}
+					{#if detail}
+						<p class="detail">{detail}</p>
+						{#if answerReading}<p class="rom">{answerReading}</p>{/if}
+					{/if}
 					{#if spokenAnswer}
 						<SpeakButton text={spokenAnswer} lang={targetLanguage} label="Hear it" size="sm" />
 					{/if}
@@ -213,6 +304,25 @@
 
 		{#if explanation}
 			<p class="explanation">{explanation}</p>
+		{/if}
+
+		{#if canAssess}
+			<div class="assess" role="group" aria-label="How easy was it?">
+				<span class="assess-label">How easy was it?</span>
+				<div class="assess-choices">
+					{#each ASSESS_CHOICES as choice (choice.grade)}
+						<button
+							type="button"
+							class="assess-btn"
+							class:selected={assessed === choice.grade}
+							aria-pressed={assessed === choice.grade}
+							onclick={() => assess(choice.grade)}
+						>
+							{choice.label}
+						</button>
+					{/each}
+				</div>
+			</div>
 		{/if}
 
 		{#if showExplain}
@@ -361,6 +471,59 @@
 		line-height: 1.45;
 		color: var(--text);
 		opacity: 0.85;
+	}
+
+	/* Self-assessment ------------------------------------------------------- */
+
+	.assess {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.4rem 0.6rem;
+		margin-top: 0.85rem;
+	}
+
+	.assess-label {
+		font-size: 0.78rem;
+		font-weight: 700;
+		color: var(--text-muted);
+	}
+
+	.assess-choices {
+		display: flex;
+		gap: 0.3rem;
+	}
+
+	.assess-btn {
+		padding: 0.3rem 0.7rem;
+		border: 2px solid color-mix(in srgb, var(--tone) 30%, transparent);
+		border-radius: 999px;
+		background: transparent;
+		color: var(--text-muted);
+		font: inherit;
+		font-size: 0.8rem;
+		font-weight: 800;
+		cursor: pointer;
+		transition:
+			border-color 0.15s ease,
+			background 0.15s ease,
+			color 0.15s ease;
+	}
+
+	.assess-btn:hover {
+		border-color: var(--tone);
+		color: var(--text);
+	}
+
+	.assess-btn:focus-visible {
+		outline: none;
+		box-shadow: var(--ring);
+	}
+
+	.assess-btn.selected {
+		border-color: var(--tone);
+		background: var(--tone);
+		color: var(--text-inverse);
 	}
 
 	.explain {

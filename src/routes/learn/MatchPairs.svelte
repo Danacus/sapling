@@ -19,13 +19,19 @@
 -->
 <script lang="ts">
 	import type { AnswerEvent } from '$lib/session/engine';
+	import { speak } from '$lib/tts';
 	import type { MatchPairsChallenge } from '$lib/types';
 	import { getShowRomanization } from '$lib/ui/prefs';
 
 	let {
 		challenge,
-		onanswer
-	}: { challenge: MatchPairsChallenge; onanswer: (event: AnswerEvent) => void } = $props();
+		onanswer,
+		targetLanguage = ''
+	}: {
+		challenge: MatchPairsChallenge;
+		onanswer: (event: AnswerEvent) => void;
+		targetLanguage?: string;
+	} = $props();
 
 	/** Read once — the toggle lives in Settings, not mid-session. */
 	const showRomanization = getShowRomanization();
@@ -182,9 +188,18 @@
 		});
 	}
 
+	/**
+	 * The left column is the target language, so picking a tile is a free chance
+	 * to hear it — the round is otherwise silent reading. Only on *selection*: a
+	 * deselecting tap is the learner taking a choice back, not asking again, and
+	 * `speak` cuts off whatever is playing anyway. Failures are swallowed inside
+	 * `speak`, so nothing here can stall the round.
+	 */
 	function tapLeft(pair: number): void {
 		if (busy || done || isMatchedLeft(pair)) return;
-		selectedLeft = selectedLeft === pair ? null : pair;
+		const selecting = selectedLeft !== pair;
+		selectedLeft = selecting ? pair : null;
+		if (selecting) void speak(challenge.pairs[pair].a, targetLanguage);
 		resolve();
 	}
 

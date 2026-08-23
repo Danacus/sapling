@@ -36,6 +36,7 @@
 		MATCH_PAIRS_XP,
 		SESSION_LENGTH,
 		SKIP_ANSWER,
+		amendResult,
 		applyOverturn,
 		applyResult,
 		bankSessionXp,
@@ -49,6 +50,7 @@
 		type SessionAnswer
 	} from '$lib/session/engine';
 	import { motionMs } from '$lib/session/motion';
+	import type { FsrsCardState, Grade } from '$lib/srs';
 	import type { Challenge, KnowledgeItem, Profile, Stats, Verdict } from '$lib/types';
 	import {
 		addRecentTopic,
@@ -183,6 +185,15 @@
 	 * challenge from the queue.
 	 */
 	let pendingWrite: Promise<void> = Promise.resolve();
+
+	/**
+	 * The same write, kept for its value: the card state each item on the current
+	 * challenge had *before* it was graded. {@link assessCurrent} needs it to
+	 * recompute the review rather than stack a second one on top. Never rejects —
+	 * a failed write yields an empty map, and amending nothing is the right
+	 * outcome there.
+	 */
+	let pendingPriors: Promise<Map<string, FsrsCardState | null>> = Promise.resolve(new Map());
 
 	/* ---------------------------------------------------------------------- */
 	/* Boot                                                                    */
@@ -335,7 +346,10 @@
 	async function advance(): Promise<void> {
 		feedback = null;
 
-		if (llmAnswered >= SESSION_LENGTH) {
+		// `plannedLlm` is the queue as it stood at boot (capped by SESSION_LENGTH),
+		// so a completed session drains its whole batch instead of stopping at a
+		// fixed count and stranding the tail as a stub "continue session".
+		if (llmAnswered >= plannedLlm) {
 			await finish();
 			return;
 		}
@@ -416,14 +430,50 @@
 		if (xp > 0) toast = { id: ++toastSeq, amount: xp };
 
 		// Fire-and-follow: the banner animates now, the write lands underneath it.
-		pendingWrite = applyResult(challenge, {
+		// The one promise is held twice — as `pendingPriors` for its value (the
+		// pre-answer cards a self-assessment would re-grade from) and as
+		// `pendingWrite` for its completion, which is what the session awaits before
+		// touching the queue again. Neither is ever dropped.
+		pendingPriors = applyResult(challenge, {
 			verdict: event.verdict,
 			answerGiven: event.answerGiven,
 			responseMs: event.responseMs,
 			now: Date.now()
 		}).catch(() => {
 			// A failed write must not eat the session; the answer is already scored.
+			return new Map<string, FsrsCardState | null>();
 		});
+		pendingWrite = pendingPriors.then(() => undefined);
+	}
+
+	/**
+	 * The learner rated a correct answer Hard / Good / Easy before continuing.
+	 *
+	 * Explicit self-assessment is the only route to an FSRS `Easy` (see
+	 * `gradeFromResult`), so this is the learner steering their own schedule
+	 * rather than a guess made from response time. `amendResult` recomputes the
+	 * review from the captured pre-answer cards and replaces the history entry,
+	 * so switching between grades stays exact however often it happens.
+	 *
+	 * Chained onto `pendingWrite` for the usual reason: the original review must
+	 * be on the card (and its history entry appended) before the amend rewrites
+	 * it. `continueSession` awaits the same chain, so even a rating given as the
+	 * learner reaches for Continue lands before the next challenge is pulled.
+	 *
+	 * XP is untouched: it prices the verdict, not the grade — "that was hard" is
+	 * not a smaller correct answer.
+	 */
+	function assessCurrent(grade: Grade): void {
+		const fb = feedback;
+		if (!fb) return;
+		const priors = pendingPriors;
+		pendingWrite = pendingWrite
+			.then(async () => {
+				await amendResult(fb.challenge, grade, await priors, Date.now());
+			})
+			.catch(() => {
+				// A failed write must not eat the session; the answer is already scored.
+			});
 	}
 
 	/**
@@ -574,7 +624,7 @@
 
 	const targetLanguage = $derived(profile?.targetLanguage ?? '');
 	const nativeLanguage = $derived(profile?.nativeLanguage ?? '');
-	const isLastStep = $derived(llmAnswered >= SESSION_LENGTH || stepsDone >= totalSteps);
+	const isLastStep = $derived(llmAnswered >= plannedLlm || stepsDone >= totalSteps);
 
 	/** Read once — the toggle lives in Settings, not mid-session. */
 	const showRomanization = getShowRomanization();
@@ -836,7 +886,7 @@
 								{nativeLanguage}
 							/>
 						{:else}
-							<MatchPairs challenge={current} onanswer={handleAnswer} />
+							<MatchPairs challenge={current} onanswer={handleAnswer} {targetLanguage} />
 						{/if}
 
 						{#if current.type !== 'match-pairs' && !feedback}
@@ -867,6 +917,7 @@
 				overturned={feedback.overturned ?? false}
 				oncontinue={() => void continueSession()}
 				onoverturn={overturnCurrent}
+				onassess={assessCurrent}
 			/>
 		{/if}
 
