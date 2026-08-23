@@ -102,6 +102,16 @@ export type {
 } from './generate';
 
 export {
+	ROMANIZE_SCHEMA_NAME,
+	buildRomanizePrompt,
+	fillRomanizations,
+	parseRomanizations,
+	romanizationsSchema,
+	romanizeJsonSchema
+} from './romanize';
+export type { RomanizeArgs, RomanizeItem, RomanizeOptions, RomanizeResult } from './romanize';
+
+export {
 	MOCK_FLAG_KEY,
 	escalateMock,
 	isMockMode,

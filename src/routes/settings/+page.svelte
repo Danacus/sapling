@@ -6,14 +6,17 @@
 		db,
 		DEFAULT_MODEL,
 		exportData,
+		getAllItems,
 		getApiKey,
 		getModel,
 		getProfile,
 		importData,
 		saveProfile,
 		setApiKey,
-		setModel
+		setModel,
+		upsertItems
 	} from '$lib/db';
+	import { fillRomanizations, isMockMode } from '$lib/llm';
 	import {
 		formatMb,
 		getTtsEngine,
@@ -27,7 +30,7 @@
 		type TtsEngine,
 		type TtsVoice
 	} from '$lib/tts';
-	import type { Profile } from '$lib/types';
+	import type { KnowledgeItem, Profile } from '$lib/types';
 	import InlineStatus from '$lib/ui/InlineStatus.svelte';
 	import { getShowRomanization, setShowRomanization } from '$lib/ui/prefs';
 	import ProgressBar from '$lib/ui/ProgressBar.svelte';
@@ -47,6 +50,9 @@
 	let loading = $state(true);
 	let loadError = $state('');
 	let profile = $state<Profile | undefined>(undefined);
+	let allItems = $state<KnowledgeItem[]>([]);
+	/** No key configured (or the flag is set): nothing here may offer to spend. */
+	let mockMode = $state(false);
 
 	// Profile / goal ------------------------------------------------------------
 	let dailyGoalXp = $state(60);
@@ -84,6 +90,11 @@
 	let usageCompletionTokens = $state(0);
 	let usageRequests = $state(0);
 
+	// Readings backfill -------------------------------------------------------------
+	let backfilling = $state(false);
+	let backfillStatus = $state<Status>('idle');
+	let backfillMessage = $state('');
+
 	// Export / import -----------------------------------------------------------
 	let exportStatus = $state<Status>('idle');
 	let exportMessage = $state('');
@@ -104,12 +115,14 @@
 		loading = true;
 		loadError = '';
 
-		getProfile()
-			.then((loadedProfile) => {
+		Promise.all([getProfile(), getAllItems()])
+			.then(([loadedProfile, loadedItems]) => {
 				if (cancelled) return;
 				profile = loadedProfile;
+				allItems = loadedItems;
 				dailyGoalXp = loadedProfile?.dailyGoalXp ?? 60;
 
+				mockMode = isMockMode();
 				apiKeySet = getApiKey() !== undefined;
 				modelInput = getModel();
 				showRomanization = getShowRomanization();
@@ -266,6 +279,64 @@
 		} catch (cause) {
 			modelMessage = cause instanceof Error ? cause.message : 'Could not save the model.';
 			modelStatus = 'error';
+		}
+	}
+
+	/**
+	 * Whether a word is unreadable without help: it has no stored reading, and
+	 * what is left of its term once every Latin letter is removed still contains
+	 * a letter. That second half is the whole test — "café" and "Straße" strip
+	 * down to nothing and are left alone, "菜单" and "ありがとう" do not.
+	 * Punctuation and digits are not letters, so they never trigger it either.
+	 */
+	function needsReading(item: KnowledgeItem): boolean {
+		if (item.romanization?.trim()) return false;
+		return /\p{L}/u.test(item.term.replace(/\p{Script=Latin}/gu, ''));
+	}
+
+	/**
+	 * Words that predate romanization support. Only worth offering when there is
+	 * a real key behind it — the mock has no readings to give, and this is the
+	 * one button in the app that spends tokens on something other than a lesson.
+	 */
+	const missingReadings = $derived(allItems.filter(needsReading));
+
+	/** Backfills readings for every unreadable word in one batched call. */
+	async function backfillReadings() {
+		if (backfilling || !profile) return;
+		backfilling = true;
+		backfillStatus = 'idle';
+		backfillMessage = '';
+
+		const targets = missingReadings;
+		try {
+			const { readings } = await fillRomanizations({
+				items: targets.map((item) => ({ id: item.id, term: item.term })),
+				targetLanguage: profile.targetLanguage
+			});
+
+			const patched = targets
+				.filter((item) => readings.has(item.id))
+				.map((item) => ({ ...item, romanization: readings.get(item.id) as string }));
+			await upsertItems(patched);
+
+			// Patch the local copy rather than re-reading: the count in the button
+			// label has to fall the moment the write lands.
+			const byId = new Map(patched.map((item) => [item.id, item]));
+			allItems = allItems.map((item) => byId.get(item.id) ?? item);
+
+			if (patched.length === 0) {
+				backfillMessage = 'The model returned no usable readings.';
+				backfillStatus = 'error';
+			} else {
+				backfillMessage = `Added ${patched.length} reading${patched.length === 1 ? '' : 's'}`;
+				flash((value) => (backfillStatus = value), 3000);
+			}
+		} catch (cause) {
+			backfillMessage = cause instanceof Error ? cause.message : 'Could not fetch the readings.';
+			backfillStatus = 'error';
+		} finally {
+			backfilling = false;
 		}
 	}
 
@@ -623,6 +694,28 @@
 				<InlineStatus status={exportStatus} message={exportMessage} />
 			</div>
 
+			{#if !mockMode && missingReadings.length > 0}
+				<div class="field backfill-field">
+					<span class="label">Missing pronunciations</span>
+					<p class="hint">
+						{missingReadings.length} word{missingReadings.length === 1 ? '' : 's'} from before pronunciations
+						were supported {missingReadings.length === 1 ? 'has' : 'have'} no reading. One short model call
+						fills them all in.
+					</p>
+					<div class="actions-row">
+						<button
+							type="button"
+							class="btn btn-primary"
+							onclick={() => void backfillReadings()}
+							disabled={backfilling}
+						>
+							{backfilling ? 'Fetching…' : `Add missing readings (${missingReadings.length})`}
+						</button>
+						<InlineStatus status={backfillStatus} message={backfillMessage} />
+					</div>
+				</div>
+			{/if}
+
 			<div class="field import-field">
 				<span class="label">Import progress</span>
 				<input
@@ -853,6 +946,10 @@
 	}
 
 	.model-field {
+		margin-top: 1.25rem;
+	}
+
+	.backfill-field {
 		margin-top: 1.25rem;
 	}
 

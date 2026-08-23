@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 
-	import { getAllItems, getProfile, getStats, localDay, queuedCount } from '$lib/db';
-	import { isDue, retrievability, type FsrsCardState } from '$lib/srs';
+	import { deleteItem, getAllItems, getProfile, getStats, localDay, queuedCount } from '$lib/db';
+	import { isDue, wordStrength, type FsrsCardState } from '$lib/srs';
 	import type { KnowledgeItem, Profile, Stats } from '$lib/types';
 	import ProgressBar from '$lib/ui/ProgressBar.svelte';
 	import { getShowRomanization } from '$lib/ui/prefs';
@@ -22,6 +22,9 @@
 	let now = $state(Date.now());
 	let showAllWeak = $state(false);
 	let queued = $state(0);
+	/** Word list in edit mode: every row grows a delete button. Off by default. */
+	let managing = $state(false);
+	let manageError = $state('');
 
 	$effect(() => {
 		if (!browser) return;
@@ -82,7 +85,7 @@
 		items
 			.map((item) => {
 				const card = cardState(item);
-				return { item, strength: card ? retrievability(card, now) : 0 };
+				return { item, strength: card ? wordStrength(card, now) : 0 };
 			})
 			.sort((a, b) => a.strength - b.strength)
 	);
@@ -91,6 +94,29 @@
 		showAllWeak ? weakestFirst : weakestFirst.slice(0, WEAK_PREVIEW_COUNT)
 	);
 
+	/**
+	 * Forgets a word for good — its meaning, its history and its SRS card.
+	 *
+	 * Confirmed by name, because there is no undo: the only way back is to meet
+	 * the word again in a future lesson, as a brand-new item. Queued challenges
+	 * that referenced it stay playable and simply grade nothing (see
+	 * `applyResult`), so nothing has to be swept.
+	 */
+	async function removeItem(item: KnowledgeItem): Promise<void> {
+		if (!confirm(`Forget "${item.term}"? Its progress and review history go with it.`)) return;
+		try {
+			await deleteItem(item.id);
+			items = items.filter((candidate) => candidate.id !== item.id);
+			manageError = '';
+		} catch (cause) {
+			manageError = cause instanceof Error ? cause.message : 'Could not delete that word.';
+		}
+	}
+
+	/**
+	 * Red below 0.5, amber below 0.85, green above — which on the `wordStrength`
+	 * scale is roughly "under 5 days of stability", "under 18 days", and "mature".
+	 */
 	function strengthColor(strength: number): string {
 		if (strength < 0.5) return 'var(--danger)';
 		if (strength < 0.85) return 'var(--amber)';
@@ -164,7 +190,19 @@
 			<section class="card strength-card">
 				<div class="strength-head">
 					<h2>Word strength</h2>
-					<span class="strength-count">{items.length} words known</span>
+					<div class="strength-tools">
+						<span class="strength-count">{items.length} words known</span>
+						<button
+							type="button"
+							class="btn btn-ghost manage-btn"
+							onclick={() => {
+								managing = !managing;
+								manageError = '';
+							}}
+						>
+							{managing ? 'Done' : 'Manage'}
+						</button>
+					</div>
 				</div>
 				<ul class="word-list">
 					{#each visibleWeakest as entry (entry.item.id)}
@@ -185,10 +223,23 @@
 									color={strengthColor(entry.strength)}
 									label={`Recall strength for ${entry.item.term}`}
 								/>
+								{#if managing}
+									<button
+										type="button"
+										class="forget"
+										aria-label={`Forget ${entry.item.term}`}
+										onclick={() => void removeItem(entry.item)}
+									>
+										✕
+									</button>
+								{/if}
 							</div>
 						</li>
 					{/each}
 				</ul>
+				{#if manageError}
+					<p class="error manage-error" role="alert">{manageError}</p>
+				{/if}
 				{#if weakestFirst.length > WEAK_PREVIEW_COUNT}
 					<button type="button" class="btn btn-ghost show-all" onclick={() => (showAllWeak = !showAllWeak)}>
 						{showAllWeak ? 'Show fewer' : `Show all ${weakestFirst.length}`}
@@ -336,6 +387,59 @@
 		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 		align-items: center;
 		gap: 0.75rem;
+	}
+
+	.strength-tools {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.manage-btn {
+		padding: 0.3rem 0.65rem;
+		font-size: 0.8rem;
+	}
+
+	/* The bar shares its column with the delete button in manage mode; without
+	   it the flex row is a single full-width child and nothing moves. */
+	.word-bar {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.word-bar :global(.bar) {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.forget {
+		flex: 0 0 auto;
+		width: 1.6rem;
+		height: 1.6rem;
+		padding: 0;
+		border: 1px solid var(--border);
+		border-radius: 999px;
+		background: var(--surface);
+		color: var(--text-muted);
+		font: inherit;
+		font-size: 0.75rem;
+		line-height: 1;
+		cursor: pointer;
+	}
+
+	.forget:hover {
+		border-color: var(--danger);
+		color: var(--danger);
+	}
+
+	.forget:focus-visible {
+		outline: none;
+		box-shadow: var(--ring);
+	}
+
+	.manage-error {
+		margin-top: 0.85rem;
 	}
 
 	.word-text {
