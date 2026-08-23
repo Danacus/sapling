@@ -1,0 +1,41 @@
+# Sapling sync server on a single VPS: the server container plus Caddy for
+# TLS. Copy `.env.example` to `.env`, fill it in, then:
+#
+#   docker compose up -d --build
+#
+# The sync service publishes no host ports — only Caddy, on the compose
+# network, can reach it, so every external request goes through TLS.
+
+name: sapling-sync
+
+services:
+  sync:
+    build:
+      # Repo root, not server/ — the Dockerfile copies the shared event
+      # schema from src/lib/sync/events.ts.
+      context: ../..
+      dockerfile: server/Dockerfile
+    container_name: sapling-sync
+    restart: unless-stopped
+    environment:
+      SAPLING_ORIGINS: ${SAPLING_ORIGINS}
+    volumes:
+      - sapling-data:/data
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SAPLING_DOMAIN: ${SAPLING_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  sapling-data:
+  caddy-data:
+  caddy-config:

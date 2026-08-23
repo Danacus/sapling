@@ -1,0 +1,5 @@
+# TLS termination for the sync server. SAPLING_DOMAIN comes from .env via
+# compose; certificates are fetched and renewed automatically.
+{$SAPLING_DOMAIN} {
+	reverse_proxy sync:8787
+}

@@ -78,6 +78,9 @@ every response, however healthy the server is.
 
 ## Deployment
 
+For a ready-made single-VPS setup — compose file, Caddy TLS, nightly
+backups — see [`deploy/`](deploy/README.md). The raw pieces:
+
 ```sh
 # Context is the repo root — the shared event schema lives outside server/.
 docker build -f server/Dockerfile -t sapling-sync .
