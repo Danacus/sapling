@@ -149,6 +149,7 @@
 					<span aria-hidden="true">🔥</span>
 					<span>{streakDays}</span>
 				</div>
+				<a class="gear" href="/profile" aria-label="Profile">🙋</a>
 				<a class="gear" href="/settings" aria-label="Settings">⚙️</a>
 			</div>
 		</header>

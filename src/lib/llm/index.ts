@@ -76,6 +76,7 @@ export type {
 
 export {
 	CORRECTIVE_INSTRUCTION,
+	MAX_ABOUT_CHARS,
 	MAX_BATCH_CHALLENGES,
 	MIN_BATCH_CHALLENGES,
 	buildBatchPrompt,

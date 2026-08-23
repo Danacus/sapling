@@ -23,6 +23,14 @@ export interface Profile {
 	level: Level;
 	/** Free-form topics used to personalize generated content. */
 	interests: string[];
+	/**
+	 * The learner describing themselves in their own words — job, city, family,
+	 * tastes, whatever they care to say. Written on the profile page and sent
+	 * (capped, see `MAX_ABOUT_CHARS` in `$lib/llm`) with every generation request,
+	 * so scenarios can be set in their actual life instead of a generic one.
+	 * Never required: absent or blank simply personalizes nothing.
+	 */
+	about?: string;
 	/** XP target per day; drives the streak and daily goal ring. */
 	dailyGoalXp: number;
 	/** OpenRouter model id, e.g. `'openai/gpt-4o-mini'`. */

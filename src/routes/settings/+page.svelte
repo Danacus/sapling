@@ -502,6 +502,12 @@
 					<span class="readonly-label">Level</span>
 					<span class="readonly-value capitalize">{profile.level}</span>
 				</p>
+				<!--
+				  Read-only on purpose: level, interests and the self-description are
+				  edited in one place (/profile) so there is never a second copy of
+				  that form to keep in step with this one.
+				-->
+				<p class="hint profile-link"><a href="/profile">Edit level, interests and about you →</a></p>
 			{/if}
 
 			<div class="field">
@@ -1002,12 +1008,18 @@
 		margin: -0.5rem 0 1rem;
 	}
 
+	.profile-link {
+		margin: 0.75rem 0 0;
+	}
+
+	.profile-link a,
 	.test-bench-link a {
 		color: var(--primary-strong);
 		font-weight: 700;
 		text-decoration: none;
 	}
 
+	.profile-link a:hover,
 	.test-bench-link a:hover {
 		text-decoration: underline;
 	}

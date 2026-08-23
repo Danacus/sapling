@@ -3,6 +3,7 @@ import type { KnowledgeItem } from '$lib/types';
 import type { FetchLike } from './client';
 import { LlmError } from './client';
 import {
+	MAX_ABOUT_CHARS,
 	MAX_BATCH_CHALLENGES,
 	buildBatchPrompt,
 	defaultChallengeCount,
@@ -272,6 +273,34 @@ describe('buildBatchPrompt', () => {
 		expect(payload.topic).toBe('ordering in a restaurant');
 		const keys = Object.keys(payload);
 		expect(keys.indexOf('topic')).toBeLessThan(keys.indexOf('interests'));
+	});
+
+	it("sends the learner's self-description when they wrote one", () => {
+		const withAbout = buildBatchPrompt({
+			...args,
+			profile: { ...args.profile, about: 'Nurse in Valencia, two kids, I climb on weekends.' }
+		});
+		const payload = JSON.parse(withAbout[1].content) as Record<string, unknown>;
+		expect(payload.about).toBe('Nurse in Valencia, two kids, I climb on weekends.');
+	});
+
+	it('omits about when it is absent or blank', () => {
+		expect(JSON.parse(messages[1].content)).not.toHaveProperty('about');
+		const blank = buildBatchPrompt({ ...args, profile: { ...args.profile, about: '  \n ' } });
+		expect(JSON.parse(blank[1].content)).not.toHaveProperty('about');
+	});
+
+	it('caps about, so the token budget never depends on how much they typed', () => {
+		const essay = 'x'.repeat(1000);
+		const payload = JSON.parse(
+			buildBatchPrompt({ ...args, profile: { ...args.profile, about: essay } })[1].content
+		) as Record<string, unknown>;
+		expect(payload.about).toHaveLength(MAX_ABOUT_CHARS);
+		expect(payload.about).toBe('x'.repeat(MAX_ABOUT_CHARS));
+	});
+
+	it('tells the model what about is for', () => {
+		expect(messages[0].content).toContain('"about"');
 	});
 
 	it('omits the topic key entirely when there is none', () => {

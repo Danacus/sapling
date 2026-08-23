@@ -480,6 +480,14 @@ describe('planRefill', () => {
 		expect(plan.args.profile).not.toHaveProperty('dailyGoalXp');
 	});
 
+	it("threads the learner's self-description through, and omits it when blank", () => {
+		const about = 'Nurse in Valencia, two kids, I climb on weekends.';
+		expect(planRefill([], profile({ about }), NOW).args.profile.about).toBe(about);
+
+		expect(planRefill([], profile(), NOW).args.profile).not.toHaveProperty('about');
+		expect(planRefill([], profile({ about: '  ' }), NOW).args.profile).not.toHaveProperty('about');
+	});
+
 	it('sends the whole vocabulary as knownTerms, due or not', () => {
 		// Only the due slice travels as reviewItems, so without this list the
 		// model re-proposes words the learner already has and the dedupe silently

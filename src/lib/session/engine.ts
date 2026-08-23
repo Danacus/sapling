@@ -543,7 +543,11 @@ export function planRefill(
 			nativeLanguage: profile.nativeLanguage,
 			targetLanguage: profile.targetLanguage,
 			level: profile.level,
-			interests: profile.interests
+			interests: profile.interests,
+			// The learner's self-description, when they wrote one. Omitted rather
+			// than sent blank, so a profile that never filled it in costs nothing;
+			// the prompt builder does the length capping.
+			...(profile.about?.trim() ? { about: profile.about.trim() } : {})
 		},
 		reviewItems: reviewItems.map((item) => ({
 			id: item.id,

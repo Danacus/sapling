@@ -80,9 +80,21 @@ export interface ProgressStep {
 /** Callback threaded through the refill so the UI can show a live step log. */
 export type OnProgress = (step: ProgressStep) => void;
 
+/**
+ * Hard ceiling on the learner's self-description, in characters.
+ *
+ * The learner types this text and nobody reviews it, so the prompt budget must
+ * not depend on their restraint: an essay pasted into the box would ride along
+ * with *every* batch call for as long as it stays there. Enforced here by a
+ * deterministic trim-then-slice rather than by asking the model to ignore the
+ * tail, and mirrored as a `maxlength` on the profile page so the cut is visible
+ * while typing instead of silent at generation time.
+ */
+export const MAX_ABOUT_CHARS = 500;
+
 export type BatchProfile = Pick<
 	Profile,
-	'nativeLanguage' | 'targetLanguage' | 'level' | 'interests'
+	'nativeLanguage' | 'targetLanguage' | 'level' | 'interests' | 'about'
 >;
 
 export interface BatchArgs {
@@ -214,6 +226,7 @@ const SYSTEM_PROMPT = [
 	'Voice:',
 	'- Conversation, not flashcards: every prompt, sentence and translation is a line someone would really say — a dialogue turn, a question put to the learner, a request, a reaction, an opinion. Never an isolated textbook statement.',
 	'- With a "topic", EVERY challenge happens inside that scenario: cloze sentences are turns of that dialogue, translations are things you would really say there, newItems are words the scenario needs. "interests" then only colour word choice, never the sentence frame.',
+	'- "about" is the learner in their own words. Set scenarios in their life — their city, work, people, tastes — and let it colour word choice and examples. Never recite it back to them, never contradict it, and "topic" still outranks it.',
 	'- Banned: "I like <interest>", "<interest> is fun", any sentence whose only content is that the learner likes their interest, and reusing a sentence frame twice in one batch. Vary speaker, question vs statement, and register for the level.',
 	'- explanation: one line of usage or culture (register, politeness, word order) when non-obvious, written in the NATIVE language (target-language words may be quoted inside it); null when it would only restate the answer.'
 ].join('\n');
@@ -232,6 +245,7 @@ export function buildBatchPrompt(args: BatchArgs): ChatMessage[] {
 	const count = args.count ?? defaultChallengeCount(reviewItems.length, newItemSlots);
 
 	const topic = args.topic?.trim();
+	const about = profile.about?.trim().slice(0, MAX_ABOUT_CHARS);
 
 	const payload: Record<string, unknown> = {
 		native: profile.nativeLanguage,
@@ -241,6 +255,10 @@ export function buildBatchPrompt(args: BatchArgs): ChatMessage[] {
 		// interests, and models weight earlier keys more heavily.
 		...(topic ? { topic } : {}),
 		interests: profile.interests,
+		// Right after `interests` — it is the same kind of signal, only richer —
+		// and still below `topic`, which outranks both. Capped: see
+		// {@link MAX_ABOUT_CHARS}.
+		...(about ? { about } : {}),
 		challengeCount: Math.min(count, MAX_BATCH_CHALLENGES),
 		newItemSlots,
 		reviewItems: reviewItems.map((i) => ({ id: i.id, t: i.term, m: i.meaning })),
