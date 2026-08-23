@@ -5,14 +5,22 @@
  * app without passing through a schema here. These schemas are also the source
  * of truth for the JSON schema handed to OpenRouter, via {@link batchJsonSchema}.
  *
- * Two shapes live here:
+ * Two shapes live here, and they are deliberately *not* the same shape:
  *
  * - `challengeSchema` mirrors the `Challenge` union in `$lib/types` exactly
  *   (ids assigned, `match-pairs` included). It validates what the layer *emits*.
- * - `generatedBatchSchema` describes what the model is asked to *produce*: the
- *   same challenges minus `id` (assigned locally) and minus `match-pairs`
- *   (built locally for free — see `makeMatchPairsChallenge`), wrapped in an
- *   envelope alongside the new vocabulary the batch introduces.
+ * - `generatedChallengeSchema` describes the wire format the model is asked to
+ *   *produce*: pure content, no presentation. There is no `direction` flag, no
+ *   `correctIndex`, no `___` placement and no free-floating romanization array —
+ *   the direction is implied by the challenge type, and everything positional is
+ *   assembled locally by `resolveBatch`. Anything the model cannot express, it
+ *   cannot get wrong.
+ *
+ * The primitive that makes that work is {@link targetTextSchema}: one piece of
+ * target-language text with its own Latin reading attached. Every slot in every
+ * wire type is *unconditionally* either a `TargetText` or a plain native-language
+ * string, so no field's language depends on a flag, and a reading can never end
+ * up under the wrong string — or under a string the learner has not answered yet.
  *
  * Optional string fields are declared `.nullish()` rather than `.optional()`:
  * models emit `null` for "not applicable" far more often than they omit a key,
@@ -36,64 +44,112 @@ export const itemRefSchema = nonEmpty;
 export const NEW_ITEM_REF = /^new:(\d+)$/;
 
 // --------------------------------------------------------------------------
-// What the model generates (no `id`, no `match-pairs`).
+// What the model generates: content only, direction implied by the type.
 // --------------------------------------------------------------------------
 
+/**
+ * One string of the target language, carrying its own Latin-script reading.
+ *
+ * `reading` is pinyin with tone marks for Mandarin, romaji for Japanese, and so
+ * on; it is `null` for target languages already written in the Latin script, so
+ * those lessons pay nothing for a field they cannot use. Because the reading
+ * travels *with* the text it reads, the two can never be paired up wrongly.
+ */
+export const targetTextSchema = z.object({
+	text: nonEmpty,
+	reading: z.string().nullish()
+});
+
+/**
+ * The halves of a cloze sentence either side of the blank. Same shape as
+ * {@link targetTextSchema} but the text may be empty: a sentence is allowed to
+ * begin or end with the blank.
+ */
+const clozePartSchema = z.object({
+	text: z.string(),
+	reading: z.string().nullish()
+});
+
 const generatedBase = {
-	direction: directionSchema,
 	explanation: z.string().nullish(),
 	itemIds: z.array(itemRefSchema).min(1)
 };
 
-export const generatedMultipleChoiceSchema = z.object({
-	type: z.literal('multiple-choice'),
-	prompt: nonEmpty,
-	promptRomanization: z.string().nullish(),
+/**
+ * Exactly three distractors. Declared as a length-constrained array rather than
+ * a tuple: tuples emit `prefixItems`, which several structured-output
+ * implementations reject.
+ */
+const threeOf = <T extends z.ZodType>(schema: T) => z.array(schema).length(3);
+
+/** Target text shown, native meaning chosen. */
+export const generatedRecognizeMcSchema = z.object({
+	type: z.literal('recognize-mc'),
+	shown: targetTextSchema,
+	correctMeaning: nonEmpty,
+	distractors: threeOf(nonEmpty),
 	/** Heading above the prompt; null when the UI's default heading fits. */
 	instruction: z.string().nullish(),
-	/**
-	 * Exactly four options. Declared as a length-constrained array rather than a
-	 * tuple: tuples emit `prefixItems`, which several structured-output
-	 * implementations reject. The resolver narrows it back to a 4-tuple.
-	 */
-	options: z.array(nonEmpty).length(4),
-	/**
-	 * Deliberately *not* length-constrained: a misaligned romanization array is a
-	 * cosmetic defect, and rejecting the whole challenge over it would throw away
-	 * a challenge we already paid for. The resolver keeps it only when it lines
-	 * up with `options` one-for-one, and drops it silently otherwise.
-	 */
-	optionsRomanization: z.array(nonEmpty).nullish(),
-	correctIndex: z.int().min(0).max(3),
 	...generatedBase
 });
 
+/** Native prompt shown, target text chosen. */
+export const generatedProduceMcSchema = z.object({
+	type: z.literal('produce-mc'),
+	promptNative: nonEmpty,
+	correct: targetTextSchema,
+	distractors: threeOf(targetTextSchema),
+	instruction: z.string().nullish(),
+	...generatedBase
+});
+
+/**
+ * A target-language word missing from a target-language sentence.
+ *
+ * The model supplies the sentence in three pieces rather than one string with a
+ * marker in it: the blank is then placed by the app, always exactly once, and
+ * the answer's reading sits in a field of its own that the pre-answer view never
+ * touches.
+ */
 export const generatedClozeSchema = z.object({
 	type: z.literal('cloze'),
-	/** Must carry the `___` blank the UI renders as an input. */
-	sentence: nonEmpty.refine((s) => s.includes('___'), {
-		message: 'sentence must contain a ___ blank'
-	}),
-	/** Romanization of the whole sentence; not required to carry the blank. */
-	sentenceRomanization: z.string().nullish(),
-	acceptedAnswers: z.array(nonEmpty).min(1),
-	wordBank: z.array(nonEmpty).nullish(),
-	translationHint: nonEmpty,
+	before: clozePartSchema,
+	answer: targetTextSchema,
+	after: clozePartSchema,
+	hintNative: nonEmpty,
+	/**
+	 * Three to five wrong candidates turn the challenge into a word bank; null
+	 * means the learner types the answer. Deliberately *not* length-constrained:
+	 * a bank of the wrong size is a cosmetic defect, and rejecting a challenge we
+	 * already paid for over it would be a poor trade. The resolver decides what
+	 * survives.
+	 */
+	distractorWords: z.array(targetTextSchema).nullish(),
 	...generatedBase
 });
 
-export const generatedTypedTranslationSchema = z.object({
-	type: z.literal('typed-translation'),
-	prompt: nonEmpty,
-	promptRomanization: z.string().nullish(),
-	acceptedAnswers: z.array(nonEmpty).min(1),
+/** Type the target language. Multiple `answers` are genuinely different phrasings. */
+export const generatedTranslateToTargetSchema = z.object({
+	type: z.literal('translate-to-target'),
+	promptNative: nonEmpty,
+	answers: z.array(targetTextSchema).min(1),
+	...generatedBase
+});
+
+/** Type the native language. */
+export const generatedTranslateToNativeSchema = z.object({
+	type: z.literal('translate-to-native'),
+	prompt: targetTextSchema,
+	answersNative: z.array(nonEmpty).min(1),
 	...generatedBase
 });
 
 export const generatedChallengeSchema = z.discriminatedUnion('type', [
-	generatedMultipleChoiceSchema,
+	generatedRecognizeMcSchema,
+	generatedProduceMcSchema,
 	generatedClozeSchema,
-	generatedTypedTranslationSchema
+	generatedTranslateToTargetSchema,
+	generatedTranslateToNativeSchema
 ]);
 
 export const generatedItemSchema = z.object({
@@ -120,6 +176,8 @@ export const looseBatchSchema = z.object({
 	newItems: z.array(z.unknown()).optional()
 });
 
+export type TargetText = z.infer<typeof targetTextSchema>;
+export type GeneratedCloze = z.infer<typeof generatedClozeSchema>;
 export type GeneratedChallenge = z.infer<typeof generatedChallengeSchema>;
 export type GeneratedItem = z.infer<typeof generatedItemSchema>;
 export type GeneratedBatch = z.infer<typeof generatedBatchSchema>;
@@ -152,7 +210,11 @@ export const clozeChallengeSchema = z.object({
 	sentence: nonEmpty,
 	sentenceRomanization: z.string().optional(),
 	acceptedAnswers: z.array(z.string()).min(1),
+	/** Reading of `acceptedAnswers[0]`; see the domain type. */
+	answerRomanization: z.string().optional(),
 	wordBank: z.array(z.string()).optional(),
+	/** Index-aligned with `wordBank`; all-or-nothing, see the resolver. */
+	wordBankRomanization: z.array(z.string()).optional(),
 	translationHint: z.string(),
 	...storedBase
 });
@@ -162,6 +224,8 @@ export const typedTranslationChallengeSchema = z.object({
 	prompt: nonEmpty,
 	promptRomanization: z.string().optional(),
 	acceptedAnswers: z.array(z.string()).min(1),
+	/** Reading of `acceptedAnswers[0]`; toTarget only. */
+	answerRomanization: z.string().optional(),
 	...storedBase
 });
 
@@ -242,7 +306,8 @@ function tighten(node: unknown): void {
  * The JSON schema sent as `response_format.json_schema.schema`.
  *
  * `$defs`/`$ref` are inlined (`cycles`/`reused` both set to inline where the
- * generator allows it) because several cheap models choke on references.
+ * generator allows it) because several cheap models choke on references — which
+ * matters more now that `TargetText` appears in almost every wire type.
  */
 export function batchJsonSchema(): JsonObject {
 	const schema = z.toJSONSchema(generatedBatchSchema, {

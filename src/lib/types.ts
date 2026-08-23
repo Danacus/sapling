@@ -117,8 +117,25 @@ export interface ClozeChallenge extends ChallengeBase {
 	sentenceRomanization?: string;
 	/** Any of these count as correct (before fuzzy matching). */
 	acceptedAnswers: string[];
+	/**
+	 * Latin reading of the canonical accepted answer (`acceptedAnswers[0]`),
+	 * copied by the resolver from that answer's own `reading`. The post-answer
+	 * feedback shows it under "Answer: …", where the learner is being told a word
+	 * they could not produce and most needs to know how to say. Absent for
+	 * Latin-script targets, and absent from anything queued before the field
+	 * existed — a missing reading simply renders no line.
+	 */
+	answerRomanization?: string;
 	/** Optional set of draggable/tappable candidate words. */
 	wordBank?: string[];
+	/**
+	 * Latin-script reading of each word bank entry, index-aligned with
+	 * `wordBank`. Built by the resolver from the readings that ride along with
+	 * the bank's words — never emitted by the model as a list of its own, so it
+	 * cannot drift out of alignment. Present only when *every* bank word has a
+	 * reading; a half-annotated bank would be worse than a bare one.
+	 */
+	wordBankRomanization?: string[];
 	/** Native-language rendering of the full sentence. */
 	translationHint: string;
 	itemIds: string[];
@@ -131,6 +148,13 @@ export interface TypedTranslationChallenge extends ChallengeBase {
 	/** Romanization of `prompt`, when the prompt is in the target script. */
 	promptRomanization?: string;
 	acceptedAnswers: string[];
+	/**
+	 * Latin reading of the canonical accepted answer (`acceptedAnswers[0]`), for
+	 * the post-answer feedback. See {@link ClozeChallenge.answerRomanization};
+	 * additionally absent when `direction` is `'toNative'`, where the answer is
+	 * already in the learner's own language.
+	 */
+	answerRomanization?: string;
 	itemIds: string[];
 }
 

@@ -2,17 +2,21 @@
  * Mock mode: a full lesson batch with no API key and no network.
  *
  * The fixtures are deterministic and go through the *same* parse/resolve path
- * as a real completion — they are emitted as a fenced JSON string and fed to
- * `parseBatch` + `resolveBatch` — so developing against the mock exercises the
- * real code, not a parallel happy path.
+ * as a real completion — they are written in the generation wire format, emitted
+ * as a fenced JSON string and fed to `parseBatch` + `resolveBatch` — so
+ * developing against the mock exercises the real code, not a parallel happy
+ * path. Option order, blank placement and the derived accepted answers are all
+ * produced by the resolver here exactly as they are for a paid batch.
  *
  * Two fixture sets, chosen by the profile's target language, each a small
  * restaurant scene so the mock shows off what a topic-driven batch looks like:
  *
- * - **Spanish for English speakers** (the default): mixed directions, covering
- *   multiple-choice, cloze with and without a word bank, and typed translation.
+ * - **Spanish for English speakers** (the default): every wire type —
+ *   recognize-mc, produce-mc, cloze with and without distractorWords,
+ *   translate-to-target and translate-to-native — with `"reading": null`
+ *   throughout, as a Latin-script lesson has.
  * - **Mandarin for English speakers**, selected when the target language names
- *   Chinese: the same coverage plus pinyin on every target-script string, so
+ *   Chinese: the same coverage with pinyin on every target-script string, so
  *   the romanization UI can be built and eyeballed with no API key. Set the
  *   target language to "Chinese" in onboarding to get it.
  *
@@ -68,11 +72,7 @@ const DISTRACTORS = [
 	'slowly'
 ];
 
-function stripAccents(value: string): string {
-	return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-}
-
-/** One canned fixture set: five challenges hanging off two new items. */
+/** One canned fixture set: six challenges hanging off two new items. */
 interface Fixture {
 	challenges: unknown[];
 	newItems: unknown[];
@@ -95,63 +95,74 @@ function spanishRestaurant(): Fixture {
 	return {
 		challenges: [
 			{
-				type: 'multiple-choice',
-				direction: 'toNative',
-				prompt: '¿Nos trae la cuenta, por favor?',
-				// Exercises the instruction field: this is a dialogue turn, not a
-				// bare vocabulary lookup, so the default "What does this mean?"
-				// heading undersells it.
-				instruction: 'What is the customer asking for?',
-				options: [
-					'Could you bring us the bill, please?',
+				type: 'recognize-mc',
+				shown: { text: '¿Nos trae la cuenta, por favor?', reading: null },
+				correctMeaning: 'Could you bring us the bill, please?',
+				distractors: [
 					'Could we see the menu, please?',
 					'Is this table free?',
 					'Could you bring another chair?'
 				],
-				correctIndex: 0,
+				// Exercises the instruction field: this is a dialogue turn, not a
+				// bare vocabulary lookup, so the default "What does this mean?"
+				// heading undersells it.
+				instruction: 'What is the customer asking for?',
 				itemIds: ['new:0'],
 				explanation: 'Waiters are addressed with "usted", hence "trae" rather than "traes".'
 			},
 			{
 				type: 'cloze',
-				direction: 'toTarget',
-				sentence: '¿Nos trae la ___, por favor? Tenemos prisa.',
-				acceptedAnswers: ['cuenta', 'la cuenta'],
-				wordBank: ['cuenta', 'carta', 'propina', 'mesa'],
-				translationHint: 'Could you bring us the bill, please? We are in a hurry.',
+				before: { text: '¿Nos trae la ', reading: null },
+				answer: { text: 'cuenta', reading: null },
+				after: { text: ', por favor? Tenemos prisa.', reading: null },
+				hintNative: 'Could you bring us the bill, please? We are in a hurry.',
+				distractorWords: [
+					{ text: 'carta', reading: null },
+					{ text: 'propina', reading: null },
+					{ text: 'mesa', reading: null }
+				],
 				itemIds: ['new:0'],
 				explanation: null
 			},
 			{
-				type: 'multiple-choice',
-				direction: 'toTarget',
-				prompt: 'to order (food in a restaurant)',
-				options: ['pedir', 'pagar', 'probar', 'servir'],
-				correctIndex: 0,
+				type: 'produce-mc',
+				promptNative: 'to order (food in a restaurant)',
+				correct: { text: 'pedir', reading: null },
+				distractors: [
+					{ text: 'pagar', reading: null },
+					{ text: 'probar', reading: null },
+					{ text: 'servir', reading: null }
+				],
+				instruction: null,
 				itemIds: ['new:1'],
 				explanation: null
 			},
 			{
-				type: 'typed-translation',
-				direction: 'toTarget',
-				prompt: 'I would like to order the fish, please.',
-				acceptedAnswers: [
-					'quiero pedir el pescado, por favor',
-					'quiero pedir el pescado por favor',
-					'quisiera pedir el pescado, por favor',
-					'quisiera pedir el pescado por favor'
+				type: 'translate-to-target',
+				promptNative: 'I would like to order the fish, please.',
+				answers: [
+					{ text: 'quisiera pedir el pescado, por favor', reading: null },
+					{ text: 'quiero pedir el pescado, por favor', reading: null }
 				],
 				itemIds: ['new:1'],
 				explanation: '"Quisiera" is the polite way to ask; "quiero" is fine but blunter.'
 			},
 			{
+				// No distractorWords: the learner types this one.
 				type: 'cloze',
-				direction: 'toNative',
-				sentence: '"¿Ya saben qué van a pedir?" — "Yes, we are ready to ___."',
-				acceptedAnswers: ['order'],
-				wordBank: null,
-				translationHint: '"¿Ya saben qué van a pedir?" — "Sí, ya podemos pedir."',
+				before: { text: '¿Ya podemos ', reading: null },
+				answer: { text: 'pedir', reading: null },
+				after: { text: '?', reading: null },
+				hintNative: 'Can we order now?',
+				distractorWords: null,
 				itemIds: ['new:1'],
+				explanation: null
+			},
+			{
+				type: 'translate-to-native',
+				prompt: { text: 'la cuenta', reading: null },
+				answersNative: ['the bill', 'the check'],
+				itemIds: ['new:0'],
 				explanation: null
 			}
 		],
@@ -164,71 +175,76 @@ function spanishRestaurant(): Fixture {
 
 /**
  * Mandarin, the same restaurant scene, with pinyin on every target-script
- * string — and, for the typed challenges, toneless pinyin in `acceptedAnswers`
- * so typing "maidan" grades correct through the ordinary local validator.
+ * string. Nothing here spells a toneless variant out: the resolver folds the
+ * readings, so typing "maidan" grades correct through the ordinary local
+ * validator.
  */
 function mandarinRestaurant(): Fixture {
 	return {
 		challenges: [
 			{
-				type: 'multiple-choice',
-				direction: 'toNative',
-				prompt: '菜单',
-				promptRomanization: 'càidān',
-				options: ['the menu', 'the bill', 'the chopsticks', 'the waiter'],
-				optionsRomanization: null,
-				correctIndex: 0,
+				type: 'recognize-mc',
+				shown: { text: '菜单', reading: 'càidān' },
+				correctMeaning: 'the menu',
+				distractors: ['the bill', 'the chopsticks', 'the waiter'],
+				instruction: null,
 				itemIds: ['new:0'],
 				explanation: null
 			},
 			{
-				type: 'multiple-choice',
-				direction: 'toTarget',
-				prompt: 'Could I see the menu?',
-				promptRomanization: null,
-				options: ['菜单', '筷子', '服务员', '茶'],
-				optionsRomanization: ['càidān', 'kuàizi', 'fúwùyuán', 'chá'],
-				correctIndex: 0,
+				type: 'produce-mc',
+				promptNative: 'Could I see the menu?',
+				correct: { text: '菜单', reading: 'càidān' },
+				distractors: [
+					{ text: '筷子', reading: 'kuàizi' },
+					{ text: '服务员', reading: 'fúwùyuán' },
+					{ text: '茶', reading: 'chá' }
+				],
+				instruction: null,
 				itemIds: ['new:0'],
 				explanation: null
 			},
 			{
 				type: 'cloze',
-				direction: 'toTarget',
-				sentence: '你好，请给我一份___。',
-				// The gap survives romanization: writing "càidān" here would show the
-				// learner the very word they are being asked for.
-				sentenceRomanization: 'Nǐ hǎo, qǐng gěi wǒ yī fèn ___.',
-				acceptedAnswers: ['菜单', 'càidān', 'caidan'],
-				wordBank: ['菜单', '筷子', '茶', '水'],
-				translationHint: 'Hello, could I have a menu, please?',
+				// The reading of the answer travels in `answer`, never in `before` or
+				// `after`, so the pinyin line under the sentence cannot spell out the
+				// word behind the blank.
+				before: { text: '你好，请给我一份', reading: 'Nǐ hǎo, qǐng gěi wǒ yī fèn' },
+				answer: { text: '菜单', reading: 'càidān' },
+				after: { text: '。', reading: '.' },
+				hintNative: 'Hello, could I have a menu, please?',
+				distractorWords: [
+					{ text: '筷子', reading: 'kuàizi' },
+					{ text: '茶', reading: 'chá' },
+					{ text: '水', reading: 'shuǐ' }
+				],
 				itemIds: ['new:0'],
 				explanation: '份 (fèn) is the measure word for a menu or a portion.'
 			},
 			{
-				type: 'typed-translation',
-				direction: 'toTarget',
-				prompt: 'Excuse me, the bill please.',
-				promptRomanization: null,
-				acceptedAnswers: [
-					'服务员，买单',
-					'买单',
-					'fúwùyuán, mǎidān',
-					'fuwuyuan, maidan',
-					'mǎidān',
-					'maidan'
+				type: 'translate-to-target',
+				promptNative: 'Excuse me, the bill please.',
+				answers: [
+					{ text: '服务员，买单', reading: 'fúwùyuán, mǎidān' },
+					{ text: '买单', reading: 'mǎidān' }
 				],
 				itemIds: ['new:1'],
 				explanation: 'Calling 服务员 (fúwùyuán) across the room is normal, not rude.'
 			},
 			{
 				type: 'cloze',
-				direction: 'toNative',
-				sentence: '"你们要买单吗?" — "Yes, could we ___ now?"',
-				sentenceRomanization: null,
-				acceptedAnswers: ['pay', 'pay the bill'],
-				wordBank: null,
-				translationHint: '"你们要买单吗？" — "对，我们想买单。"',
+				before: { text: '我们想', reading: 'Wǒmen xiǎng' },
+				answer: { text: '买单', reading: 'mǎidān' },
+				after: { text: '。', reading: '.' },
+				hintNative: 'We would like to pay the bill.',
+				distractorWords: null,
+				itemIds: ['new:1'],
+				explanation: null
+			},
+			{
+				type: 'translate-to-native',
+				prompt: { text: '买单', reading: 'mǎidān' },
+				answersNative: ['to pay the bill', 'pay the bill'],
 				itemIds: ['new:1'],
 				explanation: null
 			}
@@ -252,37 +268,35 @@ function fixtureFor(args: BatchArgs): Fixture {
 		: spanishRestaurant();
 }
 
-/** Two challenges per review item, so the mock reflects the real batch shape. */
+/**
+ * Two challenges per review item — one recognition, one production — so the
+ * mock reflects the real batch shape.
+ *
+ * Nothing here picks a slot for the correct answer: the resolver shuffles, and
+ * the mock's seeded rng makes that shuffle reproducible, so practice mode never
+ * trains "always pick the first one" and never changes between runs either.
+ */
 function reviewChallenges(items: ReviewItemRef[]): unknown[] {
 	const out: unknown[] = [];
-	items.slice(0, 5).forEach((item, index) => {
+	items.slice(0, 5).forEach((item) => {
 		const others = items.filter((o) => o.id !== item.id).map((o) => o.meaning);
 		const pool = [...others, ...DISTRACTORS].filter((m) => m && m !== item.meaning);
 		const wrong = [...new Set(pool)].slice(0, 3);
 		while (wrong.length < 3) wrong.push(`${DISTRACTORS[wrong.length]} (${wrong.length})`);
 
-		// Rotate the correct slot so the mock never trains "always pick A".
-		const correctIndex = index % 4;
-		const options = [...wrong];
-		options.splice(correctIndex, 0, item.meaning);
-
 		out.push({
-			type: 'multiple-choice',
-			direction: 'toNative',
-			prompt: item.term,
-			promptRomanization: null,
-			options,
-			optionsRomanization: null,
-			correctIndex,
+			type: 'recognize-mc',
+			shown: { text: item.term, reading: null },
+			correctMeaning: item.meaning,
+			distractors: wrong,
+			instruction: null,
 			itemIds: [item.id],
 			explanation: null
 		});
 		out.push({
-			type: 'typed-translation',
-			direction: 'toTarget',
-			prompt: item.meaning,
-			promptRomanization: null,
-			acceptedAnswers: [...new Set([item.term, stripAccents(item.term)])],
+			type: 'translate-to-target',
+			promptNative: item.meaning,
+			answers: [{ text: item.term, reading: null }],
 			itemIds: [item.id],
 			explanation: null
 		});
@@ -302,7 +316,7 @@ export function mockBatchCompletion(args: BatchArgs): string {
 	const fixture = fixtureFor(args);
 	const review = reviewChallenges(args.reviewItems);
 
-	// Always keep the canned five: they are what makes the mock cover every
+	// Always keep the canned six: they are what makes the mock cover every
 	// challenge type and both new items.
 	const challenges = [...fixture.challenges, ...review].slice(
 		0,
@@ -321,6 +335,20 @@ function mockIdFactory(): () => string {
 }
 
 /**
+ * A seeded LCG standing in for `Math.random`, for the same reason as
+ * {@link mockIdFactory}: the resolver shuffles options and word banks, and a
+ * mock batch that reshuffled on every call would be useless as a fixture — and
+ * would make the practice lesson flicker between reloads.
+ */
+function mockRng(): () => number {
+	let seed = 0x2f6e2b1;
+	return () => {
+		seed = (seed * 1664525 + 1013904223) >>> 0;
+		return seed / 0x100000000;
+	};
+}
+
+/**
  * A full mock batch, post-processed by the real resolver.
  *
  * Like the real path, `newItems` come back with `fsrsCard: null` for the caller
@@ -336,7 +364,8 @@ export function mockBatch(args: BatchArgs, opts: BatchOptions = {}): BatchResult
 	const resolved = resolveBatch(parseBatch(mockBatchCompletion(args)), {
 		newId: opts.newId ?? mockIdFactory(),
 		now: opts.now ?? (() => 0),
-		knownItemIds: args.reviewItems.map((i) => i.id)
+		knownItemIds: args.reviewItems.map((i) => i.id),
+		rng: opts.rng ?? mockRng()
 	});
 	return { challenges: resolved.challenges, newItems: resolved.newItems, usage: NO_USAGE };
 }

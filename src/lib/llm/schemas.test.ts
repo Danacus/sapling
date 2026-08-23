@@ -2,113 +2,169 @@ import { describe, expect, it } from 'vitest';
 import {
 	batchJsonSchema,
 	challengeSchema,
+	clozeChallengeSchema,
 	generatedBatchSchema,
 	generatedChallengeSchema,
-	multipleChoiceChallengeSchema
+	multipleChoiceChallengeSchema,
+	targetTextSchema
 } from './schemas';
 
 type JsonNode = Record<string, unknown>;
 
+/** A Latin-script batch: every `reading` is null and nothing is lost by it. */
 const validBatch = {
 	challenges: [
 		{
-			type: 'multiple-choice',
-			direction: 'toNative',
-			prompt: 'el perro',
-			options: ['the dog', 'the cat', 'the bread', 'the house'],
-			correctIndex: 0,
+			type: 'recognize-mc',
+			shown: { text: 'el perro', reading: null },
+			correctMeaning: 'the dog',
+			distractors: ['the cat', 'the bread', 'the house'],
 			itemIds: ['i1'],
 			explanation: null
 		},
 		{
+			type: 'produce-mc',
+			promptNative: 'to order (food in a restaurant)',
+			correct: { text: 'pedir', reading: null },
+			distractors: [
+				{ text: 'pagar', reading: null },
+				{ text: 'probar', reading: null },
+				{ text: 'servir', reading: null }
+			],
+			itemIds: ['i2'],
+			explanation: null
+		},
+		{
 			type: 'cloze',
-			direction: 'toTarget',
-			sentence: 'Yo ___ un libro.',
-			acceptedAnswers: ['leo'],
-			wordBank: ['leo', 'como', 'bebo', 'corro'],
-			translationHint: 'I read a book.',
+			before: { text: 'Yo ', reading: null },
+			answer: { text: 'leo', reading: null },
+			after: { text: ' un libro.', reading: null },
+			hintNative: 'I read a book.',
+			distractorWords: [
+				{ text: 'como', reading: null },
+				{ text: 'bebo', reading: null },
+				{ text: 'corro', reading: null }
+			],
 			itemIds: ['new:0'],
 			explanation: 'leer -> leo'
 		},
 		{
-			type: 'typed-translation',
-			direction: 'toTarget',
-			prompt: 'the water is cold',
-			acceptedAnswers: ['el agua está fría', 'el agua esta fria'],
+			type: 'translate-to-target',
+			promptNative: 'the water is cold',
+			answers: [{ text: 'el agua está fría', reading: null }],
 			itemIds: ['i2']
+		},
+		{
+			type: 'translate-to-native',
+			prompt: { text: 'la cuenta', reading: null },
+			answersNative: ['the bill', 'the check'],
+			itemIds: ['i1']
 		}
 	],
 	newItems: [{ term: 'leer', meaning: 'to read', notes: null }]
 };
 
+describe('targetTextSchema', () => {
+	it('accepts a reading, a null reading and an omitted one', () => {
+		expect(targetTextSchema.safeParse({ text: '菜单', reading: 'càidān' }).success).toBe(true);
+		expect(targetTextSchema.safeParse({ text: 'el perro', reading: null }).success).toBe(true);
+		expect(targetTextSchema.safeParse({ text: 'el perro' }).success).toBe(true);
+	});
+
+	it('rejects empty text: a slot with nothing in it is not content', () => {
+		expect(targetTextSchema.safeParse({ text: '', reading: null }).success).toBe(false);
+	});
+});
+
 describe('generatedBatchSchema', () => {
 	it('parses a well-formed batch', () => {
 		const parsed = generatedBatchSchema.safeParse(validBatch);
 		expect(parsed.success).toBe(true);
-		expect(parsed.success && parsed.data.challenges).toHaveLength(3);
+		expect(parsed.success && parsed.data.challenges).toHaveLength(5);
 	});
 
 	it('accepts an omitted optional field as well as an explicit null', () => {
-		expect(generatedChallengeSchema.safeParse(validBatch.challenges[2]).success).toBe(true);
+		expect(generatedChallengeSchema.safeParse(validBatch.challenges[3]).success).toBe(true);
 		expect(generatedChallengeSchema.safeParse(validBatch.challenges[0]).success).toBe(true);
 	});
 
-	it('rejects multiple-choice without exactly four options', () => {
-		const bad = { ...validBatch.challenges[0], options: ['a', 'b', 'c'] };
-		expect(generatedChallengeSchema.safeParse(bad).success).toBe(false);
+	it('rejects multiple choice without exactly three distractors', () => {
+		const short = { ...validBatch.challenges[0], distractors: ['the cat', 'the bread'] };
+		expect(generatedChallengeSchema.safeParse(short).success).toBe(false);
+		const long = {
+			...validBatch.challenges[1],
+			distractors: [
+				{ text: 'pagar', reading: null },
+				{ text: 'probar', reading: null },
+				{ text: 'servir', reading: null },
+				{ text: 'comer', reading: null }
+			]
+		};
+		expect(generatedChallengeSchema.safeParse(long).success).toBe(false);
 	});
 
-	it('rejects an out-of-range correctIndex', () => {
-		const bad = { ...validBatch.challenges[0], correctIndex: 7 };
-		expect(generatedChallengeSchema.safeParse(bad).success).toBe(false);
+	it('has no correctIndex to get wrong: position is not part of the wire format', () => {
+		const serialized = JSON.stringify(batchJsonSchema());
+		expect(serialized).not.toContain('correctIndex');
+		expect(serialized).not.toContain('direction');
 	});
 
-	it('rejects a cloze sentence without a ___ blank', () => {
-		const bad = { ...validBatch.challenges[1], sentence: 'Yo leo un libro.' };
-		expect(generatedChallengeSchema.safeParse(bad).success).toBe(false);
+	it('lets a cloze begin or end at the blank, but never omit the answer', () => {
+		const leading = {
+			...validBatch.challenges[2],
+			before: { text: '', reading: null }
+		};
+		expect(generatedChallengeSchema.safeParse(leading).success).toBe(true);
+		const noAnswer = { ...validBatch.challenges[2], answer: { text: '', reading: null } };
+		expect(generatedChallengeSchema.safeParse(noAnswer).success).toBe(false);
 	});
 
-	it('rejects an empty acceptedAnswers list', () => {
-		const bad = { ...validBatch.challenges[2], acceptedAnswers: [] };
-		expect(generatedChallengeSchema.safeParse(bad).success).toBe(false);
+	it('rejects an empty answers list on either typed type', () => {
+		expect(
+			generatedChallengeSchema.safeParse({ ...validBatch.challenges[3], answers: [] }).success
+		).toBe(false);
+		expect(
+			generatedChallengeSchema.safeParse({ ...validBatch.challenges[4], answersNative: [] })
+				.success
+		).toBe(false);
 	});
 
 	it('rejects an unknown challenge type', () => {
-		expect(generatedChallengeSchema.safeParse({ type: 'essay', direction: 'toTarget' }).success)
-			.toBe(false);
+		expect(generatedChallengeSchema.safeParse({ type: 'essay', promptNative: 'x' }).success).toBe(
+			false
+		);
 	});
 
-	it('round-trips a non-Latin-script batch with every romanization field', () => {
+	it('round-trips a non-Latin-script batch with a reading on every target slot', () => {
 		const zhBatch = {
 			challenges: [
 				{
-					type: 'multiple-choice',
-					direction: 'toTarget',
-					prompt: 'the menu',
-					promptRomanization: null,
-					options: ['菜单', '筷子', '服务员', '茶'],
-					optionsRomanization: ['càidān', 'kuàizi', 'fúwùyuán', 'chá'],
-					correctIndex: 0,
+					type: 'produce-mc',
+					promptNative: 'the menu',
+					correct: { text: '菜单', reading: 'càidān' },
+					distractors: [
+						{ text: '筷子', reading: 'kuàizi' },
+						{ text: '服务员', reading: 'fúwùyuán' },
+						{ text: '茶', reading: 'chá' }
+					],
+					instruction: null,
 					itemIds: ['new:0'],
 					explanation: null
 				},
 				{
 					type: 'cloze',
-					direction: 'toTarget',
-					sentence: '请给我一份___。',
-					sentenceRomanization: 'Qǐng gěi wǒ yī fèn càidān.',
-					acceptedAnswers: ['菜单', 'càidān', 'caidan'],
-					wordBank: null,
-					translationHint: 'Please give me a menu.',
+					before: { text: '请给我一份', reading: 'Qǐng gěi wǒ yī fèn' },
+					answer: { text: '菜单', reading: 'càidān' },
+					after: { text: '。', reading: '.' },
+					hintNative: 'Please give me a menu.',
+					distractorWords: null,
 					itemIds: ['new:0'],
 					explanation: null
 				},
 				{
-					type: 'typed-translation',
-					direction: 'toTarget',
-					prompt: 'the bill, please',
-					promptRomanization: null,
-					acceptedAnswers: ['买单', 'mǎidān', 'maidan'],
+					type: 'translate-to-target',
+					promptNative: 'the bill, please',
+					answers: [{ text: '买单', reading: 'mǎidān' }],
 					itemIds: ['new:1']
 				}
 			],
@@ -122,24 +178,21 @@ describe('generatedBatchSchema', () => {
 		expect(parsed.success).toBe(true);
 		if (!parsed.success) return;
 		expect(parsed.data.newItems[0].romanization).toBe('càidān');
-		const mc = parsed.data.challenges[0];
-		expect(mc.type === 'multiple-choice' && mc.optionsRomanization).toEqual([
-			'càidān',
+		const produce = parsed.data.challenges[0];
+		expect(produce.type === 'produce-mc' && produce.distractors.map((d) => d.reading)).toEqual([
 			'kuàizi',
 			'fúwùyuán',
 			'chá'
 		]);
 	});
 
-	it('keeps a Latin-script batch valid with the romanization fields absent', () => {
-		// Latin-script lessons omit the keys entirely rather than sending nulls.
-		expect(generatedBatchSchema.safeParse(validBatch).success).toBe(true);
-	});
-
-	it('tolerates a misaligned optionsRomanization rather than dropping the challenge', () => {
-		// Alignment is enforced by the resolver, not the schema: a cosmetic
-		// defect must not cost us a challenge we already paid for.
-		const wonky = { ...validBatch.challenges[0], optionsRomanization: ['a', 'b'] };
+	it('tolerates a word bank of an unusual size rather than dropping the challenge', () => {
+		// Size is enforced by the resolver, not the schema: a cosmetic defect must
+		// not cost us a challenge we already paid for.
+		const wonky = {
+			...validBatch.challenges[2],
+			distractorWords: [{ text: 'como', reading: null }]
+		};
 		expect(generatedChallengeSchema.safeParse(wonky).success).toBe(true);
 	});
 
@@ -148,9 +201,9 @@ describe('generatedBatchSchema', () => {
 			const withInstruction = { ...validBatch.challenges[0], instruction: 'Pick the best reply' };
 			const parsed = generatedChallengeSchema.safeParse(withInstruction);
 			expect(parsed.success).toBe(true);
-			expect(
-				parsed.success && parsed.data.type === 'multiple-choice' && parsed.data.instruction
-			).toBe('Pick the best reply');
+			expect(parsed.success && parsed.data.type === 'recognize-mc' && parsed.data.instruction).toBe(
+				'Pick the best reply'
+			);
 		});
 
 		it('tolerates a null or omitted instruction', () => {
@@ -182,6 +235,26 @@ describe('generatedBatchSchema', () => {
 		});
 	});
 
+	it('stores an optional wordBankRomanization alongside the bank', () => {
+		const base = {
+			id: 'c1',
+			type: 'cloze' as const,
+			direction: 'toTarget' as const,
+			sentence: '请给我一份___。',
+			acceptedAnswers: ['菜单'],
+			translationHint: 'Please give me a menu.',
+			itemIds: ['i1']
+		};
+		expect(clozeChallengeSchema.safeParse(base).success).toBe(true);
+		expect(
+			clozeChallengeSchema.safeParse({
+				...base,
+				wordBank: ['菜单', '筷子'],
+				wordBankRomanization: ['càidān', 'kuàizi']
+			}).success
+		).toBe(true);
+	});
+
 	it('rejects match-pairs: it is generated locally, never by the model', () => {
 		const matchPairs = {
 			type: 'match-pairs',
@@ -203,6 +276,7 @@ describe('batchJsonSchema', () => {
 	const serialized = JSON.stringify(schema);
 
 	it('contains no unresolved $refs or $defs', () => {
+		// TargetText appears in almost every wire type; it must still be inlined.
 		expect(serialized).not.toContain('$ref');
 		expect(serialized).not.toContain('$defs');
 		expect(serialized).not.toContain('definitions');
@@ -238,10 +312,17 @@ describe('batchJsonSchema', () => {
 		expect(Object.keys(schema.properties as object)).toEqual(['challenges', 'newItems']);
 	});
 
-	it('offers every romanization field to the model', () => {
-		expect(serialized).toContain('promptRomanization');
-		expect(serialized).toContain('optionsRomanization');
-		expect(serialized).toContain('sentenceRomanization');
+	it('offers every wire type and the reading slot to the model', () => {
+		for (const type of [
+			'recognize-mc',
+			'produce-mc',
+			'cloze',
+			'translate-to-target',
+			'translate-to-native'
+		]) {
+			expect(serialized).toContain(type);
+		}
+		expect(serialized).toContain('reading');
 		const newItems = (schema.properties as Record<string, Record<string, JsonNode>>).newItems;
 		const itemProps = (newItems.items as JsonNode).properties as object;
 		expect(Object.keys(itemProps)).toContain('romanization');

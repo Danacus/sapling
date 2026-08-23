@@ -13,7 +13,8 @@
  */
 
 import { getModel } from '$lib/db/settings';
-import type { Challenge, KnowledgeItem, Profile } from '$lib/types';
+import type { Challenge, ClozeChallenge, KnowledgeItem, Profile } from '$lib/types';
+import { foldDiacritics } from '$lib/validate';
 import { chatCompletion, LlmError } from './client';
 import type { ChatMessage, FetchLike, TokenUsage } from './client';
 import {
@@ -24,7 +25,7 @@ import {
 	generatedItemSchema,
 	looseBatchSchema
 } from './schemas';
-import type { GeneratedChallenge, GeneratedItem } from './schemas';
+import type { GeneratedChallenge, GeneratedCloze, GeneratedItem, TargetText } from './schemas';
 
 /** Hard ceiling on challenges per batch, so one call can never run away. */
 export const MAX_BATCH_CHALLENGES = 20;
@@ -119,6 +120,11 @@ export interface BatchOptions {
 	now?: () => number;
 	/** Called as each generation step starts; see {@link ProgressStep}. */
 	onProgress?: OnProgress;
+	/**
+	 * Injectable `[0,1)` source for the option/word-bank shuffles the resolver
+	 * performs; defaults to `Math.random`. Only tests and the mock pass one.
+	 */
+	rng?: () => number;
 }
 
 export interface BatchResult {
@@ -138,12 +144,12 @@ export interface BatchResult {
 
 /**
  * The system prompt. Written for tokens, not for looks: no pleasantries, one
- * inline example per challenge type, rules as bare imperatives. Roughly 1050
- * prompt tokens (up from ~480 before the voice, romanization and calibration
- * blocks below),
- * unchanged across every call, so it caches well on providers that support
- * prompt caching — and it buys back more than it costs: better challenges mean
- * fewer regenerated batches, and the romanization rules keep grading local.
+ * inline example per challenge type, rules as bare imperatives. Roughly 1150
+ * prompt tokens — five types cost more to spell out than three, and the whole
+ * per-field romanization block they replace is gone — unchanged across every
+ * call, so it caches well on providers that support prompt caching. It buys
+ * back more than it costs: better challenges mean fewer regenerated batches,
+ * and the content-only wire format keeps grading local.
  *
  * Three blocks earn their keep beyond the bare schema:
  *
@@ -157,50 +163,49 @@ export interface BatchResult {
  *   rules force dialogue turns, questions and situational phrases instead, and
  *   name the bland patterns explicitly so they can be refused.
  * - **Romanization.** Non-Latin scripts are unreadable and untypeable for a
- *   beginner. The model must supply a Latin reading for every target-script
- *   string, *and* put the toneless romanization into `acceptedAnswers` so the
- *   local (free) validator grades "ni hao" as correct without any script-aware
- *   logic of its own. Latin-script targets omit the fields entirely and pay
- *   nothing.
+ *   beginner, so every target-language string travels as a `TargetText`: the
+ *   text and its Latin reading together, in one object. That is the whole rule —
+ *   there is no per-field table of which reading applies where, no reading can
+ *   be misaligned with the string it annotates, and a reading cannot leak the
+ *   answer to a challenge it is not part of. The app derives the toneless
+ *   spellings from the readings it is given, so the model never spends tokens
+ *   listing "nǐ hǎo" and "ni hao" side by side. Latin-script targets send
+ *   `"reading": null` everywhere and pay nothing.
  */
 const SYSTEM_PROMPT = [
 	'You are an expert language-course author. Output one JSON object and nothing else: no prose, no markdown fences.',
 	'Shape: {"challenges":[Challenge],"newItems":[{"term","meaning","romanization","notes"}]}',
-	'Every Challenge has: type, direction ("toTarget"=produce the target language, "toNative"=produce the native language), itemIds, explanation (one short sentence or null).',
+	'Every Challenge has: type, itemIds, explanation (one short sentence or null). The rest of its fields depend on the type.',
+	'TargetText, written {"text":..,"reading":..}, is one string of the TARGET language plus its Latin reading: pinyin with tone marks for Mandarin, romaji for Japanese, revised romanization for Korean, the standard scheme otherwise. "reading" is ALWAYS null when the target language is written in the Latin script. Every field that is not a TargetText is plain text in the NATIVE language.',
 	'Types:',
-	'multiple-choice {prompt, options:[4 strings], correctIndex:0-3, promptRomanization, optionsRomanization, instruction} e.g. {"type":"multiple-choice","direction":"toNative","prompt":"el perro","options":["the dog","the cat","the bread","the house"],"correctIndex":0,"itemIds":["i1"],"explanation":null,"instruction":null}',
-	'cloze {sentence (must contain ___), acceptedAnswers, wordBank (4-6 candidate words or null), translationHint, sentenceRomanization} e.g. {"type":"cloze","direction":"toTarget","sentence":"Yo ___ un libro.","acceptedAnswers":["leo"],"wordBank":["leo","como","bebo","corro"],"translationHint":"I read a book.","itemIds":["i2"],"explanation":"leer -> leo in the first person."}',
-	'typed-translation {prompt, acceptedAnswers, promptRomanization} e.g. {"type":"typed-translation","direction":"toTarget","prompt":"the water is cold","acceptedAnswers":["el agua esta fria","el agua está fría"],"itemIds":["new:0"],"explanation":null}',
+	'recognize-mc — target text shown, native meaning picked. {shown:TargetText, correctMeaning, distractors:[3], instruction} e.g. {"type":"recognize-mc","shown":{"text":"el perro","reading":null},"correctMeaning":"the dog","distractors":["the cat","the bread","the house"],"instruction":null,"itemIds":["i1"],"explanation":null}',
+	'produce-mc — native prompt shown, target text picked. {promptNative, correct:TargetText, distractors:[3 TargetText], instruction} e.g. {"type":"produce-mc","promptNative":"to order (food in a restaurant)","correct":{"text":"pedir","reading":null},"distractors":[{"text":"pagar","reading":null},{"text":"probar","reading":null},{"text":"servir","reading":null}],"instruction":null,"itemIds":["i2"],"explanation":null}',
+	'cloze — one target-language word missing from a target-language sentence. {before:TargetText, answer:TargetText, after:TargetText, hintNative, distractorWords:[3-5 TargetText] or null} e.g. {"type":"cloze","before":{"text":"你好，请给我一份","reading":"Nǐ hǎo, qǐng gěi wǒ yī fèn"},"answer":{"text":"菜单","reading":"càidān"},"after":{"text":"。","reading":"."},"hintNative":"Hello, could I have a menu, please?","distractorWords":[{"text":"筷子","reading":"kuàizi"},{"text":"茶","reading":"chá"},{"text":"水","reading":"shuǐ"}],"itemIds":["i3"],"explanation":"份 (fèn) is the measure word for a menu or a portion."} — before and after carry their own spacing and punctuation and the app puts the blank between them; either may be {"text":"","reading":null}. hintNative is the whole sentence in the native language. distractorWords null means the learner types the answer.',
+	'translate-to-target — type the target language. {promptNative, answers:[TargetText, 1 or more]} e.g. {"type":"translate-to-target","promptNative":"Excuse me, the bill please.","answers":[{"text":"服务员，买单","reading":"fúwùyuán, mǎidān"},{"text":"买单","reading":"mǎidān"}],"itemIds":["i4"],"explanation":null}',
+	'translate-to-native — type the native language. {prompt:TargetText, answersNative:[1 or more]} e.g. {"type":"translate-to-native","prompt":{"text":"la cuenta","reading":null},"answersNative":["the bill","the check"],"itemIds":["i5"],"explanation":null}',
 	'Rules:',
 	'- itemIds must reference the given item ids, or "new:<index>" for entries of newItems (0-based). Never invent an id.',
 	'- Produce exactly one challenge object per requested slot; give the same review item different types.',
-	'- Distractors must be plausible: same part of speech and register, never synonyms of the answer, never obviously absurd.',
-	'- acceptedAnswers must be exhaustive: with and without accents, with and without the article, contractions, and every common synonym or word order a learner might type.',
-	'- Mix direction across the batch.',
-	'- Cloze sentences use only vocabulary at or below the learner level, keep one blank, and translationHint is the whole sentence in the native language. If sentenceRomanization is given it must keep the ___ gap (see Romanization).',
+	'- Mix recognition and production across the batch.',
+	'- Distractors must be plausible: same part of speech and register, never synonyms of the correct answer, never obviously absurd. Exactly one of the four may be correct given the prompt; if two would both answer it, rewrite the prompt.',
+	'- translate-to-target answers must be exhaustive, one entry per genuinely different way to say it: with and without the article, contractions, common synonyms and word orders. Do NOT list tone- or accent-stripped spellings — the app derives those from "reading".',
 	'- Answerable from what is shown alone: the prompt, plus the challenge type, must uniquely determine the answer. Never an open question whose answer depends on facts you never state — directions, prices, names, times, opinions, anything from an imagined scene the learner cannot see.',
-	'- In a situational dialogue either give the exact line to produce ("Say: \'the fish stall is to the right\'") or make acceptedAnswers cover every plausible alternative reply.',
-	'- Multiple-choice: exactly one option may be correct given the prompt; if two options would both answer it, rewrite the prompt.',
+	'- In a situational dialogue either give the exact line to produce ("Say: \'the fish stall is to the right\'") or make answers cover every plausible alternative reply.',
 	'- instruction: a short heading, in the NATIVE language, matched to what the challenge actually asks — "What does this mean?" for a plain meaning question, "Pick the best reply" or "How would you answer?" for a conversational turn; null when the default meaning-question heading fits.',
-	'- newItems must fit the learner level; term in the target language, meaning in the native language, notes only for gender/irregularity/register.',
+	'- Cloze sentences use only vocabulary at or below the learner level.',
+	'- newItems must fit the learner level; term in the target language, meaning in the native language, romanization as in TargetText (null for Latin scripts), notes only for gender/irregularity/register.',
 	'- Exactly newItemSlots entries in newItems, and every one of them must be used by at least one challenge.',
 	'Difficulty calibration:',
 	'- recentAccuracy (0-1, share of recent answers the learner got right) and recentMistakes are their current form; calibrate the batch to them.',
-	'- recentAccuracy below 0.7: favour recognition — multiple-choice and cloze WITH a wordBank — keep answers to one or two words, and avoid full-sentence typed-translation.',
-	'- recentAccuracy above 0.85: lean into production — typed-translation and cloze without a wordBank, longer sentences.',
+	'- recentAccuracy below 0.7: favour recognition — recognize-mc, produce-mc and cloze WITH distractorWords — keep answers to one or two words, and avoid full-sentence translate-to-target.',
+	'- recentAccuracy above 0.85: lean into production — translate-to-target and cloze without distractorWords, longer sentences.',
 	'- Every term in recentMistakes gets one more challenge in this batch, EASIER than last time and in a different format from the one it was failed in.',
 	'- gave "(skipped)" means the format was too demanding for that term: re-practise it with a recognition format.',
 	'Voice:',
 	'- Conversation, not flashcards: every prompt, sentence and translation is a line someone would really say — a dialogue turn, a question put to the learner, a request, a reaction, an opinion. Never an isolated textbook statement.',
 	'- With a "topic", EVERY challenge happens inside that scenario: cloze sentences are turns of that dialogue, translations are things you would really say there, newItems are words the scenario needs. "interests" then only colour word choice, never the sentence frame.',
 	'- Banned: "I like <interest>", "<interest> is fun", any sentence whose only content is that the learner likes their interest, and reusing a sentence frame twice in one batch. Vary speaker, question vs statement, and register for the level.',
-	'- explanation: one line of usage or culture (register, politeness, word order) when non-obvious, written in the NATIVE language (target-language words may be quoted inside it); null when it would only restate the answer.',
-	'Romanization, for target languages NOT written in the Latin script only:',
-	'- Give a Latin reading for every target-script string: promptRomanization, optionsRomanization (one per option, same order), sentenceRomanization (whole sentence), newItems.romanization. Use pinyin with tone marks for Mandarin, romaji for Japanese, revised romanization for Korean, the standard scheme otherwise.',
-	'- sentenceRomanization mirrors the cloze sentence INCLUDING the ___ gap: romanize only the words that are visible, leave ___ exactly where it stands, and never write the reading of the blanked word — that hands the learner the answer. e.g. sentence "你好，请给我一份___。" -> sentenceRomanization "Nǐ hǎo, qǐng gěi wǒ yī fèn ___."',
-	'- A field whose string is already in the native language is null.',
-	'- For typed answers (cloze without wordBank, typed-translation toTarget) acceptedAnswers must ALSO list the romanized form with AND without tone/accent marks, e.g. ["你好","nǐ hǎo","ni hao"].',
-	'- If the target language uses the Latin script, every romanization field is null.'
+	'- explanation: one line of usage or culture (register, politeness, word order) when non-obvious, written in the NATIVE language (target-language words may be quoted inside it); null when it would only restate the answer.'
 ].join('\n');
 
 /** Default batch size: two challenges per review item, two per new item. */
@@ -245,7 +250,7 @@ export function buildBatchPrompt(args: BatchArgs): ChatMessage[] {
 
 /** Appended verbatim when a first attempt came back mostly unusable. */
 export const CORRECTIVE_INSTRUCTION =
-	'Your previous reply was rejected. Return ONLY a raw JSON object {"challenges":[...],"newItems":[...]}, no fences, no commentary. Every challenge needs type, direction, itemIds and its own required fields; cloze sentences must contain ___; multiple-choice needs exactly 4 options.';
+	'Your previous reply was rejected. Return ONLY a raw JSON object {"challenges":[...],"newItems":[...]}, no fences, no commentary. Every challenge needs type, itemIds and its own fields: recognize-mc {shown,correctMeaning,distractors}, produce-mc {promptNative,correct,distractors}, cloze {before,answer,after,hintNative}, translate-to-target {promptNative,answers}, translate-to-native {prompt,answersNative}. Every target-language slot is a TargetText object {"text","reading"}, reading null for Latin scripts; distractors is exactly 3 entries.';
 
 // --------------------------------------------------------------------------
 // Parsing
@@ -349,36 +354,155 @@ function optionalString<K extends string>(
 /** The blank a cloze sentence is built around. */
 const CLOZE_GAP = '___';
 
-/**
- * Keeps a cloze's `sentenceRomanization` only when it still hides the answer.
- *
- * A reading that dropped the `___` has, in practice, romanized the blanked word
- * along with the rest of the sentence — so a learner with romanization switched
- * on is handed the answer they were asked to produce. The reading is worth much
- * less than the challenge, so the field goes and the challenge stays.
- */
-function clozeRomanization(
-	sentence: string,
-	romanization: string | null | undefined
-): Partial<Record<'sentenceRomanization', string>> {
-	const trimmed = undefinedIfBlank(romanization);
-	if (!trimmed) return {};
-	if (sentence.includes(CLOZE_GAP) && !trimmed.includes(CLOZE_GAP)) return {};
-	return { sentenceRomanization: trimmed };
+/** Case- and whitespace-insensitive key used to detect colliding labels. */
+function labelKey(value: string): string {
+	return value.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/** Fisher-Yates over a copy; `rng` is injectable so shuffles can be replayed. */
+function shuffled<T>(values: readonly T[], rng: () => number): T[] {
+	const out = [...values];
+	for (let i = out.length - 1; i > 0; i--) {
+		const j = Math.floor(rng() * (i + 1));
+		[out[i], out[j]] = [out[j], out[i]];
+	}
+	return out;
+}
+
+/** The trimmed Latin reading of a target-language slot, or `undefined`. */
+function readingOf(value: { reading?: string | null }): string | undefined {
+	return undefinedIfBlank(value.reading);
 }
 
 /**
- * Keeps a romanization array only when it lines up with the strings it
- * annotates, one non-blank entry each. A misaligned array would put the wrong
- * reading under the wrong option, which is worse than showing none.
+ * Trims, drops blanks and removes exact repeats, preserving order. Entry 0 stays
+ * the canonical form: the UI speaks and displays it as *the* answer.
  */
-function alignedRomanization(
-	values: string[] | null | undefined,
-	expectedLength: number
-): string[] | undefined {
-	if (!values || values.length !== expectedLength) return undefined;
-	const trimmed = values.map((v) => v.trim());
-	return trimmed.every((v) => v.length > 0) ? trimmed : undefined;
+function dedupe(values: (string | null | undefined)[]): string[] {
+	const seen = new Set<string>();
+	const out: string[] = [];
+	for (const value of values) {
+		const trimmed = value?.trim();
+		if (!trimmed || seen.has(trimmed)) continue;
+		seen.add(trimmed);
+		out.push(trimmed);
+	}
+	return out;
+}
+
+/**
+ * Every spelling of one target-language answer the free local validator should
+ * accept: the text, its reading, and both with diacritics folded away — so
+ * "ni hao" and "el agua esta fria" grade correct without the validator needing
+ * script-aware logic of its own. Derived here rather than asked for, which is
+ * why the prompt forbids spending tokens on accent variants.
+ */
+function answerVariants(target: TargetText): string[] {
+	const text = target.text.trim();
+	const reading = readingOf(target);
+	return dedupe([
+		text,
+		reading,
+		reading ? foldDiacritics(reading) : undefined,
+		foldDiacritics(text)
+	]);
+}
+
+/** One choosable answer, with the reading that belongs to it. */
+interface Choice {
+	text: string;
+	reading?: string;
+	correct?: boolean;
+}
+
+/**
+ * Lays four choices out in a random order and reports where the right one
+ * landed.
+ *
+ * Position is decided here and never by the model: asked for a `correctIndex`,
+ * models answer 0 far more often than chance, and a learner who notices trains
+ * "always pick the first one" instead of the language.
+ *
+ * `optionsRomanization` is all-or-nothing — a column with one gap in it reads
+ * worse than no column at all — and is built from the readings that travelled
+ * with the options through the same shuffle, so it cannot fall out of step.
+ */
+function assembleChoices(choices: Choice[], rng: () => number) {
+	const order = shuffled(choices, rng);
+	const [a, b, c, d] = order.map((choice) => choice.text);
+	const readings = order.map((choice) => choice.reading);
+	const correctAt = order.findIndex((choice) => choice.correct);
+	return {
+		options: [a, b, c, d] as [string, string, string, string],
+		correctIndex: correctAt < 0 ? 0 : correctAt,
+		...(readings.every((r): r is string => !!r) ? { optionsRomanization: readings } : {})
+	};
+}
+
+/** Latin readings are space-separated, so the blank needs air around it. */
+const OPENS_WITH_WORD = /^[\p{L}\p{N}]/u;
+
+/**
+ * The reading of a cloze sentence, blank included.
+ *
+ * Built from `before` and `after` only. The answer's reading lives in a field
+ * of its own and is never concatenated in, so the line a learner sees before
+ * answering structurally cannot spell out the word they are being asked for —
+ * there is no guard here to forget. The reading is dropped whenever a visible
+ * part lacks one, since a half-romanized sentence is worse than none.
+ */
+function clozeSentenceRomanization(
+	generated: GeneratedCloze
+): Partial<Record<'sentenceRomanization', string>> {
+	// No reading on the answer means a Latin-script target: no readings anywhere.
+	if (!readingOf(generated.answer)) return {};
+	for (const part of [generated.before, generated.after]) {
+		if (part.text.trim() && !readingOf(part)) return {};
+	}
+	const head = readingOf(generated.before) ?? '';
+	const tail = readingOf(generated.after) ?? '';
+	if (!head && !tail) return {};
+	const gapTail = OPENS_WITH_WORD.test(tail) ? ' ' : '';
+	const line = `${head}${head ? ' ' : ''}${CLOZE_GAP}${gapTail}${tail}`
+		.replace(/\s+/g, ' ')
+		.trim();
+	return { sentenceRomanization: line };
+}
+
+/**
+ * The tappable candidate words for a cloze, shuffled with the answer among
+ * them.
+ *
+ * Distractors that collide with the answer (or with each other) are dropped:
+ * two identical chips make one of them wrong by position alone. The answer
+ * itself never is. A bank of fewer than two chips is not a choice, so the
+ * challenge falls back to typing.
+ */
+function clozeWordBank(
+	answer: TargetText,
+	distractors: TargetText[] | null | undefined,
+	rng: () => number
+): Partial<Pick<ClozeChallenge, 'wordBank' | 'wordBankRomanization'>> {
+	if (!distractors?.length) return {};
+	const answerChoice: Choice = { text: answer.text.trim(), reading: readingOf(answer) };
+	const seen = new Set([labelKey(answerChoice.text)]);
+	const entries = shuffled(
+		[answerChoice, ...distractors.map((d) => ({ text: d.text.trim(), reading: readingOf(d) }))],
+		rng
+	).filter((entry) => {
+		if (entry === answerChoice) return true;
+		const key = labelKey(entry.text);
+		if (!key || seen.has(key)) return false;
+		seen.add(key);
+		return true;
+	});
+	if (entries.length < 2) return {};
+
+	const readings = entries.map((entry) => entry.reading);
+	return {
+		wordBank: entries.map((entry) => entry.text),
+		...(readings.every((r): r is string => !!r) ? { wordBankRomanization: readings } : {})
+	};
 }
 
 export interface ResolveOptions {
@@ -386,6 +510,8 @@ export interface ResolveOptions {
 	now?: () => number;
 	/** Ids the model was allowed to reference. Omit to accept any non-`new:` id. */
 	knownItemIds?: Iterable<string>;
+	/** Injectable `[0,1)` source for the shuffles; defaults to `Math.random`. */
+	rng?: () => number;
 }
 
 export interface ResolvedBatch {
@@ -397,8 +523,20 @@ export interface ResolvedBatch {
 
 /**
  * Turns validated model output into domain objects: mints challenge ids,
- * materializes `newItems` as `KnowledgeItem`s and rewrites every `new:<index>`
- * reference to the real id.
+ * materializes `newItems` as `KnowledgeItem`s, rewrites every `new:<index>`
+ * reference to the real id — and assembles the presentation the model was never
+ * asked for.
+ *
+ * That assembly is where the wire format pays off. The model supplies content;
+ * this function decides direction, option order, the position of the blank and
+ * which readings are safe to show, so the failure modes that presentation
+ * invites (a correct answer always in slot A, a romanization that spells out the
+ * word behind the blank, a reading under the wrong option) cannot be expressed
+ * in the first place.
+ *
+ * Salvage philosophy is unchanged: a cosmetic defect — a missing or partial
+ * reading, a word bank that dedupes down to nothing — degrades silently, and
+ * only a structural failure (no resolvable `itemIds`) costs a challenge.
  *
  * The returned `KnowledgeItem.fsrsCard` is `null` — a deliberate placeholder.
  * The caller owns card initialization (`$lib/srs`); this layer stays free of
@@ -410,6 +548,7 @@ export interface ResolvedBatch {
 export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): ResolvedBatch {
 	const now = options.now?.() ?? Date.now();
 	const known = options.knownItemIds ? new Set(options.knownItemIds) : undefined;
+	const rng = options.rng ?? Math.random;
 
 	const newItems: KnowledgeItem[] = batch.newItems.map((item) => ({
 		id: makeId(options.newId),
@@ -454,43 +593,116 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
 		const explanation = undefinedIfBlank(generated.explanation);
 		const base = {
 			id,
-			direction: generated.direction,
 			itemIds: unique,
 			...(explanation ? { explanation } : {})
 		};
 
-		if (generated.type === 'multiple-choice') {
-			const [a, b, c, d] = generated.options;
-			const optionsRomanization = alignedRomanization(generated.optionsRomanization, 4);
-			challenges.push({
-				...base,
-				type: 'multiple-choice',
-				prompt: generated.prompt,
-				...optionalString('promptRomanization', generated.promptRomanization),
-				options: [a, b, c, d],
-				...(optionsRomanization ? { optionsRomanization } : {}),
-				correctIndex: generated.correctIndex,
-				...optionalString('instruction', generated.instruction)
-			});
-		} else if (generated.type === 'cloze') {
-			const wordBank = generated.wordBank?.filter((w) => w.trim().length > 0);
-			challenges.push({
-				...base,
-				type: 'cloze',
-				sentence: generated.sentence,
-				...clozeRomanization(generated.sentence, generated.sentenceRomanization),
-				acceptedAnswers: generated.acceptedAnswers,
-				...(wordBank && wordBank.length > 1 ? { wordBank } : {}),
-				translationHint: generated.translationHint
-			});
-		} else {
-			challenges.push({
-				...base,
-				type: 'typed-translation',
-				prompt: generated.prompt,
-				...optionalString('promptRomanization', generated.promptRomanization),
-				acceptedAnswers: generated.acceptedAnswers
-			});
+		switch (generated.type) {
+			case 'recognize-mc': {
+				// The options are native-language meanings, so no reading rides along
+				// and no `optionsRomanization` is produced.
+				const { options: choices, correctIndex } = assembleChoices(
+					[
+						{ text: generated.correctMeaning.trim(), correct: true },
+						...generated.distractors.map((text) => ({ text: text.trim() }))
+					],
+					rng
+				);
+				challenges.push({
+					...base,
+					type: 'multiple-choice',
+					direction: 'toNative',
+					prompt: generated.shown.text.trim(),
+					...optionalString('promptRomanization', generated.shown.reading),
+					options: choices,
+					correctIndex,
+					...optionalString('instruction', generated.instruction)
+				});
+				break;
+			}
+
+			case 'produce-mc': {
+				challenges.push({
+					...base,
+					type: 'multiple-choice',
+					direction: 'toTarget',
+					// The prompt is native by construction, so there is no reading to
+					// show and none to accidentally spoil the answer with.
+					prompt: generated.promptNative.trim(),
+					...assembleChoices(
+						[
+							{
+								text: generated.correct.text.trim(),
+								reading: readingOf(generated.correct),
+								correct: true
+							},
+							...generated.distractors.map((d) => ({
+								text: d.text.trim(),
+								reading: readingOf(d)
+							}))
+						],
+						rng
+					),
+					...optionalString('instruction', generated.instruction)
+				});
+				break;
+			}
+
+			case 'cloze': {
+				challenges.push({
+					...base,
+					type: 'cloze',
+					direction: 'toTarget',
+					// The halves carry their own spacing and punctuation; concatenating
+					// them verbatim is what guarantees exactly one blank, in the one
+					// place the answer was taken from.
+					sentence: generated.before.text + CLOZE_GAP + generated.after.text,
+					...clozeSentenceRomanization(generated),
+					acceptedAnswers: answerVariants(generated.answer),
+					// Only ever shown *after* answering, which is what makes it safe:
+					// `acceptedAnswers[0]` is the answer's own text, so this reading
+					// annotates that string and nothing the learner still has to produce.
+					...optionalString('answerRomanization', generated.answer.reading),
+					...clozeWordBank(generated.answer, generated.distractorWords, rng),
+					translationHint: generated.hintNative.trim()
+				});
+				break;
+			}
+
+			case 'translate-to-target': {
+				challenges.push({
+					...base,
+					type: 'typed-translation',
+					direction: 'toTarget',
+					// No `promptRomanization`: the prompt is native, and the field does
+					// not exist on this wire type, so the answer's reading has nowhere
+					// to leak to.
+					prompt: generated.promptNative.trim(),
+					acceptedAnswers: dedupe(generated.answers.flatMap(answerVariants)),
+					// The first answer is the canonical one (`answerVariants` puts its
+					// text first), so its reading is the one that belongs under the
+					// answer the banner shows.
+					...optionalString('answerRomanization', generated.answers[0].reading)
+				});
+				break;
+			}
+
+			case 'translate-to-native': {
+				challenges.push({
+					...base,
+					type: 'typed-translation',
+					direction: 'toNative',
+					prompt: generated.prompt.text.trim(),
+					...optionalString('promptRomanization', generated.prompt.reading),
+					acceptedAnswers: dedupe(generated.answersNative)
+				});
+				break;
+			}
+
+			default: {
+				const _exhaustive: never = generated;
+				void _exhaustive;
+			}
 		}
 	}
 
@@ -556,7 +768,8 @@ export async function generateBatch(args: BatchArgs, opts: BatchOptions = {}): P
 			resolved = resolveBatch(parseBatch(completion.content), {
 				newId: opts.newId,
 				now: opts.now,
-				knownItemIds
+				knownItemIds,
+				rng: opts.rng
 			});
 		} catch (error) {
 			if (error instanceof LlmError && error.kind === 'bad-response') {
@@ -589,11 +802,6 @@ export async function generateBatch(args: BatchArgs, opts: BatchOptions = {}): P
 const MATCH_MIN = 4;
 const MATCH_MAX = 5;
 
-/** Case- and whitespace-insensitive key used to detect colliding tile labels. */
-function tileKey(value: string): string {
-	return value.trim().toLowerCase().replace(/\s+/g, ' ');
-}
-
 /**
  * Builds a `match-pairs` challenge locally, for free — no model call, no
  * tokens. Pairs a random handful of already-known items term-to-meaning.
@@ -616,12 +824,7 @@ export function makeMatchPairsChallenge(
 	const usable = items.filter((i) => i.term?.trim() && i.meaning?.trim());
 	if (usable.length < MATCH_MIN) return undefined;
 
-	// Fisher-Yates over a copy.
-	const pool = [...usable];
-	for (let i = pool.length - 1; i > 0; i--) {
-		const j = Math.floor(rng() * (i + 1));
-		[pool[i], pool[j]] = [pool[j], pool[i]];
-	}
+	const pool = shuffled(usable, rng);
 
 	// Drop collisions *after* the shuffle, so which twin survives is still
 	// random rather than always the first one in storage order.
@@ -629,8 +832,8 @@ export function makeMatchPairsChallenge(
 	const seenMeanings = new Set<string>();
 	const distinct: KnowledgeItem[] = [];
 	for (const item of pool) {
-		const term = tileKey(item.term);
-		const meaning = tileKey(item.meaning);
+		const term = labelKey(item.term);
+		const meaning = labelKey(item.meaning);
 		if (seenTerms.has(term) || seenMeanings.has(meaning)) continue;
 		seenTerms.add(term);
 		seenMeanings.add(meaning);

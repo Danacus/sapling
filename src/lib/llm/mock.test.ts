@@ -64,10 +64,21 @@ describe('mockBatch', () => {
 		const directions = new Set(result.challenges.map((c) => c.direction));
 		expect(directions).toEqual(new Set(['toTarget', 'toNative']));
 
-		const withWordBank = result.challenges.filter(
-			(c) => c.type === 'cloze' && c.wordBank && c.wordBank.length > 0
-		);
-		expect(withWordBank.length).toBeGreaterThan(0);
+		// Both cloze modes: a word bank to tap, and one to type.
+		const clozes = result.challenges.filter((c) => c.type === 'cloze');
+		expect(clozes.filter((c) => c.wordBank?.length).length).toBeGreaterThan(0);
+		expect(clozes.filter((c) => !c.wordBank).length).toBeGreaterThan(0);
+	});
+
+	it('shuffles the correct option rather than parking it in one slot', () => {
+		const mc = result.challenges.filter((c) => c.type === 'multiple-choice');
+		expect(mc.length).toBeGreaterThan(2);
+		// Whatever the seeded shuffle chose, correctIndex points at the answer.
+		const expected = ['Could you bring us the bill, please?', 'pedir'];
+		for (const challenge of mc.slice(0, 2)) {
+			expect(expected).toContain(challenge.options[challenge.correctIndex]);
+		}
+		expect(new Set(mc.map((c) => c.correctIndex)).size).toBeGreaterThan(1);
 	});
 
 	it('introduces two new items with placeholder card state', () => {
@@ -154,28 +165,52 @@ describe('the Mandarin fixtures', () => {
 
 		expect(result.newItems.map((i) => i.romanization)).toEqual(['càidān', 'mǎidān']);
 
-		const mc = result.challenges.filter((c) => c.type === 'multiple-choice');
-		expect(mc.find((c) => c.promptRomanization === 'càidān')).toBeDefined();
-		expect(mc.find((c) => c.optionsRomanization)?.optionsRomanization).toEqual([
-			'càidān',
-			'kuàizi',
-			'fúwùyuán',
-			'chá'
-		]);
+		const readings: Record<string, string> = {
+			菜单: 'càidān',
+			筷子: 'kuàizi',
+			服务员: 'fúwùyuán',
+			茶: 'chá',
+			水: 'shuǐ'
+		};
 
-		// The reading keeps the gap: it must not spell out the blanked word.
-		const cloze = result.challenges.find((c) => c.type === 'cloze' && c.sentenceRomanization);
+		const mc = result.challenges.filter((c) => c.type === 'multiple-choice');
+		// Target shown, meaning picked: the prompt gets the reading, the native
+		// options get none.
+		const recognize = mc.find((c) => c.promptRomanization === 'càidān');
+		expect(recognize).toBeDefined();
+		expect(recognize && 'optionsRomanization' in recognize).toBe(false);
+
+		// Target picked: every option is annotated, aligned with the shuffle.
+		const produce = mc.find((c) => c.optionsRomanization);
+		expect(produce?.optionsRomanization).toEqual(produce?.options.map((o) => readings[o]));
+		expect(produce && 'promptRomanization' in produce).toBe(false);
+	});
+
+	it('reads the cloze around the blank without ever spelling it out', () => {
+		const result = mockBatch(zhArgs);
+		const cloze = result.challenges.find((c) => c.type === 'cloze' && c.wordBank);
+		expect(cloze?.type === 'cloze' && cloze.sentence).toBe('你好，请给我一份___。');
 		expect(cloze?.type === 'cloze' && cloze.sentenceRomanization).toBe(
 			'Nǐ hǎo, qǐng gěi wǒ yī fèn ___.'
 		);
+		// The answer's reading is in a field of its own; it cannot reach this line.
+		expect(cloze?.type === 'cloze' && cloze.sentenceRomanization).not.toContain('càidān');
+
+		const bank = cloze?.type === 'cloze' ? cloze : undefined;
+		expect(bank?.wordBank).toContain('菜单');
+		expect(bank?.wordBankRomanization).toHaveLength(bank?.wordBank?.length ?? 0);
 	});
 
 	it('accepts a toneless pinyin answer through the ordinary local validator', () => {
 		const result = mockBatch(zhArgs);
-		const typed = result.challenges.find((c) => c.type === 'typed-translation');
-		expect(typed?.type === 'typed-translation' && checkChallenge(typed, 'maidan')).toBe(
-			'correct'
+		const typed = result.challenges.find(
+			(c) => c.type === 'typed-translation' && c.direction === 'toTarget'
 		);
+		// Nothing in the fixture lists "maidan": the resolver folded the tones off
+		// the reading it was given.
+		expect(typed?.type === 'typed-translation' && checkChallenge(typed, 'maidan')).toBe('correct');
+		const cloze = result.challenges.find((c) => c.type === 'cloze' && !c.wordBank);
+		expect(cloze?.type === 'cloze' && checkChallenge(cloze, 'maidan')).toBe('correct');
 	});
 
 	it('is deterministic', () => {

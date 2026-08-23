@@ -12,7 +12,7 @@ import {
 	resolveBatch,
 	stripFences
 } from './generate';
-import type { BatchArgs, ProgressStep } from './generate';
+import type { BatchArgs, ProgressStep, ResolveOptions } from './generate';
 import { challengeSchema } from './schemas';
 
 const args: BatchArgs = {
@@ -29,47 +29,72 @@ const args: BatchArgs = {
 	newItemSlots: 2
 };
 
-function mc(itemId: string, prompt: string) {
+/**
+ * `rng` of 0 sends Fisher-Yates through the same swaps every time, which lands
+ * the correct choice last — so a test can assert on an exact index without
+ * hard-coding what the shuffle "happens" to do.
+ */
+const ZERO_RNG = () => 0;
+/** The opposite extreme: `j === i` at every step, so nothing moves at all. */
+const IDENTITY_RNG = () => 0.999999;
+
+function recognize(itemId: string, term: string, meaning = 'the dog') {
 	return {
-		type: 'multiple-choice',
-		direction: 'toNative',
-		prompt,
-		options: ['the dog', 'the cat', 'the bread', 'the house'],
-		correctIndex: 0,
+		type: 'recognize-mc',
+		shown: { text: term, reading: null },
+		correctMeaning: meaning,
+		distractors: ['the cat', 'the bread', 'the house'],
 		itemIds: [itemId],
 		explanation: null
 	};
 }
 
-function tt(itemId: string, prompt: string) {
+function translate(itemId: string, promptNative: string, answer = 'el perro') {
 	return {
-		type: 'typed-translation',
-		direction: 'toTarget',
-		prompt,
-		acceptedAnswers: ['el perro'],
+		type: 'translate-to-target',
+		promptNative,
+		answers: [{ text: answer, reading: null }],
 		itemIds: [itemId]
 	};
 }
 
 const cloze = {
 	type: 'cloze',
-	direction: 'toTarget',
-	sentence: 'Yo ___ un libro.',
-	acceptedAnswers: ['leo'],
-	wordBank: ['leo', 'como', 'bebo', 'corro'],
-	translationHint: 'I read a book.',
+	before: { text: 'Yo ', reading: null },
+	answer: { text: 'leo', reading: null },
+	after: { text: ' un libro.', reading: null },
+	hintNative: 'I read a book.',
+	distractorWords: [
+		{ text: 'como', reading: null },
+		{ text: 'bebo', reading: null },
+		{ text: 'corro', reading: null }
+	],
 	itemIds: ['new:0'],
 	explanation: 'leer -> leo in the first person.'
 };
 
+const produce = {
+	type: 'produce-mc',
+	promptNative: 'early',
+	correct: { text: 'temprano', reading: null },
+	distractors: [
+		{ text: 'tarde', reading: null },
+		{ text: 'ahora', reading: null },
+		{ text: 'pronto', reading: null }
+	],
+	instruction: null,
+	itemIds: ['new:1'],
+	explanation: null
+};
+
 const goodBatch = {
 	challenges: [
-		mc('i1', 'el perro'),
-		tt('i1', 'the dog'),
-		mc('i2', 'leer'),
+		recognize('i1', 'el perro'),
+		translate('i1', 'the dog'),
+		recognize('i2', 'leer', 'to read'),
 		cloze,
-		tt('new:0', 'to read'),
-		{ ...mc('new:1', 'temprano'), options: ['early', 'late', 'now', 'soon'] }
+		translate('new:0', 'to read', 'leer'),
+		produce
 	],
 	newItems: [
 		{ term: 'leer', meaning: 'to read', notes: 'irregular in some tenses' },
@@ -100,12 +125,23 @@ const callOpts = (fetchFn: FetchLike) => ({
 	apiKey: 'sk-or-test',
 	model: 'test/model',
 	now: () => 1700000000000,
-	newId: idFactory()
+	newId: idFactory(),
+	rng: IDENTITY_RNG
 });
 
 function idFactory(): () => string {
 	let n = 0;
 	return () => `id-${++n}`;
+}
+
+/** parse + resolve, the pairing every caller of this layer uses. */
+function resolve(batch: { challenges: unknown[]; newItems?: unknown[] }, opts: ResolveOptions = {}) {
+	return resolveBatch(parseBatch(JSON.stringify({ newItems: [], ...batch })), {
+		newId: idFactory(),
+		now: () => 0,
+		rng: IDENTITY_RNG,
+		...opts
+	});
 }
 
 describe('stripFences', () => {
@@ -134,11 +170,28 @@ describe('buildBatchPrompt', () => {
 
 	it('states every challenge type and the itemIds contract in the system message', () => {
 		const system = messages[0].content;
-		expect(system).toContain('multiple-choice');
-		expect(system).toContain('cloze');
-		expect(system).toContain('typed-translation');
+		for (const type of [
+			'recognize-mc',
+			'produce-mc',
+			'cloze',
+			'translate-to-target',
+			'translate-to-native'
+		]) {
+			expect(system).toContain(type);
+		}
 		expect(system).not.toContain('match-pairs');
 		expect(system).toContain('new:<index>');
+	});
+
+	it('never mentions the presentation the app assembles for itself', () => {
+		const system = messages[0].content;
+		// Direction, option order and blank placement are not the model's to get
+		// wrong; asking for them is what used to produce slot-A bias and spoilers.
+		expect(system).not.toContain('correctIndex');
+		expect(system).not.toContain('"direction"');
+		expect(system).not.toContain('promptRomanization');
+		expect(system).not.toContain('optionsRomanization');
+		expect(system).not.toContain('sentenceRomanization');
 	});
 
 	it('packs the data as compact JSON, no prose', () => {
@@ -187,7 +240,7 @@ describe('buildBatchPrompt', () => {
 		expect(system).toContain('recentMistakes');
 		expect(system).toContain('0.7');
 		expect(system).toContain('0.85');
-		expect(system).toContain('wordBank');
+		expect(system).toContain('distractorWords');
 		expect(system).toContain('(skipped)');
 	});
 
@@ -218,20 +271,20 @@ describe('buildBatchPrompt', () => {
 		// The user's complaint: interests produced "I like to cook" sentences.
 		expect(system).toContain('I like <interest>');
 		expect(system).toContain('topic');
-		expect(system).toContain('promptRomanization');
-		expect(system).toContain('optionsRomanization');
-		expect(system).toContain('sentenceRomanization');
+		// One rule for readings, everywhere, instead of a per-field table.
+		expect(system).toContain('TargetText');
 		expect(system).toContain('pinyin');
+		expect(system).toContain('"reading" is ALWAYS null when the target language');
 		// The rule that keeps grading local and free for non-Latin scripts.
-		expect(system).toContain('acceptedAnswers must ALSO list the romanized form');
+		expect(system).toContain('the app derives those from "reading"');
 	});
 
-	it('requires a cloze romanization to keep the ___ gap', () => {
+	it('explains that the app, not the model, places the cloze blank', () => {
 		const system = messages[0].content;
-		expect(system).toContain('sentenceRomanization mirrors the cloze sentence INCLUDING the ___');
-		expect(system).toContain('never write the reading of the blanked word');
+		expect(system).toContain('the app puts the blank between them');
+		expect(system).toContain('before and after carry their own spacing and punctuation');
 		// Shown, not just told.
-		expect(system).toContain('Nǐ hǎo, qǐng gěi wǒ yī fèn ___.');
+		expect(system).toContain('Nǐ hǎo, qǐng gěi wǒ yī fèn');
 	});
 
 	it('demands challenges that are answerable from what is shown', () => {
@@ -242,7 +295,7 @@ describe('buildBatchPrompt', () => {
 		expect(system).toContain('uniquely determine the answer');
 		expect(system).toMatch(/facts you never state/i);
 		expect(system).toContain("Say: 'the fish stall is to the right'");
-		expect(system).toContain('exactly one option may be correct');
+		expect(system).toContain('Exactly one of the four may be correct');
 	});
 
 	it('lets the model choose the multiple-choice instruction heading', () => {
@@ -290,6 +343,20 @@ describe('generateBatch', () => {
 		expect(result.challenges[0].itemIds).toEqual(['i1']);
 	});
 
+	it('derives direction from the challenge type', async () => {
+		const scripted = scriptedFetch([JSON.stringify(goodBatch)]);
+		const result = await generateBatch(args, callOpts(scripted.fetchFn));
+		// recognize-mc, translate-to-target, recognize-mc, cloze, translate, produce-mc
+		expect(result.challenges.map((c) => c.direction)).toEqual([
+			'toNative',
+			'toTarget',
+			'toNative',
+			'toTarget',
+			'toTarget',
+			'toTarget'
+		]);
+	});
+
 	it('strips markdown fences around the JSON', async () => {
 		const scripted = scriptedFetch(['```json\n' + JSON.stringify(goodBatch) + '\n```']);
 		const result = await generateBatch(args, callOpts(scripted.fetchFn));
@@ -301,7 +368,7 @@ describe('generateBatch', () => {
 			...goodBatch,
 			challenges: [
 				...goodBatch.challenges,
-				{ type: 'multiple-choice', direction: 'toNative', prompt: 'x', options: ['a', 'b'] }
+				{ type: 'recognize-mc', shown: { text: 'x' }, distractors: ['a', 'b'] }
 			]
 		};
 		const scripted = scriptedFetch([JSON.stringify(damaged)]);
@@ -314,7 +381,7 @@ describe('generateBatch', () => {
 	it('drops challenges that reference an id the model invented', async () => {
 		const hallucinated = {
 			...goodBatch,
-			challenges: [...goodBatch.challenges, mc('i-does-not-exist', 'ghost')]
+			challenges: [...goodBatch.challenges, recognize('i-does-not-exist', 'ghost')]
 		};
 		const scripted = scriptedFetch([JSON.stringify(hallucinated)]);
 		const result = await generateBatch(args, callOpts(scripted.fetchFn));
@@ -322,7 +389,7 @@ describe('generateBatch', () => {
 	});
 
 	it('retries once with a corrective instruction, then succeeds', async () => {
-		const thin = { challenges: [mc('i1', 'el perro')], newItems: [] };
+		const thin = { challenges: [recognize('i1', 'el perro')], newItems: [] };
 		const scripted = scriptedFetch([JSON.stringify(thin), JSON.stringify(goodBatch)]);
 		const result = await generateBatch(args, callOpts(scripted.fetchFn));
 
@@ -334,9 +401,7 @@ describe('generateBatch', () => {
 
 	it('throws bad-response after the retry also fails', async () => {
 		const scripted = scriptedFetch(['not json at all', 'still not json']);
-		const error = await generateBatch(args, callOpts(scripted.fetchFn)).catch(
-			(e: unknown) => e
-		);
+		const error = await generateBatch(args, callOpts(scripted.fetchFn)).catch((e: unknown) => e);
 
 		expect(scripted.calls).toBe(2);
 		expect(error).toBeInstanceOf(LlmError);
@@ -344,7 +409,7 @@ describe('generateBatch', () => {
 	});
 
 	it('throws bad-response when too few challenges survive twice', async () => {
-		const thin = JSON.stringify({ challenges: [mc('i1', 'el perro')], newItems: [] });
+		const thin = JSON.stringify({ challenges: [recognize('i1', 'el perro')], newItems: [] });
 		const scripted = scriptedFetch([thin, thin]);
 		await expect(generateBatch(args, callOpts(scripted.fetchFn))).rejects.toMatchObject({
 			kind: 'bad-response'
@@ -363,7 +428,7 @@ describe('generateBatch', () => {
 	});
 
 	it('reports the retry step only when the corrective retry fires', async () => {
-		const thin = { challenges: [mc('i1', 'el perro')], newItems: [] };
+		const thin = { challenges: [recognize('i1', 'el perro')], newItems: [] };
 		const scripted = scriptedFetch([JSON.stringify(thin), JSON.stringify(goodBatch)]);
 		const steps: ProgressStep[] = [];
 		await generateBatch(args, { ...callOpts(scripted.fetchFn), onProgress: (s) => steps.push(s) });
@@ -379,7 +444,7 @@ describe('generateBatch', () => {
 	});
 
 	it('does not demand five challenges from a two-challenge batch', async () => {
-		const tiny = JSON.stringify({ challenges: [mc('i1', 'el perro')], newItems: [] });
+		const tiny = JSON.stringify({ challenges: [recognize('i1', 'el perro')], newItems: [] });
 		const scripted = scriptedFetch([tiny]);
 		const result = await generateBatch(
 			{ ...args, newItemSlots: 0, reviewItems: args.reviewItems.slice(0, 1), count: 1 },
@@ -392,33 +457,27 @@ describe('generateBatch', () => {
 
 describe('resolveBatch', () => {
 	it('discards new items no challenge actually uses', () => {
-		const parsed = parseBatch(
-			JSON.stringify({
-				challenges: [mc('new:0', 'x')],
-				newItems: [
-					{ term: 'a', meaning: 'A' },
-					{ term: 'b', meaning: 'B' }
-				]
-			})
-		);
-		const resolved = resolveBatch(parsed, { newId: idFactory(), now: () => 0 });
+		const resolved = resolve({
+			challenges: [recognize('new:0', 'x')],
+			newItems: [
+				{ term: 'a', meaning: 'A' },
+				{ term: 'b', meaning: 'B' }
+			]
+		});
 		expect(resolved.newItems).toHaveLength(1);
 		expect(resolved.newItems[0].term).toBe('a');
 		expect(resolved.challenges[0].itemIds).toEqual([resolved.newItems[0].id]);
 	});
 
 	it('drops a challenge whose every reference is unresolvable', () => {
-		const parsed = parseBatch(
-			JSON.stringify({ challenges: [mc('new:9', 'x')], newItems: [] })
-		);
-		const resolved = resolveBatch(parsed, { newId: idFactory(), now: () => 0 });
+		const resolved = resolve({ challenges: [recognize('new:9', 'x')] });
 		expect(resolved.challenges).toHaveLength(0);
 		expect(resolved.dropped).toBe(1);
 	});
 
 	it('counts malformed entries as dropped rather than failing', () => {
 		const parsed = parseBatch(
-			JSON.stringify({ challenges: [mc('i1', 'ok'), { type: 'cloze' }], newItems: [{}] })
+			JSON.stringify({ challenges: [recognize('i1', 'ok'), { type: 'cloze' }], newItems: [{}] })
 		);
 		expect(parsed.challenges).toHaveLength(1);
 		expect(parsed.dropped).toBe(2);
@@ -428,154 +487,381 @@ describe('resolveBatch', () => {
 		expect(() => parseBatch('{"challenges":"nope"}')).toThrow(LlmError);
 	});
 
-	it('copies romanization onto built KnowledgeItems and challenges', () => {
-		const parsed = parseBatch(
-			JSON.stringify({
-				challenges: [
-					{
-						type: 'multiple-choice',
-						direction: 'toTarget',
-						prompt: 'the menu',
-						promptRomanization: null,
-						options: ['菜单', '筷子', '服务员', '茶'],
-						optionsRomanization: ['càidān', 'kuàizi', 'fúwùyuán', 'chá'],
-						correctIndex: 0,
-						itemIds: ['new:0']
-					},
-					{
-						type: 'cloze',
-						direction: 'toTarget',
-						sentence: '请给我一份___。',
-						sentenceRomanization: 'Qǐng gěi wǒ yī fèn ___.',
-						acceptedAnswers: ['菜单', 'càidān', 'caidan'],
-						translationHint: 'Please give me a menu.',
-						itemIds: ['new:0']
-					},
-					{
-						type: 'typed-translation',
-						direction: 'toNative',
-						prompt: '买单',
-						promptRomanization: 'mǎidān',
-						acceptedAnswers: ['the bill'],
-						itemIds: ['new:1']
-					}
-				],
-				newItems: [
-					{ term: '菜单', meaning: 'the menu', romanization: 'càidān' },
-					{ term: '买单', meaning: 'to pay the bill', romanization: '  mǎidān  ' }
-				]
-			})
-		);
-		const resolved = resolveBatch(parsed, { newId: idFactory(), now: () => 0 });
-
-		expect(resolved.newItems.map((i) => i.romanization)).toEqual(['càidān', 'mǎidān']);
-
-		const [mc, cloze, typed] = resolved.challenges;
-		expect(mc.type === 'multiple-choice' && mc.optionsRomanization).toEqual([
-			'càidān',
-			'kuàizi',
-			'fúwùyuán',
-			'chá'
-		]);
-		// A null romanization becomes an absent key, not `undefined`.
-		expect(mc.type === 'multiple-choice' && 'promptRomanization' in mc).toBe(false);
-		expect(cloze.type === 'cloze' && cloze.sentenceRomanization).toBe(
-			'Qǐng gěi wǒ yī fèn ___.'
-		);
-		expect(typed.type === 'typed-translation' && typed.promptRomanization).toBe('mǎidān');
-
-		for (const challenge of resolved.challenges) {
-			expect(challengeSchema.safeParse(challenge).success).toBe(true);
-		}
+	it('leaves romanization keys off entirely for a Latin-script batch', () => {
+		expect(JSON.stringify(resolve(goodBatch))).not.toContain('omanization');
 	});
 
-	/**
-	 * The user's complaint: with romanization on, the pinyin under a cloze
-	 * spelled out the word the blank was hiding. A reading that lost the gap has
-	 * romanized the answer along with everything else, so it is dropped.
-	 */
-	describe('the cloze romanization gap guard', () => {
-		function clozeBatch(sentence: string, sentenceRomanization: string) {
-			return JSON.stringify({
+	describe('choice assembly', () => {
+		it('shuffles the options and points correctIndex at the right one', () => {
+			const resolved = resolve({ challenges: [recognize('i1', 'el perro')] }, { rng: ZERO_RNG });
+			const [challenge] = resolved.challenges;
+			if (challenge.type !== 'multiple-choice') throw new Error('expected multiple-choice');
+
+			// With rng 0 the correct answer lands last — the point being that the
+			// model never got to say where it goes.
+			expect(challenge.correctIndex).toBe(3);
+			expect(challenge.options[challenge.correctIndex]).toBe('the dog');
+			expect([...challenge.options].sort()).toEqual(
+				['the dog', 'the cat', 'the bread', 'the house'].sort()
+			);
+		});
+
+		it('always indexes the correct option, whatever the shuffle does', () => {
+			for (let seed = 0; seed < 20; seed++) {
+				const resolved = resolve(
+					{ challenges: [recognize('i1', 'el perro')] },
+					{ rng: () => seed / 20 }
+				);
+				const [challenge] = resolved.challenges;
+				expect(challenge.type === 'multiple-choice' && challenge.options[challenge.correctIndex])
+					.toBe('the dog');
+			}
+		});
+
+		it('reads a recognize-mc target prompt but never annotates its native options', () => {
+			const resolved = resolve({
 				challenges: [
 					{
-						type: 'cloze',
-						direction: 'toTarget',
-						sentence,
-						sentenceRomanization,
-						acceptedAnswers: ['菜单'],
-						translationHint: 'Please give me a menu.',
+						type: 'recognize-mc',
+						shown: { text: '菜单', reading: 'càidān' },
+						correctMeaning: 'the menu',
+						distractors: ['the bill', 'the chopsticks', 'the waiter'],
 						itemIds: ['i1']
 					}
-				],
-				newItems: []
+				]
 			});
-		}
+			const [challenge] = resolved.challenges;
+			if (challenge.type !== 'multiple-choice') throw new Error('expected multiple-choice');
+			expect(challenge.prompt).toBe('菜单');
+			expect(challenge.promptRomanization).toBe('càidān');
+			expect('optionsRomanization' in challenge).toBe(false);
+			expect(challenge.direction).toBe('toNative');
+		});
 
-		function resolveCloze(sentence: string, sentenceRomanization: string) {
-			const resolved = resolveBatch(parseBatch(clozeBatch(sentence, sentenceRomanization)), {
-				newId: idFactory(),
-				now: () => 0
+		it('aligns optionsRomanization with the shuffle when every option has a reading', () => {
+			const zh = (text: string, reading: string | null) => ({ text, reading });
+			const resolved = resolve(
+				{
+					challenges: [
+						{
+							type: 'produce-mc',
+							promptNative: 'the menu',
+							correct: zh('菜单', 'càidān'),
+							distractors: [zh('筷子', 'kuàizi'), zh('服务员', 'fúwùyuán'), zh('茶', 'chá')],
+							itemIds: ['i1']
+						}
+					]
+				},
+				{ rng: ZERO_RNG }
+			);
+			const [challenge] = resolved.challenges;
+			if (challenge.type !== 'multiple-choice') throw new Error('expected multiple-choice');
+
+			const readings: Record<string, string> = {
+				菜单: 'càidān',
+				筷子: 'kuàizi',
+				服务员: 'fúwùyuán',
+				茶: 'chá'
+			};
+			expect(challenge.optionsRomanization).toEqual(
+				challenge.options.map((option) => readings[option])
+			);
+			expect(challenge.options[challenge.correctIndex]).toBe('菜单');
+			// The prompt is native; the field does not exist for it to spoil.
+			expect('promptRomanization' in challenge).toBe(false);
+			expect(challenge.direction).toBe('toTarget');
+		});
+
+		it('drops optionsRomanization entirely when one reading is missing', () => {
+			const resolved = resolve({
+				challenges: [
+					{
+						type: 'produce-mc',
+						promptNative: 'the menu',
+						correct: { text: '菜单', reading: 'càidān' },
+						distractors: [
+							{ text: '筷子', reading: 'kuàizi' },
+							{ text: '服务员', reading: '   ' },
+							{ text: '茶', reading: 'chá' }
+						],
+						itemIds: ['i1']
+					}
+				]
 			});
+			// A half-annotated column is worse than none; the challenge survives.
+			expect(resolved.challenges).toHaveLength(1);
+			expect(resolved.challenges[0]).not.toHaveProperty('optionsRomanization');
+		});
+
+		it('copies a multiple-choice instruction, omitting it when null', () => {
+			const resolved = resolve({
+				challenges: [
+					{ ...recognize('i1', 'el perro'), instruction: 'Pick the best reply' },
+					{ ...recognize('i2', 'leer', 'to read'), instruction: null }
+				]
+			});
+			const [withInstruction, withoutInstruction] = resolved.challenges;
+
+			expect(
+				withInstruction.type === 'multiple-choice' ? withInstruction.instruction : undefined
+			).toBe('Pick the best reply');
+			expect(
+				withoutInstruction.type === 'multiple-choice' && 'instruction' in withoutInstruction
+			).toBe(false);
+
+			for (const challenge of resolved.challenges) {
+				expect(challengeSchema.safeParse(challenge).success).toBe(true);
+			}
+		});
+	});
+
+	describe('cloze assembly', () => {
+		const zhCloze = {
+			type: 'cloze',
+			before: { text: '你好，请给我一份', reading: 'Nǐ hǎo, qǐng gěi wǒ yī fèn' },
+			answer: { text: '菜单', reading: 'càidān' },
+			after: { text: '。', reading: '.' },
+			hintNative: 'Hello, could I have a menu, please?',
+			distractorWords: [
+				{ text: '筷子', reading: 'kuàizi' },
+				{ text: '茶', reading: 'chá' },
+				{ text: '水', reading: 'shuǐ' }
+			],
+			itemIds: ['i1']
+		};
+
+		function resolveCloze(overrides: Record<string, unknown> = {}, opts: ResolveOptions = {}) {
+			const resolved = resolve({ challenges: [{ ...zhCloze, ...overrides }] }, opts);
 			const [challenge] = resolved.challenges;
 			return challenge?.type === 'cloze' ? challenge : undefined;
 		}
 
-		it('keeps a reading that still carries the gap', () => {
-			const cloze = resolveCloze('请给我一份___。', 'Qǐng gěi wǒ yī fèn ___.');
-			expect(cloze?.sentenceRomanization).toBe('Qǐng gěi wǒ yī fèn ___.');
+		it('puts exactly one blank between the two halves, verbatim', () => {
+			const challenge = resolveCloze();
+			expect(challenge?.sentence).toBe('你好，请给我一份___。');
+			expect(challenge?.sentence.split('___')).toHaveLength(2);
+			expect(challenge?.direction).toBe('toTarget');
+			expect(challenge?.translationHint).toBe('Hello, could I have a menu, please?');
 		});
 
-		it('strips a reading that spells the blanked word out', () => {
-			const cloze = resolveCloze('请给我一份___。', 'Qǐng gěi wǒ yī fèn càidān.');
-			// The challenge survives; only the spoiler goes.
-			expect(cloze).toBeDefined();
-			expect('sentenceRomanization' in (cloze ?? {})).toBe(false);
-			expect(cloze?.sentence).toBe('请给我一份___。');
+		it('romanizes around the blank and structurally cannot leak the answer', () => {
+			const challenge = resolveCloze();
+			expect(challenge?.sentenceRomanization).toBe('Nǐ hǎo, qǐng gěi wǒ yī fèn ___.');
+			expect(challenge?.sentenceRomanization).toContain('___');
+			// The answer's reading lives in its own field and is never concatenated.
+			expect(challenge?.sentenceRomanization).not.toContain('càidān');
+			expect(challenge?.sentenceRomanization).not.toContain('caidan');
+		});
+
+		it('accepts the answer typed in script, in pinyin, or without the tones', () => {
+			const challenge = resolveCloze();
+			expect(challenge?.acceptedAnswers).toEqual(['菜单', 'càidān', 'caidan']);
+		});
+
+		it('carries the answer its own reading, for the post-answer feedback', () => {
+			const challenge = resolveCloze();
+			// The reading of acceptedAnswers[0], and of nothing else.
+			expect(challenge?.answerRomanization).toBe('càidān');
+			expect(challenge?.acceptedAnswers[0]).toBe('菜单');
+		});
+
+		it('omits answerRomanization when the answer has no reading', () => {
+			const challenge = resolveCloze({ answer: { text: '菜单', reading: null } });
+			expect('answerRomanization' in (challenge ?? {})).toBe(false);
+		});
+
+		it('shuffles the answer into the word bank and reads every chip', () => {
+			const challenge = resolveCloze({}, { rng: ZERO_RNG });
+			expect(challenge?.wordBank).toContain('菜单');
+			expect(challenge?.wordBank).toHaveLength(4);
+			expect(challenge?.wordBankRomanization).toHaveLength(4);
+			const readings: Record<string, string> = {
+				菜单: 'càidān',
+				筷子: 'kuàizi',
+				茶: 'chá',
+				水: 'shuǐ'
+			};
+			expect(challenge?.wordBankRomanization).toEqual(
+				challenge?.wordBank?.map((word) => readings[word])
+			);
+		});
+
+		it('omits wordBankRomanization when one chip has no reading', () => {
+			const challenge = resolveCloze({
+				distractorWords: [
+					{ text: '筷子', reading: 'kuàizi' },
+					{ text: '茶', reading: null },
+					{ text: '水', reading: 'shuǐ' }
+				]
+			});
+			expect(challenge?.wordBank).toHaveLength(4);
+			expect('wordBankRomanization' in (challenge ?? {})).toBe(false);
+		});
+
+		it('drops distractors that duplicate the answer, and the bank with them', () => {
+			const challenge = resolveCloze({
+				distractorWords: [
+					{ text: ' 菜单 ', reading: 'càidān' },
+					{ text: '菜单', reading: 'càidān' }
+				]
+			});
+			// One chip is not a choice: fall back to typing.
+			expect('wordBank' in (challenge ?? {})).toBe(false);
+			expect(challenge?.acceptedAnswers).toContain('菜单');
+		});
+
+		it('keeps a two-chip bank once duplicates are gone', () => {
+			const challenge = resolveCloze({
+				distractorWords: [
+					{ text: '茶', reading: 'chá' },
+					{ text: '茶', reading: 'chá' }
+				]
+			});
+			expect(challenge?.wordBank?.length).toBe(2);
+			expect(challenge?.wordBank).toContain('菜单');
+		});
+
+		it('has no word bank at all when the model sent no distractors', () => {
+			const challenge = resolveCloze({ distractorWords: null });
+			expect('wordBank' in (challenge ?? {})).toBe(false);
+			expect('wordBankRomanization' in (challenge ?? {})).toBe(false);
+		});
+
+		it('handles a sentence that opens or closes on the blank', () => {
+			const leading = resolveCloze({
+				before: { text: '', reading: null },
+				after: { text: '，请给我菜单。', reading: ', qǐng gěi wǒ càidān.' },
+				answer: { text: '你好', reading: 'nǐ hǎo' }
+			});
+			expect(leading?.sentence).toBe('___，请给我菜单。');
+			expect(leading?.sentenceRomanization).toBe('___, qǐng gěi wǒ càidān.');
+
+			const trailing = resolveCloze({
+				after: { text: '', reading: null }
+			});
+			expect(trailing?.sentence).toBe('你好，请给我一份___');
+			expect(trailing?.sentenceRomanization).toBe('Nǐ hǎo, qǐng gěi wǒ yī fèn ___');
+		});
+
+		it('drops the reading when a visible half has none', () => {
+			const challenge = resolveCloze({ after: { text: '。', reading: '  ' } });
+			expect(challenge).toBeDefined();
+			expect('sentenceRomanization' in (challenge ?? {})).toBe(false);
+			expect(challenge?.sentence).toBe('你好，请给我一份___。');
+		});
+
+		it('adds no reading for a Latin-script cloze', () => {
+			const resolved = resolve({
+				challenges: [cloze],
+				newItems: [{ term: 'leer', meaning: 'to read' }]
+			});
+			const [challenge] = resolved.challenges;
+			if (challenge.type !== 'cloze') throw new Error('expected cloze');
+			expect(challenge.sentence).toBe('Yo ___ un libro.');
+			expect('sentenceRomanization' in challenge).toBe(false);
+			expect('answerRomanization' in challenge).toBe(false);
+			expect(challenge.acceptedAnswers).toEqual(['leo']);
+			expect(challenge.wordBank).toHaveLength(4);
+			expect('wordBankRomanization' in challenge).toBe(false);
 		});
 	});
 
-	it('leaves romanization keys off entirely for a Latin-script batch', () => {
-		const parsed = parseBatch(JSON.stringify(goodBatch));
-		const resolved = resolveBatch(parsed, { newId: idFactory(), now: () => 0 });
-		expect(JSON.stringify(resolved)).not.toContain('omanization');
-	});
-
-	it('copies a multiple-choice instruction, omitting it when null', () => {
-		const parsed = parseBatch(
-			JSON.stringify({
+	describe('typed translation', () => {
+		it('carries no promptRomanization key toTarget: the prompt is native', () => {
+			const resolved = resolve({
 				challenges: [
-					{ ...mc('i1', 'el perro'), instruction: 'Pick the best reply' },
-					{ ...mc('i2', 'leer'), instruction: null }
-				],
-				newItems: []
-			})
-		);
-		const resolved = resolveBatch(parsed, { newId: idFactory(), now: () => 0 });
-		const [withInstruction, withoutInstruction] = resolved.challenges;
+					{
+						type: 'translate-to-target',
+						promptNative: 'Excuse me, the bill please.',
+						answers: [
+							{ text: '服务员，买单', reading: 'fúwùyuán, mǎidān' },
+							{ text: '买单', reading: 'mǎidān' }
+						],
+						itemIds: ['i1']
+					}
+				]
+			});
+			const [challenge] = resolved.challenges;
+			if (challenge.type !== 'typed-translation') throw new Error('expected typed-translation');
 
-		expect(
-			withInstruction.type === 'multiple-choice' ? withInstruction.instruction : undefined
-		).toBe('Pick the best reply');
-		expect(
-			withoutInstruction.type === 'multiple-choice' && 'instruction' in withoutInstruction
-		).toBe(false);
+			expect('promptRomanization' in challenge).toBe(false);
+			// The canonical answer's own reading, for the banner to show afterwards.
+			expect(challenge.answerRomanization).toBe('fúwùyuán, mǎidān');
+			expect(challenge.direction).toBe('toTarget');
+			// Toneless variants are derived, not asked for.
+			expect(challenge.acceptedAnswers).toEqual([
+				'服务员，买单',
+				'fúwùyuán, mǎidān',
+				'fuwuyuan, maidan',
+				'买单',
+				'mǎidān',
+				'maidan'
+			]);
+		});
 
+		it('derives accent-stripped variants for a Latin-script target too', () => {
+			const resolved = resolve({
+				challenges: [
+					{
+						type: 'translate-to-target',
+						promptNative: 'the water is cold',
+						answers: [{ text: 'el agua está fría', reading: null }],
+						itemIds: ['i1']
+					}
+				]
+			});
+			const [challenge] = resolved.challenges;
+			expect(challenge.type === 'typed-translation' && challenge.acceptedAnswers).toEqual([
+				'el agua está fría',
+				'el agua esta fria'
+			]);
+			// A Latin script needs no reading, so no key is written at all.
+			expect(challenge).not.toHaveProperty('answerRomanization');
+		});
+
+		it('reads the prompt toNative and takes the native answers as given', () => {
+			const resolved = resolve({
+				challenges: [
+					{
+						type: 'translate-to-native',
+						prompt: { text: '买单', reading: 'mǎidān' },
+						answersNative: ['to pay the bill', 'pay the bill', 'to pay the bill'],
+						itemIds: ['i1']
+					}
+				]
+			});
+			const [challenge] = resolved.challenges;
+			if (challenge.type !== 'typed-translation') throw new Error('expected typed-translation');
+
+			expect(challenge.direction).toBe('toNative');
+			expect(challenge.prompt).toBe('买单');
+			expect(challenge.promptRomanization).toBe('mǎidān');
+			expect(challenge.acceptedAnswers).toEqual(['to pay the bill', 'pay the bill']);
+			// The answer is the learner's own language; there is nothing to read.
+			expect('answerRomanization' in challenge).toBe(false);
+		});
+
+		it('omits promptRomanization toNative for a Latin-script target', () => {
+			const resolved = resolve({
+				challenges: [
+					{
+						type: 'translate-to-native',
+						prompt: { text: 'la cuenta', reading: null },
+						answersNative: ['the bill'],
+						itemIds: ['i1']
+					}
+				]
+			});
+			expect(resolved.challenges[0]).not.toHaveProperty('promptRomanization');
+		});
+	});
+
+	it('emits only valid domain challenges for a mixed batch', () => {
+		const resolved = resolve(goodBatch);
+		expect(resolved.challenges).toHaveLength(6);
 		for (const challenge of resolved.challenges) {
 			expect(challengeSchema.safeParse(challenge).success).toBe(true);
 		}
-	});
-
-	it('drops a misaligned optionsRomanization instead of the whole challenge', () => {
-		const parsed = parseBatch(
-			JSON.stringify({
-				challenges: [{ ...mc('i1', 'el perro'), optionsRomanization: ['a', 'b'] }],
-				newItems: []
-			})
-		);
-		const resolved = resolveBatch(parsed, { newId: idFactory(), now: () => 0 });
-		expect(resolved.challenges).toHaveLength(1);
-		expect(resolved.challenges[0]).not.toHaveProperty('optionsRomanization');
 	});
 });
 
