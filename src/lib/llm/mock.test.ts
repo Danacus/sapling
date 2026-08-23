@@ -59,7 +59,9 @@ describe('mockBatch', () => {
 
 	it('covers every generated challenge type and both directions', () => {
 		const types = new Set(result.challenges.map((c) => c.type));
-		expect(types).toEqual(new Set(['multiple-choice', 'cloze', 'typed-translation']));
+		expect(types).toEqual(
+			new Set(['multiple-choice', 'cloze', 'typed-translation', 'word-order', 'spot-error'])
+		);
 
 		const directions = new Set(result.challenges.map((c) => c.direction));
 		expect(directions).toEqual(new Set(['toTarget', 'toNative']));
@@ -121,6 +123,36 @@ describe('mockBatch', () => {
 				expect(ids.has(id)).toBe(true);
 			}
 		}
+	});
+
+	it('shuffles the word-order tiles without disturbing the answer', () => {
+		const wordOrder = result.challenges.find((c) => c.type === 'word-order');
+		if (wordOrder?.type !== 'word-order') throw new Error('expected a word-order challenge');
+
+		expect(wordOrder.answerTokens).toEqual([
+			'¿Nos',
+			'trae',
+			'la',
+			'cuenta,',
+			'por',
+			'favor?'
+		]);
+		expect(wordOrder.answer).toBe('¿Nos trae la cuenta, por favor?');
+		// Two distractors on top of the six real tiles, all still available.
+		expect(wordOrder.tiles).toHaveLength(8);
+		for (const token of wordOrder.answerTokens) expect(wordOrder.tiles).toContain(token);
+		expect(wordOrder.tiles).not.toEqual(wordOrder.answerTokens);
+	});
+
+	it('corrupts the spot-error sentence at the stated position only', () => {
+		const spot = result.challenges.find((c) => c.type === 'spot-error');
+		if (spot?.type !== 'spot-error') throw new Error('expected a spot-error challenge');
+
+		expect(spot.tokens).toEqual(['Quisiera', 'pagar', 'el', 'pescado.']);
+		expect(spot.correctIndex).toBe(1);
+		expect(spot.intendedWord).toBe('pedir');
+		expect(spot.correctedSentence).toBe('Quisiera pedir el pescado.');
+		expect(spot.meaning).toBe('I would like to order the fish.');
 	});
 
 	it('is deterministic and spends no tokens', () => {
@@ -211,6 +243,28 @@ describe('the Mandarin fixtures', () => {
 		expect(typed?.type === 'typed-translation' && checkChallenge(typed, 'maidan')).toBe('correct');
 		const cloze = result.challenges.find((c) => c.type === 'cloze' && !c.wordBank);
 		expect(cloze?.type === 'cloze' && checkChallenge(cloze, 'maidan')).toBe('correct');
+	});
+
+	it('segments per word and joins without spaces, as the script demands', () => {
+		const result = mockBatch(zhArgs);
+
+		const wordOrder = result.challenges.find((c) => c.type === 'word-order');
+		if (wordOrder?.type !== 'word-order') throw new Error('expected a word-order challenge');
+		// 菜单 is one tile, not 菜 + 单 — the whole reason the model segments.
+		expect(wordOrder.answerTokens).toContain('菜单');
+		expect(wordOrder.answer).toBe('你好，请给我菜单。');
+		expect(wordOrder.answer).not.toContain(' ');
+		// Readings are Latin, so they stay space-separated whatever the script.
+		expect(wordOrder.answerRomanization).toBe('nǐ hǎo , qǐng gěi wǒ càidān .');
+		expect(wordOrder.tilesRomanization).toHaveLength(wordOrder.tiles.length);
+
+		const spot = result.challenges.find((c) => c.type === 'spot-error');
+		if (spot?.type !== 'spot-error') throw new Error('expected a spot-error challenge');
+		expect(spot.tokens).toEqual(['我们', '想', '菜单']);
+		expect(spot.intendedWord).toBe('买单');
+		expect(spot.correctedSentence).toBe('我们想买单');
+		expect(spot.tokensRomanization).toEqual(['wǒmen', 'xiǎng', 'càidān']);
+		expect(spot.intendedWordRomanization).toBe('mǎidān');
 	});
 
 	it('is deterministic', () => {

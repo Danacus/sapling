@@ -258,6 +258,22 @@ export function checkChallenge(challenge: Challenge, answerGiven: string): Verdi
 			return hit ? 'correct' : 'wrong';
 		}
 
+		case 'word-order': {
+			// Tapped tiles, not typed text: the component grades by comparing the
+			// chosen token sequence to `answerTokens`. This dispatcher stays total by
+			// grading the assembled sentence, which is what the component reports as
+			// `answerGiven` — and it is an exact comparison, never fuzzy, because the
+			// learner picked from a closed set rather than spelling anything.
+			return normalize(answerGiven) === normalize(challenge.answer) ? 'correct' : 'wrong';
+		}
+
+		case 'spot-error': {
+			// The answer is the *wrong* word — the one the learner is asked to tap.
+			return normalize(answerGiven) === normalize(challenge.tokens[challenge.correctIndex])
+				? 'correct'
+				: 'wrong';
+		}
+
 		default: {
 			const _exhaustive: never = challenge;
 			return _exhaustive;

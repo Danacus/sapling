@@ -6,7 +6,9 @@ import {
 	generatedBatchSchema,
 	generatedChallengeSchema,
 	multipleChoiceChallengeSchema,
-	targetTextSchema
+	spotErrorChallengeSchema,
+	targetTextSchema,
+	wordOrderChallengeSchema
 } from './schemas';
 
 type JsonNode = Record<string, unknown>;
@@ -59,6 +61,34 @@ const validBatch = {
 			prompt: { text: 'la cuenta', reading: null },
 			answersNative: ['the bill', 'the check'],
 			itemIds: ['i1']
+		},
+		{
+			type: 'word-order',
+			promptNative: 'I read a book.',
+			words: [
+				{ text: 'Yo', reading: null },
+				{ text: 'leo', reading: null },
+				{ text: 'un', reading: null },
+				{ text: 'libro.', reading: null }
+			],
+			distractorWords: [{ text: 'bebo', reading: null }],
+			instruction: null,
+			itemIds: ['new:0'],
+			explanation: null
+		},
+		{
+			type: 'spot-error',
+			words: [
+				{ text: 'Yo', reading: null },
+				{ text: 'leo', reading: null },
+				{ text: 'un', reading: null },
+				{ text: 'libro.', reading: null }
+			],
+			wrongWord: { text: 'bebo', reading: null },
+			wrongPosition: 1,
+			meaningNative: 'I read a book.',
+			itemIds: ['new:0'],
+			explanation: null
 		}
 	],
 	newItems: [{ term: 'leer', meaning: 'to read', notes: null }]
@@ -80,7 +110,7 @@ describe('generatedBatchSchema', () => {
 	it('parses a well-formed batch', () => {
 		const parsed = generatedBatchSchema.safeParse(validBatch);
 		expect(parsed.success).toBe(true);
-		expect(parsed.success && parsed.data.challenges).toHaveLength(5);
+		expect(parsed.success && parsed.data.challenges).toHaveLength(7);
 	});
 
 	it('accepts an omitted optional field as well as an explicit null', () => {
@@ -255,6 +285,104 @@ describe('generatedBatchSchema', () => {
 		).toBe(true);
 	});
 
+	describe('word-order', () => {
+		const wordOrder = validBatch.challenges[5];
+
+		it('needs at least two tiles to be a sentence to build', () => {
+			expect(
+				generatedChallengeSchema.safeParse({
+					...wordOrder,
+					words: [{ text: 'Yo', reading: null }]
+				}).success
+			).toBe(false);
+		});
+
+		it('treats distractorWords as optional, null or any length', () => {
+			for (const distractorWords of [null, undefined, [], [{ text: 'x', reading: null }]]) {
+				expect(
+					generatedChallengeSchema.safeParse({ ...wordOrder, distractorWords }).success
+				).toBe(true);
+			}
+		});
+
+		it('carries no order field of its own: order is the array', () => {
+			const serialized = JSON.stringify(batchJsonSchema());
+			expect(serialized).not.toContain('correctOrder');
+			expect(serialized).not.toContain('answerTokens');
+		});
+
+		it('stores shuffled tiles alongside the answer key', () => {
+			const stored = {
+				id: 'c1',
+				type: 'word-order' as const,
+				direction: 'toTarget' as const,
+				prompt: 'I read a book.',
+				tiles: ['libro.', 'Yo', 'un', 'leo'],
+				answerTokens: ['Yo', 'leo', 'un', 'libro.'],
+				answer: 'Yo leo un libro.',
+				itemIds: ['i1']
+			};
+			expect(wordOrderChallengeSchema.safeParse(stored).success).toBe(true);
+			expect(challengeSchema.safeParse(stored).success).toBe(true);
+			expect(
+				wordOrderChallengeSchema.safeParse({
+					...stored,
+					tilesRomanization: ['', '', '', ''],
+					answerRomanization: 'x'
+				}).success
+			).toBe(true);
+		});
+	});
+
+	describe('spot-error', () => {
+		const spotError = validBatch.challenges[6];
+
+		it('needs a sentence long enough to hide an error in', () => {
+			expect(
+				generatedChallengeSchema.safeParse({
+					...spotError,
+					words: [
+						{ text: 'Yo', reading: null },
+						{ text: 'leo', reading: null }
+					]
+				}).success
+			).toBe(false);
+		});
+
+		it('rejects a negative or non-integer wrongPosition', () => {
+			expect(generatedChallengeSchema.safeParse({ ...spotError, wrongPosition: -1 }).success).toBe(
+				false
+			);
+			expect(generatedChallengeSchema.safeParse({ ...spotError, wrongPosition: 1.5 }).success).toBe(
+				false
+			);
+		});
+
+		it('leaves the overshooting position to the resolver, not the schema', () => {
+			// A position past the end is a structural failure the resolver drops:
+			// the schema cannot see the array length from inside the field.
+			expect(generatedChallengeSchema.safeParse({ ...spotError, wrongPosition: 99 }).success).toBe(
+				true
+			);
+		});
+
+		it('stores the corrupted sentence and the word that belonged there', () => {
+			const stored = {
+				id: 'c1',
+				type: 'spot-error' as const,
+				direction: 'toNative' as const,
+				tokens: ['Yo', 'bebo', 'un', 'libro.'],
+				correctIndex: 1,
+				intendedWord: 'leo',
+				correctedSentence: 'Yo leo un libro.',
+				meaning: 'I read a book.',
+				itemIds: ['i1']
+			};
+			expect(spotErrorChallengeSchema.safeParse(stored).success).toBe(true);
+			expect(challengeSchema.safeParse(stored).success).toBe(true);
+		});
+	});
+
 	it('rejects match-pairs: it is generated locally, never by the model', () => {
 		const matchPairs = {
 			type: 'match-pairs',
@@ -318,7 +446,9 @@ describe('batchJsonSchema', () => {
 			'produce-mc',
 			'cloze',
 			'translate-to-target',
-			'translate-to-native'
+			'translate-to-native',
+			'word-order',
+			'spot-error'
 		]) {
 			expect(serialized).toContain(type);
 		}

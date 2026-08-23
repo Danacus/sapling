@@ -109,6 +109,43 @@ describe('payload schemas', () => {
 		});
 	});
 
+	it('accepts every member of the stored Challenge union', () => {
+		// The `type` allow-list is the one field of the challenge payload that has
+		// to be kept in step with `$lib/types` — a type missing from it is a
+		// challenge that silently never arrives on the other device.
+		const shapes: Record<string, unknown>[] = [
+			{ id: 'c1', type: 'multiple-choice', direction: 'toNative', itemIds: ['i1'] },
+			{ id: 'c2', type: 'cloze', direction: 'toTarget', itemIds: ['i1'] },
+			{ id: 'c3', type: 'typed-translation', direction: 'toTarget', itemIds: ['i1'] },
+			{ id: 'c4', type: 'match-pairs', direction: 'toNative', itemIds: ['i1'] },
+			{
+				id: 'c5',
+				type: 'word-order',
+				direction: 'toTarget',
+				itemIds: ['i1'],
+				tiles: ['买单', '我们', '想'],
+				answerTokens: ['我们', '想', '买单'],
+				answer: '我们想买单'
+			},
+			{
+				id: 'c6',
+				type: 'spot-error',
+				direction: 'toNative',
+				itemIds: ['i1'],
+				tokens: ['我们', '想', '菜单'],
+				correctIndex: 2,
+				intendedWord: '买单',
+				correctedSentence: '我们想买单',
+				meaning: 'We would like to pay the bill.'
+			}
+		];
+
+		for (const challenge of shapes) {
+			const parsed = parseSyncPayload(EVENT_TYPES.challengeAdded, { challenge, generatedAt: AT });
+			expect(parsed?.challenge).toEqual(challenge);
+		}
+	});
+
 	it('rejects malformed payloads instead of throwing', () => {
 		expect(parseSyncPayload(EVENT_TYPES.itemReviewed, { itemId: 'i1', at: AT })).toBeUndefined();
 		expect(

@@ -13,8 +13,8 @@
  *
  * - **Spanish for English speakers** (the default): every wire type —
  *   recognize-mc, produce-mc, cloze with and without distractorWords,
- *   translate-to-target and translate-to-native — with `"reading": null`
- *   throughout, as a Latin-script lesson has.
+ *   translate-to-target, translate-to-native, word-order and spot-error — with
+ *   `"reading": null` throughout, as a Latin-script lesson has.
  * - **Mandarin for English speakers**, selected when the target language names
  *   Chinese: the same coverage with pinyin on every target-script string, so
  *   the romanization UI can be built and eyeballed with no API key. Set the
@@ -78,7 +78,7 @@ const DISTRACTORS = [
 	'slowly'
 ];
 
-/** One canned fixture set: six challenges hanging off two new items. */
+/** One canned fixture set: eight challenges hanging off two new items. */
 interface Fixture {
 	challenges: unknown[];
 	newItems: unknown[];
@@ -170,6 +170,39 @@ function spanishRestaurant(): Fixture {
 				answersNative: ['the bill', 'the check'],
 				itemIds: ['new:0'],
 				explanation: null
+			},
+			{
+				type: 'word-order',
+				promptNative: 'Could you bring us the bill, please?',
+				words: [
+					{ text: '¿Nos', reading: null },
+					{ text: 'trae', reading: null },
+					{ text: 'la', reading: null },
+					{ text: 'cuenta,', reading: null },
+					{ text: 'por', reading: null },
+					{ text: 'favor?', reading: null }
+				],
+				distractorWords: [
+					{ text: 'carta', reading: null },
+					{ text: 'propina', reading: null }
+				],
+				instruction: null,
+				itemIds: ['new:0'],
+				explanation: null
+			},
+			{
+				type: 'spot-error',
+				words: [
+					{ text: 'Quisiera', reading: null },
+					{ text: 'pedir', reading: null },
+					{ text: 'el', reading: null },
+					{ text: 'pescado.', reading: null }
+				],
+				wrongWord: { text: 'pagar', reading: null },
+				wrongPosition: 1,
+				meaningNative: 'I would like to order the fish.',
+				itemIds: ['new:1'],
+				explanation: '"Pagar" is to pay; ordering is "pedir".'
 			}
 		],
 		newItems: [
@@ -253,6 +286,41 @@ function mandarinRestaurant(): Fixture {
 				answersNative: ['to pay the bill', 'pay the bill'],
 				itemIds: ['new:1'],
 				explanation: null
+			},
+			{
+				// Segmented per *word*, not per character — 菜单 is one tile. That is
+				// the whole reason the model does the splitting.
+				type: 'word-order',
+				promptNative: 'Hello, could I have a menu, please?',
+				words: [
+					{ text: '你好', reading: 'nǐ hǎo' },
+					{ text: '，', reading: ',' },
+					{ text: '请', reading: 'qǐng' },
+					{ text: '给', reading: 'gěi' },
+					{ text: '我', reading: 'wǒ' },
+					{ text: '菜单', reading: 'càidān' },
+					{ text: '。', reading: '.' }
+				],
+				distractorWords: [
+					{ text: '筷子', reading: 'kuàizi' },
+					{ text: '茶', reading: 'chá' }
+				],
+				instruction: null,
+				itemIds: ['new:0'],
+				explanation: null
+			},
+			{
+				type: 'spot-error',
+				words: [
+					{ text: '我们', reading: 'wǒmen' },
+					{ text: '想', reading: 'xiǎng' },
+					{ text: '买单', reading: 'mǎidān' }
+				],
+				wrongWord: { text: '菜单', reading: 'càidān' },
+				wrongPosition: 2,
+				meaningNative: 'We would like to pay the bill.',
+				itemIds: ['new:1'],
+				explanation: '菜单 (càidān) is the menu; paying the bill is 买单 (mǎidān).'
 			}
 		],
 		newItems: [
@@ -322,12 +390,12 @@ export function mockBatchCompletion(args: BatchArgs): string {
 	const fixture = fixtureFor(args);
 	const review = reviewChallenges(args.reviewItems);
 
-	// Always keep the canned six: they are what makes the mock cover every
-	// challenge type and both new items.
-	const challenges = [...fixture.challenges, ...review].slice(
-		0,
-		Math.max(fixture.challenges.length, count)
-	);
+	// Always keep the canned set — it is what makes the mock cover every
+	// challenge type and both new items — and always let at least a couple of
+	// per-review-item challenges ride along, so the mock exercises review
+	// references even when the derived `count` is no bigger than the canned set.
+	const floor = fixture.challenges.length + Math.min(review.length, 2);
+	const challenges = [...fixture.challenges, ...review].slice(0, Math.max(floor, count));
 
 	const batch = { challenges, newItems: fixture.newItems };
 

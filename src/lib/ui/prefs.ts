@@ -9,6 +9,7 @@
  */
 
 const SHOW_ROMANIZATION_KEY = 'll.showRomanization';
+const LISTENING_MODE_KEY = 'll.listeningMode';
 const RECENT_TOPICS_KEY = 'll.recentTopics';
 
 /** At most this many recent topics are remembered. */
@@ -37,6 +38,35 @@ export function setShowRomanization(show: boolean): void {
 	if (!hasStorage()) return;
 	try {
 		localStorage.setItem(SHOW_ROMANIZATION_KEY, show ? '1' : '0');
+	} catch {
+		/* ignore: storage unavailable */
+	}
+}
+
+/**
+ * Whether some recognize-style challenges may be presented audio-first, with
+ * the prompt spoken and its text hidden until the learner asks for it (see
+ * `isListeningChallenge` in `$lib/session/engine`).
+ *
+ * On by default — it is the cheapest listening practice the app has, and it is
+ * always one tap away from turning back into an ordinary reading challenge.
+ * Off is for learners who cannot use audio at all, or do not want to.
+ */
+export function getListeningMode(): boolean {
+	if (!hasStorage()) return true;
+	try {
+		const raw = localStorage.getItem(LISTENING_MODE_KEY);
+		return raw === null ? true : raw === '1';
+	} catch {
+		return true;
+	}
+}
+
+/** Persists the listening-mode toggle. */
+export function setListeningMode(on: boolean): void {
+	if (!hasStorage()) return;
+	try {
+		localStorage.setItem(LISTENING_MODE_KEY, on ? '1' : '0');
 	} catch {
 		/* ignore: storage unavailable */
 	}

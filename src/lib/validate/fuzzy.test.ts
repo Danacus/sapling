@@ -3,7 +3,9 @@ import type {
 	ClozeChallenge,
 	MatchPairsChallenge,
 	MultipleChoiceChallenge,
-	TypedTranslationChallenge
+	SpotErrorChallenge,
+	TypedTranslationChallenge,
+	WordOrderChallenge
 } from '$lib/types';
 import { checkAnswer, checkChallenge, editDistance, normalize, validateAnswer } from './fuzzy';
 
@@ -407,5 +409,42 @@ describe('checkChallenge', () => {
 		expect(checkChallenge(matchPairs, 'hola::hello')).toBe('correct');
 		expect(checkChallenge(matchPairs, 'hola::goodbye')).toBe('wrong');
 		expect(checkChallenge(matchPairs, 'not a pair')).toBe('wrong');
+	});
+
+	const wordOrder: WordOrderChallenge = {
+		id: 'w1',
+		type: 'word-order',
+		direction: 'toTarget',
+		prompt: 'I am going home.',
+		tiles: ['Hause.', 'Ich', 'nach', 'gehe', 'komme'],
+		answerTokens: ['Ich', 'gehe', 'nach', 'Hause.'],
+		answer: 'Ich gehe nach Hause.',
+		itemIds: ['item1']
+	};
+
+	const spotError: SpotErrorChallenge = {
+		id: 's1',
+		type: 'spot-error',
+		direction: 'toNative',
+		tokens: ['Ich', 'komme', 'nach', 'Hause.'],
+		correctIndex: 1,
+		intendedWord: 'gehe',
+		correctedSentence: 'Ich gehe nach Hause.',
+		meaning: 'I am going home.',
+		itemIds: ['item1']
+	};
+
+	it('grades word-order exactly: the learner picked tiles, they did not spell', () => {
+		expect(checkChallenge(wordOrder, 'Ich gehe nach Hause.')).toBe('correct');
+		expect(checkChallenge(wordOrder, 'Ich nach gehe Hause.')).toBe('wrong');
+		// One tile out is a wrong arrangement, never a near miss.
+		expect(checkChallenge(wordOrder, 'Ich gehe nach Hausee.')).toBe('wrong');
+	});
+
+	it('grades spot-error against the word the learner had to tap — the wrong one', () => {
+		expect(checkChallenge(spotError, 'komme')).toBe('correct');
+		// Tapping the word that is actually fine is not the answer.
+		expect(checkChallenge(spotError, 'gehe')).toBe('wrong');
+		expect(checkChallenge(spotError, 'Hause.')).toBe('wrong');
 	});
 });

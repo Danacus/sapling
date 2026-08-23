@@ -274,14 +274,69 @@ export function wantsMatchRound(llmAnswered: number, lastMatchAfter: number): bo
  * the thing the learner is missing.
  */
 export function spokenAnswerFor(challenge: Challenge): string {
+	// Checked ahead of the direction gate: the sentence a spot-error round is
+	// *about* is target-language whichever way the challenge is exercised, and
+	// what the learner needs to hear is the corrected one, not the broken one
+	// they were shown.
+	if (challenge.type === 'spot-error') return challenge.correctedSentence.trim();
 	if (challenge.type === 'match-pairs' || challenge.direction !== 'toTarget') return '';
 	if (challenge.type === 'multiple-choice') {
 		return challenge.options[challenge.correctIndex]?.trim() ?? '';
 	}
+	// The assembled sentence, spacing and all — never the tiles read one by one.
+	if (challenge.type === 'word-order') return challenge.answer.trim();
 	const canonical = challenge.acceptedAnswers[0]?.trim() ?? '';
 	if (!canonical) return '';
 	if (challenge.type === 'cloze') return challenge.sentence.split('___').join(canonical);
 	return canonical;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Listening mode (pure)                                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Share of eligible challenges presented audio-first. Half: a session that was
+ * *all* listening stops being reading practice, and one that never listens
+ * never trains the ear.
+ */
+export const LISTENING_SHARE = 0.5;
+
+/** FNV-1a over the id, mapped to `[0,1)`. Stable across devices and reloads. */
+function idFraction(id: string): number {
+	let hash = 0x811c9dc5;
+	for (let i = 0; i < id.length; i++) {
+		hash ^= id.charCodeAt(i);
+		hash = Math.imul(hash, 0x01000193) >>> 0;
+	}
+	return hash / 0x100000000;
+}
+
+/**
+ * Whether a challenge should be played before it is read.
+ *
+ * Listening mode is **presentation only** — the stored challenge is untouched,
+ * nothing about it is generated differently, and grading is identical. That is
+ * the point: every recognize-MC row already in the pool, however long ago it was
+ * generated, can be served as a listening exercise.
+ *
+ * Eligible: `multiple-choice` in the `toNative` direction, i.e. target text
+ * shown and a native meaning picked — the only stored shape whose prompt is a
+ * target-language string the learner is expected to understand rather than
+ * produce.
+ *
+ * Which of them get it is decided by a hash of the challenge id rather than a
+ * coin flip, so a challenge that comes back round in a later session is
+ * presented the same way it was the first time. `enabled` is the learner's
+ * preference (`ll.listeningMode`); the caller also has to check that speech is
+ * actually available, which is a browser question this module knows nothing
+ * about.
+ */
+export function isListeningChallenge(challenge: Challenge, enabled: boolean): boolean {
+	if (!enabled) return false;
+	if (challenge.type !== 'multiple-choice' || challenge.direction !== 'toNative') return false;
+	if (!challenge.prompt.trim()) return false;
+	return idFraction(challenge.id) < LISTENING_SHARE;
 }
 
 /* -------------------------------------------------------------------------- */

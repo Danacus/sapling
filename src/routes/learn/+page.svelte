@@ -36,6 +36,7 @@
 		comboAfter,
 		COMBO_THRESHOLD,
 		generateChallenges,
+		isListeningChallenge,
 		reportChallenge,
 		sessionSummary,
 		spokenAnswerFor,
@@ -51,7 +52,12 @@
 	import { runSync } from '$lib/sync/run';
 	import { warmSpeech } from '$lib/tts';
 	import type { Challenge, KnowledgeItem, Profile, Stats, Verdict } from '$lib/types';
-	import { addRecentTopic, getRecentTopics, getShowRomanization } from '$lib/ui/prefs';
+	import {
+		addRecentTopic,
+		getListeningMode,
+		getRecentTopics,
+		getShowRomanization
+	} from '$lib/ui/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
@@ -59,7 +65,9 @@
 	import FeedbackBanner from './FeedbackBanner.svelte';
 	import MatchPairs from './MatchPairs.svelte';
 	import MultipleChoice from './MultipleChoice.svelte';
+	import SpotError from './SpotError.svelte';
 	import TypedTranslation from './TypedTranslation.svelte';
+	import WordOrder from './WordOrder.svelte';
 
 	/** Conversational scenarios offered next to the topic field. */
 	const TOPIC_SUGGESTIONS = [
@@ -381,6 +389,13 @@
 		// means the real speak synthesizes as before.
 		const answerAudio = spokenAnswerFor(challenge);
 		if (answerAudio) void warmSpeech(answerAudio, targetLanguage);
+		// A listening challenge plays its *prompt* the moment it appears, with
+		// nothing on screen to read in the meantime — so that clip is the one
+		// warming actually matters for. Warmed here rather than in the component
+		// so the same rule decides both.
+		if (isListeningChallenge(challenge, listeningEnabled) && challenge.type === 'multiple-choice') {
+			void warmSpeech(challenge.prompt, targetLanguage);
+		}
 	}
 
 	function correctAnswerFor(challenge: Challenge): string {
@@ -390,6 +405,13 @@
 			case 'cloze':
 			case 'typed-translation':
 				return challenge.acceptedAnswers[0] ?? '';
+			case 'word-order':
+				return challenge.answer;
+			// Not the word they had to tap — the word that belonged there. "Answer:
+			// pedir" is the thing worth remembering; "the wrong one was pagar" is
+			// already on screen, highlighted.
+			case 'spot-error':
+				return challenge.intendedWord;
 			case 'match-pairs':
 				return '';
 		}
@@ -661,8 +683,9 @@
 	const nativeLanguage = $derived(profile?.nativeLanguage ?? '');
 	const isLastStep = $derived(llmAnswered >= plannedLlm || stepsDone >= totalSteps);
 
-	/** Read once — the toggle lives in Settings, not mid-session. */
+	/** Read once — the toggles live in Settings, not mid-session. */
 	const showRomanization = getShowRomanization();
+	const listeningEnabled = getListeningMode();
 </script>
 
 <svelte:head>
@@ -920,6 +943,10 @@
 								{targetLanguage}
 								{nativeLanguage}
 							/>
+						{:else if current.type === 'word-order'}
+							<WordOrder challenge={current} onanswer={handleAnswer} />
+						{:else if current.type === 'spot-error'}
+							<SpotError challenge={current} onanswer={handleAnswer} />
 						{:else}
 							<MatchPairs challenge={current} onanswer={handleAnswer} {targetLanguage} />
 						{/if}

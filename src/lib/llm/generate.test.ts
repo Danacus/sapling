@@ -5,6 +5,7 @@ import { LlmError } from './client';
 import {
 	MAX_ABOUT_CHARS,
 	MAX_BATCH_CHALLENGES,
+	MAX_WORD_ORDER_DISTRACTORS,
 	buildBatchPrompt,
 	defaultChallengeCount,
 	generateBatch,
@@ -176,12 +177,28 @@ describe('buildBatchPrompt', () => {
 			'produce-mc',
 			'cloze',
 			'translate-to-target',
-			'translate-to-native'
+			'translate-to-native',
+			'word-order',
+			'spot-error'
 		]) {
 			expect(system).toContain(type);
 		}
 		expect(system).not.toContain('match-pairs');
 		expect(system).toContain('new:<index>');
+	});
+
+	it('spells out the segmentation and answerability rules for the tile types', () => {
+		const system = messages[0].content;
+		// One tile per word is the rule that makes these types work for Chinese at
+		// all; a per-character split would turn word order into calligraphy.
+		expect(system).toContain('one tile per WORD');
+		expect(system).toContain('菜单 is one tile');
+		// Answerability, per type: one right order, one unambiguously wrong word.
+		expect(system).toContain('exactly one natural order');
+		expect(system).toContain('unambiguously wrong');
+		// The shuffle and the corruption are the app's, and the prompt says so.
+		expect(system).toContain('the app shuffles the tiles');
+		expect(system).toContain('the app replaces words[wrongPosition]');
 	});
 
 	it('never mentions the presentation the app assembles for itself', () => {
@@ -926,6 +943,212 @@ describe('resolveBatch', () => {
 				]
 			});
 			expect(resolved.challenges[0]).not.toHaveProperty('promptRomanization');
+		});
+	});
+
+	describe('word-order assembly', () => {
+		const wordOrder = {
+			type: 'word-order',
+			promptNative: 'I read a book.',
+			words: [
+				{ text: 'Yo', reading: null },
+				{ text: 'leo', reading: null },
+				{ text: 'un', reading: null },
+				{ text: 'libro.', reading: null }
+			],
+			distractorWords: [{ text: 'bebo', reading: null }],
+			itemIds: ['i1']
+		};
+
+		function resolveWordOrder(overrides: Record<string, unknown> = {}, opts: ResolveOptions = {}) {
+			const resolved = resolve({ challenges: [{ ...wordOrder, ...overrides }] }, opts);
+			const [challenge] = resolved.challenges;
+			return challenge?.type === 'word-order' ? challenge : undefined;
+		}
+
+		it('keeps the model order as the answer and shuffles what is shown', () => {
+			const challenge = resolveWordOrder({}, { rng: ZERO_RNG });
+			expect(challenge?.answerTokens).toEqual(['Yo', 'leo', 'un', 'libro.']);
+			expect(challenge?.answer).toBe('Yo leo un libro.');
+			expect(challenge?.direction).toBe('toTarget');
+			// Five tiles: four real plus the distractor, in an order the model
+			// never got to choose.
+			expect(challenge?.tiles).toHaveLength(5);
+			expect([...(challenge?.tiles ?? [])].sort()).toEqual(
+				['Yo', 'leo', 'un', 'libro.', 'bebo'].sort()
+			);
+			expect(challenge?.tiles).not.toEqual(challenge?.answerTokens);
+		});
+
+		it('joins a no-space script without spaces, and its readings with them', () => {
+			const challenge = resolveWordOrder({
+				words: [
+					{ text: '我们', reading: 'wǒmen' },
+					{ text: '想', reading: 'xiǎng' },
+					{ text: '买单', reading: 'mǎidān' }
+				],
+				distractorWords: null
+			});
+			expect(challenge?.answer).toBe('我们想买单');
+			expect(challenge?.answerRomanization).toBe('wǒmen xiǎng mǎidān');
+			expect(challenge?.tilesRomanization).toHaveLength(3);
+		});
+
+		it('drops a partial romanization rather than a challenge', () => {
+			const challenge = resolveWordOrder({
+				words: [
+					{ text: '我们', reading: 'wǒmen' },
+					{ text: '想', reading: '  ' },
+					{ text: '买单', reading: 'mǎidān' }
+				],
+				distractorWords: null
+			});
+			expect(challenge).toBeDefined();
+			expect(challenge).not.toHaveProperty('tilesRomanization');
+			expect(challenge).not.toHaveProperty('answerRomanization');
+		});
+
+		it('caps an oversized distractor list instead of dropping the challenge', () => {
+			const challenge = resolveWordOrder({
+				distractorWords: ['bebo', 'como', 'corro', 'salto', 'canto', 'duermo'].map((text) => ({
+					text,
+					reading: null
+				}))
+			});
+			// Four real tiles plus MAX_WORD_ORDER_DISTRACTORS.
+			expect(challenge?.tiles).toHaveLength(4 + MAX_WORD_ORDER_DISTRACTORS);
+		});
+
+		it('drops a distractor that duplicates a real tile: it could never be wrong', () => {
+			const challenge = resolveWordOrder({
+				distractorWords: [
+					{ text: 'leo', reading: null },
+					{ text: 'bebo', reading: null }
+				]
+			});
+			expect(challenge?.tiles).toHaveLength(5);
+			expect(challenge?.tiles.filter((tile) => tile === 'leo')).toHaveLength(1);
+		});
+
+		it('keeps a sentence that legitimately repeats a word', () => {
+			// Duplicate *answer* tokens are fine — grading is by text sequence, not
+			// by which tile the learner happened to tap.
+			const challenge = resolveWordOrder({
+				words: [
+					{ text: 'Ni', reading: null },
+					{ text: 'leo', reading: null },
+					{ text: 'ni', reading: null },
+					{ text: 'escribo.', reading: null }
+				],
+				distractorWords: null
+			});
+			expect(challenge?.answerTokens).toEqual(['Ni', 'leo', 'ni', 'escribo.']);
+			expect(challenge?.tiles).toHaveLength(4);
+		});
+
+		it('drops the challenge when there is no sentence to build', () => {
+			const resolved = resolve({
+				challenges: [{ ...wordOrder, words: [{ text: 'Yo', reading: null }] }]
+			});
+			// Rejected by the schema before it ever reaches the resolver.
+			expect(resolved.challenges).toHaveLength(0);
+
+			const blank = resolve({
+				challenges: [
+					{
+						...wordOrder,
+						words: [
+							{ text: '   ', reading: null },
+							{ text: 'leo', reading: null }
+						]
+					}
+				]
+			});
+			expect(blank.challenges).toHaveLength(0);
+			expect(blank.dropped).toBe(1);
+		});
+
+		it('copies an instruction, omitting it when null', () => {
+			expect(resolveWordOrder({ instruction: 'Build the sentence' })?.instruction).toBe(
+				'Build the sentence'
+			);
+			expect(resolveWordOrder({ instruction: null })).not.toHaveProperty('instruction');
+		});
+	});
+
+	describe('spot-error assembly', () => {
+		const spotError = {
+			type: 'spot-error',
+			words: [
+				{ text: '我们', reading: 'wǒmen' },
+				{ text: '想', reading: 'xiǎng' },
+				{ text: '买单', reading: 'mǎidān' }
+			],
+			wrongWord: { text: '菜单', reading: 'càidān' },
+			wrongPosition: 2,
+			meaningNative: 'We would like to pay the bill.',
+			itemIds: ['i1']
+		};
+
+		function resolveSpotError(overrides: Record<string, unknown> = {}) {
+			const resolved = resolve({ challenges: [{ ...spotError, ...overrides }] });
+			const [challenge] = resolved.challenges;
+			return challenge?.type === 'spot-error' ? challenge : undefined;
+		}
+
+		it('applies the corruption at the stated position and nowhere else', () => {
+			const challenge = resolveSpotError();
+			expect(challenge?.tokens).toEqual(['我们', '想', '菜单']);
+			expect(challenge?.correctIndex).toBe(2);
+			expect(challenge?.intendedWord).toBe('买单');
+			expect(challenge?.correctedSentence).toBe('我们想买单');
+			expect(challenge?.meaning).toBe('We would like to pay the bill.');
+			expect(challenge?.direction).toBe('toNative');
+		});
+
+		it('reads every token, the wrong one included, and the word that belonged', () => {
+			const challenge = resolveSpotError();
+			expect(challenge?.tokensRomanization).toEqual(['wǒmen', 'xiǎng', 'càidān']);
+			expect(challenge?.intendedWordRomanization).toBe('mǎidān');
+		});
+
+		it('drops a partial romanization rather than the challenge', () => {
+			const challenge = resolveSpotError({ wrongWord: { text: '菜单', reading: null } });
+			expect(challenge).toBeDefined();
+			expect(challenge).not.toHaveProperty('tokensRomanization');
+			// The intended word still has its own reading; only the row is all-or-nothing.
+			expect(challenge?.intendedWordRomanization).toBe('mǎidān');
+		});
+
+		it('drops a wrongPosition that overshoots the sentence', () => {
+			const resolved = resolve({ challenges: [{ ...spotError, wrongPosition: 3 }] });
+			expect(resolved.challenges).toHaveLength(0);
+			expect(resolved.dropped).toBe(1);
+		});
+
+		it('drops a wrongWord that is the word it replaces', () => {
+			const resolved = resolve({
+				challenges: [{ ...spotError, wrongWord: { text: ' 买单 ', reading: 'mǎidān' } }]
+			});
+			expect(resolved.challenges).toHaveLength(0);
+			expect(resolved.dropped).toBe(1);
+		});
+
+		it('spaces a Latin sentence back together', () => {
+			const challenge = resolveSpotError({
+				words: [
+					{ text: 'Quisiera', reading: null },
+					{ text: 'pedir', reading: null },
+					{ text: 'el', reading: null },
+					{ text: 'pescado.', reading: null }
+				],
+				wrongWord: { text: 'pagar', reading: null },
+				wrongPosition: 1,
+				meaningNative: 'I would like to order the fish.'
+			});
+			expect(challenge?.tokens).toEqual(['Quisiera', 'pagar', 'el', 'pescado.']);
+			expect(challenge?.correctedSentence).toBe('Quisiera pedir el pescado.');
+			expect(challenge).not.toHaveProperty('tokensRomanization');
 		});
 	});
 

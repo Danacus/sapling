@@ -177,13 +177,17 @@
 	 * The canonical answer, but only when it is in the target language —
 	 * hearing your own native language read back teaches nothing.
 	 *
-	 * Cloze answers are always target-language; the other two types depend on
-	 * the direction. Match rounds have no single answer, so they get nothing.
+	 * Cloze, word-order and spot-error answers are always target-language — the
+	 * last of those despite its `toNative` direction, because the word it names
+	 * is still a target-language word. The other two types depend on the
+	 * direction. Match rounds have no single answer, so they get nothing.
 	 * `closestAccepted` wins when present because that is the form the learner
 	 * was nearly right about.
 	 */
 	const answerIsTargetLanguage = $derived(
 		challenge.type === 'cloze' ||
+			challenge.type === 'word-order' ||
+			challenge.type === 'spot-error' ||
 			((challenge.type === 'multiple-choice' || challenge.type === 'typed-translation') &&
 				challenge.direction === 'toTarget')
 	);
@@ -235,9 +239,15 @@
 		if (challenge.type === 'multiple-choice') {
 			return challenge.optionsRomanization?.[challenge.correctIndex] ?? '';
 		}
-		if (challenge.type === 'cloze' || challenge.type === 'typed-translation') {
+		if (
+			challenge.type === 'cloze' ||
+			challenge.type === 'typed-translation' ||
+			challenge.type === 'word-order'
+		) {
 			return challenge.answerRomanization ?? '';
 		}
+		// Reads the word that *belonged* there — which is what `detail` prints.
+		if (challenge.type === 'spot-error') return challenge.intendedWordRomanization ?? '';
 		return '';
 	});
 

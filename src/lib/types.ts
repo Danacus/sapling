@@ -186,12 +186,82 @@ export interface MatchPairsChallenge extends ChallengeBase {
 	itemIds: string[];
 }
 
+/**
+ * Arrange shuffled target-language word tiles into the right sentence.
+ *
+ * The model does the segmentation (one tile per *word*, not per character),
+ * which is what makes this type work for Chinese and Japanese at all. The
+ * resolver does the shuffling, so tile order carries no signal.
+ *
+ * Grading compares the learner's sequence of tile **texts** to
+ * {@link answerTokens}, never tile indices: a sentence that legitimately uses
+ * the same word twice — or a distractor that happens to duplicate a real tile —
+ * must not be able to fail a correct arrangement.
+ */
+export interface WordOrderChallenge extends ChallengeBase {
+	type: 'word-order';
+	/** The sentence to build, in the learner's native language. */
+	prompt: string;
+	/** Heading shown above the prompt; absent means the UI's default. */
+	instruction?: string;
+	/**
+	 * Every tile the learner may place, already shuffled: the sentence's own
+	 * words plus any distractors. Duplicates are legal — see the type note.
+	 */
+	tiles: string[];
+	/**
+	 * Latin reading of each tile, index-aligned with `tiles`. All-or-nothing,
+	 * exactly like {@link ClozeChallenge.wordBankRomanization}: a half-annotated
+	 * row of tiles reads worse than a bare one.
+	 */
+	tilesRomanization?: string[];
+	/** The correct tile texts, in order. The answer key. */
+	answerTokens: string[];
+	/**
+	 * `answerTokens` assembled into a sentence with the target script's own
+	 * spacing rule (`joinTokens` in `$lib/text`) — what the feedback banner
+	 * prints and what TTS speaks.
+	 */
+	answer: string;
+	/** Latin reading of `answer`; absent for Latin-script targets. */
+	answerRomanization?: string;
+	itemIds: string[];
+}
+
+/**
+ * Tap the one word in a target-language sentence that does not belong.
+ *
+ * `meaning` is load-bearing rather than decorative: without being told what the
+ * sentence is *supposed* to say, a learner cannot tell a wrong word from a word
+ * they simply do not know yet.
+ */
+export interface SpotErrorChallenge extends ChallengeBase {
+	type: 'spot-error';
+	/** The sentence as shown, one entry per word, with the wrong word in place. */
+	tokens: string[];
+	/** Latin reading of each token, index-aligned with `tokens`; all-or-nothing. */
+	tokensRomanization?: string[];
+	/** Index into `tokens` of the wrong word — tapping it is the correct answer. */
+	correctIndex: number;
+	/** The word that belongs at `correctIndex`; the banner's "should have been". */
+	intendedWord: string;
+	/** Latin reading of `intendedWord`; absent for Latin-script targets. */
+	intendedWordRomanization?: string;
+	/** The sentence with `intendedWord` restored — printed and spoken after answering. */
+	correctedSentence: string;
+	/** What the sentence is meant to say, in the learner's native language. */
+	meaning: string;
+	itemIds: string[];
+}
+
 /** Any challenge; discriminate on `type`. */
 export type Challenge =
 	| MultipleChoiceChallenge
 	| ClozeChallenge
 	| TypedTranslationChallenge
-	| MatchPairsChallenge;
+	| MatchPairsChallenge
+	| WordOrderChallenge
+	| SpotErrorChallenge;
 
 /** Narrowing helper: the `type` tag of a `Challenge`. */
 export type ChallengeType = Challenge['type'];

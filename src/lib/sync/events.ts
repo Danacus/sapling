@@ -143,19 +143,31 @@ export const itemPatchSchema = z.object({
 /**
  * A stored `Challenge`, shape-checked rather than fully validated.
  *
- * The authoritative structural schema for the four-way `Challenge` union is
+ * The authoritative structural schema for the `Challenge` union is
  * `challengeSchema` in `$lib/llm/schemas.ts`, and it cannot be imported here
- * (module header). Re-typing ~60 lines of union in a second place would be a
+ * (module header). Re-typing ~100 lines of union in a second place would be a
  * standing drift hazard for no merge benefit: challenge content is **immutable
  * and opaque to the merge** — §4 identifies challenges by id and copies content
  * through verbatim; nothing in the apply engine reads a field below `type`. So
  * this checks exactly what the merge and the UI's discriminant depend on and
  * lets the rest ride along (`looseObject`). The payload's own producer already
  * validated it against `challengeSchema` at generation time.
+ *
+ * The one field that must be kept in step is `type`: it is an allow-list, so a
+ * challenge type this file has never heard of is dropped on the receiving
+ * device rather than pooled. **Every new member of the `Challenge` union has to
+ * be added here too**, or the type simply will not survive a sync.
  */
 export const challengeContentSchema = z.looseObject({
 	id: nonEmpty,
-	type: z.enum(['multiple-choice', 'cloze', 'typed-translation', 'match-pairs']),
+	type: z.enum([
+		'multiple-choice',
+		'cloze',
+		'typed-translation',
+		'match-pairs',
+		'word-order',
+		'spot-error'
+	]),
 	direction: z.enum(['toTarget', 'toNative']),
 	itemIds: z.array(z.string())
 });

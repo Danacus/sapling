@@ -19,10 +19,18 @@ import type { ChallengeRow } from '$lib/db';
 import { getBatch, isMockMode, makeMatchPairsChallenge } from '$lib/llm';
 import type { ProgressStep } from '$lib/llm';
 import { gradeFromResult, newCardState, reviewCard, Grade } from '$lib/srs';
-import type { Challenge, ChallengeResult, KnowledgeItem, Profile, Verdict } from '$lib/types';
+import type {
+	Challenge,
+	ChallengeResult,
+	KnowledgeItem,
+	MultipleChoiceChallenge,
+	Profile,
+	Verdict
+} from '$lib/types';
 import {
 	BATCH_TARGET,
 	COMBO_THRESHOLD,
+	LISTENING_SHARE,
 	MATCH_PAIRS_EVERY,
 	MATCH_PAIRS_XP,
 	MAX_COMBO_BONUS,
@@ -33,6 +41,7 @@ import {
 	comboAfter,
 	dedupeNewItems,
 	deriveRecentMistakes,
+	isListeningChallenge,
 	planRefill,
 	planSession,
 	remapItemIds,
@@ -172,6 +181,37 @@ describe('spokenAnswerFor', () => {
 		).toBe('请给我一份菜单。');
 	});
 
+	it('speaks a word-order answer as the assembled sentence, not tile by tile', () => {
+		expect(
+			spokenAnswerFor({
+				...base,
+				type: 'word-order',
+				direction: 'toTarget',
+				prompt: 'We would like to pay the bill.',
+				tiles: ['买单', '我们', '菜单', '想'],
+				answerTokens: ['我们', '想', '买单'],
+				answer: '我们想买单'
+			})
+		).toBe('我们想买单');
+	});
+
+	it('speaks the corrected spot-error sentence, never the broken one on screen', () => {
+		expect(
+			spokenAnswerFor({
+				...base,
+				type: 'spot-error',
+				// toNative, and still spoken: the sentence is target-language whichever
+				// way round the challenge is exercised.
+				direction: 'toNative',
+				tokens: ['我们', '想', '菜单'],
+				correctIndex: 2,
+				intendedWord: '买单',
+				correctedSentence: '我们想买单',
+				meaning: 'We would like to pay the bill.'
+			})
+		).toBe('我们想买单');
+	});
+
 	it('is silent when the answer is in the native language, or has no single answer', () => {
 		expect(
 			spokenAnswerFor({
@@ -216,6 +256,101 @@ describe('spokenAnswerFor', () => {
 				translationHint: 'A menu, please.'
 			})
 		).toBe('');
+	});
+});
+
+describe('isListeningChallenge', () => {
+	/** A recognize-MC row: target text shown, native meaning picked. */
+	function recognize(id: string, prompt = '菜单'): MultipleChoiceChallenge {
+		return {
+			id,
+			type: 'multiple-choice',
+			direction: 'toNative',
+			prompt,
+			options: ['the menu', 'the bill', 'the tea', 'the water'],
+			correctIndex: 0,
+			itemIds: ['i1']
+		};
+	}
+
+	/** Ids are only hashed, so any spread of them samples the share fairly. */
+	const ids = Array.from({ length: 400 }, (_, i) => `challenge-${i}`);
+
+	it('is off entirely when the learner switched it off', () => {
+		expect(ids.some((id) => isListeningChallenge(recognize(id), false))).toBe(false);
+	});
+
+	it('takes only recognize-style multiple choice: nothing else has a target prompt', () => {
+		const ineligible: Challenge[] = [
+			{
+				id: 'c1',
+				type: 'multiple-choice',
+				// The prompt is the learner's own language here; playing it teaches nothing.
+				direction: 'toTarget',
+				prompt: 'the menu',
+				options: ['菜单', '筷子', '茶', '水'],
+				correctIndex: 0,
+				itemIds: ['i1']
+			},
+			{
+				id: 'c2',
+				type: 'cloze',
+				direction: 'toTarget',
+				sentence: '请给我一份___。',
+				acceptedAnswers: ['菜单'],
+				translationHint: 'A menu, please.',
+				itemIds: ['i1']
+			},
+			{
+				id: 'c3',
+				type: 'typed-translation',
+				direction: 'toNative',
+				prompt: '买单',
+				acceptedAnswers: ['to pay the bill'],
+				itemIds: ['i1']
+			},
+			{
+				id: 'c4',
+				type: 'match-pairs',
+				direction: 'toNative',
+				pairs: [
+					{ a: '菜单', b: 'the menu' },
+					{ a: '买单', b: 'to pay the bill' }
+				],
+				itemIds: ['i1']
+			}
+		];
+
+		for (const challenge of ineligible) {
+			// Tried under every id, so a hash that happens to fall in range cannot
+			// make an ineligible type look eligible.
+			for (const id of ids.slice(0, 40)) {
+				expect(isListeningChallenge({ ...challenge, id }, true)).toBe(false);
+			}
+		}
+	});
+
+	it('takes roughly the configured share of eligible challenges', () => {
+		const taken = ids.filter((id) => isListeningChallenge(recognize(id), true)).length;
+		const share = taken / ids.length;
+		// Neither "always" nor "never": a session mixes reading and listening.
+		expect(share).toBeGreaterThan(LISTENING_SHARE - 0.1);
+		expect(share).toBeLessThan(LISTENING_SHARE + 0.1);
+	});
+
+	it('decides the same way every time for the same challenge', () => {
+		// A pooled challenge comes back round; it must not flip presentation
+		// between sessions or between devices.
+		for (const id of ids.slice(0, 50)) {
+			const first = isListeningChallenge(recognize(id), true);
+			expect(isListeningChallenge(recognize(id), true)).toBe(first);
+		}
+	});
+
+	it('never hides a prompt that has nothing to say', () => {
+		for (const id of ids.slice(0, 40)) {
+			expect(isListeningChallenge(recognize(id, '   '), true)).toBe(false);
+		}
 	});
 });
 

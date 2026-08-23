@@ -144,12 +144,57 @@ export const generatedTranslateToNativeSchema = z.object({
 	...generatedBase
 });
 
+/**
+ * A target-language sentence, pre-segmented into word tiles the learner puts
+ * back in order.
+ *
+ * `words` is the sentence *in the correct order* — the model segments, the app
+ * shuffles. That split is what makes the type work for Chinese and Japanese:
+ * word boundaries are a language question the model can answer and a local
+ * tokenizer cannot. Direction is implied (toTarget); there is no `correctOrder`
+ * field to get wrong because order is simply the array's own.
+ */
+export const generatedWordOrderSchema = z.object({
+	type: z.literal('word-order'),
+	promptNative: nonEmpty,
+	words: z.array(targetTextSchema).min(2),
+	/**
+	 * Extra wrong tiles. Not length-constrained, for the same reason as the
+	 * cloze word bank: an oversized list is a cosmetic defect and the resolver
+	 * caps it rather than costing us a challenge we already paid for.
+	 */
+	distractorWords: z.array(targetTextSchema).nullish(),
+	instruction: z.string().nullish(),
+	...generatedBase
+});
+
+/**
+ * A target-language sentence with exactly one word swapped for a wrong one.
+ *
+ * `words` is the **correct** sentence, segmented; the corruption is described
+ * separately (`wrongWord` at `wrongPosition`) and applied by the resolver. So
+ * the model never hands over a sentence with the answer already baked into it,
+ * and "which word is wrong" is a fact the app derives rather than trusts.
+ */
+export const generatedSpotErrorSchema = z.object({
+	type: z.literal('spot-error'),
+	words: z.array(targetTextSchema).min(3),
+	wrongWord: targetTextSchema,
+	/** 0-based index into `words`; the resolver rejects one that overshoots. */
+	wrongPosition: z.int().min(0),
+	/** What the sentence is meant to say — what makes the error findable. */
+	meaningNative: nonEmpty,
+	...generatedBase
+});
+
 export const generatedChallengeSchema = z.discriminatedUnion('type', [
 	generatedRecognizeMcSchema,
 	generatedProduceMcSchema,
 	generatedClozeSchema,
 	generatedTranslateToTargetSchema,
-	generatedTranslateToNativeSchema
+	generatedTranslateToNativeSchema,
+	generatedWordOrderSchema,
+	generatedSpotErrorSchema
 ]);
 
 export const generatedItemSchema = z.object({
@@ -244,12 +289,43 @@ export const matchPairsChallengeSchema = z.object({
 	...storedBase
 });
 
+export const wordOrderChallengeSchema = z.object({
+	type: z.literal('word-order'),
+	prompt: nonEmpty,
+	instruction: z.string().optional(),
+	/** Shuffled by the resolver; duplicates are legal (grading is by text sequence). */
+	tiles: z.array(nonEmpty).min(2),
+	/** Index-aligned with `tiles`; all-or-nothing, see the resolver. */
+	tilesRomanization: z.array(z.string()).optional(),
+	answerTokens: z.array(nonEmpty).min(2),
+	/** `answerTokens` joined with the script's own spacing rule. */
+	answer: nonEmpty,
+	answerRomanization: z.string().optional(),
+	...storedBase
+});
+
+export const spotErrorChallengeSchema = z.object({
+	type: z.literal('spot-error'),
+	tokens: z.array(nonEmpty).min(3),
+	/** Index-aligned with `tokens`; all-or-nothing, see the resolver. */
+	tokensRomanization: z.array(z.string()).optional(),
+	/** The position of the *wrong* word: tapping it is the correct answer. */
+	correctIndex: z.int().min(0),
+	intendedWord: nonEmpty,
+	intendedWordRomanization: z.string().optional(),
+	correctedSentence: nonEmpty,
+	meaning: nonEmpty,
+	...storedBase
+});
+
 /** Mirrors the `Challenge` union in `$lib/types`. */
 export const challengeSchema = z.discriminatedUnion('type', [
 	multipleChoiceChallengeSchema,
 	clozeChallengeSchema,
 	typedTranslationChallengeSchema,
-	matchPairsChallengeSchema
+	matchPairsChallengeSchema,
+	wordOrderChallengeSchema,
+	spotErrorChallengeSchema
 ]);
 
 // Compile-time check that the schema really does mirror the domain type.

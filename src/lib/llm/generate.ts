@@ -13,6 +13,7 @@
  */
 
 import { getModel } from '$lib/db/settings';
+import { joinTokens } from '$lib/text';
 import type { Challenge, ClozeChallenge, KnowledgeItem, Profile } from '$lib/types';
 import { foldDiacritics } from '$lib/validate';
 import { chatCompletion, LlmError } from './client';
@@ -177,8 +178,8 @@ export interface BatchResult {
 
 /**
  * The system prompt. Written for tokens, not for looks: no pleasantries, one
- * inline example per challenge type, rules as bare imperatives. Roughly 1150
- * prompt tokens — five types cost more to spell out than three, and the whole
+ * inline example per challenge type, rules as bare imperatives. Roughly 1450
+ * prompt tokens — seven types cost more to spell out than five, and the whole
  * per-field romanization block they replace is gone — unchanged across every
  * call, so it caches well on providers that support prompt caching. It buys
  * back more than it costs: better challenges mean fewer regenerated batches,
@@ -216,6 +217,8 @@ const SYSTEM_PROMPT = [
 	'cloze — one target-language word missing from a target-language sentence. {before:TargetText, answer:TargetText, after:TargetText, hintNative, distractorWords:[3-5 TargetText] or null} e.g. {"type":"cloze","before":{"text":"你好，请给我一份","reading":"Nǐ hǎo, qǐng gěi wǒ yī fèn"},"answer":{"text":"菜单","reading":"càidān"},"after":{"text":"。","reading":"."},"hintNative":"Hello, could I have a menu, please?","distractorWords":[{"text":"筷子","reading":"kuàizi"},{"text":"茶","reading":"chá"},{"text":"水","reading":"shuǐ"}],"itemIds":["i3"],"explanation":"份 (fèn) is the measure word for a menu or a portion."} — before and after carry their own spacing and punctuation and the app puts the blank between them; either may be {"text":"","reading":null}. hintNative is the whole sentence in the native language. distractorWords null means the learner types the answer.',
 	'translate-to-target — type the target language. {promptNative, answers:[TargetText, 1 or more]} e.g. {"type":"translate-to-target","promptNative":"Excuse me, the bill please.","answers":[{"text":"服务员，买单","reading":"fúwùyuán, mǎidān"},{"text":"买单","reading":"mǎidān"}],"itemIds":["i4"],"explanation":null}',
 	'translate-to-native — type the native language. {prompt:TargetText, answersNative:[1 or more]} e.g. {"type":"translate-to-native","prompt":{"text":"la cuenta","reading":null},"answersNative":["the bill","the check"],"itemIds":["i5"],"explanation":null}',
+	'word-order — build a target sentence out of tiles. {promptNative, words:[2+ TargetText — the sentence split into tiles, IN THE CORRECT ORDER], distractorWords:[0-3 TargetText] or null, instruction} e.g. {"type":"word-order","promptNative":"Could you bring us the bill, please?","words":[{"text":"¿Nos","reading":null},{"text":"trae","reading":null},{"text":"la","reading":null},{"text":"cuenta,","reading":null},{"text":"por","reading":null},{"text":"favor?","reading":null}],"distractorWords":[{"text":"carta","reading":null}],"instruction":null,"itemIds":["i6"],"explanation":null} — the app shuffles the tiles, so never state an order anywhere else.',
+	'spot-error — one wrong word in a target sentence. {words:[3+ TargetText — the CORRECT sentence split into tiles, in order], wrongWord:TargetText, wrongPosition:int, meaningNative} e.g. {"type":"spot-error","words":[{"text":"我们","reading":"wǒmen"},{"text":"想","reading":"xiǎng"},{"text":"买单","reading":"mǎidān"}],"wrongWord":{"text":"菜单","reading":"càidān"},"wrongPosition":2,"meaningNative":"We would like to pay the bill.","itemIds":["i7"],"explanation":null} — the app replaces words[wrongPosition] with wrongWord and asks the learner to tap it.',
 	'Rules:',
 	'- itemIds: the id of a reviewItem, "new:<index>" for an entry of newItems (0-based), or — for a challenge built on a word from known — that word exactly as it appears in known. Never invent anything else.',
 	'- Produce exactly one challenge object per requested slot; give the same review item different types.',
@@ -226,6 +229,9 @@ const SYSTEM_PROMPT = [
 	'- In a situational dialogue either give the exact line to produce ("Say: \'the fish stall is to the right\'") or make answers cover every plausible alternative reply.',
 	'- instruction: a short heading, in the NATIVE language, matched to what the challenge actually asks — "What does this mean?" for a plain meaning question, "Pick the best reply" or "How would you answer?" for a conversational turn; null when the default meaning-question heading fits.',
 	'- Cloze sentences use only vocabulary at or below the learner level.',
+	'- Segmentation (word-order, spot-error): one tile per WORD, never per character or syllable, and punctuation rides on the tile it touches. For Chinese and Japanese split on word boundaries — 菜单 is one tile, not 菜 + 单. Each tile is a TargetText and carries its own reading under the usual rule.',
+	'- word-order sentences must have exactly one natural order: if the same tiles could be rearranged into a second correct sentence, rewrite it. Keep them to 4-8 tiles. distractorWords are plausible words that fit nowhere in the sentence, never a form of a word already in it.',
+	'- spot-error: wrongWord must be a real target-language word that is unambiguously wrong in that slot given meaningNative — same part of speech, wrong meaning — never a synonym, a spelling slip or a stylistic quibble. wrongPosition is a 0-based index into words, and wrongWord must differ from the word it replaces.',
 	'- newItems must fit the learner level; term in the target language, meaning in the native language, romanization as in TargetText (null for Latin scripts), notes only for gender/irregularity/register.',
 	'- Exactly newItemSlots entries in newItems, and every one of them must be used by at least one challenge.',
 	'- known lists vocabulary the learner already has. newItems must NOT repeat anything in it (no exact repeats, no trivial variants of a known term) — introduce genuinely new words. Prefer building sentences out of known words plus this batch\'s newItems, so the learner mostly reads what they can already read.',
@@ -292,7 +298,7 @@ export function buildBatchPrompt(args: BatchArgs): ChatMessage[] {
 
 /** Appended verbatim when a first attempt came back mostly unusable. */
 export const CORRECTIVE_INSTRUCTION =
-	'Your previous reply was rejected. Return ONLY a raw JSON object {"challenges":[...],"newItems":[...]}, no fences, no commentary. Every challenge needs type, itemIds and its own fields: recognize-mc {shown,correctMeaning,distractors}, produce-mc {promptNative,correct,distractors}, cloze {before,answer,after,hintNative}, translate-to-target {promptNative,answers}, translate-to-native {prompt,answersNative}. Every target-language slot is a TargetText object {"text","reading"}, reading null for Latin scripts; distractors is exactly 3 entries.';
+	'Your previous reply was rejected. Return ONLY a raw JSON object {"challenges":[...],"newItems":[...]}, no fences, no commentary. Every challenge needs type, itemIds and its own fields: recognize-mc {shown,correctMeaning,distractors}, produce-mc {promptNative,correct,distractors}, cloze {before,answer,after,hintNative}, translate-to-target {promptNative,answers}, translate-to-native {prompt,answersNative}, word-order {promptNative,words}, spot-error {words,wrongWord,wrongPosition,meaningNative}. Every target-language slot is a TargetText object {"text","reading"}, reading null for Latin scripts; distractors is exactly 3 entries.';
 
 // --------------------------------------------------------------------------
 // Parsing
@@ -566,6 +572,41 @@ function clozeWordBank(
 	};
 }
 
+/**
+ * Ceiling on the extra wrong tiles a `word-order` challenge may carry.
+ *
+ * A tray with twice as many tiles as the sentence needs stops being a word-order
+ * exercise and becomes a search. An oversized list is cosmetic, so the resolver
+ * trims it rather than dropping a challenge we already paid for.
+ */
+export const MAX_WORD_ORDER_DISTRACTORS = 3;
+
+/** One segmented word: its text and the reading that travels with it. */
+interface Token {
+	text: string;
+	reading?: string;
+}
+
+/** Trims a `TargetText` list into tokens; `undefined` when any of them is blank. */
+function tokenize(words: TargetText[]): Token[] | undefined {
+	const tokens = words.map((word) => ({ text: word.text.trim(), reading: readingOf(word) }));
+	return tokens.every((token) => token.text) ? tokens : undefined;
+}
+
+/**
+ * `{ key: readings }` when *every* token has one, `{}` otherwise.
+ *
+ * All-or-nothing for the same reason as `optionsRomanization`: a row of tiles
+ * where three are annotated and one is not reads worse than a bare row, and the
+ * gap looks like a bug rather than a missing reading.
+ */
+function tokenReadings<K extends string>(key: K, tokens: Token[]): Partial<Record<K, string[]>> {
+	const readings = tokens.map((token) => token.reading);
+	return readings.every((reading): reading is string => !!reading)
+		? ({ [key]: readings } as Record<K, string[]>)
+		: {};
+}
+
 export interface ResolveOptions {
 	newId?: () => string;
 	now?: () => number;
@@ -770,6 +811,93 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
 					prompt: generated.prompt.text.trim(),
 					...optionalString('promptRomanization', generated.prompt.reading),
 					acceptedAnswers: dedupe(generated.answersNative)
+				});
+				break;
+			}
+
+			case 'word-order': {
+				// Structural: fewer than two real tiles is not a sentence to build,
+				// and a blank tile is a tile that cannot be tapped.
+				const words = tokenize(generated.words);
+				if (!words || words.length < 2) {
+					dropped++;
+					continue;
+				}
+
+				// Distractors are cosmetic: an oversized list is trimmed, and one that
+				// duplicates a real tile is dropped — it could only ever be used in
+				// place of its twin, which grades correct anyway (text sequence, not
+				// indices), so it is a tile that does nothing.
+				const seen = new Set(words.map((word) => labelKey(word.text)));
+				const distractors: Token[] = [];
+				for (const candidate of generated.distractorWords ?? []) {
+					if (distractors.length >= MAX_WORD_ORDER_DISTRACTORS) break;
+					const token = { text: candidate.text.trim(), reading: readingOf(candidate) };
+					const key = labelKey(token.text);
+					if (!key || seen.has(key)) continue;
+					seen.add(key);
+					distractors.push(token);
+				}
+
+				const tiles = shuffled([...words, ...distractors], rng);
+				const answerTokens = words.map((word) => word.text);
+				const answerReadings = words.map((word) => word.reading);
+
+				challenges.push({
+					...base,
+					type: 'word-order',
+					direction: 'toTarget',
+					// Native by construction: there is no reading to leak the sentence.
+					prompt: generated.promptNative.trim(),
+					tiles: tiles.map((tile) => tile.text),
+					...tokenReadings('tilesRomanization', tiles),
+					answerTokens,
+					// The script decides the spacing, once, here — so the sentence the
+					// banner prints is byte-identical to the one the component assembles
+					// out of the learner's tiles.
+					answer: joinTokens(answerTokens),
+					...(answerReadings.every((reading): reading is string => !!reading)
+						? { answerRomanization: answerReadings.join(' ') }
+						: {}),
+					...optionalString('instruction', generated.instruction)
+				});
+				break;
+			}
+
+			case 'spot-error': {
+				const words = tokenize(generated.words);
+				const wrong: Token = {
+					text: generated.wrongWord.text.trim(),
+					reading: readingOf(generated.wrongWord)
+				};
+				const at = generated.wrongPosition;
+				// All structural: a corruption that lands outside the sentence, or one
+				// that replaces a word with itself, leaves nothing to find. There is no
+				// cosmetic reading of either — the challenge would be unanswerable.
+				if (!words || words.length < 3 || at >= words.length || !wrong.text) {
+					dropped++;
+					continue;
+				}
+				if (labelKey(wrong.text) === labelKey(words[at].text)) {
+					dropped++;
+					continue;
+				}
+
+				const tokens = words.map((word, index) => (index === at ? wrong : word));
+
+				challenges.push({
+					...base,
+					type: 'spot-error',
+					// The sentence is target-language and the meaning is given; the
+					// learner is reading *out* of the target language to find the slip.
+					direction: 'toNative',
+					tokens: tokens.map((token) => token.text),
+					...tokenReadings('tokensRomanization', tokens),
+					correctIndex: at,
+					intendedWord: words[at].text,
+					...(words[at].reading ? { intendedWordRomanization: words[at].reading } : {}),
+					correctedSentence: joinTokens(words.map((word) => word.text)),
+					meaning: generated.meaningNative.trim()
 				});
 				break;
 			}

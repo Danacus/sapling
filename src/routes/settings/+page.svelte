@@ -40,7 +40,12 @@
 	import { runSync } from '$lib/sync/run';
 	import type { KnowledgeItem, Profile } from '$lib/types';
 	import InlineStatus from '$lib/ui/InlineStatus.svelte';
-	import { getShowRomanization, setShowRomanization } from '$lib/ui/prefs';
+	import {
+		getListeningMode,
+		getShowRomanization,
+		setListeningMode,
+		setShowRomanization
+	} from '$lib/ui/prefs';
 	import ProgressBar from '$lib/ui/ProgressBar.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
@@ -70,6 +75,7 @@
 
 	// Display -----------------------------------------------------------------------
 	let showRomanization = $state(true);
+	let listeningMode = $state(true);
 
 	// Speech ----------------------------------------------------------------------
 	let ttsEngine = $state<TtsEngine>('kokoro');
@@ -153,6 +159,7 @@
 				apiKeySet = getApiKey() !== undefined;
 				modelInput = getModel();
 				showRomanization = getShowRomanization();
+				listeningMode = getListeningMode();
 
 				ttsEngine = getTtsEngine();
 				ttsVoice = getTtsVoice();
@@ -260,6 +267,11 @@
 		apiKeyInput = '';
 		apiKeyMessage = 'Key cleared';
 		flash((value) => (apiKeyStatus = value));
+	}
+
+	function toggleListeningMode() {
+		listeningMode = !listeningMode;
+		setListeningMode(listeningMode);
 	}
 
 	function toggleRomanization() {
@@ -689,6 +701,27 @@
 					aria-checked={showRomanization}
 					aria-label="Show pronunciation (romanization)"
 					onclick={toggleRomanization}
+				>
+					<span class="switch-thumb"></span>
+				</button>
+			</div>
+
+			<div class="switch-row">
+				<div class="switch-copy">
+					<span class="label">Listening challenges</span>
+					<p class="hint">
+						Some "what does this mean?" challenges are played instead of shown, with the text one tap
+						away. Needs speech to be on; turn this off to always see the words.
+					</p>
+				</div>
+				<button
+					type="button"
+					class="switch"
+					class:on={listeningMode}
+					role="switch"
+					aria-checked={listeningMode}
+					aria-label="Listening challenges"
+					onclick={toggleListeningMode}
 				>
 					<span class="switch-thumb"></span>
 				</button>
