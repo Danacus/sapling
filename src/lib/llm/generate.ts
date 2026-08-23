@@ -107,6 +107,15 @@ export interface BatchArgs {
 	 * colour word choice. Blank/absent means "no scenario", and costs no tokens.
 	 */
 	topic?: string;
+	/**
+	 * Every term the learner already has, review-due or not. Two jobs: `newItems`
+	 * must not repeat any of them (the model only sees due items otherwise, so it
+	 * re-proposes common words and the dedupe silently eats the batch's new-word
+	 * slots), and sentences should prefer drawing on them, so new material is
+	 * mostly readable instead of full of untracked strangers. Terms only — a few
+	 * hundred words costs well under 1k tokens, paid only on explicit generation.
+	 */
+	knownTerms?: string[];
 }
 
 export interface BatchOptions {
@@ -195,6 +204,7 @@ const SYSTEM_PROMPT = [
 	'- Cloze sentences use only vocabulary at or below the learner level.',
 	'- newItems must fit the learner level; term in the target language, meaning in the native language, romanization as in TargetText (null for Latin scripts), notes only for gender/irregularity/register.',
 	'- Exactly newItemSlots entries in newItems, and every one of them must be used by at least one challenge.',
+	'- known lists vocabulary the learner already has. newItems must NOT repeat anything in it (no exact repeats, no trivial variants of a known term) — introduce genuinely new words. Prefer building sentences out of known words plus this batch\'s newItems, so the learner mostly reads what they can already read.',
 	'Difficulty calibration:',
 	'- recentAccuracy (0-1, share of recent answers the learner got right) and recentMistakes are their current form; calibrate the batch to them.',
 	'- recentAccuracy below 0.7: favour recognition — recognize-mc, produce-mc and cloze WITH distractorWords — keep answers to one or two words, and avoid full-sentence translate-to-target.',
@@ -233,7 +243,8 @@ export function buildBatchPrompt(args: BatchArgs): ChatMessage[] {
 		interests: profile.interests,
 		challengeCount: Math.min(count, MAX_BATCH_CHALLENGES),
 		newItemSlots,
-		reviewItems: reviewItems.map((i) => ({ id: i.id, t: i.term, m: i.meaning }))
+		reviewItems: reviewItems.map((i) => ({ id: i.id, t: i.term, m: i.meaning })),
+		...(args.knownTerms?.length ? { known: args.knownTerms } : {})
 	};
 	if (args.recentAccuracy !== undefined && Number.isFinite(args.recentAccuracy)) {
 		payload.recentAccuracy = Math.round(args.recentAccuracy * 100) / 100;

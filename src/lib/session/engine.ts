@@ -522,6 +522,10 @@ export function planRefill(
 		})),
 		newItemSlots,
 		count: opts.count ?? BATCH_TARGET,
+		// The whole vocabulary, not just the due slice: without it the model
+		// re-proposes words the learner already has and the dedupe silently eats
+		// the batch's new-word slots ("asked for 3 new words, got 1").
+		...(items.length ? { knownTerms: items.map((item) => item.term) } : {}),
 		// Both are difficulty dials for the prompt: how the learner is doing, and
 		// which words they are currently losing. Omitted when there is nothing to
 		// say, so a day-one batch pays no tokens for them.

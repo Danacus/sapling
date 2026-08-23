@@ -234,6 +234,20 @@ describe('buildBatchPrompt', () => {
 		expect(JSON.parse(messages[1].content)).not.toHaveProperty('recentAccuracy');
 	});
 
+	it('includes the known-vocabulary list when supplied, omits it when empty', () => {
+		// Without it the model re-proposes words the learner already has, and the
+		// dedupe silently eats the batch's new-word slots.
+		const payload = JSON.parse(
+			buildBatchPrompt({ ...args, knownTerms: ['名字', '做饭', '点菜'] })[1].content
+		) as Record<string, unknown>;
+		expect(payload.known).toEqual(['名字', '做饭', '点菜']);
+
+		expect(JSON.parse(messages[1].content)).not.toHaveProperty('known');
+		expect(
+			JSON.parse(buildBatchPrompt({ ...args, knownTerms: [] })[1].content)
+		).not.toHaveProperty('known');
+	});
+
 	it('states the difficulty-calibration rules in the system message', () => {
 		const system = messages[0].content;
 		expect(system).toContain('recentAccuracy');

@@ -389,6 +389,16 @@ describe('planRefill', () => {
 		expect(plan.args.profile).not.toHaveProperty('dailyGoalXp');
 	});
 
+	it('sends the whole vocabulary as knownTerms, due or not', () => {
+		// Only the due slice travels as reviewItems, so without this list the
+		// model re-proposes words the learner already has and the dedupe silently
+		// eats the batch's new-word slots.
+		const items = [item('a', -1 * DAY), item('b', -5 * DAY), item('c', +2 * DAY)];
+		const plan = planRefill(items, profile(), NOW);
+
+		expect(plan.args.knownTerms).toEqual(['term-a', 'term-b', 'term-c']);
+	});
+
 	it('sends due items as {id, term, meaning}, most overdue first', () => {
 		const items = [item('a', -1 * DAY), item('b', -5 * DAY), item('c', +2 * DAY)];
 		const plan = planRefill(items, profile(), NOW);
