@@ -51,25 +51,43 @@ export async function upsertItems(items: KnowledgeItem[]): Promise<void> {
 }
 
 /**
+ * Forgets one word entirely.
+ *
+ * Safe to call mid-session: queued challenges keep pointing at the id, and
+ * {@link updateItemAfterReview} — via `applyResult` — skips items that are no
+ * longer there. The learner sees the challenge play out, it just grades nothing.
+ */
+export async function deleteItem(id: string): Promise<void> {
+	await db.items.delete(id);
+}
+
+/**
  * Writes back the FSRS card produced by a review and appends one history entry.
+ *
+ * With `replaceLast`, the entry overwrites the newest one instead of being
+ * appended — for a review that is being *recomputed* rather than added (the
+ * learner re-graded the answer they just gave; see `amendResult`). Appending
+ * there would double-count the review in `reps` and in `accuracyFromHistory`.
+ * An empty history has nothing to replace, so it simply appends.
  *
  * Resolves to `false` when the item no longer exists.
  */
 export async function updateItemAfterReview(
 	id: string,
 	fsrsCard: unknown,
-	historyEntry: { at: number; grade: number }
+	historyEntry: { at: number; grade: number },
+	opts: { replaceLast?: boolean } = {}
 ): Promise<boolean> {
 	const plainCard = toPlain(fsrsCard);
 	const plainEntry = toPlain(historyEntry);
 	return db.transaction('rw', db.items, async () => {
 		const item = await db.items.get(id);
 		if (!item) return false;
-		await db.items.put({
-			...item,
-			fsrsCard: plainCard,
-			history: [...item.history, plainEntry]
-		});
+		const history =
+			opts.replaceLast && item.history.length > 0
+				? [...item.history.slice(0, -1), plainEntry]
+				: [...item.history, plainEntry];
+		await db.items.put({ ...item, fsrsCard: plainCard, history });
 		return true;
 	});
 }

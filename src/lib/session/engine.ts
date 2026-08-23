@@ -56,8 +56,17 @@ export const REFILL_THRESHOLD = 5;
 /** Challenges we ask the model for in one batch. */
 export const BATCH_TARGET = 14;
 
-/** How many LLM challenges one session plays at most. */
-export const SESSION_LENGTH = 12;
+/**
+ * Hard ceiling on LLM challenges in one session. A session normally ends when
+ * the queue runs dry, not here — the batch size ({@link BATCH_TARGET}) is what
+ * actually sizes a session. The ceiling only exists so a queue that piled up
+ * (several aborted sessions in a row) cannot turn into a marathon.
+ *
+ * Keep this ≥ {@link BATCH_TARGET}: a ceiling below the batch size makes every
+ * completed session strand `BATCH_TARGET - SESSION_LENGTH` challenges, which
+ * then nag as a stub "continue session" forever.
+ */
+export const SESSION_LENGTH = 20;
 
 /** A free, locally built match-pairs round is slotted in after every N answers. */
 export const MATCH_PAIRS_EVERY = 4;
@@ -105,7 +114,11 @@ export interface AnswerEvent {
 	 */
 	answerGiven: string;
 	verdict: Verdict;
-	/** Milliseconds from "challenge shown" to "answer submitted". */
+	/**
+	 * Milliseconds from "challenge shown" to "answer submitted". Kept for review
+	 * screens and analytics only — it no longer sharpens the FSRS grade, which
+	 * the learner is asked about directly instead (see {@link amendResult}).
+	 */
 	responseMs: number;
 	/** Nearest accepted answer, when the component graded with `validateAnswer`. */
 	closestAccepted?: string;
@@ -552,7 +565,10 @@ export interface AnswerOutcome {
 	verdict: Verdict;
 	/** Raw input, stored for review screens. */
 	answerGiven: string;
-	/** Time from "challenge shown" to "answer submitted"; sharpens the grade. */
+	/**
+	 * Time from "challenge shown" to "answer submitted". Recorded, not graded on:
+	 * see {@link AnswerEvent.responseMs}.
+	 */
 	responseMs?: number;
 	/** Epoch ms; defaults to `Date.now()`. */
 	now?: number;
@@ -572,17 +588,31 @@ export interface AnswerOutcome {
  *
  * Missing items are skipped rather than treated as an error: a challenge can
  * outlive its item if the learner reset their data mid-session.
+ *
+ * Returns, per item it actually reviewed, that item's card state **as it was
+ * before** this review (`null` when the item had no card yet). FSRS has no
+ * inverse, so that snapshot is the only way {@link amendResult} can re-grade
+ * this same answer without stacking a second review on top of it. Match-pairs
+ * returns an empty map; callers with nothing to amend can ignore the value.
  */
-export async function applyResult(challenge: Challenge, outcome: AnswerOutcome): Promise<void> {
+export async function applyResult(
+	challenge: Challenge,
+	outcome: AnswerOutcome
+): Promise<Map<string, FsrsCardState | null>> {
 	const now = outcome.now ?? Date.now();
+	const priorCards = new Map<string, FsrsCardState | null>();
 
 	if (challenge.type !== 'match-pairs') {
-		const grade = gradeFromResult(outcome.verdict, outcome.responseMs);
+		const grade = gradeFromResult(outcome.verdict);
 		for (const itemId of challenge.itemIds) {
 			const item = await getItem(itemId);
 			if (!item) continue;
-			const card = (item.fsrsCard as FsrsCardState | null | undefined) ?? newCardState(now);
-			await updateItemAfterReview(itemId, reviewCard(card, grade, now), { at: now, grade });
+			const prior = (item.fsrsCard as FsrsCardState | null | undefined) ?? null;
+			priorCards.set(itemId, prior);
+			await updateItemAfterReview(itemId, reviewCard(prior ?? newCardState(now), grade, now), {
+				at: now,
+				grade
+			});
 		}
 	}
 
@@ -596,6 +626,51 @@ export async function applyResult(challenge: Challenge, outcome: AnswerOutcome):
 	// Ephemeral match-pairs rounds were never enqueued; Dexie's `update` on a
 	// missing key is a no-op, so this stays a single unconditional call.
 	await markChallengeDone(challenge.id);
+
+	return priorCards;
+}
+
+/**
+ * Re-grades the review {@link applyResult} just wrote, because the learner said
+ * so: after a correct answer the banner offers Hard / Good / Easy, and touching
+ * it means "that was not a plain Good".
+ *
+ * The rewind is exact rather than compensating. FSRS has no inverse, so the
+ * card is not nudged from where the Good left it — it is recomputed from
+ * `priorCards`, the pre-review snapshot {@link applyResult} handed back, and the
+ * history entry *replaces* the one that review appended instead of adding to
+ * it. A second appended review would inflate `reps` and double-count the answer
+ * in {@link accuracyFromHistory}. Recomputing from the same priors every time
+ * is also what makes repeated calls safe: assessing Easy and then Hard lands
+ * exactly where assessing Hard once would, because neither reads the card it is
+ * about to overwrite.
+ *
+ * Match-pairs is a no-op, for the reason given in {@link applyResult}, and so
+ * is any item the challenge names but that review skipped (deleted mid-session)
+ * — absence from `priorCards` is the signal.
+ *
+ * No interaction with {@link applyOverturn}: an overturn only ever fires on a
+ * `wrong` verdict and a self-assessment only on a `correct` one, so the two
+ * paths are disjoint by construction and never race for the same card.
+ */
+export async function amendResult(
+	challenge: Challenge,
+	grade: Grade,
+	priorCards: Map<string, FsrsCardState | null>,
+	now: number = Date.now()
+): Promise<void> {
+	if (challenge.type === 'match-pairs') return;
+
+	for (const itemId of challenge.itemIds) {
+		if (!priorCards.has(itemId)) continue;
+		const prior = priorCards.get(itemId) ?? newCardState(now);
+		await updateItemAfterReview(
+			itemId,
+			reviewCard(prior, grade, now),
+			{ at: now, grade },
+			{ replaceLast: true }
+		);
+	}
 }
 
 /**

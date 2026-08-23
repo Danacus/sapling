@@ -96,21 +96,29 @@ export function newCardState(now: number): FsrsCardState {
 }
 
 /**
- * Maps a validation verdict (+ optional response time) onto an FSRS grade.
+ * Maps a validation verdict onto an FSRS grade.
  *
  * - `'wrong'` → Again
  * - `'almost'` → Hard
- * - `'correct'`, answered in under 4000ms (when `responseMs` is known) → Easy
- * - `'correct'`, otherwise → Good
+ * - `'correct'` → Good
+ *
+ * Note what is missing: nothing here ever returns Easy. It used to be inferred
+ * from a sub-4s response time, capped for answers the learner merely picked off
+ * a list — but both halves were guesses at a thing the learner can simply be
+ * asked. A fast answer can be a lucky one, a slow one can be a certain one
+ * typed carefully, and Easy stretches the next interval further than any other
+ * grade, so a wrong guess is expensive. Easy is now only ever assigned by the
+ * learner's own post-answer assessment; see `amendResult` in
+ * `$lib/session/engine`.
  */
-export function gradeFromResult(verdict: Verdict, responseMs?: number): Grade {
+export function gradeFromResult(verdict: Verdict): Grade {
 	switch (verdict) {
 		case 'wrong':
 			return Grade.Again;
 		case 'almost':
 			return Grade.Hard;
 		case 'correct':
-			return responseMs !== undefined && responseMs < 4000 ? Grade.Easy : Grade.Good;
+			return Grade.Good;
 	}
 }
 
@@ -136,6 +144,34 @@ export function retrievability(state: FsrsCardState, now: number): number {
 	const scheduler = fsrs();
 	const card = toFsrsCard(state);
 	return scheduler.get_retrievability(card, new Date(now), false);
+}
+
+/** Stability (in days) treated as "this word is mature" by {@link wordStrength}. */
+const MATURE_STABILITY_DAYS = 30;
+
+/**
+ * How well a word is known, 0..1 — the number behind the dashboard's strength
+ * bars.
+ *
+ * {@link retrievability} alone is the wrong axis, tempting as it looks: the
+ * scheduler's whole job is to keep it pinned in 0.9–1.0, so a learner who is on
+ * schedule sees every bar full and the display tells them nothing. Stability —
+ * the days it takes recall to decay to 90% — is the quantity that actually
+ * spans their range: a word met this morning sits under a day, a word they own
+ * sits at weeks. {@link MATURE_STABILITY_DAYS} is taken as the top of that
+ * range, and the log scale spends the bar's width where the movement is (the
+ * first fortnight) instead of squashing it against zero.
+ *
+ * Multiplying by retrievability is what keeps the bar honest about *now*: a
+ * mature word left unreviewed for a month visibly sags below the same word
+ * reviewed yesterday, which is exactly the word the learner should go find.
+ */
+export function wordStrength(state: FsrsCardState, now: number): number {
+	const maturity = Math.min(
+		1,
+		Math.log1p(Math.max(0, state.stability)) / Math.log1p(MATURE_STABILITY_DAYS)
+	);
+	return maturity * retrievability(state, now);
 }
 
 /**

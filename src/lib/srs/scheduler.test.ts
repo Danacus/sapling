@@ -10,6 +10,7 @@ import {
 	retrievability,
 	reviewCard,
 	selectSessionItems,
+	wordStrength,
 	type FsrsCardState
 } from './scheduler';
 
@@ -116,18 +117,13 @@ describe('gradeFromResult', () => {
 		expect(gradeFromResult('almost')).toBe(Grade.Hard);
 	});
 
-	it('maps correct with no response time to Good', () => {
+	it('maps correct to Good', () => {
 		expect(gradeFromResult('correct')).toBe(Grade.Good);
 	});
 
-	it('maps a fast correct answer (<4000ms) to Easy', () => {
-		expect(gradeFromResult('correct', 3999)).toBe(Grade.Easy);
-		expect(gradeFromResult('correct', 0)).toBe(Grade.Easy);
-	});
-
-	it('maps a slow correct answer (>=4000ms) to Good', () => {
-		expect(gradeFromResult('correct', 4000)).toBe(Grade.Good);
-		expect(gradeFromResult('correct', 10_000)).toBe(Grade.Good);
+	it('never assigns Easy — only the learner can (see amendResult)', () => {
+		const verdicts = ['wrong', 'almost', 'correct'] as const;
+		for (const verdict of verdicts) expect(gradeFromResult(verdict)).not.toBe(Grade.Easy);
 	});
 });
 
@@ -150,6 +146,45 @@ describe('retrievability', () => {
 		const atReview = retrievability(reviewed, reviewed.last_review!);
 		const muchLater = retrievability(reviewed, reviewed.last_review! + 100 * DAY);
 		expect(atReview).toBeGreaterThan(muchLater);
+	});
+});
+
+describe('wordStrength', () => {
+	/** A card of a given stability, reviewed at `reviewedAt`. */
+	function mature(stability: number, reviewedAt: number): FsrsCardState {
+		return {
+			...newCardState(NOW),
+			stability,
+			difficulty: 5,
+			state: CardState.Review,
+			reps: 4,
+			last_review: reviewedAt,
+			due: reviewedAt + stability * DAY
+		};
+	}
+
+	it('scores a freshly created card low', () => {
+		expect(wordStrength(newCardState(NOW), NOW)).toBeLessThan(0.35);
+	});
+
+	it('scores a mature card just reviewed at (nearly) full strength', () => {
+		expect(wordStrength(mature(30, NOW), NOW)).toBeCloseTo(1, 2);
+		expect(wordStrength(mature(90, NOW), NOW)).toBeCloseTo(1, 2);
+	});
+
+	it('sags for an overdue card at the same stability', () => {
+		const stability = 20;
+		const fresh = wordStrength(mature(stability, NOW), NOW);
+		const overdue = wordStrength(mature(stability, NOW - 120 * DAY), NOW);
+		expect(overdue).toBeLessThan(fresh);
+	});
+
+	it('separates a young card from a mature one, where retrievability would not', () => {
+		const young = wordStrength(mature(1, NOW), NOW);
+		const old = wordStrength(mature(30, NOW), NOW);
+		expect(young).toBeLessThan(old);
+		// The point of the change: both are perfectly recallable right now.
+		expect(retrievability(mature(1, NOW), NOW)).toBeCloseTo(retrievability(mature(30, NOW), NOW), 3);
 	});
 });
 

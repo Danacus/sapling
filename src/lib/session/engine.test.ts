@@ -422,8 +422,7 @@ describe('a skipped challenge', () => {
 	it('is worth nothing, breaks the combo and grades FSRS Again', () => {
 		expect(xpFor('wrong', 5)).toBe(0);
 		expect(comboAfter('wrong', 5)).toBe(0);
-		// Whatever the response time, a skip is "I could not produce it".
-		expect(gradeFromResult('wrong', 200)).toBe(Grade.Again);
+		// A skip is "I could not produce it", which is exactly what Again encodes.
 		expect(gradeFromResult('wrong')).toBe(Grade.Again);
 	});
 
@@ -610,19 +609,23 @@ describe('session walkthrough (mock batch, no database)', () => {
 		return { answers, matchRounds, llmAnswered, summary: sessionSummary(answers), queue };
 	}
 
-	it('plays a flawless session: 12 answers, 2 free rounds, capped combo', async () => {
+	it('plays a flawless session: the whole batch, 3 free rounds, capped combo', async () => {
 		const known = Array.from({ length: 6 }, (_, i) => item(`k${i}`, -DAY));
 		const run = await playSession(known, () => 'correct');
 
-		expect(run.llmAnswered).toBe(SESSION_LENGTH);
-		expect(run.matchRounds).toBe(2); // after the 4th and the 8th answer
-		expect(run.answers).toHaveLength(SESSION_LENGTH + 2);
+		// One BATCH_TARGET-sized batch, played to the end. The queue MUST be
+		// empty afterwards: a session that stops short of its own batch strands
+		// the tail as a stub "continue session" on the next visit.
+		expect(run.llmAnswered).toBe(BATCH_TARGET);
+		expect(run.queue).toHaveLength(0);
+		expect(run.matchRounds).toBe(3); // after the 4th, 8th and 12th answer
+		expect(run.answers).toHaveLength(BATCH_TARGET + 3);
 		expect(run.summary.accuracy).toBe(1);
 
 		// Combos 1-2 pay the flat 10; from combo 3 the bonus ramps 2,4,6,8,10
 		// (12,14,16,18,20) and every combo from 7 on is capped at 20.
-		const expectedLlmXp = 10 * 2 + (12 + 14 + 16 + 18 + 20) + 20 * 5;
-		expect(run.summary.xp).toBe(expectedLlmXp + 2 * MATCH_PAIRS_XP);
+		const expectedLlmXp = 10 * 2 + (12 + 14 + 16 + 18 + 20) + 20 * 7;
+		expect(run.summary.xp).toBe(expectedLlmXp + 3 * MATCH_PAIRS_XP);
 	});
 
 	it('a wrong answer resets the combo back to the base rate', async () => {
@@ -638,7 +641,7 @@ describe('session walkthrough (mock batch, no database)', () => {
 		expect(run.summary.wrong).toBe(1);
 	});
 
-	it('ends gracefully when the queue runs dry before 12 answers', async () => {
+	it('ends gracefully when the queue runs dry early', async () => {
 		// A tiny batch: mock mode still returns its five canned challenges.
 		const plan = planRefill([], profile(), NOW, { count: 5 });
 		const batch = await getBatch(plan.args);
