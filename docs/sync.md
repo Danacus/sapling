@@ -82,7 +82,7 @@ payloads as opaque):
 |---------------------|----------------------------------------------------------------|
 | `item-added`        | item content: `id, kind, term, meaning, romanization?, notes?, introducedAt` (no card, no history) |
 | `item-reviewed`     | `itemId, at, grade` — exactly a history entry                  |
-| `review-amended`    | `itemId, at, grade` — replaces the entry with the same `(itemId, at)` (self-assessment re-grade) |
+| `review-amended`    | `itemId, at, grade, replaces?` — the re-grade carries its **own** timestamp (`amendResult` stamps a fresh `now`); `replaces` names the `at` of the entry it supersedes, absent when there was nothing to replace. Cards are re-folded from history timestamps, so the event must describe the history the emitting device actually holds. |
 | `item-updated`      | `itemId, fields` — LWW field patch (romanization backfill, note edits) |
 | `item-deleted`      | `itemId` — tombstone                                           |
 | `challenge-added`   | the full immutable `Challenge` content + `generatedAt, topic?` |
@@ -220,6 +220,15 @@ New `src/lib/sync/` module, following house rules:
   collection) and fully unit-tested in node — the merge rules in §4 are the
   test suite. Dexie touching stays in thin untested wrappers, per the
   project's testing philosophy.
+- **Apply cannot re-capture, by construction**: remote folds are written by
+  exactly one dedicated repository function (`mergeSyncSnapshot`) that never
+  touches the outbox — no `capture:false` flag to forget. It diffs by
+  reference identity (the pure engine returns untouched rows as the same
+  objects), so a three-review merge writes three rows.
+- Counts and sums (`challenge-served`, `result-logged`, `xp-banked`) dedupe
+  by remembered event ids in `syncState` bookkeeping; everything else dedupes
+  from the data it produces. Bookkeeping is stored sorted so identical event
+  sets yield byte-identical snapshots regardless of pull batching.
 - **Engine, not components, calls sync**: a `runSync()` orchestrator (push,
   pull, apply, advance cursor) invoked from three places — a Settings "Sync
   now" button, fire-and-forget after `finish()`/`quit()` banks a session, and

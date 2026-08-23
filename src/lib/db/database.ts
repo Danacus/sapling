@@ -9,6 +9,7 @@
 import Dexie from 'dexie';
 import type { Table } from 'dexie';
 import type { Challenge, ChallengeResult, KnowledgeItem, Profile, Stats } from '$lib/types';
+import type { SyncEvent } from '$lib/sync/events';
 import { poolRowFromLegacy, type LegacyChallengeRow } from './migrate';
 
 /** The `profile` and `stats` tables hold exactly one row under this key. */
@@ -53,12 +54,39 @@ export interface ResultRow extends ChallengeResult {
 	seq?: number;
 }
 
+/**
+ * One locally produced sync event, waiting to be pushed (docs/sync.md §9).
+ *
+ * `seq` is Dexie's auto-increment key and the *only* ordering: the outbox
+ * drains oldest-first. It is a separate field rather than the table's `id`
+ * because a {@link SyncEvent} already has an `id` of its own — the client-minted
+ * UUID the server dedupes on — and shadowing it would be a trap.
+ */
+export interface OutboxRow {
+	seq?: number;
+	event: SyncEvent;
+}
+
+/**
+ * Key-value scratch space for the sync client: the pull cursor, the
+ * genesis-done flag, and the apply engine's dedupe bookkeeping.
+ *
+ * Untyped `value` on purpose — this is one table for several unrelated
+ * singletons, each owned and typed by its reader in `$lib/sync`.
+ */
+export interface SyncStateRow {
+	key: string;
+	value: unknown;
+}
+
 export class AppDatabase extends Dexie {
 	declare profile: Table<ProfileRow, string>;
 	declare items: Table<KnowledgeItem, string>;
 	declare challenges: Table<ChallengeRow, string>;
 	declare results: Table<ResultRow, number>;
 	declare stats: Table<StatsRow, string>;
+	declare outbox: Table<OutboxRow, number>;
+	declare syncState: Table<SyncStateRow, string>;
 
 	constructor() {
 		super('language-learning');
@@ -90,6 +118,13 @@ export class AppDatabase extends Dexie {
 						ref.value = poolRowFromLegacy(row as LegacyChallengeRow);
 					})
 			);
+
+		// v3: sync (docs/sync.md §9). Purely additive — two new tables, no
+		// existing table touched, so Dexie needs no `upgrade` callback: a v2
+		// database opens as v3 with both tables simply empty, which is exactly
+		// the right starting state (capture is opt-in, and genesis backfills
+		// everything that predates it).
+		this.version(3).stores({ outbox: '++seq', syncState: 'key' });
 	}
 }
 
