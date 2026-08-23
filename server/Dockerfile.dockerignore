@@ -1,0 +1,14 @@
+# BuildKit reads `<dockerfile>.dockerignore` in preference to the context's
+# `.dockerignore`, which is what keeps this out of the repo root — the root is
+# the app's, and the Cloudflare Pages build must not grow files it doesn't need.
+#
+# The Dockerfile COPYs explicit paths anyway; this only keeps the context small.
+*
+!server/package.json
+!server/pnpm-lock.yaml
+!server/pnpm-workspace.yaml
+!server/tsconfig.json
+!server/src
+!server/scripts
+!src/lib/sync
+server/src/**/*.test.ts

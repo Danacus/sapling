@@ -55,19 +55,25 @@ One append-only log per user. Every event:
 
 ```ts
 interface SyncEvent {
-  /** Client-minted UUID; the server dedupes on it (idempotent push). */
+  /** Client-minted RFC 4122 UUID (`crypto.randomUUID()`); the server
+      dedupes on it (idempotent push) and rejects non-UUID ids. */
   id: string;
   /** Stable per-device id (minted once, stored in localStorage). */
   device: string;
   /** Client wall-clock, epoch ms. Ordering key (see §5 on skew). */
   at: number;
   type: string;      // discriminant, see below
-  payload: unknown;  // zod-validated per type on the client
+  /** zod-validated per type on the client; may be `null`, never absent
+      (the server serializes it into a NOT NULL column). */
+  payload: unknown;
 }
 ```
 
-The server wraps each stored event with a monotonically increasing per-user
-`seq` — the pull cursor.
+The server wraps each stored event with a `seq` — the pull cursor. In the
+implementation `seq` is one global `AUTOINCREMENT` counter: strictly
+increasing over the whole table, therefore strictly increasing within any one
+user's subsequence, which is all a cursor needs (and `AUTOINCREMENT`
+specifically, so a delete can never cause rowid reuse and rewind a cursor).
 
 Event types and payloads (client-validated with zod; the server treats
 payloads as opaque):
@@ -158,6 +164,14 @@ A sync = push outbox, then pull from the stored cursor until `latest`,
 applying as it goes; both halves retry-safe and interruption-safe (the outbox
 only drains entries the server acknowledged; the cursor only advances after
 apply). Batching at 500 events keeps requests small.
+
+Protocol details settled in implementation: an over-large `limit` is clamped
+to 500 rather than rejected ("give me as much as you'll give" must not fail a
+sync); the body-level `device` on a push is shape-checked only — each event's
+own `device` is authoritative; caps are 500 events/request and 64 KB of
+serialized payload per event (shared constants in `src/lib/sync/events.ts`);
+the pull shape `SyncEvent & { seq }` is exported as `storedSyncEventSchema`
+from the same module.
 
 ## 7. Authentication
 

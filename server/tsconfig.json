@@ -1,0 +1,28 @@
+{
+	// Node-side TypeScript, independent of the app's SvelteKit tsconfig.
+	//
+	// `include` deliberately reaches back into the app's `src/lib/sync/` for the
+	// shared event envelope — one source of truth for what a valid event is
+	// (docs/sync.md §8). That is also why `rootDir` is the repo root: emitted
+	// JS lands as `dist/server/src/*.js` + `dist/src/lib/sync/*.js`, mirroring
+	// the repo layout so the relative import still resolves at runtime.
+	"compilerOptions": {
+		"target": "ES2023",
+		"lib": ["ES2023"],
+		"module": "nodenext",
+		"moduleResolution": "nodenext",
+		"types": ["node"],
+		"rootDir": "..",
+		"outDir": "dist",
+		"strict": true,
+		"esModuleInterop": true,
+		"forceConsistentCasingInFileNames": true,
+		"skipLibCheck": true,
+		"sourceMap": true,
+		// Imports are written with explicit `.ts` extensions (so `tsx` and
+		// vitest run the sources directly) and rewritten to `.js` on emit.
+		"allowImportingTsExtensions": true,
+		"rewriteRelativeImportExtensions": true
+	},
+	"include": ["src/**/*.ts", "scripts/**/*.ts", "../src/lib/sync/**/*.ts"]
+}

@@ -1,0 +1,6 @@
+# Compiled output and local databases. SQLite in WAL mode writes -wal/-shm
+# siblings next to the database file, so ignore the whole family.
+dist/
+*.db
+*.db-wal
+*.db-shm
