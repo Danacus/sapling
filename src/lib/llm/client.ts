@@ -201,15 +201,21 @@ export async function chatCompletion(opts: ChatCompletionOptions): Promise<ChatC
 			delete body.response_format;
 		}
 
+		// The attribution headers are OpenRouter-specific; other endpoints' CORS
+		// preflights reject them, so they only go where they are understood.
+		const headers: Record<string, string> = {
+			Authorization: `Bearer ${apiKey}`,
+			'Content-Type': 'application/json'
+		};
+		if (baseUrl === OPENROUTER_BASE_URL) {
+			headers['HTTP-Referer'] = APP_REFERER;
+			headers['X-Title'] = APP_TITLE;
+		}
+
 		try {
 			response = await fetchFn(`${baseUrl}/chat/completions`, {
 				method: 'POST',
-				headers: {
-					Authorization: `Bearer ${apiKey}`,
-					'Content-Type': 'application/json',
-					'HTTP-Referer': APP_REFERER,
-					'X-Title': APP_TITLE
-				},
+				headers,
 				body: JSON.stringify(body),
 				signal: opts.signal
 			});

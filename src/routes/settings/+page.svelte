@@ -2,7 +2,6 @@
 	import { browser } from '$app/environment';
 
 	import {
-		clearApiKey,
 		db,
 		DEFAULT_MODEL,
 		exportData,
@@ -59,12 +58,9 @@
 		'google/gemini-3.5-flash-lite',
 		'google/gemini-3.1-flash-lite',
 		'openai/gpt-5-nano',
-		'anthropic/claude-haiku-4.5'
+		'anthropic/claude-haiku-4.5',
+		'Qwen/Qwen3.6-35B-A3B-FP8'
 	];
-
-	/** Hetzner's experimental free endpoint, the reason the URL is configurable at all. */
-	const HETZNER_BASE_URL = 'https://inference.hetzner.com/api/v1';
-	const HETZNER_MODEL = 'Qwen/Qwen3.6-35B-A3B-FP8';
 
 	let loading = $state(true);
 	let loadError = $state('');
@@ -99,21 +95,13 @@
 	let audioCacheStatus = $state<Status>('idle');
 	let audioCacheMessage = $state('');
 
-	// LLM: API key ----------------------------------------------------------------
+	// LLM: endpoint + key + model, applied together ---------------------------------
+	let baseUrlInput = $state('');
 	let apiKeySet = $state(false);
 	let apiKeyInput = $state('');
-	let apiKeyStatus = $state<Status>('idle');
-	let apiKeyMessage = $state('');
-
-	// LLM: model --------------------------------------------------------------------
 	let modelInput = $state(DEFAULT_MODEL);
-	let modelStatus = $state<Status>('idle');
-	let modelMessage = $state('');
-
-	// LLM: endpoint -----------------------------------------------------------------
-	let baseUrlInput = $state('');
-	let baseUrlStatus = $state<Status>('idle');
-	let baseUrlMessage = $state('');
+	let llmStatus = $state<Status>('idle');
+	let llmMessage = $state('');
 
 	// Sync --------------------------------------------------------------------------
 	let syncServerInput = $state('');
@@ -254,33 +242,6 @@
 		}
 	}
 
-	function saveKey() {
-		const trimmed = apiKeyInput.trim();
-		if (!trimmed) {
-			apiKeyMessage = 'Enter a key first.';
-			apiKeyStatus = 'error';
-			return;
-		}
-		try {
-			setApiKey(trimmed);
-			apiKeySet = true;
-			apiKeyInput = '';
-			apiKeyMessage = 'Key saved';
-			flash((value) => (apiKeyStatus = value));
-		} catch (cause) {
-			apiKeyMessage = cause instanceof Error ? cause.message : 'Could not save the key.';
-			apiKeyStatus = 'error';
-		}
-	}
-
-	function clearKey() {
-		clearApiKey();
-		apiKeySet = false;
-		apiKeyInput = '';
-		apiKeyMessage = 'Key cleared';
-		flash((value) => (apiKeyStatus = value));
-	}
-
 	function toggleListeningMode() {
 		listeningMode = !listeningMode;
 		setListeningMode(listeningMode);
@@ -360,36 +321,26 @@
 		}
 	}
 
-	function saveModelChoice() {
-		try {
-			setModel(modelInput);
-			modelInput = getModel();
-			modelMessage = 'Saved';
-			flash((value) => (modelStatus = value));
-		} catch (cause) {
-			modelMessage = cause instanceof Error ? cause.message : 'Could not save the model.';
-			modelStatus = 'error';
-		}
-	}
-
-	function saveEndpointChoice() {
+	/** Applies endpoint, key and model at once. A blank key keeps the saved one. */
+	function applyLlmSettings() {
 		try {
 			setBaseUrl(baseUrlInput);
 			baseUrlInput = getBaseUrl() ?? '';
-			baseUrlMessage = baseUrlInput ? 'Saved' : 'Using OpenRouter';
-			flash((value) => (baseUrlStatus = value));
+			const key = apiKeyInput.trim();
+			if (key) {
+				setApiKey(key);
+				apiKeySet = true;
+				apiKeyInput = '';
+			}
+			setModel(modelInput);
+			modelInput = getModel();
+			mockMode = isMockMode();
+			llmMessage = 'Saved';
+			flash((value) => (llmStatus = value));
 		} catch (cause) {
-			baseUrlMessage = cause instanceof Error ? cause.message : 'Could not save the endpoint.';
-			baseUrlStatus = 'error';
+			llmMessage = cause instanceof Error ? cause.message : 'Could not save.';
+			llmStatus = 'error';
 		}
-	}
-
-	/** One-tap Hetzner setup: endpoint + its only model, in both fields. */
-	function useHetzner() {
-		baseUrlInput = HETZNER_BASE_URL;
-		modelInput = HETZNER_MODEL;
-		saveEndpointChoice();
-		saveModelChoice();
 	}
 
 	/** Refreshes the status line. Best-effort — a failed read leaves the previous values on screen. */
@@ -886,6 +837,17 @@
 			<h2>Language model</h2>
 
 			<div class="field">
+				<span class="label">API endpoint</span>
+				<input
+					class="input"
+					type="url"
+					bind:value={baseUrlInput}
+					placeholder="https://openrouter.ai/api/v1"
+					autocomplete="off"
+					spellcheck="false"
+				/>
+			</div>
+			<div class="field">
 				<span class="label">API key</span>
 				<input
 					class="input"
@@ -895,20 +857,8 @@
 					autocomplete="off"
 					spellcheck="false"
 				/>
-				<p class="hint">
-					Stored only in your browser — it never leaves this device except to call the API endpoint
-					below (OpenRouter unless you changed it).
-				</p>
 			</div>
-			<div class="actions-row">
-				<button type="button" class="btn btn-primary" onclick={saveKey}>Save key</button>
-				{#if apiKeySet}
-					<button type="button" class="btn btn-ghost" onclick={clearKey}>Clear key</button>
-				{/if}
-				<InlineStatus status={apiKeyStatus} message={apiKeyMessage} />
-			</div>
-
-			<div class="field model-field">
+			<div class="field">
 				<span class="label">Model</span>
 				<input
 					class="input"
@@ -923,33 +873,13 @@
 						<option value={suggestion}></option>
 					{/each}
 				</datalist>
-				<p class="hint">Any OpenRouter model id works — pick a suggestion or type your own.</p>
 			</div>
+			<p class="hint">
+				Any OpenAI-compatible endpoint; blank means OpenRouter. The key stays in this browser.
+			</p>
 			<div class="actions-row">
-				<button type="button" class="btn btn-primary" onclick={saveModelChoice}>Save model</button>
-				<InlineStatus status={modelStatus} message={modelMessage} />
-			</div>
-
-			<div class="field">
-				<span class="label">API endpoint</span>
-				<input
-					class="input"
-					type="url"
-					bind:value={baseUrlInput}
-					placeholder="https://openrouter.ai/api/v1"
-					autocomplete="off"
-					spellcheck="false"
-				/>
-				<p class="hint">
-					Leave blank for OpenRouter. Any OpenAI-compatible endpoint works — the API key above is
-					sent to whichever endpoint is set here. "Use Hetzner" fills in their free experimental
-					endpoint and its model ({HETZNER_MODEL}); you still need a Hetzner API key.
-				</p>
-			</div>
-			<div class="actions-row">
-				<button type="button" class="btn btn-primary" onclick={saveEndpointChoice}>Save endpoint</button>
-				<button type="button" class="btn btn-ghost" onclick={useHetzner}>Use Hetzner</button>
-				<InlineStatus status={baseUrlStatus} message={baseUrlMessage} />
+				<button type="button" class="btn btn-primary" onclick={applyLlmSettings}>Apply</button>
+				<InlineStatus status={llmStatus} message={llmMessage} />
 			</div>
 		</section>
 
@@ -1297,10 +1227,6 @@
 	.profile-link a:hover,
 	.test-bench-link a:hover {
 		text-decoration: underline;
-	}
-
-	.model-field {
-		margin-top: 1.25rem;
 	}
 
 	.sync-key-field {

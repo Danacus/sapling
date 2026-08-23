@@ -75,6 +75,11 @@ describe('chatCompletion', () => {
 		});
 
 		expect(calls[0].url).toBe('https://inference.hetzner.com/api/v1/chat/completions');
+		// CORS: non-OpenRouter endpoints reject the attribution headers in preflight.
+		const headers = calls[0].init.headers as Record<string, string>;
+		expect(headers['HTTP-Referer']).toBeUndefined();
+		expect(headers['X-Title']).toBeUndefined();
+		expect(headers.Authorization).toBe(`Bearer ${KEY}`);
 	});
 
 	it('sends a strict json_schema response_format when a schema is given', async () => {
