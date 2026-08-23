@@ -15,6 +15,7 @@
 	import { fly, slide } from 'svelte/transition';
 
 	import { getEscalation, LlmError } from '$lib/llm';
+	import { spokenAnswerFor } from '$lib/session/engine';
 	import { motionMs } from '$lib/session/motion';
 	import { Grade } from '$lib/srs';
 	import { speak } from '$lib/tts';
@@ -188,36 +189,20 @@
 	);
 
 	/**
-	 * What the speak button says — always the canonical target-script form, never
-	 * the variant {@link detail} is showing.
+	 * What the speak button says — always the canonical target-script form
+	 * (`spokenAnswerFor`), never the variant {@link detail} is showing.
 	 *
-	 * The two deliberately diverge. `closestAccepted` is whichever accepted
-	 * variant the learner came nearest to, and for a non-Latin target that is
-	 * routinely a romanization — possibly the tone-stripped one — because
-	 * `acceptedAnswers` carries those on purpose so typing "caidan" grades
-	 * correct. Printing it back is right (it is the form they nearly wrote);
-	 * handing it to a Mandarin voice is not, which is the whole bug: the
-	 * synthesizer reads Latin letters as Latin letters. The resolver pins
-	 * `acceptedAnswers[0]` to the canonical script form (see `answerVariants`),
-	 * so that is what gets spoken.
+	 * The two deliberately diverge: `closestAccepted` is whichever accepted
+	 * variant the learner came nearest to, routinely a (possibly tone-stripped)
+	 * romanization for a non-Latin target. Printing it back is right — it is the
+	 * form they nearly wrote; handing it to a Mandarin voice is not, because the
+	 * synthesizer reads Latin letters as Latin letters.
 	 *
-	 * A cloze speaks the whole sentence with the blank filled rather than the
-	 * bare word: the learner already knows what the word means — what they are
-	 * missing is how it sounds in place, with the rhythm and the sandhi of the
-	 * line around it. Multiple choice needs no such care; its option text is
-	 * already script.
+	 * Shared with the session screen, which pre-synthesizes this exact string
+	 * when the challenge is shown — that is what makes the auto-play below land
+	 * instantly instead of a second or two after the grade.
 	 */
-	const spokenAnswer = $derived.by(() => {
-		if (!answerIsTargetLanguage) return '';
-		if (challenge.type === 'multiple-choice') return correctAnswer.trim();
-		if (challenge.type === 'typed-translation') return challenge.acceptedAnswers[0]?.trim() ?? '';
-		if (challenge.type === 'cloze') {
-			const canonical = challenge.acceptedAnswers[0]?.trim();
-			if (!canonical) return '';
-			return challenge.sentence.split('___').join(canonical);
-		}
-		return '';
-	});
+	const spokenAnswer = $derived(spokenAnswerFor(challenge));
 
 	/**
 	 * Auto-play the answer once, the moment the banner appears.

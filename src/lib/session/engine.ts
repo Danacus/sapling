@@ -254,6 +254,36 @@ export function wantsMatchRound(llmAnswered: number, lastMatchAfter: number): bo
 	);
 }
 
+/**
+ * The canonical target-language audio for a challenge's answer, or `''` when
+ * there is nothing worth hearing (the answer is in the learner's own language,
+ * or the round has no single answer).
+ *
+ * One function, two consumers, on purpose: the feedback banner speaks this the
+ * moment an answer is graded, and the session screen *pre-synthesizes* it the
+ * moment the challenge is shown — the learner takes seconds to answer while
+ * Kokoro takes one or two to render, so warming here is what makes the
+ * auto-play land instantly instead of arriving late. If the two computed the
+ * string independently, a drift between them would silently turn every warm
+ * into a miss.
+ *
+ * Always the canonical script form — `acceptedAnswers[0]`, which the resolver
+ * pins (see `answerVariants` in `$lib/llm/generate`) — never a romanized
+ * variant: TTS reads Latin letters as Latin letters. A cloze speaks the whole
+ * sentence with the blank filled, because how the word sounds *in place* is
+ * the thing the learner is missing.
+ */
+export function spokenAnswerFor(challenge: Challenge): string {
+	if (challenge.type === 'match-pairs' || challenge.direction !== 'toTarget') return '';
+	if (challenge.type === 'multiple-choice') {
+		return challenge.options[challenge.correctIndex]?.trim() ?? '';
+	}
+	const canonical = challenge.acceptedAnswers[0]?.trim() ?? '';
+	if (!canonical) return '';
+	if (challenge.type === 'cloze') return challenge.sentence.split('___').join(canonical);
+	return canonical;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Session planning (pure)                                                     */
 /* -------------------------------------------------------------------------- */

@@ -38,6 +38,7 @@
 		generateChallenges,
 		reportChallenge,
 		sessionSummary,
+		spokenAnswerFor,
 		startSession,
 		wantsMatchRound,
 		xpFor,
@@ -47,6 +48,7 @@
 	} from '$lib/session/engine';
 	import { motionMs } from '$lib/session/motion';
 	import type { FsrsCardState, Grade } from '$lib/srs';
+	import { warmSpeech } from '$lib/tts';
 	import type { Challenge, KnowledgeItem, Profile, Stats, Verdict } from '$lib/types';
 	import { addRecentTopic, getRecentTopics, getShowRomanization } from '$lib/ui/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
@@ -371,6 +373,13 @@
 	function show(challenge: Challenge): void {
 		challengeShownAt = Date.now();
 		current = challenge;
+		// Warm the answer's audio while the learner is still thinking: Kokoro
+		// takes a second or two per phrase, answering takes longer, so the
+		// banner's auto-play finds the clip already local and plays instantly
+		// instead of trailing the grade. Fire-and-forget; a failed warm just
+		// means the real speak synthesizes as before.
+		const answerAudio = spokenAnswerFor(challenge);
+		if (answerAudio) void warmSpeech(answerAudio, targetLanguage);
 	}
 
 	function correctAnswerFor(challenge: Challenge): string {

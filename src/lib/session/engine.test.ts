@@ -37,6 +37,7 @@ import {
 	planSession,
 	remapItemIds,
 	sessionSummary,
+	spokenAnswerFor,
 	wantsMatchRound,
 	xpFor,
 	type SessionAnswer
@@ -125,6 +126,96 @@ describe('wantsMatchRound', () => {
 
 	it('does not repeat itself at the same count', () => {
 		expect(wantsMatchRound(MATCH_PAIRS_EVERY, MATCH_PAIRS_EVERY)).toBe(false);
+	});
+});
+
+describe('spokenAnswerFor', () => {
+	// The banner speaks this and the session screen pre-synthesizes it; these
+	// pin that both always get the canonical script form, never a romanization.
+	const base = { id: 'c1', itemIds: ['i1'] };
+
+	it('speaks the correct option of a toTarget multiple choice', () => {
+		expect(
+			spokenAnswerFor({
+				...base,
+				type: 'multiple-choice',
+				direction: 'toTarget',
+				prompt: 'the menu',
+				options: ['筷子', '菜单', '茶', '水'],
+				correctIndex: 1
+			})
+		).toBe('菜单');
+	});
+
+	it('speaks the canonical accepted answer of a toTarget typed translation', () => {
+		expect(
+			spokenAnswerFor({
+				...base,
+				type: 'typed-translation',
+				direction: 'toTarget',
+				prompt: 'the bill, please',
+				acceptedAnswers: ['买单', 'mǎidān', 'maidan']
+			})
+		).toBe('买单');
+	});
+
+	it('speaks a cloze as the whole sentence with the blank filled', () => {
+		expect(
+			spokenAnswerFor({
+				...base,
+				type: 'cloze',
+				direction: 'toTarget',
+				sentence: '请给我一份___。',
+				acceptedAnswers: ['菜单', 'càidān'],
+				translationHint: 'A menu, please.'
+			})
+		).toBe('请给我一份菜单。');
+	});
+
+	it('is silent when the answer is in the native language, or has no single answer', () => {
+		expect(
+			spokenAnswerFor({
+				...base,
+				type: 'multiple-choice',
+				direction: 'toNative',
+				prompt: '菜单',
+				options: ['the menu', 'the bill', 'the tea', 'the water'],
+				correctIndex: 0
+			})
+		).toBe('');
+		expect(
+			spokenAnswerFor({
+				...base,
+				type: 'typed-translation',
+				direction: 'toNative',
+				prompt: '买单',
+				acceptedAnswers: ['to pay the bill']
+			})
+		).toBe('');
+		expect(
+			spokenAnswerFor({
+				...base,
+				type: 'match-pairs',
+				direction: 'toNative',
+				pairs: [
+					{ a: '菜单', b: 'the menu' },
+					{ a: '买单', b: 'to pay the bill' }
+				]
+			})
+		).toBe('');
+	});
+
+	it('is silent on an empty accepted-answer list rather than speaking a bare gap', () => {
+		expect(
+			spokenAnswerFor({
+				...base,
+				type: 'cloze',
+				direction: 'toTarget',
+				sentence: '请给我一份___。',
+				acceptedAnswers: [],
+				translationHint: 'A menu, please.'
+			})
+		).toBe('');
 	});
 });
 

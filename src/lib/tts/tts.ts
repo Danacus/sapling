@@ -138,6 +138,69 @@ export async function preloadKokoro(onProgress?: (progress: TtsProgress) => void
 	}
 }
 
+/**
+ * Synthesis calls in flight, keyed like the memory cache. A warm-up racing a
+ * real `speak` of the same phrase (the common case: the answer's audio starts
+ * warming when the challenge is shown, and a fast learner answers before the
+ * render finishes) must share one synthesis, not queue two on the worker.
+ */
+const inflight = new Map<string, Promise<Blob>>();
+
+/**
+ * One clip, wherever it is cheapest: memory LRU → Cache Storage → synthesis,
+ * writing through to both on a miss and deduplicating concurrent requests for
+ * the same phrase. Throws only when synthesis itself fails.
+ */
+async function obtainClip(phrase: string, speaker: { id: number; name: string }): Promise<Blob> {
+	const key = audioCacheKey(phrase, speaker.name);
+
+	const cached = audioCache.get(key);
+	if (cached) return cached;
+
+	const pending = inflight.get(key);
+	if (pending) return pending;
+
+	const work = (async () => {
+		let blob = await readClip(audioCacheUrl(phrase, speaker.name, KOKORO_SPEED));
+		if (!blob) {
+			blob = await synthesize(phrase, speaker.id, KOKORO_SPEED);
+			void writeClip(audioCacheUrl(phrase, speaker.name, KOKORO_SPEED), blob);
+		}
+		audioCache.set(key, blob);
+		return blob;
+	})();
+
+	inflight.set(key, work);
+	try {
+		return await work;
+	} finally {
+		inflight.delete(key);
+	}
+}
+
+/**
+ * Renders `text` into the caches without playing it.
+ *
+ * The session screen calls this the moment a challenge is shown: the learner
+ * takes seconds to answer while Kokoro takes one or two to synthesize, so by
+ * the time the feedback banner wants to auto-play the answer the clip is
+ * already local and playback is instant — which also keeps the play inside the
+ * click's user-activation window instead of arriving after it. Fire-and-forget
+ * safe: every failure is swallowed, warming is only ever an optimization.
+ * Web Speech has nothing to warm (the OS synthesizes at play time).
+ */
+export async function warmSpeech(text: string, language: string): Promise<void> {
+	const phrase = text?.trim();
+	if (!phrase || getTtsEngine() !== 'kokoro') return;
+	const speaker = kokoroSpeakerFor(language);
+	if (!speaker) return;
+	try {
+		await obtainClip(phrase, speaker);
+	} catch {
+		/* the real speak() will retry and fall back; a failed warm costs nothing */
+	}
+}
+
 /** Plays a WAV blob to completion. Resolves (never rejects) on playback errors. */
 function playBlob(blob: Blob): Promise<void> {
 	const url = URL.createObjectURL(blob);
@@ -184,21 +247,10 @@ export async function speak(text: string, language: string): Promise<void> {
 		const speaker = kokoroSpeakerFor(language);
 		if (speaker) {
 			try {
-				// Memory → disk → synthesize, writing through to both on a miss. The
-				// disk layer never throws (see `audio-store.ts`), so a broken or
-				// absent Cache Storage costs a re-synthesis and nothing else.
-				const key = audioCacheKey(phrase, speaker.name);
-				const url = audioCacheUrl(phrase, speaker.name, KOKORO_SPEED);
-
-				let blob = audioCache.get(key);
-				if (!blob) blob = await readClip(url);
-				if (!blob) {
-					blob = await synthesize(phrase, speaker.id, KOKORO_SPEED);
-					void writeClip(url, blob);
-				}
-				audioCache.set(key, blob);
-
-				await playBlob(blob);
+				// Memory → disk → synthesize (see `obtainClip`); the disk layer never
+				// throws, so a broken or absent Cache Storage costs a re-synthesis
+				// and nothing else.
+				await playBlob(await obtainClip(phrase, speaker));
 				return;
 			} catch (cause) {
 				console.warn('[tts] Kokoro failed; falling back to the browser voice.', cause);
