@@ -1,0 +1,16 @@
+<!--
+  Source artwork for the PWA / apple-touch icons. Flat, no gradients and no
+  small text, so it survives being rasterised down to 192px and rendered at
+  favicon size. Colors are the light-theme primary/surface tokens from
+  src/app.css; keep them in sync if the palette ever moves.
+
+  Rasterise with:  resvg icon.svg icon-512.png -w 512 -h 512
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="112" fill="#58cc02" />
+  <path
+    d="M148 120h216a52 52 0 0 1 52 52v128a52 52 0 0 1-52 52H244l-72 62a12 12 0 0 1-20-9v-53h-4a52 52 0 0 1-52-52V172a52 52 0 0 1 52-52z"
+    fill="#ffffff" />
+  <rect x="152" y="189" width="208" height="30" rx="15" fill="#58cc02" />
+  <rect x="152" y="253" width="136" height="30" rx="15" fill="#58cc02" />
+</svg>

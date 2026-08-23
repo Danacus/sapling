@@ -1,6 +1,5 @@
-# pnpm settings.
+# pnpm settings placeholder — pnpm recreates this file as needed; leave it be.
 #
-# Nothing to configure right now: the speech engine is a prebuilt WebAssembly
-# bundle fetched at runtime (see src/lib/tts/models.ts), not an npm package, so
-# no dependency here has a native install script that needs allowing or
-# blocking. Kept as a placeholder because pnpm recreates it on demand.
+# The speech engine is a prebuilt WebAssembly bundle fetched at runtime (see
+# src/lib/tts/models.ts), not an npm package, so nothing here needs a native
+# install script.

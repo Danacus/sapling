@@ -16,6 +16,14 @@ nix develop -c pnpm test src/lib/srs/scheduler.test.ts # single test file
 
 Nix flakes only see files that are `git add`ed — a brand-new file the flake needs must be staged before `nix develop` picks it up. `pnpm-workspace.yaml` is a comment-only placeholder pnpm recreates; leave it.
 
+## Deploying
+
+Cloudflare Pages, **git integration**: every push to the connected repo's default branch builds and deploys, site at `*.pages.dev`. CF's build image installs node + pnpm itself (the `packageManager` field in package.json pins the pnpm version via corepack); build command `pnpm build`, output directory `build` — configured once in the CF dashboard, nothing deploy-related lives in the repo.
+
+`static/_headers` sets immutable caching for `/_app/immutable/*` (deliberately **no** COOP/COEP — cross-origin isolation would break the TTS model-mirror fetches). Keep `fallback: 'index.html'` and *no* top-level `404.html`: that combination is exactly what makes CF Pages serve the SPA shell for every route.
+
+The app is an installable PWA (`static/manifest.webmanifest` + `src/service-worker.ts`; SvelteKit auto-registers the worker in production builds only). Users install it from the browser's "Install app" control, or on iOS via Share → Add to Home Screen.
+
 ## Architecture
 
 Local-first static SPA (SvelteKit 2 + Svelte 5, `adapter-static`, `ssr=false`), no backend. All user state lives in the browser. The one external call is a batched LLM request from the browser to OpenRouter with the user's own key.

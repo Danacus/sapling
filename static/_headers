@@ -1,0 +1,8 @@
+# Cloudflare Pages response headers. Copied verbatim into build/ by SvelteKit.
+#
+# Note what is deliberately absent: no COOP/COEP. The sherpa-onnx WASM TTS runs
+# un-isolated today, and turning on cross-origin isolation would block the
+# model-mirror fetches (~439MB of Kokoro voices) that make audio work at all.
+
+/_app/immutable/*
+  Cache-Control: public, max-age=31536000, immutable

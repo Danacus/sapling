@@ -13,6 +13,7 @@
 		"test": "vitest run",
 		"test:watch": "vitest"
 	},
+	"packageManager": "pnpm@11.21.0",
 	"devDependencies": {
 		"@sveltejs/adapter-static": "^3.0.10",
 		"@sveltejs/kit": "^2.63.0",

@@ -4,6 +4,21 @@
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="text-scale" content="scale" />
+
+		<!--
+			Installable-PWA wiring. The manifest carries the install metadata and
+			icons; the two extras below are the platforms that ignore it:
+			- theme-color paints the Android/desktop title bar (both palettes use
+			  the same brand green, so one value is enough).
+			- iOS never reads the manifest for the home-screen icon, so it needs
+			  its own apple-touch-icon link.
+		-->
+		<link rel="manifest" href="%sveltekit.assets%/manifest.webmanifest" />
+		<meta name="theme-color" content="#58cc02" />
+		<link rel="icon" href="%sveltekit.assets%/icons/icon-192.png" type="image/png" />
+		<link rel="apple-touch-icon" href="%sveltekit.assets%/icons/apple-touch-icon.png" />
+		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-title" content="Learn" />
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

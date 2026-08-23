@@ -1,0 +1,32 @@
+{
+	"name": "Language Learning",
+	"short_name": "Learn",
+	"description": "Gamified, personalized language practice that runs entirely in your browser.",
+	"start_url": "/",
+	"scope": "/",
+	"id": "/",
+	"display": "standalone",
+	"orientation": "portrait-primary",
+	"background_color": "#f7f8fa",
+	"theme_color": "#58cc02",
+	"icons": [
+		{
+			"src": "/icons/icon-192.png",
+			"sizes": "192x192",
+			"type": "image/png",
+			"purpose": "any"
+		},
+		{
+			"src": "/icons/icon-512.png",
+			"sizes": "512x512",
+			"type": "image/png",
+			"purpose": "any"
+		},
+		{
+			"src": "/icons/icon-maskable-512.png",
+			"sizes": "512x512",
+			"type": "image/png",
+			"purpose": "maskable"
+		}
+	]
+}
