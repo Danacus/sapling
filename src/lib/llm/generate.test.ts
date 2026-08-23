@@ -566,6 +566,80 @@ describe('resolveBatch', () => {
 		expect(resolved.dropped).toBe(1);
 	});
 
+	describe('both-sides-in-target guard', () => {
+		it('drops a recognize-mc whose "meanings" are in the target script', () => {
+			const resolved = resolve({
+				challenges: [
+					{
+						type: 'recognize-mc',
+						shown: { text: '菜单', reading: 'càidān' },
+						correctMeaning: '菜单',
+						distractors: ['筷子', '茶', '水'],
+						itemIds: ['i1'],
+						explanation: null
+					}
+				]
+			});
+			expect(resolved.challenges).toHaveLength(0);
+			expect(resolved.dropped).toBe(1);
+		});
+
+		it('drops a produce-mc whose prompt is already target text', () => {
+			const resolved = resolve({
+				challenges: [
+					{
+						type: 'produce-mc',
+						promptNative: '菜单',
+						correct: { text: '菜单', reading: 'càidān' },
+						distractors: [
+							{ text: '筷子', reading: 'kuàizi' },
+							{ text: '茶', reading: 'chá' },
+							{ text: '水', reading: 'shuǐ' }
+						],
+						instruction: null,
+						itemIds: ['i1'],
+						explanation: null
+					}
+				]
+			});
+			expect(resolved.challenges).toHaveLength(0);
+			expect(resolved.dropped).toBe(1);
+		});
+
+		it('drops a translate-to-native whose accepted answers are target text', () => {
+			const resolved = resolve({
+				challenges: [
+					{
+						type: 'translate-to-native',
+						prompt: { text: '买单', reading: 'mǎidān' },
+						answersNative: ['买单'],
+						itemIds: ['i1'],
+						explanation: null
+					}
+				]
+			});
+			expect(resolved.challenges).toHaveLength(0);
+			expect(resolved.dropped).toBe(1);
+		});
+
+		it('keeps no-space-script meanings when the target side is Latin — a zh-native learner', () => {
+			const resolved = resolve({
+				challenges: [
+					{
+						type: 'recognize-mc',
+						shown: { text: 'the dog', reading: null },
+						correctMeaning: '狗',
+						distractors: ['猫', '面包', '房子'],
+						itemIds: ['i1'],
+						explanation: null
+					}
+				]
+			});
+			expect(resolved.challenges).toHaveLength(1);
+			expect(resolved.dropped).toBe(0);
+		});
+	});
+
 	it('counts malformed entries as dropped rather than failing', () => {
 		const parsed = parseBatch(
 			JSON.stringify({ challenges: [recognize('i1', 'ok'), { type: 'cloze' }], newItems: [{}] })

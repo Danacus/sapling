@@ -13,7 +13,7 @@
  */
 
 import { getModel } from '$lib/db/settings';
-import { isPunctuationOnly, joinTokens, mergePunctuationTokens } from '$lib/text';
+import { isPunctuationOnly, joinTokens, mergePunctuationTokens, usesInterWordSpaces } from '$lib/text';
 import type { Challenge, ClozeChallenge, KnowledgeItem, Profile } from '$lib/types';
 import { foldDiacritics } from '$lib/validate';
 import { chatCompletion, LlmError } from './client';
@@ -224,6 +224,7 @@ const SYSTEM_PROMPT = [
 	'- Produce exactly one challenge object per requested slot; give the same review item different types.',
 	'- Mix recognition and production across the batch.',
 	'- Distractors must be plausible: same part of speech and register, never synonyms of the correct answer, never obviously absurd. Exactly one of the four may be correct given the prompt; if two would both answer it, rewrite the prompt.',
+	'- Sides never swap: correctMeaning, recognize-mc distractors, promptNative, hintNative, meaningNative, answersNative and instruction are NATIVE-language text and never contain target-language words or script. A challenge whose prompt and options are in the same language is invalid — one side is always the native language.',
 	'- translate-to-target answers must be exhaustive, one entry per genuinely different way to say it: with and without the article, contractions, common synonyms and word orders. Do NOT list tone- or accent-stripped spellings — the app derives those from "reading".',
 	'- Answerable from what is shown alone: the prompt, plus the challenge type, must uniquely determine the answer. Never an open question whose answer depends on facts you never state — directions, prices, names, times, opinions, anything from an imagined scene the learner cannot see.',
 	'- In a situational dialogue either give the exact line to produce ("Say: \'the fish stall is to the right\'") or make answers cover every plausible alternative reply.',
@@ -506,6 +507,20 @@ function assembleChoices(choices: Choice[], rng: () => number) {
 	};
 }
 
+/**
+ * True when a slot that must be native-language text is written in the same
+ * no-space script as the challenge's own target side — i.e. the model put the
+ * target language on both sides of the card, which turns a translation
+ * exercise into nonsense. Direction-aware by construction: for a Chinese
+ * native speaker learning English the target side is Latin, so their (Chinese)
+ * native slots never trip this. Only detectable when the target is a no-space
+ * script; a Spanish-vs-English swap has no script signal and stays a prompt
+ * problem.
+ */
+function nativeSlotInTargetScript(nativeSlot: string, targetText: string): boolean {
+	return !usesInterWordSpaces(nativeSlot) && !usesInterWordSpaces(targetText);
+}
+
 /** Latin readings are space-separated, so the blank needs air around it. */
 const OPENS_WITH_WORD = /^[\p{L}\p{N}]/u;
 
@@ -723,6 +738,16 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
 
 		switch (generated.type) {
 			case 'recognize-mc': {
+				// Both sides in the target language is a structural failure, not a
+				// cosmetic one: the "translation" being asked for is already shown.
+				if (
+					[generated.correctMeaning, ...generated.distractors].some((option) =>
+						nativeSlotInTargetScript(option, generated.shown.text)
+					)
+				) {
+					dropped++;
+					continue;
+				}
 				// The options are native-language meanings, so no reading rides along
 				// and no `optionsRomanization` is produced.
 				const { options: choices, correctIndex } = assembleChoices(
@@ -746,6 +771,10 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
 			}
 
 			case 'produce-mc': {
+				if (nativeSlotInTargetScript(generated.promptNative, generated.correct.text)) {
+					dropped++;
+					continue;
+				}
 				challenges.push({
 					...base,
 					type: 'multiple-choice',
@@ -812,6 +841,17 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
 			}
 
 			case 'translate-to-native': {
+				// An accepted "native" answer in the target's own script grades
+				// copying the prompt as correct — same both-sides failure as the
+				// multiple-choice guards above.
+				if (
+					generated.answersNative.some((answer) =>
+						nativeSlotInTargetScript(answer, generated.prompt.text)
+					)
+				) {
+					dropped++;
+					continue;
+				}
 				challenges.push({
 					...base,
 					type: 'typed-translation',
