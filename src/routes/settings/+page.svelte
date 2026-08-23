@@ -8,6 +8,7 @@
 		exportData,
 		getAllItems,
 		getApiKey,
+		getBaseUrl,
 		getModel,
 		getProfile,
 		getSyncState,
@@ -15,6 +16,7 @@
 		outboxCount,
 		saveProfile,
 		setApiKey,
+		setBaseUrl,
 		setModel,
 		upsertItems
 	} from '$lib/db';
@@ -53,12 +55,16 @@
 
 	const GOAL_PRESETS = [30, 60, 120];
 	const MODEL_SUGGESTIONS = [
-		'google/gemini-2.5-flash-lite',
-		'google/gemini-2.5-flash',
+		'google/gemini-3.7-flash',
+		'google/gemini-3.5-flash-lite',
+		'google/gemini-3.1-flash-lite',
 		'openai/gpt-5-nano',
-		'meta-llama/llama-4-maverick',
 		'anthropic/claude-haiku-4.5'
 	];
+
+	/** Hetzner's experimental free endpoint, the reason the URL is configurable at all. */
+	const HETZNER_BASE_URL = 'https://inference.hetzner.com/api/v1';
+	const HETZNER_MODEL = 'Qwen/Qwen3.6-35B-A3B-FP8';
 
 	let loading = $state(true);
 	let loadError = $state('');
@@ -103,6 +109,11 @@
 	let modelInput = $state(DEFAULT_MODEL);
 	let modelStatus = $state<Status>('idle');
 	let modelMessage = $state('');
+
+	// LLM: endpoint -----------------------------------------------------------------
+	let baseUrlInput = $state('');
+	let baseUrlStatus = $state<Status>('idle');
+	let baseUrlMessage = $state('');
 
 	// Sync --------------------------------------------------------------------------
 	let syncServerInput = $state('');
@@ -158,6 +169,7 @@
 				mockMode = isMockMode();
 				apiKeySet = getApiKey() !== undefined;
 				modelInput = getModel();
+				baseUrlInput = getBaseUrl() ?? '';
 				showRomanization = getShowRomanization();
 				listeningMode = getListeningMode();
 
@@ -358,6 +370,26 @@
 			modelMessage = cause instanceof Error ? cause.message : 'Could not save the model.';
 			modelStatus = 'error';
 		}
+	}
+
+	function saveEndpointChoice() {
+		try {
+			setBaseUrl(baseUrlInput);
+			baseUrlInput = getBaseUrl() ?? '';
+			baseUrlMessage = baseUrlInput ? 'Saved' : 'Using OpenRouter';
+			flash((value) => (baseUrlStatus = value));
+		} catch (cause) {
+			baseUrlMessage = cause instanceof Error ? cause.message : 'Could not save the endpoint.';
+			baseUrlStatus = 'error';
+		}
+	}
+
+	/** One-tap Hetzner setup: endpoint + its only model, in both fields. */
+	function useHetzner() {
+		baseUrlInput = HETZNER_BASE_URL;
+		modelInput = HETZNER_MODEL;
+		saveEndpointChoice();
+		saveModelChoice();
 	}
 
 	/** Refreshes the status line. Best-effort — a failed read leaves the previous values on screen. */
@@ -854,7 +886,7 @@
 			<h2>Language model</h2>
 
 			<div class="field">
-				<span class="label">OpenRouter API key</span>
+				<span class="label">API key</span>
 				<input
 					class="input"
 					type="password"
@@ -863,7 +895,10 @@
 					autocomplete="off"
 					spellcheck="false"
 				/>
-				<p class="hint">Stored only in your browser — it never leaves this device except to call OpenRouter.</p>
+				<p class="hint">
+					Stored only in your browser — it never leaves this device except to call the API endpoint
+					below (OpenRouter unless you changed it).
+				</p>
 			</div>
 			<div class="actions-row">
 				<button type="button" class="btn btn-primary" onclick={saveKey}>Save key</button>
@@ -893,6 +928,28 @@
 			<div class="actions-row">
 				<button type="button" class="btn btn-primary" onclick={saveModelChoice}>Save model</button>
 				<InlineStatus status={modelStatus} message={modelMessage} />
+			</div>
+
+			<div class="field">
+				<span class="label">API endpoint</span>
+				<input
+					class="input"
+					type="url"
+					bind:value={baseUrlInput}
+					placeholder="https://openrouter.ai/api/v1"
+					autocomplete="off"
+					spellcheck="false"
+				/>
+				<p class="hint">
+					Leave blank for OpenRouter. Any OpenAI-compatible endpoint works — the API key above is
+					sent to whichever endpoint is set here. "Use Hetzner" fills in their free experimental
+					endpoint and its model ({HETZNER_MODEL}); you still need a Hetzner API key.
+				</p>
+			</div>
+			<div class="actions-row">
+				<button type="button" class="btn btn-primary" onclick={saveEndpointChoice}>Save endpoint</button>
+				<button type="button" class="btn btn-ghost" onclick={useHetzner}>Use Hetzner</button>
+				<InlineStatus status={baseUrlStatus} message={baseUrlMessage} />
 			</div>
 		</section>
 

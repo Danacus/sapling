@@ -9,10 +9,10 @@
  * whole LLM layer can be unit-tested in node without a network.
  */
 
-import { DEFAULT_MODEL, getApiKey, getModel } from '$lib/db/settings';
+import { DEFAULT_MODEL, getApiKey, getBaseUrl, getModel } from '$lib/db/settings';
 import { recordUsage } from './usage';
 
-/** OpenRouter's OpenAI-compatible endpoint. */
+/** OpenRouter's OpenAI-compatible endpoint; used unless the learner set a custom one. */
 export const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 
 /** Attribution headers; OpenRouter shows these on the app leaderboard. */
@@ -53,6 +53,11 @@ export interface ChatCompletionOptions {
 	 * key; production code should let it fall through to `getApiKey()`.
 	 */
 	apiKey?: string;
+	/**
+	 * Overrides the stored endpoint. Production code should let it fall through
+	 * to `getBaseUrl()` (custom endpoint) and then {@link OPENROUTER_BASE_URL}.
+	 */
+	baseUrl?: string;
 }
 
 export interface ChatCompletionResult {
@@ -175,6 +180,7 @@ export async function chatCompletion(opts: ChatCompletionOptions): Promise<ChatC
 	if (!apiKey) throw llmError('no-key');
 
 	const model = opts.model?.trim() || getModel() || DEFAULT_MODEL;
+	const baseUrl = (opts.baseUrl?.trim() || getBaseUrl() || OPENROUTER_BASE_URL).replace(/\/+$/, '');
 	const fetchFn = opts.fetchFn ?? (globalThis.fetch?.bind(globalThis) as FetchLike | undefined);
 	if (!fetchFn) throw llmError('network', 'no fetch implementation available');
 
@@ -196,7 +202,7 @@ export async function chatCompletion(opts: ChatCompletionOptions): Promise<ChatC
 		}
 
 		try {
-			response = await fetchFn(`${OPENROUTER_BASE_URL}/chat/completions`, {
+			response = await fetchFn(`${baseUrl}/chat/completions`, {
 				method: 'POST',
 				headers: {
 					Authorization: `Bearer ${apiKey}`,

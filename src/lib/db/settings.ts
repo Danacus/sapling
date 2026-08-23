@@ -8,9 +8,10 @@
 
 const API_KEY_STORAGE_KEY = 'll.openrouter.apiKey';
 const MODEL_STORAGE_KEY = 'll.openrouter.model';
+const BASE_URL_STORAGE_KEY = 'll.llm.baseUrl';
 
 /** Model used when the learner has not picked one. */
-export const DEFAULT_MODEL = 'google/gemini-2.5-flash-lite';
+export const DEFAULT_MODEL = 'google/gemini-3.7-flash';
 
 function hasStorage(): boolean {
 	return typeof localStorage !== 'undefined';
@@ -78,4 +79,23 @@ export function setModel(model: string): void {
 		return;
 	}
 	write(MODEL_STORAGE_KEY, trimmed);
+}
+
+/**
+ * A custom OpenAI-compatible endpoint (e.g. Hetzner Inference), or `undefined`
+ * to use OpenRouter. The stored value never carries a trailing slash.
+ */
+export function getBaseUrl(): string | undefined {
+	const url = read(BASE_URL_STORAGE_KEY)?.trim();
+	return url ? url : undefined;
+}
+
+/** Stores the endpoint base URL. A blank value restores OpenRouter. */
+export function setBaseUrl(url: string): void {
+	const trimmed = url.trim().replace(/\/+$/, '');
+	if (!trimmed) {
+		remove(BASE_URL_STORAGE_KEY);
+		return;
+	}
+	write(BASE_URL_STORAGE_KEY, trimmed);
 }

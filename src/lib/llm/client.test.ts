@@ -64,6 +64,19 @@ describe('chatCompletion', () => {
 		expect(calls[0].body.model).toBe('test/model');
 	});
 
+	it('posts to a custom base URL when one is given, without a trailing slash', async () => {
+		const { fetchFn, calls } = recordingFetch([() => jsonResponse(okCompletion())]);
+		await chatCompletion({
+			messages,
+			apiKey: KEY,
+			model: 'Qwen/Qwen3.6-35B-A3B-FP8',
+			baseUrl: 'https://inference.hetzner.com/api/v1/',
+			fetchFn
+		});
+
+		expect(calls[0].url).toBe('https://inference.hetzner.com/api/v1/chat/completions');
+	});
+
 	it('sends a strict json_schema response_format when a schema is given', async () => {
 		const { fetchFn, calls } = recordingFetch([() => jsonResponse(okCompletion('{}'))]);
 		await chatCompletion({
