@@ -14,12 +14,14 @@
  * - **Web Speech API** for every other language, and as the fallback whenever
  *   Kokoro is unavailable, still downloading, or fails.
  *
- * Synthesized clips are cached in memory per (text, speaker) so replaying a
- * word is instant; the runtime's two big downloads are cached by the worker in
- * Cache Storage (`ll-tts-models`).
+ * Synthesized clips are cached twice over — an in-memory LRU for this session,
+ * then Cache Storage (`ll-tts-audio`) so a word drilled yesterday still plays
+ * instantly today; the runtime's two big downloads live in their own bucket
+ * (`ll-tts-models`), written by the worker.
  */
 
-import { audioCacheKey, LruCache } from './cache';
+import { readClip, writeClip } from './audio-store';
+import { audioCacheKey, audioCacheUrl, LruCache } from './cache';
 import { bcp47For, kokoroSpeakerFor, kokoroSupports } from './languages';
 import { initSherpa, onSherpaProgress, synthesize, type TtsProgress } from './sherpa';
 import {
@@ -50,19 +52,31 @@ export {
 } from './prefs';
 export { bcp47For, kokoroSupports, kokoroSpeakerFor, MANDARIN_SPEAKERS } from './languages';
 export { KOKORO_MODEL_ID, RUNTIME_DOWNLOAD_BYTES, formatMb } from './models';
+/** The stored-clip cache, for the Settings row that reports and clears it. */
+export { audioCacheBytes, clearAudioCache } from './audio-store';
+export { AUDIO_CACHE_MAX_BYTES, formatCacheSize } from './cache';
 
 /** Roughly a session's worth of replayed words. */
 const AUDIO_CACHE_SIZE = 50;
 
 const audioCache = new LruCache<Blob>(AUDIO_CACHE_SIZE);
 
+/**
+ * Playback rate handed to Kokoro (1 = as trained). Threaded through both the
+ * synthesis call and the cache key from one place, so the two can never
+ * disagree about what a stored clip sounds like.
+ */
+const KOKORO_SPEED = 1;
+
 /** The clip currently playing, so a new request can cut it off. */
 let playing: HTMLAudioElement | null = null;
 
 /**
- * Persists the engine choice. Changing it drops the cached audio: clips are
+ * Persists the engine choice. Changing it drops the in-memory audio: clips are
  * engine-specific, and a learner switching engines is usually doing it
- * *because* they disliked what they just heard.
+ * *because* they disliked what they just heard. Stored clips survive — only
+ * Kokoro ever writes any, so switching away leaves them valid for a switch
+ * back, and Settings has an explicit button for throwing them out.
  */
 export function setTtsEngine(engine: TtsEngine): void {
 	if (engine === getTtsEngine()) return;
@@ -73,8 +87,10 @@ export function setTtsEngine(engine: TtsEngine): void {
 
 /**
  * Persists the Mandarin voice. The model stays loaded — the speaker is just an
- * argument to each generation — but every cached clip was rendered in the old
- * voice, so they go.
+ * argument to each generation — but every clip in memory was rendered in the
+ * old voice, so they go. The *stored* clips stay: their keys carry the speaker
+ * (see `audioCacheUrl`), so they cannot be mistaken for the new voice, and
+ * switching back is instant instead of a fresh round of synthesis.
  */
 export function setTtsVoice(voice: TtsVoice): void {
 	if (voice === getTtsVoice()) return;
@@ -168,12 +184,20 @@ export async function speak(text: string, language: string): Promise<void> {
 		const speaker = kokoroSpeakerFor(language);
 		if (speaker) {
 			try {
+				// Memory → disk → synthesize, writing through to both on a miss. The
+				// disk layer never throws (see `audio-store.ts`), so a broken or
+				// absent Cache Storage costs a re-synthesis and nothing else.
 				const key = audioCacheKey(phrase, speaker.name);
+				const url = audioCacheUrl(phrase, speaker.name, KOKORO_SPEED);
+
 				let blob = audioCache.get(key);
+				if (!blob) blob = await readClip(url);
 				if (!blob) {
-					blob = await synthesize(phrase, speaker.id);
-					audioCache.set(key, blob);
+					blob = await synthesize(phrase, speaker.id, KOKORO_SPEED);
+					void writeClip(url, blob);
 				}
+				audioCache.set(key, blob);
+
 				await playBlob(blob);
 				return;
 			} catch (cause) {

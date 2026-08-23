@@ -46,6 +46,13 @@
 /** Cache Storage bucket holding the two big runtime downloads. */
 export const MODEL_CACHE_NAME = 'll-tts-models';
 
+/**
+ * Cache Storage bucket holding *synthesized clips* (see `audio-store.ts`).
+ * Separate from the model bucket on purpose: clearing the clips must never
+ * cost the learner a 439 MB re-download, and the worker owns the other one.
+ */
+export const AUDIO_CACHE_NAME = 'll-tts-audio';
+
 /** The Hugging Face dataset holding the prebuilt WASM packs. */
 const BUNDLE_REPO = 'datasets/jiangzhuo9357/sherpa-onnx-tts-models';
 

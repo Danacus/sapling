@@ -18,6 +18,10 @@
 	} from '$lib/db';
 	import { fillRomanizations, isMockMode } from '$lib/llm';
 	import {
+		audioCacheBytes,
+		AUDIO_CACHE_MAX_BYTES,
+		clearAudioCache,
+		formatCacheSize,
 		formatMb,
 		getTtsEngine,
 		getTtsVoice,
@@ -73,6 +77,11 @@
 	let preloadMessage = $state('');
 	/** Bytes seen per file, so the percentage is over the whole download. */
 	let preloadBytes = new Map<string, { loaded: number; total: number }>();
+	/** Stored spoken clips, in bytes. 0 until the first read comes back. */
+	let audioBytes = $state(0);
+	let clearingAudio = $state(false);
+	let audioCacheStatus = $state<Status>('idle');
+	let audioCacheMessage = $state('');
 
 	// LLM: API key ----------------------------------------------------------------
 	let apiKeySet = $state(false);
@@ -129,6 +138,11 @@
 
 				ttsEngine = getTtsEngine();
 				ttsVoice = getTtsVoice();
+				// Walks Cache Storage, so it must not hold up the rest of the page;
+				// it reports 0 rather than failing if the cache is unreachable.
+				void audioCacheBytes().then((bytes) => {
+					if (!cancelled) audioBytes = bytes;
+				});
 
 				usagePromptTokens = readUsage('ll.usage.promptTokens');
 				usageCompletionTokens = readUsage('ll.usage.completionTokens');
@@ -157,6 +171,10 @@
 
 	/** e.g. "227 MB" — never hard-coded, so the copy cannot drift. */
 	const downloadSize = formatMb(RUNTIME_DOWNLOAD_BYTES);
+
+	/** e.g. "37 MB of 105 MB" — both halves come from the cache module. */
+	const audioCacheSize = $derived(formatCacheSize(audioBytes));
+	const audioCacheCap = formatCacheSize(AUDIO_CACHE_MAX_BYTES);
 
 	function readUsage(key: string): number {
 		try {
@@ -267,6 +285,28 @@
 			preloadStatus = 'error';
 		} finally {
 			preloading = false;
+		}
+	}
+
+	/**
+	 * Throws away the stored clips. Only the clip bucket — the voice model is a
+	 * separate cache, and nobody wants a stray tap to cost them that download.
+	 */
+	async function clearAudioClips() {
+		if (clearingAudio) return;
+		clearingAudio = true;
+		audioCacheStatus = 'idle';
+		try {
+			await clearAudioCache();
+			audioBytes = await audioCacheBytes();
+			audioCacheMessage = 'Audio cache cleared';
+			flash((value) => (audioCacheStatus = value));
+		} catch (cause) {
+			audioCacheMessage =
+				cause instanceof Error ? cause.message : 'Could not clear the audio cache.';
+			audioCacheStatus = 'error';
+		} finally {
+			clearingAudio = false;
 		}
 	}
 
@@ -598,8 +638,9 @@
 					half the size but produces silence in WebAssembly.
 				</p>
 				<p class="hint">
-					Synthesis takes roughly a second or two per phrase on a laptop CPU, in a background thread,
-					and each clip is remembered for the rest of the session.
+					Synthesis takes roughly a second or two per phrase on a laptop CPU, in a background thread.
+					Each clip is then kept, so a word you have heard before plays back instantly — including
+					after a reload.
 				</p>
 
 				{#if preloading}
@@ -618,6 +659,32 @@
 					</div>
 				{/if}
 			{/if}
+
+			<!--
+			  Outside the Kokoro block on purpose: only Kokoro fills this cache, but
+			  someone who has just switched to the browser voice is exactly the
+			  person who wants to reclaim the space.
+			-->
+			<div class="field">
+				<span class="label">Audio cache</span>
+				<p class="hint">
+					{audioCacheSize} of spoken clips, out of {audioCacheCap}. Stored in your browser alongside
+					the voice model; once it is full the clips you have not played in longest are dropped.
+					Clearing them costs nothing but a moment's re-synthesis — the {downloadSize} voice model is
+					a separate cache and stays put.
+				</p>
+				<div class="actions-row">
+					<button
+						type="button"
+						class="btn btn-ghost"
+						onclick={() => void clearAudioClips()}
+						disabled={clearingAudio || audioBytes === 0}
+					>
+						{clearingAudio ? 'Clearing…' : 'Clear audio cache'}
+					</button>
+					<InlineStatus status={audioCacheStatus} message={audioCacheMessage} />
+				</div>
+			</div>
 		</section>
 
 		<section class="card">
