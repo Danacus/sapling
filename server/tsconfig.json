@@ -3,9 +3,13 @@
 	//
 	// `include` deliberately reaches back into the app's `src/lib/sync/` for the
 	// shared event envelope — one source of truth for what a valid event is
-	// (docs/sync.md §8). That is also why `rootDir` is the repo root: emitted
-	// JS lands as `dist/server/src/*.js` + `dist/src/lib/sync/*.js`, mirroring
-	// the repo layout so the relative import still resolves at runtime.
+	// (docs/sync.md §8). **Only `events.ts`, never a glob**: the rest of
+	// `src/lib/sync/` is app code (`$lib` aliases, Dexie) that this compiler
+	// can never resolve — a glob here is how the Docker build broke the moment
+	// the client half of sync grew its second file. `rootDir` is the repo root
+	// so emitted JS lands as `dist/server/src/*.js` + `dist/src/lib/sync/*.js`,
+	// mirroring the repo layout so the relative import still resolves at
+	// runtime.
 	"compilerOptions": {
 		"target": "ES2023",
 		"lib": ["ES2023"],
@@ -24,5 +28,5 @@
 		"allowImportingTsExtensions": true,
 		"rewriteRelativeImportExtensions": true
 	},
-	"include": ["src/**/*.ts", "scripts/**/*.ts", "../src/lib/sync/**/*.ts"]
+	"include": ["src/**/*.ts", "scripts/**/*.ts", "../src/lib/sync/events.ts"]
 }
