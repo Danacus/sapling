@@ -15,7 +15,6 @@
 -->
 <script lang="ts">
 	import type { AnswerEvent } from '$lib/session/engine';
-	import { speak } from '$lib/tts';
 	import type { ClozeChallenge } from '$lib/types';
 	import { getShowRomanization } from '$lib/ui/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
@@ -101,11 +100,9 @@
 		if (!ready) return;
 		locked = true;
 		const { verdict, closestAccepted } = validateAnswer(answer, challenge.acceptedAnswers);
-		// Hearing the sentence whole, right as it is graded, is the point of a
-		// cloze: the gap only becomes a sentence once the answer is in it. The
-		// submit click is the user gesture autoplay policy wants, and `speak`
-		// swallows its own failures — audio never gates the answer going out.
-		void speak(completedSentence, targetLanguage);
+		// No speech here: the feedback banner auto-plays the completed sentence
+		// for every challenge type in one place, so cloze stays consistent with
+		// the rest instead of being the one type that speaks for itself.
 		onanswer({
 			answerGiven: answer,
 			verdict,

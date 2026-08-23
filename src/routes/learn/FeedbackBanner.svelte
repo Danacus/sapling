@@ -17,6 +17,7 @@
 	import { getEscalation, LlmError } from '$lib/llm';
 	import { motionMs } from '$lib/session/motion';
 	import { Grade } from '$lib/srs';
+	import { speak } from '$lib/tts';
 	import type { Challenge, Verdict } from '$lib/types';
 	import { getShowRomanization } from '$lib/ui/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
@@ -216,6 +217,25 @@
 			return challenge.sentence.split('___').join(canonical);
 		}
 		return '';
+	});
+
+	/**
+	 * Auto-play the answer once, the moment the banner appears.
+	 *
+	 * One rule for every challenge type: if there is target-language audio worth
+	 * hearing ({@link spokenAnswer} non-empty), it plays on answering — the same
+	 * moment the grade lands, when the learner's attention is already on the
+	 * answer. Living here rather than in the components is what makes it
+	 * consistent; a per-component call is how cloze ended up speaking while
+	 * multiple choice stayed silent. The banner mounts fresh for each answer, so
+	 * the flag resets itself, and an overturn repaint never replays. "Hear it"
+	 * stays as the manual replay.
+	 */
+	let autoSpoken = false;
+	$effect(() => {
+		if (autoSpoken || !spokenAnswer) return;
+		autoSpoken = true;
+		void speak(spokenAnswer, targetLanguage);
 	});
 
 	/**
