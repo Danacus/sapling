@@ -1,9 +1,9 @@
 # Sapling Sync — design (draft for iteration)
 
-Status: **stable — signed off.** This document is the spec for the first
-Sapling "service": multi-device synchronization of progress, vocabulary, and
-the challenge pool. §11 records the decisions made during iteration;
-implementation follows §12's slices.
+Status: **stable — signed off, and implemented.** This document is the spec
+for the first Sapling "service": multi-device synchronization of progress,
+vocabulary, and the challenge pool. §11 records the decisions made during
+iteration; §12 records all four implementation slices as done.
 
 ## 1. Goals and non-goals
 
@@ -269,10 +269,15 @@ New `src/lib/sync/` module, following house rules:
 
 ## 12. Implementation slices (once this doc is stable)
 
-1. `server/`: skeleton, auth middleware, event tables, push/pull endpoints,
-   tests. Deployable container.
-2. Client: device id, outbox capture in repositories, genesis synthesis,
-   pure apply engine + tests.
-3. Client: `runSync()` + Settings card + after-session trigger.
-4. Polish: pagination hardening, rate limits, docs (CLAUDE.md + a short
-   self-hosting README in `server/`).
+1. **Done.** `server/`: skeleton, auth middleware, event tables, push/pull
+   endpoints, tests. Deployable container.
+2. **Done.** Client: device id, outbox capture in repositories, genesis
+   synthesis, pure apply engine + tests.
+3. **Done.** Client: `runSync()` (`src/lib/sync/run.ts`) + the Settings
+   "Sync" card (`src/routes/settings/+page.svelte`) + the after-session
+   trigger (`finish()`/`quit()` in `src/routes/learn/+page.svelte`).
+4. **Done.** Polish: pagination hardening, rate limits (both server-side,
+   §6/§8), the on-load trigger (a boot-guarded call in
+   `src/routes/+layout.svelte`, fire-and-forget and outside the
+   per-navigation `$effect`), and docs (this file, `CLAUDE.md`,
+   `server/README.md`).

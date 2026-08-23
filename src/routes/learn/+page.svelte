@@ -48,6 +48,7 @@
 	} from '$lib/session/engine';
 	import { motionMs } from '$lib/session/motion';
 	import type { FsrsCardState, Grade } from '$lib/srs';
+	import { runSync } from '$lib/sync/run';
 	import { warmSpeech } from '$lib/tts';
 	import type { Challenge, KnowledgeItem, Profile, Stats, Verdict } from '$lib/types';
 	import { addRecentTopic, getRecentTopics, getShowRomanization } from '$lib/ui/prefs';
@@ -578,6 +579,11 @@
 
 		endStats = summary.xp > 0 ? await bankSessionXp(summary.xp) : await getStats();
 		phase = 'summary';
+
+		// Fire-and-forget (§9): a device should pick up what other devices did
+		// while this session was in progress, but the summary screen must never
+		// wait on the network. `runSync` never throws and no-ops when unconfigured.
+		void runSync();
 	}
 
 	function requestQuit(): void {
@@ -603,6 +609,8 @@
 			await pendingWrite;
 			const summary = sessionSummary(answers);
 			if (summary.xp > 0) await bankSessionXp(summary.xp);
+			// Fire-and-forget (§9) — must not delay the navigation below.
+			void runSync();
 		} catch {
 			/* leaving anyway */
 		}
