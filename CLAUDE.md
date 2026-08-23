@@ -14,7 +14,7 @@ nix develop -c pnpm test                               # vitest run (all suites)
 nix develop -c pnpm test src/lib/srs/scheduler.test.ts # single test file
 ```
 
-Nix flakes only see files that are `git add`ed — a brand-new file the flake needs must be staged before `nix develop` picks it up. `pnpm-workspace.yaml` is a comment-only placeholder pnpm recreates; leave it.
+Nix flakes only see files that are `git add`ed — a brand-new file the flake needs must be staged before `nix develop` picks it up. `pnpm-workspace.yaml` records pnpm's dependency build-script decisions (`allowBuilds`) — an undecided script hard-fails Cloudflare Pages' CI install, so keep decisions explicit there.
 
 ## Deploying
 

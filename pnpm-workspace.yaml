@@ -1,5 +1,10 @@
-# pnpm settings placeholder — pnpm recreates this file as needed; leave it be.
+# pnpm settings — records the dependency build-script decisions pnpm ≥10
+# demands. A package with an *undecided* build script is only a warning
+# locally, but Cloudflare Pages' CI install hard-fails on it
+# (ERR_PNPM_IGNORED_BUILDS), so the decision must live in the repo.
 #
-# The speech engine is a prebuilt WebAssembly bundle fetched at runtime (see
-# src/lib/tts/models.ts), not an npm package, so nothing here needs a native
-# install script.
+# esbuild is denied on purpose: its platform binary arrives via
+# optionalDependencies and the postinstall is only a sanity check — vite
+# builds fine without it, locally and on CF.
+allowBuilds:
+  esbuild: false
