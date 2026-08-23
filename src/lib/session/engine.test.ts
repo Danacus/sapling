@@ -1,11 +1,12 @@
 /**
  * Unit tests for the pure half of the session engine.
  *
- * The database-touching half (`applyResult`, `runRefillIfNeeded`,
- * `bankSessionXp`) needs IndexedDB, which node does not have, so it is covered
- * by the same "thin wrapper, no logic" rule as `src/lib/db/repositories.ts`:
- * everything worth asserting was pushed down into `planRefill` / `xpFor` /
- * `sessionSummary`, which are exercised here.
+ * The database-touching half (`applyResult`, `generateChallenges`,
+ * `startSession`, `bankSessionXp`) needs IndexedDB, which node does not have,
+ * so it is covered by the same "thin wrapper, no logic" rule as
+ * `src/lib/db/repositories.ts`: everything worth asserting was pushed down into
+ * `planSession` / `planRefill` / `xpFor` / `sessionSummary`, which are
+ * exercised here.
  *
  * The one exception is {@link planRefill}'s output being fed to the real
  * `getBatch` in mock mode (no API key in node ⇒ mock automatically), which
@@ -14,6 +15,7 @@
 
 import { describe, expect, it } from 'vitest';
 
+import type { ChallengeRow } from '$lib/db';
 import { getBatch, isMockMode, makeMatchPairsChallenge } from '$lib/llm';
 import type { ProgressStep } from '$lib/llm';
 import { gradeFromResult, newCardState, reviewCard, Grade } from '$lib/srs';
@@ -25,12 +27,14 @@ import {
 	MATCH_PAIRS_XP,
 	MAX_COMBO_BONUS,
 	MAX_RECENT_MISTAKES,
+	RESERVE_GAP,
 	SESSION_LENGTH,
 	SKIP_ANSWER,
 	comboAfter,
 	dedupeNewItems,
 	deriveRecentMistakes,
 	planRefill,
+	planSession,
 	remapItemIds,
 	sessionSummary,
 	wantsMatchRound,
@@ -157,6 +161,196 @@ describe('sessionSummary', () => {
 			accuracy: 0,
 			itemsPracticed: 0
 		});
+	});
+});
+
+/* -------------------------------------------------------------------------- */
+
+describe('planSession', () => {
+	/** A pooled challenge; defaults to freshly generated and never served. */
+	function row(id: string, itemIds: string[], over: Partial<ChallengeRow> = {}): ChallengeRow {
+		return {
+			id,
+			type: 'typed-translation',
+			direction: 'toTarget',
+			prompt: `prompt-${id}`,
+			acceptedAnswers: ['a'],
+			itemIds,
+			generatedAt: NOW - DAY,
+			timesServed: 0,
+			lastServedAt: null,
+			reported: false,
+			...over
+		} as ChallengeRow;
+	}
+
+	const ids = (challenges: Challenge[]) => challenges.map((challenge) => challenge.id);
+
+	it('serves a due word before a brand-new challenge about a word that is not due', () => {
+		const items = [item('due', -5 * DAY), item('fine', +5 * DAY)];
+		const pool = [
+			row('fresh', ['fine'], { generatedAt: NOW }),
+			row('old-but-due', ['due'], { generatedAt: NOW - 30 * DAY })
+		];
+
+		// The load-bearing case: a global freshness weight would put `fresh`
+		// first here, and every new batch would then bury spaced repetition.
+		expect(ids(planSession(pool, items, NOW, { target: 1 }))).toEqual(['old-but-due']);
+	});
+
+	it('orders due items most-overdue first', () => {
+		const items = [item('a', -DAY), item('b', -10 * DAY), item('c', -3 * DAY)];
+		const pool = [row('ca', ['a']), row('cb', ['b']), row('cc', ['c'])];
+
+		expect(ids(planSession(pool, items, NOW, { target: 3 }))).toEqual(['cb', 'cc', 'ca']);
+	});
+
+	it('prefers a never-served challenge over a served one for the same word', () => {
+		const items = [item('due', -DAY)];
+		const pool = [
+			row('served', ['due'], { timesServed: 1, lastServedAt: NOW - 10 * DAY }),
+			row('unseen', ['due'])
+		];
+
+		expect(ids(planSession(pool, items, NOW, { target: 1 }))).toEqual(['unseen']);
+	});
+
+	it('breaks ties between never-served challenges by newest generation', () => {
+		const items = [item('due', -DAY)];
+		const pool = [
+			row('older', ['due'], { generatedAt: NOW - 2 * DAY }),
+			row('newest', ['due'], { generatedAt: NOW })
+		];
+
+		expect(ids(planSession(pool, items, NOW, { target: 1 }))).toEqual(['newest']);
+	});
+
+	it('recycles the least recently served challenge first', () => {
+		const items = [item('due', -DAY)];
+		const pool = [
+			row('recent', ['due'], { timesServed: 2, lastServedAt: NOW - 4 * DAY }),
+			row('stale', ['due'], { timesServed: 5, lastServedAt: NOW - 30 * DAY })
+		];
+
+		expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['stale', 'recent']);
+	});
+
+	it('excludes anything served inside the reserve gap', () => {
+		const items = [item('due', -DAY)];
+		const tooSoon = row('hot', ['due'], { timesServed: 1, lastServedAt: NOW - RESERVE_GAP + 1 });
+		const rested = row('rested', ['due'], { timesServed: 1, lastServedAt: NOW - RESERVE_GAP });
+
+		expect(ids(planSession([tooSoon], items, NOW))).toEqual([]);
+		expect(ids(planSession([tooSoon, rested], items, NOW))).toEqual(['rested']);
+	});
+
+	it('excludes reported challenges', () => {
+		const items = [item('due', -DAY)];
+		const pool = [row('bad', ['due'], { reported: true }), row('good', ['due'])];
+
+		expect(ids(planSession(pool, items, NOW))).toEqual(['good']);
+	});
+
+	it('excludes challenges whose words no longer exist', () => {
+		const items = [item('kept', -DAY)];
+		const pool = [
+			row('orphan', ['deleted']),
+			row('half-orphan', ['kept', 'deleted']),
+			row('nothing', []),
+			row('fine', ['kept'])
+		];
+
+		expect(ids(planSession(pool, items, NOW))).toEqual(['fine']);
+	});
+
+	it('gives each due word a second challenge before falling back to fresh filler', () => {
+		const items = [item('due', -DAY), item('later', +DAY)];
+		const pool = [
+			row('due-1', ['due'], { generatedAt: NOW - 2 * DAY }),
+			row('due-2', ['due'], { generatedAt: NOW - 3 * DAY }),
+			row('filler', ['later'], { generatedAt: NOW })
+		];
+
+		expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['due-1', 'due-2']);
+	});
+
+	it('fills leftover slots with the newest never-served challenges', () => {
+		const items = [item('due', -DAY), item('later', +DAY)];
+		const pool = [
+			row('due-1', ['due']),
+			row('fill-old', ['later'], { generatedAt: NOW - 5 * DAY }),
+			row('fill-new', ['later'], { generatedAt: NOW }),
+			row('fill-served', ['later'], { timesServed: 1, lastServedAt: NOW - 10 * DAY })
+		];
+
+		// Due first, then freshness newest-first, and only then the recyclables.
+		expect(ids(planSession(pool, items, NOW, { target: 4 }))).toEqual([
+			'due-1',
+			'fill-new',
+			'fill-old',
+			'fill-served'
+		]);
+	});
+
+	it('never plans the same challenge twice, even across several due words', () => {
+		const items = [item('a', -2 * DAY), item('b', -DAY)];
+		const pool = [row('both', ['a', 'b']), row('just-b', ['b'])];
+
+		const planned = ids(planSession(pool, items, NOW, { target: 4 }));
+		expect(planned).toEqual(['both', 'just-b']);
+		expect(new Set(planned).size).toBe(planned.length);
+	});
+
+	it('respects the target and the hard cap', () => {
+		const items = [item('due', -DAY)];
+		const pool = Array.from({ length: 40 }, (_, i) =>
+			row(`c${String(i).padStart(2, '0')}`, ['due'], { generatedAt: NOW - i })
+		);
+
+		expect(planSession(pool, items, NOW)).toHaveLength(BATCH_TARGET);
+		expect(planSession(pool, items, NOW, { target: 5 })).toHaveLength(5);
+		// A target above the ceiling is clamped, not honoured.
+		expect(planSession(pool, items, NOW, { target: 999 })).toHaveLength(SESSION_LENGTH);
+		expect(planSession(pool, items, NOW, { target: 999, limit: 3 })).toHaveLength(3);
+	});
+
+	it('is deterministic and independent of pool order', () => {
+		const items = [item('a', -2 * DAY), item('b', -DAY), item('c', +DAY)];
+		const pool = [
+			row('c1', ['a']),
+			row('c2', ['b'], { timesServed: 1, lastServedAt: NOW - 9 * DAY }),
+			row('c3', ['c'], { generatedAt: NOW }),
+			row('c4', ['a'], { generatedAt: NOW - 4 * DAY })
+		];
+
+		const once = ids(planSession(pool, items, NOW));
+		expect(ids(planSession(pool, items, NOW))).toEqual(once);
+		expect(ids(planSession([...pool].reverse(), items, NOW))).toEqual(once);
+	});
+
+	it('hands back plain challenges, without the pool bookkeeping', () => {
+		const planned = planSession([row('c1', ['due'], { topic: 'at the market' })], [item('due', -DAY)], NOW);
+
+		expect(planned[0]).not.toHaveProperty('timesServed');
+		expect(planned[0]).not.toHaveProperty('lastServedAt');
+		expect(planned[0]).not.toHaveProperty('generatedAt');
+		expect(planned[0]).not.toHaveProperty('reported');
+		expect(planned[0]).not.toHaveProperty('topic');
+		expect(planned[0].id).toBe('c1');
+	});
+
+	it('is pure: it does not mutate the pool it is given', () => {
+		const pool = [row('c1', ['due']), row('c2', ['due'], { generatedAt: NOW })];
+		const snapshot = structuredClone(pool);
+
+		planSession(pool, [item('due', -DAY)], NOW);
+
+		expect(pool).toEqual(snapshot);
+	});
+
+	it('returns nothing when there is nothing playable', () => {
+		expect(planSession([], [item('due', -DAY)], NOW)).toEqual([]);
+		expect(planSession([row('c1', ['due'])], [], NOW)).toEqual([]);
 	});
 });
 
@@ -549,10 +743,10 @@ describe('planRefill → getBatch (mock mode)', () => {
 
 /**
  * A dry run of the loop `src/routes/learn/+page.svelte` drives, with the
- * database swapped for an array and the learner swapped for a scripted answer
+ * database swapped for arrays and the learner swapped for a scripted answer
  * function. It exercises the parts that are easy to get subtly wrong — combo
  * accounting, where the free match rounds land, and what each answer is worth —
- * against a real mock batch.
+ * against a real mock batch, planned the way a real session is planned.
  */
 describe('session walkthrough (mock batch, no database)', () => {
 	/** Plays a session the way the page does; `answerAs` scripts the learner. */
@@ -563,10 +757,21 @@ describe('session walkthrough (mock batch, no database)', () => {
 		const plan = planRefill(known, profile(), NOW);
 		const batch = await getBatch(plan.args);
 
-		// What `runRefillIfNeeded` does before anything is persisted.
+		// What `generateChallenges` does before anything is persisted...
 		const newItems = batch.newItems.map((i) => ({ ...i, fsrsCard: newCardState(NOW) }));
-		const pool = [...known, ...newItems];
-		const queue = [...batch.challenges];
+		const items = [...known, ...newItems];
+		// ...and what `addToPool` writes: a fresh, never-served batch.
+		const pool: ChallengeRow[] = batch.challenges.map((challenge, index) => ({
+			...challenge,
+			generatedAt: NOW + index,
+			timesServed: 0,
+			lastServedAt: null,
+			reported: false
+		}));
+
+		// The session is planned once, up front — no database read mid-play.
+		const planned = planSession(pool, items, NOW);
+		let next = 0;
 
 		const answers: SessionAnswer[] = [];
 		let combo = 0;
@@ -578,16 +783,18 @@ describe('session walkthrough (mock batch, no database)', () => {
 			if (llmAnswered >= SESSION_LENGTH) break;
 
 			let challenge: Challenge | undefined;
-			if (pool.length >= 4 && wantsMatchRound(llmAnswered, lastMatchAfter)) {
-				challenge = makeMatchPairsChallenge(pool);
+			if (items.length >= 4 && wantsMatchRound(llmAnswered, lastMatchAfter)) {
+				challenge = makeMatchPairsChallenge(items);
 				if (challenge) {
 					lastMatchAfter = llmAnswered;
 					matchRounds++;
 				}
 			}
 			if (!challenge) {
-				challenge = queue.shift();
-				if (!challenge) break;
+				const fromPlan = planned[next];
+				if (!fromPlan) break;
+				next++;
+				challenge = fromPlan;
 			}
 
 			const isMatch = challenge.type === 'match-pairs';
@@ -606,18 +813,24 @@ describe('session walkthrough (mock batch, no database)', () => {
 			});
 		}
 
-		return { answers, matchRounds, llmAnswered, summary: sessionSummary(answers), queue };
+		return {
+			answers,
+			matchRounds,
+			llmAnswered,
+			summary: sessionSummary(answers),
+			planned,
+			unplayed: planned.length - next
+		};
 	}
 
-	it('plays a flawless session: the whole batch, 3 free rounds, capped combo', async () => {
+	it('plays a flawless session: the whole plan, 3 free rounds, capped combo', async () => {
 		const known = Array.from({ length: 6 }, (_, i) => item(`k${i}`, -DAY));
 		const run = await playSession(known, () => 'correct');
 
-		// One BATCH_TARGET-sized batch, played to the end. The queue MUST be
-		// empty afterwards: a session that stops short of its own batch strands
-		// the tail as a stub "continue session" on the next visit.
+		// A BATCH_TARGET-sized plan, played to the end: the session is sized by
+		// what was planned, and nothing may be left over at the end of it.
 		expect(run.llmAnswered).toBe(BATCH_TARGET);
-		expect(run.queue).toHaveLength(0);
+		expect(run.unplayed).toBe(0);
 		expect(run.matchRounds).toBe(3); // after the 4th, 8th and 12th answer
 		expect(run.answers).toHaveLength(BATCH_TARGET + 3);
 		expect(run.summary.accuracy).toBe(1);
@@ -641,15 +854,16 @@ describe('session walkthrough (mock batch, no database)', () => {
 		expect(run.summary.wrong).toBe(1);
 	});
 
-	it('ends gracefully when the queue runs dry early', async () => {
-		// A tiny batch: mock mode still returns its five canned challenges.
+	it('ends gracefully when the plan is shorter than a full session', async () => {
+		// A tiny batch: mock mode still returns its canned challenges.
 		const plan = planRefill([], profile(), NOW, { count: 5 });
 		const batch = await getBatch(plan.args);
 		expect(batch.challenges.length).toBeLessThan(SESSION_LENGTH);
 
 		const run = await playSession([], () => 'correct');
-		expect(run.llmAnswered).toBeLessThanOrEqual(SESSION_LENGTH);
-		expect(run.queue).toHaveLength(0);
+		expect(run.planned.length).toBeLessThan(SESSION_LENGTH);
+		expect(run.llmAnswered).toBe(run.planned.length);
+		expect(run.unplayed).toBe(0);
 	});
 
 	it('match rounds carry no item ids into the summary', async () => {

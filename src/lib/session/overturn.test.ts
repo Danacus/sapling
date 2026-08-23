@@ -41,13 +41,14 @@ vi.mock('$lib/db', () => ({
 	},
 	// Imported by engine.ts at module load; never called from this test.
 	addResult: async () => undefined,
+	addToPool: async () => undefined,
 	addXp: async () => undefined,
-	enqueueChallenges: async () => undefined,
 	getAllItems: async () => [...items.values()],
 	getChallengesByIds: async () => [],
-	markChallengeDone: async () => undefined,
-	queuedCount: async () => 0,
+	getPool: async () => [],
 	recentResults: async () => [],
+	recordServe: async () => undefined,
+	reportChallenge: async () => undefined,
 	upsertItems: async () => undefined
 }));
 

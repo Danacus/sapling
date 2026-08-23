@@ -1,40 +1,33 @@
 <!--
   The session screen — the part of the app people actually spend time in.
 
-  Shape of a session:
-    boot decides between two paths. A leftover queue (the learner quit mid-
-    session last time) offers a choice — continue it as-is, no topic prompt
-    and no refill, ending gracefully whenever it runs dry; or clear it and
-    fall into the topic picker. An empty queue goes straight to the topic
-    picker. Either way that's: topic → refill the queue (one batched LLM
-    call) → play up to 12 generated challenges, slipping a free
-    locally-built match-pairs round in after every 4th → summary.
+  Shape of a visit: one start screen shows what the pool holds ("N challenges
+  ready · M words due"), and offers two independent actions. **Start session**
+  plays a plan the engine assembled from challenges that already exist — no
+  network, no waiting, ever. **Generate new lesson** spends one batched LLM
+  call in the *background*, adding to the pool; the learner can start playing
+  while it runs, and whatever it produces is simply there next time.
+
+  Then: play the planned challenges, slipping a free locally-built match-pairs
+  round in after every 4th → summary.
 
   Rules and writes live in `$lib/session/engine`; this file owns pacing, motion
-  and everything the learner sees. The one invariant worth stating: a challenge
-  only leaves the queue once `applyResult` has marked it done, so the pending
-  write is always awaited before pulling the next one.
+  and everything the learner sees. The invariant worth stating: the session is
+  planned once, up front, and nothing reads the database mid-play — `advance`
+  walks an array. `pendingWrite` is still awaited before advancing, because a
+  self-assessment must land on top of the review it re-grades.
 -->
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
 	import { fade, fly, scale } from 'svelte/transition';
 
-	import {
-		clearQueue,
-		getAllItems,
-		getProfile,
-		getStats,
-		localDay,
-		queuedCount,
-		takeNextChallenge
-	} from '$lib/db';
+	import { getProfile, getStats, localDay } from '$lib/db';
 	import { LlmError, isMockMode, makeMatchPairsChallenge } from '$lib/llm';
 	import type { ProgressStep } from '$lib/llm';
 	import {
 		MATCH_PAIRS_EVERY,
 		MATCH_PAIRS_XP,
-		SESSION_LENGTH,
 		SKIP_ANSWER,
 		amendResult,
 		applyOverturn,
@@ -42,23 +35,20 @@
 		bankSessionXp,
 		comboAfter,
 		COMBO_THRESHOLD,
-		runRefillIfNeeded,
+		generateChallenges,
+		reportChallenge,
 		sessionSummary,
+		startSession,
 		wantsMatchRound,
 		xpFor,
 		type AnswerEvent,
-		type SessionAnswer
+		type SessionAnswer,
+		type SessionPlan
 	} from '$lib/session/engine';
 	import { motionMs } from '$lib/session/motion';
 	import type { FsrsCardState, Grade } from '$lib/srs';
 	import type { Challenge, KnowledgeItem, Profile, Stats, Verdict } from '$lib/types';
-	import {
-		addRecentTopic,
-		getCurrentTopic,
-		getRecentTopics,
-		getShowRomanization,
-		setCurrentTopic
-	} from '$lib/ui/prefs';
+	import { addRecentTopic, getRecentTopics, getShowRomanization } from '$lib/ui/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
@@ -68,7 +58,7 @@
 	import MultipleChoice from './MultipleChoice.svelte';
 	import TypedTranslation from './TypedTranslation.svelte';
 
-	/** Conversational scenarios offered on the topic screen. */
+	/** Conversational scenarios offered next to the topic field. */
 	const TOPIC_SUGGESTIONS = [
 		'Ordering in a restaurant',
 		'Talking about your hobbies',
@@ -80,7 +70,7 @@
 		'Talking about your weekend'
 	];
 
-	type Phase = 'choice' | 'topic' | 'preparing' | 'error' | 'playing' | 'summary';
+	type Phase = 'loading' | 'start' | 'playing' | 'summary';
 
 	interface Feedback {
 		challenge: Challenge;
@@ -94,31 +84,39 @@
 		overturned?: boolean;
 	}
 
-	let phase = $state<Phase>('topic');
-	let errorMessage = $state('');
+	let phase = $state<Phase>('loading');
+	let bootError = $state('');
 	let profile = $state<Profile | undefined>(undefined);
 	let mock = $state(false);
 
-	/* Choice screen (leftover queue) ------------------------------------------ */
-	/** Challenges left over from a previous session, as seen at boot. */
-	let leftoverCount = $state(0);
-	/** The topic those leftovers were generated for, if any was recorded. */
-	let leftoverTopic = $state<string | undefined>(undefined);
+	/* Start screen ------------------------------------------------------------ */
 
-	/* Topic screen ------------------------------------------------------------ */
+	/** The plan the pool currently supports, re-read whenever the pool moves. */
+	let plan = $state<SessionPlan | null>(null);
 	let topicInput = $state('');
 	let recentTopics = $state<string[]>([]);
-	/** The topic actually used to boot the session, carried across a retry. */
-	let sessionTopic = $state<string | undefined>(undefined);
-	/** Whether the in-flight/retryable boot should skip the refill (continue path). */
-	let skipRefill = $state(false);
+	/** A generation is in flight; the button is latched and the log is live. */
+	let generating = $state(false);
+	let genError = $state('');
 
 	const topicChips = $derived([
 		...TOPIC_SUGGESTIONS,
 		...(profile?.interests ?? []).slice(0, 2).map((interest) => `Chatting about ${interest}`)
 	]);
 
-	/** Every known item; the pool the free match-pairs rounds are drawn from. */
+	const readyCount = $derived(plan?.readyCount ?? 0);
+	const dueCount = $derived(plan?.dueCount ?? 0);
+	const canStart = $derived((plan?.challenges.length ?? 0) > 0);
+	/** Worth nudging towards a fresh lesson: nothing to play, or barely anything. */
+	const nudgeGenerate = $derived(plan !== null && (plan.poolLow || !canStart));
+
+	/* Session ----------------------------------------------------------------- */
+
+	/** The planned challenges, in order, and how far into them we are. */
+	let queue: Challenge[] = [];
+	let nextIndex = 0;
+
+	/** Every known item; what the free match-pairs rounds are drawn from. */
 	let items = $state<KnowledgeItem[]>([]);
 	let newWords = $state<KnowledgeItem[]>([]);
 
@@ -129,7 +127,7 @@
 	let bestCombo = $state(0);
 	let llmAnswered = $state(0);
 	let lastMatchAfter = $state(-1);
-	let plannedLlm = $state(SESSION_LENGTH);
+	let plannedLlm = $state(0);
 
 	let endStats = $state<Stats | undefined>(undefined);
 	let goalNewlyReached = $state(false);
@@ -143,13 +141,13 @@
 	/** When the current challenge was first shown; used for a skip's response time. */
 	let challengeShownAt = Date.now();
 
-	/* Preparing screen -------------------------------------------------------- */
+	/* Generation log ---------------------------------------------------------- */
 
 	/**
-	 * One step of the refill, as reported by `runRefillIfNeeded`. `endedAt` is
-	 * filled in when the *next* step starts (or when the refill finishes), which
-	 * is what makes the list honest about where the seconds went — especially
-	 * whether they went into the model call.
+	 * One step of a generation run, as reported by `generateChallenges`.
+	 * `endedAt` is filled in when the *next* step starts (or when the run
+	 * finishes), which is what makes the list honest about where the seconds
+	 * went — especially whether they went into the model call.
 	 */
 	interface PrepStep {
 		label: string;
@@ -158,9 +156,9 @@
 	}
 
 	let prepSteps = $state<PrepStep[]>([]);
-	/** Ticks while preparing, so the running step's counter moves. */
+	/** Ticks while generating, so the running step's counter moves. */
 	let prepNow = $state(Date.now());
-	/** Total refill time, shown briefly once the session starts. */
+	/** Total generation time, kept on screen once the lesson has landed. */
 	let prepTotalMs = $state<number | null>(null);
 
 	/** Closes whichever step is still open at `at`. */
@@ -180,9 +178,9 @@
 
 	/**
 	 * The in-flight `applyResult`. Never dropped on the floor: the UI advances
-	 * without waiting for it, but `continueSession` awaits it before the next
-	 * `takeNextChallenge`, because that is what actually removes the answered
-	 * challenge from the queue.
+	 * without waiting for it, but `continueSession` awaits it, so a rating given
+	 * as the learner reaches for Continue still lands on top of the review it
+	 * re-grades rather than racing it.
 	 */
 	let pendingWrite: Promise<void> = Promise.resolve();
 
@@ -204,127 +202,131 @@
 	$effect(() => {
 		if (booted || !browser) return;
 		booted = true;
-		void loadBootScreen();
+		void loadStartScreen();
 	});
 
 	$effect(() => {
-		if (phase !== 'preparing') return;
+		if (!generating) return;
 		const timer = setInterval(() => (prepNow = Date.now()), 100);
 		return () => clearInterval(timer);
 	});
 
 	/**
-	 * Decides which screen greets the learner: a leftover queue offers a
-	 * choice between resuming it and starting fresh; an empty one goes
-	 * straight to the topic picker, which *is* the "new session" path there.
-	 * Skipped straight past if there is no profile yet.
+	 * Boot: read the profile and plan a session from what the pool already
+	 * holds. No LLM call, no threshold check, nothing that can fail slowly —
+	 * this is why the start screen appears immediately however empty or full
+	 * the pool is. Skipped straight past if there is no profile yet.
 	 */
-	async function loadBootScreen(): Promise<void> {
-		const loaded = await getProfile();
-		if (!loaded) {
-			// The layout sends profile-less visitors to onboarding; nothing to do.
-			return;
+	async function loadStartScreen(): Promise<void> {
+		try {
+			const loaded = await getProfile();
+			if (!loaded) {
+				// The layout sends profile-less visitors to onboarding; nothing to do.
+				return;
+			}
+			profile = loaded;
+			mock = isMockMode();
+			recentTopics = getRecentTopics();
+			await refreshPlan();
+		} catch (cause) {
+			bootError = cause instanceof Error ? cause.message : 'Could not read your progress.';
 		}
-		profile = loaded;
-
-		const queued = await queuedCount();
-		if (queued > 0) {
-			leftoverCount = queued;
-			leftoverTopic = getCurrentTopic();
-			phase = 'choice';
-		} else {
-			showTopicScreen();
-		}
+		phase = 'start';
 	}
 
-	function showTopicScreen(): void {
-		recentTopics = getRecentTopics();
-		topicInput = '';
-		phase = 'topic';
+	/** Re-plans from the pool: at boot, and whenever a generation has landed. */
+	async function refreshPlan(): Promise<void> {
+		plan = await startSession();
 	}
 
-	/** "Continue session" on the choice screen: plays the existing queue as-is. */
-	function continueLeftoverSession(): void {
-		sessionTopic = leftoverTopic;
-		skipRefill = true;
-		void boot(leftoverTopic, { skipRefill: true });
-	}
-
-	/** "New session" on the choice screen: drops the leftovers, then the topic picker takes over. */
-	async function startNewSession(): Promise<void> {
-		await clearQueue();
-		setCurrentTopic(undefined);
-		showTopicScreen();
-	}
-
-	/** "Start" / Enter on the topic screen: banks the topic, then boots the session. */
-	function startWithTopic(): void {
-		const trimmed = topicInput.trim();
-		if (trimmed) recentTopics = addRecentTopic(trimmed);
-		sessionTopic = trimmed || undefined;
-		skipRefill = false;
-		void boot(sessionTopic, { skipRefill: false });
-	}
-
-	async function boot(topic: string | undefined, opts: { skipRefill: boolean }): Promise<void> {
-		phase = 'preparing';
-		errorMessage = '';
+	/**
+	 * "Generate new lesson": one batched LLM call, in the background.
+	 *
+	 * Deliberately not awaited by anything the learner is waiting on — they can
+	 * start a session from existing material while this runs, and if they do,
+	 * the finished batch just sits in the pool for next time. The only thing it
+	 * touches on completion is the plan behind the start screen.
+	 */
+	async function generate(): Promise<void> {
+		if (generating || !profile) return;
+		generating = true;
+		genError = '';
 		prepSteps = [];
 		prepTotalMs = null;
-		const prepStartedAt = Date.now();
-		prepNow = prepStartedAt;
+		const startedAt = Date.now();
+		prepNow = startedAt;
+
+		const topic = topicInput.trim();
+		if (topic) recentTopics = addRecentTopic(topic);
 
 		try {
-			if (!profile) {
-				const loaded = await getProfile();
-				if (!loaded) {
-					// The layout sends profile-less visitors to onboarding; nothing to do.
-					return;
-				}
-				profile = loaded;
-			}
+			await generateChallenges(profile, {
+				onProgress: recordPrepStep,
+				...(topic ? { topic } : {})
+			});
 
-			const stats = await getStats();
-			todayXpBefore = stats.history.find((e) => e.day === localDay(Date.now()))?.xp ?? 0;
+			// Close the last step and keep the total on screen, so "that felt long"
+			// can be checked against a number.
+			const finishedAt = Date.now();
+			prepSteps = closeOpenStep(prepSteps, finishedAt);
+			prepTotalMs = finishedAt - startedAt;
 
-			if (opts.skipRefill) {
-				// Continuing a leftover queue: no topic prompt, no LLM call — just
-				// play what's already there. The session ends gracefully (existing
-				// dry-queue path in `advance`) whenever it runs out.
-				mock = isMockMode();
-				items = await getAllItems();
-				newWords = [];
-				plannedLlm = Math.min(SESSION_LENGTH, await queuedCount());
-			} else {
-				const info = await runRefillIfNeeded(profile, {
-					onProgress: recordPrepStep,
-					...(topic ? { topic } : {})
-				});
-				mock = info.mock || isMockMode();
-				items = info.items;
-				newWords = info.newItems;
-				plannedLlm = Math.min(SESSION_LENGTH, info.queuedAfter);
-				setCurrentTopic(topic);
-
-				// Close the last step and keep the total around for a few seconds, so
-				// "that felt long" can be checked against a number. Never blocking.
-				const finishedAt = Date.now();
-				prepSteps = closeOpenStep(prepSteps, finishedAt);
-				prepTotalMs = finishedAt - prepStartedAt;
-				setTimeout(() => (prepTotalMs = null), 5000);
-			}
-
-			phase = 'playing';
-			await advance();
+			// The pool moved: re-plan so the counts and the Start button are honest.
+			// Harmless mid-session — the running session plays its own array.
+			await refreshPlan();
 		} catch (cause) {
-			errorMessage =
+			genError =
 				cause instanceof LlmError
 					? cause.message
 					: cause instanceof Error
 						? cause.message
-						: 'Something went wrong preparing your session.';
-			phase = 'error';
+						: 'Something went wrong building your lesson.';
+			prepSteps = [];
+			prepTotalMs = null;
+		} finally {
+			generating = false;
 		}
+	}
+
+	/**
+	 * "Start session": plays the plan the start screen was already showing.
+	 * Instant by construction — the challenges were chosen at boot.
+	 */
+	async function beginSession(): Promise<void> {
+		const ready = plan;
+		if (!ready || ready.challenges.length === 0) return;
+
+		queue = ready.challenges;
+		nextIndex = 0;
+		items = ready.items;
+		plannedLlm = ready.challenges.length;
+		newWords = firstTimeWords(ready);
+
+		answers = [];
+		combo = 0;
+		bestCombo = 0;
+		llmAnswered = 0;
+		lastMatchAfter = -1;
+
+		const stats = await getStats();
+		todayXpBefore = stats.history.find((e) => e.day === localDay(Date.now()))?.xp ?? 0;
+
+		phase = 'playing';
+		await advance();
+	}
+
+	/**
+	 * The words in this session the learner has never been reviewed on — what the
+	 * summary calls "New words".
+	 *
+	 * Generation no longer bookends a session, so "introduced by this batch" is
+	 * not a thing the session can know any more; an empty review history is the
+	 * honest local stand-in, and it stays true for a word that was generated
+	 * yesterday but is only being met now.
+	 */
+	function firstTimeWords(ready: SessionPlan): KnowledgeItem[] {
+		const exercised = new Set(ready.challenges.flatMap((challenge) => challenge.itemIds));
+		return ready.items.filter((item) => exercised.has(item.id) && item.history.length === 0);
 	}
 
 	/* ---------------------------------------------------------------------- */
@@ -346,10 +348,9 @@
 	async function advance(): Promise<void> {
 		feedback = null;
 
-		// `plannedLlm` is the queue as it stood at boot (capped by SESSION_LENGTH),
-		// so a completed session drains its whole batch instead of stopping at a
-		// fixed count and stranding the tail as a stub "continue session".
-		if (llmAnswered >= plannedLlm) {
+		// The plan is the session: when it is walked, we are done. Checked before
+		// the match round below so a session never ends on free filler.
+		if (nextIndex >= queue.length) {
 			await finish();
 			return;
 		}
@@ -364,14 +365,7 @@
 			}
 		}
 
-		const next = await takeNextChallenge();
-		if (!next) {
-			// Queue ran dry mid-session (a short batch, or a session resumed after
-			// most of it was already played). End on what we have.
-			await finish();
-			return;
-		}
-		show(next);
+		show(queue[nextIndex++]);
 	}
 
 	function show(challenge: Challenge): void {
@@ -540,10 +534,25 @@
 		});
 	}
 
+	/**
+	 * The learner flagged this challenge as broken. It is excluded from every
+	 * future plan, immediately and permanently — but the session does *not*
+	 * advance: a challenge worth reporting is usually one they still want
+	 * explained. Chained onto `pendingWrite` like every other write, and
+	 * swallowed on failure for the same reason.
+	 */
+	function reportCurrent(): void {
+		const fb = feedback;
+		if (!fb) return;
+		pendingWrite = pendingWrite.then(() => reportChallenge(fb.challenge)).catch(() => {
+			// A failed write must not eat the session; the banner already said thanks.
+		});
+	}
+
 	async function continueSession(): Promise<void> {
-		// Drop the banner first so it slides out while the write finishes; the
-		// queue read below must not happen until `markChallengeDone` has landed,
-		// or `takeNextChallenge` hands back the challenge just answered.
+		// Drop the banner first so it slides out while the write finishes, then
+		// wait for it: a self-assessment given at the last moment is chained onto
+		// the same promise and must land before the next challenge is shown.
 		feedback = null;
 		await pendingWrite;
 		await advance();
@@ -570,7 +579,13 @@
 		void quit();
 	}
 
-	/** Leaves early, but banks whatever was earned — progress is never punished. */
+	/**
+	 * Leaves early, but banks whatever was earned — progress is never punished.
+	 *
+	 * Nothing to clean up: challenges are only stamped as served when they are
+	 * answered, so everything the learner did not reach is still in the pool and
+	 * simply gets planned again next time.
+	 */
 	async function quit(): Promise<void> {
 		if (leaving) return;
 		leaving = true;
@@ -601,11 +616,14 @@
 		return seen.size;
 	});
 
-	/** Words introduced this session that the learner actually met in a challenge. */
+	/**
+	 * First-time words the learner actually reached. No fallback to the planned
+	 * set: `newWords` now names every never-reviewed word the *plan* touched, so
+	 * listing unmet ones on an early quit would claim words they never saw.
+	 */
 	const learnedWords = $derived.by(() => {
 		const practised = new Set(answers.flatMap((a) => a.itemIds));
-		const met = newWords.filter((word) => practised.has(word.id));
-		return met.length > 0 ? met : newWords;
+		return newWords.filter((word) => practised.has(word.id));
 	});
 
 	const confetti = $derived.by(() => {
@@ -635,121 +653,127 @@
 </svelte:head>
 
 <main class="shell">
-	{#if phase === 'choice'}
+	{#if phase === 'loading'}
+		<div class="centered"><Spinner /></div>
+	{:else if phase === 'start'}
 		<div class="centered">
-			<div class="card choice-card">
-				<h1>Pick up where you left off?</h1>
-				<p class="hint">
-					{#if leftoverTopic}
-						You have {leftoverCount} challenge{leftoverCount === 1 ? '' : 's'} left from “{leftoverTopic}”.
-					{:else}
-						You have {leftoverCount} challenge{leftoverCount === 1 ? '' : 's'} waiting in your queue.
-					{/if}
-				</p>
+			<div class="card start-card">
+				<h1>Ready when you are</h1>
 
-				<button
-					type="button"
-					class="btn btn-primary btn-block choice-btn"
-					onclick={continueLeftoverSession}
-				>
-					Continue session · {leftoverCount} left
-				</button>
-				<button
-					type="button"
-					class="btn btn-ghost btn-block choice-btn"
-					onclick={() => void startNewSession()}
-				>
-					New session
-				</button>
-			</div>
-		</div>
-	{:else if phase === 'topic'}
-		<div class="centered">
-			<div class="card topic-card">
-				<h1>What do you want to talk about today?</h1>
-				<p class="hint">Optional — pick or type a scenario and today's lesson leans into it.</p>
-
-				<input
-					class="input topic-input"
-					type="text"
-					bind:value={topicInput}
-					placeholder="e.g. checking into a hotel…"
-					autocomplete="off"
-					aria-label="Session topic"
-					onkeydown={(event) => {
-						if (event.key === 'Enter') {
-							event.preventDefault();
-							startWithTopic();
-						}
-					}}
-				/>
-
-				<div class="chip-row">
-					{#each topicChips as chip (chip)}
-						<button
-							type="button"
-							class="chip"
-							class:selected={topicInput.trim().toLowerCase() === chip.toLowerCase()}
-							onclick={() => (topicInput = chip)}
-						>
-							{chip}
-						</button>
-					{/each}
-				</div>
-
-				{#if recentTopics.length > 0}
-					<div class="recent">
-						<p class="recent-label">Recent</p>
-						<div class="chip-row">
-							{#each recentTopics as recent (recent)}
-								<button type="button" class="chip" onclick={() => (topicInput = recent)}>
-									{recent}
-								</button>
-							{/each}
-						</div>
-					</div>
+				{#if bootError}
+					<p class="error-message" role="alert">{bootError}</p>
+				{:else}
+					<p class="pool-status">
+						<strong>{readyCount}</strong> challenge{readyCount === 1 ? '' : 's'} ready ·
+						<strong>{dueCount}</strong>
+						word{dueCount === 1 ? '' : 's'} due for review
+					</p>
 				{/if}
 
-				<button type="button" class="btn btn-primary btn-block start-btn" onclick={startWithTopic}>
-					{topicInput.trim() ? 'Start' : 'Skip — just review'}
+				<button
+					type="button"
+					class="btn btn-primary btn-block start-btn"
+					disabled={!canStart}
+					onclick={() => void beginSession()}
+				>
+					Start session
 				</button>
-			</div>
-		</div>
-	{:else if phase === 'preparing'}
-		<div class="centered" role="status" aria-live="polite">
-			<Spinner />
-			<h1 class="prep-title">Preparing your session…</h1>
-			<ul class="prep-steps">
-				{#each prepSteps as step, index (index)}
-					{@const done = step.endedAt !== undefined}
-					<li class:done>
-						{#if done}
-							<span class="prep-mark" aria-hidden="true">✓</span>
-						{:else}
-							<span class="prep-mark prep-spinner" aria-hidden="true"></span>
-						{/if}
-						<span class="prep-label">{step.label}</span>
-						<span class="prep-secs">{stepSeconds(step)}s</span>
-					</li>
-				{/each}
-			</ul>
-		</div>
-	{:else if phase === 'error'}
-		<div class="centered">
-			<div class="card error-card">
-				<p class="error-emoji" aria-hidden="true">🧩</p>
-				<h1>We couldn't build a lesson</h1>
-				<p class="error-message" role="alert">{errorMessage}</p>
-				<div class="error-actions">
+
+				{#if nudgeGenerate}
+					<p class="nudge">
+						{canStart
+							? 'Running low on fresh material — generate a new lesson below.'
+							: 'Nothing to practise yet. Generate a lesson to get started.'}
+						{#if mock}
+							In practice mode it's instant and free.{/if}
+					</p>
+				{/if}
+
+				<section class="generate">
+					<h2>New lesson</h2>
+					<p class="hint">Optional — pick or type a scenario and the lesson leans into it.</p>
+
+					<input
+						class="input topic-input"
+						type="text"
+						bind:value={topicInput}
+						placeholder="e.g. checking into a hotel…"
+						autocomplete="off"
+						aria-label="Lesson topic"
+						onkeydown={(event) => {
+							if (event.key === 'Enter') {
+								event.preventDefault();
+								void generate();
+							}
+						}}
+					/>
+
+					<div class="chip-row">
+						{#each topicChips as chip (chip)}
+							<button
+								type="button"
+								class="chip"
+								class:selected={topicInput.trim().toLowerCase() === chip.toLowerCase()}
+								onclick={() => (topicInput = chip)}
+							>
+								{chip}
+							</button>
+						{/each}
+					</div>
+
+					{#if recentTopics.length > 0}
+						<div class="recent">
+							<p class="recent-label">Recent</p>
+							<div class="chip-row">
+								{#each recentTopics as recent (recent)}
+									<button type="button" class="chip" onclick={() => (topicInput = recent)}>
+										{recent}
+									</button>
+								{/each}
+							</div>
+						</div>
+					{/if}
+
 					<button
 						type="button"
-						class="btn btn-primary"
-						onclick={() => void boot(sessionTopic, { skipRefill })}
+						class="btn btn-ghost btn-block generate-btn"
+						disabled={generating}
+						onclick={() => void generate()}
 					>
-						Retry
+						{generating ? 'Generating…' : 'Generate new lesson'}
 					</button>
-					<a class="btn btn-ghost" href="/">Back</a>
-				</div>
+
+					{#if prepSteps.length > 0}
+						<ul class="prep-steps" role="status" aria-live="polite">
+							{#each prepSteps as step, index (index)}
+								{@const done = step.endedAt !== undefined}
+								<li class:done>
+									{#if done}
+										<span class="prep-mark" aria-hidden="true">✓</span>
+									{:else}
+										<span class="prep-mark prep-spinner" aria-hidden="true"></span>
+									{/if}
+									<span class="prep-label">{step.label}</span>
+									<span class="prep-secs">{stepSeconds(step)}s</span>
+								</li>
+							{/each}
+						</ul>
+						{#if prepTotalMs !== null}
+							<p class="prep-total" transition:fade={{ duration: motionMs(200) }}>
+								Lesson ready in {(prepTotalMs / 1000).toFixed(1)}s — it's in the pool.
+							</p>
+						{/if}
+					{/if}
+
+					{#if genError}
+						<div class="gen-error">
+							<p class="error-message" role="alert">{genError}</p>
+							<button type="button" class="btn btn-ghost" onclick={() => void generate()}>
+								Try again
+							</button>
+						</div>
+					{/if}
+				</section>
 			</div>
 		</div>
 	{:else if phase === 'summary'}
@@ -768,7 +792,7 @@
 			<div class="card summary-card">
 				{#if summary.answered === 0}
 					<h1>Nothing to practise</h1>
-					<p class="lead">Your queue is empty right now — come back in a bit.</p>
+					<p class="lead">Your pool has nothing ready right now — generate a new lesson.</p>
 				{:else}
 					<p class="summary-emoji" aria-hidden="true">{accuracyPct >= 80 ? '🎉' : '💪'}</p>
 					<h1>Session complete!</h1>
@@ -853,12 +877,6 @@
 			{/if}
 		</header>
 
-		{#if prepTotalMs !== null}
-			<p class="prep-total" transition:fade={{ duration: motionMs(200) }}>
-				Lesson ready in {(prepTotalMs / 1000).toFixed(1)}s
-			</p>
-		{/if}
-
 		{#if mock}
 			<p class="mock-banner">
 				Practice mode — add your OpenRouter key in <a href="/settings">Settings</a> for personalized
@@ -918,6 +936,7 @@
 				oncontinue={() => void continueSession()}
 				onoverturn={overturnCurrent}
 				onassess={assessCurrent}
+				onreport={reportCurrent}
 			/>
 		{/if}
 
@@ -926,8 +945,8 @@
 				<div class="card quit-card" in:scale={{ duration: motionMs(200), start: 0.92 }}>
 					<h2>Leave the session?</h2>
 					<p class="hint">
-						You've earned {summary.xp} XP so far — we'll keep it. The rest of the lesson stays in your
-						queue.
+						You've earned {summary.xp} XP so far — we'll keep it. Whatever you haven't played stays in
+						your pool for next time.
 					</p>
 					<div class="quit-actions">
 						<button type="button" class="btn btn-primary" onclick={() => (showQuitConfirm = false)}>
@@ -966,24 +985,57 @@
 		text-align: center;
 	}
 
-	/* Choice (leftover queue) ------------------------------------------------- */
+	/* Start ------------------------------------------------------------------- */
 
-	.choice-card {
+	.start-card {
+		width: 100%;
 		text-align: center;
 	}
 
-	.choice-btn {
-		margin-top: 1rem;
+	.pool-status {
+		margin: 0.35rem 0 1.25rem;
+		color: var(--text-muted);
+		font-size: 0.95rem;
 	}
 
-	.choice-btn:first-of-type {
-		margin-top: 1.5rem;
+	.pool-status strong {
+		color: var(--text);
 	}
 
-	/* Topic ------------------------------------------------------------------ */
+	.nudge {
+		margin: 0.9rem 0 0;
+		padding: 0.55rem 0.8rem;
+		border-radius: var(--radius-sm);
+		background: var(--accent-soft);
+		color: var(--text);
+		font-size: 0.85rem;
+		font-weight: 700;
+	}
 
-	.topic-card {
-		text-align: center;
+	.generate {
+		margin-top: 1.75rem;
+		padding-top: 1.25rem;
+		border-top: 1px solid var(--border);
+	}
+
+	.generate h2 {
+		margin: 0 0 0.25rem;
+		font-size: 0.78rem;
+		letter-spacing: 0.07em;
+		text-transform: uppercase;
+		color: var(--text-muted);
+	}
+
+	.generate-btn {
+		margin-top: 1.25rem;
+	}
+
+	.gen-error {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.5rem;
+		margin-top: 0.9rem;
 	}
 
 	.topic-input {
@@ -1046,12 +1098,7 @@
 		margin-top: 1.5rem;
 	}
 
-	/* Preparing ------------------------------------------------------------ */
-
-	.prep-title {
-		margin: 0.5rem 0 0;
-		font-size: 1.3rem;
-	}
+	/* Generation log ------------------------------------------------------- */
 
 	.prep-steps {
 		display: flex;
@@ -1059,7 +1106,7 @@
 		gap: 0.3rem;
 		width: 100%;
 		max-width: 20rem;
-		margin: 0.25rem 0 0;
+		margin: 0.9rem auto 0;
 		padding: 0;
 		list-style: none;
 		font-size: 0.85rem;
@@ -1125,32 +1172,19 @@
 	}
 
 	.prep-total {
-		margin: 0;
+		margin: 0.5rem 0 0;
 		font-size: 0.78rem;
 		font-weight: 700;
 		color: var(--text-muted);
 		text-align: center;
 	}
 
-	/* Error ---------------------------------------------------------------- */
-
-	.error-card {
-		text-align: center;
-	}
-
-	.error-emoji {
-		margin: 0 0 0.5rem;
-		font-size: 2.5rem;
-	}
+	/* Errors --------------------------------------------------------------- */
 
 	.error-message {
-		color: var(--text-muted);
-	}
-
-	.error-actions {
-		display: flex;
-		justify-content: center;
-		gap: 0.6rem;
+		color: var(--danger);
+		font-size: 0.88rem;
+		font-weight: 700;
 	}
 
 	/* Top bar -------------------------------------------------------------- */

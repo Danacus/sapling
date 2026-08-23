@@ -37,7 +37,8 @@
 		overturned = false,
 		oncontinue,
 		onoverturn,
-		onassess
+		onassess,
+		onreport
 	}: {
 		challenge: Challenge;
 		verdict: Verdict;
@@ -76,6 +77,12 @@
 		 * review from its pre-answer state, so the last call wins.
 		 */
 		onassess?: (grade: Grade) => void;
+		/**
+		 * The learner flagged this challenge as broken. Fired at most once; the
+		 * page excludes it from the pool for good. Absent for locally built
+		 * match-pairs rounds, which have no pool row to flag.
+		 */
+		onreport?: () => void;
 	} = $props();
 
 	/** Read once — the toggle lives in Settings, not mid-session. */
@@ -116,6 +123,24 @@
 		if (grade === assessed) return;
 		assessed = grade;
 		onassess?.(grade);
+	}
+
+	/* Reporting -------------------------------------------------------------- */
+
+	/**
+	 * Flagged, and staying flagged for as long as this banner is up — the button
+	 * turns into its own receipt rather than a toast, because the learner is
+	 * about to leave the banner anyway.
+	 *
+	 * Deliberately does *not* advance the session: a challenge worth reporting is
+	 * usually one the learner still wants explained.
+	 */
+	let reported = $state(false);
+
+	function report(): void {
+		if (reported) return;
+		reported = true;
+		onreport?.();
 	}
 
 	/** What the banner paints as, once a dispute has been won. */
@@ -360,6 +385,18 @@
 			<button type="button" class="btn btn-ghost explain-btn" onclick={toggleExplain}>
 				{showExplain ? 'Hide' : 'Explain'}
 			</button>
+			{#if onreport && challenge.type !== 'match-pairs'}
+				<button
+					type="button"
+					class="btn btn-ghost report-btn"
+					class:reported
+					disabled={reported}
+					onclick={report}
+					title="This challenge is broken — never show it again"
+				>
+					{reported ? 'Reported' : 'Report'}
+				</button>
+			{/if}
 			<button type="button" class="btn continue" onclick={oncontinue}>
 				{last ? 'Finish' : 'Continue'}
 			</button>
@@ -572,6 +609,22 @@
 
 	.explain-btn {
 		padding: 0.85rem 1rem;
+	}
+
+	/* Quieter than Explain: a rare escape hatch, not part of the loop. */
+	.report-btn {
+		padding: 0.85rem 0.7rem;
+		font-size: 0.82rem;
+		opacity: 0.7;
+	}
+
+	.report-btn:hover:not(:disabled) {
+		opacity: 1;
+	}
+
+	.report-btn.reported {
+		opacity: 0.9;
+		color: var(--text-muted);
 	}
 
 	.continue {

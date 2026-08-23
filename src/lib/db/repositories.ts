@@ -6,8 +6,6 @@
  * node test environment), so all the logic worth testing lives elsewhere.
  */
 
-import Dexie from 'dexie';
-
 import type { Challenge, ChallengeResult, KnowledgeItem, Profile, Stats } from '$lib/types';
 import { db, SINGLETON_KEY } from './database';
 import type { ChallengeRow } from './database';
@@ -53,7 +51,7 @@ export async function upsertItems(items: KnowledgeItem[]): Promise<void> {
 /**
  * Forgets one word entirely.
  *
- * Safe to call mid-session: queued challenges keep pointing at the id, and
+ * Safe to call mid-session: pooled challenges keep pointing at the id, and
  * {@link updateItemAfterReview} — via `applyResult` — skips items that are no
  * longer there. The learner sees the challenge play out, it just grades nothing.
  */
@@ -93,62 +91,82 @@ export async function updateItemAfterReview(
 }
 
 /* -------------------------------------------------------------------------- */
-/* Challenge queue                                                             */
+/* Challenge pool                                                              */
 /* -------------------------------------------------------------------------- */
 
 /**
- * Appends generated challenges to the queue.
+ * Adds a freshly generated batch to the pool.
  *
- * `enqueuedAt` is offset by the index so a batch keeps the order it was
- * generated in even when the whole batch is written in the same millisecond.
+ * `generatedAt` is offset by the index so a batch keeps the order it was
+ * written in even when every row lands in the same millisecond — the planner's
+ * "newest first" freshness fill leans on that ordering being total.
  */
-export async function enqueueChallenges(challenges: Challenge[]): Promise<void> {
+export async function addToPool(
+	challenges: Challenge[],
+	now: number = Date.now(),
+	topic?: string
+): Promise<void> {
 	if (challenges.length === 0) return;
-	const now = Date.now();
+	const trimmed = topic?.trim();
 	const rows: ChallengeRow[] = toPlain(challenges).map((challenge, index) => ({
 		...challenge,
-		status: 'queued',
-		enqueuedAt: now + index
+		generatedAt: now + index,
+		timesServed: 0,
+		lastServedAt: null,
+		reported: false,
+		...(trimmed ? { topic: trimmed } : {})
 	}));
 	await db.challenges.bulkPut(rows);
 }
 
 /**
- * The oldest queued challenge, or `undefined` when the queue is empty.
+ * Every challenge the learner could still be shown, in no particular order.
  *
- * Peeking only: the challenge stays queued until {@link markChallengeDone}.
+ * Reported rows are dropped here rather than at the planner, so "flagged" means
+ * gone everywhere at once. Everything else — eligibility, recycling gaps,
+ * ordering — is `planSession`'s business, working in memory over this array:
+ * one learner's pool is a few hundred rows, which is not worth an index.
  */
-export async function takeNextChallenge(): Promise<Challenge | undefined> {
-	return db.challenges
-		.where('[status+enqueuedAt]')
-		.between(['queued', Dexie.minKey], ['queued', Dexie.maxKey])
-		.first();
+export async function getPool(): Promise<ChallengeRow[]> {
+	const rows = await db.challenges.toArray();
+	return rows.filter((row) => !row.reported);
 }
 
 /**
- * Looks challenges up by id, answered ones included — `markChallengeDone` only
- * flips a status, it never deletes. Used to turn a result log entry back into
- * the words it exercised. Ids that no longer exist are simply absent.
+ * Stamps a challenge as served: one more play, at `now`.
+ *
+ * Called when an answer is *committed*, not when a challenge is planned, which
+ * is what makes an early quit self-cleaning — challenges the learner never
+ * reached were never stamped, so they simply come back next session.
+ *
+ * A missing id is a no-op: locally built match-pairs rounds are never pooled,
+ * so `applyResult` can call this unconditionally.
+ */
+export async function recordServe(id: string, now: number = Date.now()): Promise<void> {
+	await db.transaction('rw', db.challenges, async () => {
+		const row = await db.challenges.get(id);
+		if (!row) return;
+		await db.challenges.put({ ...row, timesServed: row.timesServed + 1, lastServedAt: now });
+	});
+}
+
+/**
+ * Flags a challenge the learner reported as broken. The row stays (results
+ * point at it) but {@link getPool} never hands it out again.
+ */
+export async function reportChallenge(id: string): Promise<void> {
+	await db.challenges.update(id, { reported: true });
+}
+
+/**
+ * Looks challenges up by id, reported and already-answered ones included —
+ * nothing here ever deletes. Used to turn a result log entry back into the
+ * words it exercised. Ids that no longer exist are simply absent.
  */
 export async function getChallengesByIds(ids: string[]): Promise<Challenge[]> {
 	if (ids.length === 0) return [];
 	const rows = await db.challenges.bulkGet(ids);
 	return rows.filter((row): row is ChallengeRow => row !== undefined);
-}
-
-/** Marks a challenge as answered so it leaves the queue. */
-export async function markChallengeDone(id: string): Promise<void> {
-	await db.challenges.update(id, { status: 'done' });
-}
-
-/** How many challenges are still waiting to be answered. */
-export async function queuedCount(): Promise<number> {
-	return db.challenges.where('status').equals('queued').count();
-}
-
-/** Drops every still-queued challenge (answered ones are kept). */
-export async function clearQueue(): Promise<void> {
-	await db.challenges.where('status').equals('queued').delete();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -256,7 +274,10 @@ export interface ExportEnvelope {
  * Serializes profile, items and stats as JSON.
  *
  * Deliberately excludes the API key (it lives in `localStorage`) and the
- * challenge queue (regenerated content, not progress).
+ * challenge pool (regenerated content, not progress — and the pool's serve
+ * bookkeeping means nothing on another device). Nothing in the envelope
+ * mentions challenges, so the pool's row shape is free to change without
+ * touching the export format.
  */
 export async function exportData(): Promise<string> {
 	const [profile, items, stats] = await Promise.all([getProfile(), getAllItems(), getStats()]);
@@ -278,7 +299,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Restores a dump produced by {@link exportData}, replacing existing data.
  *
  * Throws on malformed input or an unsupported envelope version; the API key and
- * the challenge queue are untouched.
+ * the challenge pool are untouched.
  */
 export async function importData(json: string): Promise<void> {
 	let parsed: unknown;

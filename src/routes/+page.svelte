@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 
-	import { deleteItem, getAllItems, getProfile, getStats, localDay, queuedCount } from '$lib/db';
+	import { deleteItem, getAllItems, getPool, getProfile, getStats, localDay } from '$lib/db';
 	import { isDue, wordStrength, type FsrsCardState } from '$lib/srs';
 	import type { KnowledgeItem, Profile, Stats } from '$lib/types';
 	import ProgressBar from '$lib/ui/ProgressBar.svelte';
@@ -21,7 +21,8 @@
 	let stats = $state<Stats | undefined>(undefined);
 	let now = $state(Date.now());
 	let showAllWeak = $state(false);
-	let queued = $state(0);
+	/** Challenges in the pool — an upper bound on what a session could draw from. */
+	let pooled = $state(0);
 	/** Word list in edit mode: every row grows a delete button. Off by default. */
 	let managing = $state(false);
 	let manageError = $state('');
@@ -33,13 +34,13 @@
 		loading = true;
 		loadError = '';
 
-		Promise.all([getProfile(), getAllItems(), getStats(), queuedCount()])
-			.then(([loadedProfile, loadedItems, loadedStats, loadedQueued]) => {
+		Promise.all([getProfile(), getAllItems(), getStats(), getPool()])
+			.then(([loadedProfile, loadedItems, loadedStats, pool]) => {
 				if (cancelled) return;
 				profile = loadedProfile;
 				items = loadedItems;
 				stats = loadedStats;
-				queued = loadedQueued;
+				pooled = pool.length;
 				now = Date.now();
 				loading = false;
 			})
@@ -171,13 +172,13 @@
 
 		<section class="card start-card">
 			<a class="btn btn-primary btn-block start-btn" href="/learn">Start session</a>
-			{#if queued > 0}
-				<p class="hint centered">
-					{queued} challenge{queued === 1 ? '' : 's'} waiting — pick up where you left off
-				</p>
-			{:else if items.length === 0}
+			{#if items.length === 0}
 				<p class="hint centered">
 					Your first session will introduce your first words in {targetLanguage}.
+				</p>
+			{:else if pooled === 0}
+				<p class="hint centered">
+					No challenges in your pool — generate a lesson to fill it back up.
 				</p>
 			{:else}
 				<p class="hint centered">

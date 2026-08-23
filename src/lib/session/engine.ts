@@ -2,36 +2,47 @@
  * Session engine: everything the learn screen needs that is not rendering.
  *
  * The split is deliberate. `+page.svelte` owns the *feel* (transitions,
- * keyboard, banners); this module owns the *rules* (what to generate, what an
+ * keyboard, banners); this module owns the *rules* (what to play, what an
  * answer is worth, what gets written to the database). Anything worth a unit
  * test lives here, and the pure half — {@link xpFor}, {@link comboAfter},
- * {@link planRefill}, {@link sessionSummary} — is testable without IndexedDB.
+ * {@link planRefill}, {@link planSession}, {@link sessionSummary} — is testable
+ * without IndexedDB.
  *
- * Token economy, restated because it drives the refill policy below: one
- * batched `getBatch` call produces a whole lesson (~2.5k tokens), grading is
- * local and free, and only an explicit "explain this" spends more. So we
- * refill rarely and generously rather than often and thinly.
+ * **Generation and play are decoupled.** Every challenge ever generated lives
+ * in a persistent pool (`challenges` in IndexedDB); answering one stamps it
+ * rather than consuming it. {@link generateChallenges} is an explicit,
+ * backgroundable user action that adds to the pool, and {@link planSession}
+ * assembles a session out of whatever is already there — so starting is
+ * instant, always, and never waits on the network.
+ *
+ * Token economy, restated because it is what allows that: one batched
+ * `getBatch` call produces a whole lesson (~2.5k tokens), grading is local and
+ * free, and only an explicit "explain this" spends more. So we generate rarely
+ * and generously, and get many sessions out of each batch by recycling.
  */
 
 import {
 	addResult,
+	addToPool,
 	addXp,
-	enqueueChallenges,
 	getAllItems,
 	getChallengesByIds,
 	getItem,
-	markChallengeDone,
-	queuedCount,
+	getPool,
 	recentResults,
+	recordServe,
+	reportChallenge as flagChallengeReported,
 	updateItemAfterReview,
 	upsertItems
 } from '$lib/db';
+import type { ChallengeRow } from '$lib/db';
 import { getBatch, isMockMode } from '$lib/llm';
 import type { BatchArgs, OnProgress, RecentMistake, TokenUsage } from '$lib/llm';
 import {
 	Grade,
 	accuracyFromHistory,
 	gradeFromResult,
+	isDue,
 	newCardState,
 	reviewCard,
 	selectSessionItems,
@@ -50,21 +61,32 @@ import type {
 /* Tuning                                                                      */
 /* -------------------------------------------------------------------------- */
 
-/** Refill the queue as soon as fewer than this many challenges are left. */
-export const REFILL_THRESHOLD = 5;
-
 /** Challenges we ask the model for in one batch. */
 export const BATCH_TARGET = 14;
 
 /**
- * Hard ceiling on LLM challenges in one session. A session normally ends when
- * the queue runs dry, not here — the batch size ({@link BATCH_TARGET}) is what
- * actually sizes a session. The ceiling only exists so a queue that piled up
- * (several aborted sessions in a row) cannot turn into a marathon.
+ * How long a challenge rests after being served before it may be planned again.
  *
- * Keep this ≥ {@link BATCH_TARGET}: a ceiling below the batch size makes every
- * completed session strand `BATCH_TARGET - SESSION_LENGTH` challenges, which
- * then nag as a stub "continue session" forever.
+ * The pool is recycled, but not tightly: re-seeing the exact same sentence a
+ * few minutes later trains *the card* — the shape of that one prompt and the
+ * answer that goes with it — rather than the word underneath. Three days is
+ * long enough that the sentence has to be re-read rather than recognized, and
+ * short enough that a modest pool still covers a daily habit.
+ */
+export const RESERVE_GAP = 3 * 24 * 60 * 60 * 1000;
+
+/**
+ * A planned session shorter than this is reported as `poolLow`, so the start
+ * screen can nudge towards generating. Deliberately below {@link BATCH_TARGET}:
+ * a slightly short session is still a session, and nagging on every visit is
+ * how a nudge becomes wallpaper.
+ */
+export const POOL_LOW_THRESHOLD = 8;
+
+/**
+ * Hard ceiling on LLM challenges in one session. {@link BATCH_TARGET} is what
+ * actually sizes a session; this only exists so a pool that has grown large
+ * cannot turn one sitting into a marathon.
  */
 export const SESSION_LENGTH = 20;
 
@@ -93,7 +115,7 @@ export const SKIP_ANSWER = '(skipped)';
 /** How many trouble words are worth carrying into the next batch prompt. */
 export const MAX_RECENT_MISTAKES = 8;
 
-/** How far back {@link runRefillIfNeeded} reads the result log for those. */
+/** How far back {@link generateChallenges} reads the result log for those. */
 export const RECENT_RESULTS_WINDOW = 30;
 
 /* -------------------------------------------------------------------------- */
@@ -233,7 +255,149 @@ export function wantsMatchRound(llmAnswered: number, lastMatchAfter: number): bo
 }
 
 /* -------------------------------------------------------------------------- */
-/* Refill planning (pure)                                                      */
+/* Session planning (pure)                                                     */
+/* -------------------------------------------------------------------------- */
+
+export interface PlanSessionOptions {
+	/** Slots to aim for. Defaults to {@link BATCH_TARGET}. */
+	target?: number;
+	/** Hard ceiling, whatever `target` says. Defaults to {@link SESSION_LENGTH}. */
+	limit?: number;
+}
+
+/** `fsrsCard` is `unknown` on the domain type; a missing card means "brand new". */
+function cardOf(item: KnowledgeItem): FsrsCardState | null {
+	return (item.fsrsCard as FsrsCardState | null | undefined) ?? null;
+}
+
+/** True while a pooled challenge may be planned again. */
+function isEligible(row: ChallengeRow, knownItemIds: Set<string>, now: number): boolean {
+	if (row.reported) return false;
+	// A challenge whose vocabulary the learner deleted grades nothing and often
+	// no longer even makes sense; it is dead weight, not practice.
+	if (row.itemIds.length === 0) return false;
+	if (!row.itemIds.every((id) => knownItemIds.has(id))) return false;
+	if (row.lastServedAt === null) return true;
+	return now - row.lastServedAt >= RESERVE_GAP;
+}
+
+/**
+ * Ranks two eligible challenges by how much we want to serve them *next*.
+ *
+ * Never-served first (a fresh batch — and the new vocabulary in it — has to be
+ * able to surface at all), newest generation first within those so the batch
+ * the learner just paid for leads; then served ones, least recently first, so
+ * recycling rotates through the pool instead of favouring one corner of it.
+ * Ids break every remaining tie, which is what keeps a plan reproducible.
+ */
+function byFreshness(a: ChallengeRow, b: ChallengeRow): number {
+	const aNew = a.lastServedAt === null;
+	const bNew = b.lastServedAt === null;
+	if (aNew !== bNew) return aNew ? -1 : 1;
+	if (aNew && bNew) return b.generatedAt - a.generatedAt || (a.id < b.id ? -1 : 1);
+	return (a.lastServedAt ?? 0) - (b.lastServedAt ?? 0) || (a.id < b.id ? -1 : 1);
+}
+
+/**
+ * Builds the session: which pooled challenges to play, in order.
+ *
+ * **Due beats fresh, and that is the whole design.** The obvious cheap version
+ * — score every challenge by freshness and take the top N — quietly kills
+ * spaced repetition, because each new batch is newer than everything already
+ * pooled and so crowds out every review that came due in the meantime. So the
+ * walk is item-first: every due word, most overdue first, claims the best
+ * challenge that exercises it; freshness only decides *which* of that word's
+ * challenges wins, and only then fills whatever slots are left over.
+ *
+ * A second pass gives due items a second challenge each before the leftovers
+ * are handed to fresh material: two angles on a word that is genuinely due is
+ * worth more than one more sentence about a word that is not.
+ *
+ * Eligibility is checked once, up front: not reported, every `itemIds` entry
+ * still resolving to a real item, and either never served or rested for
+ * {@link RESERVE_GAP}.
+ *
+ * Pure and deterministic — no clock, no database, no rng — so a plan can be
+ * pinned exactly in tests.
+ */
+export function planSession(
+	pool: ChallengeRow[],
+	items: KnowledgeItem[],
+	now: number,
+	opts: PlanSessionOptions = {}
+): Challenge[] {
+	const limit = Math.max(0, opts.limit ?? SESSION_LENGTH);
+	const target = Math.min(Math.max(0, opts.target ?? BATCH_TARGET), limit);
+	if (target === 0) return [];
+
+	const knownItemIds = new Set(items.map((item) => item.id));
+	const eligible = pool.filter((row) => isEligible(row, knownItemIds, now)).sort(byFreshness);
+
+	// Which challenges exercise which word, each bucket already in serve order.
+	const byItem = new Map<string, ChallengeRow[]>();
+	for (const row of eligible) {
+		for (const id of row.itemIds) {
+			const bucket = byItem.get(id);
+			if (bucket) bucket.push(row);
+			else byItem.set(id, [row]);
+		}
+	}
+
+	// Most overdue first. A card-less item is treated as due right now: it was
+	// introduced but never scheduled, so it belongs in this session, just not
+	// ahead of words the learner is actually late on.
+	const dueItems = items
+		.filter((item) => {
+			const card = cardOf(item);
+			return card === null || isDue(card, now);
+		})
+		.sort((a, b) => (cardOf(a)?.due ?? now) - (cardOf(b)?.due ?? now) || (a.id < b.id ? -1 : 1));
+
+	const chosen: ChallengeRow[] = [];
+	const taken = new Set<string>();
+
+	for (let pass = 0; pass < 2 && chosen.length < target; pass++) {
+		for (const item of dueItems) {
+			if (chosen.length >= target) break;
+			const next = byItem.get(item.id)?.find((row) => !taken.has(row.id));
+			if (!next) continue;
+			taken.add(next.id);
+			chosen.push(next);
+		}
+	}
+
+	// Whatever is left: the fresh batch that no due word claimed, then the
+	// least-recently-served leftovers. `eligible` is already in that order.
+	for (const row of eligible) {
+		if (chosen.length >= target) break;
+		if (taken.has(row.id)) continue;
+		taken.add(row.id);
+		chosen.push(row);
+	}
+
+	return chosen.map(toChallenge);
+}
+
+/**
+ * Sheds the pool bookkeeping so the session and its components see a plain
+ * domain `Challenge`. The cast is unavoidable: a rest-destructure over a
+ * discriminated union produces an `Omit` that no longer narrows on `type`,
+ * even though every field of it survived.
+ */
+function toChallenge(row: ChallengeRow): Challenge {
+	const {
+		generatedAt: _generatedAt,
+		timesServed: _timesServed,
+		lastServedAt: _lastServedAt,
+		reported: _reported,
+		topic: _topic,
+		...challenge
+	} = row;
+	return challenge as Challenge;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Batch-request planning (pure)                                               */
 /* -------------------------------------------------------------------------- */
 
 /** What {@link planRefill} decided, ready to hand to `getBatch`. */
@@ -312,7 +476,7 @@ export interface PlanRefillOptions {
 	/** The challenge rows those results point at, in any order. */
 	recentChallenges?: Challenge[];
 	/**
-	 * Free-form scenario for this session, e.g. `'ordering in a restaurant'`.
+	 * Free-form scenario for this lesson, e.g. `'ordering in a restaurant'`.
 	 * Blank/whitespace-only is treated the same as absent — the key is only
 	 * added to {@link BatchArgs} when it carries real content.
 	 */
@@ -372,37 +536,31 @@ export function planRefill(
 }
 
 /* -------------------------------------------------------------------------- */
-/* Refill (database + LLM)                                                     */
+/* Generation (database + LLM)                                                 */
 /* -------------------------------------------------------------------------- */
 
-/** What a refill attempt did, for the UI's banner and dev console. */
-export interface RefillInfo {
-	/** False when the queue was already deep enough and nothing was generated. */
-	refilled: boolean;
-	queuedBefore: number;
-	queuedAfter: number;
+/** What one generation run produced, for the UI's status area and dev console. */
+export interface GenerateInfo {
 	addedChallenges: number;
 	/** Freshly introduced words, already persisted with initialized card state. */
 	newItems: KnowledgeItem[];
 	usage: TokenUsage;
 	/** True when the offline mock produced this batch (no key configured). */
 	mock: boolean;
-	/** Every item known after the refill — the match-pairs pool. */
+	/** Every item known afterwards — the match-pairs pool. */
 	items: KnowledgeItem[];
-	plan?: RefillPlan;
+	plan: RefillPlan;
 }
 
-export interface RunRefillOptions {
+export interface GenerateOptions {
 	now?: number;
 	signal?: AbortSignal;
-	/** Generate even when the queue is deep enough. */
-	force?: boolean;
 	maxItems?: number;
 	count?: number;
 	/** Forwarded to {@link planRefill}; see {@link PlanRefillOptions.topic}. */
 	topic?: string;
 	/**
-	 * Called as each phase of the refill starts, so the learn screen can show
+	 * Called as each phase of generation starts, so the learn screen can show
 	 * what is being waited on. Steps are reported, not measured: the caller times
 	 * each one from its event to the next.
 	 */
@@ -466,47 +624,37 @@ export function remapItemIds(challenges: Challenge[], idRemap: Map<string, strin
 }
 
 /**
- * Tops the challenge queue up when it has run low.
+ * Writes one new lesson into the pool. The learner asked for this.
+ *
+ * There is no threshold and no "if needed": generating is a deliberate button
+ * press, it is the only thing in the app that spends tokens on content, and the
+ * pool it adds to is never drained by playing. The caller runs this in the
+ * background — a session can be played from existing material while it is in
+ * flight, and the batch simply shows up in the pool for next time.
  *
  * Order matters: new items are persisted *with real FSRS card state* before the
- * challenges that reference them are enqueued, so the queue can never point at
- * an item that does not exist yet. `getBatch` hands back `fsrsCard: null` by
- * design (the LLM layer must not depend on ts-fsrs) — initializing it is this
- * function's job.
+ * challenges that reference them are pooled, so the pool can never point at an
+ * item that does not exist yet (which {@link planSession} would then discard as
+ * ineligible). `getBatch` hands back `fsrsCard: null` by design — the LLM layer
+ * must not depend on ts-fsrs — so initializing it is this function's job.
  *
  * `LlmError` is deliberately **not** caught: its `message` is already written
- * for a human, and the learn screen renders it with a retry button.
+ * for a human, and the learn screen renders it inline with a retry button.
  */
-export async function runRefillIfNeeded(
+export async function generateChallenges(
 	profile: Profile,
-	opts: RunRefillOptions = {}
-): Promise<RefillInfo> {
+	opts: GenerateOptions = {}
+): Promise<GenerateInfo> {
 	const now = opts.now ?? Date.now();
 	const progress = opts.onProgress;
-
-	progress?.({ id: 'queue-check', label: 'Checking your queue' });
-	const queuedBefore = await queuedCount();
 	const mock = isMockMode();
-
-	if (!opts.force && queuedBefore >= REFILL_THRESHOLD) {
-		return {
-			refilled: false,
-			queuedBefore,
-			queuedAfter: queuedBefore,
-			addedChallenges: 0,
-			newItems: [],
-			usage: { promptTokens: 0, completionTokens: 0 },
-			mock,
-			items: await getAllItems()
-		};
-	}
 
 	progress?.({ id: 'select-items', label: 'Selecting review words' });
 	const items = await getAllItems();
 
 	// The trouble list for the prompt: recent misses, resolved back to the words
-	// they exercised. Done rows stay in the challenges table, so this is a plain
-	// lookup — bounded by RECENT_RESULTS_WINDOW so it stays one cheap read.
+	// they exercised. Answered rows stay in the pool, so this is a plain lookup —
+	// bounded by RECENT_RESULTS_WINDOW so it stays one cheap read.
 	const results = await recentResults(RECENT_RESULTS_WINDOW);
 	const missed = results.filter((result) => result.verdict === 'wrong');
 	const recentChallenges = await getChallengesByIds([
@@ -541,12 +689,9 @@ export async function runRefillIfNeeded(
 
 	progress?.({ id: 'save', label: 'Saving your lesson' });
 	await upsertItems(newItems);
-	await enqueueChallenges(challenges);
+	await addToPool(challenges, now, opts.topic);
 
 	return {
-		refilled: true,
-		queuedBefore,
-		queuedAfter: await queuedCount(),
 		addedChallenges: challenges.length,
 		newItems,
 		usage: batch.usage,
@@ -554,6 +699,75 @@ export async function runRefillIfNeeded(
 		items: [...items, ...newItems],
 		plan
 	};
+}
+
+/* -------------------------------------------------------------------------- */
+/* Starting a session (database)                                               */
+/* -------------------------------------------------------------------------- */
+
+/** Everything the learn screen needs to render its start screen and then play. */
+export interface SessionPlan {
+	/** The challenges to play, in order. Empty means there is nothing to do. */
+	challenges: Challenge[];
+	/** Every item known right now — the match-pairs pool and the item lookup. */
+	items: KnowledgeItem[];
+	/** Pooled challenges that could be played at all (before session sizing). */
+	readyCount: number;
+	/** Words whose card is due at `now`. */
+	dueCount: number;
+	/**
+	 * The plan came up short — recycling gaps and reported rows have eaten the
+	 * pool. The UI nudges towards generating; it does not block starting.
+	 */
+	poolLow: boolean;
+}
+
+/**
+ * Reads the pool and plans a session from it. No network, no generation, no
+ * waiting: this is what makes "Start session" instant, whatever state the
+ * learner's key or connection is in.
+ *
+ * Cheap enough to re-run whenever the pool may have moved (a background
+ * generation finishing, say) so the start screen's counts stay honest.
+ */
+export async function startSession(
+	opts: { now?: number } & PlanSessionOptions = {}
+): Promise<SessionPlan> {
+	const now = opts.now ?? Date.now();
+	const { now: _now, ...planOpts } = opts;
+
+	const [pool, items] = await Promise.all([getPool(), getAllItems()]);
+	const challenges = planSession(pool, items, now, planOpts);
+
+	const knownItemIds = new Set(items.map((item) => item.id));
+	const readyCount = pool.filter((row) => isEligible(row, knownItemIds, now)).length;
+	const dueCount = items.filter((item) => {
+		const card = cardOf(item);
+		return card === null || isDue(card, now);
+	}).length;
+
+	return {
+		challenges,
+		items,
+		readyCount,
+		dueCount,
+		poolLow: challenges.length < POOL_LOW_THRESHOLD
+	};
+}
+
+/**
+ * The learner flagged a challenge as broken from the feedback banner: wrong
+ * answer key, nonsense sentence, an "answer" that was never typeable.
+ *
+ * One flag is enough — the row is excluded from every future pool read rather
+ * than merely deprioritized, because a challenge the learner had to argue with
+ * is worse than no challenge at all. The row itself stays, since results point
+ * at it. Match-pairs rounds are built locally and never pooled, so flagging one
+ * is a no-op (there is nothing to fix but the generator's item list).
+ */
+export async function reportChallenge(challenge: Challenge): Promise<void> {
+	if (challenge.type === 'match-pairs') return;
+	await flagChallengeReported(challenge.id);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -575,9 +789,14 @@ export interface AnswerOutcome {
 }
 
 /**
- * Persists one answer: SRS card updates, the result log entry, and removal from
- * the queue. All database writes for an answered challenge happen here, so
+ * Persists one answer: SRS card updates, the result log entry, and the pool's
+ * serve stamp. All database writes for an answered challenge happen here, so
  * components never import a repository.
+ *
+ * The stamp lands at *answer* time, not when the session was planned, and that
+ * asymmetry is what makes an early quit self-cleaning: challenges the learner
+ * never reached were never stamped, so they come back in the next plan for
+ * free, with no leftover-queue bookkeeping to reconcile.
  *
  * **Match-pairs deliberately touches no SRS state.** A matching round is a
  * recognition drill built locally from words the learner already has; letting it
@@ -623,9 +842,9 @@ export async function applyResult(
 		at: now
 	});
 
-	// Ephemeral match-pairs rounds were never enqueued; Dexie's `update` on a
-	// missing key is a no-op, so this stays a single unconditional call.
-	await markChallengeDone(challenge.id);
+	// Ephemeral match-pairs rounds were never pooled; `recordServe` no-ops on a
+	// missing id, so this stays a single unconditional call.
+	await recordServe(challenge.id, now);
 
 	return priorCards;
 }
