@@ -50,13 +50,18 @@ export {
 	chatCompletion
 } from './client';
 export type {
+	AssistantMessage,
 	ChatCompletionOptions,
 	ChatCompletionResult,
 	ChatMessage,
 	FetchLike,
 	LlmErrorKind,
 	ResponseFormat,
-	TokenUsage
+	TextMessage,
+	TokenUsage,
+	ToolCallRequest,
+	ToolDef,
+	ToolResultMessage
 } from './client';
 
 export {
