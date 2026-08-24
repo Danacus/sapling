@@ -104,7 +104,14 @@ sw.addEventListener('fetch', (event) => {
 			// Hashed build output and static files: cache-first, no revalidation.
 			// A new deploy ships a new `version`, hence a new cache, hence new
 			// entries — staleness is impossible by construction.
-			if (isPrecached) {
+			//
+			// Deliberately excludes navigations even though `SHELL` ('/') is itself
+			// precached: without this exclusion every navigation would be answered
+			// from cache before the network-first logic below ever runs, and a tab
+			// stuck on an old service worker could never recover — not even via a
+			// hard reload, which bypasses the browser's HTTP cache but not an active
+			// SW's own fetch interception.
+			if (isPrecached && request.mode !== 'navigate') {
 				const hit = await cache.match(url.pathname);
 				if (hit) return hit;
 			}
