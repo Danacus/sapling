@@ -2,17 +2,31 @@
 	import { browser } from '$app/environment';
 
 	import { deleteItem, getAllItems, getPool, getProfile, getStats, localDay } from '$lib/db';
+	import { hideReadingProbability } from '$lib/session/romanization';
 	import { isDue, wordStrength, type FsrsCardState } from '$lib/srs';
 	import type { KnowledgeItem, Profile, Stats } from '$lib/types';
 	import ProgressBar from '$lib/ui/ProgressBar.svelte';
-	import { getShowRomanization } from '$lib/ui/prefs';
+	import { getRomanizationMode } from '$lib/ui/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	const WEAK_PREVIEW_COUNT = 10;
 
-	/** Read once — the toggle lives in Settings, not mid-page. */
-	const showRomanization = getShowRomanization();
+	/** Read once — the setting lives in Settings, not mid-page. */
+	const romanizationMode = getRomanizationMode();
+
+	/**
+	 * Whether a word in the list shows its reading. Adaptive mode deliberately
+	 * does not roll a coin here: a static list has no recall to aid, and a
+	 * reading that appeared and vanished between visits would read as a bug. It
+	 * hides only what the learner fully owns — the same words adaptive mode
+	 * always hides mid-session.
+	 */
+	function showsReading(strength: number): boolean {
+		if (romanizationMode === 'on') return true;
+		if (romanizationMode === 'off') return false;
+		return hideReadingProbability(strength) < 1;
+	}
 
 	let loading = $state(true);
 	let loadError = $state('');
@@ -215,7 +229,7 @@
 									<span class="term">{entry.item.term}</span>
 									<SpeakButton text={entry.item.term} lang={speechLanguage} size="sm" />
 								</span>
-								{#if showRomanization && entry.item.romanization}
+								{#if showsReading(entry.strength) && entry.item.romanization}
 									<span class="rom">{entry.item.romanization}</span>
 								{/if}
 								<span class="meaning">{entry.item.meaning}</span>

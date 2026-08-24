@@ -21,7 +21,6 @@
 	import type { ChallengeProps } from '$lib/challenges/props';
 	import { isPunctuationOnly, joinTokens } from '$lib/text';
 	import type { WordOrderChallenge } from '$lib/types';
-	import { getShowRomanization } from '$lib/ui/prefs';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
 	import CheckButton from './blocks/CheckButton.svelte';
 	import PromptHeader from './blocks/PromptHeader.svelte';
@@ -31,10 +30,7 @@
 	// Both languages are offered to every challenge component; this one needs
 	// neither — the prompt is native, the tiles are target, and both are printed
 	// rather than spoken.
-	let { challenge, onanswer }: ChallengeProps<WordOrderChallenge> = $props();
-
-	/** Read once — the toggle lives in Settings, not mid-session. */
-	const showRomanization = getShowRomanization();
+	let { challenge, onanswer, showReadings = true }: ChallengeProps<WordOrderChallenge> = $props();
 
 	/**
 	 * Tile *positions* the learner has placed, in the order they placed them.
@@ -63,7 +59,7 @@
 	const askedIn = $derived(challenge.instruction ?? 'Put the words in order');
 
 	function readingOf(index: number): string {
-		return (showRomanization ? challenge.tilesRomanization?.[index] : '') ?? '';
+		return (showReadings ? challenge.tilesRomanization?.[index] : '') ?? '';
 	}
 
 	function place(index: number): void {

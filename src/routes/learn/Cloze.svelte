@@ -21,7 +21,6 @@
 <script lang="ts">
 	import type { ChallengeProps } from '$lib/challenges/props';
 	import type { ClozeChallenge } from '$lib/types';
-	import { getShowRomanization } from '$lib/ui/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import { validateAnswer } from '$lib/validate';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
@@ -30,10 +29,12 @@
 	import TapOption from './blocks/TapOption.svelte';
 	import TapRow from './blocks/TapRow.svelte';
 
-	let { challenge, onanswer, targetLanguage = '' }: ChallengeProps<ClozeChallenge> = $props();
-
-	/** Read once — the toggle lives in Settings, not mid-session. */
-	const showRomanization = getShowRomanization();
+	let {
+		challenge,
+		onanswer,
+		targetLanguage = '',
+		showReadings = true
+	}: ChallengeProps<ClozeChallenge> = $props();
 
 	const GAP = '___';
 
@@ -93,7 +94,7 @@
 	);
 
 	function readingOf(index: number): string {
-		return (showRomanization ? challenge.wordBankRomanization?.[index] : '') ?? '';
+		return (showReadings ? challenge.wordBankRomanization?.[index] : '') ?? '';
 	}
 
 	function pick(index: number): void {
@@ -157,7 +158,7 @@
 		<span>{parts.after}</span>
 		<SpeakButton text={spokenSentence} lang={targetLanguage} />
 	</p>
-	{#if showRomanization && challenge.sentenceRomanization}
+	{#if showReadings && challenge.sentenceRomanization}
 		<p class="rom sentence-rom">{challenge.sentenceRomanization}</p>
 	{/if}
 

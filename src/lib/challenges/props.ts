@@ -2,7 +2,7 @@
  * The contract every challenge component implements.
  *
  * One declared shape rather than six hand-rolled inline prop types: the
- * dispatcher (`ChallengeHost.svelte`) passes the same four props to all of
+ * dispatcher (`ChallengeHost.svelte`) passes the same props to all of
  * them, so a component that quietly disagreed about the name or the optionality
  * of one of them used to fail silently — the prop simply arrived `undefined`.
  * Typing `$props()` with `ChallengeProps<TheirChallenge>` makes that a compile
@@ -32,4 +32,12 @@ export interface ChallengeProps<C extends Challenge> {
 	targetLanguage?: string;
 	/** The learner's own language; used where a component names it in a prompt. */
 	nativeLanguage?: string;
+	/**
+	 * The learner's romanization preference, already resolved for *this*
+	 * challenge (see `$lib/session/romanization`): components render their
+	 * readings only when it is true, and change nothing else. Optional and
+	 * defaulting to true, so a bare render still shows readings — the behaviour
+	 * every component had before the preference could hide them.
+	 */
+	showReadings?: boolean;
 }

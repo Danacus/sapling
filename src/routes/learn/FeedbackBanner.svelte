@@ -20,7 +20,7 @@
 	import { Grade } from '$lib/srs';
 	import { speak } from '$lib/tts';
 	import type { Challenge, Verdict } from '$lib/types';
-	import { getShowRomanization } from '$lib/ui/prefs';
+	import { getRomanizationMode } from '$lib/ui/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
@@ -87,8 +87,10 @@
 		onreport?: () => void;
 	} = $props();
 
-	/** Read once — the toggle lives in Settings, not mid-session. */
-	const showRomanization = getShowRomanization();
+	// Adaptive mode never hides the reading here: hiding is a during-recall aid,
+	// and the post-answer reveal is the teaching moment.
+	/** Read once — the setting lives in Settings, not mid-session. */
+	const showRomanization = getRomanizationMode() !== 'off';
 
 	let showExplain = $state(false);
 	let question = $state('');

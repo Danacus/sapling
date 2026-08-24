@@ -20,7 +20,6 @@
 	import { choiceKeyAction } from '$lib/challenges/keyboard';
 	import type { ChallengeProps } from '$lib/challenges/props';
 	import type { SpotErrorChallenge } from '$lib/types';
-	import { getShowRomanization } from '$lib/ui/prefs';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
 	import CheckButton from './blocks/CheckButton.svelte';
 	import PromptHeader from './blocks/PromptHeader.svelte';
@@ -30,10 +29,7 @@
 	// Both languages are offered to every challenge component; this one needs
 	// neither — it is deliberately silent, and the meaning line is already
 	// native-language text carried on the challenge.
-	let { challenge, onanswer }: ChallengeProps<SpotErrorChallenge> = $props();
-
-	/** Read once — the toggle lives in Settings, not mid-session. */
-	const showRomanization = getShowRomanization();
+	let { challenge, onanswer, showReadings = true }: ChallengeProps<SpotErrorChallenge> = $props();
 
 	let selected = $state<number | null>(null);
 
@@ -45,7 +41,7 @@
 	);
 
 	function readingOf(index: number): string {
-		return (showRomanization ? challenge.tokensRomanization?.[index] : '') ?? '';
+		return (showReadings ? challenge.tokensRomanization?.[index] : '') ?? '';
 	}
 
 	function select(index: number): void {
