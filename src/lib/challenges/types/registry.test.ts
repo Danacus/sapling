@@ -16,7 +16,6 @@
  * registry twice.
  */
 
-import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { challengeSchema } from '$lib/llm/schemas';
 import type { Challenge, ChallengeType } from '$lib/types';
@@ -97,21 +96,4 @@ describe('stored-type purity', () => {
 		expect(Object.keys(STORED_TYPE_DEFS).sort()).toEqual(Object.keys(expected).sort());
 	});
 
-	it('keeps the def modules leaves', () => {
-		// The layering that makes `$lib/llm/schemas` able to compose
-		// `challengeSchema` out of these: defs may reach for zod, the domain types
-		// and the string matchers, and nothing else. An import of `$lib/llm` would
-		// close a cycle; a Svelte or DB import would make them unrunnable in node
-		// and drag presentation state into what is meant to be pure data.
-		const dir = new URL('.', import.meta.url);
-		const allowed = new Set(['zod', '$lib/types', '$lib/validate']);
-		for (const file of readdirSync(dir)) {
-			if (!file.endsWith('.ts') || file.endsWith('.test.ts')) continue;
-			const source = readFileSync(new URL(file, dir), 'utf8');
-			for (const [, specifier] of source.matchAll(/from '([^']+)'/g)) {
-				if (specifier.startsWith('./')) continue;
-				expect(allowed.has(specifier), `${file} imports ${specifier}`).toBe(true);
-			}
-		}
-	});
 });

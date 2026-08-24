@@ -68,9 +68,6 @@ export const DEFAULT_QUESTION =
 /** Word budget for an escalation reply. Kept tight on purpose. */
 export const ANSWER_WORD_LIMIT = 120;
 
-/** Spelled-out counts for {@link SHAPE_GLOSS}; a bare numeral past the table. */
-const COUNT_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven'];
-
 /**
  * What the model has to be told about the *stored* challenge shapes before it
  * can judge a dispute about one.
@@ -84,16 +81,10 @@ const COUNT_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seve
  * a new tile-based type describes itself here by existing, and a type that stops
  * needing a gloss stops paying for one.
  */
-const SHAPE_GLOSS = ((): string => {
-	const lead = "The challenge JSON is the app's own stored shape.";
-	const specs = WIRE_TYPE_DEFS.map((def) => def.escalationSpec).filter(
-		(spec): spec is string => !!spec
-	);
-	if (!specs.length) return lead;
-	const count = COUNT_WORDS[specs.length] ?? String(specs.length);
-	const verb = specs.length === 1 ? 'is' : 'are';
-	return [`${lead} Most types are self-describing; ${count} ${verb} not.`, ...specs].join(' ');
-})();
+const SHAPE_GLOSS = [
+	"The challenge JSON is the app's own stored shape. Most types are self-describing; the exceptions:",
+	...WIRE_TYPE_DEFS.map((def) => def.escalationSpec).filter((spec): spec is string => !!spec)
+].join(' ');
 
 /** Builds the two-message escalation prompt. */
 export function buildEscalationPrompt(args: EscalationArgs): ChatMessage[] {

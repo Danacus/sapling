@@ -128,17 +128,6 @@ export type StoredTypeRegistry = {
 };
 
 /**
- * Projects a tuple of type tags onto the tuple of their schemas — element by
- * element, so each member keeps the literal `type` it pins. `z.discriminatedUnion`
- * infers its union member-by-member, and an ordinary `.map()` hands it a widened
- * `ZodType[]` that has already forgotten which literal each member discriminates
- * on. See `./index`.
- */
-export type SchemasOf<R extends StoredTypeRegistry, Order extends readonly ChallengeType[]> = {
-	readonly [K in keyof Order]: R[Order[K] & ChallengeType]['schema'];
-};
-
-/**
  * Guard for a challenge whose type this build does not know.
  *
  * Unreachable through the registry, which TypeScript checks first: the argument

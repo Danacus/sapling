@@ -22,7 +22,7 @@
 
 import type { Challenge, ChallengeType } from '$lib/types';
 import { clozeStoredDef } from './cloze';
-import type { SchemasOf, StoredTypeBehaviour, StoredTypeRegistry } from './def';
+import type { StoredTypeBehaviour, StoredTypeRegistry } from './def';
 import { unhandledChallenge } from './def';
 import { matchPairsStoredDef } from './match-pairs';
 import { multipleChoiceStoredDef } from './multiple-choice';
@@ -30,13 +30,7 @@ import { spotErrorStoredDef } from './spot-error';
 import { typedTranslationStoredDef } from './typed-translation';
 import { wordOrderStoredDef } from './word-order';
 
-export type {
-	ChallengeOf,
-	SchemasOf,
-	StoredTypeBehaviour,
-	StoredTypeDef,
-	StoredTypeRegistry
-} from './def';
+export type { ChallengeOf, StoredTypeBehaviour, StoredTypeDef, StoredTypeRegistry } from './def';
 export { unhandledChallenge };
 
 export { clozeChallengeSchema } from './cloze';
@@ -109,18 +103,24 @@ void _orderParity;
 
 /**
  * The registry's schemas as a *tuple*, in {@link STORED_TYPE_ORDER}, which is what
- * `z.discriminatedUnion` needs: it infers the union member-by-member, and an
- * ordinary `.map(...)` hands it a widened `ZodType[]` that has already forgotten
- * which literal each member pins. {@link SchemasOf} projects the tuple
- * element-wise, so this stays a view of the registry rather than a second list —
- * the cast only restores at the type level what `.map` erased.
+ * `z.discriminatedUnion` needs: it infers the union member-by-member, and a
+ * `.map(...)` over the registry hands it a widened `ZodType[]` that has already
+ * forgotten which literal each member pins — restoring that cost a mapped-type
+ * projection and an `as unknown as` cast, more machinery than these six lines.
+ * Spelled out instead: membership cannot drift (`_orderParity` above and the
+ * mapped registry type), and `registry.test.ts` pins order and member identity.
  *
  * `$lib/llm/schemas` wraps this into `challengeSchema`; nothing else should need
  * it.
  */
-export const storedChallengeSchemas = STORED_TYPE_ORDER.map(
-	(type) => REGISTRY[type].schema
-) as unknown as SchemasOf<typeof REGISTRY, StoredTypeOrder>;
+export const storedChallengeSchemas = [
+	multipleChoiceStoredDef.schema,
+	clozeStoredDef.schema,
+	typedTranslationStoredDef.schema,
+	matchPairsStoredDef.schema,
+	wordOrderStoredDef.schema,
+	spotErrorStoredDef.schema
+] as const;
 
 /**
  * The def for a challenge, with its methods widened to the whole union.

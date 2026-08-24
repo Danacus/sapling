@@ -89,9 +89,9 @@ export interface WireTypeDef<T extends WirePayload = WirePayload> {
 	/** The discriminator, identical to the one `schema` pins. */
 	readonly type: T['type'];
 	/**
-	 * This type's zod member. It lives here, not in `../schemas`: the union over
-	 * there is built by mapping this field across the registry, so listing a def
-	 * in `./index` is the whole of adding a member to `GeneratedChallenge`.
+	 * This type's zod member. It lives here, not in `../schemas`: `./index`
+	 * lists this field in `generatedChallengeSchema`'s union, and its parity
+	 * check keeps that list and the registry covering the same types.
 	 */
 	readonly schema: z.ZodType<T>;
 	/**
@@ -153,13 +153,4 @@ export type OptionalSpecs = Pick<WireTypeDef, 'rulesSpec' | 'escalationSpec'>;
 /** {@link OptionalSpecs} intersected into every element of a tuple of defs. */
 export type WithOptionalSpecs<T extends readonly unknown[]> = {
 	readonly [K in keyof T]: T[K] & OptionalSpecs;
-};
-
-/**
- * Projects a tuple of defs onto the tuple of their schemas — element by
- * element, so each member keeps the literal `type` it pins. See
- * {@link WireTypeDef.schema}.
- */
-export type SchemasOf<T extends readonly { readonly schema: unknown }[]> = {
-	readonly [K in keyof T]: T[K]['schema'];
 };

@@ -8,17 +8,17 @@
  * escalation prompt glosses the tile-based shapes in, and the order of
  * {@link generatedChallengeSchema}'s union, which is *built* from it.
  *
- * That last one is the point of this module. The union is not a second list to
- * keep in step with the array below; it is a projection of it, so a def that is
- * not registered here is not a wire type at all — the model is never told about
- * it, no completion can parse into it, and `pnpm check` says so at the one place
- * that tried to use it.
+ * That last one is the point of this module: a def that is not registered here
+ * is not a wire type at all — the model is never told about it, no completion
+ * can parse into it, and `_registryParity` fails `pnpm check` if the array and
+ * the union ever disagree on membership.
  *
  * **Adding a wire type**: write `./<type>.ts` — schema, `promptSpec`,
  * `correctiveSpec`, `resolve`, `fixtures`, plus `rulesSpec`/`escalationSpec` if
- * it needs them — and list it below. Everything downstream (the prompt, the
- * union, the JSON schema sent to OpenRouter, the resolver dispatch, the
- * escalation gloss, the mock lesson) follows from those two edits. The only
+ * it needs them — and list it twice below: in {@link WIRE_TYPE_DEFS} and in
+ * {@link generatedChallengeSchema}'s member list. Everything downstream (the
+ * prompt, the JSON schema sent to OpenRouter, the resolver dispatch, the
+ * escalation gloss, the mock lesson) follows from those edits. The only
  * hand-written mentions left are the cross-type rules in `../generate`'s
  * `Rules:` block, which by definition name more than one type.
  */
@@ -32,7 +32,7 @@ import { translateToNativeDef } from './translate-to-native';
 import { translateToTargetDef } from './translate-to-target';
 import { wordOrderDef } from './word-order';
 
-import type { SchemasOf, WithOptionalSpecs } from './def';
+import type { WithOptionalSpecs } from './def';
 
 export type {
 	ChallengeBase,
@@ -40,7 +40,6 @@ export type {
 	FixtureScenario,
 	OptionalSpecs,
 	ResolveContext,
-	SchemasOf,
 	WirePayload,
 	WithOptionalSpecs,
 	WireTypeDef,
@@ -97,25 +96,28 @@ export const WIRE_TYPE_DEFS: WithOptionalSpecs<typeof REGISTRY> = REGISTRY;
 export type AnyWireTypeDef = (typeof WIRE_TYPE_DEFS)[number];
 
 /**
- * The registry's schemas as a *tuple*, which is what `z.discriminatedUnion`
- * needs: it infers the union member-by-member, and an ordinary
- * `WIRE_TYPE_DEFS.map(...)` hands it a widened `ZodType[]` that has already
- * forgotten which literal each member pins. {@link SchemasOf} projects the tuple
- * element-wise, so this stays a view of the array above rather than a second
- * list — the cast only restores at the type level what `.map` erased.
- */
-type WireSchemas = SchemasOf<typeof WIRE_TYPE_DEFS>;
-
-/**
  * The wire format the model is asked to produce, as one discriminated union.
+ *
+ * The members are spelled out rather than mapped from {@link WIRE_TYPE_DEFS}:
+ * `z.discriminatedUnion` needs each schema's concrete type, which `.map` erases,
+ * and restoring it cost a mapped-type projection and an `as unknown as` cast —
+ * more machinery than the seven lines it saved. So this is a second list of the
+ * same defs, two screens below the first, and it cannot drift: membership is
+ * pinned by `_registryParity` below, order and member identity by
+ * `registry.test.ts`.
  *
  * Re-exported from `../schemas`, which is the façade the rest of the app imports
  * from; it lives here because this is where membership is decided.
  */
-export const generatedChallengeSchema = z.discriminatedUnion(
-	'type',
-	WIRE_TYPE_DEFS.map((def) => def.schema) as unknown as WireSchemas
-);
+export const generatedChallengeSchema = z.discriminatedUnion('type', [
+	recognizeMcDef.schema,
+	produceMcDef.schema,
+	clozeDef.schema,
+	translateToTargetDef.schema,
+	translateToNativeDef.schema,
+	wordOrderDef.schema,
+	spotErrorDef.schema
+]);
 
 export type GeneratedChallenge = z.infer<typeof generatedChallengeSchema>;
 
