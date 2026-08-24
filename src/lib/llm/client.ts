@@ -19,10 +19,48 @@ export const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 export const APP_REFERER = 'https://github.com/daanvo/language-learning';
 export const APP_TITLE = 'Language Learning';
 
-export interface ChatMessage {
-	role: 'system' | 'user' | 'assistant';
+/**
+ * One tool the model may call, in the caller's terms. `parameters` is a JSON
+ * Schema object describing the arguments; it is passed through verbatim.
+ */
+export interface ToolDef {
+	name: string;
+	description: string;
+	parameters: unknown;
+}
+
+/**
+ * One tool call the model asked for. `arguments` is the raw JSON string the
+ * model produced — the client never parses it, so callers own validation (a
+ * model is free to emit malformed JSON here).
+ */
+export interface ToolCallRequest {
+	id: string;
+	name: string;
+	arguments: string;
+}
+
+/** System and user turns: plain text, nothing else. */
+export interface TextMessage {
+	role: 'system' | 'user';
 	content: string;
 }
+
+/** `content` may be empty when the turn is nothing but tool calls. */
+export interface AssistantMessage {
+	role: 'assistant';
+	content: string;
+	toolCalls?: ToolCallRequest[];
+}
+
+/** The result of running one tool call, fed back for the next turn. */
+export interface ToolResultMessage {
+	role: 'tool';
+	content: string;
+	toolCallId: string;
+}
+
+export type ChatMessage = TextMessage | AssistantMessage | ToolResultMessage;
 
 /**
  * `'json'` asks for plain JSON-object mode; the object form additionally pins a
@@ -43,6 +81,11 @@ export interface ChatCompletionOptions {
 	/** Defaults to the learner's stored model, else {@link DEFAULT_MODEL}. */
 	model?: string;
 	responseFormat?: ResponseFormat;
+	/**
+	 * Tools the model may call. Sent on every attempt — orthogonal to
+	 * `responseFormat`. An empty array is the same as omitting it.
+	 */
+	tools?: ToolDef[];
 	maxTokens?: number;
 	temperature?: number;
 	signal?: AbortSignal;
@@ -61,8 +104,10 @@ export interface ChatCompletionOptions {
 }
 
 export interface ChatCompletionResult {
-	/** Raw assistant message content. */
+	/** Raw assistant message content; `''` when the turn was only tool calls. */
 	content: string;
+	/** Tool calls the model asked for, empty when it made none. */
+	toolCalls: ToolCallRequest[];
 	usage: TokenUsage;
 	/** Model actually used (OpenRouter may route elsewhere). */
 	model: string;
@@ -152,6 +197,32 @@ function buildResponseFormat(format: ResponseFormat): unknown {
 	};
 }
 
+/** Our message shapes in OpenAI's wire spelling; nothing else reaches the API. */
+function buildMessage(message: ChatMessage): unknown {
+	if (message.role === 'tool') {
+		return { role: 'tool', content: message.content, tool_call_id: message.toolCallId };
+	}
+	if (message.role === 'assistant' && message.toolCalls?.length) {
+		return {
+			role: 'assistant',
+			content: message.content,
+			tool_calls: message.toolCalls.map((call) => ({
+				id: call.id,
+				type: 'function',
+				function: { name: call.name, arguments: call.arguments }
+			}))
+		};
+	}
+	return { role: message.role, content: message.content };
+}
+
+function buildTool(tool: ToolDef): unknown {
+	return {
+		type: 'function',
+		function: { name: tool.name, description: tool.description, parameters: tool.parameters }
+	};
+}
+
 async function readBody(response: Response): Promise<string> {
 	try {
 		return await response.text();
@@ -175,9 +246,28 @@ function errorDetail(body: string): string | undefined {
 
 interface CompletionPayload {
 	model?: string;
-	choices?: { message?: { content?: unknown } }[];
+	choices?: { message?: { content?: unknown; tool_calls?: unknown } }[];
 	usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
 	error?: { message?: unknown };
+}
+
+/**
+ * Defensive: an entry without an id or a function name is unanswerable, so it
+ * is dropped rather than surfaced. Absent or non-string `arguments` become
+ * `'{}'` — a no-argument call is the common cause and is perfectly callable.
+ */
+function parseToolCalls(raw: unknown): ToolCallRequest[] {
+	if (!Array.isArray(raw)) return [];
+	const calls: ToolCallRequest[] = [];
+	for (const entry of raw) {
+		const call = entry as { id?: unknown; function?: { name?: unknown; arguments?: unknown } };
+		const id = call?.id;
+		const name = call?.function?.name;
+		if (typeof id !== 'string' || !id || typeof name !== 'string' || !name) continue;
+		const args = call.function?.arguments;
+		calls.push({ id, name, arguments: typeof args === 'string' ? args : '{}' });
+	}
+	return calls;
 }
 
 function toCount(value: unknown): number {
@@ -199,9 +289,11 @@ export async function chatCompletion(opts: ChatCompletionOptions): Promise<ChatC
 	const fetchFn = opts.fetchFn ?? (globalThis.fetch?.bind(globalThis) as FetchLike | undefined);
 	if (!fetchFn) throw llmError('network', 'no fetch implementation available');
 
-	const body: Record<string, unknown> = { model, messages: opts.messages };
+	const body: Record<string, unknown> = { model, messages: opts.messages.map(buildMessage) };
 	if (opts.temperature !== undefined) body.temperature = opts.temperature;
 	if (opts.maxTokens !== undefined) body.max_tokens = opts.maxTokens;
+	// No `tool_choice`: the default (auto) is what every caller wants.
+	if (opts.tools?.length) body.tools = opts.tools.map(buildTool);
 
 	let schemaDropped = false;
 	let response: Response;
@@ -274,8 +366,11 @@ export async function chatCompletion(opts: ChatCompletionOptions): Promise<ChatC
 		throw llmError('bad-response', payload.error.message.slice(0, 200), response.status);
 	}
 
-	const content = payload.choices?.[0]?.message?.content;
-	if (typeof content !== 'string' || !content.trim()) {
+	const message = payload.choices?.[0]?.message;
+	const toolCalls = parseToolCalls(message?.tool_calls);
+	const content = typeof message?.content === 'string' ? message.content : '';
+	// A tool-calling turn legitimately has no prose; anything else must.
+	if (!content.trim() && toolCalls.length === 0) {
 		throw llmError('bad-response', 'no message content', response.status);
 	}
 
@@ -285,5 +380,5 @@ export async function chatCompletion(opts: ChatCompletionOptions): Promise<ChatC
 	};
 	recordUsage(usage);
 
-	return { content, usage, model: payload.model ?? model, schemaDropped };
+	return { content, toolCalls, usage, model: payload.model ?? model, schemaDropped };
 }
