@@ -82,6 +82,22 @@ describe('chatCompletion', () => {
 		expect(headers.Authorization).toBe(`Bearer ${KEY}`);
 	});
 
+	it('opts in to browser CORS on the Anthropic endpoint', async () => {
+		const { fetchFn, calls } = recordingFetch([() => jsonResponse(okCompletion())]);
+		await chatCompletion({
+			messages,
+			apiKey: KEY,
+			model: 'claude-sonnet-4-6',
+			baseUrl: 'https://api.anthropic.com/v1',
+			fetchFn
+		});
+
+		expect(calls[0].url).toBe('https://api.anthropic.com/v1/chat/completions');
+		const headers = calls[0].init.headers as Record<string, string>;
+		expect(headers['anthropic-dangerous-direct-browser-access']).toBe('true');
+		expect(headers['HTTP-Referer']).toBeUndefined();
+	});
+
 	it('sends a strict json_schema response_format when a schema is given', async () => {
 		const { fetchFn, calls } = recordingFetch([() => jsonResponse(okCompletion('{}'))]);
 		await chatCompletion({

@@ -108,6 +108,21 @@ function llmError(kind: LlmErrorKind, detail?: string, status?: number, cause?: 
 	return new LlmError(kind, message, { status, cause });
 }
 
+/**
+ * Anthropic's API only serves CORS headers when the request opts in with
+ * `anthropic-dangerous-direct-browser-access` ("dangerous" because it implies
+ * the key ships to a browser — which is this app's whole model anyway); without
+ * it the preflight fails with "Disallowed CORS origin".
+ */
+function isAnthropicApi(baseUrl: string): boolean {
+	try {
+		const host = new URL(baseUrl).hostname;
+		return host === 'anthropic.com' || host.endsWith('.anthropic.com');
+	} catch {
+		return false;
+	}
+}
+
 function kindForStatus(status: number): LlmErrorKind {
 	if (status === 401 || status === 403) return 'auth';
 	if (status === 429) return 'rate-limit';
@@ -210,6 +225,9 @@ export async function chatCompletion(opts: ChatCompletionOptions): Promise<ChatC
 		if (baseUrl === OPENROUTER_BASE_URL) {
 			headers['HTTP-Referer'] = APP_REFERER;
 			headers['X-Title'] = APP_TITLE;
+		}
+		if (isAnthropicApi(baseUrl)) {
+			headers['anthropic-dangerous-direct-browser-access'] = 'true';
 		}
 
 		try {
