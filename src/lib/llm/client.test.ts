@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { APP_REFERER, APP_TITLE, LlmError, OPENROUTER_BASE_URL, chatCompletion } from './client';
-import type { FetchLike } from './client';
+import type { ChatMessage, FetchLike, ToolDef } from './client';
 
 const KEY = 'sk-or-test';
 
@@ -208,6 +208,178 @@ describe('chatCompletion', () => {
 		const notJson = recordingFetch([() => new Response('<html>502</html>', { status: 200 })]);
 		await expect(
 			chatCompletion({ messages, apiKey: KEY, model: 'm', fetchFn: notJson.fetchFn })
+		).rejects.toMatchObject({ kind: 'bad-response' });
+	});
+
+	it('serializes plain messages without tool fields', async () => {
+		const { fetchFn, calls } = recordingFetch([() => jsonResponse(okCompletion())]);
+		const result = await chatCompletion({ messages, apiKey: KEY, model: 'm', fetchFn });
+
+		expect(calls[0].body.messages).toEqual([{ role: 'user', content: 'hi' }]);
+		expect(calls[0].body.tools).toBeUndefined();
+		expect(result.toolCalls).toEqual([]);
+	});
+});
+
+const ADD_WORD: ToolDef = {
+	name: 'add_word',
+	description: 'Add a word to the list',
+	parameters: { type: 'object', properties: { term: { type: 'string' } }, required: ['term'] }
+};
+
+function toolCallCompletion(toolCalls: unknown, content: unknown = undefined) {
+	return {
+		model: 'test/model',
+		choices: [
+			{ message: { ...(content === undefined ? {} : { content }), tool_calls: toolCalls } }
+		],
+		usage: { prompt_tokens: 3, completion_tokens: 2 }
+	};
+}
+
+describe('chatCompletion tool calling', () => {
+	const messages = [{ role: 'user' as const, content: 'add "hond"' }];
+
+	it('serializes tools to the OpenAI function shape', async () => {
+		const { fetchFn, calls } = recordingFetch([() => jsonResponse(okCompletion())]);
+		await chatCompletion({ messages, apiKey: KEY, model: 'm', fetchFn, tools: [ADD_WORD] });
+
+		expect(calls[0].body.tools).toEqual([
+			{
+				type: 'function',
+				function: {
+					name: 'add_word',
+					description: 'Add a word to the list',
+					parameters: ADD_WORD.parameters
+				}
+			}
+		]);
+		// Default (auto) tool choice; we never pin one.
+		expect(calls[0].body.tool_choice).toBeUndefined();
+	});
+
+	it('omits tools when the array is empty', async () => {
+		const { fetchFn, calls } = recordingFetch([() => jsonResponse(okCompletion())]);
+		await chatCompletion({ messages, apiKey: KEY, model: 'm', fetchFn, tools: [] });
+
+		expect(calls[0].body.tools).toBeUndefined();
+	});
+
+	it('sends tools on the response_format retry too', async () => {
+		const { fetchFn, calls } = recordingFetch([
+			() => jsonResponse({ error: { message: 'response_format unsupported' } }, 400),
+			() => jsonResponse(okCompletion('{}'))
+		]);
+		await chatCompletion({
+			messages,
+			apiKey: KEY,
+			model: 'm',
+			fetchFn,
+			tools: [ADD_WORD],
+			responseFormat: 'json'
+		});
+
+		expect(calls).toHaveLength(2);
+		expect(calls[1].body.response_format).toBeUndefined();
+		expect(calls[1].body.tools).toBeDefined();
+	});
+
+	it('round-trips an assistant tool call and its result to the wire shape', async () => {
+		const { fetchFn, calls } = recordingFetch([() => jsonResponse(okCompletion('done'))]);
+		const exchange: ChatMessage[] = [
+			{ role: 'user', content: 'add "hond"' },
+			{
+				role: 'assistant',
+				content: '',
+				toolCalls: [{ id: 'call_1', name: 'add_word', arguments: '{"term":"hond"}' }]
+			},
+			{ role: 'tool', content: '{"ok":true}', toolCallId: 'call_1' }
+		];
+		await chatCompletion({ messages: exchange, apiKey: KEY, model: 'm', fetchFn });
+
+		expect(calls[0].body.messages).toEqual([
+			{ role: 'user', content: 'add "hond"' },
+			{
+				role: 'assistant',
+				content: '',
+				tool_calls: [
+					{
+						id: 'call_1',
+						type: 'function',
+						function: { name: 'add_word', arguments: '{"term":"hond"}' }
+					}
+				]
+			},
+			{ role: 'tool', content: '{"ok":true}', tool_call_id: 'call_1' }
+		]);
+	});
+
+	it('parses tool calls from a response with no content', async () => {
+		const { fetchFn } = recordingFetch([
+			() =>
+				jsonResponse(
+					toolCallCompletion([
+						{
+							id: 'call_1',
+							type: 'function',
+							function: { name: 'add_word', arguments: '{"term":"hond"}' }
+						}
+					])
+				)
+		]);
+		const result = await chatCompletion({ messages, apiKey: KEY, model: 'm', fetchFn });
+
+		expect(result.content).toBe('');
+		expect(result.toolCalls).toEqual([
+			{ id: 'call_1', name: 'add_word', arguments: '{"term":"hond"}' }
+		]);
+		expect(result.usage).toEqual({ promptTokens: 3, completionTokens: 2 });
+	});
+
+	it('keeps content that arrives alongside tool calls', async () => {
+		const { fetchFn } = recordingFetch([
+			() =>
+				jsonResponse(
+					toolCallCompletion(
+						[{ id: 'call_1', function: { name: 'add_word', arguments: '{}' } }],
+						'Adding it now.'
+					)
+				)
+		]);
+		const result = await chatCompletion({ messages, apiKey: KEY, model: 'm', fetchFn });
+
+		expect(result.content).toBe('Adding it now.');
+		expect(result.toolCalls).toHaveLength(1);
+	});
+
+	it('skips malformed tool call entries and defaults missing arguments', async () => {
+		const { fetchFn } = recordingFetch([
+			() =>
+				jsonResponse(
+					toolCallCompletion([
+						{ function: { name: 'add_word', arguments: '{}' } }, // no id
+						{ id: 'call_2' }, // no function
+						{ id: 'call_3', function: { name: '' } }, // empty name
+						{ id: 'call_4', function: { name: 'list_words' } }, // no arguments
+						{ id: 'call_5', function: { name: 'list_words', arguments: { term: 'x' } } },
+						'nonsense'
+					])
+				)
+		]);
+		const result = await chatCompletion({ messages, apiKey: KEY, model: 'm', fetchFn });
+
+		expect(result.toolCalls).toEqual([
+			{ id: 'call_4', name: 'list_words', arguments: '{}' },
+			{ id: 'call_5', name: 'list_words', arguments: '{}' }
+		]);
+	});
+
+	it('still rejects a response with neither content nor usable tool calls', async () => {
+		const { fetchFn } = recordingFetch([
+			() => jsonResponse(toolCallCompletion([{ function: { name: 'add_word' } }]))
+		]);
+		await expect(
+			chatCompletion({ messages, apiKey: KEY, model: 'm', fetchFn })
 		).rejects.toMatchObject({ kind: 'bad-response' });
 	});
 });
