@@ -56,7 +56,9 @@
 		addRecentTopic,
 		getListeningMode,
 		getRecentTopics,
-		getShowRomanization
+		getReviewOnlyMode,
+		getShowRomanization,
+		setReviewOnlyMode
 	} from '$lib/ui/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
@@ -101,6 +103,7 @@
 	let plan = $state<SessionPlan | null>(null);
 	let topicInput = $state('');
 	let recentTopics = $state<string[]>([]);
+	let reviewOnlyMode = $state(false);
 	/** A generation is in flight; the button is latched and the log is live. */
 	let generating = $state(false);
 	let genError = $state('');
@@ -113,8 +116,12 @@
 	const readyCount = $derived(plan?.readyCount ?? 0);
 	const dueCount = $derived(plan?.dueCount ?? 0);
 	const canStart = $derived((plan?.challenges.length ?? 0) > 0);
-	/** Worth nudging towards a fresh lesson: nothing to play, or barely anything. */
-	const nudgeGenerate = $derived(plan !== null && (plan.poolLow || !canStart));
+	/**
+	 * Worth nudging towards a fresh lesson: nothing to play, or barely anything.
+	 * Suppressed under review-only — generating would only add new vocabulary,
+	 * which that mode is specifically trying to keep out of the session.
+	 */
+	const nudgeGenerate = $derived(plan !== null && !reviewOnlyMode && (plan.poolLow || !canStart));
 
 	/* Session ----------------------------------------------------------------- */
 
@@ -233,6 +240,7 @@
 			profile = loaded;
 			mock = isMockMode();
 			recentTopics = getRecentTopics();
+			reviewOnlyMode = getReviewOnlyMode();
 			await refreshPlan();
 		} catch (cause) {
 			bootError = cause instanceof Error ? cause.message : 'Could not read your progress.';
@@ -242,7 +250,14 @@
 
 	/** Re-plans from the pool: at boot, and whenever a generation has landed. */
 	async function refreshPlan(): Promise<void> {
-		plan = await startSession();
+		plan = await startSession({ reviewOnly: reviewOnlyMode });
+	}
+
+	/** The learner flipped Review only: persist it and re-plan immediately. */
+	function toggleReviewOnly(on: boolean): void {
+		reviewOnlyMode = on;
+		setReviewOnlyMode(on);
+		void refreshPlan();
 	}
 
 	/**
@@ -304,7 +319,9 @@
 
 		queue = ready.challenges;
 		nextIndex = 0;
-		items = ready.items;
+		// Match-pairs rounds are drawn from `items` mid-session (see `advance`); under
+		// review-only, a never-reviewed word must not sneak in there either.
+		items = reviewOnlyMode ? ready.items.filter((item) => item.history.length > 0) : ready.items;
 		plannedLlm = ready.challenges.length;
 		newWords = firstTimeWords(ready);
 
@@ -686,6 +703,15 @@
 					</p>
 				{/if}
 
+				<label class="review-only-toggle">
+					<input
+						type="checkbox"
+						checked={reviewOnlyMode}
+						onchange={(event) => toggleReviewOnly(event.currentTarget.checked)}
+					/>
+					Review only — no new words, nothing generated
+				</label>
+
 				<button
 					type="button"
 					class="btn btn-primary btn-block start-btn"
@@ -705,91 +731,97 @@
 					</p>
 				{/if}
 
-				<section class="generate">
-					<h2>New lesson</h2>
-					<p class="hint">Optional — pick or type a scenario and the lesson leans into it.</p>
+				{#if reviewOnlyMode && !canStart}
+					<p class="nudge">Nothing due for review yet. Turn off Review only to add new words.</p>
+				{/if}
 
-					<input
-						class="input topic-input"
-						type="text"
-						bind:value={topicInput}
-						placeholder="e.g. checking into a hotel…"
-						autocomplete="off"
-						aria-label="Lesson topic"
-						onkeydown={(event) => {
-							if (event.key === 'Enter') {
-								event.preventDefault();
-								void generate();
-							}
-						}}
-					/>
+				{#if !reviewOnlyMode}
+					<section class="generate">
+						<h2>New lesson</h2>
+						<p class="hint">Optional — pick or type a scenario and the lesson leans into it.</p>
 
-					<div class="chip-row">
-						{#each topicChips as chip (chip)}
-							<button
-								type="button"
-								class="chip"
-								class:selected={topicInput.trim().toLowerCase() === chip.toLowerCase()}
-								onclick={() => (topicInput = chip)}
-							>
-								{chip}
-							</button>
-						{/each}
-					</div>
+						<input
+							class="input topic-input"
+							type="text"
+							bind:value={topicInput}
+							placeholder="e.g. checking into a hotel…"
+							autocomplete="off"
+							aria-label="Lesson topic"
+							onkeydown={(event) => {
+								if (event.key === 'Enter') {
+									event.preventDefault();
+									void generate();
+								}
+							}}
+						/>
 
-					{#if recentTopics.length > 0}
-						<div class="recent">
-							<p class="recent-label">Recent</p>
-							<div class="chip-row">
-								{#each recentTopics as recent (recent)}
-									<button type="button" class="chip" onclick={() => (topicInput = recent)}>
-										{recent}
-									</button>
-								{/each}
-							</div>
-						</div>
-					{/if}
-
-					<button
-						type="button"
-						class="btn btn-ghost btn-block generate-btn"
-						disabled={generating}
-						onclick={() => void generate()}
-					>
-						{generating ? 'Generating…' : 'Generate new lesson'}
-					</button>
-
-					{#if prepSteps.length > 0}
-						<ul class="prep-steps" role="status" aria-live="polite">
-							{#each prepSteps as step, index (index)}
-								{@const done = step.endedAt !== undefined}
-								<li class:done>
-									{#if done}
-										<span class="prep-mark" aria-hidden="true">✓</span>
-									{:else}
-										<span class="prep-mark prep-spinner" aria-hidden="true"></span>
-									{/if}
-									<span class="prep-label">{step.label}</span>
-									<span class="prep-secs">{stepSeconds(step)}s</span>
-								</li>
+						<div class="chip-row">
+							{#each topicChips as chip (chip)}
+								<button
+									type="button"
+									class="chip"
+									class:selected={topicInput.trim().toLowerCase() === chip.toLowerCase()}
+									onclick={() => (topicInput = chip)}
+								>
+									{chip}
+								</button>
 							{/each}
-						</ul>
-						{#if prepTotalMs !== null}
-							<p class="prep-total" transition:fade={{ duration: motionMs(200) }}>
-								Lesson ready in {(prepTotalMs / 1000).toFixed(1)}s — it's in the pool.
-							</p>
-						{/if}
-					{/if}
-
-					{#if genError}
-						<div class="gen-error">
-							<p class="error-message" role="alert">{genError}</p>
-							<button type="button" class="btn btn-ghost" onclick={() => void generate()}>
-								Try again
-							</button>
 						</div>
-					{/if}
-				</section>
+
+						{#if recentTopics.length > 0}
+							<div class="recent">
+								<p class="recent-label">Recent</p>
+								<div class="chip-row">
+									{#each recentTopics as recent (recent)}
+										<button type="button" class="chip" onclick={() => (topicInput = recent)}>
+											{recent}
+										</button>
+									{/each}
+								</div>
+							</div>
+						{/if}
+
+						<button
+							type="button"
+							class="btn btn-ghost btn-block generate-btn"
+							disabled={generating}
+							onclick={() => void generate()}
+						>
+							{generating ? 'Generating…' : 'Generate new lesson'}
+						</button>
+
+						{#if prepSteps.length > 0}
+							<ul class="prep-steps" role="status" aria-live="polite">
+								{#each prepSteps as step, index (index)}
+									{@const done = step.endedAt !== undefined}
+									<li class:done>
+										{#if done}
+											<span class="prep-mark" aria-hidden="true">✓</span>
+										{:else}
+											<span class="prep-mark prep-spinner" aria-hidden="true"></span>
+										{/if}
+										<span class="prep-label">{step.label}</span>
+										<span class="prep-secs">{stepSeconds(step)}s</span>
+									</li>
+								{/each}
+							</ul>
+							{#if prepTotalMs !== null}
+								<p class="prep-total" transition:fade={{ duration: motionMs(200) }}>
+									Lesson ready in {(prepTotalMs / 1000).toFixed(1)}s — it's in the pool.
+								</p>
+							{/if}
+						{/if}
+
+						{#if genError}
+							<div class="gen-error">
+								<p class="error-message" role="alert">{genError}</p>
+								<button type="button" class="btn btn-ghost" onclick={() => void generate()}>
+									Try again
+								</button>
+							</div>
+						{/if}
+					</section>
+				{/if}
 			</div>
 		</div>
 	{:else if phase === 'summary'}
@@ -1018,6 +1050,18 @@
 		color: var(--text);
 		font-size: 0.85rem;
 		font-weight: 700;
+	}
+
+	.review-only-toggle {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem;
+		margin: 0.9rem 0 0;
+		color: var(--text-muted);
+		font-size: 0.85rem;
+		font-weight: 700;
+		cursor: pointer;
 	}
 
 	.generate {

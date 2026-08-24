@@ -578,6 +578,39 @@ describe('planSession', () => {
 		expect(planSession([], [item('due', -DAY)], NOW)).toEqual([]);
 		expect(planSession([row('c1', ['due'])], [], NOW)).toEqual([]);
 	});
+
+	describe('reviewOnly', () => {
+		const reviewed = [{ at: NOW - DAY, grade: 3 }];
+
+		it('excludes a due item with no review history, but keeps one that has been reviewed', () => {
+			const items = [item('never', -DAY), item('seen', -DAY, reviewed)];
+			const pool = [row('c-never', ['never']), row('c-seen', ['seen'])];
+
+			expect(ids(planSession(pool, items, NOW, { reviewOnly: true }))).toEqual(['c-seen']);
+		});
+
+		it('excludes a never-reviewed item from freshness filler too, not just the due pass', () => {
+			const items = [item('due', -DAY, reviewed), item('never', +DAY)];
+			const pool = [
+				row('due-1', ['due']),
+				row('filler', ['never'], { generatedAt: NOW })
+			];
+
+			// With reviewOnly off, `filler` would fill the second slot; with it on,
+			// the never-reviewed item's challenge must never surface, due or filler.
+			expect(ids(planSession(pool, items, NOW, { target: 2, reviewOnly: true }))).toEqual(['due-1']);
+		});
+
+		it('behaves exactly as before when unset', () => {
+			const items = [item('due', -5 * DAY), item('fine', +5 * DAY)];
+			const pool = [
+				row('fresh', ['fine'], { generatedAt: NOW }),
+				row('old-but-due', ['due'], { generatedAt: NOW - 30 * DAY })
+			];
+
+			expect(ids(planSession(pool, items, NOW, { target: 1 }))).toEqual(['old-but-due']);
+		});
+	});
 });
 
 /* -------------------------------------------------------------------------- */

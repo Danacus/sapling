@@ -325,6 +325,13 @@ export interface PlanSessionOptions {
 	target?: number;
 	/** Hard ceiling, whatever `target` says. Defaults to {@link SESSION_LENGTH}. */
 	limit?: number;
+	/**
+	 * Restrict the plan to words the learner has already been reviewed on at
+	 * least once (`item.history.length > 0`). Brand-new vocabulary — freshly
+	 * generated or simply never played — is excluded entirely rather than
+	 * deprioritized, both from the due pass and from freshness filler.
+	 */
+	reviewOnly?: boolean;
 }
 
 /** `fsrsCard` is `unknown` on the domain type; a missing card means "brand new". */
@@ -333,14 +340,27 @@ function cardOf(item: KnowledgeItem): FsrsCardState | null {
 }
 
 /** True while a pooled challenge may be planned again. */
-function isEligible(row: ChallengeRow, knownItemIds: Set<string>, now: number): boolean {
+function isEligible(row: ChallengeRow, allowedItemIds: Set<string>, now: number): boolean {
 	if (row.reported) return false;
 	// A challenge whose vocabulary the learner deleted grades nothing and often
 	// no longer even makes sense; it is dead weight, not practice.
 	if (row.itemIds.length === 0) return false;
-	if (!row.itemIds.every((id) => knownItemIds.has(id))) return false;
+	if (!row.itemIds.every((id) => allowedItemIds.has(id))) return false;
 	if (row.lastServedAt === null) return true;
 	return now - row.lastServedAt >= RESERVE_GAP;
+}
+
+/**
+ * The items a plan may draw on: everything, or — under {@link
+ * PlanSessionOptions.reviewOnly} — only items with at least one review in
+ * their history. Shared by {@link isEligible}'s pool filter and the due-items
+ * filter in {@link planSession}, so review-only excludes new vocabulary from
+ * both the due pass and freshness filler, not just one of them.
+ */
+function allowedItemIds(items: KnowledgeItem[], reviewOnly: boolean): Set<string> {
+	return new Set(
+		items.filter((item) => !reviewOnly || item.history.length > 0).map((item) => item.id)
+	);
 }
 
 /**
@@ -392,8 +412,8 @@ export function planSession(
 	const target = Math.min(Math.max(0, opts.target ?? BATCH_TARGET), limit);
 	if (target === 0) return [];
 
-	const knownItemIds = new Set(items.map((item) => item.id));
-	const eligible = pool.filter((row) => isEligible(row, knownItemIds, now)).sort(byFreshness);
+	const allowed = allowedItemIds(items, opts.reviewOnly ?? false);
+	const eligible = pool.filter((row) => isEligible(row, allowed, now)).sort(byFreshness);
 
 	// Which challenges exercise which word, each bucket already in serve order.
 	const byItem = new Map<string, ChallengeRow[]>();
@@ -407,9 +427,11 @@ export function planSession(
 
 	// Most overdue first. A card-less item is treated as due right now: it was
 	// introduced but never scheduled, so it belongs in this session, just not
-	// ahead of words the learner is actually late on.
+	// ahead of words the learner is actually late on. `allowed` gates this too,
+	// so a never-reviewed item is never "due right now" under review-only.
 	const dueItems = items
 		.filter((item) => {
+			if (!allowed.has(item.id)) return false;
 			const card = cardOf(item);
 			return card === null || isDue(card, now);
 		})
@@ -813,9 +835,10 @@ export async function startSession(
 	const [pool, items] = await Promise.all([getPool(), getAllItems()]);
 	const challenges = planSession(pool, items, now, planOpts);
 
-	const knownItemIds = new Set(items.map((item) => item.id));
-	const readyCount = pool.filter((row) => isEligible(row, knownItemIds, now)).length;
+	const allowed = allowedItemIds(items, planOpts.reviewOnly ?? false);
+	const readyCount = pool.filter((row) => isEligible(row, allowed, now)).length;
 	const dueCount = items.filter((item) => {
+		if (!allowed.has(item.id)) return false;
 		const card = cardOf(item);
 		return card === null || isDue(card, now);
 	}).length;
