@@ -120,7 +120,14 @@ sw.addEventListener('fetch', (event) => {
 			} catch (err) {
 				const fallback = await cache.match(request.mode === 'navigate' ? SHELL : request);
 				if (fallback) return fallback;
-				throw err;
+				// Rethrowing here rejects `respondWith`'s promise, which Chrome
+				// reports as "A ServiceWorker intercepted the request and
+				// encountered an unexpected error" — an ordinary failed response
+				// says the same thing without the alarming framing.
+				return new Response(err instanceof Error ? err.message : 'fetch failed', {
+					status: 503,
+					statusText: 'Service Unavailable'
+				});
 			}
 		})()
 	);

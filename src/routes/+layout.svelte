@@ -24,6 +24,27 @@
 	// not configured.
 	if (browser) void runSync();
 
+	/**
+	 * A tab left open across a deploy keeps running the old build's JS. When it
+	 * later dynamically imports one of its own (now-deleted) hashed chunks, the
+	 * SPA fallback rewrites the missing path to `index.html` instead of a 404,
+	 * and Vite's loader rejects with `vite:preloadError` — this is the "error
+	 * loading dynamically imported module" report. Reloading picks up the fresh
+	 * shell and heals it, since nothing in this app's state lives past IndexedDB.
+	 *
+	 * Guarded against looping if the reload lands on a genuinely broken deploy:
+	 * this line only runs once a page load has gotten this far successfully, so
+	 * it clears any guard a previous reload set, and re-arms for the next one.
+	 */
+	if (browser) {
+		sessionStorage.removeItem('ll.reloadedForPreloadError');
+		window.addEventListener('vite:preloadError', () => {
+			if (sessionStorage.getItem('ll.reloadedForPreloadError')) return;
+			sessionStorage.setItem('ll.reloadedForPreloadError', '1');
+			window.location.reload();
+		});
+	}
+
 	$effect(() => {
 		// Re-runs on every navigation: `page.url.pathname` is the tracked read.
 		const path = page.url.pathname;
