@@ -108,6 +108,10 @@
 	/** A generation is in flight; the button is latched and the log is live. */
 	let generating = $state(false);
 	let genError = $state('');
+	/** "Extra practice" plan is being fetched; latches that button. */
+	let practiceLoading = $state(false);
+	/** The fetched practice plan came back empty — nothing ahead of schedule to review. */
+	let practiceEmpty = $state(false);
 
 	const topicChips = $derived([
 		...TOPIC_SUGGESTIONS,
@@ -123,6 +127,12 @@
 	 * which that mode is specifically trying to keep out of the session.
 	 */
 	const nudgeGenerate = $derived(plan !== null && !reviewOnlyMode && (plan.poolLow || !canStart));
+	/**
+	 * The pool has ever held material — enough to offer "Extra practice" even
+	 * when nothing is due right now. Whether the practice plan actually turns
+	 * up anything is only known once fetched; see {@link practiceEmpty}.
+	 */
+	const hasPoolMaterial = $derived((plan?.items.length ?? 0) > 0);
 
 	/* Session ----------------------------------------------------------------- */
 
@@ -322,8 +332,40 @@
 	 * Instant by construction — the challenges were chosen at boot.
 	 */
 	async function beginSession(): Promise<void> {
-		const ready = plan;
-		if (!ready || ready.challenges.length === 0) return;
+		if (!plan) return;
+		await playPlan(plan);
+	}
+
+	/**
+	 * "Extra practice": fetches a plan that reviews words *ahead* of schedule
+	 * from the existing pool — no generation, no new vocabulary — and, if it
+	 * turns up anything, plays it through the exact same setup as a normal
+	 * session. Latched like {@link generate}'s button while the fetch is in
+	 * flight; an empty result surfaces inline rather than silently no-opping.
+	 */
+	async function beginPractice(): Promise<void> {
+		if (practiceLoading) return;
+		practiceLoading = true;
+		practiceEmpty = false;
+		try {
+			const ready = await startSession({ practice: true, reviewOnly: reviewOnlyMode });
+			if (ready.challenges.length === 0) {
+				practiceEmpty = true;
+				return;
+			}
+			await playPlan(ready);
+		} finally {
+			practiceLoading = false;
+		}
+	}
+
+	/**
+	 * Shared setup for both "Start session" and "Extra practice": turns a
+	 * {@link SessionPlan} into the playing phase. Kept as one function so the
+	 * two entry points can never drift on match-pairs filtering or bookkeeping.
+	 */
+	async function playPlan(ready: SessionPlan): Promise<void> {
+		if (ready.challenges.length === 0) return;
 
 		queue = ready.challenges;
 		nextIndex = 0;
@@ -737,18 +779,42 @@
 					Start session
 				</button>
 
+				{#if hasPoolMaterial}
+					<button
+						type="button"
+						class="btn btn-ghost btn-block practice-btn"
+						disabled={practiceLoading}
+						onclick={() => void beginPractice()}
+					>
+						{practiceLoading ? 'Fetching…' : 'Extra practice'}
+					</button>
+					<p class="hint">
+						Reviews words before they're due, from material you already have — no new words, nothing
+						generated.
+					</p>
+					{#if practiceEmpty}
+						<p class="nudge">Nothing to practise yet — generate a lesson first.</p>
+					{/if}
+				{/if}
+
 				{#if nudgeGenerate}
 					<p class="nudge">
 						{canStart
 							? 'Running low on fresh material — generate a new lesson below.'
-							: 'Nothing to practise yet. Generate a lesson to get started.'}
+							: hasPoolMaterial
+								? 'Nothing due right now — try Extra practice above, or generate a new lesson.'
+								: 'Nothing to practise yet. Generate a lesson to get started.'}
 						{#if mock}
 							In practice mode it's instant and free.{/if}
 					</p>
 				{/if}
 
 				{#if reviewOnlyMode && !canStart}
-					<p class="nudge">Nothing due for review yet. Turn off Review only to add new words.</p>
+					<p class="nudge">
+						{hasPoolMaterial
+							? 'Nothing due for review yet — Extra practice above reviews ahead of schedule, or turn off Review only to add new words.'
+							: 'Nothing due for review yet. Turn off Review only to add new words.'}
+					</p>
 				{/if}
 
 				{#if !reviewOnlyMode}
@@ -1165,6 +1231,10 @@
 
 	.start-btn {
 		margin-top: 1.5rem;
+	}
+
+	.practice-btn {
+		margin-top: 0.6rem;
 	}
 
 	/* Generation log ------------------------------------------------------- */
