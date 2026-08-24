@@ -1,0 +1,13 @@
+# Cloudflare Pages routing, copied verbatim into build/ by SvelteKit.
+#
+# A missing hashed build asset must 404 for real, never fall back to the SPA
+# shell: `_headers` marks /_app/immutable/* cached forever (`immutable`), and
+# once a fallback 200 HTML response gets edge-cached under that header it
+# sticks around for up to a year — a stale client requesting one dead chunk
+# once is enough to poison that URL for every visitor afterwards, on any
+# deployment, until the cache is purged. A 404 status isn't eligible for that
+# caching, so this can't happen again. Every other unmatched path is a
+# client-side route and still needs the SPA shell, so a hard refresh on e.g.
+# /learn keeps working.
+/_app/immutable/*  /404.html  404
+/*                 /index.html  200
