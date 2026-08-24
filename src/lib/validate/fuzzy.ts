@@ -8,9 +8,15 @@
  * Everything here is pure and synchronous: no network calls, no randomness.
  * This is the "free" grading path that runs before (or instead of) an LLM
  * judge call.
+ *
+ * These are string matchers, and they know nothing about challenges: which
+ * field of which type is graded how — and whether near-misses count there at
+ * all — is per-type knowledge and lives in `$lib/challenges/types`, dispatched
+ * by `checkChallenge` in `$lib/challenges/check`. Keeping this module a leaf is
+ * what lets the challenge layer call into it without the arrow pointing back.
  */
 
-import type { Challenge, Verdict } from '$lib/types';
+import type { Verdict } from '$lib/types';
 
 /** Options for {@link normalize}. */
 export interface NormalizeOptions {
@@ -230,53 +236,4 @@ export function validateAnswer(
 /** Grades a free-text answer against the accepted answers. */
 export function checkAnswer(given: string, accepted: string[]): Verdict {
 	return validateAnswer(given, accepted).verdict;
-}
-
-/** Grades any challenge; dispatches on `challenge.type`. */
-export function checkChallenge(challenge: Challenge, answerGiven: string): Verdict {
-	switch (challenge.type) {
-		case 'cloze':
-		case 'typed-translation':
-			return checkAnswer(answerGiven, challenge.acceptedAnswers);
-
-		case 'multiple-choice': {
-			const correctOption = challenge.options[challenge.correctIndex];
-			return checkAnswer(answerGiven, [correctOption]);
-		}
-
-		case 'match-pairs': {
-			// Match-pairs is normally graded interactively in the UI (each tap
-			// resolves one pair), not via a single free-text answer. This
-			// dispatcher is kept total by accepting an "a::b" / "a|b" encoding
-			// of one resolved pair, matched against the challenge's pairs.
-			const parts = answerGiven.split(/::|\|/).map((p) => p.trim());
-			if (parts.length !== 2) return 'wrong';
-			const [a, b] = parts;
-			const hit = challenge.pairs.some(
-				(pair) => normalize(a) === normalize(pair.a) && normalize(b) === normalize(pair.b)
-			);
-			return hit ? 'correct' : 'wrong';
-		}
-
-		case 'word-order': {
-			// Tapped tiles, not typed text: the component grades by comparing the
-			// chosen token sequence to `answerTokens`. This dispatcher stays total by
-			// grading the assembled sentence, which is what the component reports as
-			// `answerGiven` — and it is an exact comparison, never fuzzy, because the
-			// learner picked from a closed set rather than spelling anything.
-			return normalize(answerGiven) === normalize(challenge.answer) ? 'correct' : 'wrong';
-		}
-
-		case 'spot-error': {
-			// The answer is the *wrong* word — the one the learner is asked to tap.
-			return normalize(answerGiven) === normalize(challenge.tokens[challenge.correctIndex])
-				? 'correct'
-				: 'wrong';
-		}
-
-		default: {
-			const _exhaustive: never = challenge;
-			return _exhaustive;
-		}
-	}
 }

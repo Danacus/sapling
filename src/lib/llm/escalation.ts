@@ -16,6 +16,7 @@
 import { z } from 'zod';
 
 import type { Challenge } from '$lib/types';
+import { WIRE_TYPE_DEFS } from './challenge-types';
 import { chatCompletion } from './client';
 import type { ChatMessage, FetchLike, TokenUsage } from './client';
 import { stripFences } from './generate';
@@ -67,13 +68,40 @@ export const DEFAULT_QUESTION =
 /** Word budget for an escalation reply. Kept tight on purpose. */
 export const ANSWER_WORD_LIMIT = 120;
 
+/** Spelled-out counts for {@link SHAPE_GLOSS}; a bare numeral past the table. */
+const COUNT_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven'];
+
+/**
+ * What the model has to be told about the *stored* challenge shapes before it
+ * can judge a dispute about one.
+ *
+ * Most stored challenges explain themselves — a `prompt` and `acceptedAnswers`
+ * need no gloss — but the tile-based types do not say which array the learner
+ * rearranged or which index holds the wrong word, and a model that guesses will
+ * confidently overturn a correct grade. Only the types that need it carry an
+ * `escalationSpec`, so this sentence is composed from the registry (in the same
+ * order as the batch prompt's `Types:` block) rather than listing them by hand:
+ * a new tile-based type describes itself here by existing, and a type that stops
+ * needing a gloss stops paying for one.
+ */
+const SHAPE_GLOSS = ((): string => {
+	const lead = "The challenge JSON is the app's own stored shape.";
+	const specs = WIRE_TYPE_DEFS.map((def) => def.escalationSpec).filter(
+		(spec): spec is string => !!spec
+	);
+	if (!specs.length) return lead;
+	const count = COUNT_WORDS[specs.length] ?? String(specs.length);
+	const verb = specs.length === 1 ? 'is' : 'are';
+	return [`${lead} Most types are self-describing; ${count} ${verb} not.`, ...specs].join(' ');
+})();
+
 /** Builds the two-message escalation prompt. */
 export function buildEscalationPrompt(args: EscalationArgs): ChatMessage[] {
 	const system = [
 		`You are a precise language tutor. The learner speaks ${args.nativeLanguage} and is learning ${args.targetLanguage}.`,
 		'Reply with one JSON object and nothing else, no markdown fences: {"answer": string, "overturn": boolean}.',
 		`"answer": your reply in ${args.nativeLanguage}, plain text, at most ${ANSWER_WORD_LIMIT} words. Answer exactly what was asked and nothing else. No greeting, no praise, no encouragement, no restating the question, no markdown.`,
-		'The challenge JSON is the app\'s own stored shape. Most types are self-describing; two are not. "word-order": the learner arranged the shuffled "tiles" into a sentence, and "answerTokens" in that order (printed as "answer") is the only accepted arrangement. "spot-error": "tokens" is the sentence as the learner saw it, "correctIndex" is the position of the WRONG word they had to tap, "intendedWord" is what belongs there and "meaning" is what the sentence was supposed to say.',
+		SHAPE_GLOSS,
 		'"overturn": true ONLY when the answer the learner gave should genuinely have been accepted as correct for the challenge exactly as it was shown — a valid alternative translation, a synonym, or an acceptable register or spelling variant that the accepted answers simply missed.',
 		'Never overturn out of politeness, encouragement, or because the learner insists. If their answer changes the meaning, is ungrammatical, or answers a different question than the one asked, "overturn" is false and the explanation says why.',
 		'When you overturn, "answer" states plainly that their answer counts and why it is valid.'

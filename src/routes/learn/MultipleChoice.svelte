@@ -23,22 +23,22 @@
   blocks gameplay.
 -->
 <script lang="ts">
-	import type { AnswerEvent } from '$lib/session/engine';
+	import { choiceKeyAction } from '$lib/challenges/keyboard';
+	import type { ChallengeProps } from '$lib/challenges/props';
 	import { isListeningChallenge } from '$lib/session/engine';
 	import { speak, ttsAvailable } from '$lib/tts';
 	import type { MultipleChoiceChallenge } from '$lib/types';
 	import { getListeningMode, getShowRomanization } from '$lib/ui/prefs';
-	import SpeakButton from '$lib/ui/SpeakButton.svelte';
+	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
+	import CheckButton from './blocks/CheckButton.svelte';
+	import PromptHeader from './blocks/PromptHeader.svelte';
+	import TapOption from './blocks/TapOption.svelte';
 
 	let {
 		challenge,
 		onanswer,
 		targetLanguage = ''
-	}: {
-		challenge: MultipleChoiceChallenge;
-		onanswer: (event: AnswerEvent) => void;
-		targetLanguage?: string;
-	} = $props();
+	}: ChallengeProps<MultipleChoiceChallenge> = $props();
 
 	/** Read once — the toggles live in Settings, not mid-session. */
 	const showRomanization = getShowRomanization();
@@ -59,12 +59,19 @@
 	 */
 	const AUDIO_TIMEOUT_MS = 6000;
 
-	/** Reset per challenge: `challenge.id` is the tracked read. */
 	let selected = $state<number | null>(null);
-	let locked = $state(false);
-	let shownAt = $state(Date.now());
 	/** The learner — or a failure — asked for the prompt text. */
 	let revealed = $state(false);
+
+	// Declared before the audio effect below, so a challenge swap clears
+	// `revealed` before the new prompt gets its chance to set it again.
+	const lock = createAnswerLock(
+		() => challenge.id,
+		() => {
+			selected = null;
+			revealed = false;
+		}
+	);
 
 	/**
 	 * Audio-first for this particular challenge. Three independent gates: the
@@ -76,15 +83,7 @@
 	);
 
 	/** True while the prompt is withheld — the only thing listening mode changes. */
-	const hidingPrompt = $derived(listening && !revealed && !locked);
-
-	$effect(() => {
-		void challenge.id;
-		selected = null;
-		locked = false;
-		revealed = false;
-		shownAt = Date.now();
-	});
+	const hidingPrompt = $derived(listening && !revealed && !lock.locked);
 
 	/**
 	 * Plays the prompt once per challenge, and reveals the text if that plainly
@@ -131,59 +130,50 @@
 	 */
 	const promptIsTarget = $derived(challenge.direction === 'toNative');
 
+	function readingOf(index: number): string {
+		return (showRomanization ? challenge.optionsRomanization?.[index] : '') ?? '';
+	}
+
 	function select(index: number): void {
-		if (locked) return;
+		if (lock.locked) return;
 		selected = index;
 	}
 
 	function submit(): void {
-		if (locked || selected === null) return;
-		locked = true;
+		if (lock.locked || selected === null) return;
 		onanswer({
 			answerGiven: challenge.options[selected],
 			verdict: selected === challenge.correctIndex ? 'correct' : 'wrong',
-			responseMs: Date.now() - shownAt
+			responseMs: lock.commit()
 		});
 	}
 
+	/** Digits 1-4 pick, Enter checks; the rule itself is in `$lib/challenges`. */
 	function onkeydown(event: KeyboardEvent): void {
-		if (locked || event.metaKey || event.ctrlKey || event.altKey) return;
-
-		const digit = Number.parseInt(event.key, 10);
-		if (digit >= 1 && digit <= challenge.options.length) {
-			event.preventDefault();
-			select(digit - 1);
-			return;
-		}
-
-		if (event.key === 'Enter' && selected !== null) {
-			event.preventDefault();
-			submit();
-		}
+		const action = choiceKeyAction(event, {
+			count: challenge.options.length,
+			locked: lock.locked,
+			hasSelection: selected !== null
+		});
+		if (action.kind === 'ignore') return;
+		event.preventDefault();
+		if (action.kind === 'select') select(action.index);
+		else submit();
 	}
 </script>
 
 <svelte:window {onkeydown} />
 
 <div class="mc">
-	<p class="asked">{askedIn}</p>
-	<p class="prompt">
-		{#if hidingPrompt}
-			<span class="hidden-prompt" aria-hidden="true">· · ·</span>
-		{:else}
-			<span>{challenge.prompt}</span>
-		{/if}
-		{#if promptIsTarget}
-			<SpeakButton
-				text={challenge.prompt}
-				lang={targetLanguage}
-				label={hidingPrompt ? 'Play again' : ''}
-			/>
-		{/if}
-	</p>
-	{#if showRomanization && challenge.promptRomanization && !hidingPrompt}
-		<p class="rom">{challenge.promptRomanization}</p>
-	{/if}
+	<PromptHeader
+		kicker={askedIn}
+		prompt={challenge.prompt}
+		reading={(showRomanization ? challenge.promptRomanization : '') ?? ''}
+		hidePrompt={hidingPrompt}
+		speakText={promptIsTarget ? challenge.prompt : ''}
+		speakLang={targetLanguage}
+		speakLabel={hidingPrompt ? 'Play again' : ''}
+	/>
 
 	{#if listening}
 		<!-- Always rendered, never only after a failure: the escape hatch has to
@@ -200,82 +190,27 @@
 
 	<div class="options" role="radiogroup" aria-label="Answer options">
 		{#each challenge.options as option, index (index)}
-			<button
-				type="button"
-				class="option"
-				class:chosen={selected === index}
-				role="radio"
-				aria-checked={selected === index}
-				disabled={locked}
+			<TapOption
+				text={option}
+				reading={readingOf(index)}
+				badge={index + 1}
+				size="card"
+				align="start"
+				selection="radio"
+				state={selected === index ? 'selected' : 'idle'}
+				disabled={lock.locked}
 				onclick={() => select(index)}
-			>
-				<span class="key" aria-hidden="true">{index + 1}</span>
-				<span class="label">
-					<span>{option}</span>
-					{#if showRomanization && challenge.optionsRomanization?.[index]}
-						<span class="rom">{challenge.optionsRomanization[index]}</span>
-					{/if}
-				</span>
-			</button>
+			/>
 		{/each}
 	</div>
 
-	<button
-		type="button"
-		class="btn btn-primary btn-block check"
-		disabled={selected === null || locked}
-		onclick={submit}
-	>
-		Check
-	</button>
+	<CheckButton disabled={selected === null || lock.locked} onclick={submit} />
 </div>
 
 <style>
 	.mc {
 		display: flex;
 		flex-direction: column;
-	}
-
-	.asked {
-		margin: 0 0 0.4rem;
-		font-size: 0.78rem;
-		font-weight: 800;
-		letter-spacing: 0.07em;
-		text-transform: uppercase;
-		color: var(--text-muted);
-	}
-
-	.prompt {
-		display: flex;
-		align-items: center;
-		gap: 0.4rem;
-		margin: 0 0 1.5rem;
-		font-size: 1.9rem;
-		font-weight: 800;
-		line-height: 1.15;
-		letter-spacing: -0.015em;
-		overflow-wrap: anywhere;
-	}
-
-	.prompt > span {
-		min-width: 0;
-	}
-
-	/* When romanization follows the prompt, it owns the trailing space instead. */
-	.prompt:has(+ :global(.rom)) {
-		margin-bottom: 0.2rem;
-	}
-
-	.prompt + :global(.rom) {
-		margin-bottom: 1.3rem;
-		font-size: 1rem;
-	}
-
-	/* A placeholder with the same weight as the prompt, so revealing the text
-	   does not shove the options down the page. */
-	.hidden-prompt {
-		color: var(--text-muted);
-		letter-spacing: 0.15em;
 	}
 
 	.reveal {
@@ -293,96 +228,5 @@
 		display: grid;
 		gap: 0.7rem;
 		margin-bottom: 1.5rem;
-	}
-
-	.option {
-		display: flex;
-		align-items: center;
-		gap: 0.85rem;
-		width: 100%;
-		padding: 1rem 1.1rem;
-		border: 2px solid var(--border);
-		border-bottom-width: 4px;
-		border-radius: var(--radius);
-		background: var(--surface);
-		color: var(--text);
-		font: inherit;
-		font-weight: 700;
-		font-size: 1.05rem;
-		text-align: left;
-		cursor: pointer;
-		transition:
-			border-color 0.12s ease,
-			background 0.12s ease,
-			transform 0.08s ease;
-	}
-
-	.option:hover:not(:disabled) {
-		background: var(--surface-alt);
-	}
-
-	.option:active:not(:disabled) {
-		transform: translateY(2px);
-		border-bottom-width: 2px;
-	}
-
-	.option:focus-visible {
-		outline: none;
-		box-shadow: var(--ring);
-	}
-
-	.option.chosen {
-		border-color: var(--accent);
-		background: var(--accent-soft);
-	}
-
-	.option:disabled {
-		cursor: default;
-		opacity: 0.75;
-	}
-
-	.key {
-		display: grid;
-		place-items: center;
-		flex: 0 0 auto;
-		width: 1.75rem;
-		height: 1.75rem;
-		border: 2px solid var(--border);
-		border-radius: var(--radius-sm);
-		font-size: 0.8rem;
-		font-weight: 800;
-		color: var(--text-muted);
-	}
-
-	.option.chosen .key {
-		border-color: var(--accent);
-		color: var(--accent);
-	}
-
-	.label {
-		min-width: 0;
-		overflow-wrap: anywhere;
-	}
-
-	.check {
-		margin-top: auto;
-	}
-
-	/* The number badges are a keyboard affordance; useless on touch. */
-	@media (pointer: coarse) {
-		.key {
-			display: none;
-		}
-	}
-
-	@media (max-width: 480px) {
-		.prompt {
-			font-size: 1.5rem;
-		}
-
-		.option {
-			padding: 0.85rem 0.9rem;
-			font-size: 1rem;
-		}
 	}
 </style>

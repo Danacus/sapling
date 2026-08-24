@@ -14,8 +14,8 @@
 <script lang="ts">
 	import { fly, slide } from 'svelte/transition';
 
+	import { answerReading, spokenAnswerFor } from '$lib/challenges/display';
 	import { getEscalation, LlmError } from '$lib/llm';
-	import { spokenAnswerFor } from '$lib/session/engine';
 	import { motionMs } from '$lib/session/motion';
 	import { Grade } from '$lib/srs';
 	import { speak } from '$lib/tts';
@@ -174,25 +174,6 @@
 	});
 
 	/**
-	 * The canonical answer, but only when it is in the target language —
-	 * hearing your own native language read back teaches nothing.
-	 *
-	 * Cloze, word-order and spot-error answers are always target-language — the
-	 * last of those despite its `toNative` direction, because the word it names
-	 * is still a target-language word. The other two types depend on the
-	 * direction. Match rounds have no single answer, so they get nothing.
-	 * `closestAccepted` wins when present because that is the form the learner
-	 * was nearly right about.
-	 */
-	const answerIsTargetLanguage = $derived(
-		challenge.type === 'cloze' ||
-			challenge.type === 'word-order' ||
-			challenge.type === 'spot-error' ||
-			((challenge.type === 'multiple-choice' || challenge.type === 'typed-translation') &&
-				challenge.direction === 'toTarget')
-	);
-
-	/**
 	 * What the speak button says — always the canonical target-script form
 	 * (`spokenAnswerFor`), never the variant {@link detail} is showing.
 	 *
@@ -233,23 +214,11 @@
 	 * know how to say it. Absent for Latin scripts, for native-language answers,
 	 * and for anything queued before the field existed; each of those simply
 	 * renders no line.
+	 *
+	 * Which field that is per challenge type is `$lib/challenges/display`'s
+	 * business; the learner's romanization preference is this component's.
 	 */
-	const answerReading = $derived.by(() => {
-		if (!showRomanization || !answerIsTargetLanguage) return '';
-		if (challenge.type === 'multiple-choice') {
-			return challenge.optionsRomanization?.[challenge.correctIndex] ?? '';
-		}
-		if (
-			challenge.type === 'cloze' ||
-			challenge.type === 'typed-translation' ||
-			challenge.type === 'word-order'
-		) {
-			return challenge.answerRomanization ?? '';
-		}
-		// Reads the word that *belonged* there — which is what `detail` prints.
-		if (challenge.type === 'spot-error') return challenge.intendedWordRomanization ?? '';
-		return '';
-	});
+	const reading = $derived(showRomanization ? (answerReading(challenge) ?? '') : '');
 
 	async function ask(): Promise<void> {
 		if (asking) return;
@@ -330,7 +299,7 @@
 					<p class="headline">{headline}</p>
 					{#if detail}
 						<p class="detail">{detail}</p>
-						{#if answerReading}<p class="rom">{answerReading}</p>{/if}
+						{#if reading}<p class="rom">{reading}</p>{/if}
 					{/if}
 					{#if spokenAnswer}
 						<SpeakButton text={spokenAnswer} lang={targetLanguage} label="Hear it" size="sm" />

@@ -1,0 +1,101 @@
+/**
+ * `recognize-mc` — the target text is shown, the learner picks its native
+ * meaning. Stored as a `multiple-choice` challenge in the `toNative` direction.
+ *
+ * The options are native-language meanings, so nothing here carries a reading:
+ * an `optionsRomanization` column would have nothing to annotate.
+ */
+
+import { z } from 'zod';
+import { assembleChoices, nativeSlotInTargetScript, optionalString } from '../resolve-helpers';
+import { generatedBase, nonEmpty, targetTextSchema, threeOf } from './primitives';
+import type { WireTypeDef } from './def';
+
+/** Target text shown, native meaning chosen. */
+export const generatedRecognizeMcSchema = z.object({
+	type: z.literal('recognize-mc'),
+	shown: targetTextSchema,
+	correctMeaning: nonEmpty,
+	distractors: threeOf(nonEmpty),
+	/** Heading above the prompt; null when the UI's default heading fits. */
+	instruction: z.string().nullish(),
+	...generatedBase
+});
+
+export type GeneratedRecognizeMc = z.infer<typeof generatedRecognizeMcSchema>;
+
+export const recognizeMcDef = {
+	type: 'recognize-mc',
+	schema: generatedRecognizeMcSchema,
+	promptSpec: 'recognize-mc — target text shown, native meaning picked. {shown:TargetText, correctMeaning, distractors:[3], instruction} e.g. {"type":"recognize-mc","shown":{"text":"el perro","reading":null},"correctMeaning":"the dog","distractors":["the cat","the bread","the house"],"instruction":null,"itemIds":["i1"],"explanation":null}',
+	correctiveSpec: 'recognize-mc {shown,correctMeaning,distractors}',
+
+	fixtures: {
+		spanish: [
+			{
+				order: 0,
+				challenge: {
+					type: 'recognize-mc',
+					shown: { text: '¿Nos trae la cuenta, por favor?', reading: null },
+					correctMeaning: 'Could you bring us the bill, please?',
+					distractors: [
+						'Could we see the menu, please?',
+						'Is this table free?',
+						'Could you bring another chair?'
+					],
+					// Exercises the instruction field: this is a dialogue turn, not a
+					// bare vocabulary lookup, so the default "What does this mean?"
+					// heading undersells it.
+					instruction: 'What is the customer asking for?',
+					itemIds: ['new:0'],
+					explanation: 'Waiters are addressed with "usted", hence "trae" rather than "traes".'
+				}
+			}
+		],
+		mandarin: [
+			{
+				order: 0,
+				challenge: {
+					type: 'recognize-mc',
+					shown: { text: '菜单', reading: 'càidān' },
+					correctMeaning: 'the menu',
+					distractors: ['the bill', 'the chopsticks', 'the waiter'],
+					instruction: null,
+					itemIds: ['new:0'],
+					explanation: null
+				}
+			}
+		]
+	},
+
+	resolve(generated, { base, rng }) {
+		// Both sides in the target language is a structural failure, not a
+		// cosmetic one: the "translation" being asked for is already shown.
+		if (
+			[generated.correctMeaning, ...generated.distractors].some((option) =>
+				nativeSlotInTargetScript(option, generated.shown.text)
+			)
+		) {
+			return null;
+		}
+		// The options are native-language meanings, so no reading rides along
+		// and no `optionsRomanization` is produced.
+		const { options: choices, correctIndex } = assembleChoices(
+			[
+				{ text: generated.correctMeaning.trim(), correct: true },
+				...generated.distractors.map((text) => ({ text: text.trim() }))
+			],
+			rng
+		);
+		return {
+			...base,
+			type: 'multiple-choice',
+			direction: 'toNative',
+			prompt: generated.shown.text.trim(),
+			...optionalString('promptRomanization', generated.shown.reading),
+			options: choices,
+			correctIndex,
+			...optionalString('instruction', generated.instruction)
+		};
+	}
+} satisfies WireTypeDef<GeneratedRecognizeMc>;

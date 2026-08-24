@@ -22,6 +22,7 @@
 	import { goto } from '$app/navigation';
 	import { fade, fly, scale } from 'svelte/transition';
 
+	import { correctAnswerText, spokenAnswerFor } from '$lib/challenges/display';
 	import { getProfile, getStats, localDay } from '$lib/db';
 	import { LlmError, isMockMode, makeMatchPairsChallenge } from '$lib/llm';
 	import type { ProgressStep } from '$lib/llm';
@@ -39,7 +40,6 @@
 		isListeningChallenge,
 		reportChallenge,
 		sessionSummary,
-		spokenAnswerFor,
 		startSession,
 		wantsMatchRound,
 		xpFor,
@@ -61,13 +61,8 @@
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
-	import Cloze from './Cloze.svelte';
+	import ChallengeHost from './ChallengeHost.svelte';
 	import FeedbackBanner from './FeedbackBanner.svelte';
-	import MatchPairs from './MatchPairs.svelte';
-	import MultipleChoice from './MultipleChoice.svelte';
-	import SpotError from './SpotError.svelte';
-	import TypedTranslation from './TypedTranslation.svelte';
-	import WordOrder from './WordOrder.svelte';
 
 	/** Conversational scenarios offered next to the topic field. */
 	const TOPIC_SUGGESTIONS = [
@@ -398,25 +393,6 @@
 		}
 	}
 
-	function correctAnswerFor(challenge: Challenge): string {
-		switch (challenge.type) {
-			case 'multiple-choice':
-				return challenge.options[challenge.correctIndex];
-			case 'cloze':
-			case 'typed-translation':
-				return challenge.acceptedAnswers[0] ?? '';
-			case 'word-order':
-				return challenge.answer;
-			// Not the word they had to tap — the word that belonged there. "Answer:
-			// pedir" is the thing worth remembering; "the wrong one was pagar" is
-			// already on screen, highlighted.
-			case 'spot-error':
-				return challenge.intendedWord;
-			case 'match-pairs':
-				return '';
-		}
-	}
-
 	function handleAnswer(event: AnswerEvent): void {
 		const challenge = current;
 		if (!challenge || feedback) return;
@@ -447,7 +423,7 @@
 			challenge,
 			verdict: event.verdict,
 			answerGiven: event.answerGiven,
-			correctAnswer: correctAnswerFor(challenge),
+			correctAnswer: correctAnswerText(challenge),
 			...(event.closestAccepted ? { closestAccepted: event.closestAccepted } : {}),
 			...(challenge.explanation ? { explanation: challenge.explanation } : {}),
 			xp
@@ -932,24 +908,12 @@
 						in:fly={{ x: 40, duration: motionMs(240), delay: motionMs(80) }}
 						out:fly={{ x: -40, duration: motionMs(160) }}
 					>
-						{#if current.type === 'multiple-choice'}
-							<MultipleChoice challenge={current} onanswer={handleAnswer} {targetLanguage} />
-						{:else if current.type === 'cloze'}
-							<Cloze challenge={current} onanswer={handleAnswer} {targetLanguage} />
-						{:else if current.type === 'typed-translation'}
-							<TypedTranslation
-								challenge={current}
-								onanswer={handleAnswer}
-								{targetLanguage}
-								{nativeLanguage}
-							/>
-						{:else if current.type === 'word-order'}
-							<WordOrder challenge={current} onanswer={handleAnswer} />
-						{:else if current.type === 'spot-error'}
-							<SpotError challenge={current} onanswer={handleAnswer} />
-						{:else}
-							<MatchPairs challenge={current} onanswer={handleAnswer} {targetLanguage} />
-						{/if}
+						<ChallengeHost
+							challenge={current}
+							onanswer={handleAnswer}
+							{targetLanguage}
+							{nativeLanguage}
+						/>
 
 						{#if current.type !== 'match-pairs' && !feedback}
 							<button type="button" class="btn btn-ghost skip-btn" onclick={skipCurrent}>

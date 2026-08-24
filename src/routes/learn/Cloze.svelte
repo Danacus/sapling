@@ -12,23 +12,25 @@
 
   Both modes grade through `validateAnswer`, which is what makes an accent slip
   an 'almost' rather than a 'wrong'.
+
+  The sentence line is the one prompt no block renders: it is not text with a
+  speaker next to it, it is an interactive line with a control *in* it, and the
+  gap has to sit in the reading order where the word belongs. So the kicker
+  comes from `PromptHeader` and the line below it stays this component's own.
 -->
 <script lang="ts">
-	import type { AnswerEvent } from '$lib/session/engine';
+	import type { ChallengeProps } from '$lib/challenges/props';
 	import type { ClozeChallenge } from '$lib/types';
 	import { getShowRomanization } from '$lib/ui/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import { validateAnswer } from '$lib/validate';
+	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
+	import CheckButton from './blocks/CheckButton.svelte';
+	import PromptHeader from './blocks/PromptHeader.svelte';
+	import TapOption from './blocks/TapOption.svelte';
+	import TapRow from './blocks/TapRow.svelte';
 
-	let {
-		challenge,
-		onanswer,
-		targetLanguage = ''
-	}: {
-		challenge: ClozeChallenge;
-		onanswer: (event: AnswerEvent) => void;
-		targetLanguage?: string;
-	} = $props();
+	let { challenge, onanswer, targetLanguage = '' }: ChallengeProps<ClozeChallenge> = $props();
 
 	/** Read once — the toggle lives in Settings, not mid-session. */
 	const showRomanization = getShowRomanization();
@@ -50,18 +52,18 @@
 
 	let typed = $state('');
 	let pickedIndex = $state<number | null>(null);
-	let locked = $state(false);
-	let shownAt = $state(Date.now());
 	let input = $state<HTMLInputElement | null>(null);
 
-	$effect(() => {
-		void challenge.id;
-		typed = '';
-		pickedIndex = null;
-		locked = false;
-		shownAt = Date.now();
-	});
+	const lock = createAnswerLock(
+		() => challenge.id,
+		() => {
+			typed = '';
+			pickedIndex = null;
+		}
+	);
 
+	// Kept separate from the reset above: this one depends on the `bind:this`
+	// landing, and re-running the reset when it does would clear the field.
 	$effect(() => {
 		void challenge.id;
 		if (!usesBank) input?.focus();
@@ -70,7 +72,7 @@
 	const answer = $derived(
 		usesBank ? (pickedIndex === null ? '' : bank[pickedIndex]) : typed.trim()
 	);
-	const ready = $derived(answer.length > 0 && !locked);
+	const ready = $derived(answer.length > 0 && !lock.locked);
 
 	/** The sentence with the blank filled in by the canonical accepted answer. */
 	const completedSentence = $derived(
@@ -87,18 +89,21 @@
 	 * canonical form.
 	 */
 	const spokenSentence = $derived(
-		locked ? completedSentence : challenge.sentence.split(GAP).join('…')
+		lock.locked ? completedSentence : challenge.sentence.split(GAP).join('…')
 	);
 
+	function readingOf(index: number): string {
+		return (showRomanization ? challenge.wordBankRomanization?.[index] : '') ?? '';
+	}
+
 	function pick(index: number): void {
-		if (locked) return;
+		if (lock.locked) return;
 		// Tapping the chip that is already in the gap takes it back out.
 		pickedIndex = pickedIndex === index ? null : index;
 	}
 
 	function submit(): void {
 		if (!ready) return;
-		locked = true;
 		const { verdict, closestAccepted } = validateAnswer(answer, challenge.acceptedAnswers);
 		// No speech here: the feedback banner auto-plays the completed sentence
 		// for every challenge type in one place, so cloze stays consistent with
@@ -106,7 +111,7 @@
 		onanswer({
 			answerGiven: answer,
 			verdict,
-			responseMs: Date.now() - shownAt,
+			responseMs: lock.commit(),
 			closestAccepted
 		});
 	}
@@ -118,7 +123,7 @@
 </script>
 
 <form class="cloze" onsubmit={onFormSubmit}>
-	<p class="asked">Fill in the blank</p>
+	<PromptHeader kicker="Fill in the blank" />
 
 	<p class="sentence">
 		<span>{parts.before}</span>
@@ -127,7 +132,7 @@
 				type="button"
 				class="gap"
 				class:filled={pickedIndex !== null}
-				disabled={locked}
+				disabled={lock.locked}
 				aria-label={pickedIndex === null ? 'Empty blank' : `Blank filled with ${answer}`}
 				onclick={() => (pickedIndex = null)}
 			>
@@ -144,7 +149,7 @@
 				autocapitalize="off"
 				autocorrect="off"
 				spellcheck="false"
-				disabled={locked}
+				disabled={lock.locked}
 				aria-label="Your answer for the blank"
 				placeholder="…"
 			/>
@@ -160,39 +165,27 @@
 
 	{#if usesBank}
 		<div class="bank">
-			{#each bank as word, index (index)}
-				<button
-					type="button"
-					class="chip"
-					class:used={pickedIndex === index}
-					disabled={locked}
-					onclick={() => pick(index)}
-				>
-					<span>{word}</span>
-					{#if showRomanization && challenge.wordBankRomanization?.[index]}
-						<span class="rom">{challenge.wordBankRomanization[index]}</span>
-					{/if}
-				</button>
-			{/each}
+			<TapRow>
+				{#each bank as word, index (index)}
+					<TapOption
+						text={word}
+						reading={readingOf(index)}
+						state={pickedIndex === index ? 'spent' : 'idle'}
+						disabled={lock.locked}
+						onclick={() => pick(index)}
+					/>
+				{/each}
+			</TapRow>
 		</div>
 	{/if}
 
-	<button type="submit" class="btn btn-primary btn-block check" disabled={!ready}>Check</button>
+	<CheckButton type="submit" disabled={!ready} />
 </form>
 
 <style>
 	.cloze {
 		display: flex;
 		flex-direction: column;
-	}
-
-	.asked {
-		margin: 0 0 0.4rem;
-		font-size: 0.78rem;
-		font-weight: 800;
-		letter-spacing: 0.07em;
-		text-transform: uppercase;
-		color: var(--text-muted);
 	}
 
 	.sentence {
@@ -215,6 +208,12 @@
 		align-self: center;
 	}
 
+	/*
+	  The blank itself — the one idiom no other type has. Deliberately not a
+	  `.tap`: it is a hole in a sentence, drawn as a dashed rule the word lands
+	  on, and both modes (the tappable button and the inline input) wear it so
+	  the gap looks the same whether the learner picks or spells.
+	*/
 	.gap {
 		display: inline-block;
 		min-width: 5.5rem;
@@ -256,7 +255,7 @@
 
 	.gap:disabled {
 		cursor: default;
-		opacity: 0.8;
+		opacity: 0.75;
 	}
 
 	.sentence-rom {
@@ -271,55 +270,7 @@
 	}
 
 	.bank {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.55rem;
 		margin-bottom: 1.5rem;
-	}
-
-	.chip {
-		padding: 0.6rem 1rem;
-		border: 2px solid var(--border);
-		border-bottom-width: 4px;
-		border-radius: var(--radius);
-		background: var(--surface);
-		color: var(--text);
-		font: inherit;
-		font-weight: 700;
-		cursor: pointer;
-		transition:
-			transform 0.08s ease,
-			opacity 0.15s ease,
-			background 0.15s ease;
-	}
-
-	.chip:hover:not(:disabled) {
-		background: var(--surface-alt);
-	}
-
-	.chip:active:not(:disabled) {
-		transform: translateY(2px);
-		border-bottom-width: 2px;
-	}
-
-	.chip:focus-visible {
-		outline: none;
-		box-shadow: var(--ring);
-	}
-
-	/* The chip currently sitting in the gap stays visible but clearly spent. */
-	.chip.used {
-		opacity: 0.35;
-		border-style: dashed;
-		border-bottom-width: 2px;
-	}
-
-	.chip:disabled {
-		cursor: default;
-	}
-
-	.check {
-		margin-top: auto;
 	}
 
 	@media (max-width: 480px) {

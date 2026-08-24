@@ -1,0 +1,137 @@
+<!--
+  The top of a challenge: kicker, prompt, reading, speaker.
+
+  Every type opened with some subset of the same four lines, hand-rolled, and
+  they had drifted on the details that hold the block together — the line
+  height, the space a reading is allowed to steal from the prompt's bottom
+  margin, whether the speaker button sits on the text or under it. One block
+  owns all of that now, so a new challenge type gets the layout by asking for
+  it rather than by copying it.
+
+  The margin dance is the part worth knowing: a prompt normally carries the
+  whole gap to whatever follows it, but when a romanization line follows, the
+  reading owns that gap instead and the prompt tightens up against it. That is
+  what keeps `word · reading` reading as one unit rather than as two.
+
+  `hidePrompt` is listening mode's whole footprint here (see MultipleChoice):
+  the text is replaced by a placeholder of the same weight — so revealing it
+  does not shove the options down the page — and the reading is withheld with
+  it, since a romanization gives the word away just as plainly as the script.
+-->
+<script lang="ts">
+	import SpeakButton from '$lib/ui/SpeakButton.svelte';
+
+	let {
+		kicker,
+		prompt = '',
+		reading = '',
+		hidePrompt = false,
+		speakText = '',
+		speakLang = '',
+		speakLabel = '',
+		size = 'lg'
+	}: {
+		/** The uppercase instruction line — "Fill in the blank". Always shown. */
+		kicker: string;
+		/**
+		 * The thing being asked. Empty means the type has no plain-text prompt
+		 * (cloze builds an interactive sentence of its own), and the whole line is
+		 * left out rather than rendered blank.
+		 */
+		prompt?: string;
+		/**
+		 * The prompt's Latin reading, or `''` for none. Callers apply the
+		 * learner's romanization preference themselves — this block only renders
+		 * what it is handed.
+		 */
+		reading?: string;
+		/** Withhold the prompt text and its reading; see the component note. */
+		hidePrompt?: boolean;
+		/** Non-empty adds a speaker button after the prompt, reading this text. */
+		speakText?: string;
+		/** The profile's `targetLanguage`, for `speak()`. */
+		speakLang?: string;
+		/** Optional visible caption on the speaker button, e.g. "Play again". */
+		speakLabel?: string;
+		/**
+		 * `lg` for a word or short phrase the learner reads once; `md` where the
+		 * prompt is a whole native-language sentence, or a running count, and
+		 * wants to sit closer to the content below it.
+		 */
+		size?: 'lg' | 'md';
+	} = $props();
+
+	const showReading = $derived(reading !== '' && !hidePrompt);
+	const hasPromptLine = $derived(prompt !== '' || hidePrompt || speakText !== '');
+</script>
+
+<p class="asked">{kicker}</p>
+
+{#if hasPromptLine}
+	<p class="prompt {size}" class:tight={showReading}>
+		{#if hidePrompt}
+			<span class="veiled" aria-hidden="true">· · ·</span>
+		{:else}
+			<span>{prompt}</span>
+		{/if}
+		{#if speakText !== ''}
+			<SpeakButton text={speakText} lang={speakLang} label={speakLabel} />
+		{/if}
+	</p>
+{/if}
+
+{#if showReading}
+	<p class="rom prompt-rom">{reading}</p>
+{/if}
+
+<style>
+	.prompt {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		margin: 0 0 1.5rem;
+		font-weight: 800;
+		line-height: 1.2;
+		letter-spacing: -0.015em;
+		overflow-wrap: anywhere;
+	}
+
+	/* Lets a long prompt shrink instead of pushing the speaker button off. */
+	.prompt > span {
+		min-width: 0;
+	}
+
+	.prompt.lg {
+		font-size: 1.9rem;
+	}
+
+	.prompt.md {
+		font-size: 1.5rem;
+	}
+
+	/* A reading follows, and owns the trailing space instead. */
+	.prompt.tight {
+		margin-bottom: 0.2rem;
+	}
+
+	.prompt-rom {
+		margin: 0 0 1.3rem;
+		font-size: 1rem;
+	}
+
+	/* A placeholder with the prompt's own weight, so the reveal shifts nothing. */
+	.veiled {
+		color: var(--text-muted);
+		letter-spacing: 0.15em;
+	}
+
+	@media (max-width: 480px) {
+		.prompt.lg {
+			font-size: 1.5rem;
+		}
+
+		.prompt.md {
+			font-size: 1.25rem;
+		}
+	}
+</style>

@@ -16,22 +16,23 @@
   built from. The generator now guarantees no duplicate labels on either side,
   but this makes identical labels interchangeable if one ever slips through
   rather than making some correct-looking pair unmatchable.
+
+  The tiles are ordinary `TapOption`s: `correct` is a locked-in pair, `wrong`
+  the shake, `pop` the one-shot beat over a fresh match. This type does not
+  lock the way the others do — the round ends when every pair is matched, not
+  when a button is pressed — so it uses the shared lock only for its clock and
+  its per-challenge reset.
 -->
 <script lang="ts">
-	import type { AnswerEvent } from '$lib/session/engine';
+	import type { ChallengeProps } from '$lib/challenges/props';
 	import { speak } from '$lib/tts';
 	import type { MatchPairsChallenge } from '$lib/types';
 	import { getShowRomanization } from '$lib/ui/prefs';
+	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
+	import PromptHeader from './blocks/PromptHeader.svelte';
+	import TapOption from './blocks/TapOption.svelte';
 
-	let {
-		challenge,
-		onanswer,
-		targetLanguage = ''
-	}: {
-		challenge: MatchPairsChallenge;
-		onanswer: (event: AnswerEvent) => void;
-		targetLanguage?: string;
-	} = $props();
+	let { challenge, onanswer, targetLanguage = '' }: ChallengeProps<MatchPairsChallenge> = $props();
 
 	/** Read once — the toggle lives in Settings, not mid-session. */
 	const showRomanization = getShowRomanization();
@@ -100,7 +101,6 @@
 	let mistakes = $state(0);
 	let busy = $state(false);
 	let done = $state(false);
-	let shownAt = $state(Date.now());
 
 	let timers: ReturnType<typeof setTimeout>[] = [];
 
@@ -108,20 +108,27 @@
 		timers.push(setTimeout(fn, ms));
 	}
 
+	const lock = createAnswerLock(
+		() => challenge.id,
+		() => {
+			matchedLeft = [];
+			matchedRight = [];
+			selectedLeft = null;
+			selectedRight = null;
+			wrong = null;
+			poppedLeft = null;
+			poppedRight = null;
+			mistakes = 0;
+			busy = false;
+			done = false;
+		}
+	);
+
+	// Separate from the reset: a cleanup that cancelled the reset's own writes
+	// would be a different thing entirely. This one only stops timers from the
+	// round that just left the screen.
 	$effect(() => {
 		void challenge.id;
-		matchedLeft = [];
-		matchedRight = [];
-		selectedLeft = null;
-		selectedRight = null;
-		wrong = null;
-		poppedLeft = null;
-		poppedRight = null;
-		mistakes = 0;
-		busy = false;
-		done = false;
-		shownAt = Date.now();
-
 		return () => {
 			for (const timer of timers) clearTimeout(timer);
 			timers = [];
@@ -184,8 +191,15 @@
 			// A clean sweep is 'correct'; any misfire is 'almost'. Never 'wrong':
 			// the round is only over once every pair has actually been matched.
 			verdict: mistakes === 0 ? 'correct' : 'almost',
-			responseMs: Date.now() - shownAt
+			responseMs: lock.commit()
 		});
+	}
+
+	/** What a tile is currently showing, in `TapOption`'s vocabulary. */
+	function stateOf(matched: boolean, selected: boolean, shaking: boolean) {
+		if (shaking) return 'wrong' as const;
+		if (matched) return 'correct' as const;
+		return selected ? ('selected' as const) : ('idle' as const);
 	}
 
 	/**
@@ -211,53 +225,50 @@
 </script>
 
 <div class="match">
-	<p class="asked">Tap the matching pairs</p>
-	<p class="sub">
-		{remaining > 0
+	<PromptHeader
+		kicker="Tap the matching pairs"
+		size="md"
+		prompt={remaining > 0
 			? `${remaining} pair${remaining === 1 ? '' : 's'} to go`
 			: 'All matched — nice.'}
-	</p>
+	/>
 
 	<div class="columns">
 		<div class="column">
 			{#each left as tile (tile.pair)}
-				<button
-					type="button"
-					class="tile"
-					class:selected={selectedLeft === tile.pair}
-					class:matched={isMatchedLeft(tile.pair)}
-					class:ll-pop={poppedLeft === tile.pair}
-					class:ll-shake={wrong?.left === tile.pair}
+				<TapOption
+					text={tile.text}
+					reading={(showRomanization ? tile.rom : '') ?? ''}
+					fill
+					selection="toggle"
+					state={stateOf(
+						isMatchedLeft(tile.pair),
+						selectedLeft === tile.pair,
+						wrong?.left === tile.pair
+					)}
+					pop={poppedLeft === tile.pair}
 					disabled={isMatchedLeft(tile.pair) || done}
-					aria-pressed={selectedLeft === tile.pair}
 					onclick={() => tapLeft(tile.pair)}
-				>
-					<span>{tile.text}</span>
-					{#if showRomanization && tile.rom}
-						<span class="rom">{tile.rom}</span>
-					{/if}
-				</button>
+				/>
 			{/each}
 		</div>
 
 		<div class="column">
 			{#each right as tile (tile.pair)}
-				<button
-					type="button"
-					class="tile"
-					class:selected={selectedRight === tile.pair}
-					class:matched={isMatchedRight(tile.pair)}
-					class:ll-pop={poppedRight === tile.pair}
-					class:ll-shake={wrong?.right === tile.pair}
+				<TapOption
+					text={tile.text}
+					reading={(showRomanization ? tile.rom : '') ?? ''}
+					fill
+					selection="toggle"
+					state={stateOf(
+						isMatchedRight(tile.pair),
+						selectedRight === tile.pair,
+						wrong?.right === tile.pair
+					)}
+					pop={poppedRight === tile.pair}
 					disabled={isMatchedRight(tile.pair) || done}
-					aria-pressed={selectedRight === tile.pair}
 					onclick={() => tapRight(tile.pair)}
-				>
-					<span>{tile.text}</span>
-					{#if showRomanization && tile.rom}
-						<span class="rom">{tile.rom}</span>
-					{/if}
-				</button>
+				/>
 			{/each}
 		</div>
 	</div>
@@ -267,22 +278,6 @@
 	.match {
 		display: flex;
 		flex-direction: column;
-	}
-
-	.asked {
-		margin: 0 0 0.2rem;
-		font-size: 0.78rem;
-		font-weight: 800;
-		letter-spacing: 0.07em;
-		text-transform: uppercase;
-		color: var(--text-muted);
-	}
-
-	.sub {
-		margin: 0 0 1.4rem;
-		font-size: 1.35rem;
-		font-weight: 800;
-		letter-spacing: -0.01em;
 	}
 
 	.columns {
@@ -295,73 +290,5 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.7rem;
-	}
-
-	.tile {
-		min-height: 3.4rem;
-		padding: 0.7rem 0.75rem;
-		border: 2px solid var(--border);
-		border-bottom-width: 4px;
-		border-radius: var(--radius);
-		background: var(--surface);
-		color: var(--text);
-		font: inherit;
-		font-weight: 700;
-		line-height: 1.25;
-		cursor: pointer;
-		overflow-wrap: anywhere;
-		transition:
-			border-color 0.12s ease,
-			background 0.12s ease,
-			opacity 0.25s ease,
-			transform 0.08s ease;
-	}
-
-	.tile:hover:not(:disabled) {
-		background: var(--surface-alt);
-	}
-
-	.tile:active:not(:disabled) {
-		transform: translateY(2px);
-		border-bottom-width: 2px;
-	}
-
-	.tile:focus-visible {
-		outline: none;
-		box-shadow: var(--ring);
-	}
-
-	.tile.selected {
-		border-color: var(--accent);
-		background: var(--accent-soft);
-	}
-
-	.tile.matched {
-		border-color: var(--primary);
-		background: var(--primary-soft);
-		color: var(--primary-strong);
-		opacity: 0.5;
-		cursor: default;
-	}
-
-	/*
-	  The shake and pop classes come from app.css so all three interactive
-	  challenge types share one definition (and one reduced-motion opt-out).
-	  The wrong pair also flips to danger colours, which reduced motion keeps.
-	*/
-	.tile.ll-shake {
-		border-color: var(--danger);
-		background: color-mix(in srgb, var(--danger) 14%, transparent);
-		color: var(--danger);
-	}
-
-	@media (max-width: 480px) {
-		.sub {
-			font-size: 1.15rem;
-		}
-
-		.tile {
-			font-size: 0.95rem;
-		}
 	}
 </style>

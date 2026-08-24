@@ -20,10 +20,20 @@
  *   the romanization UI can be built and eyeballed with no API key. Set the
  *   target language to "Chinese" in onboarding to get it.
  *
+ * The canned challenges themselves are **not** written here: each wire type
+ * carries its own examples for both scenarios in `./challenge-types/<type>.ts`,
+ * beside the schema they have to satisfy, and this module folds them back into
+ * one lesson by their `order`. That is what makes coverage automatic — a type
+ * with no fixture is a type with no example, and `registry.test.ts` says so —
+ * and it is why the two `newItems` lists, which belong to the scenario rather
+ * than to any one challenge, are the only fixture data left below.
+ *
  * Both sets introduce exactly two new vocabulary items.
  */
 
 import { getApiKey } from '$lib/db/settings';
+import { WIRE_TYPE_DEFS } from './challenge-types';
+import type { FixtureScenario } from './challenge-types';
 import type { TokenUsage } from './client';
 import type { BatchArgs, BatchOptions, BatchResult, ReviewItemRef } from './generate';
 import {
@@ -96,115 +106,26 @@ export function usesMandarinFixtures(targetLanguage: string): boolean {
 	return MANDARIN_NAMES.test(targetLanguage ?? '');
 }
 
+/**
+ * Every def's fixtures for one scenario, folded back into lesson order.
+ *
+ * `order` is a fixture's place in the *lesson*, not in the registry: a scenario
+ * opens on recognition and closes on the production types, and each cloze sits
+ * beside the challenge it follows on from. Sorting by it lets a def put its
+ * examples wherever they read best without moving the registry's own order,
+ * which is the order the model is shown the types in and answers to the prompt,
+ * not to the mock.
+ */
+function scenarioChallenges(scenario: FixtureScenario): unknown[] {
+	return WIRE_TYPE_DEFS.flatMap((def) => [...def.fixtures[scenario]])
+		.sort((a, b) => a.order - b.order)
+		.map((fixture) => fixture.challenge);
+}
+
 /** Spanish, a restaurant scene: the default mock lesson. */
 function spanishRestaurant(): Fixture {
 	return {
-		challenges: [
-			{
-				type: 'recognize-mc',
-				shown: { text: '¿Nos trae la cuenta, por favor?', reading: null },
-				correctMeaning: 'Could you bring us the bill, please?',
-				distractors: [
-					'Could we see the menu, please?',
-					'Is this table free?',
-					'Could you bring another chair?'
-				],
-				// Exercises the instruction field: this is a dialogue turn, not a
-				// bare vocabulary lookup, so the default "What does this mean?"
-				// heading undersells it.
-				instruction: 'What is the customer asking for?',
-				itemIds: ['new:0'],
-				explanation: 'Waiters are addressed with "usted", hence "trae" rather than "traes".'
-			},
-			{
-				type: 'cloze',
-				before: { text: '¿Nos trae la ', reading: null },
-				answer: { text: 'cuenta', reading: null },
-				after: { text: ', por favor? Tenemos prisa.', reading: null },
-				hintNative: 'Could you bring us the bill, please? We are in a hurry.',
-				distractorWords: [
-					{ text: 'carta', reading: null },
-					{ text: 'propina', reading: null },
-					{ text: 'mesa', reading: null }
-				],
-				itemIds: ['new:0'],
-				explanation: null
-			},
-			{
-				type: 'produce-mc',
-				promptNative: 'to order (food in a restaurant)',
-				correct: { text: 'pedir', reading: null },
-				distractors: [
-					{ text: 'pagar', reading: null },
-					{ text: 'probar', reading: null },
-					{ text: 'servir', reading: null }
-				],
-				instruction: null,
-				itemIds: ['new:1'],
-				explanation: null
-			},
-			{
-				type: 'translate-to-target',
-				promptNative: 'I would like to order the fish, please.',
-				answers: [
-					{ text: 'quisiera pedir el pescado, por favor', reading: null },
-					{ text: 'quiero pedir el pescado, por favor', reading: null }
-				],
-				itemIds: ['new:1'],
-				explanation: '"Quisiera" is the polite way to ask; "quiero" is fine but blunter.'
-			},
-			{
-				// No distractorWords: the learner types this one.
-				type: 'cloze',
-				before: { text: '¿Ya podemos ', reading: null },
-				answer: { text: 'pedir', reading: null },
-				after: { text: '?', reading: null },
-				hintNative: 'Can we order now?',
-				distractorWords: null,
-				itemIds: ['new:1'],
-				explanation: null
-			},
-			{
-				type: 'translate-to-native',
-				prompt: { text: 'la cuenta', reading: null },
-				answersNative: ['the bill', 'the check'],
-				itemIds: ['new:0'],
-				explanation: null
-			},
-			{
-				type: 'word-order',
-				promptNative: 'Could you bring us the bill, please?',
-				words: [
-					{ text: '¿Nos', reading: null },
-					{ text: 'trae', reading: null },
-					{ text: 'la', reading: null },
-					{ text: 'cuenta,', reading: null },
-					{ text: 'por', reading: null },
-					{ text: 'favor?', reading: null }
-				],
-				distractorWords: [
-					{ text: 'carta', reading: null },
-					{ text: 'propina', reading: null }
-				],
-				instruction: null,
-				itemIds: ['new:0'],
-				explanation: null
-			},
-			{
-				type: 'spot-error',
-				words: [
-					{ text: 'Quisiera', reading: null },
-					{ text: 'pedir', reading: null },
-					{ text: 'el', reading: null },
-					{ text: 'pescado.', reading: null }
-				],
-				wrongWord: { text: 'pagar', reading: null },
-				wrongPosition: 1,
-				meaningNative: 'I would like to order the fish.',
-				itemIds: ['new:1'],
-				explanation: '"Pagar" is to pay; ordering is "pedir".'
-			}
-		],
+		challenges: scenarioChallenges('spanish'),
 		newItems: [
 			{ term: 'la cuenta', meaning: 'the bill', romanization: null, notes: 'feminine noun' },
 			{ term: 'pedir', meaning: 'to order', romanization: null, notes: 'stem-changing: pido' }
@@ -214,114 +135,13 @@ function spanishRestaurant(): Fixture {
 
 /**
  * Mandarin, the same restaurant scene, with pinyin on every target-script
- * string. Nothing here spells a toneless variant out: the resolver folds the
- * readings, so typing "maidan" grades correct through the ordinary local
- * validator.
+ * string. Nothing in its fixtures spells a toneless variant out: the resolver
+ * folds the readings, so typing "maidan" grades correct through the ordinary
+ * local validator.
  */
 function mandarinRestaurant(): Fixture {
 	return {
-		challenges: [
-			{
-				type: 'recognize-mc',
-				shown: { text: '菜单', reading: 'càidān' },
-				correctMeaning: 'the menu',
-				distractors: ['the bill', 'the chopsticks', 'the waiter'],
-				instruction: null,
-				itemIds: ['new:0'],
-				explanation: null
-			},
-			{
-				type: 'produce-mc',
-				promptNative: 'Could I see the menu?',
-				correct: { text: '菜单', reading: 'càidān' },
-				distractors: [
-					{ text: '筷子', reading: 'kuàizi' },
-					{ text: '服务员', reading: 'fúwùyuán' },
-					{ text: '茶', reading: 'chá' }
-				],
-				instruction: null,
-				itemIds: ['new:0'],
-				explanation: null
-			},
-			{
-				type: 'cloze',
-				// The reading of the answer travels in `answer`, never in `before` or
-				// `after`, so the pinyin line under the sentence cannot spell out the
-				// word behind the blank.
-				before: { text: '你好，请给我一份', reading: 'Nǐ hǎo, qǐng gěi wǒ yī fèn' },
-				answer: { text: '菜单', reading: 'càidān' },
-				after: { text: '。', reading: '.' },
-				hintNative: 'Hello, could I have a menu, please?',
-				distractorWords: [
-					{ text: '筷子', reading: 'kuàizi' },
-					{ text: '茶', reading: 'chá' },
-					{ text: '水', reading: 'shuǐ' }
-				],
-				itemIds: ['new:0'],
-				explanation: '份 (fèn) is the measure word for a menu or a portion.'
-			},
-			{
-				type: 'translate-to-target',
-				promptNative: 'Excuse me, the bill please.',
-				answers: [
-					{ text: '服务员，买单', reading: 'fúwùyuán, mǎidān' },
-					{ text: '买单', reading: 'mǎidān' }
-				],
-				itemIds: ['new:1'],
-				explanation: 'Calling 服务员 (fúwùyuán) across the room is normal, not rude.'
-			},
-			{
-				type: 'cloze',
-				before: { text: '我们想', reading: 'Wǒmen xiǎng' },
-				answer: { text: '买单', reading: 'mǎidān' },
-				after: { text: '。', reading: '.' },
-				hintNative: 'We would like to pay the bill.',
-				distractorWords: null,
-				itemIds: ['new:1'],
-				explanation: null
-			},
-			{
-				type: 'translate-to-native',
-				prompt: { text: '买单', reading: 'mǎidān' },
-				answersNative: ['to pay the bill', 'pay the bill'],
-				itemIds: ['new:1'],
-				explanation: null
-			},
-			{
-				// Segmented per *word*, not per character — 菜单 is one tile. That is
-				// the whole reason the model does the splitting. Punctuation rides
-				// the word it touches, never a tile of its own, per the prompt rule.
-				type: 'word-order',
-				promptNative: 'Hello, could I have a menu, please?',
-				words: [
-					{ text: '你好，', reading: 'nǐ hǎo' },
-					{ text: '请', reading: 'qǐng' },
-					{ text: '给', reading: 'gěi' },
-					{ text: '我', reading: 'wǒ' },
-					{ text: '菜单。', reading: 'càidān' }
-				],
-				distractorWords: [
-					{ text: '筷子', reading: 'kuàizi' },
-					{ text: '茶', reading: 'chá' }
-				],
-				instruction: null,
-				itemIds: ['new:0'],
-				explanation: null
-			},
-			{
-				type: 'spot-error',
-				words: [
-					{ text: '我们', reading: 'wǒmen' },
-					{ text: '想', reading: 'xiǎng' },
-					{ text: '买单', reading: 'mǎidān' }
-				],
-				wrongWord: { text: '菜单', reading: 'càidān' },
-				wrongPosition: 2,
-				meaningNative: 'We would like to pay the bill.',
-				itemIds: ['new:1'],
-				explanation: '菜单 (càidān) is the menu; paying the bill is 买单 (mǎidān).'
-			}
-		],
+		challenges: scenarioChallenges('mandarin'),
 		newItems: [
 			{ term: '菜单', meaning: 'the menu', romanization: 'càidān', notes: null },
 			{

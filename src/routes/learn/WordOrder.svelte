@@ -18,18 +18,20 @@
   by the same rule as the answer it is graded against, spaces or no spaces.
 -->
 <script lang="ts">
-	import type { AnswerEvent } from '$lib/session/engine';
+	import type { ChallengeProps } from '$lib/challenges/props';
 	import { isPunctuationOnly, joinTokens } from '$lib/text';
 	import type { WordOrderChallenge } from '$lib/types';
 	import { getShowRomanization } from '$lib/ui/prefs';
+	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
+	import CheckButton from './blocks/CheckButton.svelte';
+	import PromptHeader from './blocks/PromptHeader.svelte';
+	import TapOption from './blocks/TapOption.svelte';
+	import TapRow from './blocks/TapRow.svelte';
 
-	let {
-		challenge,
-		onanswer
-	}: {
-		challenge: WordOrderChallenge;
-		onanswer: (event: AnswerEvent) => void;
-	} = $props();
+	// Both languages are offered to every challenge component; this one needs
+	// neither — the prompt is native, the tiles are target, and both are printed
+	// rather than spoken.
+	let { challenge, onanswer }: ChallengeProps<WordOrderChallenge> = $props();
 
 	/** Read once — the toggle lives in Settings, not mid-session. */
 	const showRomanization = getShowRomanization();
@@ -40,37 +42,37 @@
 	 * distinct tiles on screen; the texts behind them are what grading uses.
 	 */
 	let placed = $state<number[]>([]);
-	let locked = $state(false);
-	let shownAt = $state(Date.now());
 
-	$effect(() => {
-		void challenge.id;
-		placed = [];
-		locked = false;
-		shownAt = Date.now();
-	});
+	const lock = createAnswerLock(
+		() => challenge.id,
+		() => {
+			placed = [];
+		}
+	);
 
 	const bank = $derived(
-		challenge.tiles.map((text, index) => ({ index, text })).filter((tile) => !placed.includes(tile.index))
+		challenge.tiles
+			.map((text, index) => ({ index, text }))
+			.filter((tile) => !placed.includes(tile.index))
 	);
 
 	const chosen = $derived(placed.map((index) => challenge.tiles[index]));
 	const sentence = $derived(joinTokens(chosen));
-	const ready = $derived(placed.length > 0 && !locked);
+	const ready = $derived(placed.length > 0 && !lock.locked);
 
 	const askedIn = $derived(challenge.instruction ?? 'Put the words in order');
 
-	function romanizationOf(index: number): string | undefined {
-		return showRomanization ? challenge.tilesRomanization?.[index] : undefined;
+	function readingOf(index: number): string {
+		return (showRomanization ? challenge.tilesRomanization?.[index] : '') ?? '';
 	}
 
 	function place(index: number): void {
-		if (locked || placed.includes(index)) return;
+		if (lock.locked || placed.includes(index)) return;
 		placed = [...placed, index];
 	}
 
 	function remove(position: number): void {
-		if (locked) return;
+		if (lock.locked) return;
 		placed = placed.filter((_, at) => at !== position);
 	}
 
@@ -91,11 +93,10 @@
 
 	function submit(): void {
 		if (!ready) return;
-		locked = true;
 		onanswer({
 			answerGiven: sentence,
 			verdict: isCorrect() ? 'correct' : 'wrong',
-			responseMs: Date.now() - shownAt
+			responseMs: lock.commit()
 		});
 	}
 
@@ -106,42 +107,39 @@
 </script>
 
 <form class="word-order" onsubmit={onFormSubmit}>
-	<p class="asked">{askedIn}</p>
-	<p class="prompt">{challenge.prompt}</p>
+	<PromptHeader kicker={askedIn} prompt={challenge.prompt} size="md" />
 
 	<div class="tray" class:empty={placed.length === 0} aria-label="Your sentence">
 		{#if placed.length === 0}
 			<span class="tray-hint">Tap the words below</span>
 		{:else}
 			{#each placed as index, position (position)}
-				<button
-					type="button"
-					class="tile placed"
-					disabled={locked}
-					aria-label={`Remove ${challenge.tiles[index]}`}
+				<TapOption
+					text={challenge.tiles[index]}
+					reading={readingOf(index)}
+					state="selected"
+					disabled={lock.locked}
+					label={`Remove ${challenge.tiles[index]}`}
 					onclick={() => remove(position)}
-				>
-					<span>{challenge.tiles[index]}</span>
-					{#if romanizationOf(index)}
-						<span class="rom">{romanizationOf(index)}</span>
-					{/if}
-				</button>
+				/>
 			{/each}
 		{/if}
 	</div>
 
-	<div class="bank" aria-label="Available words">
-		{#each bank as tile (tile.index)}
-			<button type="button" class="tile" disabled={locked} onclick={() => place(tile.index)}>
-				<span>{tile.text}</span>
-				{#if romanizationOf(tile.index)}
-					<span class="rom">{romanizationOf(tile.index)}</span>
-				{/if}
-			</button>
-		{/each}
+	<div class="bank">
+		<TapRow label="Available words">
+			{#each bank as tile (tile.index)}
+				<TapOption
+					text={tile.text}
+					reading={readingOf(tile.index)}
+					disabled={lock.locked}
+					onclick={() => place(tile.index)}
+				/>
+			{/each}
+		</TapRow>
 	</div>
 
-	<button type="submit" class="btn btn-primary btn-block check" disabled={!ready}>Check</button>
+	<CheckButton type="submit" disabled={!ready} />
 </form>
 
 <style>
@@ -150,30 +148,12 @@
 		flex-direction: column;
 	}
 
-	.asked {
-		margin: 0 0 0.4rem;
-		font-size: 0.78rem;
-		font-weight: 800;
-		letter-spacing: 0.07em;
-		text-transform: uppercase;
-		color: var(--text-muted);
-	}
-
-	.prompt {
-		margin: 0 0 1.25rem;
-		font-size: 1.5rem;
-		font-weight: 800;
-		line-height: 1.2;
-		letter-spacing: -0.015em;
-		overflow-wrap: anywhere;
-	}
-
 	/* A ruled line the tiles land on, so an empty tray still reads as a slot. */
 	.tray {
 		display: flex;
 		flex-wrap: wrap;
 		align-content: flex-start;
-		gap: 0.5rem;
+		gap: 0.55rem;
 		min-height: 5.5rem;
 		margin-bottom: 1.4rem;
 		padding: 0.6rem;
@@ -194,66 +174,6 @@
 	}
 
 	.bank {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.55rem;
 		margin-bottom: 1.5rem;
-	}
-
-	.tile {
-		padding: 0.6rem 0.95rem;
-		border: 2px solid var(--border);
-		border-bottom-width: 4px;
-		border-radius: var(--radius);
-		background: var(--surface);
-		color: var(--text);
-		font: inherit;
-		font-weight: 700;
-		line-height: 1.25;
-		cursor: pointer;
-		overflow-wrap: anywhere;
-		transition:
-			transform 0.08s ease,
-			background 0.15s ease,
-			border-color 0.15s ease;
-	}
-
-	.tile:hover:not(:disabled) {
-		background: var(--surface-alt);
-	}
-
-	.tile:active:not(:disabled) {
-		transform: translateY(2px);
-		border-bottom-width: 2px;
-	}
-
-	.tile:focus-visible {
-		outline: none;
-		box-shadow: var(--ring);
-	}
-
-	.tile.placed {
-		border-color: var(--accent);
-		background: var(--accent-soft);
-	}
-
-	.tile:disabled {
-		cursor: default;
-		opacity: 0.8;
-	}
-
-	.check {
-		margin-top: auto;
-	}
-
-	@media (max-width: 480px) {
-		.prompt {
-			font-size: 1.25rem;
-		}
-
-		.tile {
-			padding: 0.5rem 0.8rem;
-			font-size: 0.95rem;
-		}
 	}
 </style>

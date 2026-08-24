@@ -17,104 +17,95 @@
   Keyboard: 1-9 select the first nine words, Enter checks.
 -->
 <script lang="ts">
-	import type { AnswerEvent } from '$lib/session/engine';
+	import { choiceKeyAction } from '$lib/challenges/keyboard';
+	import type { ChallengeProps } from '$lib/challenges/props';
 	import type { SpotErrorChallenge } from '$lib/types';
 	import { getShowRomanization } from '$lib/ui/prefs';
+	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
+	import CheckButton from './blocks/CheckButton.svelte';
+	import PromptHeader from './blocks/PromptHeader.svelte';
+	import TapOption from './blocks/TapOption.svelte';
+	import TapRow from './blocks/TapRow.svelte';
 
-	let {
-		challenge,
-		onanswer
-	}: {
-		challenge: SpotErrorChallenge;
-		onanswer: (event: AnswerEvent) => void;
-	} = $props();
+	// Both languages are offered to every challenge component; this one needs
+	// neither — it is deliberately silent, and the meaning line is already
+	// native-language text carried on the challenge.
+	let { challenge, onanswer }: ChallengeProps<SpotErrorChallenge> = $props();
 
 	/** Read once — the toggle lives in Settings, not mid-session. */
 	const showRomanization = getShowRomanization();
 
 	let selected = $state<number | null>(null);
-	let locked = $state(false);
-	let shownAt = $state(Date.now());
 
-	$effect(() => {
-		void challenge.id;
-		selected = null;
-		locked = false;
-		shownAt = Date.now();
-	});
+	const lock = createAnswerLock(
+		() => challenge.id,
+		() => {
+			selected = null;
+		}
+	);
 
-	function romanizationOf(index: number): string | undefined {
-		return showRomanization ? challenge.tokensRomanization?.[index] : undefined;
+	function readingOf(index: number): string {
+		return (showRomanization ? challenge.tokensRomanization?.[index] : '') ?? '';
 	}
 
 	function select(index: number): void {
-		if (locked) return;
+		if (lock.locked) return;
 		selected = selected === index ? null : index;
 	}
 
 	function submit(): void {
-		if (locked || selected === null) return;
-		locked = true;
+		if (lock.locked || selected === null) return;
 		onanswer({
 			// The token they tapped, so the result log and any escalation see the
 			// same string the learner saw.
 			answerGiven: challenge.tokens[selected],
 			verdict: selected === challenge.correctIndex ? 'correct' : 'wrong',
-			responseMs: Date.now() - shownAt
+			responseMs: lock.commit()
 		});
 	}
 
+	/**
+	 * Digits 1-9 pick, Enter checks; the rule itself is in `$lib/challenges`.
+	 * The ceiling is 9 rather than the token count because there is no `10` key —
+	 * a longer sentence simply has tiles the keyboard cannot reach.
+	 */
 	function onkeydown(event: KeyboardEvent): void {
-		if (locked || event.metaKey || event.ctrlKey || event.altKey) return;
-
-		const digit = Number.parseInt(event.key, 10);
-		if (digit >= 1 && digit <= Math.min(9, challenge.tokens.length)) {
-			event.preventDefault();
-			select(digit - 1);
-			return;
-		}
-
-		if (event.key === 'Enter' && selected !== null) {
-			event.preventDefault();
-			submit();
-		}
+		const action = choiceKeyAction(event, {
+			count: Math.min(9, challenge.tokens.length),
+			locked: lock.locked,
+			hasSelection: selected !== null
+		});
+		if (action.kind === 'ignore') return;
+		event.preventDefault();
+		if (action.kind === 'select') select(action.index);
+		else submit();
 	}
 </script>
 
 <svelte:window {onkeydown} />
 
 <div class="spot">
-	<p class="asked">Tap the word that's wrong</p>
+	<PromptHeader kicker="Tap the word that's wrong" />
 
-	<div class="sentence" role="radiogroup" aria-label="Words in the sentence">
-		{#each challenge.tokens as token, index (index)}
-			<button
-				type="button"
-				class="token"
-				class:chosen={selected === index}
-				role="radio"
-				aria-checked={selected === index}
-				disabled={locked}
-				onclick={() => select(index)}
-			>
-				<span>{token}</span>
-				{#if romanizationOf(index)}
-					<span class="rom">{romanizationOf(index)}</span>
-				{/if}
-			</button>
-		{/each}
+	<div class="sentence">
+		<TapRow align="end" role="radiogroup" label="Words in the sentence">
+			{#each challenge.tokens as token, index (index)}
+				<TapOption
+					text={token}
+					reading={readingOf(index)}
+					size="inline"
+					selection="radio"
+					state={selected === index ? 'selected' : 'idle'}
+					disabled={lock.locked}
+					onclick={() => select(index)}
+				/>
+			{/each}
+		</TapRow>
 	</div>
 
 	<p class="meaning">It should mean: {challenge.meaning}</p>
 
-	<button
-		type="button"
-		class="btn btn-primary btn-block check"
-		disabled={selected === null || locked}
-		onclick={submit}
-	>
-		Check
-	</button>
+	<CheckButton disabled={selected === null || lock.locked} onclick={submit} />
 </div>
 
 <style>
@@ -123,71 +114,8 @@
 		flex-direction: column;
 	}
 
-	.asked {
-		margin: 0 0 0.6rem;
-		font-size: 0.78rem;
-		font-weight: 800;
-		letter-spacing: 0.07em;
-		text-transform: uppercase;
-		color: var(--text-muted);
-	}
-
 	.sentence {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: flex-end;
-		gap: 0.4rem;
 		margin-bottom: 1rem;
-	}
-
-	.token {
-		padding: 0.45rem 0.7rem;
-		border: 2px solid transparent;
-		border-bottom: 3px dashed var(--border-strong);
-		border-radius: var(--radius-sm);
-		background: var(--surface-alt);
-		color: var(--text);
-		font: inherit;
-		font-size: 1.35rem;
-		font-weight: 800;
-		line-height: 1.2;
-		cursor: pointer;
-		overflow-wrap: anywhere;
-		transition:
-			border-color 0.12s ease,
-			background 0.12s ease,
-			transform 0.08s ease;
-	}
-
-	.token:hover:not(:disabled) {
-		background: var(--surface);
-	}
-
-	.token:active:not(:disabled) {
-		transform: translateY(1px);
-	}
-
-	.token:focus-visible {
-		outline: none;
-		box-shadow: var(--ring);
-	}
-
-	.token.chosen {
-		border-color: var(--accent);
-		border-bottom-style: solid;
-		background: var(--accent-soft);
-	}
-
-	.token:disabled {
-		cursor: default;
-		opacity: 0.8;
-	}
-
-	/* The reading sits under its own word, so a long sentence still lines up. */
-	.token :global(.rom) {
-		display: block;
-		font-size: 0.72rem;
-		font-weight: 600;
 	}
 
 	.meaning {
@@ -196,16 +124,5 @@
 		font-style: italic;
 		color: var(--text-muted);
 		overflow-wrap: anywhere;
-	}
-
-	.check {
-		margin-top: auto;
-	}
-
-	@media (max-width: 480px) {
-		.token {
-			font-size: 1.1rem;
-			padding: 0.4rem 0.55rem;
-		}
 	}
 </style>

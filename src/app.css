@@ -236,6 +236,74 @@ a {
 	letter-spacing: 0.01em;
 }
 
+/* Challenge vocabulary ----------------------------------------------------- */
+
+/*
+  The kicker above a challenge — "Fill in the blank", "Pick the translation".
+  Every challenge type opens with one, rendered by `PromptHeader`; the gap to
+  whatever follows is the same everywhere, so the kicker and the prompt read as
+  one block whichever type is on screen.
+*/
+.asked {
+	margin: 0 0 0.4rem;
+	font-size: 0.78rem;
+	font-weight: 800;
+	letter-spacing: 0.07em;
+	text-transform: uppercase;
+	color: var(--text-muted);
+}
+
+/*
+  The submit button at the foot of a challenge. `margin-top: auto` is what
+  pins it to the bottom of the challenge column however tall the content above
+  it turns out to be — which is why every type wants the same one line.
+*/
+.check {
+	margin-top: auto;
+}
+
+/*
+  The tap-target skin: a card with a thick bottom border that collapses under
+  the press, so options, chips, tiles and word tokens all depress the same way.
+
+  The skin only. Shape, type scale and the selected/matched states belong to
+  `blocks/TapOption.svelte`, which is the one component that wears this class —
+  everything a challenge type can vary is a prop there rather than a scoped
+  override here. The transition list is deliberately shared: five types had
+  five subsets of these four properties at three different durations, and the
+  press should feel the same wherever the learner meets it.
+*/
+.tap {
+	border: 2px solid var(--border);
+	border-bottom-width: 4px;
+	border-radius: var(--radius);
+	background: var(--surface);
+	color: var(--text);
+	font: inherit;
+	font-weight: 700;
+	cursor: pointer;
+	transition:
+		border-color 0.12s ease,
+		background 0.12s ease,
+		color 0.12s ease,
+		opacity 0.15s ease,
+		transform 0.08s ease;
+}
+
+.tap:hover:not(:disabled) {
+	background: var(--surface-alt);
+}
+
+.tap:active:not(:disabled) {
+	transform: translateY(2px);
+	border-bottom-width: 2px;
+}
+
+.tap:focus-visible {
+	outline: none;
+	box-shadow: var(--ring);
+}
+
 /* Layout helpers ----------------------------------------------------------- */
 
 .card {

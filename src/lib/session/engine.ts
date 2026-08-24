@@ -146,12 +146,14 @@ export interface AnswerEvent {
 	closestAccepted?: string;
 }
 
-/** Props shared by every challenge component. */
-export interface ChallengeProps<C extends Challenge> {
-	challenge: C;
-	/** Fired once, when the learner commits. Components then lock themselves. */
-	onanswer: (event: AnswerEvent) => void;
-}
+/**
+ * Props shared by every challenge component.
+ *
+ * Declared in `$lib/challenges/props` — it is a rendering contract, and it
+ * belongs next to the components that implement it. Re-exported here because
+ * this is where {@link AnswerEvent}, its other half, lives.
+ */
+export type { ChallengeProps } from '$lib/challenges/props';
 
 /* -------------------------------------------------------------------------- */
 /* Scoring (pure)                                                              */
@@ -255,41 +257,16 @@ export function wantsMatchRound(llmAnswered: number, lastMatchAfter: number): bo
 }
 
 /**
- * The canonical target-language audio for a challenge's answer, or `''` when
- * there is nothing worth hearing (the answer is in the learner's own language,
- * or the round has no single answer).
+ * The canonical target-language audio for a challenge's answer.
  *
- * One function, two consumers, on purpose: the feedback banner speaks this the
- * moment an answer is graded, and the session screen *pre-synthesizes* it the
- * moment the challenge is shown — the learner takes seconds to answer while
- * Kokoro takes one or two to render, so warming here is what makes the
- * auto-play land instantly instead of arriving late. If the two computed the
- * string independently, a drift between them would silently turn every warm
- * into a miss.
- *
- * Always the canonical script form — `acceptedAnswers[0]`, which the resolver
- * pins (see `answerVariants` in `$lib/llm/generate`) — never a romanized
- * variant: TTS reads Latin letters as Latin letters. A cloze speaks the whole
- * sentence with the blank filled, because how the word sounds *in place* is
- * the thing the learner is missing.
+ * Moved to `$lib/challenges/display`, where it sits alongside the three other
+ * per-type presentation rules it kept drifting from (what the correct answer
+ * reads as, whether it is target-language, what its Latin reading is). Still
+ * exported here: the session screen pre-synthesizes it when a challenge is
+ * shown, which is session pacing rather than rendering, and this is where that
+ * caller has always looked for it.
  */
-export function spokenAnswerFor(challenge: Challenge): string {
-	// Checked ahead of the direction gate: the sentence a spot-error round is
-	// *about* is target-language whichever way the challenge is exercised, and
-	// what the learner needs to hear is the corrected one, not the broken one
-	// they were shown.
-	if (challenge.type === 'spot-error') return challenge.correctedSentence.trim();
-	if (challenge.type === 'match-pairs' || challenge.direction !== 'toTarget') return '';
-	if (challenge.type === 'multiple-choice') {
-		return challenge.options[challenge.correctIndex]?.trim() ?? '';
-	}
-	// The assembled sentence, spacing and all — never the tiles read one by one.
-	if (challenge.type === 'word-order') return challenge.answer.trim();
-	const canonical = challenge.acceptedAnswers[0]?.trim() ?? '';
-	if (!canonical) return '';
-	if (challenge.type === 'cloze') return challenge.sentence.split('___').join(canonical);
-	return canonical;
-}
+export { spokenAnswerFor } from '$lib/challenges/display';
 
 /* -------------------------------------------------------------------------- */
 /* Listening mode (pure)                                                       */

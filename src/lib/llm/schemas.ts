@@ -5,10 +5,13 @@
  * app without passing through a schema here. These schemas are also the source
  * of truth for the JSON schema handed to OpenRouter, via {@link batchJsonSchema}.
  *
- * Two shapes live here, and they are deliberately *not* the same shape:
+ * Two shapes meet here, and they are deliberately *not* the same shape:
  *
  * - `challengeSchema` mirrors the `Challenge` union in `$lib/types` exactly
- *   (ids assigned, `match-pairs` included). It validates what the layer *emits*.
+ *   (ids assigned, `match-pairs` included). It validates what the layer *emits*,
+ *   and it is *composed* below from the stored-type registry in
+ *   `$lib/challenges/types`, where each member sits next to that type's grading
+ *   and presentation rules.
  * - `generatedChallengeSchema` describes the wire format the model is asked to
  *   *produce*: pure content, no presentation. There is no `direction` flag, no
  *   `correctIndex`, no `___` placement and no free-floating romanization array —
@@ -16,11 +19,23 @@
  *   assembled locally by `resolveBatch`. Anything the model cannot express, it
  *   cannot get wrong.
  *
- * The primitive that makes that work is {@link targetTextSchema}: one piece of
- * target-language text with its own Latin reading attached. Every slot in every
- * wire type is *unconditionally* either a `TargetText` or a plain native-language
- * string, so no field's language depends on a flag, and a reading can never end
- * up under the wrong string — or under a string the learner has not answered yet.
+ * Neither half is written out here any more. Each wire type owns its own zod
+ * member in `./challenge-types/<type>.ts`, next to the prompt line that
+ * describes it and the resolver that consumes it; each stored type owns its own
+ * in `$lib/challenges/types/<type>.ts`, next to the grading rule and the four
+ * presentation facts for that type. Both unions are projected from their
+ * registries — so a schema, a prompt spec and a resolver cannot drift apart, and
+ * neither can a schema, a grading rule and a feedback banner, because each set
+ * is one edit. This module re-exports the lot: it stays the single import site
+ * for the rest of the app, which never needs to know how many modules the two
+ * unions are spread across.
+ *
+ * The primitive that makes the wire format work is {@link targetTextSchema}: one
+ * piece of target-language text with its own Latin reading attached. Every slot
+ * in every wire type is *unconditionally* either a `TargetText` or a plain
+ * native-language string, so no field's language depends on a flag, and a
+ * reading can never end up under the wrong string — or under a string the
+ * learner has not answered yet.
  *
  * Optional string fields are declared `.nullish()` rather than `.optional()`:
  * models emit `null` for "not applicable" far more often than they omit a key,
@@ -29,173 +44,47 @@
 
 import { z } from 'zod';
 import type { Challenge } from '$lib/types';
-
-const nonEmpty = z.string().min(1);
-
-export const directionSchema = z.enum(['toTarget', 'toNative']);
-
-/**
- * A reference to a `KnowledgeItem`: either an existing id, or `new:<index>`
- * pointing at an entry of the batch's `newItems` array.
- */
-export const itemRefSchema = nonEmpty;
+// The generated union, imported so `generatedBatchSchema` can wrap it; it is
+// also re-exported below, since this module is the façade for the wire format.
+import { generatedChallengeSchema } from './challenge-types';
+import { nonEmpty } from './challenge-types/primitives';
+// The stored half, imported so `challengeSchema` can be composed from it. Those
+// modules are leaves — zod, `$lib/types` and the string matchers — so importing
+// *down* into them from here closes no cycle.
+import { storedChallengeSchemas } from '$lib/challenges/types';
 
 /** `new:0`, `new:12`, ... */
 export const NEW_ITEM_REF = /^new:(\d+)$/;
 
 // --------------------------------------------------------------------------
 // What the model generates: content only, direction implied by the type.
+// Defined per type in `./challenge-types`, re-exported here as the façade.
 // --------------------------------------------------------------------------
 
-/**
- * One string of the target language, carrying its own Latin-script reading.
- *
- * `reading` is pinyin with tone marks for Mandarin, romaji for Japanese, and so
- * on; it is `null` for target languages already written in the Latin script, so
- * those lessons pay nothing for a field they cannot use. Because the reading
- * travels *with* the text it reads, the two can never be paired up wrongly.
- */
-export const targetTextSchema = z.object({
-	text: nonEmpty,
-	reading: z.string().nullish()
-});
-
-/**
- * The halves of a cloze sentence either side of the blank. Same shape as
- * {@link targetTextSchema} but the text may be empty: a sentence is allowed to
- * begin or end with the blank.
- */
-const clozePartSchema = z.object({
-	text: z.string(),
-	reading: z.string().nullish()
-});
-
-const generatedBase = {
-	explanation: z.string().nullish(),
-	itemIds: z.array(itemRefSchema).min(1)
-};
-
-/**
- * Exactly three distractors. Declared as a length-constrained array rather than
- * a tuple: tuples emit `prefixItems`, which several structured-output
- * implementations reject.
- */
-const threeOf = <T extends z.ZodType>(schema: T) => z.array(schema).length(3);
-
-/** Target text shown, native meaning chosen. */
-export const generatedRecognizeMcSchema = z.object({
-	type: z.literal('recognize-mc'),
-	shown: targetTextSchema,
-	correctMeaning: nonEmpty,
-	distractors: threeOf(nonEmpty),
-	/** Heading above the prompt; null when the UI's default heading fits. */
-	instruction: z.string().nullish(),
-	...generatedBase
-});
-
-/** Native prompt shown, target text chosen. */
-export const generatedProduceMcSchema = z.object({
-	type: z.literal('produce-mc'),
-	promptNative: nonEmpty,
-	correct: targetTextSchema,
-	distractors: threeOf(targetTextSchema),
-	instruction: z.string().nullish(),
-	...generatedBase
-});
-
-/**
- * A target-language word missing from a target-language sentence.
- *
- * The model supplies the sentence in three pieces rather than one string with a
- * marker in it: the blank is then placed by the app, always exactly once, and
- * the answer's reading sits in a field of its own that the pre-answer view never
- * touches.
- */
-export const generatedClozeSchema = z.object({
-	type: z.literal('cloze'),
-	before: clozePartSchema,
-	answer: targetTextSchema,
-	after: clozePartSchema,
-	hintNative: nonEmpty,
-	/**
-	 * Three to five wrong candidates turn the challenge into a word bank; null
-	 * means the learner types the answer. Deliberately *not* length-constrained:
-	 * a bank of the wrong size is a cosmetic defect, and rejecting a challenge we
-	 * already paid for over it would be a poor trade. The resolver decides what
-	 * survives.
-	 */
-	distractorWords: z.array(targetTextSchema).nullish(),
-	...generatedBase
-});
-
-/** Type the target language. Multiple `answers` are genuinely different phrasings. */
-export const generatedTranslateToTargetSchema = z.object({
-	type: z.literal('translate-to-target'),
-	promptNative: nonEmpty,
-	answers: z.array(targetTextSchema).min(1),
-	...generatedBase
-});
-
-/** Type the native language. */
-export const generatedTranslateToNativeSchema = z.object({
-	type: z.literal('translate-to-native'),
-	prompt: targetTextSchema,
-	answersNative: z.array(nonEmpty).min(1),
-	...generatedBase
-});
-
-/**
- * A target-language sentence, pre-segmented into word tiles the learner puts
- * back in order.
- *
- * `words` is the sentence *in the correct order* — the model segments, the app
- * shuffles. That split is what makes the type work for Chinese and Japanese:
- * word boundaries are a language question the model can answer and a local
- * tokenizer cannot. Direction is implied (toTarget); there is no `correctOrder`
- * field to get wrong because order is simply the array's own.
- */
-export const generatedWordOrderSchema = z.object({
-	type: z.literal('word-order'),
-	promptNative: nonEmpty,
-	words: z.array(targetTextSchema).min(2),
-	/**
-	 * Extra wrong tiles. Not length-constrained, for the same reason as the
-	 * cloze word bank: an oversized list is a cosmetic defect and the resolver
-	 * caps it rather than costing us a challenge we already paid for.
-	 */
-	distractorWords: z.array(targetTextSchema).nullish(),
-	instruction: z.string().nullish(),
-	...generatedBase
-});
-
-/**
- * A target-language sentence with exactly one word swapped for a wrong one.
- *
- * `words` is the **correct** sentence, segmented; the corruption is described
- * separately (`wrongWord` at `wrongPosition`) and applied by the resolver. So
- * the model never hands over a sentence with the answer already baked into it,
- * and "which word is wrong" is a fact the app derives rather than trusts.
- */
-export const generatedSpotErrorSchema = z.object({
-	type: z.literal('spot-error'),
-	words: z.array(targetTextSchema).min(3),
-	wrongWord: targetTextSchema,
-	/** 0-based index into `words`; the resolver rejects one that overshoots. */
-	wrongPosition: z.int().min(0),
-	/** What the sentence is meant to say — what makes the error findable. */
-	meaningNative: nonEmpty,
-	...generatedBase
-});
-
-export const generatedChallengeSchema = z.discriminatedUnion('type', [
-	generatedRecognizeMcSchema,
-	generatedProduceMcSchema,
+export {
+	clozePartSchema,
+	generatedChallengeSchema,
 	generatedClozeSchema,
-	generatedTranslateToTargetSchema,
+	generatedProduceMcSchema,
+	generatedRecognizeMcSchema,
+	generatedSpotErrorSchema,
 	generatedTranslateToNativeSchema,
+	generatedTranslateToTargetSchema,
 	generatedWordOrderSchema,
-	generatedSpotErrorSchema
-]);
+	itemRefSchema,
+	targetTextSchema
+} from './challenge-types';
+export type {
+	GeneratedChallenge,
+	GeneratedCloze,
+	GeneratedProduceMc,
+	GeneratedRecognizeMc,
+	GeneratedSpotError,
+	GeneratedTranslateToNative,
+	GeneratedTranslateToTarget,
+	GeneratedWordOrder,
+	TargetText
+} from './challenge-types';
 
 export const generatedItemSchema = z.object({
 	term: nonEmpty,
@@ -221,112 +110,33 @@ export const looseBatchSchema = z.object({
 	newItems: z.array(z.unknown()).optional()
 });
 
-export type TargetText = z.infer<typeof targetTextSchema>;
-export type GeneratedCloze = z.infer<typeof generatedClozeSchema>;
-export type GeneratedChallenge = z.infer<typeof generatedChallengeSchema>;
 export type GeneratedItem = z.infer<typeof generatedItemSchema>;
 export type GeneratedBatch = z.infer<typeof generatedBatchSchema>;
 
 // --------------------------------------------------------------------------
 // What the app stores (mirrors `$lib/types`, `match-pairs` included).
+// Defined per type in `$lib/challenges/types`, re-exported here as the façade.
 // --------------------------------------------------------------------------
 
-const storedBase = {
-	id: nonEmpty,
-	direction: directionSchema,
-	explanation: z.string().optional(),
-	itemIds: z.array(nonEmpty)
-};
-
-export const multipleChoiceChallengeSchema = z.object({
-	type: z.literal('multiple-choice'),
-	prompt: nonEmpty,
-	promptRomanization: z.string().optional(),
-	instruction: z.string().optional(),
-	options: z.tuple([z.string(), z.string(), z.string(), z.string()]),
-	/** Index-aligned with `options` when present; the resolver guarantees the length. */
-	optionsRomanization: z.array(z.string()).length(4).optional(),
-	correctIndex: z.int().min(0).max(3),
-	...storedBase
-});
-
-export const clozeChallengeSchema = z.object({
-	type: z.literal('cloze'),
-	sentence: nonEmpty,
-	sentenceRomanization: z.string().optional(),
-	acceptedAnswers: z.array(z.string()).min(1),
-	/** Reading of `acceptedAnswers[0]`; see the domain type. */
-	answerRomanization: z.string().optional(),
-	wordBank: z.array(z.string()).optional(),
-	/** Index-aligned with `wordBank`; all-or-nothing, see the resolver. */
-	wordBankRomanization: z.array(z.string()).optional(),
-	translationHint: z.string(),
-	...storedBase
-});
-
-export const typedTranslationChallengeSchema = z.object({
-	type: z.literal('typed-translation'),
-	prompt: nonEmpty,
-	promptRomanization: z.string().optional(),
-	acceptedAnswers: z.array(z.string()).min(1),
-	/** Reading of `acceptedAnswers[0]`; toTarget only. */
-	answerRomanization: z.string().optional(),
-	...storedBase
-});
-
-export const matchPairsChallengeSchema = z.object({
-	type: z.literal('match-pairs'),
-	pairs: z
-		.array(
-			z.object({
-				a: nonEmpty,
-				b: nonEmpty,
-				aRom: z.string().optional(),
-				bRom: z.string().optional()
-			})
-		)
-		.min(2),
-	...storedBase
-});
-
-export const wordOrderChallengeSchema = z.object({
-	type: z.literal('word-order'),
-	prompt: nonEmpty,
-	instruction: z.string().optional(),
-	/** Shuffled by the resolver; duplicates are legal (grading is by text sequence). */
-	tiles: z.array(nonEmpty).min(2),
-	/** Index-aligned with `tiles`; all-or-nothing, see the resolver. */
-	tilesRomanization: z.array(z.string()).optional(),
-	answerTokens: z.array(nonEmpty).min(2),
-	/** `answerTokens` joined with the script's own spacing rule. */
-	answer: nonEmpty,
-	answerRomanization: z.string().optional(),
-	...storedBase
-});
-
-export const spotErrorChallengeSchema = z.object({
-	type: z.literal('spot-error'),
-	tokens: z.array(nonEmpty).min(3),
-	/** Index-aligned with `tokens`; all-or-nothing, see the resolver. */
-	tokensRomanization: z.array(z.string()).optional(),
-	/** The position of the *wrong* word: tapping it is the correct answer. */
-	correctIndex: z.int().min(0),
-	intendedWord: nonEmpty,
-	intendedWordRomanization: z.string().optional(),
-	correctedSentence: nonEmpty,
-	meaning: nonEmpty,
-	...storedBase
-});
-
-/** Mirrors the `Challenge` union in `$lib/types`. */
-export const challengeSchema = z.discriminatedUnion('type', [
-	multipleChoiceChallengeSchema,
+export {
 	clozeChallengeSchema,
-	typedTranslationChallengeSchema,
+	directionSchema,
 	matchPairsChallengeSchema,
-	wordOrderChallengeSchema,
-	spotErrorChallengeSchema
-]);
+	multipleChoiceChallengeSchema,
+	spotErrorChallengeSchema,
+	typedTranslationChallengeSchema,
+	wordOrderChallengeSchema
+} from '$lib/challenges/types';
+
+/**
+ * Mirrors the `Challenge` union in `$lib/types`.
+ *
+ * Projected from the stored-type registry, in its declared order, exactly as
+ * `generatedChallengeSchema` is projected from the wire registry: a stored type
+ * that is not registered over there is not part of this union, and the compiler
+ * says so at the registry rather than here.
+ */
+export const challengeSchema = z.discriminatedUnion('type', storedChallengeSchemas);
 
 // Compile-time check that the schema really does mirror the domain type.
 type SchemaChallenge = z.infer<typeof challengeSchema>;

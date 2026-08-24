@@ -10,7 +10,7 @@ import { parseBatch, stripFences } from './generate';
 import type { BatchArgs } from './generate';
 import { challengeSchema, generatedBatchSchema } from './schemas';
 import { getEscalation } from './index';
-import { checkChallenge } from '$lib/validate';
+import { checkChallenge } from '$lib/challenges/check';
 
 const args: BatchArgs = {
 	profile: {

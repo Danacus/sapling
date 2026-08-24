@@ -9,9 +9,12 @@
 
 import { describe, expect, it } from 'vitest';
 
+import type { ChallengeType } from '$lib/types';
+
 import {
 	EVENT_TYPES,
 	SYNC_PAYLOAD_SCHEMAS,
+	challengeContentSchema,
 	parseSyncPayload,
 	storedSyncEventSchema,
 	syncEventSchema,
@@ -191,6 +194,59 @@ describe('typeSyncEvent', () => {
 
 	it('returns undefined for a payload that does not fit its type', () => {
 		expect(typeSyncEvent({ ...envelope, payload: { challengeId: 'c1' } })).toBeUndefined();
+	});
+});
+
+/**
+ * `challengeContentSchema.type` is an allow-list, and `events.ts` cannot import
+ * `$lib/types` to derive it (the file is shared verbatim with the server, which
+ * compiles it by relative path). So the list is maintained by hand, and a
+ * challenge type missing from it is dropped on the *receiving* device — a
+ * failure mode that is invisible on the device that generated it.
+ *
+ * This is the guard rail. `CHALLENGE_TYPES` is a total record over
+ * `ChallengeType`: adding a member to the union in `$lib/types` fails to
+ * compile here, and filling it in then fails the assertion below until
+ * `events.ts` has been updated too.
+ */
+describe('challengeContentSchema type allow-list', () => {
+	const CHALLENGE_TYPES: { [T in ChallengeType]: true } = {
+		'multiple-choice': true,
+		cloze: true,
+		'typed-translation': true,
+		'match-pairs': true,
+		'word-order': true,
+		'spot-error': true
+	};
+
+	/** The enum as `events.ts` actually declares it, read back through zod. */
+	const declared: readonly string[] = challengeContentSchema.shape.type.options;
+
+	it('matches the stored Challenge union exactly', () => {
+		expect([...declared].sort()).toEqual(Object.keys(CHALLENGE_TYPES).sort());
+	});
+
+	it('lists each type once', () => {
+		expect(new Set(declared).size).toBe(declared.length);
+	});
+
+	it('accepts every listed type and drops anything else', () => {
+		for (const type of declared) {
+			const parsed = challengeContentSchema.safeParse({
+				id: 'c1',
+				type,
+				direction: 'toTarget',
+				itemIds: ['i1']
+			});
+			expect(parsed.success).toBe(true);
+		}
+		const unknown = challengeContentSchema.safeParse({
+			id: 'c1',
+			type: 'dictation',
+			direction: 'toTarget',
+			itemIds: ['i1']
+		});
+		expect(unknown.success).toBe(false);
 	});
 });
 
