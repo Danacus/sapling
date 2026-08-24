@@ -27,15 +27,16 @@
 	import type { ChallengeProps } from '$lib/challenges/props';
 	import { speak } from '$lib/tts';
 	import type { MatchPairsChallenge } from '$lib/types';
-	import { getShowRomanization } from '$lib/ui/prefs';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
 	import PromptHeader from './blocks/PromptHeader.svelte';
 	import TapOption from './blocks/TapOption.svelte';
 
-	let { challenge, onanswer, targetLanguage = '' }: ChallengeProps<MatchPairsChallenge> = $props();
-
-	/** Read once — the toggle lives in Settings, not mid-session. */
-	const showRomanization = getShowRomanization();
+	let {
+		challenge,
+		onanswer,
+		targetLanguage = '',
+		showReadings = true
+	}: ChallengeProps<MatchPairsChallenge> = $props();
 
 	/** Case/whitespace-insensitive text key, for matching tiles by content. */
 	function textKey(text: string): string {
@@ -238,7 +239,7 @@
 			{#each left as tile (tile.pair)}
 				<TapOption
 					text={tile.text}
-					reading={(showRomanization ? tile.rom : '') ?? ''}
+					reading={(showReadings ? tile.rom : '') ?? ''}
 					fill
 					selection="toggle"
 					state={stateOf(
@@ -257,7 +258,7 @@
 			{#each right as tile (tile.pair)}
 				<TapOption
 					text={tile.text}
-					reading={(showRomanization ? tile.rom : '') ?? ''}
+					reading={(showReadings ? tile.rom : '') ?? ''}
 					fill
 					selection="toggle"
 					state={stateOf(

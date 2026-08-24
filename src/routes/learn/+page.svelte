@@ -48,6 +48,7 @@
 		type SessionPlan
 	} from '$lib/session/engine';
 	import { motionMs } from '$lib/session/motion';
+	import { shouldShowReading } from '$lib/session/romanization';
 	import type { FsrsCardState, Grade } from '$lib/srs';
 	import { runSync } from '$lib/sync/run';
 	import { warmSpeech } from '$lib/tts';
@@ -57,7 +58,7 @@
 		getListeningMode,
 		getRecentTopics,
 		getReviewOnlyMode,
-		getShowRomanization,
+		getRomanizationMode,
 		setReviewOnlyMode
 	} from '$lib/ui/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
@@ -134,6 +135,13 @@
 	let newWords = $state<KnowledgeItem[]>([]);
 
 	let current = $state<Challenge | null>(null);
+	/**
+	 * Whether {@link current} renders its readings. Rolled once per served
+	 * challenge in {@link show} — under the adaptive mode the answer is a coin
+	 * flip weighted by how well the challenge's words are known, and it has to
+	 * stay put for as long as the challenge is on screen.
+	 */
+	let currentReadings = $state(true);
 	let feedback = $state<Feedback | null>(null);
 	let answers = $state<SessionAnswer[]>([]);
 	let combo = $state(0);
@@ -392,7 +400,9 @@
 	}
 
 	function show(challenge: Challenge): void {
-		challengeShownAt = Date.now();
+		const at = Date.now();
+		challengeShownAt = at;
+		currentReadings = shouldShowReading(romanizationMode, challenge, items, at);
 		current = challenge;
 		// Warm the answer's audio while the learner is still thinking: Kokoro
 		// takes a second or two per phrase, answering takes longer, so the
@@ -677,8 +687,14 @@
 	const isLastStep = $derived(llmAnswered >= plannedLlm || stepsDone >= totalSteps);
 
 	/** Read once — the toggles live in Settings, not mid-session. */
-	const showRomanization = getShowRomanization();
+	const romanizationMode = getRomanizationMode();
 	const listeningEnabled = getListeningMode();
+	/**
+	 * The summary's new-word list. A word the session just introduced is by
+	 * definition not one the learner owns, so adaptive mode has nothing to fade
+	 * out here — only an explicit Off hides these readings.
+	 */
+	const showNewWordReadings = romanizationMode !== 'off';
 </script>
 
 <svelte:head>
@@ -884,7 +900,7 @@
 												<span class="term">{word.term}</span>
 												<SpeakButton text={word.term} lang={targetLanguage} size="sm" />
 											</span>
-											{#if showRomanization && word.romanization}
+											{#if showNewWordReadings && word.romanization}
 												<span class="rom">{word.romanization}</span>
 											{/if}
 										</div>
@@ -945,6 +961,7 @@
 							onanswer={handleAnswer}
 							{targetLanguage}
 							{nativeLanguage}
+							showReadings={currentReadings}
 						/>
 
 						{#if current.type !== 'match-pairs' && !feedback}

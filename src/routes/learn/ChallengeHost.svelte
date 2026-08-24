@@ -37,27 +37,29 @@
 		challenge,
 		onanswer,
 		targetLanguage = '',
-		nativeLanguage = ''
+		nativeLanguage = '',
+		showReadings = true
 	}: {
 		challenge: Challenge;
 		onanswer: (event: AnswerEvent) => void;
 		targetLanguage?: string;
 		nativeLanguage?: string;
+		showReadings?: boolean;
 	} = $props();
 </script>
 
 {#if challenge.type === 'multiple-choice'}
-	<MultipleChoice {challenge} {onanswer} {targetLanguage} {nativeLanguage} />
+	<MultipleChoice {challenge} {onanswer} {targetLanguage} {nativeLanguage} {showReadings} />
 {:else if challenge.type === 'cloze'}
-	<Cloze {challenge} {onanswer} {targetLanguage} {nativeLanguage} />
+	<Cloze {challenge} {onanswer} {targetLanguage} {nativeLanguage} {showReadings} />
 {:else if challenge.type === 'typed-translation'}
-	<TypedTranslation {challenge} {onanswer} {targetLanguage} {nativeLanguage} />
+	<TypedTranslation {challenge} {onanswer} {targetLanguage} {nativeLanguage} {showReadings} />
 {:else if challenge.type === 'word-order'}
-	<WordOrder {challenge} {onanswer} {targetLanguage} {nativeLanguage} />
+	<WordOrder {challenge} {onanswer} {targetLanguage} {nativeLanguage} {showReadings} />
 {:else if challenge.type === 'spot-error'}
-	<SpotError {challenge} {onanswer} {targetLanguage} {nativeLanguage} />
+	<SpotError {challenge} {onanswer} {targetLanguage} {nativeLanguage} {showReadings} />
 {:else if challenge.type === 'match-pairs'}
-	<MatchPairs {challenge} {onanswer} {targetLanguage} {nativeLanguage} />
+	<MatchPairs {challenge} {onanswer} {targetLanguage} {nativeLanguage} {showReadings} />
 {:else}
 	{unhandledChallenge(challenge)}
 {/if}
