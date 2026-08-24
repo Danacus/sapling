@@ -9,20 +9,17 @@
 <script lang="ts">
 	import type { ChallengeProps } from '$lib/challenges/props';
 	import type { TypedTranslationChallenge } from '$lib/types';
-	import { getShowRomanization } from '$lib/ui/prefs';
 	import { validateAnswer } from '$lib/validate';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
 	import CheckButton from './blocks/CheckButton.svelte';
 	import PromptHeader from './blocks/PromptHeader.svelte';
 
-	/** Read once — the toggle lives in Settings, not mid-session. */
-	const showRomanization = getShowRomanization();
-
 	let {
 		challenge,
 		onanswer,
 		targetLanguage = '',
-		nativeLanguage = ''
+		nativeLanguage = '',
+		showReadings = true
 	}: ChallengeProps<TypedTranslationChallenge> = $props();
 
 	let typed = $state('');
@@ -77,7 +74,7 @@
 	<PromptHeader
 		kicker={asked}
 		prompt={challenge.prompt}
-		reading={(showRomanization ? challenge.promptRomanization : '') ?? ''}
+		reading={(showReadings ? challenge.promptRomanization : '') ?? ''}
 		speakText={promptIsTarget ? challenge.prompt : ''}
 		speakLang={targetLanguage}
 	/>

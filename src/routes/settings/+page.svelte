@@ -43,9 +43,10 @@
 	import InlineStatus from '$lib/ui/InlineStatus.svelte';
 	import {
 		getListeningMode,
-		getShowRomanization,
+		getRomanizationMode,
 		setListeningMode,
-		setShowRomanization
+		setRomanizationMode,
+		type RomanizationMode
 	} from '$lib/ui/prefs';
 	import ProgressBar from '$lib/ui/ProgressBar.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
@@ -60,6 +61,11 @@
 		'openai/gpt-5-nano',
 		'anthropic/claude-haiku-4.5',
 		'Qwen/Qwen3.6-35B-A3B-FP8'
+	];
+	const ROMANIZATION_MODES: { value: RomanizationMode; label: string }[] = [
+		{ value: 'off', label: 'Off' },
+		{ value: 'on', label: 'On' },
+		{ value: 'adaptive', label: 'Adaptive' }
 	];
 
 	let loading = $state(true);
@@ -76,7 +82,7 @@
 	let goalMessage = $state('');
 
 	// Display -----------------------------------------------------------------------
-	let showRomanization = $state(true);
+	let romanizationMode = $state<RomanizationMode>('on');
 	let listeningMode = $state(true);
 
 	// Speech ----------------------------------------------------------------------
@@ -158,7 +164,7 @@
 				apiKeySet = getApiKey() !== undefined;
 				modelInput = getModel();
 				baseUrlInput = getBaseUrl() ?? '';
-				showRomanization = getShowRomanization();
+				romanizationMode = getRomanizationMode();
 				listeningMode = getListeningMode();
 
 				ttsEngine = getTtsEngine();
@@ -247,9 +253,9 @@
 		setListeningMode(listeningMode);
 	}
 
-	function toggleRomanization() {
-		showRomanization = !showRomanization;
-		setShowRomanization(showRomanization);
+	function setRomanization(mode: RomanizationMode) {
+		romanizationMode = mode;
+		setRomanizationMode(mode);
 	}
 
 	function chooseEngine(engine: TtsEngine) {
@@ -668,25 +674,26 @@
 
 		<section class="card">
 			<h2>Display</h2>
-			<div class="switch-row">
-				<div class="switch-copy">
-					<span class="label">Show pronunciation (romanization)</span>
-					<p class="hint">
-						Pinyin, romaji and the like under words written in a non-Latin script. Only shows up
-						for languages that need it.
-					</p>
+			<div class="field">
+				<span class="label">Pronunciation (romanization)</span>
+				<p class="hint">
+					Pinyin, romaji and the like under words written in a non-Latin script. Only shows up for
+					languages that need it. Adaptive hides the reading for words you know well, so the crutch
+					fades as a word sticks.
+				</p>
+				<div class="preset-row" role="group" aria-label="Pronunciation (romanization)">
+					{#each ROMANIZATION_MODES as option (option.value)}
+						<button
+							type="button"
+							class="chip"
+							class:selected={romanizationMode === option.value}
+							aria-pressed={romanizationMode === option.value}
+							onclick={() => setRomanization(option.value)}
+						>
+							{option.label}
+						</button>
+					{/each}
 				</div>
-				<button
-					type="button"
-					class="switch"
-					class:on={showRomanization}
-					role="switch"
-					aria-checked={showRomanization}
-					aria-label="Show pronunciation (romanization)"
-					onclick={toggleRomanization}
-				>
-					<span class="switch-thumb"></span>
-				</button>
 			</div>
 
 			<div class="switch-row">

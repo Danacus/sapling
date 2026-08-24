@@ -28,7 +28,7 @@
 	import { isListeningChallenge } from '$lib/session/engine';
 	import { speak, ttsAvailable } from '$lib/tts';
 	import type { MultipleChoiceChallenge } from '$lib/types';
-	import { getListeningMode, getShowRomanization } from '$lib/ui/prefs';
+	import { getListeningMode } from '$lib/ui/prefs';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
 	import CheckButton from './blocks/CheckButton.svelte';
 	import PromptHeader from './blocks/PromptHeader.svelte';
@@ -37,11 +37,11 @@
 	let {
 		challenge,
 		onanswer,
-		targetLanguage = ''
+		targetLanguage = '',
+		showReadings = true
 	}: ChallengeProps<MultipleChoiceChallenge> = $props();
 
-	/** Read once — the toggles live in Settings, not mid-session. */
-	const showRomanization = getShowRomanization();
+	/** Read once — the toggle lives in Settings, not mid-session. */
 	const listeningEnabled = getListeningMode();
 
 	/**
@@ -131,7 +131,7 @@
 	const promptIsTarget = $derived(challenge.direction === 'toNative');
 
 	function readingOf(index: number): string {
-		return (showRomanization ? challenge.optionsRomanization?.[index] : '') ?? '';
+		return (showReadings ? challenge.optionsRomanization?.[index] : '') ?? '';
 	}
 
 	function select(index: number): void {
@@ -168,7 +168,7 @@
 	<PromptHeader
 		kicker={askedIn}
 		prompt={challenge.prompt}
-		reading={(showRomanization ? challenge.promptRomanization : '') ?? ''}
+		reading={(showReadings ? challenge.promptRomanization : '') ?? ''}
 		hidePrompt={hidingPrompt}
 		speakText={promptIsTarget ? challenge.prompt : ''}
 		speakLang={targetLanguage}

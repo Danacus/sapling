@@ -8,6 +8,8 @@
  * context (SSR-less here, but tests still run in node).
  */
 
+const ROMANIZATION_MODE_KEY = 'll.romanizationMode';
+/** Superseded by {@link ROMANIZATION_MODE_KEY}; still read once, to migrate. */
 const SHOW_ROMANIZATION_KEY = 'll.showRomanization';
 const LISTENING_MODE_KEY = 'll.listeningMode';
 const RECENT_TOPICS_KEY = 'll.recentTopics';
@@ -21,24 +23,43 @@ function hasStorage(): boolean {
 }
 
 /**
- * Whether romanization (pinyin, romaji, ...) should render under target-script
- * text. Defaults to shown when the learner has never touched the setting.
+ * How romanization (pinyin, romaji, ...) renders under target-script text.
+ *
+ * `'adaptive'` is the interesting one: the reading is a crutch, and a crutch
+ * that never goes away is a crutch the learner keeps leaning on. Under it the
+ * decision is made per served challenge from how well its words are known —
+ * see `$lib/session/romanization`.
  */
-export function getShowRomanization(): boolean {
-	if (!hasStorage()) return true;
+export type RomanizationMode = 'off' | 'on' | 'adaptive';
+
+const ROMANIZATION_MODES: readonly RomanizationMode[] = ['off', 'on', 'adaptive'];
+
+/**
+ * The learner's romanization mode. Defaults to `'on'` when the setting has
+ * never been touched.
+ *
+ * Falls back to the legacy boolean key when the mode key is absent or holds
+ * something unrecognized, so a learner who had turned readings off stays off
+ * across the upgrade rather than having them silently reappear.
+ */
+export function getRomanizationMode(): RomanizationMode {
+	if (!hasStorage()) return 'on';
 	try {
-		const raw = localStorage.getItem(SHOW_ROMANIZATION_KEY);
-		return raw === null ? true : raw === '1';
+		const raw = localStorage.getItem(ROMANIZATION_MODE_KEY);
+		if (raw !== null && (ROMANIZATION_MODES as readonly string[]).includes(raw)) {
+			return raw as RomanizationMode;
+		}
+		return localStorage.getItem(SHOW_ROMANIZATION_KEY) === '0' ? 'off' : 'on';
 	} catch {
-		return true;
+		return 'on';
 	}
 }
 
-/** Persists the romanization toggle. */
-export function setShowRomanization(show: boolean): void {
+/** Persists the romanization mode. Writes the new key only. */
+export function setRomanizationMode(mode: RomanizationMode): void {
 	if (!hasStorage()) return;
 	try {
-		localStorage.setItem(SHOW_ROMANIZATION_KEY, show ? '1' : '0');
+		localStorage.setItem(ROMANIZATION_MODE_KEY, mode);
 	} catch {
 		/* ignore: storage unavailable */
 	}
