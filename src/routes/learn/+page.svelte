@@ -748,8 +748,9 @@
 		<div class="centered"><Spinner /></div>
 	{:else if phase === 'start'}
 		<div class="centered">
-			<div class="card start-card">
+			<div class="card start-card ll-rise">
 				<h1>Ready when you are</h1>
+				<hr class="stitch" />
 
 				{#if bootError}
 					<p class="error-message" role="alert">{bootError}</p>
@@ -878,7 +879,9 @@
 									{@const done = step.endedAt !== undefined}
 									<li class:done>
 										{#if done}
-											<span class="prep-mark" aria-hidden="true">✓</span>
+											<span class="prep-mark" aria-hidden="true">
+												<svg class="ico" viewBox="0 0 24 24"><path d="m5 12.8 4.4 4.4L19 7.6" /></svg>
+											</span>
 										{:else}
 											<span class="prep-mark prep-spinner" aria-hidden="true"></span>
 										{/if}
@@ -924,13 +927,29 @@
 					<h1>Nothing to practise</h1>
 					<p class="lead">Your pool has nothing ready right now — generate a new lesson.</p>
 				{:else}
-					<p class="summary-emoji" aria-hidden="true">{accuracyPct >= 80 ? '🎉' : '💪'}</p>
-					<h1>Session complete!</h1>
+					<!-- The brand glyph, pressed into the page: a sprout in a specimen
+					     frame. Two leaves for a session that went well, one for a session
+					     that is still growing — the same distinction the two emoji drew,
+					     said in the app's own hand. -->
+					<p class="summary-mark" aria-hidden="true">
+						<span class="medal" class:thriving={accuracyPct >= 80}>
+							<svg class="ico sprout" viewBox="0 0 24 24">
+								<path d="M12 21v-8.6" />
+								{#if accuracyPct >= 80}
+									<path d="M12 16.2c-3.3 0-5.2-1.9-5.2-5.2 3.3 0 5.2 1.9 5.2 5.2Z" />
+								{/if}
+								<path d="M12 12.6c0-3.8 2-5.8 5.6-5.8 0 3.8-2 5.8-5.6 5.8Z" />
+							</svg>
+						</span>
+					</p>
+					<h1>Session complete</h1>
 
 					<div class="xp-hero">
 						<span class="xp-number">+{summary.xp}</span>
 						<span class="xp-label">XP</span>
 					</div>
+
+					<hr class="stitch" />
 
 					<div class="stat-grid">
 						<div class="stat">
@@ -942,22 +961,40 @@
 							<span class="stat-label">Words strengthened</span>
 						</div>
 						<div class="stat">
-							<span class="stat-value">🔥 {endStats?.streakDays ?? 0}</span>
+							<span class="stat-value streak-value">
+								<svg class="ico sprout" viewBox="0 0 24 24" aria-hidden="true">
+									<path d="M12 21v-8.6" />
+									<path d="M12 16.2c-3.3 0-5.2-1.9-5.2-5.2 3.3 0 5.2 1.9 5.2 5.2Z" />
+									<path d="M12 12.6c0-3.8 2-5.8 5.6-5.8 0 3.8-2 5.8-5.6 5.8Z" />
+								</svg>
+								{endStats?.streakDays ?? 0}
+							</span>
 							<span class="stat-label">Day streak</span>
 						</div>
 					</div>
 
 					{#if bestCombo >= COMBO_THRESHOLD}
-						<p class="combo-note">Best combo this session: {bestCombo} in a row 🔥</p>
+						<p class="combo-note">
+							<svg class="ico spark" viewBox="0 0 24 24" aria-hidden="true">
+								<path d="M12 3.6 13.7 9.1 19.2 10.8 13.7 12.5 12 18 10.3 12.5 4.8 10.8 10.3 9.1Z" />
+							</svg>
+							Best combo this session: {bestCombo} in a row
+						</p>
 					{/if}
 
 					{#if goalNewlyReached}
-						<p class="goal-hit">🏆 Daily goal reached — {profile?.dailyGoalXp} XP. See you tomorrow?</p>
+						<p class="goal-hit">
+							<svg class="ico spark" viewBox="0 0 24 24" aria-hidden="true">
+								<path d="M12 3.6 13.7 9.1 19.2 10.8 13.7 12.5 12 18 10.3 12.5 4.8 10.8 10.3 9.1Z" />
+							</svg>
+							Daily goal reached — {profile?.dailyGoalXp} XP. See you tomorrow?
+						</p>
 					{/if}
 
 					{#if learnedWords.length > 0}
 						<section class="new-words">
 							<h2>New words</h2>
+							<hr class="stitch" />
 							<ul>
 								{#each learnedWords as word (word.id)}
 									<li>
@@ -983,7 +1020,9 @@
 		</div>
 	{:else}
 		<header class="topbar">
-			<button type="button" class="quit" onclick={requestQuit} aria-label="Quit session">×</button>
+			<button type="button" class="quit" onclick={requestQuit} aria-label="Quit session">
+				<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" /></svg>
+			</button>
 
 			<div class="progress" role="progressbar" aria-valuenow={stepsDone} aria-valuemin={0} aria-valuemax={totalSteps} aria-label="Session progress">
 				{#each Array.from({ length: totalSteps }, (_, i) => i) as index (index)}
@@ -993,7 +1032,9 @@
 
 			{#if combo >= COMBO_THRESHOLD}
 				<div class="combo" in:scale={{ duration: motionMs(240), start: 0.5 }} title="Answer streak">
-					<span aria-hidden="true">🔥</span>
+					<svg class="ico spark" viewBox="0 0 24 24" aria-hidden="true">
+						<path d="M12 3.6 13.7 9.1 19.2 10.8 13.7 12.5 12 18 10.3 12.5 4.8 10.8 10.3 9.1Z" />
+					</svg>
 					<span>{combo}</span>
 				</div>
 			{:else}
@@ -1017,11 +1058,23 @@
 		<section class="stage" class:with-banner={feedback !== null}>
 			{#if current}
 				{#key current.id}
-					<div
-						class="challenge"
-						in:fly={{ x: 40, duration: motionMs(240), delay: motionMs(80) }}
-						out:fly={{ x: -40, duration: motionMs(160) }}
-					>
+					<!--
+					  The app's one entrance beat, borrowed for the challenge swap: the
+					  same 9px lift `.ll-rise` plays on the home cards, so a new challenge
+					  settles onto the page rather than sliding in from the side.
+					  `motionMs` collapses it to an instant cut under
+					  `prefers-reduced-motion`.
+
+					  Deliberately an `in:` on its own. An `out:` here keeps the leaving
+					  challenge mounted *alongside* the arriving one for the length of its
+					  transition, and the stage then has to find room for both — which is
+					  what the swap used to flicker: two `width: 100%` children in one
+					  flex row, each shrunk to half the stage, every line rewrapped, then
+					  snapped back. The single-cell grid below makes that impossible now;
+					  one transition keeps it that way. There is no delay either — a delay
+					  only ever existed to let an outgoing element get out of the way.
+					-->
+					<div class="challenge" in:fly={{ y: 9, duration: motionMs(320) }}>
 						<ChallengeHost
 							challenge={current}
 							onanswer={handleAnswer}
@@ -1108,6 +1161,27 @@
 		text-align: center;
 	}
 
+	/* One hand for every icon on this screen, matching the dashboard: 24-unit
+	   box, hairline stroke, round joins. Set here rather than per-<svg> so the
+	   weight can never drift between the quit ✕, the combo spark and the
+	   summary's sprout. */
+	.ico {
+		width: 1.2rem;
+		height: 1.2rem;
+		flex: 0 0 auto;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 1.6;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+
+	/* The one filled mark in the set — it is a burst, not a diagram. */
+	.spark {
+		fill: currentColor;
+		stroke-width: 1.2;
+	}
+
 	/* Start ------------------------------------------------------------------- */
 
 	.start-card {
@@ -1115,24 +1189,42 @@
 		text-align: center;
 	}
 
+	.start-card h1 {
+		font-size: clamp(1.6rem, 7vw, 1.95rem);
+	}
+
+	.start-card h1 + .stitch {
+		margin: 0.9rem 0 1rem;
+	}
+
+	/* The state of the pool, read as a ledger line: the two figures carry the
+	   display face and sit on the tabular grid, so they stay the thing the eye
+	   lands on however the sentence around them declines. */
 	.pool-status {
-		margin: 0.35rem 0 1.25rem;
+		margin: 0 0 1.25rem;
 		color: var(--text-muted);
-		font-size: 0.95rem;
+		font-size: 0.92rem;
 	}
 
 	.pool-status strong {
+		font-family: var(--font-display);
+		font-size: 1.15rem;
+		font-weight: 700;
+		font-variation-settings: 'SOFT' 26;
+		font-variant-numeric: tabular-nums;
 		color: var(--text);
 	}
 
 	.nudge {
 		margin: 0.9rem 0 0;
-		padding: 0.55rem 0.8rem;
+		padding: 0.6rem 0.85rem;
+		border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
 		border-radius: var(--radius-sm);
 		background: var(--accent-soft);
 		color: var(--text);
 		font-size: 0.85rem;
-		font-weight: 700;
+		font-weight: 500;
+		text-wrap: balance;
 	}
 
 	.review-only-toggle {
@@ -1143,22 +1235,30 @@
 		margin: 0.9rem 0 0;
 		color: var(--text-muted);
 		font-size: 0.85rem;
-		font-weight: 700;
+		font-weight: 500;
 		cursor: pointer;
 	}
 
+	.review-only-toggle input {
+		accent-color: var(--primary);
+	}
+
+	/* Closed off with the app's stitched hairline rather than a solid rule:
+	   generating is a separate entry on the same page, not a new card. */
 	.generate {
 		margin-top: 1.75rem;
-		padding-top: 1.25rem;
-		border-top: 1px solid var(--border);
+		padding-top: 1.35rem;
+		border-top: 1px dashed var(--border-strong);
 	}
 
 	.generate h2 {
-		margin: 0 0 0.25rem;
-		font-size: 0.78rem;
-		letter-spacing: 0.07em;
+		margin: 0 0 0.3rem;
+		font-family: var(--font);
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.11em;
 		text-transform: uppercase;
-		color: var(--text-muted);
+		color: color-mix(in srgb, var(--accent) 65%, var(--text-muted));
 	}
 
 	.generate-btn {
@@ -1169,8 +1269,19 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 0.5rem;
+		gap: 0.7rem;
 		margin-top: 0.9rem;
+	}
+
+	/* The boxed error carries no margins of its own, so each place it lands
+	   spaces it: full width under the generate button, and clear of the
+	   toggle when the boot read failed. */
+	.gen-error .error-message {
+		align-self: stretch;
+	}
+
+	.start-card > .error-message {
+		margin-bottom: 1.25rem;
 	}
 
 	.topic-input {
@@ -1184,15 +1295,17 @@
 		gap: 0.5rem;
 	}
 
+	/* True chips, so the pill survives — in the app's settled chip voice:
+	   hairline, Karla 500, terracotta when picked. */
 	.chip {
-		padding: 0.4rem 0.85rem;
-		border: 2px solid var(--border);
+		padding: 0.34rem 0.75rem;
+		border: 1px solid var(--border-strong);
 		border-radius: 999px;
 		background: var(--surface);
 		color: var(--text-muted);
 		font: inherit;
-		font-size: 0.85rem;
-		font-weight: 700;
+		font-size: 0.83rem;
+		font-weight: 500;
 		cursor: pointer;
 		transition:
 			border-color 0.15s ease,
@@ -1201,7 +1314,8 @@
 	}
 
 	.chip:hover {
-		border-color: var(--border-strong);
+		border-color: var(--text-muted);
+		background: var(--surface-alt);
 		color: var(--text);
 	}
 
@@ -1214,6 +1328,7 @@
 		border-color: var(--accent);
 		background: var(--accent-soft);
 		color: var(--text);
+		font-weight: 700;
 	}
 
 	.recent {
@@ -1222,41 +1337,50 @@
 
 	.recent-label {
 		margin: 0 0 0.5rem;
-		font-size: 0.78rem;
-		font-weight: 800;
-		letter-spacing: 0.07em;
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.11em;
 		text-transform: uppercase;
 		color: var(--text-muted);
 	}
 
 	.start-btn {
 		margin-top: 1.5rem;
+		padding: 1rem 1.5rem;
+		font-size: 1.02rem;
 	}
 
 	.practice-btn {
 		margin-top: 0.6rem;
+		border-color: var(--border);
 	}
 
 	/* Generation log ------------------------------------------------------- */
 
+	/* A ruled ledger of what the run is doing and where the seconds went —
+	   hairline between entries, the same rule the word lists use. */
 	.prep-steps {
 		display: flex;
 		flex-direction: column;
-		gap: 0.3rem;
 		width: 100%;
 		max-width: 20rem;
-		margin: 0.9rem auto 0;
+		margin: 1rem auto 0;
 		padding: 0;
 		list-style: none;
-		font-size: 0.85rem;
+		font-size: 0.84rem;
 		color: var(--text-muted);
 		text-align: left;
 	}
 
 	.prep-steps li {
 		display: flex;
-		align-items: baseline;
-		gap: 0.5rem;
+		align-items: center;
+		gap: 0.55rem;
+		padding: 0.35rem 0;
+	}
+
+	.prep-steps li + li {
+		border-top: 1px solid var(--border);
 	}
 
 	.prep-steps li.done {
@@ -1264,14 +1388,21 @@
 	}
 
 	.prep-mark {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 		flex: 0 0 1rem;
-		font-weight: 900;
+	}
+
+	.prep-mark .ico {
+		width: 0.95rem;
+		height: 0.95rem;
+		stroke-width: 1.9;
 	}
 
 	.prep-spinner {
-		align-self: center;
-		width: 0.7rem;
-		height: 0.7rem;
+		width: 0.75rem;
+		height: 0.75rem;
 		border: 2px solid var(--border);
 		border-top-color: var(--primary);
 		border-radius: 50%;
@@ -1308,19 +1439,26 @@
 	.prep-secs {
 		flex: 0 0 auto;
 		font-variant-numeric: tabular-nums;
+		letter-spacing: 0.01em;
 	}
 
 	.prep-total {
-		margin: 0.5rem 0 0;
+		margin: 0.6rem 0 0;
 		font-size: 0.78rem;
-		font-weight: 700;
+		font-weight: 500;
 		color: var(--text-muted);
 		text-align: center;
 	}
 
 	/* Errors --------------------------------------------------------------- */
 
+	/* The app's one error treatment: hairline frame over a 12% danger tint. */
 	.error-message {
+		margin: 0;
+		padding: 0.6rem 0.8rem;
+		border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+		border-radius: var(--radius-sm);
+		background: color-mix(in srgb, var(--danger) 12%, transparent);
 		color: var(--danger);
 		font-size: 0.88rem;
 		font-weight: 700;
@@ -1335,20 +1473,29 @@
 		gap: 0.75rem;
 	}
 
+	/* A 10px squircle with a hairline, like every icon control in the app. */
 	.quit {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 		flex: 0 0 auto;
 		width: 2.25rem;
 		height: 2.25rem;
-		border: 0;
-		border-radius: 999px;
-		background: transparent;
+		padding: 0;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: var(--surface);
 		color: var(--text-muted);
-		font-size: 1.6rem;
 		line-height: 1;
 		cursor: pointer;
+		transition:
+			border-color 0.15s ease,
+			background 0.15s ease,
+			color 0.15s ease;
 	}
 
 	.quit:hover {
+		border-color: var(--border-strong);
 		background: var(--surface-alt);
 		color: var(--text);
 	}
@@ -1358,6 +1505,11 @@
 		box-shadow: var(--ring);
 	}
 
+	/*
+	  Progress as a row of ruled ticks rather than beads — squared ends, a
+	  hairline trough, ink laid into the paper as each step is answered. The
+	  same measure `ProgressBar` draws on the dashboard, cut into segments.
+	*/
 	.progress {
 		display: flex;
 		flex: 1;
@@ -1367,14 +1519,20 @@
 
 	.segment {
 		flex: 1;
-		height: 0.7rem;
-		border-radius: 999px;
+		height: 0.55rem;
+		border: 1px solid var(--border);
+		border-radius: 3px;
 		background: var(--surface-alt);
-		transition: background 0.3s ease;
+		box-shadow: inset 0 1px 2px color-mix(in srgb, var(--border-strong) 30%, transparent);
+		transition:
+			background 0.3s ease,
+			border-color 0.3s ease;
 	}
 
 	.segment.filled {
+		border-color: var(--primary-strong);
 		background: var(--primary);
+		box-shadow: none;
 	}
 
 	.combo,
@@ -1383,29 +1541,40 @@
 		min-width: 3rem;
 	}
 
+	/* The streak, as a tab in the same row as the quit control. */
 	.combo {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
 		gap: 0.25rem;
-		padding: 0.25rem 0.55rem;
-		border-radius: 999px;
+		height: 2.25rem;
+		padding: 0 0.5rem;
+		border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
+		border-radius: var(--radius);
 		background: color-mix(in srgb, var(--amber) 18%, var(--surface));
-		color: var(--amber);
-		font-weight: 900;
+		color: color-mix(in srgb, var(--amber) 62%, var(--text));
+		font-weight: 700;
 		font-size: 0.9rem;
+		font-variant-numeric: tabular-nums;
 	}
 
+	.combo .ico {
+		width: 1rem;
+		height: 1rem;
+	}
+
+	/* The XP receipt floating up out of the bar — a stamp, not a bubble. */
 	.xp-toast {
 		position: absolute;
 		left: 50%;
 		bottom: -0.25rem;
-		padding: 0.15rem 0.55rem;
-		border-radius: 999px;
+		padding: 0.15rem 0.5rem;
+		border-radius: var(--radius-sm);
 		background: var(--primary);
 		color: var(--text-inverse);
 		font-size: 0.85rem;
-		font-weight: 900;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
 		pointer-events: none;
 		animation: ll-float-up 1.1s ease-out forwards;
 	}
@@ -1415,22 +1584,46 @@
 	.mock-banner {
 		margin: 0;
 		padding: 0.5rem 0.75rem;
+		border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
 		border-radius: var(--radius-sm);
 		background: var(--accent-soft);
 		color: var(--text);
 		font-size: 0.82rem;
-		font-weight: 700;
+		font-weight: 500;
 		text-align: center;
+		text-wrap: balance;
 	}
 
 	/* Stage ---------------------------------------------------------------- */
 
+	/*
+	  A single-cell grid, not a flex row.
+
+	  Whatever the stage is showing goes in the one cell, so two challenges can
+	  never end up dividing the width between them mid-swap — the failure the
+	  old flex row had, and the reason a swap flickered. The row is `1fr` rather
+	  than `auto` on purpose: it has to fill the stage's height, because that is
+	  what `.check`'s `margin-top: auto` pins the submit button to. Its automatic
+	  minimum still lets a tall challenge push past it rather than clip.
+	*/
 	.stage {
 		position: relative;
-		display: flex;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		grid-template-rows: 1fr;
 		flex: 1;
 		min-height: 0;
 		padding-bottom: 1rem;
+		/* The banner arriving and leaving changes this by 14rem; glide it, or
+		   the challenge's last row jerks that far at exactly the moment the
+		   next one is arriving. Paired with the banner's own 260ms fly. */
+		transition: padding-bottom 0.24s cubic-bezier(0.2, 0.7, 0.3, 1);
+	}
+
+	.stage > .challenge,
+	.stage > .centered {
+		grid-area: 1 / 1;
+		min-width: 0;
 	}
 
 	/* Keep the last row of the challenge clear of the feedback banner. */
@@ -1449,8 +1642,9 @@
 		align-self: center;
 		margin-top: 1rem;
 		padding: 0.5rem 0.9rem;
-		font-size: 0.82rem;
-		opacity: 0.75;
+		font-size: 0.8rem;
+		font-weight: 500;
+		opacity: 0.7;
 	}
 
 	.skip-btn:hover {
@@ -1459,19 +1653,36 @@
 
 	/* Quit confirmation ---------------------------------------------------- */
 
+	/*
+	  A warm ink wash, never a blue-grey scrim. `--scrim` points at whichever
+	  token is *dark* in the current palette — the page ink on paper, the
+	  inverse ink on moss — so the overlay stays warm in both without a single
+	  literal colour.
+	*/
 	.overlay {
+		--scrim: var(--text);
 		position: fixed;
 		inset: 0;
 		z-index: 30;
 		display: grid;
 		place-items: center;
 		padding: 1rem;
-		background: rgb(9 12 18 / 55%);
+		background: color-mix(in srgb, var(--scrim) 62%, transparent);
+	}
+
+	@media (prefers-color-scheme: dark) {
+		.overlay {
+			--scrim: var(--text-inverse);
+		}
 	}
 
 	.quit-card {
 		max-width: 24rem;
 		text-align: center;
+	}
+
+	.quit-card h2 {
+		font-size: 1.2rem;
 	}
 
 	.quit-actions {
@@ -1491,106 +1702,207 @@
 		justify-content: center;
 	}
 
+	/* The end of the session is the app's brand moment, so the card is set with
+	   a little more air and a faint leaf wash rising from the top — the same
+	   gradient the dashboard's start card wears, turned the other way up. */
 	.summary-card {
 		position: relative;
 		z-index: 1;
 		text-align: center;
+		background:
+			linear-gradient(
+				170deg,
+				color-mix(in srgb, var(--primary-soft) 65%, var(--surface)),
+				var(--surface) 55%
+			),
+			var(--surface);
 	}
 
-	.summary-emoji {
+	.summary-card h1 {
 		margin: 0;
-		font-size: 3rem;
+		font-size: clamp(1.7rem, 7.5vw, 2.1rem);
+	}
+
+	/* A pressed specimen label: the sprout mounted on tinted paper inside a
+	   stitched frame, exactly as onboarding mounts its step marks. */
+	.summary-mark {
+		margin: 0 0 0.9rem;
 		line-height: 1;
-		animation: ll-pop 0.6s ease both;
+	}
+
+	.medal {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 3.4rem;
+		height: 3.4rem;
+		border: 1px dashed var(--border-strong);
+		border-radius: var(--radius);
+		background: color-mix(in srgb, var(--primary-soft) 65%, transparent);
+		color: var(--primary-strong);
+		animation: ll-pop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+	}
+
+	.medal .ico {
+		width: 2rem;
+		height: 2rem;
+		stroke-width: 1.4;
+	}
+
+	/* A clean run earns the second leaf and a terracotta frame. */
+	.medal.thriving {
+		border-style: solid;
+		border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 	}
 
 	.lead {
 		color: var(--text-muted);
+		text-wrap: balance;
 	}
 
+	/* The figure the whole screen is built around. */
 	.xp-hero {
 		display: flex;
 		align-items: baseline;
 		justify-content: center;
-		gap: 0.4rem;
-		margin: 0.75rem 0 1.5rem;
+		gap: 0.35rem;
+		margin: 0.85rem 0 0;
 		color: var(--primary-strong);
 	}
 
 	.xp-number {
-		font-size: 3rem;
-		font-weight: 900;
-		letter-spacing: -0.03em;
+		font-family: var(--font-display);
+		font-size: 3.2rem;
+		font-weight: 700;
+		font-variation-settings:
+			'SOFT' 32,
+			'WONK' 1;
+		font-variant-numeric: tabular-nums;
+		letter-spacing: -0.025em;
 		line-height: 1;
 	}
 
 	.xp-label {
-		font-size: 1.1rem;
-		font-weight: 900;
-		letter-spacing: 0.08em;
+		font-size: 1rem;
+		font-weight: 700;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
 	}
 
+	.xp-hero + .stitch {
+		margin: 1.25rem 0 1.1rem;
+	}
+
+	/*
+	  Three ruled columns rather than three cards: hairline dividers between
+	  them, nothing boxed. A page of figures reads as a page, not as tiles.
+	*/
 	.stat-grid {
 		display: grid;
-		grid-template-columns: repeat(3, 1fr);
-		gap: 0.5rem;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
 	}
 
 	.stat {
 		display: flex;
 		flex-direction: column;
-		gap: 0.2rem;
-		padding: 0.75rem 0.4rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		background: var(--surface-alt);
+		align-items: center;
+		gap: 0.25rem;
+		padding: 0.1rem 0.35rem;
+	}
+
+	.stat + .stat {
+		border-left: 1px solid var(--border);
 	}
 
 	.stat-value {
-		font-size: 1.25rem;
-		font-weight: 900;
+		font-family: var(--font-display);
+		font-size: 1.35rem;
+		font-weight: 700;
+		font-variation-settings: 'SOFT' 26;
+		font-variant-numeric: tabular-nums;
+		line-height: 1.15;
+	}
+
+	.streak-value {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+	}
+
+	.streak-value .ico {
+		width: 1.05rem;
+		height: 1.05rem;
+		color: var(--primary);
 	}
 
 	.stat-label {
-		font-size: 0.72rem;
-		font-weight: 800;
-		letter-spacing: 0.04em;
+		font-size: 0.68rem;
+		font-weight: 700;
+		letter-spacing: 0.09em;
 		text-transform: uppercase;
 		color: var(--text-muted);
+		text-wrap: balance;
+	}
+
+	.combo-note,
+	.goal-hit {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.4rem;
+		text-wrap: balance;
 	}
 
 	.combo-note {
-		margin: 1rem 0 0;
-		font-weight: 800;
+		margin: 1.1rem 0 0;
+		font-size: 0.92rem;
+		font-weight: 700;
+		color: color-mix(in srgb, var(--amber) 62%, var(--text));
+	}
+
+	.combo-note .spark {
 		color: var(--amber);
 	}
 
 	.goal-hit {
 		margin: 1rem 0 0;
-		padding: 0.6rem 0.8rem;
-		border-radius: var(--radius);
+		padding: 0.65rem 0.8rem;
+		border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
+		border-radius: var(--radius-sm);
 		background: var(--primary-soft);
 		color: var(--primary-strong);
-		font-weight: 800;
+		font-size: 0.92rem;
+		font-weight: 700;
+	}
+
+	.goal-hit .spark {
+		color: var(--accent);
 	}
 
 	.new-words {
-		margin-top: 1.5rem;
+		margin-top: 1.6rem;
 		text-align: left;
 	}
 
 	.new-words h2 {
-		margin: 0 0 0.5rem;
-		font-size: 0.78rem;
-		letter-spacing: 0.07em;
+		margin: 0;
+		font-family: var(--font);
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.11em;
 		text-transform: uppercase;
-		color: var(--text-muted);
+		color: color-mix(in srgb, var(--accent) 65%, var(--text-muted));
 	}
 
+	.new-words h2 + .stitch {
+		margin: 0.4rem 0 0.2rem;
+	}
+
+	/* A ruled ledger, matching the dashboard's word list: a page of entries,
+	   not a stack of chips. */
 	.new-words ul {
 		display: flex;
 		flex-direction: column;
-		gap: 0.4rem;
 		margin: 0;
 		padding: 0;
 		list-style: none;
@@ -1601,9 +1913,11 @@
 		align-items: baseline;
 		justify-content: space-between;
 		gap: 0.75rem;
-		padding: 0.5rem 0.7rem;
-		border-radius: var(--radius-sm);
-		background: var(--surface-alt);
+		padding: 0.55rem 0;
+	}
+
+	.new-words li + li {
+		border-top: 1px solid var(--border);
 	}
 
 	.new-words .word-text {
@@ -1619,8 +1933,13 @@
 		min-width: 0;
 	}
 
+	/* The specimen itself, in the display face — the one target-language
+	   moment left on the summary. */
 	.new-words .term {
-		font-weight: 800;
+		font-family: var(--font-display);
+		font-size: 1.05rem;
+		font-weight: 700;
+		font-variation-settings: 'SOFT' 26;
 		overflow-wrap: anywhere;
 	}
 
@@ -1637,6 +1956,8 @@
 
 	.back-btn {
 		margin-top: 1.75rem;
+		font-size: 1rem;
+		padding: 0.95rem 1.4rem;
 		text-decoration: none;
 	}
 
@@ -1668,19 +1989,32 @@
 			display: none;
 		}
 
-		.summary-emoji,
+		.medal,
 		.xp-toast {
 			animation: none;
+		}
+
+		.quit,
+		.segment,
+		.chip,
+		.combo,
+		.stage {
+			transition: none;
 		}
 	}
 
 	@media (max-width: 480px) {
 		.stat-value {
-			font-size: 1.05rem;
+			font-size: 1.15rem;
+		}
+
+		.stat-label {
+			font-size: 0.62rem;
+			letter-spacing: 0.06em;
 		}
 
 		.xp-number {
-			font-size: 2.4rem;
+			font-size: 2.6rem;
 		}
 	}
 </style>

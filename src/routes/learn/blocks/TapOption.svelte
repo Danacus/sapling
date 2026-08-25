@@ -146,8 +146,12 @@
 		border-bottom: 3px dashed var(--border-strong);
 		border-radius: var(--radius-sm);
 		background: var(--surface-alt);
-		font-size: 1.35rem;
-		font-weight: 800;
+		/* A word inside a sentence reads with the sentence, so it takes the
+		   display face the challenge prompt already wears. */
+		font-family: var(--font-display);
+		font-size: 1.3rem;
+		font-weight: 700;
+		font-variation-settings: 'SOFT' 26;
 	}
 
 	.opt.inline:hover:not(:disabled) {
@@ -160,10 +164,12 @@
 		border-bottom-width: 3px;
 	}
 
-	/* The reading sits under its own word, so a long sentence still lines up. */
+	/* The reading sits under its own word, so a long sentence still lines up.
+	   Back to the body face: the reading is an annotation, not the specimen. */
 	.opt.inline .rom {
+		font-family: var(--font);
 		font-size: 0.72rem;
-		font-weight: 600;
+		font-weight: 500;
 	}
 
 	/* States --------------------------------------------------------------- */
@@ -212,21 +218,30 @@
 
 	/* Keyboard badge ------------------------------------------------------- */
 
+	/* A pencilled index number in the margin of the entry: hairline frame, the
+	   same 6px squircle the inputs wear, figures on the tabular grid. */
 	.key {
 		display: grid;
 		place-items: center;
 		flex: 0 0 auto;
-		width: 1.75rem;
-		height: 1.75rem;
-		border: 2px solid var(--border);
+		width: 1.7rem;
+		height: 1.7rem;
+		border: 1px solid var(--border-strong);
 		border-radius: var(--radius-sm);
-		font-size: 0.8rem;
-		font-weight: 800;
+		background: color-mix(in srgb, var(--surface-alt) 70%, transparent);
+		font-size: 0.78rem;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
 		color: var(--text-muted);
+		transition:
+			border-color 0.12s ease,
+			background 0.12s ease,
+			color 0.12s ease;
 	}
 
 	.opt.selected .key {
 		border-color: var(--accent);
+		background: color-mix(in srgb, var(--accent) 14%, transparent);
 		color: var(--accent);
 	}
 

@@ -4,63 +4,84 @@
  *
  * Colors are exposed as custom properties so a later design pass can retheme
  * the app without touching components.
+ *
+ * The theme is "field journal": warm paper, ink with a green cast, leaf green
+ * and terracotta. Calm and tactile rather than candy-coloured — the learner is
+ * growing something, and the surface should read as a well-made notebook.
  */
 
 :root {
 	/* Palette --------------------------------------------------------------- */
-	--bg: #f7f8fa;
-	--surface: #ffffff;
-	--surface-alt: #f0f2f5;
-	--border: #e2e6ec;
-	--border-strong: #cdd4de;
+	--bg: #f4efe4; /* warm paper */
+	--surface: #fdfbf5; /* lighter sheet */
+	--surface-alt: #ece5d3;
+	--border: #ddd3bd;
+	--border-strong: #c3b696;
 
-	--text: #1b2330;
-	--text-muted: #667085;
-	--text-inverse: #ffffff;
+	--text: #26301f; /* ink with a green cast */
+	--text-muted: #71765f;
+	--text-inverse: #fdfbf5;
 
-	--primary: #58cc02;
-	--primary-strong: #46a302;
-	--primary-soft: #e8f7d9;
-	--accent: #1cb0f6;
-	--accent-soft: #e2f4fe;
-	--warn: #ffc800;
-	--danger: #ff4b4b;
-	--amber: #f5a623;
+	--primary: #4f8c3d; /* leaf green */
+	--primary-strong: #3c7030;
+	--primary-soft: #e2ecd4;
+	--accent: #c96a3b; /* terracotta */
+	--accent-soft: #f4e2d3;
+	--warn: #dfa932;
+	--danger: #c94f35;
+	--amber: #d89035;
 
 	/* Shape & motion -------------------------------------------------------- */
-	--radius-sm: 8px;
-	--radius: 14px;
-	--radius-lg: 20px;
-	--shadow: 0 10px 30px rgb(16 24 40 / 8%);
+	--radius-sm: 6px;
+	--radius: 10px;
+	--radius-lg: 14px;
+	--shadow: 0 10px 30px rgb(60 50 20 / 10%);
 	--ring: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent);
 
-	--font: 'Nunito', 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+	/*
+	  Strength of the paper tooth painted by `body::after`. A token because the
+	  grain is one fixed noise tile: only its opacity changes between palettes.
+	*/
+	--grain: 0.05;
+
+	/*
+	  Two families, two jobs. `--font-display` (Fraunces) is for headings and
+	  brand moments; `--font` (Karla) is everything else. Both fall through to
+	  the system stack, which is what renders target-language text in scripts
+	  the Latin webfonts do not cover — never let a webfont's metrics decide how
+	  CJK or Arabic looks.
+	*/
+	--font: 'Karla', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+		'Noto Sans', sans-serif;
+	--font-display: 'Fraunces', ui-serif, Georgia, 'Iowan Old Style', 'Times New Roman', serif;
 
 	color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
 	:root {
-		--bg: #121620;
-		--surface: #1b2130;
-		--surface-alt: #232a3b;
-		--border: #2c3446;
-		--border-strong: #3b465c;
+		--bg: #14180f;
+		--surface: #1d2316;
+		--surface-alt: #262e1d;
+		--border: #38402c;
+		--border-strong: #4d573b;
 
-		--text: #eef2f8;
-		--text-muted: #98a3b6;
-		--text-inverse: #0f1319;
+		--text: #edeadb;
+		--text-muted: #9aa287;
+		--text-inverse: #14180f;
 
-		--primary: #5fd311;
-		--primary-strong: #4bb003;
-		--primary-soft: #1f3216;
-		--accent: #38bdf8;
-		--accent-soft: #14293a;
-		--warn: #ffd24a;
-		--danger: #ff6b6b;
-		--amber: #f7b84b;
+		--primary: #7cbb5f;
+		--primary-strong: #5d9c45;
+		--primary-soft: #26371c;
+		--accent: #dd8a58;
+		--accent-soft: #3a2818;
+		--warn: #e5bb54;
+		--danger: #e06b52;
+		--amber: #dfa456;
 
-		--shadow: 0 12px 34px rgb(0 0 0 / 45%);
+		--shadow: 0 12px 34px rgb(0 0 0 / 5%);
+
+		--grain: 0.035;
 
 		color-scheme: dark;
 	}
@@ -87,13 +108,60 @@ body {
 	-webkit-font-smoothing: antialiased;
 }
 
+/*
+  Atmosphere. Two fixed, pointer-transparent layers sit behind everything
+  (`z-index: -1` puts them above the propagated body background and below all
+  in-flow content): a warm wash of light from the top plus a cool leaf glow at
+  the foot, then a tiled noise tile for paper tooth. Both are pure CSS, paint
+  once and never repaint on scroll — atmosphere is not allowed to cost frames.
+*/
+body::before,
+body::after {
+	content: '';
+	position: fixed;
+	inset: 0;
+	z-index: -1;
+	pointer-events: none;
+}
+
+body::before {
+	background-image:
+		radial-gradient(
+			120% 55% at 50% -8%,
+			color-mix(in srgb, var(--accent) 12%, transparent),
+			transparent 68%
+		),
+		radial-gradient(
+			90% 45% at 8% 104%,
+			color-mix(in srgb, var(--primary) 10%, transparent),
+			transparent 62%
+		);
+}
+
+body::after {
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23g)'/%3E%3C/svg%3E");
+	background-size: 180px 180px;
+	opacity: var(--grain);
+}
+
 h1,
 h2,
 h3 {
 	margin: 0 0 0.4em;
-	line-height: 1.2;
+	font-family: var(--font-display);
+	line-height: 1.18;
+	font-weight: 700;
+	font-variation-settings: 'SOFT' 26;
+	letter-spacing: -0.005em;
+}
+
+/* The brand voice lives at h1: a touch more weight and Fraunces' wonky
+   alternates, which is exactly as much quirk as the app wants. */
+h1 {
 	font-weight: 800;
-	letter-spacing: -0.01em;
+	font-variation-settings:
+		'SOFT' 32,
+		'WONK' 1;
 }
 
 p {
@@ -103,6 +171,13 @@ p {
 a {
 	color: var(--accent);
 	font-weight: 700;
+	text-underline-offset: 0.16em;
+	text-decoration-thickness: 1px;
+}
+
+::selection {
+	background: var(--accent-soft);
+	color: var(--text);
 }
 
 /* Buttons ------------------------------------------------------------------ */
@@ -112,19 +187,21 @@ a {
 	align-items: center;
 	justify-content: center;
 	gap: 0.5rem;
-	padding: 0.85rem 1.5rem;
-	border: 0;
+	padding: 0.8rem 1.4rem;
+	/* Transparent rather than absent, so the hairline variants below can turn
+	   a border on without changing anyone's height. */
+	border: 1px solid transparent;
 	border-radius: var(--radius);
 	background: var(--surface-alt);
 	color: var(--text);
 	font: inherit;
-	font-weight: 800;
-	letter-spacing: 0.02em;
-	text-transform: uppercase;
-	font-size: 0.9rem;
+	font-weight: 700;
+	font-size: 0.95rem;
+	line-height: 1.25;
 	cursor: pointer;
 	transition:
 		transform 0.08s ease,
+		border-color 0.15s ease,
 		filter 0.15s ease,
 		background 0.15s ease;
 }
@@ -150,11 +227,15 @@ a {
 .btn-primary {
 	background: var(--primary);
 	color: var(--text-inverse);
-	box-shadow: 0 4px 0 var(--primary-strong);
+	box-shadow: 0 3px 0 var(--primary-strong);
+}
+
+.btn-primary:hover:not(:disabled) {
+	filter: brightness(1.04);
 }
 
 .btn-primary:active:not(:disabled) {
-	box-shadow: 0 2px 0 var(--primary-strong);
+	box-shadow: 0 1px 0 var(--primary-strong);
 }
 
 .btn-ghost {
@@ -181,22 +262,23 @@ a {
 
 .field > .label {
 	display: block;
-	margin-bottom: 0.35rem;
-	font-weight: 800;
-	font-size: 0.8rem;
-	letter-spacing: 0.06em;
+	margin-bottom: 0.4rem;
+	font-weight: 700;
+	font-size: 0.74rem;
+	letter-spacing: 0.09em;
 	text-transform: uppercase;
 	color: var(--text-muted);
 }
 
 .input {
 	width: 100%;
-	padding: 0.8rem 1rem;
-	border: 2px solid var(--border);
-	border-radius: var(--radius);
+	padding: 0.75rem 0.9rem;
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-sm);
 	background: var(--surface);
 	color: var(--text);
 	font: inherit;
+	box-shadow: inset 0 1px 2px rgb(60 50 20 / 6%);
 	transition:
 		border-color 0.15s ease,
 		box-shadow 0.15s ease;
@@ -214,7 +296,7 @@ a {
 }
 
 .hint {
-	margin: 0.35rem 0 0;
+	margin: 0.4rem 0 0;
 	font-size: 0.85rem;
 	color: var(--text-muted);
 }
@@ -229,11 +311,10 @@ a {
 .rom {
 	display: block;
 	margin-top: 0.15rem;
-	color: var(--text);
-	opacity: 0.6;
+	color: var(--text-muted);
 	font-size: 0.78em;
-	font-weight: 600;
-	letter-spacing: 0.01em;
+	font-weight: 500;
+	letter-spacing: 0.02em;
 }
 
 /* Challenge vocabulary ----------------------------------------------------- */
@@ -242,15 +323,16 @@ a {
   The kicker above a challenge — "Fill in the blank", "Pick the translation".
   Every challenge type opens with one, rendered by `PromptHeader`; the gap to
   whatever follows is the same everywhere, so the kicker and the prompt read as
-  one block whichever type is on screen.
+  one block whichever type is on screen. Uppercase survives the retheme on
+  purpose: it is the editorial eyebrow of the page, now in a warmer ink.
 */
 .asked {
 	margin: 0 0 0.4rem;
-	font-size: 0.78rem;
-	font-weight: 800;
-	letter-spacing: 0.07em;
+	font-size: 0.73rem;
+	font-weight: 700;
+	letter-spacing: 0.11em;
 	text-transform: uppercase;
-	color: var(--text-muted);
+	color: color-mix(in srgb, var(--accent) 65%, var(--text-muted));
 }
 
 /*
@@ -274,13 +356,13 @@ a {
   press should feel the same wherever the learner meets it.
 */
 .tap {
-	border: 2px solid var(--border);
+	border: 1.5px solid var(--border);
 	border-bottom-width: 4px;
 	border-radius: var(--radius);
 	background: var(--surface);
 	color: var(--text);
 	font: inherit;
-	font-weight: 700;
+	font-weight: 600;
 	cursor: pointer;
 	transition:
 		border-color 0.12s ease,
@@ -292,11 +374,12 @@ a {
 
 .tap:hover:not(:disabled) {
 	background: var(--surface-alt);
+	border-color: var(--border-strong);
 }
 
 .tap:active:not(:disabled) {
 	transform: translateY(2px);
-	border-bottom-width: 2px;
+	border-bottom-width: 1.5px;
 }
 
 .tap:focus-visible {
@@ -309,7 +392,7 @@ a {
 .card {
 	width: 100%;
 	max-width: 34rem;
-	padding: 2rem;
+	padding: 1.75rem;
 	border: 1px solid var(--border);
 	border-radius: var(--radius-lg);
 	background: var(--surface);
@@ -322,6 +405,20 @@ a {
 	}
 }
 
+/*
+  The one decorative motif: a stitched hairline, borrowed from the sewn edge
+  of a pressed-flower page. Used as a rule between a card's heading and its
+  body, and nowhere else — one motif, used sparingly, is what keeps the paper
+  calm. Renders on an `<hr>` or a bare element; carries its own margins.
+*/
+.stitch {
+	height: 0;
+	margin: 0.9rem 0 1rem;
+	border: 0;
+	border-top: 1px dashed var(--border-strong);
+	opacity: 0.75;
+}
+
 /* Session game feel -------------------------------------------------------- */
 
 /*
@@ -329,6 +426,8 @@ a {
   component because several session components (cloze, typed translation,
   match-pairs) play the same two beats — a shake for "no", a pop for "yes" —
   and Svelte scopes `@keyframes` per component, which would mean three copies.
+  `ll-rise` joins them as the app's one entrance beat, staggered by an inline
+  `animation-delay` at the call site.
 
   Everything below is decoration only: the `prefers-reduced-motion` block at
   the end switches it all off without changing a single layout value.
@@ -371,6 +470,17 @@ a {
 	}
 }
 
+@keyframes ll-rise {
+	from {
+		opacity: 0;
+		transform: translateY(9px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
 @keyframes ll-float-up {
 	0% {
 		opacity: 0;
@@ -410,9 +520,16 @@ a {
 	animation: ll-pop 0.34s cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 
+/** A card settling onto the page. Stagger with `animation-delay`, never more
+    than a handful of steps — the last card must not feel late. */
+.ll-rise {
+	animation: ll-rise 0.32s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.ll-shake,
-	.ll-pop {
+	.ll-pop,
+	.ll-rise {
 		animation: none;
 	}
 

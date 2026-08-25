@@ -123,6 +123,8 @@
 	</div>
 
 	<div class="bank">
+		<p class="bank-label">Word bank</p>
+		<hr class="stitch" />
 		<TapRow label="Available words">
 			{#each bank as tile (tile.index)}
 				<TapOption
@@ -144,7 +146,12 @@
 		flex-direction: column;
 	}
 
-	/* A ruled line the tiles land on, so an empty tray still reads as a slot. */
+	/*
+	  The slot the sentence gets written into: tinted paper inside a stitched
+	  frame, closed at the foot by a solid rule the tiles sit on. The dashed
+	  frame is the app's one motif doing the job it does everywhere else —
+	  marking a space that is waiting to be filled in.
+	*/
 	.tray {
 		display: flex;
 		flex-wrap: wrap;
@@ -152,10 +159,16 @@
 		gap: 0.55rem;
 		min-height: 5.5rem;
 		margin-bottom: 1.4rem;
-		padding: 0.6rem;
-		border-bottom: 3px solid var(--border);
+		padding: 0.7rem;
+		border: 1px dashed var(--border-strong);
+		border-bottom: 3px solid var(--border-strong);
 		border-radius: var(--radius) var(--radius) 0 0;
-		background: var(--surface-alt);
+		background: color-mix(in srgb, var(--surface-alt) 60%, transparent);
+		transition: border-color 0.2s ease;
+	}
+
+	.tray:not(.empty) {
+		border-bottom-color: var(--accent);
 	}
 
 	.tray.empty {
@@ -165,11 +178,31 @@
 
 	.tray-hint {
 		color: var(--text-muted);
-		font-size: 0.9rem;
-		font-weight: 700;
+		font-size: 0.88rem;
+		font-weight: 500;
+		font-style: italic;
 	}
 
 	.bank {
 		margin-bottom: 1.5rem;
+	}
+
+	.bank-label {
+		margin: 0;
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.11em;
+		text-transform: uppercase;
+		color: var(--text-muted);
+	}
+
+	.bank-label + .stitch {
+		margin: 0.35rem 0 0.8rem;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.tray {
+			transition: none;
+		}
 	}
 </style>

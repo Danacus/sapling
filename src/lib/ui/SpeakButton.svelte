@@ -58,7 +58,20 @@
 	title={disabled ? 'Speech is off — turn it on in Settings' : 'Listen'}
 	onclick={() => void play()}
 >
-	<span class="icon" aria-hidden="true">🔊</span>
+	<span class="icon" aria-hidden="true">
+		<svg
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="1.6"
+			stroke-linecap="round"
+			stroke-linejoin="round"
+		>
+			<path d="M11.5 4.6 6.8 8.4H4.2a.7.7 0 0 0-.7.7v5.8c0 .4.3.7.7.7h2.6l4.7 3.8a.6.6 0 0 0 1-.5V5.1a.6.6 0 0 0-1-.5Z" />
+			<path class="wave wave-1" d="M15.6 9.4a3.5 3.5 0 0 1 0 5.2" />
+			<path class="wave wave-2" d="M18.4 6.9a7 7 0 0 1 0 10.2" />
+		</svg>
+	</span>
 	{#if label}<span class="label">{label}</span>{/if}
 </button>
 
@@ -68,9 +81,9 @@
 		flex: 0 0 auto;
 		align-items: center;
 		gap: 0.35rem;
-		padding: 0.35rem;
-		border: 0;
-		border-radius: 999px;
+		padding: 0.3rem;
+		border: 1px solid transparent;
+		border-radius: var(--radius-sm);
 		background: transparent;
 		color: var(--text-muted);
 		font: inherit;
@@ -80,12 +93,14 @@
 		vertical-align: middle;
 		transition:
 			background 0.15s ease,
+			border-color 0.15s ease,
+			color 0.15s ease,
 			opacity 0.15s ease;
 	}
 
 	.speak.sm {
 		font-size: 0.85rem;
-		padding: 0.25rem;
+		padding: 0.2rem;
 	}
 
 	/* After `.sm` on purpose: a labelled button needs its horizontal padding
@@ -93,11 +108,13 @@
 	.speak.has-label {
 		padding: 0.35rem 0.7rem 0.35rem 0.55rem;
 		font-size: 0.82rem;
-		font-weight: 800;
+		font-weight: 700;
 	}
 
 	.speak:hover:not(:disabled) {
 		background: var(--surface-alt);
+		border-color: var(--border);
+		color: var(--accent);
 	}
 
 	.speak:focus-visible {
@@ -111,34 +128,46 @@
 	}
 
 	.icon {
-		display: inline-block;
+		display: inline-flex;
 	}
 
-	/* Synthesizing (or downloading the model) — a pulse rather than a spinner,
-	   because the icon has no meaningful rotation. */
-	.speak.busy .icon {
-		animation: ll-speak-pulse 0.9s ease-in-out infinite;
+	/* Sized in `em` so the `sm`/`md`/labelled font sizes above keep driving the
+	   icon exactly as they did when this was a glyph. */
+	.icon svg {
+		display: block;
+		width: 1.35em;
+		height: 1.35em;
 	}
 
+	/* Synthesizing (or downloading the model) — the two arcs breathe outwards
+	   in turn, which says "sound is coming" far better than a spinner on an
+	   icon with no meaningful rotation. */
 	.speak.busy {
 		cursor: progress;
+		color: var(--accent);
 	}
 
-	@keyframes ll-speak-pulse {
+	.speak.busy .wave {
+		animation: ll-speak-wave 1.1s ease-in-out infinite;
+	}
+
+	.speak.busy .wave-2 {
+		animation-delay: 0.18s;
+	}
+
+	@keyframes ll-speak-wave {
 		0%,
 		100% {
-			opacity: 1;
-			transform: scale(1);
+			opacity: 0.25;
 		}
-		50% {
-			opacity: 0.45;
-			transform: scale(0.85);
+		45% {
+			opacity: 1;
 		}
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.speak.busy .icon {
-			animation-duration: 2.4s;
+		.speak.busy .wave {
+			animation-duration: 2.6s;
 		}
 	}
 </style>

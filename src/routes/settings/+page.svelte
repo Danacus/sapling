@@ -600,9 +600,16 @@
 </svelte:head>
 
 <main class="shell">
-	<header class="topbar">
-		<a class="back" href="/">← Back</a>
-		<h1>Settings</h1>
+	<header class="topbar ll-rise">
+		<a class="back" href="/" aria-label="Back to home">
+			<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+				<path d="m14.2 5.4-6.4 6.6 6.4 6.6" />
+			</svg>
+		</a>
+		<div class="identity">
+			<p class="eyebrow">Sapling</p>
+			<h1>Settings</h1>
+		</div>
 	</header>
 
 	{#if loading}
@@ -614,8 +621,15 @@
 			<p class="error" role="alert">{loadError}</p>
 		</section>
 	{:else}
-		<section class="card">
-			<h2>Profile</h2>
+		<section class="card ll-rise" style="animation-delay: 60ms">
+			<div class="card-head">
+				<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
+					<circle cx="12" cy="8.4" r="3.4" />
+					<path d="M4.9 19.6c.7-3.4 3.5-5.5 7.1-5.5s6.4 2.1 7.1 5.5" />
+				</svg>
+				<h2>Profile</h2>
+			</div>
+			<hr class="stitch" />
 			{#if profile}
 				<p class="readonly-row">
 					<span class="readonly-label">Learning</span>
@@ -632,7 +646,15 @@
 				  edited in one place (/profile) so there is never a second copy of
 				  that form to keep in step with this one.
 				-->
-				<p class="hint profile-link"><a href="/profile">Edit level, interests and about you →</a></p>
+				<p class="hint profile-link">
+					<a href="/profile">
+						Edit level, interests and about you
+						<svg class="ico jump-ico" viewBox="0 0 24 24" aria-hidden="true">
+							<path d="M4.8 12h14" />
+							<path d="m13.4 6.6 5.4 5.4-5.4 5.4" />
+						</svg>
+					</a>
+				</p>
 			{/if}
 
 			<div class="field">
@@ -672,8 +694,15 @@
 			</div>
 		</section>
 
-		<section class="card">
-			<h2>Display</h2>
+		<section class="card ll-rise" style="animation-delay: 110ms">
+			<div class="card-head">
+				<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
+					<path d="M2.9 12S6.7 6.4 12 6.4 21.1 12 21.1 12 17.3 17.6 12 17.6 2.9 12 2.9 12Z" />
+					<circle cx="12" cy="12" r="2.6" />
+				</svg>
+				<h2>Display</h2>
+			</div>
+			<hr class="stitch" />
 			<div class="field">
 				<span class="label">Pronunciation (romanization)</span>
 				<p class="hint">
@@ -718,9 +747,25 @@
 			</div>
 		</section>
 
-		<section class="card">
-			<h2>Speech</h2>
-			<p class="hint test-bench-link"><a href="/tts-test">Test voices →</a></p>
+		<section class="card ll-rise" style="animation-delay: 160ms">
+			<div class="card-head">
+				<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
+					<path d="M4.6 9.6h3.1L12 6.1v11.8l-4.3-3.5H4.6Z" />
+					<path d="M15.6 9.7a3.4 3.4 0 0 1 0 4.6" />
+					<path d="M18.1 7.4a6.7 6.7 0 0 1 0 9.2" />
+				</svg>
+				<h2>Speech</h2>
+			</div>
+			<hr class="stitch" />
+			<p class="hint test-bench-link">
+				<a href="/tts-test">
+					Test voices
+					<svg class="ico jump-ico" viewBox="0 0 24 24" aria-hidden="true">
+						<path d="M4.8 12h14" />
+						<path d="m13.4 6.6 5.4 5.4-5.4 5.4" />
+					</svg>
+				</a>
+			</p>
 
 			<div class="field">
 				<span class="label" id="tts-engine-label">Voice engine</span>
@@ -840,8 +885,17 @@
 			</div>
 		</section>
 
-		<section class="card">
-			<h2>Language model</h2>
+		<section class="card ll-rise" style="animation-delay: 200ms">
+			<div class="card-head">
+				<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
+					<circle cx="7.2" cy="12" r="3.9" />
+					<path d="M11.1 12h9.3" />
+					<path d="M17.2 12v3.3" />
+					<path d="M20.4 12v2.3" />
+				</svg>
+				<h2>Language model</h2>
+			</div>
+			<hr class="stitch" />
 
 			<div class="field">
 				<span class="label">API endpoint</span>
@@ -890,8 +944,17 @@
 			</div>
 		</section>
 
-		<section class="card">
-			<h2>Sync</h2>
+		<section class="card ll-rise" style="animation-delay: 200ms">
+			<div class="card-head">
+				<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
+					<path d="M19.6 11.2A7.8 7.8 0 0 0 6.4 6.6L4.2 8.8" />
+					<path d="M4.4 12.8a7.8 7.8 0 0 0 13.2 4.6l2.2-2.2" />
+					<path d="M4.2 4.6v4.2h4.2" />
+					<path d="M19.8 19.4v-4.2h-4.2" />
+				</svg>
+				<h2>Sync</h2>
+			</div>
+			<hr class="stitch" />
 			<p class="hint">
 				When sync is on, your vocabulary, challenge content, review history, results, XP days and
 				profile (including your About text) sync to your own server. Your OpenRouter key, this
@@ -951,8 +1014,17 @@
 			</div>
 		</section>
 
-		<section class="card">
-			<h2>Usage</h2>
+		<section class="card ll-rise" style="animation-delay: 200ms">
+			<div class="card-head">
+				<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
+					<path d="M4.4 19.4h15.2" />
+					<path d="M8 19.4v-5.6" />
+					<path d="M12 19.4V8.2" />
+					<path d="M16 19.4v-3.4" />
+				</svg>
+				<h2>Usage</h2>
+			</div>
+			<hr class="stitch" />
 			<dl class="usage-grid">
 				<div class="usage-item">
 					<dt>Requests</dt>
@@ -970,8 +1042,16 @@
 			<p class="hint">Actual cost depends on the model you've chosen above.</p>
 		</section>
 
-		<section class="card">
-			<h2>Data</h2>
+		<section class="card ll-rise" style="animation-delay: 200ms">
+			<div class="card-head">
+				<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
+					<path d="M4.6 8.4h14.8v9.6a1.4 1.4 0 0 1-1.4 1.4H6a1.4 1.4 0 0 1-1.4-1.4Z" />
+					<path d="M3.6 5.2h16.8v3.2H3.6Z" />
+					<path d="M10.2 12h3.6" />
+				</svg>
+				<h2>Data</h2>
+			</div>
+			<hr class="stitch" />
 			<div class="actions-row">
 				<button type="button" class="btn btn-primary" onclick={handleExport}>
 					Export progress
@@ -1015,8 +1095,16 @@
 			<InlineStatus status={importStatus} message={importMessage} />
 		</section>
 
-		<section class="card danger-card">
-			<h2>Danger zone</h2>
+		<section class="card danger-card ll-rise" style="animation-delay: 200ms">
+			<div class="card-head">
+				<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
+					<path d="M12 4.4 21 19.6H3Z" />
+					<path d="M12 10.2v4" />
+					<path d="M12 17.1h.01" />
+				</svg>
+				<h2>Danger zone</h2>
+			</div>
+			<hr class="stitch" />
 			<p class="hint">
 				Permanently deletes every word, review, and stat on this device. This cannot be undone.
 			</p>
@@ -1075,43 +1163,134 @@
 		min-height: 60dvh;
 	}
 
+	/* One hand for every icon on this screen, matching the dashboard: 24-unit
+	   box, hairline stroke, round joins. */
+	.ico {
+		width: 1.2rem;
+		height: 1.2rem;
+		flex: 0 0 auto;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 1.6;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+
 	.topbar {
 		display: flex;
 		align-items: center;
-		gap: 1rem;
+		gap: 0.75rem;
 	}
 
+	/* The same 2.25rem squircle the dashboard's topbar controls wear, so the
+	   way back looks like the way out rather than a stray link. */
 	.back {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		flex: 0 0 auto;
+		width: 2.25rem;
+		height: 2.25rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: var(--surface);
 		color: var(--text-muted);
 		text-decoration: none;
-		font-weight: 800;
+		transition:
+			border-color 0.15s ease,
+			background 0.15s ease,
+			color 0.15s ease;
+	}
+
+	.back:hover {
+		border-color: var(--border-strong);
+		background: var(--surface-alt);
+		color: var(--text);
+	}
+
+	.back:focus-visible {
+		outline: none;
+		box-shadow: var(--ring);
+	}
+
+	.identity {
+		min-width: 0;
+	}
+
+	.eyebrow {
+		margin: 0 0 0.05rem;
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: color-mix(in srgb, var(--accent) 65%, var(--text-muted));
 	}
 
 	.topbar h1 {
 		margin: 0;
-		font-size: 1.4rem;
+		font-size: 1.55rem;
+		line-height: 1.1;
 	}
 
 	.card {
 		max-width: none;
 	}
 
-	.card h2 {
-		margin: 0 0 1rem;
-		font-size: 1.1rem;
+	/* Each section is headed like a pressed specimen: its mark on tinted paper
+	   inside a dashed frame, then the app's stitched rule under the heading. */
+	.card-head {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
 	}
 
+	.card-head h2 {
+		margin: 0;
+		font-size: 1.08rem;
+	}
+
+	.head-ico {
+		width: 1.85rem;
+		height: 1.85rem;
+		padding: 0.3rem;
+		border: 1px dashed var(--border-strong);
+		border-radius: var(--radius-sm);
+		background: color-mix(in srgb, var(--primary-soft) 60%, transparent);
+		color: var(--primary-strong);
+	}
+
+	.card-head + .stitch {
+		margin: 0.85rem 0 1.15rem;
+	}
+
+	/* Ruled ledger rows: the fact on the left, its value on the right, the same
+	   hairline between them the word list uses. */
 	.readonly-row {
 		display: flex;
+		align-items: baseline;
 		justify-content: space-between;
 		gap: 1rem;
-		margin: 0 0 0.5rem;
+		margin: 0;
+		padding: 0.5rem 0;
 		font-size: 0.95rem;
 	}
 
+	.readonly-row + .readonly-row {
+		border-top: 1px solid var(--border);
+	}
+
 	.readonly-label {
-		color: var(--text-muted);
+		flex: 0 0 auto;
+		font-size: 0.72rem;
 		font-weight: 700;
+		letter-spacing: 0.09em;
+		text-transform: uppercase;
+		color: var(--text-muted);
+	}
+
+	.readonly-value {
+		text-align: right;
+		font-weight: 600;
 	}
 
 	.readonly-value.capitalize {
@@ -1130,14 +1309,15 @@
 	}
 
 	.chip {
-		padding: 0.4rem 0.85rem;
-		border: 2px solid var(--border);
+		padding: 0.35rem 0.8rem;
+		border: 1px solid var(--border-strong);
 		border-radius: 999px;
 		background: var(--surface);
 		color: var(--text-muted);
 		font: inherit;
-		font-size: 0.85rem;
-		font-weight: 700;
+		font-size: 0.83rem;
+		font-weight: 500;
+		font-variant-numeric: tabular-nums;
 		cursor: pointer;
 		transition:
 			border-color 0.15s ease,
@@ -1145,10 +1325,22 @@
 			color 0.15s ease;
 	}
 
+	.chip:hover {
+		border-color: var(--text-muted);
+		background: var(--surface-alt);
+		color: var(--text);
+	}
+
 	.chip.selected {
 		border-color: var(--primary);
 		background: var(--primary-soft);
 		color: var(--text);
+		font-weight: 700;
+	}
+
+	.chip:focus-visible {
+		outline: none;
+		box-shadow: var(--ring);
 	}
 
 	.switch-row {
@@ -1156,30 +1348,42 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 1rem;
+		padding-top: 1rem;
+		border-top: 1px solid var(--border);
 	}
 
 	.switch-copy {
 		min-width: 0;
 	}
 
+	/* Not a direct child of `.field`, so it does not inherit the global label
+	   rule — matched here so every label on the page reads the same. */
 	.switch-copy .label {
 		display: block;
 		margin-bottom: 0.3rem;
+		font-size: 0.74rem;
+		font-weight: 700;
+		letter-spacing: 0.09em;
+		text-transform: uppercase;
+		color: var(--text-muted);
 	}
 
 	.switch-copy .hint {
 		margin: 0;
 	}
 
+	/* A slider on a ruled track rather than a plastic pill: hairline frame, the
+	   same squared radius as the inputs, and a thumb that reads as a paper tab. */
 	.switch {
 		flex: 0 0 auto;
 		position: relative;
 		width: 3rem;
 		height: 1.75rem;
 		padding: 0;
-		border: 2px solid var(--border);
-		border-radius: 999px;
+		border: 1px solid var(--border-strong);
+		border-radius: var(--radius-sm);
 		background: var(--surface-alt);
+		box-shadow: inset 0 1px 2px rgb(60 50 20 / 8%);
 		cursor: pointer;
 		transition:
 			background 0.15s ease,
@@ -1192,24 +1396,31 @@
 	}
 
 	.switch.on {
-		border-color: var(--primary);
+		border-color: var(--primary-strong);
 		background: var(--primary);
 	}
 
 	.switch-thumb {
 		position: absolute;
-		top: 1px;
-		left: 1px;
-		width: 1.25rem;
-		height: 1.25rem;
-		border-radius: 999px;
+		top: 0.15rem;
+		left: 0.15rem;
+		width: 1.3rem;
+		height: 1.3rem;
+		border-radius: 4px;
 		background: var(--surface);
-		box-shadow: 0 1px 3px rgb(16 24 40 / 20%);
-		transition: transform 0.15s ease;
+		border: 1px solid var(--border-strong);
+		transition: transform 0.16s cubic-bezier(0.2, 0.7, 0.3, 1);
 	}
 
 	.switch.on .switch-thumb {
-		transform: translateX(1.25rem);
+		border-color: var(--primary-strong);
+		transform: translateX(1.28rem);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.switch-thumb {
+			transition: none;
+		}
 	}
 
 	.preload-progress {
@@ -1217,15 +1428,18 @@
 	}
 
 	.test-bench-link {
-		margin: -0.5rem 0 1rem;
+		margin: 0 0 1.15rem;
 	}
 
 	.profile-link {
-		margin: 0.75rem 0 0;
+		margin: 0.85rem 0 0;
 	}
 
 	.profile-link a,
 	.test-bench-link a {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
 		color: var(--primary-strong);
 		font-weight: 700;
 		text-decoration: none;
@@ -1234,6 +1448,24 @@
 	.profile-link a:hover,
 	.test-bench-link a:hover {
 		text-decoration: underline;
+	}
+
+	/* The arrow leans into the walk on hover — the only movement on the page. */
+	.jump-ico {
+		width: 0.95rem;
+		height: 0.95rem;
+		transition: transform 0.15s ease;
+	}
+
+	.profile-link a:hover .jump-ico,
+	.test-bench-link a:hover .jump-ico {
+		transform: translateX(2px);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.jump-ico {
+			transition: none;
+		}
 	}
 
 	.sync-key-field {
@@ -1264,59 +1496,112 @@
 		gap: 0.75rem;
 	}
 
+	/* A tally sheet rather than three tiles: the figure is the thing worth
+	   reading, set in the display face with tabular numerals so the column of
+	   counts lines up. */
 	.usage-grid {
-		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: 0.75rem;
-		margin: 0 0 0.75rem;
+		margin: 0 0 0.85rem;
 	}
 
 	.usage-item {
-		padding: 0.75rem;
-		border-radius: var(--radius);
-		background: var(--surface-alt);
-		text-align: center;
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 1rem;
+		padding: 0.5rem 0;
+	}
+
+	.usage-item + .usage-item {
+		border-top: 1px solid var(--border);
 	}
 
 	.usage-item dt {
-		font-size: 0.75rem;
-		font-weight: 800;
-		letter-spacing: 0.04em;
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.09em;
 		text-transform: uppercase;
 		color: var(--text-muted);
 	}
 
 	.usage-item dd {
-		margin: 0.2rem 0 0;
-		font-size: 1.2rem;
-		font-weight: 800;
+		margin: 0;
+		font-family: var(--font-display);
+		font-size: 1.15rem;
+		font-weight: 700;
+		font-variation-settings: 'SOFT' 26;
+		font-variant-numeric: tabular-nums;
+	}
+
+	/* Native selects keep the `.input` frame; only the marker is ours — two
+	   gradient halves, so the caret follows the ink colour in either theme. */
+	select.input {
+		appearance: none;
+		padding-right: 2.2rem;
+		background-image:
+			linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+			linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+		background-position:
+			right 1.15rem center,
+			right 0.85rem center;
+		background-size: 0.32rem 0.32rem;
+		background-repeat: no-repeat;
+	}
+
+	/* The file picker's own button, dressed as one of ours. */
+	input[type='file'].input {
+		padding: 0.5rem 0.6rem;
+		font-size: 0.9rem;
+	}
+
+	input[type='file'].input::file-selector-button {
+		margin-right: 0.7rem;
+		padding: 0.4rem 0.8rem;
+		border: 1px solid var(--border-strong);
+		border-radius: var(--radius-sm);
+		background: var(--surface-alt);
+		color: var(--text);
+		font: inherit;
+		font-size: 0.85rem;
+		font-weight: 700;
+		cursor: pointer;
 	}
 
 	.danger-card {
 		border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
 	}
 
+	.danger-card .head-ico {
+		border-color: color-mix(in srgb, var(--danger) 40%, var(--border-strong));
+		background: color-mix(in srgb, var(--danger) 8%, transparent);
+		color: var(--danger);
+	}
+
+	/* Stamped in red ink rather than filled: destructive, but it does not want
+	   to be the brightest thing on a page of calm paper. */
 	.danger-btn {
-		background: var(--danger);
-		color: var(--text-inverse);
+		border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+		background: color-mix(in srgb, var(--danger) 12%, transparent);
+		color: var(--danger);
+	}
+
+	.danger-btn:hover:not(:disabled) {
+		border-color: var(--danger);
+		background: color-mix(in srgb, var(--danger) 20%, transparent);
+		filter: none;
 	}
 
 	.reset-confirm {
-		margin-top: 0.75rem;
+		margin-top: 0.85rem;
 	}
 
 	.error {
-		margin: 0.75rem 0 0;
-		padding: 0.6rem 0.8rem;
+		margin: 0.85rem 0 0;
+		padding: 0.65rem 0.85rem;
+		border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
 		border-radius: var(--radius-sm);
-		background: color-mix(in srgb, var(--danger) 15%, transparent);
+		background: color-mix(in srgb, var(--danger) 12%, transparent);
 		color: var(--danger);
+		font-size: 0.9rem;
 		font-weight: 700;
-	}
-
-	@media (max-width: 480px) {
-		.usage-grid {
-			grid-template-columns: 1fr;
-		}
 	}
 </style>

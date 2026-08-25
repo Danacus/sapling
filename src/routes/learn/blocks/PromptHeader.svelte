@@ -85,14 +85,23 @@
 {/if}
 
 <style>
+	/*
+	  The one display-font moment inside a challenge. Fraunces is the app's
+	  heading voice and the prompt *is* the heading of the page the learner is
+	  reading — but the stack falls straight through to `ui-serif` and the system
+	  fonts, which is what renders a Chinese or Arabic prompt. Never let the
+	  Latin webfont's metrics decide how those look.
+	*/
 	.prompt {
 		display: flex;
 		align-items: center;
 		gap: 0.4rem;
 		margin: 0 0 1.5rem;
-		font-weight: 800;
+		font-family: var(--font-display);
+		font-weight: 700;
+		font-variation-settings: 'SOFT' 26;
 		line-height: 1.2;
-		letter-spacing: -0.015em;
+		letter-spacing: -0.012em;
 		overflow-wrap: anywhere;
 	}
 
@@ -119,9 +128,10 @@
 		font-size: 1rem;
 	}
 
-	/* A placeholder with the prompt's own weight, so the reveal shifts nothing. */
+	/* A placeholder with the prompt's own weight, so the reveal shifts nothing.
+	   Three stitched dots — the same dashed hand as the rest of the paper. */
 	.veiled {
-		color: var(--text-muted);
+		color: var(--border-strong);
 		letter-spacing: 0.15em;
 	}
 

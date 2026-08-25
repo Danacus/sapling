@@ -160,7 +160,7 @@
 </svelte:head>
 
 <main class="shell">
-	<section class="card">
+	<section class="card ll-rise">
 		<nav class="dots" aria-label="Onboarding progress">
 			{#each { length: TOTAL_STEPS } as _, index (index)}
 				<span
@@ -174,7 +174,13 @@
 
 		{#if step === 1}
 			<header class="head">
-				<div class="emoji" aria-hidden="true">👋</div>
+				<span class="mark" aria-hidden="true">
+					<svg class="ico" viewBox="0 0 24 24">
+						<path d="M12 21v-8.6" />
+						<path d="M12 16.2c-3.3 0-5.2-1.9-5.2-5.2 3.3 0 5.2 1.9 5.2 5.2Z" />
+						<path d="M12 12.6c0-3.8 2-5.8 5.6-5.8 0 3.8-2 5.8-5.6 5.8Z" />
+					</svg>
+				</span>
 				<h1>Let's set you up</h1>
 				<p class="sub">Which language are you bringing, and which one are you here for?</p>
 			</header>
@@ -214,7 +220,13 @@
 			{/if}
 		{:else if step === 2}
 			<header class="head">
-				<div class="emoji" aria-hidden="true">🎯</div>
+				<span class="mark" aria-hidden="true">
+					<svg class="ico" viewBox="0 0 24 24">
+						<circle cx="12" cy="12" r="7.4" />
+						<circle cx="12" cy="12" r="3.2" />
+						<path d="M12 4.6V2.4M12 21.6v-2.2M4.6 12H2.4M21.6 12h-2.2" />
+					</svg>
+				</span>
 				<h1>Tune it to you</h1>
 				<p class="sub">
 					This shapes the words and sentences we generate in {targetLanguage.trim() ||
@@ -252,7 +264,9 @@
 								onclick={() => removeInterest(interest)}
 								aria-label={`Remove ${interest}`}
 							>
-								{interest}<span class="x" aria-hidden="true">×</span>
+								{interest}<svg class="ico x" viewBox="0 0 24 24" aria-hidden="true">
+									<path d="m7 7 10 10M17 7 7 17" />
+								</svg>
 							</button>
 						{/each}
 					</div>
@@ -296,7 +310,14 @@
 			</div>
 		{:else}
 			<header class="head">
-				<div class="emoji" aria-hidden="true">🔑</div>
+				<span class="mark" aria-hidden="true">
+					<svg class="ico" viewBox="0 0 24 24">
+						<circle cx="7.2" cy="12" r="3.9" />
+						<path d="M11.1 12h9.3" />
+						<path d="M17.2 12v3.3" />
+						<path d="M20.4 12v2.3" />
+					</svg>
+				</span>
 				<h1>Connect a model</h1>
 				<p class="sub">
 					Lessons are generated on the fly through OpenRouter. Add your key now, or skip and add it
@@ -376,40 +397,70 @@
 		padding: 2rem 1rem;
 	}
 
-	.head {
-		text-align: center;
-		margin-bottom: 1.5rem;
+	/* One hand for every icon on this screen, matching the dashboard: 24-unit
+	   box, hairline stroke, round joins. */
+	.ico {
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 1.6;
+		stroke-linecap: round;
+		stroke-linejoin: round;
 	}
 
-	.emoji {
-		font-size: 2.5rem;
-		line-height: 1;
-		margin-bottom: 0.5rem;
+	/* The head is closed with the app's stitched hairline, so each step reads
+	   as an entry written under its own heading. */
+	.head {
+		text-align: center;
+		padding-bottom: 1.35rem;
+		margin-bottom: 1.5rem;
+		border-bottom: 1px dashed var(--border-strong);
+	}
+
+	/* A pressed specimen label: the step's mark mounted on tinted paper inside
+	   a dashed frame. */
+	.mark {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 3rem;
+		height: 3rem;
+		margin-bottom: 0.85rem;
+		border: 1px dashed var(--border-strong);
+		border-radius: var(--radius);
+		background: color-mix(in srgb, var(--primary-soft) 65%, transparent);
+		color: var(--primary-strong);
+	}
+
+	.mark .ico {
+		width: 1.5rem;
+		height: 1.5rem;
 	}
 
 	.head h1 {
-		font-size: 1.6rem;
+		font-size: clamp(1.6rem, 7vw, 1.95rem);
 	}
 
 	.sub {
 		margin: 0;
 		color: var(--text-muted);
+		text-wrap: balance;
 	}
 
+	/* Ruled ticks rather than beads — the current step stretches into a dash. */
 	.dots {
 		display: flex;
 		justify-content: center;
-		gap: 0.5rem;
+		gap: 0.4rem;
 		margin-bottom: 1.5rem;
 	}
 
 	.dot {
-		width: 0.6rem;
-		height: 0.6rem;
-		border-radius: 999px;
+		width: 0.55rem;
+		height: 0.3rem;
+		border-radius: 2px;
 		background: var(--border-strong);
 		transition:
-			width 0.2s ease,
+			width 0.24s cubic-bezier(0.2, 0.7, 0.3, 1),
 			background 0.2s ease;
 	}
 
@@ -418,8 +469,14 @@
 	}
 
 	.dot.active {
-		width: 1.6rem;
-		background: var(--primary);
+		width: 1.8rem;
+		background: var(--accent);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.dot {
+			transition: none;
+		}
 	}
 
 	/* Level cards ---------------------------------------------------------- */
@@ -434,8 +491,9 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.15rem;
-		padding: 0.9rem;
-		border: 2px solid var(--border);
+		padding: 0.85rem 0.9rem;
+		border: 1.5px solid var(--border);
+		border-bottom-width: 3px;
 		border-radius: var(--radius);
 		background: var(--surface);
 		color: var(--text);
@@ -454,6 +512,7 @@
 
 	.level:active {
 		transform: translateY(1px);
+		border-bottom-width: 1.5px;
 	}
 
 	.level.selected {
@@ -470,11 +529,15 @@
 	}
 
 	.level-emoji {
-		font-size: 1.3rem;
+		font-size: 1.25rem;
+		line-height: 1.2;
 	}
 
 	.level-title {
-		font-weight: 800;
+		font-family: var(--font-display);
+		font-size: 1.02rem;
+		font-weight: 700;
+		font-variation-settings: 'SOFT' 26;
 	}
 
 	.level-blurb {
@@ -498,15 +561,15 @@
 	.chip {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.35rem;
-		padding: 0.35rem 0.75rem;
-		border: 2px solid var(--border);
+		gap: 0.3rem;
+		padding: 0.3rem 0.7rem;
+		border: 1px solid var(--border-strong);
 		border-radius: 999px;
 		background: var(--surface);
 		color: var(--text-muted);
 		font: inherit;
-		font-size: 0.85rem;
-		font-weight: 700;
+		font-size: 0.83rem;
+		font-weight: 500;
 		cursor: pointer;
 		transition:
 			border-color 0.15s ease,
@@ -515,7 +578,8 @@
 	}
 
 	.chip:hover {
-		border-color: var(--border-strong);
+		border-color: var(--text-muted);
+		background: var(--surface-alt);
 		color: var(--text);
 	}
 
@@ -523,12 +587,18 @@
 		border-color: var(--accent);
 		background: var(--accent-soft);
 		color: var(--text);
+		font-weight: 700;
 	}
 
 	.chip .x {
-		font-size: 1rem;
-		line-height: 1;
-		opacity: 0.6;
+		width: 0.8rem;
+		height: 0.8rem;
+		stroke-width: 2;
+		opacity: 0.55;
+	}
+
+	.chip:hover .x {
+		opacity: 1;
 	}
 
 	/* Goals ---------------------------------------------------------------- */
@@ -544,8 +614,9 @@
 		flex-direction: column;
 		align-items: center;
 		gap: 0.1rem;
-		padding: 0.8rem 0.4rem;
-		border: 2px solid var(--border);
+		padding: 0.75rem 0.4rem;
+		border: 1.5px solid var(--border);
+		border-bottom-width: 3px;
 		border-radius: var(--radius);
 		background: var(--surface);
 		color: var(--text);
@@ -556,13 +627,21 @@
 			background 0.15s ease;
 	}
 
+	.goal:hover {
+		border-color: var(--border-strong);
+	}
+
 	.goal.selected {
 		border-color: var(--primary);
 		background: var(--primary-soft);
 	}
 
 	.goal-xp {
-		font-weight: 800;
+		font-family: var(--font-display);
+		font-size: 1.1rem;
+		font-weight: 700;
+		font-variation-settings: 'SOFT' 26;
+		font-variant-numeric: tabular-nums;
 	}
 
 	.goal-label {
@@ -570,7 +649,8 @@
 	}
 
 	.goal-minutes {
-		font-size: 0.75rem;
+		font-size: 0.72rem;
+		letter-spacing: 0.02em;
 		color: var(--text-muted);
 	}
 
@@ -593,20 +673,28 @@
 		margin-top: 0.75rem;
 		padding: 0.5rem;
 		border: 0;
+		border-radius: var(--radius-sm);
 		background: none;
 		color: var(--text-muted);
 		font: inherit;
-		font-size: 0.9rem;
-		font-weight: 700;
+		font-size: 0.88rem;
+		font-weight: 500;
 		text-decoration: underline;
+		text-underline-offset: 0.2em;
+		text-decoration-thickness: 1px;
 		cursor: pointer;
+	}
+
+	.skip:hover {
+		color: var(--text);
 	}
 
 	.error {
 		margin: 1rem 0 0;
-		padding: 0.6rem 0.8rem;
+		padding: 0.65rem 0.85rem;
+		border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
 		border-radius: var(--radius-sm);
-		background: color-mix(in srgb, var(--danger) 15%, transparent);
+		background: color-mix(in srgb, var(--danger) 12%, transparent);
 		color: var(--danger);
 		font-size: 0.9rem;
 		font-weight: 700;

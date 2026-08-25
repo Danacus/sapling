@@ -165,8 +165,14 @@
 
 <main class="shell">
 	<section class="card">
-		<a class="back" href="/settings">← Back to Settings</a>
+		<a class="back" href="/settings">
+			<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+				<path d="m14.2 5.4-6.4 6.6 6.4 6.6" />
+			</svg>
+			Back to Settings
+		</a>
 		<h1>Speech test bench</h1>
+		<hr class="stitch" />
 
 		{#if loading}
 			<p class="hint">Loading your profile…</p>
@@ -271,23 +277,60 @@
 		text-align: left;
 	}
 
+	/* Same hand as the rest of the app: 24-unit box, hairline stroke. */
+	.ico {
+		width: 0.95rem;
+		height: 0.95rem;
+		flex: 0 0 auto;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 1.6;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+
 	.back {
-		display: inline-block;
-		margin-bottom: 0.75rem;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		margin-bottom: 0.6rem;
 		color: var(--text-muted);
 		text-decoration: none;
-		font-weight: 800;
-		font-size: 0.9rem;
+		font-weight: 700;
+		font-size: 0.88rem;
+	}
+
+	.back:hover {
+		color: var(--text);
 	}
 
 	h1 {
-		margin: 0 0 1.25rem;
-		font-size: 1.3rem;
+		margin: 0;
+		font-size: 1.35rem;
+	}
+
+	h1 + .stitch {
+		margin: 0.8rem 0 1.25rem;
 	}
 
 	textarea.input {
 		resize: vertical;
 		min-height: 5rem;
+	}
+
+	/* Native select, our marker — two gradient halves, so the caret follows the
+	   ink colour in either theme. */
+	select.input {
+		appearance: none;
+		padding-right: 2.2rem;
+		background-image:
+			linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+			linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+		background-position:
+			right 1.15rem center,
+			right 0.85rem center;
+		background-size: 0.32rem 0.32rem;
+		background-repeat: no-repeat;
 	}
 
 	.chip-row {
@@ -298,14 +341,14 @@
 	}
 
 	.chip {
-		padding: 0.4rem 0.85rem;
-		border: 2px solid var(--border);
+		padding: 0.35rem 0.8rem;
+		border: 1px solid var(--border-strong);
 		border-radius: 999px;
 		background: var(--surface);
 		color: var(--text-muted);
 		font: inherit;
-		font-size: 0.85rem;
-		font-weight: 700;
+		font-size: 0.83rem;
+		font-weight: 500;
 		cursor: pointer;
 		transition:
 			border-color 0.15s ease,
@@ -313,10 +356,22 @@
 			color 0.15s ease;
 	}
 
+	.chip:hover {
+		border-color: var(--text-muted);
+		background: var(--surface-alt);
+		color: var(--text);
+	}
+
 	.chip.selected {
 		border-color: var(--primary);
 		background: var(--primary-soft);
 		color: var(--text);
+		font-weight: 700;
+	}
+
+	.chip:focus-visible {
+		outline: none;
+		box-shadow: var(--ring);
 	}
 
 	.actions-row {
@@ -327,10 +382,14 @@
 		margin-top: 1.25rem;
 	}
 
+	/* The read-out, ruled off like a meter reading at the foot of the sheet. */
 	.status-line {
-		margin: 0.9rem 0 0;
+		margin: 1rem 0 0;
+		padding-top: 0.8rem;
+		border-top: 1px solid var(--border);
 		font-size: 0.9rem;
 		font-weight: 700;
+		font-variant-numeric: tabular-nums;
 		color: var(--text-muted);
 	}
 </style>

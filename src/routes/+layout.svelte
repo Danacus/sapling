@@ -93,13 +93,27 @@
 		min-height: 100dvh;
 	}
 
+	/* Deliberately the same two counter-turning hairline arcs as
+	   `$lib/ui/Spinner.svelte` — this is the first thing the app ever draws, so
+	   it has to be the app's spinner and not a placeholder. */
 	.spinner {
-		width: 2.5rem;
-		height: 2.5rem;
-		border: 4px solid var(--border);
+		position: relative;
+		width: 2.25rem;
+		height: 2.25rem;
+		border: 2px solid var(--border);
 		border-top-color: var(--primary);
 		border-radius: 50%;
-		animation: spin 0.8s linear infinite;
+		animation: spin 0.9s cubic-bezier(0.55, 0.15, 0.4, 0.85) infinite;
+	}
+
+	.spinner::after {
+		content: '';
+		position: absolute;
+		inset: 0.3rem;
+		border: 2px solid transparent;
+		border-bottom-color: var(--accent);
+		border-radius: 50%;
+		animation: spin 1.4s linear infinite reverse;
 	}
 
 	@keyframes spin {
@@ -109,8 +123,10 @@
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.spinner {
+		.spinner,
+		.spinner::after {
 			animation-duration: 2.4s;
+			animation-timing-function: linear;
 		}
 	}
 </style>

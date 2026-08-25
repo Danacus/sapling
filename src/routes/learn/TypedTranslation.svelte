@@ -102,11 +102,20 @@
 		flex-direction: column;
 	}
 
+	/* The writing surface. Everything else on this screen is printed; this is
+	   the one place the learner puts ink on the page, so it keeps the body face
+	   at a comfortable hand size and takes a terracotta caret. */
 	.answer {
 		margin-bottom: 1.5rem;
 		font-size: 1.15rem;
-		font-weight: 700;
-		line-height: 1.4;
+		font-weight: 500;
+		line-height: 1.5;
+		caret-color: var(--accent);
 		resize: none;
+	}
+
+	.answer::placeholder {
+		font-weight: 400;
+		font-style: italic;
 	}
 </style>

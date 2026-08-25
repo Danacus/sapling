@@ -111,12 +111,20 @@
 	}
 
 	.sentence {
-		margin-bottom: 1rem;
+		margin-bottom: 1.1rem;
 	}
 
+	/*
+	  Not decoration — without it a wrong word is indistinguishable from an
+	  unfamiliar one. Set as a margin gloss on the sentence above: hairline rule,
+	  italic, quiet. The same treatment cloze gives its translation hint, because
+	  the two lines do the same job.
+	*/
 	.meaning {
 		margin: 0 0 1.5rem;
-		font-size: 1rem;
+		padding-left: 0.7rem;
+		border-left: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+		font-size: 0.98rem;
 		font-style: italic;
 		color: var(--text-muted);
 		overflow-wrap: anywhere;

@@ -166,6 +166,8 @@
 
 	{#if usesBank}
 		<div class="bank">
+			<p class="bank-label">Word bank</p>
+			<hr class="stitch" />
 			<TapRow>
 				{#each bank as word, index (index)}
 					<TapOption
@@ -189,14 +191,19 @@
 		flex-direction: column;
 	}
 
+	/* The sentence is this type's prompt, so it takes the same display face
+	   `PromptHeader` gives every other type's — with the stack still falling
+	   through to the system fonts for non-Latin scripts. */
 	.sentence {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: baseline;
 		gap: 0.15rem 0;
 		margin: 0 0 0.6rem;
-		font-size: 1.55rem;
-		font-weight: 800;
+		font-family: var(--font-display);
+		font-size: 1.5rem;
+		font-weight: 700;
+		font-variation-settings: 'SOFT' 26;
 		line-height: 1.5;
 		letter-spacing: -0.01em;
 		overflow-wrap: anywhere;
@@ -245,6 +252,7 @@
 	.gap-input {
 		cursor: text;
 		color: var(--text);
+		caret-color: var(--accent);
 		max-width: 100%;
 	}
 
@@ -264,9 +272,13 @@
 		font-size: 1rem;
 	}
 
+	/* The meaning, pencilled in the margin: a hairline rule to the left of it
+	   marks it as a gloss on the sentence rather than a second instruction. */
 	.translation {
 		margin: 0 0 1.4rem;
-		font-size: 1rem;
+		padding-left: 0.7rem;
+		border-left: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+		font-size: 0.98rem;
 		font-style: italic;
 	}
 
@@ -274,9 +286,24 @@
 		margin-bottom: 1.5rem;
 	}
 
+	/* The bank is a list of material, so it opens like every other list on the
+	   paper: a quiet label closed with the stitched hairline. */
+	.bank-label {
+		margin: 0;
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.11em;
+		text-transform: uppercase;
+		color: var(--text-muted);
+	}
+
+	.bank-label + .stitch {
+		margin: 0.35rem 0 0.8rem;
+	}
+
 	@media (max-width: 480px) {
 		.sentence {
-			font-size: 1.25rem;
+			font-size: 1.22rem;
 		}
 	}
 </style>
