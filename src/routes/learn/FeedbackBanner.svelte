@@ -634,7 +634,12 @@
 		flex: 0 0 auto;
 	}
 
+	/* Match the spinner to the slip of paper it sits on: `--spinner-tone`
+	   inherits down into `Spinner.svelte`'s scoped rule, so the "Explain"
+	   wait reads as one object in the verdict's own ink rather than the
+	   component's green default. */
 	.asking {
+		--spinner-tone: var(--tone-strong);
 		padding: 0.8rem 0;
 	}
 
