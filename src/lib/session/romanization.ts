@@ -36,6 +36,7 @@ import type { RomanizedToken } from '$lib/romanize';
 import { wordStrength, type FsrsCardState } from '$lib/srs';
 import type { Challenge, KnowledgeItem } from '$lib/types';
 import type { RomanizationMode } from '$lib/ui/prefs';
+import { weakestWordStrength } from './progression';
 
 /**
  * Below this strength the reading always shows: the word is still being
@@ -71,24 +72,15 @@ export function hideReadingProbability(strength: number): number {
  * shaky word is enough to make a bare-script prompt unanswerable. An `itemId`
  * that no longer resolves counts as 0 for the same reason: an unknown word is
  * the weakest word there is.
+ *
+ * The computation itself is `weakestWordStrength` in `./progression`, which asks
+ * the same question of the same words for a different purpose (which *kind* of
+ * challenge a word can bear). It moved there under a neutral name rather than
+ * being copied, because two ramps that disagreed about which word is the weakest
+ * would be a bug nobody would think to look for; this name stays because "the
+ * strength that decides the readings" is what every caller here means.
  */
-export function challengeReadingStrength(
-	challenge: Challenge,
-	items: KnowledgeItem[],
-	now: number
-): number {
-	if (challenge.itemIds.length === 0) return 0;
-
-	const byId = new Map(items.map((item) => [item.id, item]));
-
-	let weakest = 1;
-	for (const id of challenge.itemIds) {
-		const card = byId.get(id)?.fsrsCard as FsrsCardState | null | undefined;
-		const strength = card ? wordStrength(card, now) : 0;
-		if (strength < weakest) weakest = strength;
-	}
-	return weakest;
-}
+export const challengeReadingStrength = weakestWordStrength;
 
 /**
  * One weighted coin flip: does a word of this strength keep its reading?

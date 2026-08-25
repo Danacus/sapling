@@ -44,6 +44,14 @@ export const spotErrorStoredDef = {
 			: 'wrong';
 	},
 
+	// Recognition: the learner reads a sentence and judges it. Nothing is
+	// produced — not even the word that belonged there, which the banner supplies
+	// afterwards — so this is comprehension work, and it is available to a word
+	// the very first time it comes back round.
+	demand() {
+		return 0;
+	},
+
 	// Not the word they had to tap — the word that belonged there.
 	correctAnswerText(challenge) {
 		return challenge.intendedWord;

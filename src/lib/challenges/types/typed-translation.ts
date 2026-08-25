@@ -31,6 +31,15 @@ export const typedTranslationStoredDef = {
 		return checkAnswer(answerGiven, challenge.acceptedAnswers);
 	},
 
+	// The hardest thing the app asks — but only one way round. `toTarget` is free
+	// production: a whole target sentence written from memory, with no options, no
+	// tiles and no bank. `toNative` is comprehension wearing a keyboard; the
+	// typing happens in the learner's own language, so it demands nothing of their
+	// target-language recall and belongs with the recognition tier.
+	demand(challenge) {
+		return challenge.direction === 'toTarget' ? 2 : 0;
+	},
+
 	correctAnswerText(challenge) {
 		return challenge.acceptedAnswers[0] ?? '';
 	},

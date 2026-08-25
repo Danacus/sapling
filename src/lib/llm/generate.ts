@@ -63,6 +63,20 @@ export interface ReviewItemRef {
 	id: string;
 	term: string;
 	meaning: string;
+	/**
+	 * How far along this word is — a hint for *which types* to write about it.
+	 *
+	 * Free production is a much harder question than recognition, and a word met
+	 * yesterday put through one produces a wrong answer that says nothing about
+	 * the word. The caller derives this from the same strength floors the session
+	 * planner gates serving on (`maturityOf` in `$lib/session/progression`), so
+	 * the two halves agree: the prompt asks for recognition where the planner
+	 * would only serve recognition anyway.
+	 *
+	 * Optional and omitted rather than sent blank — a caller with no SRS state to
+	 * consult pays nothing for the field, and the mock ignores it entirely.
+	 */
+	maturity?: 'new' | 'young' | 'solid';
 }
 
 export interface RecentMistake {
@@ -252,6 +266,7 @@ const SYSTEM_PROMPT = [
 	'- itemIds: the id of a reviewItem, "new:<index>" for an entry of newItems (0-based), or — for a challenge built on a word from known — that word exactly as it appears in known. Never invent anything else.',
 	'- Produce exactly one challenge object per requested slot; give the same review item different types.',
 	'- Mix recognition and production across the batch.',
+	'- Match type to maturity ("maturity" on each reviewItem): new → recognize-mc, produce-mc, translate-to-native, spot-error, cloze WITH distractorWords; young adds word-order; solid adds translate-to-target and cloze without distractorWords. A new word\'s first challenges must be recognition.',
 	'- Distractors must be plausible: same part of speech and register, never synonyms of the correct answer, never obviously absurd. Exactly one of the four may be correct given the prompt; if two would both answer it, rewrite the prompt.',
 	'- Sides never swap: correctMeaning, recognize-mc distractors, promptNative, hintNative, meaningNative, answersNative and instruction are NATIVE-language text and never contain target-language words or script. A challenge whose prompt and options are in the same language is invalid — one side is always the native language.',
 	translateToTargetDef.rulesSpec,
@@ -313,7 +328,15 @@ export function buildBatchPrompt(args: BatchArgs): ChatMessage[] {
 		...(about ? { about } : {}),
 		challengeCount: Math.min(count, MAX_BATCH_CHALLENGES),
 		newItemSlots,
-		reviewItems: reviewItems.map((i) => ({ id: i.id, t: i.term, m: i.meaning })),
+		reviewItems: reviewItems.map((i) => ({
+			id: i.id,
+			t: i.term,
+			m: i.meaning,
+			// Spelled out rather than abbreviated like `t`/`m`: the rule that reads it
+			// names the field, and a dozen review items make the difference a rounding
+			// error against a 1450-token static prompt.
+			...(i.maturity ? { maturity: i.maturity } : {})
+		})),
 		// Terms only — the ids stay local (see `knownItems` and `knownTermIndex`).
 		...(args.knownItems?.length ? { known: args.knownItems.map((i) => i.term) } : {})
 	};

@@ -35,6 +35,15 @@ export const clozeStoredDef = {
 		return checkAnswer(answerGiven, challenge.acceptedAnswers);
 	},
 
+	// The one type whose demand is decided by the row rather than the type. With a
+	// `wordBank` the answer is on screen and the learner picks the word that fits
+	// the gap — constrained production. Without one they have to retrieve and
+	// spell it from the sentence alone, which is free production of a single word
+	// and the same act a typed translation asks for, sentence-length aside.
+	demand(challenge) {
+		return challenge.wordBank && challenge.wordBank.length > 0 ? 1 : 2;
+	},
+
 	correctAnswerText(challenge) {
 		return challenge.acceptedAnswers[0] ?? '';
 	},

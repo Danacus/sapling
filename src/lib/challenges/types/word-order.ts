@@ -37,6 +37,14 @@ export const wordOrderStoredDef = {
 		return normalize(answerGiven) === normalize(challenge.answer) ? 'correct' : 'wrong';
 	},
 
+	// Constrained production: the learner really does build a target sentence,
+	// but out of tiles that are handed to them. Every word is on screen and
+	// spelled correctly — what is being recalled is the *order*, not the
+	// vocabulary — so this sits a tier below writing the same sentence blind.
+	demand() {
+		return 1;
+	},
+
 	correctAnswerText(challenge) {
 		return challenge.answer;
 	},

@@ -48,6 +48,14 @@ export const matchPairsStoredDef = {
 		return hit ? 'correct' : 'wrong';
 	},
 
+	// Recognition, and the easiest kind: both halves of every pair are on screen
+	// and the learner only has to join them up. Academic in practice — match
+	// rounds are built locally and never pooled, so no planner ever asks — but the
+	// registry is total by construction and an honest answer costs one line.
+	demand() {
+		return 0;
+	},
+
 	correctAnswerText() {
 		return '';
 	},

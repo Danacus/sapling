@@ -34,6 +34,14 @@ export const multipleChoiceStoredDef = {
 		return checkAnswer(answerGiven, [correctOption]);
 	},
 
+	// Recognition in **both** directions: the answer is already on screen and the
+	// learner picks it out. `toTarget` looks productive — the answer is a target
+	// word — but nothing is produced; a distractor list is a closed set, and
+	// recognizing the right member of one is what a beginner can do first.
+	demand() {
+		return 0;
+	},
+
 	correctAnswerText(challenge) {
 		return challenge.options[challenge.correctIndex];
 	},

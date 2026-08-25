@@ -7,15 +7,16 @@
  * union in `$lib/types` and this object stops typechecking until it has a def,
  * with the missing key named in the error. That is the guard the four
  * presentation `switch`es and the grading `switch` used to provide between them,
- * except it now fires once, in one file, for all six facts at once.
+ * except it now fires once, in one file, for every fact at once.
  *
  * Everything downstream is a projection of this object: `$lib/llm/schemas`
  * composes `challengeSchema` out of {@link storedChallengeSchemas}, `../display`
  * and `../check` dispatch through {@link storedDefFor}. None of them names a
  * type.
  *
- * **Adding a stored type**: write `./<type>.ts` — `schema`, `check`, and the four
- * presentation methods — and list it below, in {@link STORED_TYPE_ORDER} too. See
+ * **Adding a stored type**: write `./<type>.ts` — `schema`, `check`, `demand` and
+ * the four presentation methods — and list it below, in {@link STORED_TYPE_ORDER}
+ * too. See
  * `./def` for the contract and the CLAUDE.md checklist for the wire and UI edits
  * that go with it.
  */
@@ -30,7 +31,13 @@ import { spotErrorStoredDef } from './spot-error';
 import { typedTranslationStoredDef } from './typed-translation';
 import { wordOrderStoredDef } from './word-order';
 
-export type { ChallengeOf, StoredTypeBehaviour, StoredTypeDef, StoredTypeRegistry } from './def';
+export type {
+	ChallengeOf,
+	Demand,
+	StoredTypeBehaviour,
+	StoredTypeDef,
+	StoredTypeRegistry
+} from './def';
 export { unhandledChallenge };
 
 export { clozeChallengeSchema } from './cloze';

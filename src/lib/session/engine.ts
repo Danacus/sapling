@@ -56,6 +56,7 @@ import type {
 	Stats,
 	Verdict
 } from '$lib/types';
+import { bearable, maturityOf } from './progression';
 
 /* -------------------------------------------------------------------------- */
 /* Tuning                                                                      */
@@ -422,6 +423,12 @@ interface PlanBoard {
 	restedByItem: Map<string, ChallengeRow[]>;
 	/** Item id → the resting challenges covering it, in serve order. */
 	restingByItem: Map<string, ChallengeRow[]>;
+	/**
+	 * Whether a row's demand fits its weakest word — see `./progression`. Memoized
+	 * per plan: the walks below ask about the same rows repeatedly, and each
+	 * answer costs a pass over the vocabulary.
+	 */
+	bearable: (row: ChallengeRow) => boolean;
 }
 
 function bucketByItem(rows: ChallengeRow[]): Map<string, ChallengeRow[]> {
@@ -436,21 +443,76 @@ function bucketByItem(rows: ChallengeRow[]): Map<string, ChallengeRow[]> {
 	return byItem;
 }
 
-function planBoard(pool: ChallengeRow[], allowed: Set<string>, now: number): PlanBoard {
+function planBoard(
+	pool: ChallengeRow[],
+	items: KnowledgeItem[],
+	allowed: Set<string>,
+	now: number
+): PlanBoard {
 	const playable = pool.filter((row) => isPlayable(row, allowed));
 	const rested = playable.filter((row) => isRested(row, now)).sort(byFreshness);
 	const resting = playable.filter((row) => !isRested(row, now)).sort(byRecency);
+
+	const memo = new Map<string, boolean>();
+	const bearableRow = (row: ChallengeRow): boolean => {
+		const cached = memo.get(row.id);
+		if (cached !== undefined) return cached;
+		const answer = bearable(row, items, now);
+		memo.set(row.id, answer);
+		return answer;
+	};
+
 	return {
 		rested,
 		resting,
 		restedByItem: bucketByItem(rested),
-		restingByItem: bucketByItem(resting)
+		restingByItem: bucketByItem(resting),
+		bearable: bearableRow
 	};
 }
 
-/** The first challenge in a bucket this plan has not claimed yet. */
-function firstFree(bucket: ChallengeRow[] | undefined, taken: Set<string>): ChallengeRow | undefined {
-	return bucket?.find((row) => !taken.has(row.id));
+/**
+ * The challenge a plan takes next out of one already-ordered bucket: the first
+ * unclaimed **bearable** one, else the first unclaimed one at all.
+ *
+ * That "else" is the whole of how strength-gated progression stays a preference
+ * (see `./progression`). Within a bucket, a challenge the weakest word can bear
+ * jumps the queue; when the bucket has none, the word is still served — a hard
+ * exercise beats a skipped review, exactly as a too-familiar sentence does.
+ *
+ * And because the rule only ever reorders *inside* a bucket, it cannot bend the
+ * rest gap: the caller consults the rested bucket first, so an unbearable rested
+ * challenge still outranks a bearable resting one. The one place the gap yields
+ * is the first due pass, and it yields for its own reason.
+ */
+function firstFree(
+	bucket: ChallengeRow[] | undefined,
+	taken: Set<string>,
+	bearableRow: (row: ChallengeRow) => boolean
+): ChallengeRow | undefined {
+	if (!bucket) return undefined;
+	const free = (row: ChallengeRow) => !taken.has(row.id);
+	return bucket.find((row) => free(row) && bearableRow(row)) ?? bucket.find(free);
+}
+
+/**
+ * `rows` reordered so the bearable ones come first, each group otherwise
+ * untouched.
+ *
+ * {@link firstFree}'s rule applied to a whole bucket at once — which is what
+ * repeatedly taking "the first unclaimed bearable, else the first unclaimed"
+ * from the same list amounts to. Used by the fillers, where there is no item to
+ * walk and the bucket order *is* the plan. A stable partition, so freshness and
+ * serve recency still decide everything within a tier.
+ */
+function bearableFirst(
+	rows: ChallengeRow[],
+	bearableRow: (row: ChallengeRow) => boolean
+): ChallengeRow[] {
+	const fits: ChallengeRow[] = [];
+	const rest: ChallengeRow[] = [];
+	for (const row of rows) (bearableRow(row) ? fits : rest).push(row);
+	return [...fits, ...rest];
 }
 
 /**
@@ -509,6 +571,13 @@ function byDueDate(now: number): (a: KnowledgeItem, b: KnowledgeItem) => number 
  * filler — stays rested-only, because variety is precisely what those are for
  * and neither is worth bending a rule to get.
  *
+ * A third preference rides *inside* that structure rather than beside it:
+ * **bearability** ({@link bearable}, `./progression`). Where a word has several
+ * challenges to choose from, it gets the one whose demand its weakest word can
+ * currently carry — recognition while the word is new, production once it has
+ * been recalled a few times. It is only ever a tie-break within a bucket, so it
+ * never costs a review and never bends the rest gap: see {@link firstFree}.
+ *
  * Pure and deterministic — no clock, no database, no rng — so a plan can be
  * pinned exactly in tests.
  */
@@ -522,7 +591,7 @@ export function planSession(
 	if (target === 0) return [];
 
 	const allowed = allowedItemIds(items, opts.reviewOnly ?? false);
-	const board = planBoard(pool, allowed, now);
+	const board = planBoard(pool, items, allowed, now);
 	const dueItems = dueItemsFirst(items, allowed, now);
 
 	const chosen: ChallengeRow[] = [];
@@ -532,8 +601,10 @@ export function planSession(
 		for (const item of dueItems) {
 			if (chosen.length >= target) break;
 			const next =
-				firstFree(board.restedByItem.get(item.id), taken) ??
-				(pass === 0 ? firstFree(board.restingByItem.get(item.id), taken) : undefined);
+				firstFree(board.restedByItem.get(item.id), taken, board.bearable) ??
+				(pass === 0
+					? firstFree(board.restingByItem.get(item.id), taken, board.bearable)
+					: undefined);
 			if (!next) continue;
 			taken.add(next.id);
 			chosen.push(next);
@@ -541,8 +612,9 @@ export function planSession(
 	}
 
 	// Whatever is left: the fresh batch that no due word claimed, then the
-	// least-recently-served leftovers. `board.rested` is already in that order.
-	for (const row of board.rested) {
+	// least-recently-served leftovers. `board.rested` is already in that order,
+	// with the challenges their words can bear brought to the front of it.
+	for (const row of bearableFirst(board.rested, board.bearable)) {
 		if (chosen.length >= target) break;
 		if (taken.has(row.id)) continue;
 		taken.add(row.id);
@@ -576,6 +648,10 @@ export function planSession(
  * challenge: practice is the learner explicitly asking for volume, and once
  * they have, there is no scheduler-shaped reason left to ration it.
  *
+ * Bearability applies exactly as it does in {@link planSession}, and for the
+ * same reason: asking for more practice is not asking to be over-faced, and a
+ * word that is still new gets recognition here too.
+ *
  * Pure and deterministic, on the same terms as {@link planSession}.
  */
 export function planPractice(
@@ -588,7 +664,7 @@ export function planPractice(
 	if (target === 0) return [];
 
 	const allowed = allowedItemIds(items, opts.reviewOnly ?? false);
-	const board = planBoard(pool, allowed, now);
+	const board = planBoard(pool, items, allowed, now);
 	const atRisk = items.filter((item) => allowed.has(item.id)).sort(byDueDate(now));
 
 	const chosen: ChallengeRow[] = [];
@@ -598,16 +674,21 @@ export function planPractice(
 		for (const item of atRisk) {
 			if (chosen.length >= target) break;
 			const next =
-				firstFree(board.restedByItem.get(item.id), taken) ??
-				firstFree(board.restingByItem.get(item.id), taken);
+				firstFree(board.restedByItem.get(item.id), taken, board.bearable) ??
+				firstFree(board.restingByItem.get(item.id), taken, board.bearable);
 			if (!next) continue;
 			taken.add(next.id);
 			chosen.push(next);
 		}
 	}
 
-	// Leftovers, rested material first: the gap is soft, not worthless.
-	for (const row of [...board.rested, ...board.resting]) {
+	// Leftovers, rested material first: the gap is soft, not worthless. Bearable
+	// first *within* each half, so preferring a fitting challenge never promotes
+	// resting material over rested.
+	for (const row of [
+		...bearableFirst(board.rested, board.bearable),
+		...bearableFirst(board.resting, board.bearable)
+	]) {
 		if (chosen.length >= target) break;
 		if (taken.has(row.id)) continue;
 		taken.add(row.id);
@@ -771,10 +852,16 @@ export function planRefill(
 			// the prompt builder does the length capping.
 			...(profile.about?.trim() ? { about: profile.about.trim() } : {})
 		},
+		// `maturity` is the generation-side half of strength-gated progression
+		// (`./progression`): the planner shapes what is *served* out of the pool,
+		// this shapes what the model writes into it. Both read the same floors, so
+		// a batch is not full of production challenges the planner will then
+		// decline to serve for weeks.
 		reviewItems: reviewItems.map((item) => ({
 			id: item.id,
 			term: item.term,
-			meaning: item.meaning
+			meaning: item.meaning,
+			maturity: maturityOf(item, now)
 		})),
 		newItemSlots,
 		count: opts.count ?? BATCH_TARGET,

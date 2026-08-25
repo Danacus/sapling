@@ -18,7 +18,7 @@ import { describe, expect, it } from 'vitest';
 import type { ChallengeRow } from '$lib/db';
 import { getBatch, isMockMode, makeMatchPairsChallenge } from '$lib/llm';
 import type { ProgressStep } from '$lib/llm';
-import { gradeFromResult, newCardState, reviewCard, Grade } from '$lib/srs';
+import { CardState, gradeFromResult, newCardState, reviewCard, Grade } from '$lib/srs';
 import type {
 	Challenge,
 	ChallengeResult,
@@ -104,6 +104,49 @@ function row(id: string, itemIds: string[], over: Partial<ChallengeRow> = {}): C
 /** A pooled challenge served recently enough that it is still resting. */
 function resting(id: string, itemIds: string[], servedAgo: number): ChallengeRow {
 	return row(id, itemIds, { timesServed: 1, lastServedAt: NOW - servedAgo });
+}
+
+/**
+ * A pooled multiple-choice row — demand 0, so any word can bear it, where
+ * {@link row}'s typed-translation default is demand 2 and none of the fresh
+ * cards {@link item} builds can. The pair is what the bearability tests below
+ * choose between.
+ */
+function recognition(id: string, itemIds: string[], over: Partial<ChallengeRow> = {}): ChallengeRow {
+	return {
+		id,
+		type: 'multiple-choice',
+		direction: 'toNative',
+		prompt: `prompt-${id}`,
+		options: ['a', 'b', 'c', 'd'],
+		correctIndex: 0,
+		itemIds,
+		generatedAt: NOW - DAY,
+		timesServed: 0,
+		lastServedAt: null,
+		reported: false,
+		...over
+	} as ChallengeRow;
+}
+
+/**
+ * A word the learner owns: ten days of stability, reviewed just now, so
+ * `wordStrength` clears `FREE_PRODUCTION_FLOOR` and every demand tier is
+ * bearable. {@link item}'s card is `newCardState`, which sits at strength 0.
+ */
+function strongItem(id: string, dueOffset: number): KnowledgeItem {
+	return {
+		...item(id, dueOffset),
+		fsrsCard: {
+			...newCardState(NOW),
+			due: NOW + dueOffset,
+			stability: 10,
+			scheduled_days: 10,
+			reps: 5,
+			state: CardState.Review,
+			last_review: NOW
+		}
+	};
 }
 
 const ids = (challenges: Challenge[]) => challenges.map((challenge) => challenge.id);
@@ -547,6 +590,73 @@ describe('planSession', () => {
 		});
 	});
 
+	describe('a challenge a word can bear beats one it cannot', () => {
+		// `recognition` is demand 0 and `row` is a toTarget typed translation,
+		// demand 2; `item` builds a fresh card at strength 0 and `strongItem` one
+		// past FREE_PRODUCTION_FLOOR. See `./progression`.
+
+		it('gives a weak due word the recognition challenge over the production one', () => {
+			const items = [item('due', -DAY)];
+			const pool = [
+				// Freshness would take the typed translation first: it is the newer
+				// never-served row. Bearability outranks freshness within the bucket.
+				row('typed', ['due'], { generatedAt: NOW }),
+				recognition('choice', ['due'], { generatedAt: NOW - 5 * DAY })
+			];
+
+			expect(ids(planSession(pool, items, NOW, { target: 1 }))).toEqual(['choice']);
+			// And the production one is still second, not dropped.
+			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['choice', 'typed']);
+		});
+
+		it('still serves the production challenge when it is the only one', () => {
+			// The invariant that keeps this a preference: a hard exercise beats a
+			// skipped review, so a due word is never starved for being weak.
+			const items = [item('due', -DAY)];
+			const pool = [row('typed', ['due'], { generatedAt: NOW })];
+
+			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['typed']);
+		});
+
+		it('leaves the freshness order alone for a word that can bear both', () => {
+			const items = [strongItem('due', -DAY)];
+			const pool = [
+				row('typed', ['due'], { generatedAt: NOW }),
+				recognition('choice', ['due'], { generatedAt: NOW - 5 * DAY })
+			];
+
+			// Both bearable ⇒ nothing to prefer ⇒ the newer never-served row leads,
+			// exactly as it did before bearability existed.
+			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['typed', 'choice']);
+		});
+
+		it('does not spend the rest gap to find something bearable', () => {
+			// The preference works *within* a bucket, so the rested bucket is still
+			// consulted first and an unbearable rested row wins over a bearable
+			// resting one. The gap only ever yields when the rested bucket has
+			// nothing at all for a due word — which is its own rule, not this one.
+			const items = [item('due', -DAY)];
+			const pool = [
+				row('typed-rested', ['due']),
+				recognition('choice-hot', ['due'], { timesServed: 1, lastServedAt: NOW - DAY })
+			];
+
+			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['typed-rested']);
+		});
+
+		it('prefers bearable material in the freshness filler too', () => {
+			// Nothing due, so only the filler runs: the same "bearable first, then
+			// the rest, each in its own order" rule, applied to a whole bucket.
+			const items = [item('later', +5 * DAY)];
+			const pool = [
+				row('typed', ['later'], { generatedAt: NOW }),
+				recognition('choice', ['later'], { generatedAt: NOW - 5 * DAY })
+			];
+
+			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['choice', 'typed']);
+		});
+	});
+
 	it('excludes reported challenges', () => {
 		const items = [item('due', -DAY)];
 		const pool = [row('bad', ['due'], { reported: true }), row('good', ['due'])];
@@ -772,6 +882,23 @@ describe('planPractice', () => {
 		expect(ids(planPractice(pool, items, NOW, { target: 5 }))).toEqual(['fine']);
 	});
 
+	it('prefers a bearable challenge, exactly as planSession does', () => {
+		// Asking for extra practice is not asking to be over-faced: a word still
+		// at strength 0 gets the recognition row first here too, and the
+		// production one right after it rather than never.
+		const items = [item('a', +DAY)];
+		const pool = [
+			row('typed', ['a'], { generatedAt: NOW }),
+			recognition('choice', ['a'], { generatedAt: NOW - 5 * DAY })
+		];
+
+		expect(ids(planPractice(pool, items, NOW, { target: 2 }))).toEqual(['choice', 'typed']);
+		expect(ids(planPractice(pool, [strongItem('a', +DAY)], NOW, { target: 2 }))).toEqual([
+			'typed',
+			'choice'
+		]);
+	});
+
 	it('respects reviewOnly, in the item walk and the filler alike', () => {
 		const reviewed = [{ at: NOW - DAY, grade: 3 }];
 		const items = [item('never', +DAY), item('seen', +2 * DAY, reviewed)];
@@ -890,14 +1017,32 @@ describe('planRefill', () => {
 		]);
 	});
 
-	it('sends due items as {id, term, meaning}, most overdue first', () => {
+	it('sends due items as {id, term, meaning, maturity}, most overdue first', () => {
 		const items = [item('a', -1 * DAY), item('b', -5 * DAY), item('c', +2 * DAY)];
 		const plan = planRefill(items, profile(), NOW);
 
+		// `maturity` is the prompt's type hint (see `./progression`): these cards
+		// are freshly created, so both words are still 'new' and the batch will be
+		// asked for recognition about them.
 		expect(plan.args.reviewItems).toEqual([
-			{ id: 'b', term: 'term-b', meaning: 'meaning-b' },
-			{ id: 'a', term: 'term-a', meaning: 'meaning-a' }
+			{ id: 'b', term: 'term-b', meaning: 'meaning-b', maturity: 'new' },
+			{ id: 'a', term: 'term-a', meaning: 'meaning-a', maturity: 'new' }
 		]);
+	});
+
+	it('reports a reviewed word as more mature than a brand-new one', () => {
+		const fresh = item('a', -DAY);
+		const card = reviewCard(newCardState(NOW - 5 * DAY), Grade.Good, NOW - 5 * DAY);
+		const reviewed: KnowledgeItem = {
+			...item('b', -DAY),
+			fsrsCard: { ...card, due: NOW - DAY }
+		};
+
+		const byId = new Map(
+			planRefill([fresh, reviewed], profile(), NOW).args.reviewItems.map((i) => [i.id, i.maturity])
+		);
+		expect(byId.get('a')).toBe('new');
+		expect(byId.get('b')).not.toBe('new');
 	});
 
 	it('paces new words off recent accuracy', () => {

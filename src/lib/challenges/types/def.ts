@@ -3,13 +3,14 @@
  *
  * A `StoredTypeDef` is the whole of what the app knows about a member of the
  * `Challenge` union once it has been generated: the zod schema that validates it
- * (`schema`), how a learner's answer to it is graded (`check`), and the four
- * presentation facts the feedback banner and the TTS warm-up ask of every
- * challenge — *what was the right answer* (`correctAnswerText`), *is that answer
- * in the target language* (`answerIsTargetLanguage`), *what is its Latin reading*
- * (`answerReading`), *what should the learner hear* (`spokenAnswerFor`).
+ * (`schema`), how a learner's answer to it is graded (`check`), how much it asks
+ * of the learner (`demand`), and the four presentation facts the feedback banner
+ * and the TTS warm-up ask of every challenge — *what was the right answer*
+ * (`correctAnswerText`), *is that answer in the target language*
+ * (`answerIsTargetLanguage`), *what is its Latin reading* (`answerReading`),
+ * *what should the learner hear* (`spokenAnswerFor`).
  *
- * Those six facts used to live in three files and eight `switch`es. Adding a
+ * Those facts used to live in three files and eight `switch`es. Adding a
  * type meant finding all of them, and the compiler only checked some. Now they
  * are one object per type, listed in `./index`, and the registry is a mapped type
  * over `ChallengeType` — so a seventh member of the union is a `pnpm check`
@@ -34,6 +35,15 @@ import type { Challenge, ChallengeType, Verdict } from '$lib/types';
 export type ChallengeOf<T extends ChallengeType> = Extract<Challenge, { type: T }>;
 
 /**
+ * How much productive recall a challenge asks of its words.
+ *
+ * An ordinal, not a score: `0 < 1 < 2` is the only arithmetic anyone should do
+ * with it, and the one comparison `$lib/session/progression` makes is "is this
+ * tier at or below what the weakest word can bear".
+ */
+export type Demand = 0 | 1 | 2;
+
+/**
  * The half of a def the dispatchers call.
  *
  * Split out from {@link StoredTypeDef} so `../display` and `../check` can hold a
@@ -55,6 +65,25 @@ export interface StoredTypeBehaviour<C extends Challenge> {
 	 * tapped one was chosen from a closed set.
 	 */
 	check(challenge: C, answerGiven: string): Verdict;
+	/**
+	 * How much productive recall this challenge asks of its words, 0..2:
+	 * 0 recognition (read/choose), 1 constrained production (assemble from
+	 * given material), 2 free production (produce from nothing).
+	 * Session planning gates 1 and 2 behind word strength; see
+	 * `$lib/session/progression`.
+	 *
+	 * A *fact about the question*, deliberately not a factor in
+	 * {@link check}: grading stays type-blind, because a verdict is FSRS's
+	 * evidence about the word and fudging it per type would corrupt the
+	 * schedule. What demand shapes is which question gets asked, never what
+	 * the answer to it is worth.
+	 *
+	 * Takes the whole challenge rather than being a constant per type because
+	 * two types straddle a tier: a cloze with a word bank is a choice and one
+	 * without is free recall, and typed translation is production in one
+	 * direction and comprehension in the other.
+	 */
+	demand(challenge: C): Demand;
 	/**
 	 * What the feedback banner tells the learner they should have answered.
 	 *
