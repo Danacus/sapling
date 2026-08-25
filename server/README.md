@@ -13,15 +13,16 @@ lines, one file per concern: `src/db.ts` (schema + statements), `src/auth.ts`
 ## Quickstart
 
 `server/` is an **independent package**, not part of the app's pnpm workspace:
-its own `package.json`, lockfile and `node_modules`. Node and pnpm live in the
-repo's Nix devShell, so run everything through it from the repo root:
+its own `package.json`, lockfile and `node_modules`. Run everything from the
+repo root (the repo's `flake.nix` devShell provides Node + pnpm; see
+[`../CLAUDE.md`](../CLAUDE.md#commands)):
 
 ```sh
-nix develop -c bash -c 'cd server && pnpm install'
-nix develop -c bash -c 'cd server && pnpm new-key --user daan'   # prints a key, once
-nix develop -c bash -c 'cd server && pnpm dev'                   # tsx watch, :8787
-nix develop -c bash -c 'cd server && pnpm test'                  # vitest, in-memory db
-nix develop -c bash -c 'cd server && pnpm typecheck'
+cd server && pnpm install
+cd server && pnpm new-key --user daan   # prints a key, once
+cd server && pnpm dev                   # tsx watch, :8787
+cd server && pnpm test                  # vitest, in-memory db
+cd server && pnpm typecheck
 ```
 
 Smoke test it:

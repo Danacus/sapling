@@ -6,26 +6,26 @@ The app is called **Sapling** (manifest, titles, icon); the repo/package name st
 
 ## Commands
 
-Node and pnpm exist **only inside the Nix devShell**. Prefix every command with `nix develop -c` (or enter the shell once with `nix develop`).
+The repo ships a `flake.nix` devShell (Node 22 + pnpm) with a `.envrc` (`use flake`) so direnv loads it automatically on `cd`. If direnv isn't active for some reason, fall back to prefixing commands with `nix develop -c` (or run `nix develop` once to enter the shell).
 
 ```sh
-nix develop -c pnpm dev                                # dev server
-nix develop -c pnpm build                              # static build -> build/
-nix develop -c pnpm check                              # svelte-check (typecheck)
-nix develop -c pnpm test                               # vitest run (all suites)
-nix develop -c pnpm test src/lib/srs/scheduler.test.ts # single test file
+pnpm dev                                # dev server
+pnpm build                              # static build -> build/
+pnpm check                              # svelte-check (typecheck)
+pnpm test                               # vitest run (all suites)
+pnpm test src/lib/srs/scheduler.test.ts # single test file
 ```
 
-The sync server in `server/` is a **separate package, deliberately not a workspace member** — its own `package.json`, lockfile, `node_modules` and `pnpm-workspace.yaml`, so the Cloudflare Pages build of the app never sees it. Run its commands from the repo root through the same devShell:
+The sync server in `server/` is a **separate package, deliberately not a workspace member** — its own `package.json`, lockfile, `node_modules` and `pnpm-workspace.yaml`, so the Cloudflare Pages build of the app never sees it. Run its commands from the repo root:
 
 ```sh
-nix develop -c bash -c 'cd server && pnpm install'    # once, and after dep changes
-nix develop -c bash -c 'cd server && pnpm test'       # vitest, in-memory SQLite
-nix develop -c bash -c 'cd server && pnpm typecheck'
-nix develop -c bash -c 'cd server && pnpm dev'        # tsx watch on :8787
+cd server && pnpm install    # once, and after dep changes
+cd server && pnpm test       # vitest, in-memory SQLite
+cd server && pnpm typecheck
+cd server && pnpm dev        # tsx watch on :8787
 ```
 
-Nix flakes only see files that are `git add`ed — a brand-new file the flake needs must be staged before `nix develop` picks it up. `pnpm-workspace.yaml` records pnpm's dependency build-script decisions (`allowBuilds`) — an undecided script hard-fails Cloudflare Pages' CI install, so keep decisions explicit there.
+Nix flakes only see files that are `git add`ed — a brand-new file the flake needs must be staged before direnv (or `nix develop`) picks it up. `pnpm-workspace.yaml` records pnpm's dependency build-script decisions (`allowBuilds`) — an undecided script hard-fails Cloudflare Pages' CI install, so keep decisions explicit there.
 
 ## Deploying
 
