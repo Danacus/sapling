@@ -1058,16 +1058,23 @@
 		<section class="stage" class:with-banner={feedback !== null}>
 			{#if current}
 				{#key current.id}
-					<!-- The app's one entrance beat, borrowed for the challenge swap: the
-					     same 9px lift `.ll-rise` plays on the home cards, so a new
-					     challenge settles onto the page rather than sliding in from the
-					     side. `motionMs` collapses both to an instant cut under
-					     `prefers-reduced-motion`. -->
-					<div
-						class="challenge"
-						in:fly={{ y: 9, duration: motionMs(320), delay: motionMs(90) }}
-						out:fly={{ y: -6, duration: motionMs(150) }}
-					>
+					<!--
+					  The app's one entrance beat, borrowed for the challenge swap: the
+					  same 9px lift `.ll-rise` plays on the home cards, so a new challenge
+					  settles onto the page rather than sliding in from the side.
+					  `motionMs` collapses it to an instant cut under
+					  `prefers-reduced-motion`.
+
+					  Deliberately an `in:` on its own. An `out:` here keeps the leaving
+					  challenge mounted *alongside* the arriving one for the length of its
+					  transition, and the stage then has to find room for both — which is
+					  what the swap used to flicker: two `width: 100%` children in one
+					  flex row, each shrunk to half the stage, every line rewrapped, then
+					  snapped back. The single-cell grid below makes that impossible now;
+					  one transition keeps it that way. There is no delay either — a delay
+					  only ever existed to let an outgoing element get out of the way.
+					-->
+					<div class="challenge" in:fly={{ y: 9, duration: motionMs(320) }}>
 						<ChallengeHost
 							challenge={current}
 							onanswer={handleAnswer}
@@ -1589,12 +1596,34 @@
 
 	/* Stage ---------------------------------------------------------------- */
 
+	/*
+	  A single-cell grid, not a flex row.
+
+	  Whatever the stage is showing goes in the one cell, so two challenges can
+	  never end up dividing the width between them mid-swap — the failure the
+	  old flex row had, and the reason a swap flickered. The row is `1fr` rather
+	  than `auto` on purpose: it has to fill the stage's height, because that is
+	  what `.check`'s `margin-top: auto` pins the submit button to. Its automatic
+	  minimum still lets a tall challenge push past it rather than clip.
+	*/
 	.stage {
 		position: relative;
-		display: flex;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		grid-template-rows: 1fr;
 		flex: 1;
 		min-height: 0;
 		padding-bottom: 1rem;
+		/* The banner arriving and leaving changes this by 14rem; glide it, or
+		   the challenge's last row jerks that far at exactly the moment the
+		   next one is arriving. Paired with the banner's own 260ms fly. */
+		transition: padding-bottom 0.24s cubic-bezier(0.2, 0.7, 0.3, 1);
+	}
+
+	.stage > .challenge,
+	.stage > .centered {
+		grid-area: 1 / 1;
+		min-width: 0;
 	}
 
 	/* Keep the last row of the challenge clear of the feedback banner. */
@@ -1968,7 +1997,8 @@
 		.quit,
 		.segment,
 		.chip,
-		.combo {
+		.combo,
+		.stage {
 			transition: none;
 		}
 	}
