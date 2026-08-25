@@ -28,19 +28,41 @@
 </div>
 
 <style>
+	/* A ruled measure rather than a capsule: hairline trough, squared ends, a
+	   hint of inset so the fill reads as ink laid into the paper. */
 	.bar {
 		width: 100%;
-		height: 0.6rem;
-		border-radius: 999px;
+		height: 0.55rem;
+		border: 1px solid var(--border);
+		border-radius: 3px;
 		background: var(--surface-alt);
+		box-shadow: inset 0 1px 2px rgb(60 50 20 / 8%);
 		overflow: hidden;
 	}
 
 	.fill {
+		position: relative;
 		height: 100%;
-		border-radius: 999px;
+		border-radius: 2px;
 		transition:
-			width 0.3s ease,
+			width 0.35s cubic-bezier(0.2, 0.7, 0.3, 1),
 			background 0.3s ease;
+	}
+
+	/* A faint top highlight keeps the fill from reading as flat plastic. It has
+	   to be a pseudo-element: `color` arrives as an inline `background`
+	   shorthand, which would blow away any `background-image` set here. */
+	.fill::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		border-radius: inherit;
+		background: linear-gradient(rgb(255 255 255 / 24%), rgb(255 255 255 / 0%) 65%);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.fill {
+			transition: none;
+		}
 	}
 </style>

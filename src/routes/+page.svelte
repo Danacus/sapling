@@ -153,40 +153,73 @@
 			<p class="error" role="alert">{loadError}</p>
 		</div>
 	{:else}
-		<header class="topbar">
-			<div>
+		<header class="topbar ll-rise">
+			<div class="identity">
 				<p class="eyebrow">Learning</p>
 				<h1>{targetLanguage}</h1>
 			</div>
 			<div class="topbar-actions">
 				<div class="streak" class:dimmed={streakDays === 0} title="Current streak">
-					<span aria-hidden="true">🔥</span>
+					<svg class="ico sprout" viewBox="0 0 24 24" aria-hidden="true">
+						<path d="M12 21v-8.6" />
+						<path d="M12 16.2c-3.3 0-5.2-1.9-5.2-5.2 3.3 0 5.2 1.9 5.2 5.2Z" />
+						<path d="M12 12.6c0-3.8 2-5.8 5.6-5.8 0 3.8-2 5.8-5.6 5.8Z" />
+					</svg>
 					<span>{streakDays}</span>
 				</div>
-				<a class="gear" href="/chat" aria-label="Assistant">💬</a>
-				<a class="gear" href="/profile" aria-label="Profile">🙋</a>
-				<a class="gear" href="/settings" aria-label="Settings">⚙️</a>
+				<a class="gear" href="/chat" aria-label="Assistant">
+					<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+						<path
+							d="M20.3 12.2c0 4-3.7 7.2-8.2 7.2a9.4 9.4 0 0 1-2.5-.3L4.6 20.5l1.3-3.7a6.9 6.9 0 0 1-2.2-4.6C3.7 8.2 7.4 5 11.9 5s8.4 3.2 8.4 7.2Z"
+						/>
+						<path d="M9 11.9h.01M12 11.9h.01M15 11.9h.01" />
+					</svg>
+				</a>
+				<a class="gear" href="/profile" aria-label="Profile">
+					<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+						<circle cx="12" cy="8.4" r="3.4" />
+						<path d="M4.9 19.6c.7-3.4 3.5-5.5 7.1-5.5s6.4 2.1 7.1 5.5" />
+					</svg>
+				</a>
+				<a class="gear" href="/settings" aria-label="Settings">
+					<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+						<path d="M4 8.2h8.4M17.4 8.2H20M4 15.8h2.6M11.6 15.8H20" />
+						<circle cx="15" cy="8.2" r="2.3" />
+						<circle cx="9" cy="15.8" r="2.3" />
+					</svg>
+				</a>
 			</div>
 		</header>
 
-		<section class="card goal-card">
+		<section class="card goal-card ll-rise" style="animation-delay: 60ms">
 			<div class="goal-head">
 				<h2>Today's goal</h2>
 				<span class="goal-figure">{todayXp} / {dailyGoalXp} XP</span>
 			</div>
+			<hr class="stitch" />
 			<ProgressBar
 				value={goalFraction}
 				color={goalReached ? 'var(--primary)' : 'var(--accent)'}
 				label="Daily XP goal progress"
 			/>
 			{#if goalReached}
-				<p class="goal-note celebrate">🎉 Goal reached — nice work today!</p>
+				<p class="goal-note celebrate">
+					<svg class="ico spark" viewBox="0 0 24 24" aria-hidden="true">
+						<path d="M12 3.6 13.7 9.1 19.2 10.8 13.7 12.5 12 18 10.3 12.5 4.8 10.8 10.3 9.1Z" />
+					</svg>
+					Goal reached — nice work today!
+				</p>
 			{:else if dailyGoalXp > 0}
 				<p class="goal-note">{Math.max(0, dailyGoalXp - todayXp)} XP to go.</p>
 			{/if}
 		</section>
 
-		<section class="card start-card">
+		<section class="card start-card ll-rise" style="animation-delay: 120ms">
+			<svg class="watermark" viewBox="0 0 24 24" aria-hidden="true">
+				<path d="M12 21v-8.6" />
+				<path d="M12 16.2c-3.3 0-5.2-1.9-5.2-5.2 3.3 0 5.2 1.9 5.2 5.2Z" />
+				<path d="M12 12.6c0-3.8 2-5.8 5.6-5.8 0 3.8-2 5.8-5.6 5.8Z" />
+			</svg>
 			<a class="btn btn-primary btn-block start-btn" href="/learn">Start session</a>
 			{#if items.length === 0}
 				<p class="hint centered">
@@ -204,7 +237,7 @@
 		</section>
 
 		{#if items.length > 0}
-			<section class="card strength-card">
+			<section class="card strength-card ll-rise" style="animation-delay: 180ms">
 				<div class="strength-head">
 					<h2>Word strength</h2>
 					<div class="strength-tools">
@@ -221,6 +254,7 @@
 						</button>
 					</div>
 				</div>
+				<hr class="stitch" />
 				<ul class="word-list">
 					{#each visibleWeakest as entry (entry.item.id)}
 						<li class="word-row">
@@ -247,7 +281,9 @@
 										aria-label={`Forget ${entry.item.term}`}
 										onclick={() => void removeItem(entry.item)}
 									>
-										✕
+										<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+											<path d="m7 7 10 10M17 7 7 17" />
+										</svg>
 									</button>
 								{/if}
 							</div>
@@ -283,60 +319,107 @@
 		min-height: 60dvh;
 	}
 
+	/* Every icon on this screen is the same hand: 24-unit box, hairline stroke,
+	   round joins. The attributes live here rather than on each <svg> so the
+	   markup stays readable and the weight can never drift between icons. */
+	.ico {
+		width: 1.2rem;
+		height: 1.2rem;
+		flex: 0 0 auto;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 1.6;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+
 	.topbar {
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
-		gap: 1rem;
+		gap: 0.75rem;
+	}
+
+	.identity {
+		min-width: 0;
 	}
 
 	.eyebrow {
-		margin: 0;
-		font-size: 0.8rem;
-		font-weight: 800;
-		letter-spacing: 0.06em;
+		margin: 0 0 0.1rem;
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.14em;
 		text-transform: uppercase;
-		color: var(--text-muted);
+		color: color-mix(in srgb, var(--accent) 65%, var(--text-muted));
 	}
 
 	.topbar h1 {
 		margin: 0;
-		font-size: 1.7rem;
+		font-size: clamp(1.75rem, 8vw, 2.3rem);
+		line-height: 1.05;
+		overflow-wrap: break-word;
 	}
 
 	.topbar-actions {
 		display: flex;
 		align-items: center;
-		gap: 0.75rem;
+		gap: 0.35rem;
+		/* Optically aligned with the language name, not the eyebrow above it. */
+		padding-top: 0.15rem;
+	}
+
+	/* Topbar controls are label tabs, not pills: the same 2.25rem square with a
+	   hairline and a squared-off radius, so the streak count reads as one of
+	   the row rather than a badge stuck onto it. */
+	.streak,
+	.gear {
+		height: 2.25rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: var(--surface);
+		color: var(--text);
+		transition:
+			border-color 0.15s ease,
+			background 0.15s ease,
+			color 0.15s ease;
 	}
 
 	.streak {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.3rem;
-		padding: 0.4rem 0.75rem;
-		border-radius: 999px;
-		background: var(--surface);
-		border: 1px solid var(--border);
-		font-weight: 800;
+		padding: 0 0.6rem;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.sprout {
+		color: var(--primary);
 	}
 
 	.streak.dimmed {
-		opacity: 0.45;
-		filter: grayscale(0.6);
+		opacity: 0.5;
+		filter: grayscale(0.7);
 	}
 
 	.gear {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		width: 2.5rem;
-		height: 2.5rem;
-		border-radius: 999px;
-		background: var(--surface);
-		border: 1px solid var(--border);
-		font-size: 1.1rem;
+		width: 2.25rem;
+		color: var(--text-muted);
 		text-decoration: none;
+	}
+
+	.gear:hover {
+		border-color: var(--border-strong);
+		background: var(--surface-alt);
+		color: var(--text);
+	}
+
+	.gear:focus-visible {
+		outline: none;
+		box-shadow: var(--ring);
 	}
 
 	.card {
@@ -355,48 +438,102 @@
 	.goal-head h2,
 	.strength-head h2 {
 		margin: 0;
-		font-size: 1.1rem;
+		font-size: 1.15rem;
 	}
 
 	.goal-figure,
 	.strength-count {
-		font-size: 0.85rem;
+		font-size: 0.82rem;
 		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+		letter-spacing: 0.02em;
 		color: var(--text-muted);
 	}
 
+	.goal-head + .stitch,
+	.strength-head + .stitch {
+		margin: 0 0 1rem;
+	}
+
 	.goal-note {
-		margin: 0.6rem 0 0;
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		margin: 0.7rem 0 0;
 		font-size: 0.9rem;
 		color: var(--text-muted);
 	}
 
 	.goal-note.celebrate {
 		color: var(--primary-strong);
-		font-weight: 800;
+		font-weight: 700;
+	}
+
+	/* The one filled mark in the icon set — it is a burst, not a diagram. */
+	.spark {
+		width: 1.05rem;
+		height: 1.05rem;
+		fill: var(--accent);
+		stroke: var(--accent);
+		stroke-width: 1.2;
 	}
 
 	.start-card {
+		position: relative;
+		/* Own stacking context, so the watermark's `z-index: -1` lands behind
+		   the button and above the card's own background rather than escaping
+		   to the page. */
+		isolation: isolate;
+		overflow: hidden;
 		text-align: center;
+		background:
+			linear-gradient(
+				160deg,
+				color-mix(in srgb, var(--primary-soft) 70%, var(--surface)),
+				var(--surface) 62%
+			),
+			var(--surface);
+	}
+
+	/* The brand sprout, pressed faintly into the page behind the one button
+	   that matters. Used exactly once in the app — a watermark stops being a
+	   watermark the moment it repeats. */
+	.watermark {
+		position: absolute;
+		z-index: -1;
+		right: -1.4rem;
+		bottom: -2rem;
+		width: 9.5rem;
+		height: 9.5rem;
+		fill: none;
+		stroke: var(--primary);
+		stroke-width: 1.1;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+		opacity: 0.12;
+		pointer-events: none;
 	}
 
 	.start-btn {
 		font-size: 1.05rem;
-		padding: 1.1rem 1.5rem;
+		padding: 1.05rem 1.5rem;
+		letter-spacing: 0.005em;
 	}
 
 	.hint.centered {
-		margin: 0.85rem 0 0;
+		margin: 0.9rem 0 0;
 		text-align: center;
+		text-wrap: balance;
 	}
 
+	/* A ruled ledger: rows separated by the same hairline the cards use, so a
+	   long word list reads as a page of entries rather than floating chips. */
 	.word-list {
 		list-style: none;
 		margin: 0;
 		padding: 0;
 		display: flex;
 		flex-direction: column;
-		gap: 0.85rem;
 	}
 
 	.word-row {
@@ -404,6 +541,11 @@
 		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 		align-items: center;
 		gap: 0.75rem;
+		padding: 0.6rem 0;
+	}
+
+	.word-row + .word-row {
+		border-top: 1px solid var(--border);
 	}
 
 	.strength-tools {
@@ -413,8 +555,9 @@
 	}
 
 	.manage-btn {
-		padding: 0.3rem 0.65rem;
-		font-size: 0.8rem;
+		padding: 0.28rem 0.7rem;
+		border-color: var(--border);
+		font-size: 0.78rem;
 	}
 
 	/* The bar shares its column with the delete button in manage mode; without
@@ -431,22 +574,35 @@
 	}
 
 	.forget {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 		flex: 0 0 auto;
-		width: 1.6rem;
-		height: 1.6rem;
+		width: 1.7rem;
+		height: 1.7rem;
 		padding: 0;
 		border: 1px solid var(--border);
-		border-radius: 999px;
+		border-radius: var(--radius-sm);
 		background: var(--surface);
 		color: var(--text-muted);
 		font: inherit;
-		font-size: 0.75rem;
 		line-height: 1;
 		cursor: pointer;
+		transition:
+			border-color 0.15s ease,
+			background 0.15s ease,
+			color 0.15s ease;
+	}
+
+	.forget .ico {
+		width: 0.85rem;
+		height: 0.85rem;
+		stroke-width: 1.9;
 	}
 
 	.forget:hover {
 		border-color: var(--danger);
+		background: color-mix(in srgb, var(--danger) 10%, transparent);
 		color: var(--danger);
 	}
 
@@ -473,7 +629,8 @@
 	}
 
 	.term {
-		font-weight: 800;
+		font-weight: 700;
+		letter-spacing: -0.005em;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -496,14 +653,18 @@
 	.show-all {
 		display: block;
 		width: 100%;
-		margin-top: 1rem;
+		margin-top: 0.9rem;
+		border-top: 1px dashed var(--border-strong);
+		border-radius: 0 0 var(--radius) var(--radius);
+		font-size: 0.85rem;
 	}
 
 	.error {
 		margin: 0;
-		padding: 0.6rem 0.8rem;
+		padding: 0.65rem 0.85rem;
+		border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
 		border-radius: var(--radius-sm);
-		background: color-mix(in srgb, var(--danger) 15%, transparent);
+		background: color-mix(in srgb, var(--danger) 12%, transparent);
 		color: var(--danger);
 		font-weight: 700;
 	}
@@ -512,6 +673,19 @@
 		.word-row {
 			grid-template-columns: 1fr;
 			gap: 0.35rem;
+		}
+	}
+
+	@media (max-width: 380px) {
+		/* At the narrowest phone the language name needs the whole line; the
+		   controls drop under it rather than squeezing the headline. */
+		.topbar {
+			flex-direction: column;
+			align-items: stretch;
+		}
+
+		.topbar-actions {
+			padding-top: 0;
 		}
 	}
 </style>

@@ -281,15 +281,39 @@
 		flex-direction: column;
 	}
 
+	/*
+	  A notebook spread: two facing columns with the app's stitched hairline
+	  running down the seam between them. The tiles are opaque, so the rule only
+	  ever shows in the gutter — which is exactly where a seam belongs.
+	*/
 	.columns {
+		position: relative;
 		display: grid;
 		grid-template-columns: 1fr 1fr;
-		gap: 0.7rem;
+		gap: 0.9rem;
+	}
+
+	.columns::before {
+		content: '';
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		left: 50%;
+		border-left: 1px dashed var(--border-strong);
+		opacity: 0.75;
+		pointer-events: none;
 	}
 
 	.column {
+		position: relative;
 		display: flex;
 		flex-direction: column;
 		gap: 0.7rem;
+	}
+
+	@media (max-width: 400px) {
+		.columns {
+			gap: 0.6rem;
+		}
 	}
 </style>

@@ -8,17 +8,33 @@
 		<!--
 			Installable-PWA wiring. The manifest carries the install metadata and
 			icons; the two extras below are the platforms that ignore it:
-			- theme-color paints the Android/desktop title bar (both palettes use
-			  the same brand green, so one value is enough).
+			- theme-color paints the Android/desktop title bar. The two palettes
+			  are warm paper and deep moss, so it takes one value each — the
+			  media-scoped pair below mirrors `--bg` in `app.css`.
 			- iOS never reads the manifest for the home-screen icon, so it needs
 			  its own apple-touch-icon link.
 		-->
 		<link rel="manifest" href="%sveltekit.assets%/manifest.webmanifest" />
-		<meta name="theme-color" content="#58cc02" />
+		<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4efe4" />
+		<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#14180f" />
 		<link rel="icon" href="%sveltekit.assets%/icons/icon-192.png" type="image/png" />
 		<link rel="apple-touch-icon" href="%sveltekit.assets%/icons/apple-touch-icon.png" />
 		<meta name="apple-mobile-web-app-capable" content="yes" />
 		<meta name="apple-mobile-web-app-title" content="Sapling" />
+
+		<!--
+			Display + UI faces. Fraunces (variable, opsz/SOFT/WONK) carries the
+			editorial headings, Karla the body and controls; `display=swap` keeps
+			first paint on the system fallback rather than blocking it. Both are
+			Latin-only by design — the fallback stacks in `--font`/`--font-display`
+			hand non-Latin target-language text straight to the system fonts.
+		-->
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			rel="stylesheet"
+			href="https://fonts.googleapis.com/css2?family=Fraunces:SOFT,WONK,opsz,wght@0..100,0..1,9..144,600..800&family=Karla:wght@400;500;700&display=swap"
+		/>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

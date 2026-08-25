@@ -286,16 +286,27 @@
 	<div class="inner">
 		<div class="head">
 			<div class="verdict">
+				<!-- The verdict, drawn rather than typed: ✓ ↷ ≈ ✕ each rendered at a
+				     different weight (and sometimes not at all) in the fallback fonts
+				     a target language can land on. Same order as the words above. -->
 				<span class="mark" aria-hidden="true">
-					{overturned
-						? '✓'
-						: skipped
-							? '↷'
-							: verdict === 'correct'
-								? '✓'
-								: verdict === 'almost'
-									? '≈'
-									: '✕'}
+					{#if overturned}
+						<svg class="ico" viewBox="0 0 24 24"><path d="m5 12.8 4.4 4.4L19 7.6" /></svg>
+					{:else if skipped}
+						<svg class="ico" viewBox="0 0 24 24">
+							<path d="M4.6 17.4c0-4.9 3.3-8.4 8.3-8.4H19" />
+							<path d="m15.4 5.4 3.6 3.6-3.6 3.6" />
+						</svg>
+					{:else if verdict === 'correct'}
+						<svg class="ico" viewBox="0 0 24 24"><path d="m5 12.8 4.4 4.4L19 7.6" /></svg>
+					{:else if verdict === 'almost'}
+						<svg class="ico" viewBox="0 0 24 24">
+							<path d="M4.6 9.6c2.3-2.3 4.6-2.3 6.9 0s4.6 2.3 6.9 0" />
+							<path d="M4.6 15.2c2.3-2.3 4.6-2.3 6.9 0s4.6 2.3 6.9 0" />
+						</svg>
+					{:else}
+						<svg class="ico" viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17" /></svg>
+					{/if}
 				</span>
 				<div class="text">
 					<p class="headline">{headline}</p>
@@ -367,6 +378,8 @@
 			</div>
 		{/if}
 
+		<hr class="stitch" />
+
 		<div class="actions">
 			<button type="button" class="btn btn-ghost explain-btn" onclick={toggleExplain}>
 				{showExplain ? 'Hide' : 'Explain'}
@@ -391,32 +404,69 @@
 </div>
 
 <style>
+	/*
+	  A slip of tinted paper slid under the page. Every colour on it is derived
+	  from one `--tone`, so the three verdicts are the same object in three inks
+	  rather than three designs.
+
+	  `--scrim` is the trick that makes the shadow warm in both palettes: the
+	  ink colour is dark in light mode and the *inverse* ink is dark in dark
+	  mode, so pointing at the right one gives a token-only "dark" to mix with.
+	*/
 	.banner {
+		--scrim: var(--text);
 		position: fixed;
 		inset: auto 0 0 0;
 		z-index: 20;
 		border-top: 2px solid var(--tone);
-		background: var(--tone-soft);
-		box-shadow: 0 -12px 34px rgb(16 24 40 / 12%);
+		background:
+			linear-gradient(var(--tone-soft), color-mix(in srgb, var(--tone-soft) 55%, var(--surface))),
+			var(--surface);
+		box-shadow: 0 -14px 36px color-mix(in srgb, var(--scrim) 16%, transparent);
 		padding-bottom: env(safe-area-inset-bottom, 0);
 	}
 
+	@media (prefers-color-scheme: dark) {
+		.banner {
+			--scrim: var(--text-inverse);
+		}
+	}
+
+	/* Leaf green: the answer stands. */
 	.banner.correct {
 		--tone: var(--primary);
 		--tone-strong: var(--primary-strong);
-		--tone-soft: color-mix(in srgb, var(--primary) 14%, var(--surface));
+		--tone-soft: color-mix(in srgb, var(--primary) 15%, var(--surface));
 	}
 
+	/*
+	  Amber, and the only tone whose ink is not simply the token: raw amber is
+	  too pale to read on its own tint in light mode, so the strong variant is
+	  pulled towards the page's ink — which lands darker on paper and lighter on
+	  moss, exactly as it needs to.
+	*/
 	.banner.almost {
 		--tone: var(--amber);
-		--tone-strong: var(--amber);
+		--tone-strong: color-mix(in srgb, var(--amber) 55%, var(--text));
 		--tone-soft: color-mix(in srgb, var(--amber) 16%, var(--surface));
 	}
 
+	/* Warm danger — terracotta gone hot, never a fire-engine red. */
 	.banner.wrong {
 		--tone: var(--danger);
 		--tone-strong: var(--danger);
 		--tone-soft: color-mix(in srgb, var(--danger) 14%, var(--surface));
+	}
+
+	/* One hand for every icon here, matching the rest of the app. */
+	.ico {
+		width: 1.15rem;
+		height: 1.15rem;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 1.9;
+		stroke-linecap: round;
+		stroke-linejoin: round;
 	}
 
 	.inner {
@@ -439,17 +489,18 @@
 		min-width: 0;
 	}
 
+	/* A pressed stamp, not a badge: hairline frame, tinted paper, tone ink —
+	   the same specimen-label idiom the onboarding steps wear. */
 	.mark {
 		display: grid;
 		place-items: center;
 		flex: 0 0 auto;
-		width: 2rem;
-		height: 2rem;
-		border-radius: 999px;
-		background: var(--tone);
-		color: var(--text-inverse);
-		font-size: 1.05rem;
-		font-weight: 900;
+		width: 2.1rem;
+		height: 2.1rem;
+		border: 1px solid color-mix(in srgb, var(--tone) 55%, transparent);
+		border-radius: var(--radius);
+		background: color-mix(in srgb, var(--tone) 22%, var(--surface));
+		color: var(--tone-strong);
 		line-height: 1;
 	}
 
@@ -457,17 +508,26 @@
 		min-width: 0;
 	}
 
+	/* The verdict is the headline of the page, so it takes the display face. */
 	.headline {
 		margin: 0;
-		font-size: 1.1rem;
-		font-weight: 900;
+		font-family: var(--font-display);
+		font-size: 1.15rem;
+		font-weight: 700;
+		font-variation-settings: 'SOFT' 26;
 		color: var(--tone-strong);
 		line-height: 1.25;
 	}
 
+	/* The answer being revealed is target-language text as often as not, so it
+	   reads in the same face the prompt did — the teaching moment set as
+	   carefully as the question was. */
 	.detail {
-		margin: 0.15rem 0 0;
+		margin: 0.2rem 0 0;
+		font-family: var(--font-display);
+		font-size: 1.05rem;
 		font-weight: 700;
+		font-variation-settings: 'SOFT' 26;
 		overflow-wrap: anywhere;
 	}
 
@@ -476,22 +536,26 @@
 		color: var(--tone-strong);
 	}
 
+	/* The receipt: a small stamp in the same ink as the mark. */
 	.xp {
 		flex: 0 0 auto;
-		padding: 0.25rem 0.6rem;
-		border-radius: 999px;
-		background: var(--tone);
-		color: var(--text-inverse);
+		padding: 0.28rem 0.55rem;
+		border: 1px solid color-mix(in srgb, var(--tone) 55%, transparent);
+		border-radius: var(--radius-sm);
+		background: color-mix(in srgb, var(--tone) 22%, var(--surface));
+		color: var(--tone-strong);
 		font-size: 0.8rem;
-		font-weight: 900;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
 		letter-spacing: 0.02em;
+		white-space: nowrap;
 	}
 
 	.explanation {
 		margin: 0.7rem 0 0;
-		padding-left: 2.7rem;
+		padding-left: 2.8rem;
 		font-size: 0.92rem;
-		line-height: 1.45;
+		line-height: 1.5;
 		color: var(--text);
 		opacity: 0.85;
 	}
@@ -508,7 +572,7 @@
 
 	.assess-label {
 		font-size: 0.78rem;
-		font-weight: 700;
+		font-weight: 500;
 		color: var(--text-muted);
 	}
 
@@ -517,15 +581,17 @@
 		gap: 0.3rem;
 	}
 
+	/* True chips, in the app's settled chip voice: hairline, pill, Karla 500,
+	   and the picked one filled with a tint of the verdict's own tone. */
 	.assess-btn {
-		padding: 0.3rem 0.7rem;
-		border: 2px solid color-mix(in srgb, var(--tone) 30%, transparent);
+		padding: 0.3rem 0.75rem;
+		border: 1px solid color-mix(in srgb, var(--tone) 40%, transparent);
 		border-radius: 999px;
 		background: transparent;
 		color: var(--text-muted);
 		font: inherit;
 		font-size: 0.8rem;
-		font-weight: 800;
+		font-weight: 500;
 		cursor: pointer;
 		transition:
 			border-color 0.15s ease,
@@ -535,6 +601,7 @@
 
 	.assess-btn:hover {
 		border-color: var(--tone);
+		background: color-mix(in srgb, var(--tone) 10%, transparent);
 		color: var(--text);
 	}
 
@@ -545,15 +612,17 @@
 
 	.assess-btn.selected {
 		border-color: var(--tone);
-		background: var(--tone);
-		color: var(--text-inverse);
+		background: color-mix(in srgb, var(--tone) 24%, var(--surface));
+		color: var(--tone-strong);
+		font-weight: 700;
 	}
 
 	.explain {
 		margin-top: 0.85rem;
 		padding: 0.8rem;
-		border-radius: var(--radius);
-		background: color-mix(in srgb, var(--surface) 70%, transparent);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		background: color-mix(in srgb, var(--surface) 80%, transparent);
 	}
 
 	.ask {
@@ -586,11 +655,16 @@
 		font-weight: 700;
 	}
 
+	/* The stitched hairline the whole app uses between a heading and what
+	   follows it — here between the verdict and what to do about it. */
+	.stitch {
+		margin: 0.9rem 0 0.85rem;
+	}
+
 	.actions {
 		display: flex;
 		align-items: center;
 		gap: 0.6rem;
-		margin-top: 1rem;
 	}
 
 	.explain-btn {
@@ -613,15 +687,25 @@
 		color: var(--text-muted);
 	}
 
+	/*
+	  The only filled button on the slip, and it wears the verdict's *strong*
+	  ink rather than the raw tone — that is what keeps the label readable on
+	  amber, in both palettes. The press is the app's 3D collapse, deepened
+	  through `--scrim` so the shadow darkens on paper and on moss alike.
+	*/
 	.continue {
 		flex: 1;
-		background: var(--tone);
+		background: var(--tone-strong);
 		color: var(--text-inverse);
-		box-shadow: 0 4px 0 color-mix(in srgb, var(--tone) 70%, black);
+		box-shadow: 0 3px 0 color-mix(in srgb, var(--tone-strong) 68%, var(--scrim));
+	}
+
+	.continue:hover:not(:disabled) {
+		filter: brightness(1.04);
 	}
 
 	.continue:active:not(:disabled) {
-		box-shadow: 0 2px 0 color-mix(in srgb, var(--tone) 70%, black);
+		box-shadow: 0 1px 0 color-mix(in srgb, var(--tone-strong) 68%, var(--scrim));
 	}
 
 	@media (max-width: 480px) {

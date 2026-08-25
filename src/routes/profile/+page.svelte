@@ -160,9 +160,16 @@
 </svelte:head>
 
 <main class="shell">
-	<header class="topbar">
-		<a class="back" href="/">← Back</a>
-		<h1>Profile</h1>
+	<header class="topbar ll-rise">
+		<a class="back" href="/" aria-label="Back to home">
+			<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+				<path d="m14.2 5.4-6.4 6.6 6.4 6.6" />
+			</svg>
+		</a>
+		<div class="identity">
+			<p class="eyebrow">Sapling</p>
+			<h1>Profile</h1>
+		</div>
 	</header>
 
 	{#if loading}
@@ -174,8 +181,15 @@
 			<p class="error" role="alert">{loadError}</p>
 		</section>
 	{:else}
-		<section class="card">
-			<h2>About you</h2>
+		<section class="card ll-rise" style="animation-delay: 60ms">
+			<div class="card-head">
+				<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
+					<path d="M4.8 19.2h3.1L19 8.1a2.2 2.2 0 0 0-3.1-3.1L4.8 16.1Z" />
+					<path d="m14.9 6.1 3 3" />
+				</svg>
+				<h2>About you</h2>
+			</div>
+			<hr class="stitch" />
 			<p class="hint lead">
 				Written in your own words, and used to build your lessons: scenarios set where you live,
 				examples about what you do, people who fit your life. It is sent along with each lesson
@@ -209,7 +223,9 @@
 								onclick={() => removeInterest(interest)}
 								aria-label={`Remove ${interest}`}
 							>
-								{interest}<span class="x" aria-hidden="true">×</span>
+								{interest}<svg class="ico x" viewBox="0 0 24 24" aria-hidden="true">
+									<path d="m7 7 10 10M17 7 7 17" />
+								</svg>
 							</button>
 						{/each}
 					</div>
@@ -277,8 +293,16 @@
 		</section>
 
 		{#if profile}
-			<section class="card">
-				<h2>Languages</h2>
+			<section class="card ll-rise" style="animation-delay: 120ms">
+				<div class="card-head">
+					<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
+						<circle cx="12" cy="12" r="8.2" />
+						<path d="M3.9 12h16.2" />
+						<path d="M12 3.8c2.3 2.2 3.6 5.1 3.6 8.2s-1.3 6-3.6 8.2c-2.3-2.2-3.6-5.1-3.6-8.2s1.3-6 3.6-8.2Z" />
+					</svg>
+					<h2>Languages</h2>
+				</div>
+				<hr class="stitch" />
 				<p class="readonly-row">
 					<span class="readonly-label">Learning</span>
 					<span class="readonly-value">
@@ -311,61 +335,166 @@
 		min-height: 60dvh;
 	}
 
+	/* One hand for every icon on this screen, matching the dashboard: 24-unit
+	   box, hairline stroke, round joins. */
+	.ico {
+		width: 1.2rem;
+		height: 1.2rem;
+		flex: 0 0 auto;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 1.6;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+
 	.topbar {
 		display: flex;
 		align-items: center;
-		gap: 1rem;
+		gap: 0.75rem;
 	}
 
+	/* The same squircle the dashboard's topbar controls wear. */
 	.back {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		flex: 0 0 auto;
+		width: 2.25rem;
+		height: 2.25rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: var(--surface);
 		color: var(--text-muted);
 		text-decoration: none;
-		font-weight: 800;
+		transition:
+			border-color 0.15s ease,
+			background 0.15s ease,
+			color 0.15s ease;
+	}
+
+	.back:hover {
+		border-color: var(--border-strong);
+		background: var(--surface-alt);
+		color: var(--text);
+	}
+
+	.back:focus-visible {
+		outline: none;
+		box-shadow: var(--ring);
+	}
+
+	.identity {
+		min-width: 0;
+	}
+
+	.eyebrow {
+		margin: 0 0 0.05rem;
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: color-mix(in srgb, var(--accent) 65%, var(--text-muted));
 	}
 
 	.topbar h1 {
 		margin: 0;
-		font-size: 1.4rem;
+		font-size: 1.55rem;
+		line-height: 1.1;
 	}
 
 	.card {
 		max-width: none;
 	}
 
-	.card h2 {
-		margin: 0 0 1rem;
-		font-size: 1.1rem;
+	/* Each card is headed like a pressed specimen: its mark on tinted paper in
+	   a dashed frame, then the app's stitched rule under the heading. */
+	.card-head {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+	}
+
+	.card-head h2 {
+		margin: 0;
+		font-size: 1.08rem;
+	}
+
+	.head-ico {
+		width: 1.85rem;
+		height: 1.85rem;
+		padding: 0.3rem;
+		border: 1px dashed var(--border-strong);
+		border-radius: var(--radius-sm);
+		background: color-mix(in srgb, var(--primary-soft) 60%, transparent);
+		color: var(--primary-strong);
+	}
+
+	.card-head + .stitch {
+		margin: 0.85rem 0 1.15rem;
 	}
 
 	.lead {
-		margin: -0.5rem 0 1.1rem;
+		margin: 0 0 1.25rem;
 	}
 
+	/*
+	  The one place on the page where you actually write something, so it is
+	  ruled like a notebook. The rule period and the line height are the same
+	  `1.5rem` on purpose — tie them together and the ink always lands on the
+	  line, whatever the root font size is. `local` makes the ruling scroll
+	  with the text rather than sitting still behind it.
+	*/
 	.about {
 		resize: vertical;
-		min-height: 7rem;
-		line-height: 1.5;
+		min-height: 7.5rem;
+		padding-top: 0.75rem;
+		line-height: 1.5rem;
+		background-image: repeating-linear-gradient(
+			to bottom,
+			transparent 0,
+			transparent calc(1.5rem - 1px),
+			color-mix(in srgb, var(--border) 75%, transparent) calc(1.5rem - 1px),
+			color-mix(in srgb, var(--border) 75%, transparent) 1.5rem
+		);
+		background-attachment: local;
+		background-position: 0 0.75rem;
 	}
 
 	.count {
 		text-align: right;
+		font-variant-numeric: tabular-nums;
 	}
 
 	.count.tight {
 		color: var(--danger);
+		font-weight: 700;
 	}
 
+	/* A ruled ledger row: the fact left, its value right. */
 	.readonly-row {
 		display: flex;
+		align-items: baseline;
 		justify-content: space-between;
 		gap: 1rem;
-		margin: 0 0 0.5rem;
+		margin: 0 0 0.9rem;
+		padding-bottom: 0.6rem;
+		border-bottom: 1px solid var(--border);
 		font-size: 0.95rem;
 	}
 
 	.readonly-label {
-		color: var(--text-muted);
+		flex: 0 0 auto;
+		font-size: 0.72rem;
 		font-weight: 700;
+		letter-spacing: 0.09em;
+		text-transform: uppercase;
+		color: var(--text-muted);
+	}
+
+	.readonly-value {
+		text-align: right;
+		font-weight: 600;
 	}
 
 	.muted {
@@ -389,15 +518,15 @@
 	.chip {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.35rem;
-		padding: 0.35rem 0.75rem;
-		border: 2px solid var(--border);
+		gap: 0.3rem;
+		padding: 0.3rem 0.7rem;
+		border: 1px solid var(--border-strong);
 		border-radius: 999px;
 		background: var(--surface);
 		color: var(--text-muted);
 		font: inherit;
-		font-size: 0.85rem;
-		font-weight: 700;
+		font-size: 0.83rem;
+		font-weight: 500;
 		cursor: pointer;
 		transition:
 			border-color 0.15s ease,
@@ -406,7 +535,8 @@
 	}
 
 	.chip:hover {
-		border-color: var(--border-strong);
+		border-color: var(--text-muted);
+		background: var(--surface-alt);
 		color: var(--text);
 	}
 
@@ -414,12 +544,18 @@
 		border-color: var(--accent);
 		background: var(--accent-soft);
 		color: var(--text);
+		font-weight: 700;
 	}
 
 	.chip .x {
-		font-size: 1rem;
-		line-height: 1;
-		opacity: 0.6;
+		width: 0.8rem;
+		height: 0.8rem;
+		stroke-width: 2;
+		opacity: 0.55;
+	}
+
+	.chip:hover .x {
+		opacity: 1;
 	}
 
 	/* Level cards ---------------------------------------------------------- */
@@ -430,12 +566,15 @@
 		gap: 0.6rem;
 	}
 
+	/* The same four cards as onboarding, down to the press: a hairline frame
+	   with a thicker bottom edge that collapses under the tap. */
 	.level {
 		display: flex;
 		flex-direction: column;
 		gap: 0.15rem;
-		padding: 0.9rem;
-		border: 2px solid var(--border);
+		padding: 0.85rem 0.9rem;
+		border: 1.5px solid var(--border);
+		border-bottom-width: 3px;
 		border-radius: var(--radius);
 		background: var(--surface);
 		color: var(--text);
@@ -454,6 +593,7 @@
 
 	.level:active {
 		transform: translateY(1px);
+		border-bottom-width: 1.5px;
 	}
 
 	.level.selected {
@@ -468,11 +608,15 @@
 	}
 
 	.level-emoji {
-		font-size: 1.3rem;
+		font-size: 1.25rem;
+		line-height: 1.2;
 	}
 
 	.level-title {
-		font-weight: 800;
+		font-family: var(--font-display);
+		font-size: 1.02rem;
+		font-weight: 700;
+		font-variation-settings: 'SOFT' 26;
 	}
 
 	.level-blurb {
@@ -488,11 +632,13 @@
 	}
 
 	.error {
-		margin: 0.75rem 0 0;
-		padding: 0.6rem 0.8rem;
+		margin: 0.85rem 0 0;
+		padding: 0.65rem 0.85rem;
+		border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
 		border-radius: var(--radius-sm);
-		background: color-mix(in srgb, var(--danger) 15%, transparent);
+		background: color-mix(in srgb, var(--danger) 12%, transparent);
 		color: var(--danger);
+		font-size: 0.9rem;
 		font-weight: 700;
 	}
 

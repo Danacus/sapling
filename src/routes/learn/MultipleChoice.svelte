@@ -213,20 +213,33 @@
 		flex-direction: column;
 	}
 
+	/* The listening escape hatch: a hairline tab rather than a button, so it
+	   reads as an option in the margin and not as the thing to press. */
 	.reveal {
 		align-self: flex-start;
 		margin: 0 0 1.1rem;
-		padding: 0.45rem 0.85rem;
-		font-size: 0.82rem;
+		padding: 0.4rem 0.8rem;
+		border-color: var(--border);
+		border-radius: var(--radius-sm);
+		background: var(--surface);
+		font-size: 0.8rem;
+		font-weight: 500;
+	}
+
+	.reveal:hover:not(:disabled) {
+		border-color: var(--border-strong);
+		background: var(--surface-alt);
 	}
 
 	.reveal:disabled {
-		opacity: 0.45;
+		border-style: dashed;
+		background: transparent;
+		opacity: 0.5;
 	}
 
 	.options {
 		display: grid;
-		gap: 0.7rem;
+		gap: 0.6rem;
 		margin-bottom: 1.5rem;
 	}
 </style>
