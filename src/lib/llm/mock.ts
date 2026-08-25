@@ -44,6 +44,7 @@ import {
 	resolveBatch
 } from './generate';
 import type { EscalationArgs, EscalationResult } from './escalation';
+import { NEW_ITEM_REF } from './schemas';
 
 /** localStorage flag that forces the mock even when a key is present. */
 export const MOCK_FLAG_KEY = 'll.mockMode';
@@ -209,16 +210,39 @@ export function mockBatchCompletion(args: BatchArgs): string {
 	const fixture = fixtureFor(args);
 	const review = reviewChallenges(args.reviewItems);
 
+	// Zero slots is review-only generation, and the mock honors it the way the
+	// prompt tells the real model to ("exactly newItemSlots entries"): no new
+	// items, and the half of the canned set that hangs off them stays home —
+	// so the offline path exercises the same all-review batches the real one
+	// produces.
+	const canned =
+		args.newItemSlots === 0
+			? fixture.challenges.filter((challenge) => !citesNewItem(challenge))
+			: fixture.challenges;
+	const newItems = args.newItemSlots === 0 ? [] : fixture.newItems;
+
 	// Always keep the canned set — it is what makes the mock cover every
 	// challenge type and both new items — and always let at least a couple of
 	// per-review-item challenges ride along, so the mock exercises review
 	// references even when the derived `count` is no bigger than the canned set.
-	const floor = fixture.challenges.length + Math.min(review.length, 2);
-	const challenges = [...fixture.challenges, ...review].slice(0, Math.max(floor, count));
+	const floor = canned.length + Math.min(review.length, 2);
+	const challenges = [...canned, ...review].slice(0, Math.max(floor, count));
 
-	const batch = { challenges, newItems: fixture.newItems };
+	const batch = { challenges, newItems };
 
 	return '```json\n' + JSON.stringify(batch, null, 1) + '\n```';
+}
+
+/**
+ * Whether a fixture challenge cites a `new:<index>` item — the half of the
+ * canned set that review-only generation must leave out. The fixtures are
+ * untyped wire objects, hence the structural peek.
+ */
+function citesNewItem(challenge: unknown): boolean {
+	const itemIds = (challenge as { itemIds?: unknown }).itemIds;
+	return (
+		Array.isArray(itemIds) && itemIds.some((id) => typeof id === 'string' && NEW_ITEM_REF.test(id))
+	);
 }
 
 /** Deterministic ids, so a mock batch is byte-identical across runs. */

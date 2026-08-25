@@ -57,6 +57,16 @@ describe('mockBatch', () => {
 		}
 	});
 
+	it('honors zero new-item slots: review-only batches introduce nothing', () => {
+		const reviewOnly = mockBatch({ ...args, newItemSlots: 0 });
+		expect(reviewOnly.newItems).toEqual([]);
+		expect(reviewOnly.challenges.length).toBeGreaterThan(0);
+		const known = new Set(args.reviewItems.map((i) => i.id));
+		for (const challenge of reviewOnly.challenges) {
+			for (const id of challenge.itemIds) expect(known.has(id)).toBe(true);
+		}
+	});
+
 	it('covers every generated challenge type and both directions', () => {
 		const types = new Set(result.challenges.map((c) => c.type));
 		expect(types).toEqual(

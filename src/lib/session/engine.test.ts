@@ -43,6 +43,7 @@ import {
 	deriveRecentMistakes,
 	isListeningChallenge,
 	planPractice,
+	dropNewItemChallenges,
 	planRefill,
 	planSession,
 	remapItemIds,
@@ -848,6 +849,12 @@ describe('planRefill', () => {
 		});
 	});
 
+	it('reviewOnly clamps the new-item slots to zero', () => {
+		const plan = planRefill([], profile(), NOW, { reviewOnly: true });
+		expect(plan.newItemSlots).toBe(0);
+		expect(plan.args.newItemSlots).toBe(0);
+	});
+
 	it('carries only the profile fields the prompt needs', () => {
 		const plan = planRefill([], profile(), NOW);
 		expect(Object.keys(plan.args.profile).sort()).toEqual([
@@ -1185,6 +1192,34 @@ describe('remapItemIds', () => {
 	});
 });
 
+describe('dropNewItemChallenges', () => {
+	function challenge(id: string, itemIds: string[]): Challenge {
+		return {
+			id,
+			type: 'typed-translation',
+			direction: 'toTarget',
+			prompt: 'p',
+			acceptedAnswers: ['a'],
+			itemIds
+		};
+	}
+
+	it('drops every challenge citing a banned new item, keeping the rest', () => {
+		const challenges = [
+			challenge('keep', ['existing']),
+			challenge('drop', ['existing', 'new1']),
+			challenge('drop-too', ['new2'])
+		];
+		const kept = dropNewItemChallenges(challenges, [item('new1', 0), item('new2', 0)]);
+		expect(ids(kept)).toEqual(['keep']);
+	});
+
+	it('is a no-op (same array) when there is nothing to ban', () => {
+		const challenges = [challenge('c1', ['x'])];
+		expect(dropNewItemChallenges(challenges, [])).toBe(challenges);
+	});
+});
+
 describe('planRefill → getBatch (mock mode)', () => {
 	it('runs in mock mode under node (no API key)', () => {
 		expect(isMockMode()).toBe(true);
@@ -1214,6 +1249,22 @@ describe('planRefill → getBatch (mock mode)', () => {
 
 		// Mock mode spends nothing.
 		expect(batch.usage).toEqual({ promptTokens: 0, completionTokens: 0 });
+	});
+
+	it('reviewOnly yields a batch with no new items, built on known words only', async () => {
+		const items = [item('a', -2 * DAY), item('b', -DAY)];
+		const plan = planRefill(items, profile(), NOW, { reviewOnly: true });
+		const batch = await getBatch(plan.args);
+
+		expect(batch.newItems).toEqual([]);
+		expect(batch.challenges.length).toBeGreaterThan(0);
+
+		// No new items means every challenge must stand on the words we sent.
+		const known = new Set(items.map((i) => i.id));
+		for (const challenge of batch.challenges) {
+			expect(challenge.itemIds.length).toBeGreaterThan(0);
+			for (const id of challenge.itemIds) expect(known.has(id)).toBe(true);
+		}
 	});
 
 	it('walks the same progress steps as the real path, instantly', async () => {

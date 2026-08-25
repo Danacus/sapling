@@ -720,6 +720,14 @@ export interface PlanRefillOptions {
 	 * added to {@link BatchArgs} when it carries real content.
 	 */
 	topic?: string;
+	/**
+	 * Generate review material only: `newItemSlots` is clamped to 0, so the
+	 * batch builds fresh challenges out of vocabulary the learner already has
+	 * and introduces nothing. The generation-side twin of {@link
+	 * PlanSessionOptions.reviewOnly} — the learn screen sets both from the one
+	 * toggle.
+	 */
+	reviewOnly?: boolean;
 }
 
 /**
@@ -735,11 +743,16 @@ export function planRefill(
 	opts: PlanRefillOptions = {}
 ): RefillPlan {
 	const recentAccuracy = accuracyFromHistory(items, { now });
-	const { reviewItems, newItemSlots } = selectSessionItems(items, {
+	const selected = selectSessionItems(items, {
 		now,
 		recentAccuracy,
 		...(opts.maxItems === undefined ? {} : { maxItems: opts.maxItems })
 	});
+	const reviewItems = selected.reviewItems;
+	// Clamped after pacing rather than inside it: the pacing answers "how much
+	// new material can this learner absorb", review-only answers "they declined
+	// any at all" — different questions, and the second one always wins.
+	const newItemSlots = opts.reviewOnly ? 0 : selected.newItemSlots;
 
 	const topic = opts.topic?.trim();
 
@@ -810,6 +823,8 @@ export interface GenerateOptions {
 	count?: number;
 	/** Forwarded to {@link planRefill}; see {@link PlanRefillOptions.topic}. */
 	topic?: string;
+	/** Forwarded to {@link planRefill}; see {@link PlanRefillOptions.reviewOnly}. */
+	reviewOnly?: boolean;
 	/**
 	 * Called as each phase of generation starts, so the learn screen can show
 	 * what is being waited on. Steps are reported, not measured: the caller times
@@ -858,6 +873,25 @@ export function dedupeNewItems(
 		else newItems.push(item);
 	}
 	return { newItems, idRemap };
+}
+
+/**
+ * Drops every challenge that cites one of `newItems` — the enforcement half of
+ * review-only generation. The prompt asks for exactly zero new items, but a
+ * model that proposes some anyway must not smuggle them in: the items are
+ * discarded before persisting, and the challenges built on them have to go
+ * too, because a kept one would cite an id that never reaches the database and
+ * sit in the pool forever as an unplayable row.
+ *
+ * Pure: no clock, no database.
+ */
+export function dropNewItemChallenges(
+	challenges: Challenge[],
+	newItems: KnowledgeItem[]
+): Challenge[] {
+	if (newItems.length === 0) return challenges;
+	const banned = new Set(newItems.map((item) => item.id));
+	return challenges.filter((challenge) => !challenge.itemIds.some((id) => banned.has(id)));
 }
 
 /**
@@ -917,7 +951,8 @@ export async function generateChallenges(
 		recentChallenges,
 		...(opts.maxItems === undefined ? {} : { maxItems: opts.maxItems }),
 		...(opts.count === undefined ? {} : { count: opts.count }),
-		...(opts.topic === undefined ? {} : { topic: opts.topic })
+		...(opts.topic === undefined ? {} : { topic: opts.topic }),
+		...(opts.reviewOnly === undefined ? {} : { reviewOnly: opts.reviewOnly })
 	});
 
 	const batch = await getBatch(plan.args, {
@@ -928,8 +963,15 @@ export async function generateChallenges(
 	// The model can re-propose a word the learner already knows (it only sees
 	// due items, not the whole collection); drop those before they fork the
 	// vocabulary, and point any challenge that referenced one at the real item.
-	const { newItems: proposed, idRemap } = dedupeNewItems(items, batch.newItems);
-	const challenges = remapItemIds(batch.challenges, idRemap);
+	const { newItems: deduped, idRemap } = dedupeNewItems(items, batch.newItems);
+	const remapped = remapItemIds(batch.challenges, idRemap);
+
+	// Review-only is a promise, not a request: whatever new vocabulary the
+	// model proposed despite the zero slots is discarded, challenges included.
+	// Challenges remapped onto *existing* items survive — the model "reusing" a
+	// known word is exactly what this mode wants.
+	const proposed = opts.reviewOnly ? [] : deduped;
+	const challenges = opts.reviewOnly ? dropNewItemChallenges(remapped, deduped) : remapped;
 
 	// The LLM layer leaves `fsrsCard` null on purpose; give every new word a
 	// real, due-now card before it reaches the database.

@@ -95,9 +95,11 @@ export function setListeningMode(on: boolean): void {
 }
 
 /**
- * Whether a session should be built only from words the learner has already
- * been reviewed on at least once — no brand-new vocabulary, and nothing gets
- * generated while it's on (see `$lib/session/engine`'s `reviewOnly` option).
+ * Whether the learner has declined new vocabulary: sessions are built only
+ * from words they have already been reviewed on at least once, and a lesson
+ * generated while it's on clamps its new-word slots to zero — fresh
+ * challenges, nothing new to learn (see `$lib/session/engine`'s `reviewOnly`
+ * options on both the session and the generation side).
  *
  * Off by default, unlike listening mode: this is a deliberate restriction the
  * learner opts into (e.g. "just let me review, don't teach me anything new

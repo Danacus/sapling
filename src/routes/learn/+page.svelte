@@ -154,17 +154,20 @@
 	const dueCount = $derived(plan?.dueCount ?? 0);
 	const canStart = $derived((plan?.challenges.length ?? 0) > 0);
 	/**
-	 * Worth nudging towards a fresh lesson: nothing to play, or barely anything.
-	 * Suppressed under review-only — generating would only add new vocabulary,
-	 * which that mode is specifically trying to keep out of the session.
-	 */
-	const nudgeGenerate = $derived(plan !== null && !reviewOnlyMode && (plan.poolLow || !canStart));
-	/**
 	 * The pool has ever held material — enough to offer "Extra practice" even
 	 * when nothing is due right now. Whether the practice plan actually turns
 	 * up anything is only known once fetched; see {@link practiceEmpty}.
 	 */
 	const hasPoolMaterial = $derived((plan?.items.length ?? 0) > 0);
+	/**
+	 * Worth nudging towards a fresh lesson: nothing to play, or barely anything.
+	 * Review-only generates too (with zero new-word slots), so the nudge stays —
+	 * except for a collection with no words at all, where a review-only batch
+	 * would have nothing to build from and the way out is switching modes.
+	 */
+	const nudgeGenerate = $derived(
+		plan !== null && (plan.poolLow || !canStart) && (!reviewOnlyMode || hasPoolMaterial)
+	);
 
 	/**
 	 * The one contextual message the card is allowed to show, picked by priority:
@@ -175,12 +178,13 @@
 	const notice = $derived.by(() => {
 		if (plan === null) return '';
 
-		// Review-only owns the empty case: generating is off the table in this
-		// mode, so the way out is Extra practice or switching back.
+		// Review-only owns the empty case: a lesson generated in this mode brings
+		// fresh challenges without new words, so the ways out are Extra practice,
+		// a review lesson, or switching back.
 		if (reviewOnlyMode && !canStart) {
 			return hasPoolMaterial
-				? 'Nothing due for review yet — Extra practice reviews ahead of schedule, or switch to All words to add new vocabulary.'
-				: 'Nothing due for review yet. Switch to All words to add new vocabulary.';
+				? 'Nothing due for review yet — Extra practice reviews ahead of schedule, or a new lesson below builds fresh challenges from words you already have.'
+				: 'Nothing to review yet. Switch to All words to add your first vocabulary.';
 		}
 
 		if (!nudgeGenerate) return '';
@@ -392,7 +396,10 @@
 		try {
 			await generateChallenges(profile, {
 				onProgress: recordPrepStep,
-				...(topic ? { topic } : {})
+				...(topic ? { topic } : {}),
+				// The one toggle governs both halves: sessions serve reviewed words
+				// only, and a lesson generated meanwhile introduces none either.
+				reviewOnly: reviewOnlyMode
 			});
 
 			// Close the last step and keep the total on screen, so "that felt long"
@@ -907,7 +914,7 @@
 					</div>
 					<p class="mode-note">
 						{reviewOnlyMode
-							? 'No new words, nothing generated.'
+							? 'No new words — lessons practise what you already have.'
 							: 'New words can join the session.'}
 					</p>
 				</div>
@@ -946,144 +953,142 @@
 					<p class="nudge ll-rise" style="animation-delay: 220ms">{notice}</p>
 				{/if}
 
-				{#if !reviewOnlyMode}
-					<section class="generate ll-rise" style="animation-delay: 260ms">
-						<button
-							type="button"
-							class="disclosure"
-							class:open={genOpen}
-							class:urged={nudgeGenerate}
-							aria-expanded={genOpen}
-							aria-controls="new-lesson-panel"
-							onclick={() => (genOpenChoice = !genOpen)}
+				<section class="generate ll-rise" style="animation-delay: 260ms">
+					<button
+						type="button"
+						class="disclosure"
+						class:open={genOpen}
+						class:urged={nudgeGenerate}
+						aria-expanded={genOpen}
+						aria-controls="new-lesson-panel"
+						onclick={() => (genOpenChoice = !genOpen)}
+					>
+						<span>New lesson</span>
+						{#if generating}
+							<span class="disc-meta">Generating…</span>
+						{/if}
+						<span class="disc-caret" aria-hidden="true">
+							<svg class="ico" viewBox="0 0 24 24"><path d="m9.6 6.3 5.7 5.7-5.7 5.7" /></svg>
+						</span>
+					</button>
+
+					{#if genOpen}
+						<div
+							class="gen-panel"
+							id="new-lesson-panel"
+							transition:slide={{ duration: motionMs(220) }}
 						>
-							<span>New lesson</span>
-							{#if generating}
-								<span class="disc-meta">Generating…</span>
-							{/if}
-							<span class="disc-caret" aria-hidden="true">
-								<svg class="ico" viewBox="0 0 24 24"><path d="m9.6 6.3 5.7 5.7-5.7 5.7" /></svg>
-							</span>
-						</button>
+							<p class="hint gen-hint">
+								Optional — pick or type a scenario and the lesson leans into it.
+							</p>
 
-						{#if genOpen}
-							<div
-								class="gen-panel"
-								id="new-lesson-panel"
-								transition:slide={{ duration: motionMs(220) }}
-							>
-								<p class="hint gen-hint">
-									Optional — pick or type a scenario and the lesson leans into it.
-								</p>
-
-								<input
-									class="input topic-input"
-									type="text"
-									bind:value={topicInput}
-									placeholder="e.g. checking into a hotel…"
-									autocomplete="off"
-									aria-label="Lesson topic"
-									onkeydown={(event) => {
-										if (event.key === 'Enter') {
-											event.preventDefault();
-											genOpenChoice = true;
-											void generate();
-										}
-									}}
-								/>
-
-								<div class="chip-row">
-									{#each visibleChips as chip (chip)}
-										<button
-											type="button"
-											class="chip"
-											class:selected={topicInput.trim().toLowerCase() === chip.toLowerCase()}
-											onclick={() => (topicInput = chip)}
-										>
-											{chip}
-										</button>
-									{/each}
-									{#if !showAllChips && topicChips.length > CHIP_PREVIEW}
-										<button
-											type="button"
-											class="chip chip-more"
-											onclick={() => (showAllChips = true)}
-										>
-											+{topicChips.length - CHIP_PREVIEW} more
-										</button>
-									{/if}
-								</div>
-
-								{#if recentTopics.length > 0}
-									<div class="recent">
-										<p class="recent-label">Recent</p>
-										<div class="chip-row">
-											{#each recentTopics as recent (recent)}
-												<button type="button" class="chip" onclick={() => (topicInput = recent)}>
-													{recent}
-												</button>
-											{/each}
-										</div>
-									</div>
-								{/if}
-
-								<button
-									type="button"
-									class="btn btn-block generate-btn"
-									disabled={generating}
-									onclick={() => {
+							<input
+								class="input topic-input"
+								type="text"
+								bind:value={topicInput}
+								placeholder="e.g. checking into a hotel…"
+								autocomplete="off"
+								aria-label="Lesson topic"
+								onkeydown={(event) => {
+									if (event.key === 'Enter') {
+										event.preventDefault();
 										genOpenChoice = true;
 										void generate();
-									}}
-								>
-									{generating ? 'Generating…' : 'Generate new lesson'}
-								</button>
+									}
+								}}
+							/>
 
-								{#if prepSteps.length > 0}
-									<ul class="prep-steps" role="status" aria-live="polite">
-										{#each prepSteps as step, index (index)}
-											{@const done = step.endedAt !== undefined}
-											<li class:done>
-												{#if done}
-													<span class="prep-mark" aria-hidden="true">
-														<svg class="ico" viewBox="0 0 24 24"
-															><path d="m5 12.8 4.4 4.4L19 7.6" /></svg
-														>
-													</span>
-												{:else}
-													<span class="prep-mark prep-spinner" aria-hidden="true"></span>
-												{/if}
-												<span class="prep-label">{step.label}</span>
-												<span class="prep-secs">{stepSeconds(step)}s</span>
-											</li>
-										{/each}
-									</ul>
-									{#if prepTotalMs !== null}
-										<p class="prep-total" transition:fade={{ duration: motionMs(200) }}>
-											Lesson ready in {(prepTotalMs / 1000).toFixed(1)}s — it's in the pool.
-										</p>
-									{/if}
-								{/if}
-
-								{#if genError}
-									<div class="gen-error">
-										<p class="error-message" role="alert">{genError}</p>
-										<button
-											type="button"
-											class="btn btn-ghost retry-btn"
-											onclick={() => {
-												genOpenChoice = true;
-												void generate();
-											}}
-										>
-											Try again
-										</button>
-									</div>
+							<div class="chip-row">
+								{#each visibleChips as chip (chip)}
+									<button
+										type="button"
+										class="chip"
+										class:selected={topicInput.trim().toLowerCase() === chip.toLowerCase()}
+										onclick={() => (topicInput = chip)}
+									>
+										{chip}
+									</button>
+								{/each}
+								{#if !showAllChips && topicChips.length > CHIP_PREVIEW}
+									<button
+										type="button"
+										class="chip chip-more"
+										onclick={() => (showAllChips = true)}
+									>
+										+{topicChips.length - CHIP_PREVIEW} more
+									</button>
 								{/if}
 							</div>
-						{/if}
-					</section>
-				{/if}
+
+							{#if recentTopics.length > 0}
+								<div class="recent">
+									<p class="recent-label">Recent</p>
+									<div class="chip-row">
+										{#each recentTopics as recent (recent)}
+											<button type="button" class="chip" onclick={() => (topicInput = recent)}>
+												{recent}
+											</button>
+										{/each}
+									</div>
+								</div>
+							{/if}
+
+							<button
+								type="button"
+								class="btn btn-block generate-btn"
+								disabled={generating}
+								onclick={() => {
+									genOpenChoice = true;
+									void generate();
+								}}
+							>
+								{generating ? 'Generating…' : 'Generate new lesson'}
+							</button>
+
+							{#if prepSteps.length > 0}
+								<ul class="prep-steps" role="status" aria-live="polite">
+									{#each prepSteps as step, index (index)}
+										{@const done = step.endedAt !== undefined}
+										<li class:done>
+											{#if done}
+												<span class="prep-mark" aria-hidden="true">
+													<svg class="ico" viewBox="0 0 24 24"
+														><path d="m5 12.8 4.4 4.4L19 7.6" /></svg
+													>
+												</span>
+											{:else}
+												<span class="prep-mark prep-spinner" aria-hidden="true"></span>
+											{/if}
+											<span class="prep-label">{step.label}</span>
+											<span class="prep-secs">{stepSeconds(step)}s</span>
+										</li>
+									{/each}
+								</ul>
+								{#if prepTotalMs !== null}
+									<p class="prep-total" transition:fade={{ duration: motionMs(200) }}>
+										Lesson ready in {(prepTotalMs / 1000).toFixed(1)}s — it's in the pool.
+									</p>
+								{/if}
+							{/if}
+
+							{#if genError}
+								<div class="gen-error">
+									<p class="error-message" role="alert">{genError}</p>
+									<button
+										type="button"
+										class="btn btn-ghost retry-btn"
+										onclick={() => {
+											genOpenChoice = true;
+											void generate();
+										}}
+									>
+										Try again
+									</button>
+								</div>
+							{/if}
+						</div>
+					{/if}
+				</section>
 			</div>
 		</div>
 	{:else if phase === 'summary'}
