@@ -11,19 +11,27 @@
   The margin dance is the part worth knowing: a prompt normally carries the
   whole gap to whatever follows it, but when a romanization line follows, the
   reading owns that gap instead and the prompt tightens up against it. That is
-  what keeps `word · reading` reading as one unit rather than as two.
+  what keeps `word · reading` reading as one unit rather than as two. A ruby
+  prompt has no line following it — the readings are *in* the prompt — so it
+  takes the normal bottom margin and the dance does not apply.
 
   `hidePrompt` is listening mode's whole footprint here (see MultipleChoice):
   the text is replaced by a placeholder of the same weight — so revealing it
   does not shove the options down the page — and the reading is withheld with
   it, since a romanization gives the word away just as plainly as the script.
+  Tokens are withheld by the same gate, and for the same reason: ruby over a
+  hidden prompt would be the answer in a different alphabet.
 -->
 <script lang="ts">
+	import type { RomanizedToken } from '$lib/romanize';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
+
+	import RubyText from './RubyText.svelte';
 
 	let {
 		kicker,
 		prompt = '',
+		promptTokens = null,
 		reading = '',
 		hidePrompt = false,
 		speakText = '',
@@ -40,9 +48,17 @@
 		 */
 		prompt?: string;
 		/**
+		 * The same prompt, tokenized and annotated by a local romanizer, or `null`
+		 * where there is none for this language. Non-null wins: the prompt renders
+		 * as ruby text and {@link reading} is dropped, because the readings are
+		 * already sitting over the words they belong to.
+		 */
+		promptTokens?: RomanizedToken[] | null;
+		/**
 		 * The prompt's Latin reading, or `''` for none. Callers apply the
 		 * learner's romanization preference themselves — this block only renders
-		 * what it is handed.
+		 * what it is handed. The fallback for languages with no local romanizer;
+		 * ignored entirely when {@link promptTokens} is given.
 		 */
 		reading?: string;
 		/** Withhold the prompt text and its reading; see the component note. */
@@ -61,7 +77,8 @@
 		size?: 'lg' | 'md';
 	} = $props();
 
-	const showReading = $derived(reading !== '' && !hidePrompt);
+	const showRuby = $derived(promptTokens !== null && promptTokens.length > 0 && !hidePrompt);
+	const showReading = $derived(reading !== '' && !hidePrompt && !showRuby);
 	const hasPromptLine = $derived(prompt !== '' || hidePrompt || speakText !== '');
 </script>
 
@@ -71,6 +88,8 @@
 	<p class="prompt {size}" class:tight={showReading}>
 		{#if hidePrompt}
 			<span class="veiled" aria-hidden="true">· · ·</span>
+		{:else if showRuby}
+			<RubyText tokens={promptTokens ?? []} />
 		{:else}
 			<span>{prompt}</span>
 		{/if}

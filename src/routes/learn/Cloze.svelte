@@ -19,13 +19,15 @@
   comes from `PromptHeader` and the line below it stays this component's own.
 -->
 <script lang="ts">
-	import type { ChallengeProps } from '$lib/challenges/props';
+	import { ALL_READINGS, rubyFor, type ChallengeProps } from '$lib/challenges/props';
+	import type { RomanizedToken } from '$lib/romanize';
 	import type { ClozeChallenge } from '$lib/types';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import { validateAnswer } from '$lib/validate';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
 	import CheckButton from './blocks/CheckButton.svelte';
 	import PromptHeader from './blocks/PromptHeader.svelte';
+	import RubyText from './blocks/RubyText.svelte';
 	import TapOption from './blocks/TapOption.svelte';
 	import TapRow from './blocks/TapRow.svelte';
 
@@ -33,7 +35,8 @@
 		challenge,
 		onanswer,
 		targetLanguage = '',
-		showReadings = true
+		readings = ALL_READINGS,
+		tokenize = null
 	}: ChallengeProps<ClozeChallenge> = $props();
 
 	const GAP = '___';
@@ -46,6 +49,44 @@
 			before: challenge.sentence.slice(0, index),
 			after: challenge.sentence.slice(index + GAP.length)
 		};
+	});
+
+	const ruby = $derived(rubyFor(tokenize, readings));
+
+	/**
+	 * The same two halves, as ruby tokens — or `null` where this language has no
+	 * local romanizer and the stored `sentenceRomanization` line below takes over.
+	 *
+	 * Romanized from the **whole** sentence, gap and all, and split afterwards:
+	 * readings are context-dependent, so tokenizing the two halves separately
+	 * would ask the romanizer to read each of them as its own sentence. The gap
+	 * comes back inside an unreadable (`reading: null`) token, possibly with the
+	 * spaces or punctuation around it merged in — hence the slicing, which keeps
+	 * every character of the original on the correct side of the blank.
+	 */
+	const rubyParts = $derived.by(() => {
+		const tokens = ruby(challenge.sentence);
+		if (!tokens) return null;
+
+		const before: RomanizedToken[] = [];
+		const after: RomanizedToken[] = [];
+		let split = false;
+		for (const token of tokens) {
+			if (split) {
+				after.push(token);
+				continue;
+			}
+			const at = token.text.indexOf(GAP);
+			if (at < 0) {
+				before.push(token);
+				continue;
+			}
+			if (at > 0) before.push({ text: token.text.slice(0, at), reading: null });
+			const tail = token.text.slice(at + GAP.length);
+			if (tail) after.push({ text: tail, reading: null });
+			split = true;
+		}
+		return { before, after };
 	});
 
 	const bank = $derived(challenge.wordBank ?? []);
@@ -93,8 +134,12 @@
 		lock.locked ? completedSentence : challenge.sentence.split(GAP).join('…')
 	);
 
+	function tokensOf(index: number): RomanizedToken[] | null {
+		return ruby(bank[index]);
+	}
+
 	function readingOf(index: number): string {
-		return (showReadings ? challenge.wordBankRomanization?.[index] : '') ?? '';
+		return (readings.sentence ? challenge.wordBankRomanization?.[index] : '') ?? '';
 	}
 
 	function pick(index: number): void {
@@ -127,7 +172,7 @@
 	<PromptHeader kicker="Fill in the blank" />
 
 	<p class="sentence">
-		<span>{parts.before}</span>
+		{#if rubyParts}<RubyText tokens={rubyParts.before} />{:else}<span>{parts.before}</span>{/if}
 		{#if usesBank}
 			<button
 				type="button"
@@ -155,10 +200,12 @@
 				placeholder="…"
 			/>
 		{/if}
-		<span>{parts.after}</span>
+		{#if rubyParts}<RubyText tokens={rubyParts.after} />{:else}<span>{parts.after}</span>{/if}
 		<SpeakButton text={spokenSentence} lang={targetLanguage} />
 	</p>
-	{#if showReadings && challenge.sentenceRomanization}
+	<!-- The stored one-line romanization, only where ruby is not already
+	     carrying the readings word by word. -->
+	{#if !rubyParts && readings.sentence && challenge.sentenceRomanization}
 		<p class="rom sentence-rom">{challenge.sentenceRomanization}</p>
 	{/if}
 
@@ -173,6 +220,7 @@
 					<TapOption
 						text={word}
 						reading={readingOf(index)}
+						tokens={tokensOf(index)}
 						state={pickedIndex === index ? 'spent' : 'idle'}
 						disabled={lock.locked}
 						onclick={() => pick(index)}

@@ -18,7 +18,8 @@
   by the same rule as the answer it is graded against, spaces or no spaces.
 -->
 <script lang="ts">
-	import type { ChallengeProps } from '$lib/challenges/props';
+	import { ALL_READINGS, rubyFor, type ChallengeProps } from '$lib/challenges/props';
+	import type { RomanizedToken } from '$lib/romanize';
 	import { isPunctuationOnly, joinTokens } from '$lib/text';
 	import type { WordOrderChallenge } from '$lib/types';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
@@ -30,7 +31,12 @@
 	// Both languages are offered to every challenge component; this one needs
 	// neither — the prompt is native, the tiles are target, and both are printed
 	// rather than spoken.
-	let { challenge, onanswer, showReadings = true }: ChallengeProps<WordOrderChallenge> = $props();
+	let {
+		challenge,
+		onanswer,
+		readings = ALL_READINGS,
+		tokenize = null
+	}: ChallengeProps<WordOrderChallenge> = $props();
 
 	/**
 	 * Tile *positions* the learner has placed, in the order they placed them.
@@ -58,8 +64,20 @@
 
 	const askedIn = $derived(challenge.instruction ?? 'Put the words in order');
 
+	/**
+	 * Every tile is target-language text — the prompt is the native one — so a
+	 * tile is romanized wherever it appears, tray or bank, from its own index.
+	 * `null` means no local romanizer, and {@link readingOf}'s stored strings
+	 * carry the line instead.
+	 */
+	const ruby = $derived(rubyFor(tokenize, readings));
+
+	function tokensOf(index: number): RomanizedToken[] | null {
+		return ruby(challenge.tiles[index]);
+	}
+
 	function readingOf(index: number): string {
-		return (showReadings ? challenge.tilesRomanization?.[index] : '') ?? '';
+		return (readings.sentence ? challenge.tilesRomanization?.[index] : '') ?? '';
 	}
 
 	function place(index: number): void {
@@ -113,6 +131,7 @@
 				<TapOption
 					text={challenge.tiles[index]}
 					reading={readingOf(index)}
+					tokens={tokensOf(index)}
 					state="selected"
 					disabled={lock.locked}
 					label={`Remove ${challenge.tiles[index]}`}
@@ -130,6 +149,7 @@
 				<TapOption
 					text={tile.text}
 					reading={readingOf(tile.index)}
+					tokens={tokensOf(tile.index)}
 					disabled={lock.locked}
 					onclick={() => place(tile.index)}
 				/>

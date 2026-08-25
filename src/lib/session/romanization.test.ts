@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { CardState, newCardState, wordStrength, type FsrsCardState } from '$lib/srs';
 import type { Challenge, KnowledgeItem } from '$lib/types';
+import type { RomanizedToken } from '$lib/romanize';
 import {
 	HIDE_READING_CEILING,
 	HIDE_READING_FLOOR,
+	applyPlan,
 	challengeReadingStrength,
 	hideReadingProbability,
-	shouldShowReading
+	planReadings,
+	shouldShowReading,
+	type ReadingPlan
 } from './romanization';
 
 /** Fixed instant: 2026-01-01T00:00:00.000Z. Every test computes off this. */
@@ -174,5 +178,128 @@ describe('shouldShowReading', () => {
 		expect(
 			shouldShowReading('adaptive', challenge(['strong', 'weak']), items, NOW, rigged(0))
 		).toBe(true);
+	});
+});
+
+describe('planReadings', () => {
+	const rigged = (value: number) => () => value;
+	/** Draws the given rolls in order, then repeats the last one forever. */
+	const sequence = (...rolls: number[]) => {
+		let at = 0;
+		return () => rolls[Math.min(at++, rolls.length - 1)];
+	};
+
+	it("'on' shows everything, with nothing to decide per word", () => {
+		const items = [item('strong', OWNED)];
+		const plan = planReadings('on', challenge(['strong']), items, NOW, rigged(0));
+		expect(plan.sentence).toBe(true);
+		expect(plan.byTerm.size).toBe(0);
+	});
+
+	it("'off' hides everything, with nothing to decide per word", () => {
+		const items = [item('weak', newCardState(NOW))];
+		const plan = planReadings('off', challenge(['weak']), items, NOW, rigged(1));
+		expect(plan.sentence).toBe(false);
+		expect(plan.byTerm.size).toBe(0);
+	});
+
+	it("'adaptive' agrees with shouldShowReading on the sentence", () => {
+		const items = [item('strong', OWNED), item('weak', newCardState(NOW))];
+		for (const ids of [['strong'], ['weak'], ['strong', 'weak'], []]) {
+			const target = challenge(ids);
+			expect(planReadings('adaptive', target, items, NOW, rigged(0.5)).sentence).toBe(
+				shouldShowReading('adaptive', target, items, NOW, rigged(0.5))
+			);
+		}
+	});
+
+	it("'adaptive' decides each word from its own strength, not the challenge's", () => {
+		const items = [item('strong', OWNED), item('weak', newCardState(NOW))];
+		// One rigged roll for every flip: the words still disagree, because it is
+		// the *strength* that differs, not the coin.
+		const plan = planReadings('adaptive', challenge(['strong', 'weak']), items, NOW, rigged(0.5));
+
+		expect(plan.byTerm.get('strong')).toBe(false);
+		expect(plan.byTerm.get('weak')).toBe(true);
+		// The weakest word still owns the whole-sentence fallback.
+		expect(plan.sentence).toBe(true);
+	});
+
+	it("'adaptive' draws an independent roll per word", () => {
+		const items = [item('mid-a', MIDDLING), item('mid-b', MIDDLING)];
+		const hideChance = hideReadingProbability(wordStrength(MIDDLING, NOW));
+		// Draw order: the sentence roll, then one per itemId.
+		const rolls = sequence(hideChance + 0.01, hideChance - 0.01, hideChance + 0.01);
+
+		const plan = planReadings('adaptive', challenge(['mid-a', 'mid-b']), items, NOW, rolls);
+
+		expect(plan.sentence).toBe(true);
+		expect(plan.byTerm.get('mid-a')).toBe(false);
+		expect(plan.byTerm.get('mid-b')).toBe(true);
+	});
+
+	it('keys per-word decisions by term, not by item id', () => {
+		const worded: KnowledgeItem = { ...item('i1', OWNED), term: '猫' };
+		const plan = planReadings('adaptive', challenge(['i1']), [worded], NOW, rigged(0.5));
+		expect([...plan.byTerm.keys()]).toEqual(['猫']);
+	});
+
+	it('contributes no entry for an itemId that no longer resolves', () => {
+		const items = [item('strong', OWNED)];
+		const plan = planReadings('adaptive', challenge(['strong', 'gone']), items, NOW, rigged(0.5));
+		expect([...plan.byTerm.keys()]).toEqual(['strong']);
+		// The vanished word still counts as unknown for the sentence fallback.
+		expect(plan.sentence).toBe(true);
+	});
+});
+
+describe('applyPlan', () => {
+	const tokens: RomanizedToken[] = [
+		{ text: '我', reading: 'wǒ' },
+		{ text: '喜欢', reading: 'xǐ huān' },
+		{ text: '___', reading: null },
+		{ text: '。', reading: null }
+	];
+	const plan = (sentence: boolean, byTerm: [string, boolean][] = []): ReadingPlan => ({
+		sentence,
+		byTerm: new Map(byTerm)
+	});
+
+	it('keeps every reading when the whole sentence shows', () => {
+		expect(applyPlan(tokens, plan(true))).toEqual(tokens);
+	});
+
+	it('drops every reading when the whole sentence hides', () => {
+		expect(applyPlan(tokens, plan(false))).toEqual([
+			{ text: '我', reading: null },
+			{ text: '喜欢', reading: null },
+			{ text: '___', reading: null },
+			{ text: '。', reading: null }
+		]);
+	});
+
+	it('lets a tracked term overrule the sentence in both directions', () => {
+		const hidden = applyPlan(tokens, plan(true, [['喜欢', false]]));
+		expect(hidden.map((token) => token.reading)).toEqual(['wǒ', null, null, null]);
+
+		const shown = applyPlan(tokens, plan(false, [['喜欢', true]]));
+		expect(shown.map((token) => token.reading)).toEqual([null, 'xǐ huān', null, null]);
+	});
+
+	it('falls back to the sentence for a token no term covers', () => {
+		// 我 is glue here — not a word this challenge is exercising.
+		expect(applyPlan(tokens, plan(true, [['喜欢', false]]))[0].reading).toBe('wǒ');
+		expect(applyPlan(tokens, plan(false, [['喜欢', true]]))[0].reading).toBe(null);
+	});
+
+	it('never invents a reading for a token that had none', () => {
+		const gap = [{ text: '___', reading: null }];
+		expect(applyPlan(gap, plan(true, [['___', true]]))).toEqual(gap);
+	});
+
+	it('does not mutate the tokens it was given', () => {
+		const input: RomanizedToken[] = [{ text: '猫', reading: 'māo' }];
+		applyPlan(input, plan(false));
+		expect(input[0].reading).toBe('māo');
 	});
 });

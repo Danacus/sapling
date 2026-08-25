@@ -23,9 +23,11 @@
 	import { fade, fly, scale, slide } from 'svelte/transition';
 
 	import { correctAnswerText, spokenAnswerFor } from '$lib/challenges/display';
+	import { ALL_READINGS } from '$lib/challenges/props';
 	import { getProfile, getStats, localDay } from '$lib/db';
 	import { LlmError, isMockMode, makeMatchPairsChallenge } from '$lib/llm';
 	import type { ProgressStep } from '$lib/llm';
+	import { loadRomanizer, type Romanizer } from '$lib/romanize';
 	import {
 		MATCH_PAIRS_EVERY,
 		MATCH_PAIRS_XP,
@@ -48,7 +50,7 @@
 		type SessionPlan
 	} from '$lib/session/engine';
 	import { motionMs } from '$lib/session/motion';
-	import { shouldShowReading } from '$lib/session/romanization';
+	import { planReadings, type ReadingPlan } from '$lib/session/romanization';
 	import type { FsrsCardState, Grade } from '$lib/srs';
 	import { runSync } from '$lib/sync/run';
 	import { warmSpeech } from '$lib/tts';
@@ -203,12 +205,18 @@
 
 	let current = $state<Challenge | null>(null);
 	/**
-	 * Whether {@link current} renders its readings. Rolled once per served
-	 * challenge in {@link show} — under the adaptive mode the answer is a coin
-	 * flip weighted by how well the challenge's words are known, and it has to
-	 * stay put for as long as the challenge is on screen.
+	 * Which readings {@link current} renders — one answer for the challenge, one
+	 * per word it exercises. Rolled once per served challenge in {@link show}:
+	 * under the adaptive mode each answer is a coin flip weighted by how well
+	 * that word is known, and every one of them has to stay put for as long as
+	 * the challenge is on screen.
 	 */
-	let currentReadings = $state(true);
+	let currentReadings = $state<ReadingPlan>(ALL_READINGS);
+	/**
+	 * The learner's local romanizer, once its chunk has landed. `null` until then
+	 * — and forever, for a language that has none; see {@link loadStartScreen}.
+	 */
+	let romanizer = $state<Romanizer | null>(null);
 	let feedback = $state<Feedback | null>(null);
 	let answers = $state<SessionAnswer[]>([]);
 	let combo = $state(0);
@@ -330,6 +338,15 @@
 				return;
 			}
 			profile = loaded;
+			// Fire-and-forget: this fetches a lazy chunk (pinyin's dictionary is not
+			// small), and nothing waits on it. Resolving `null` — no local romanizer
+			// for this language — and resolving late are the same case as far as the
+			// components are concerned: they fall back to the stored, LLM-written
+			// romanization strings, so at worst the first challenge of a session
+			// renders the way the whole app did before ruby existed.
+			void loadRomanizer(loaded.targetLanguage).then((loadedRomanizer) => {
+				romanizer = loadedRomanizer;
+			});
 			mock = isMockMode();
 			recentTopics = getRecentTopics();
 			reviewOnlyMode = getReviewOnlyMode();
@@ -518,7 +535,7 @@
 	function show(challenge: Challenge): void {
 		const at = Date.now();
 		challengeShownAt = at;
-		currentReadings = shouldShowReading(romanizationMode, challenge, items, at);
+		currentReadings = planReadings(romanizationMode, challenge, items, at);
 		current = challenge;
 		// Warm the answer's audio while the learner is still thinking: Kokoro
 		// takes a second or two per phrase, answering takes longer, so the
@@ -796,6 +813,24 @@
 			color: colors[i % colors.length],
 			round: i % 3 === 0
 		}));
+	});
+
+	/**
+	 * The vocabulary the romanizer groups its tokens around, so a word the
+	 * learner is studying comes back as one token keyed by its own term and can
+	 * hide its reading on its own schedule.
+	 */
+	const vocabTerms = $derived(items.map((item) => item.term));
+
+	/**
+	 * The tokenizer handed to every challenge component, pre-bound to that
+	 * vocabulary — or `null`, which is the signal to keep rendering the stored
+	 * romanization strings.
+	 */
+	const tokenize = $derived.by(() => {
+		// Captured by value, so the closure cannot outlive the check that made it.
+		const ready = romanizer;
+		return ready ? (text: string) => ready.tokenize(text, vocabTerms) : null;
 	});
 
 	const targetLanguage = $derived(profile?.targetLanguage ?? '');
@@ -1222,7 +1257,8 @@
 							onanswer={handleAnswer}
 							{targetLanguage}
 							{nativeLanguage}
-							showReadings={currentReadings}
+							readings={currentReadings}
+							{tokenize}
 						/>
 
 						{#if current.type !== 'match-pairs' && !feedback}

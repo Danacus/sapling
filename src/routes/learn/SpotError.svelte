@@ -18,7 +18,8 @@
 -->
 <script lang="ts">
 	import { choiceKeyAction } from '$lib/challenges/keyboard';
-	import type { ChallengeProps } from '$lib/challenges/props';
+	import { ALL_READINGS, rubyFor, type ChallengeProps } from '$lib/challenges/props';
+	import type { RomanizedToken } from '$lib/romanize';
 	import type { SpotErrorChallenge } from '$lib/types';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
 	import CheckButton from './blocks/CheckButton.svelte';
@@ -29,7 +30,12 @@
 	// Both languages are offered to every challenge component; this one needs
 	// neither — it is deliberately silent, and the meaning line is already
 	// native-language text carried on the challenge.
-	let { challenge, onanswer, showReadings = true }: ChallengeProps<SpotErrorChallenge> = $props();
+	let {
+		challenge,
+		onanswer,
+		readings = ALL_READINGS,
+		tokenize = null
+	}: ChallengeProps<SpotErrorChallenge> = $props();
 
 	let selected = $state<number | null>(null);
 
@@ -40,8 +46,21 @@
 		}
 	);
 
+	/**
+	 * The sentence tiles are the target-language text here (the meaning line
+	 * below them is native). Each token is romanized on its own — which is as it
+	 * should be: the romanizer is handed one tile, so a wrong word gets the
+	 * reading it actually has rather than one smoothed over by the sentence it
+	 * does not belong in.
+	 */
+	const ruby = $derived(rubyFor(tokenize, readings));
+
+	function tokensOf(index: number): RomanizedToken[] | null {
+		return ruby(challenge.tokens[index]);
+	}
+
 	function readingOf(index: number): string {
-		return (showReadings ? challenge.tokensRomanization?.[index] : '') ?? '';
+		return (readings.sentence ? challenge.tokensRomanization?.[index] : '') ?? '';
 	}
 
 	function select(index: number): void {
@@ -89,6 +108,7 @@
 				<TapOption
 					text={token}
 					reading={readingOf(index)}
+					tokens={tokensOf(index)}
 					size="inline"
 					selection="radio"
 					state={selected === index ? 'selected' : 'idle'}

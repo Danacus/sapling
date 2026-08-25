@@ -24,7 +24,8 @@
 -->
 <script lang="ts">
 	import { choiceKeyAction } from '$lib/challenges/keyboard';
-	import type { ChallengeProps } from '$lib/challenges/props';
+	import { ALL_READINGS, rubyFor, type ChallengeProps } from '$lib/challenges/props';
+	import type { RomanizedToken } from '$lib/romanize';
 	import { isListeningChallenge } from '$lib/session/engine';
 	import { speak, ttsAvailable } from '$lib/tts';
 	import type { MultipleChoiceChallenge } from '$lib/types';
@@ -38,7 +39,8 @@
 		challenge,
 		onanswer,
 		targetLanguage = '',
-		showReadings = true
+		readings = ALL_READINGS,
+		tokenize = null
 	}: ChallengeProps<MultipleChoiceChallenge> = $props();
 
 	/** Read once — the toggle lives in Settings, not mid-session. */
@@ -130,8 +132,25 @@
 	 */
 	const promptIsTarget = $derived(challenge.direction === 'toNative');
 
+	/**
+	 * Ruby for the two slots that carry target-language text, each in exactly one
+	 * direction — the same split the stored `promptRomanization` /
+	 * `optionsRomanization` fields already make. `null` from either means this
+	 * language has no local romanizer, and the stored strings below take over.
+	 *
+	 * Nothing special is done for listening mode: `PromptHeader` withholds the
+	 * tokens along with the prompt text, because ruby over a hidden prompt would
+	 * be the answer written in a second alphabet.
+	 */
+	const ruby = $derived(rubyFor(tokenize, readings));
+	const promptTokens = $derived(promptIsTarget ? ruby(challenge.prompt) : null);
+
+	function tokensOf(index: number): RomanizedToken[] | null {
+		return promptIsTarget ? null : ruby(challenge.options[index]);
+	}
+
 	function readingOf(index: number): string {
-		return (showReadings ? challenge.optionsRomanization?.[index] : '') ?? '';
+		return (readings.sentence ? challenge.optionsRomanization?.[index] : '') ?? '';
 	}
 
 	function select(index: number): void {
@@ -168,7 +187,8 @@
 	<PromptHeader
 		kicker={askedIn}
 		prompt={challenge.prompt}
-		reading={(showReadings ? challenge.promptRomanization : '') ?? ''}
+		{promptTokens}
+		reading={(readings.sentence ? challenge.promptRomanization : '') ?? ''}
 		hidePrompt={hidingPrompt}
 		speakText={promptIsTarget ? challenge.prompt : ''}
 		speakLang={targetLanguage}
@@ -193,6 +213,7 @@
 			<TapOption
 				text={option}
 				reading={readingOf(index)}
+				tokens={tokensOf(index)}
 				badge={index + 1}
 				size="card"
 				align="start"

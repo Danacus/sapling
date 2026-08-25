@@ -26,6 +26,7 @@
 	},
 	"dependencies": {
 		"dexie": "^4.4.5",
+		"pinyin-pro": "^3.29.3",
 		"ts-fsrs": "^5.4.1",
 		"zod": "^4.4.3"
 	}

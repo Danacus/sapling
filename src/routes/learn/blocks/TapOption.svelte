@@ -24,11 +24,22 @@
   second a bad pair spends being wrong, `spent` a chip whose word is currently
   sitting somewhere else on screen. `wrong` shakes on its own; `pop` is the
   separate one-shot beat a freshly matched tile plays over `correct`.
+
+  The reading comes in one of two shapes, and only one of them is ever used:
+  `reading`, the stored sentence-wide string printed under the word, or
+  `tokens`, a local romanizer's per-token annotation printed *over* it. Tokens
+  win where they exist. Both stay the caller's decision — a tap target renders
+  what it is handed.
 -->
 <script lang="ts">
+	import type { RomanizedToken } from '$lib/romanize';
+
+	import RubyText from './RubyText.svelte';
+
 	let {
 		text,
 		reading = '',
+		tokens = null,
 		badge,
 		state = 'idle',
 		size = 'tile',
@@ -44,6 +55,12 @@
 		text: string;
 		/** Its Latin reading, or `''`. The caller applies the learner's setting. */
 		reading?: string;
+		/**
+		 * The same text, tokenized and annotated by a local romanizer, or `null`
+		 * where there is none for this language. Non-null replaces both {@link
+		 * text} and {@link reading} with one ruby run.
+		 */
+		tokens?: RomanizedToken[] | null;
 		/**
 		 * The keyboard digit that picks this option. Rendered as a badge, hidden
 		 * on touch pointers where it means nothing.
@@ -94,9 +111,13 @@
 		<span class="key" aria-hidden="true">{badge}</span>
 	{/if}
 	<span class="label">
-		<span>{text}</span>
-		{#if reading !== ''}
-			<span class="rom">{reading}</span>
+		{#if tokens && tokens.length > 0}
+			<RubyText {tokens} />
+		{:else}
+			<span>{text}</span>
+			{#if reading !== ''}
+				<span class="rom">{reading}</span>
+			{/if}
 		{/if}
 	</span>
 </button>
@@ -126,6 +147,16 @@
 	.label {
 		min-width: 0;
 		overflow-wrap: anywhere;
+	}
+
+	/* Hanzi need more pixels than Latin at the same point size — the strokes of
+	   银 close up where an `a` stays open — so an annotated label sets its
+	   specimen at 115%, the modest upsize Chinese print gives characters sitting
+	   in Latin body text. Riding on the ruby wrapper keeps it exactly scoped:
+	   the wrapper only exists for target-language text with a local romanizer,
+	   so Latin labels never move. */
+	.label > :global(.ruby-text) {
+		font-size: 1.15em;
 	}
 
 	/* Sizes ---------------------------------------------------------------- */
@@ -171,6 +202,7 @@
 		font-size: 0.72rem;
 		font-weight: 500;
 	}
+
 
 	/* States --------------------------------------------------------------- */
 

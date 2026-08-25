@@ -7,7 +7,7 @@
   Enter submits.
 -->
 <script lang="ts">
-	import type { ChallengeProps } from '$lib/challenges/props';
+	import { ALL_READINGS, rubyFor, type ChallengeProps } from '$lib/challenges/props';
 	import type { TypedTranslationChallenge } from '$lib/types';
 	import { validateAnswer } from '$lib/validate';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
@@ -19,7 +19,8 @@
 		onanswer,
 		targetLanguage = '',
 		nativeLanguage = '',
-		showReadings = true
+		readings = ALL_READINGS,
+		tokenize = null
 	}: ChallengeProps<TypedTranslationChallenge> = $props();
 
 	let typed = $state('');
@@ -47,6 +48,15 @@
 	 * speaks it once the learner has committed.
 	 */
 	const promptIsTarget = $derived(challenge.direction === 'toNative');
+	/**
+	 * The prompt is the only target-language text on screen — the answer is
+	 * still in the learner's head — and only in one direction, which is the same
+	 * condition the stored `promptRomanization` is written under. `null` falls
+	 * the whole line back to that stored string.
+	 */
+	const promptTokens = $derived(
+		promptIsTarget ? rubyFor(tokenize, readings)(challenge.prompt) : null
+	);
 	const ready = $derived(typed.trim().length > 0 && !lock.locked);
 
 	function submit(): void {
@@ -74,7 +84,8 @@
 	<PromptHeader
 		kicker={asked}
 		prompt={challenge.prompt}
-		reading={(showReadings ? challenge.promptRomanization : '') ?? ''}
+		{promptTokens}
+		reading={(readings.sentence ? challenge.promptRomanization : '') ?? ''}
 		speakText={promptIsTarget ? challenge.prompt : ''}
 		speakLang={targetLanguage}
 	/>

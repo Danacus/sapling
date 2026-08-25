@@ -24,7 +24,7 @@
   its per-challenge reset.
 -->
 <script lang="ts">
-	import type { ChallengeProps } from '$lib/challenges/props';
+	import { ALL_READINGS, rubyFor, type ChallengeProps } from '$lib/challenges/props';
 	import { speak } from '$lib/tts';
 	import type { MatchPairsChallenge } from '$lib/types';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
@@ -35,8 +35,16 @@
 		challenge,
 		onanswer,
 		targetLanguage = '',
-		showReadings = true
+		readings = ALL_READINGS,
+		tokenize = null
 	}: ChallengeProps<MatchPairsChallenge> = $props();
+
+	/**
+	 * Ruby for the **left** column only. `a` is the term and `b` is its meaning
+	 * in the learner's own language — which is why only `aRom` is ever written —
+	 * so romanizing the right column would be annotating English with pinyin.
+	 */
+	const ruby = $derived(rubyFor(tokenize, readings));
 
 	/** Case/whitespace-insensitive text key, for matching tiles by content. */
 	function textKey(text: string): string {
@@ -239,7 +247,8 @@
 			{#each left as tile (tile.pair)}
 				<TapOption
 					text={tile.text}
-					reading={(showReadings ? tile.rom : '') ?? ''}
+					reading={(readings.sentence ? tile.rom : '') ?? ''}
+					tokens={ruby(tile.text)}
 					fill
 					selection="toggle"
 					state={stateOf(
@@ -258,7 +267,7 @@
 			{#each right as tile (tile.pair)}
 				<TapOption
 					text={tile.text}
-					reading={(showReadings ? tile.rom : '') ?? ''}
+					reading={(readings.sentence ? tile.rom : '') ?? ''}
 					fill
 					selection="toggle"
 					state={stateOf(

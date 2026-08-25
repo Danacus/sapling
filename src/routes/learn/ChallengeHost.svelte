@@ -23,7 +23,10 @@
 -->
 <script lang="ts">
 	import { unhandledChallenge } from '$lib/challenges/display';
+	import { ALL_READINGS } from '$lib/challenges/props';
+	import type { RomanizedToken } from '$lib/romanize';
 	import type { AnswerEvent } from '$lib/session/engine';
+	import type { ReadingPlan } from '$lib/session/romanization';
 	import type { Challenge } from '$lib/types';
 
 	import Cloze from './Cloze.svelte';
@@ -38,28 +41,30 @@
 		onanswer,
 		targetLanguage = '',
 		nativeLanguage = '',
-		showReadings = true
+		readings = ALL_READINGS,
+		tokenize = null
 	}: {
 		challenge: Challenge;
 		onanswer: (event: AnswerEvent) => void;
 		targetLanguage?: string;
 		nativeLanguage?: string;
-		showReadings?: boolean;
+		readings?: ReadingPlan;
+		tokenize?: ((text: string) => RomanizedToken[]) | null;
 	} = $props();
 </script>
 
 {#if challenge.type === 'multiple-choice'}
-	<MultipleChoice {challenge} {onanswer} {targetLanguage} {nativeLanguage} {showReadings} />
+	<MultipleChoice {challenge} {onanswer} {targetLanguage} {nativeLanguage} {readings} {tokenize} />
 {:else if challenge.type === 'cloze'}
-	<Cloze {challenge} {onanswer} {targetLanguage} {nativeLanguage} {showReadings} />
+	<Cloze {challenge} {onanswer} {targetLanguage} {nativeLanguage} {readings} {tokenize} />
 {:else if challenge.type === 'typed-translation'}
-	<TypedTranslation {challenge} {onanswer} {targetLanguage} {nativeLanguage} {showReadings} />
+	<TypedTranslation {challenge} {onanswer} {targetLanguage} {nativeLanguage} {readings} {tokenize} />
 {:else if challenge.type === 'word-order'}
-	<WordOrder {challenge} {onanswer} {targetLanguage} {nativeLanguage} {showReadings} />
+	<WordOrder {challenge} {onanswer} {targetLanguage} {nativeLanguage} {readings} {tokenize} />
 {:else if challenge.type === 'spot-error'}
-	<SpotError {challenge} {onanswer} {targetLanguage} {nativeLanguage} {showReadings} />
+	<SpotError {challenge} {onanswer} {targetLanguage} {nativeLanguage} {readings} {tokenize} />
 {:else if challenge.type === 'match-pairs'}
-	<MatchPairs {challenge} {onanswer} {targetLanguage} {nativeLanguage} {showReadings} />
+	<MatchPairs {challenge} {onanswer} {targetLanguage} {nativeLanguage} {readings} {tokenize} />
 {:else}
 	{unhandledChallenge(challenge)}
 {/if}
