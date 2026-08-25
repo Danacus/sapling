@@ -10,9 +10,9 @@
   those words actually mean. Transparency is the feature; nothing is
   summarized away.
 
-  Read-only on purpose. Forgetting a word is destructive and has no undo, so
-  it stays behind the dashboard's Manage toggle rather than living one
-  mis-tap away from a row you opened out of curiosity.
+  The one write is forgetting a word, and it lives at the bottom of an opened
+  detail behind its own confirm step: destructive with no undo, so it must
+  never be one mis-tap from a row opened out of curiosity.
 
   All derivation goes through `$lib/words/view` — this file only decides how
   the numbers look, never what they are.
@@ -20,7 +20,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 
-	import { getAllItems, getProfile } from '$lib/db';
+	import { deleteItem, getAllItems, getProfile } from '$lib/db';
 	import { hideReadingProbability } from '$lib/session/romanization';
 	import { CardState } from '$lib/srs';
 	import type { KnowledgeItem, Profile } from '$lib/types';
@@ -87,6 +87,16 @@
 
 	/** Ids of the rows opened out. Several at once: comparing two words is the point. */
 	let opened = $state<string[]>([]);
+
+	/**
+	 * The forget flow, armed per row: the first tap swaps the quiet button for
+	 * an explicit confirm pair, and closing the row disarms it. There is no
+	 * undo, so one mis-tap must never be enough — but a browser `confirm()`
+	 * would be the only native dialog in the app, so the second step lives on
+	 * the page instead.
+	 */
+	let confirming = $state<string | null>(null);
+	let forgetError = $state<{ id: string; message: string } | null>(null);
 
 	$effect(() => {
 		if (!browser) return;
@@ -232,7 +242,37 @@
 	}
 
 	function toggle(id: string): void {
-		opened = isOpen(id) ? opened.filter((candidate) => candidate !== id) : [...opened, id];
+		if (isOpen(id)) {
+			opened = opened.filter((candidate) => candidate !== id);
+			if (confirming === id) confirming = null;
+			if (forgetError?.id === id) forgetError = null;
+		} else {
+			opened = [...opened, id];
+		}
+	}
+
+	/**
+	 * Forgets a word for good — its meaning, its history and its SRS card. The
+	 * only way back is to meet it again in a future lesson, as a brand-new item.
+	 * Queued challenges that referenced it stay playable and simply grade
+	 * nothing (see `applyResult`), so nothing has to be swept.
+	 */
+	async function removeItem(row: WordRow): Promise<void> {
+		const id = row.item.id;
+		try {
+			await deleteItem(id);
+			// `rows` and the summary counts are derived from `items`, so one
+			// filter updates the whole page.
+			items = items.filter((candidate) => candidate.id !== id);
+			opened = opened.filter((candidate) => candidate !== id);
+			confirming = null;
+			forgetError = null;
+		} catch (cause) {
+			forgetError = {
+				id,
+				message: cause instanceof Error ? cause.message : 'Could not delete that word.'
+			};
+		}
 	}
 
 	function clearFilters(): void {
@@ -529,6 +569,43 @@
 											<p class="sub">
 												Oldest to newest{earlier > 0 ? ` · ${earlier} earlier not shown` : ''}
 											</p>
+										{/if}
+									</div>
+
+									<div class="forget-block">
+										{#if confirming === row.item.id}
+											<p class="forget-warning">
+												Forgetting “{row.item.term}” removes its progress and review history. There
+												is no undo.
+											</p>
+											<div class="forget-actions">
+												<button
+													type="button"
+													class="btn forget-confirm"
+													onclick={() => void removeItem(row)}
+												>
+													Forget for good
+												</button>
+												<button type="button" class="btn btn-ghost" onclick={() => (confirming = null)}>
+													Keep it
+												</button>
+											</div>
+										{:else}
+											<button
+												type="button"
+												class="btn btn-ghost forget-arm"
+												onclick={() => (confirming = row.item.id)}
+											>
+												<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+													<path d="M5.4 7h13.2" />
+													<path d="M9.2 7V5.2h5.6V7" />
+													<path d="m7 7 .8 12h8.4L17 7" />
+												</svg>
+												Forget this word
+											</button>
+										{/if}
+										{#if forgetError?.id === row.item.id}
+											<p class="error forget-error" role="alert">{forgetError.message}</p>
 										{/if}
 									</div>
 								</div>
@@ -1226,6 +1303,70 @@
 		height: 1.05rem;
 		border-radius: 1px;
 		opacity: 0.85;
+	}
+
+	/* Forgetting ------------------------------------------------------------- */
+
+	/* Set off below its own hairline: destruction lives at the bottom of the
+	   note, not among the facts. */
+	.forget-block {
+		margin-top: 1rem;
+		padding-top: 0.75rem;
+		border-top: 1px dashed var(--border);
+	}
+
+	.forget-arm {
+		padding: 0.4rem 0.8rem;
+		font-size: 0.83rem;
+	}
+
+	.forget-arm .ico {
+		width: 1rem;
+		height: 1rem;
+	}
+
+	.forget-arm:hover:not(:disabled) {
+		background: color-mix(in srgb, var(--danger) 10%, transparent);
+		color: var(--danger);
+	}
+
+	.forget-warning {
+		margin: 0 0 0.6rem;
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--danger);
+	}
+
+	.forget-actions {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+
+	.forget-actions .btn {
+		padding: 0.45rem 0.9rem;
+		font-size: 0.83rem;
+	}
+
+	/* The danger twin of .btn-primary, pressed edge and all. */
+	.forget-confirm {
+		background: var(--danger);
+		color: var(--text-inverse);
+		box-shadow: 0 3px 0 color-mix(in srgb, var(--danger) 70%, black);
+	}
+
+	.forget-confirm:hover:not(:disabled) {
+		filter: brightness(1.04);
+	}
+
+	.forget-confirm:active:not(:disabled) {
+		box-shadow: 0 1px 0 color-mix(in srgb, var(--danger) 70%, black);
+	}
+
+	.forget-error {
+		margin-top: 0.6rem;
+		font-size: 0.85rem;
 	}
 
 	/* Empty results ---------------------------------------------------------- */

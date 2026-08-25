@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 
-	import { deleteItem, getAllItems, getPool, getProfile, getStats, localDay } from '$lib/db';
+	import { getAllItems, getPool, getProfile, getStats, localDay } from '$lib/db';
 	import { hideReadingProbability } from '$lib/session/romanization';
 	import { isDue, wordStrength, type FsrsCardState } from '$lib/srs';
 	import type { KnowledgeItem, Profile, Stats } from '$lib/types';
@@ -37,9 +37,6 @@
 	let showAllWeak = $state(false);
 	/** Challenges in the pool — an upper bound on what a session could draw from. */
 	let pooled = $state(0);
-	/** Word list in edit mode: every row grows a delete button. Off by default. */
-	let managing = $state(false);
-	let manageError = $state('');
 
 	$effect(() => {
 		if (!browser) return;
@@ -108,25 +105,6 @@
 	const visibleWeakest = $derived(
 		showAllWeak ? weakestFirst : weakestFirst.slice(0, WEAK_PREVIEW_COUNT)
 	);
-
-	/**
-	 * Forgets a word for good — its meaning, its history and its SRS card.
-	 *
-	 * Confirmed by name, because there is no undo: the only way back is to meet
-	 * the word again in a future lesson, as a brand-new item. Queued challenges
-	 * that referenced it stay playable and simply grade nothing (see
-	 * `applyResult`), so nothing has to be swept.
-	 */
-	async function removeItem(item: KnowledgeItem): Promise<void> {
-		if (!confirm(`Forget "${item.term}"? Its progress and review history go with it.`)) return;
-		try {
-			await deleteItem(item.id);
-			items = items.filter((candidate) => candidate.id !== item.id);
-			manageError = '';
-		} catch (cause) {
-			manageError = cause instanceof Error ? cause.message : 'Could not delete that word.';
-		}
-	}
 
 	/**
 	 * Red below 0.5, amber below 0.85, green above — which on the `wordStrength`
@@ -242,17 +220,7 @@
 					<h2>Word strength</h2>
 					<div class="strength-tools">
 						<span class="strength-count">{items.length} words known</span>
-						<a class="btn btn-ghost manage-btn" href="/words">All words</a>
-						<button
-							type="button"
-							class="btn btn-ghost manage-btn"
-							onclick={() => {
-								managing = !managing;
-								manageError = '';
-							}}
-						>
-							{managing ? 'Done' : 'Manage'}
-						</button>
+						<a class="btn btn-ghost words-link" href="/words">All words</a>
 					</div>
 				</div>
 				<hr class="stitch" />
@@ -275,25 +243,10 @@
 									color={strengthColor(entry.strength)}
 									label={`Recall strength for ${entry.item.term}`}
 								/>
-								{#if managing}
-									<button
-										type="button"
-										class="forget"
-										aria-label={`Forget ${entry.item.term}`}
-										onclick={() => void removeItem(entry.item)}
-									>
-										<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-											<path d="m7 7 10 10M17 7 7 17" />
-										</svg>
-									</button>
-								{/if}
 							</div>
 						</li>
 					{/each}
 				</ul>
-				{#if manageError}
-					<p class="error manage-error" role="alert">{manageError}</p>
-				{/if}
 				{#if weakestFirst.length > WEAK_PREVIEW_COUNT}
 					<button type="button" class="btn btn-ghost show-all" onclick={() => (showAllWeak = !showAllWeak)}>
 						{showAllWeak ? 'Show fewer' : `Show all ${weakestFirst.length}`}
@@ -555,68 +508,17 @@
 		gap: 0.5rem;
 	}
 
-	.manage-btn {
+	.words-link {
 		padding: 0.28rem 0.7rem;
 		border-color: var(--border);
 		font-size: 0.78rem;
-		/* The pair is one button and one link; only the link would otherwise
-		   arrive underlined, and they have to read as the same control. */
+		/* An anchor wearing .btn arrives underlined; the control must read as a
+		   button, not a link in a box. */
 		text-decoration: none;
 	}
 
-	/* The bar shares its column with the delete button in manage mode; without
-	   it the flex row is a single full-width child and nothing moves. */
-	.word-bar {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
 	.word-bar :global(.bar) {
-		flex: 1;
 		min-width: 0;
-	}
-
-	.forget {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		flex: 0 0 auto;
-		width: 1.7rem;
-		height: 1.7rem;
-		padding: 0;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
-		background: var(--surface);
-		color: var(--text-muted);
-		font: inherit;
-		line-height: 1;
-		cursor: pointer;
-		transition:
-			border-color 0.15s ease,
-			background 0.15s ease,
-			color 0.15s ease;
-	}
-
-	.forget .ico {
-		width: 0.85rem;
-		height: 0.85rem;
-		stroke-width: 1.9;
-	}
-
-	.forget:hover {
-		border-color: var(--danger);
-		background: color-mix(in srgb, var(--danger) 10%, transparent);
-		color: var(--danger);
-	}
-
-	.forget:focus-visible {
-		outline: none;
-		box-shadow: var(--ring);
-	}
-
-	.manage-error {
-		margin-top: 0.85rem;
 	}
 
 	.word-text {
