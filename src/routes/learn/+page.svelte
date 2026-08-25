@@ -20,7 +20,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
-	import { fade, fly, scale } from 'svelte/transition';
+	import { fade, fly, scale, slide } from 'svelte/transition';
 
 	import { correctAnswerText, spokenAnswerFor } from '$lib/challenges/display';
 	import { getProfile, getStats, localDay } from '$lib/db';
@@ -79,6 +79,14 @@
 		'Talking about your weekend'
 	];
 
+	/**
+	 * How many suggestions the topic row shows before it offers the rest. The
+	 * full list is eight-plus chips — a wall of pills the learner has to read
+	 * past to reach the one button that matters — so the closed row is a taste
+	 * and "+n more" is the way to the whole shelf.
+	 */
+	const CHIP_PREVIEW = 4;
+
 	type Phase = 'loading' | 'start' | 'playing' | 'summary';
 
 	interface Feedback {
@@ -113,10 +121,32 @@
 	/** The fetched practice plan came back empty — nothing ahead of schedule to review. */
 	let practiceEmpty = $state(false);
 
+	/**
+	 * Presentation-only: the learner's explicit choice about the "New lesson"
+	 * disclosure. `null` means they have not touched it, so it follows
+	 * {@link genAutoOpen}; once they open or close it their choice sticks.
+	 */
+	let genOpenChoice = $state<boolean | null>(null);
+	/** Presentation-only: the topic row has been asked for the rest of its chips. */
+	let showAllChips = $state(false);
+
 	const topicChips = $derived([
 		...TOPIC_SUGGESTIONS,
 		...(profile?.interests ?? []).slice(0, 2).map((interest) => `Chatting about ${interest}`)
 	]);
+
+	/**
+	 * The trimmed suggestion row: the first {@link CHIP_PREVIEW}, plus whichever
+	 * chip is currently picked so a selection made from the expanded row does not
+	 * vanish when the row closes again.
+	 */
+	const visibleChips = $derived.by(() => {
+		if (showAllChips) return topicChips;
+		const head = topicChips.slice(0, CHIP_PREVIEW);
+		const key = topicInput.trim().toLowerCase();
+		const picked = topicChips.find((chip) => chip.toLowerCase() === key);
+		return picked && !head.includes(picked) ? [...head, picked] : head;
+	});
 
 	const readyCount = $derived(plan?.readyCount ?? 0);
 	const dueCount = $derived(plan?.dueCount ?? 0);
@@ -133,6 +163,33 @@
 	 * up anything is only known once fetched; see {@link practiceEmpty}.
 	 */
 	const hasPoolMaterial = $derived((plan?.items.length ?? 0) > 0);
+
+	/**
+	 * The one contextual message the card is allowed to show, picked by priority:
+	 * review-only with nothing due beats nothing-to-play beats a thinning pool.
+	 * Three stacked amber boxes were three ways of saying "here is your next
+	 * move" at once, which is no priority at all — this slot says it once.
+	 */
+	const notice = $derived.by(() => {
+		if (plan === null) return '';
+
+		// Review-only owns the empty case: generating is off the table in this
+		// mode, so the way out is Extra practice or switching back.
+		if (reviewOnlyMode && !canStart) {
+			return hasPoolMaterial
+				? 'Nothing due for review yet — Extra practice reviews ahead of schedule, or switch to All words to add new vocabulary.'
+				: 'Nothing due for review yet. Switch to All words to add new vocabulary.';
+		}
+
+		if (!nudgeGenerate) return '';
+
+		const body = canStart
+			? 'Running low on fresh material — a new lesson tops the pool back up.'
+			: hasPoolMaterial
+				? 'Nothing due right now — try Extra practice above, or open New lesson below.'
+				: 'Nothing to practise yet. Generate a lesson to get started.';
+		return mock ? `${body} In practice mode it's instant and free.` : body;
+	});
 
 	/* Session ----------------------------------------------------------------- */
 
@@ -191,6 +248,23 @@
 	let prepNow = $state(Date.now());
 	/** Total generation time, kept on screen once the lesson has landed. */
 	let prepTotalMs = $state<number | null>(null);
+
+	/**
+	 * Where the "New lesson" disclosure sits before the learner has an opinion:
+	 * open whenever a run has something to show (in flight, its ledger, a
+	 * failure to retry), and open when generating is genuinely the *only* way
+	 * forward. A merely thinning pool gets the highlight (`.urged`) instead —
+	 * a hint, not a drawer opening itself in the learner's face.
+	 */
+	const genAutoOpen = $derived(
+		generating || genError !== '' || prepSteps.length > 0 || (nudgeGenerate && !canStart)
+	);
+	/**
+	 * An explicit tap always wins, so the caret never has a dead click — and the
+	 * two Generate buttons set the choice themselves, which is what keeps the
+	 * ledger on screen through a run the learner started.
+	 */
+	const genOpen = $derived(genOpenChoice ?? genAutoOpen);
 
 	/** Closes whichever step is still open at `at`. */
 	function closeOpenStep(steps: PrepStep[], at: number): PrepStep[] {
@@ -747,162 +821,230 @@
 	{#if phase === 'loading'}
 		<div class="centered"><Spinner /></div>
 	{:else if phase === 'start'}
+		<!--
+		  The start screen as one journal entry: today's figures ruled into two
+		  columns, the mode that produced them directly under, then the single
+		  green button the whole card exists for. Everything else is quieter than
+		  that button by construction — the secondary action is a hairline ghost,
+		  the guidance is one message rather than a stack of boxes, and the
+		  generator is folded away until it is asked for or genuinely needed.
+		-->
 		<div class="centered">
 			<div class="card start-card ll-rise">
 				<h1>Ready when you are</h1>
 				<hr class="stitch" />
 
 				{#if bootError}
-					<p class="error-message" role="alert">{bootError}</p>
+					<p class="error-message boot-error" role="alert">{bootError}</p>
 				{:else}
-					<p class="pool-status">
-						<strong>{readyCount}</strong> challenge{readyCount === 1 ? '' : 's'} ready ·
-						<strong>{dueCount}</strong>
-						word{dueCount === 1 ? '' : 's'} due for review
-					</p>
+					<div class="ledger ll-rise" style="animation-delay: 70ms">
+						<div class="figure">
+							<span class="fig-num">{readyCount}</span>
+							<span class="fig-label">Challenge{readyCount === 1 ? '' : 's'} ready</span>
+						</div>
+						<div class="figure">
+							<span class="fig-num" class:pending={dueCount > 0}>{dueCount}</span>
+							<span class="fig-label">Word{dueCount === 1 ? '' : 's'} due</span>
+						</div>
+					</div>
 				{/if}
 
-				<label class="review-only-toggle">
-					<input
-						type="checkbox"
-						checked={reviewOnlyMode}
-						onchange={(event) => toggleReviewOnly(event.currentTarget.checked)}
-					/>
-					Review only — no new words, nothing generated
-				</label>
+				<div class="mode-block ll-rise" style="animation-delay: 120ms">
+					<div class="mode" role="group" aria-label="Session mode">
+						<button
+							type="button"
+							class="mode-opt"
+							class:on={!reviewOnlyMode}
+							aria-pressed={!reviewOnlyMode}
+							onclick={() => toggleReviewOnly(false)}
+						>
+							All words
+						</button>
+						<button
+							type="button"
+							class="mode-opt"
+							class:on={reviewOnlyMode}
+							aria-pressed={reviewOnlyMode}
+							onclick={() => toggleReviewOnly(true)}
+						>
+							Review only
+						</button>
+					</div>
+					<p class="mode-note">
+						{reviewOnlyMode
+							? 'No new words, nothing generated.'
+							: 'New words can join the session.'}
+					</p>
+				</div>
 
-				<button
-					type="button"
-					class="btn btn-primary btn-block start-btn"
-					disabled={!canStart}
-					onclick={() => void beginSession()}
-				>
-					Start session
-				</button>
-
-				{#if hasPoolMaterial}
+				<div class="act ll-rise" style="animation-delay: 170ms">
 					<button
 						type="button"
-						class="btn btn-ghost btn-block practice-btn"
-						disabled={practiceLoading}
-						onclick={() => void beginPractice()}
+						class="btn btn-primary btn-block start-btn"
+						disabled={!canStart}
+						onclick={() => void beginSession()}
 					>
-						{practiceLoading ? 'Fetching…' : 'Extra practice'}
+						Start session
 					</button>
-					<p class="hint">
-						Reviews words before they're due, from material you already have — no new words, nothing
-						generated.
-					</p>
-					{#if practiceEmpty}
-						<p class="nudge">Nothing to practise yet — generate a lesson first.</p>
+
+					{#if hasPoolMaterial}
+						<div class="secondary">
+							<button
+								type="button"
+								class="btn btn-ghost practice-btn"
+								disabled={practiceLoading}
+								title="Reviews words before they're due, from material you already have — no new words, nothing generated."
+								onclick={() => void beginPractice()}
+							>
+								{practiceLoading ? 'Fetching…' : 'Extra practice'}
+							</button>
+							<p class="practice-note" class:empty={practiceEmpty}>
+								{practiceEmpty
+									? 'Nothing to practise yet — generate a lesson first.'
+									: "Reviews words before they're due."}
+							</p>
+						</div>
 					{/if}
-				{/if}
+				</div>
 
-				{#if nudgeGenerate}
-					<p class="nudge">
-						{canStart
-							? 'Running low on fresh material — generate a new lesson below.'
-							: hasPoolMaterial
-								? 'Nothing due right now — try Extra practice above, or generate a new lesson.'
-								: 'Nothing to practise yet. Generate a lesson to get started.'}
-						{#if mock}
-							In practice mode it's instant and free.{/if}
-					</p>
-				{/if}
-
-				{#if reviewOnlyMode && !canStart}
-					<p class="nudge">
-						{hasPoolMaterial
-							? 'Nothing due for review yet — Extra practice above reviews ahead of schedule, or turn off Review only to add new words.'
-							: 'Nothing due for review yet. Turn off Review only to add new words.'}
-					</p>
+				{#if notice}
+					<p class="nudge ll-rise" style="animation-delay: 220ms">{notice}</p>
 				{/if}
 
 				{#if !reviewOnlyMode}
-					<section class="generate">
-						<h2>New lesson</h2>
-						<p class="hint">Optional — pick or type a scenario and the lesson leans into it.</p>
-
-						<input
-							class="input topic-input"
-							type="text"
-							bind:value={topicInput}
-							placeholder="e.g. checking into a hotel…"
-							autocomplete="off"
-							aria-label="Lesson topic"
-							onkeydown={(event) => {
-								if (event.key === 'Enter') {
-									event.preventDefault();
-									void generate();
-								}
-							}}
-						/>
-
-						<div class="chip-row">
-							{#each topicChips as chip (chip)}
-								<button
-									type="button"
-									class="chip"
-									class:selected={topicInput.trim().toLowerCase() === chip.toLowerCase()}
-									onclick={() => (topicInput = chip)}
-								>
-									{chip}
-								</button>
-							{/each}
-						</div>
-
-						{#if recentTopics.length > 0}
-							<div class="recent">
-								<p class="recent-label">Recent</p>
-								<div class="chip-row">
-									{#each recentTopics as recent (recent)}
-										<button type="button" class="chip" onclick={() => (topicInput = recent)}>
-											{recent}
-										</button>
-									{/each}
-								</div>
-							</div>
-						{/if}
-
+					<section class="generate ll-rise" style="animation-delay: 260ms">
 						<button
 							type="button"
-							class="btn btn-ghost btn-block generate-btn"
-							disabled={generating}
-							onclick={() => void generate()}
+							class="disclosure"
+							class:open={genOpen}
+							class:urged={nudgeGenerate}
+							aria-expanded={genOpen}
+							aria-controls="new-lesson-panel"
+							onclick={() => (genOpenChoice = !genOpen)}
 						>
-							{generating ? 'Generating…' : 'Generate new lesson'}
+							<span>New lesson</span>
+							{#if generating}
+								<span class="disc-meta">Generating…</span>
+							{/if}
+							<span class="disc-caret" aria-hidden="true">
+								<svg class="ico" viewBox="0 0 24 24"><path d="m9.6 6.3 5.7 5.7-5.7 5.7" /></svg>
+							</span>
 						</button>
 
-						{#if prepSteps.length > 0}
-							<ul class="prep-steps" role="status" aria-live="polite">
-								{#each prepSteps as step, index (index)}
-									{@const done = step.endedAt !== undefined}
-									<li class:done>
-										{#if done}
-											<span class="prep-mark" aria-hidden="true">
-												<svg class="ico" viewBox="0 0 24 24"><path d="m5 12.8 4.4 4.4L19 7.6" /></svg>
-											</span>
-										{:else}
-											<span class="prep-mark prep-spinner" aria-hidden="true"></span>
-										{/if}
-										<span class="prep-label">{step.label}</span>
-										<span class="prep-secs">{stepSeconds(step)}s</span>
-									</li>
-								{/each}
-							</ul>
-							{#if prepTotalMs !== null}
-								<p class="prep-total" transition:fade={{ duration: motionMs(200) }}>
-									Lesson ready in {(prepTotalMs / 1000).toFixed(1)}s — it's in the pool.
+						{#if genOpen}
+							<div
+								class="gen-panel"
+								id="new-lesson-panel"
+								transition:slide={{ duration: motionMs(220) }}
+							>
+								<p class="hint gen-hint">
+									Optional — pick or type a scenario and the lesson leans into it.
 								</p>
-							{/if}
-						{/if}
 
-						{#if genError}
-							<div class="gen-error">
-								<p class="error-message" role="alert">{genError}</p>
-								<button type="button" class="btn btn-ghost" onclick={() => void generate()}>
-									Try again
+								<input
+									class="input topic-input"
+									type="text"
+									bind:value={topicInput}
+									placeholder="e.g. checking into a hotel…"
+									autocomplete="off"
+									aria-label="Lesson topic"
+									onkeydown={(event) => {
+										if (event.key === 'Enter') {
+											event.preventDefault();
+											genOpenChoice = true;
+											void generate();
+										}
+									}}
+								/>
+
+								<div class="chip-row">
+									{#each visibleChips as chip (chip)}
+										<button
+											type="button"
+											class="chip"
+											class:selected={topicInput.trim().toLowerCase() === chip.toLowerCase()}
+											onclick={() => (topicInput = chip)}
+										>
+											{chip}
+										</button>
+									{/each}
+									{#if !showAllChips && topicChips.length > CHIP_PREVIEW}
+										<button
+											type="button"
+											class="chip chip-more"
+											onclick={() => (showAllChips = true)}
+										>
+											+{topicChips.length - CHIP_PREVIEW} more
+										</button>
+									{/if}
+								</div>
+
+								{#if recentTopics.length > 0}
+									<div class="recent">
+										<p class="recent-label">Recent</p>
+										<div class="chip-row">
+											{#each recentTopics as recent (recent)}
+												<button type="button" class="chip" onclick={() => (topicInput = recent)}>
+													{recent}
+												</button>
+											{/each}
+										</div>
+									</div>
+								{/if}
+
+								<button
+									type="button"
+									class="btn btn-block generate-btn"
+									disabled={generating}
+									onclick={() => {
+										genOpenChoice = true;
+										void generate();
+									}}
+								>
+									{generating ? 'Generating…' : 'Generate new lesson'}
 								</button>
+
+								{#if prepSteps.length > 0}
+									<ul class="prep-steps" role="status" aria-live="polite">
+										{#each prepSteps as step, index (index)}
+											{@const done = step.endedAt !== undefined}
+											<li class:done>
+												{#if done}
+													<span class="prep-mark" aria-hidden="true">
+														<svg class="ico" viewBox="0 0 24 24"
+															><path d="m5 12.8 4.4 4.4L19 7.6" /></svg
+														>
+													</span>
+												{:else}
+													<span class="prep-mark prep-spinner" aria-hidden="true"></span>
+												{/if}
+												<span class="prep-label">{step.label}</span>
+												<span class="prep-secs">{stepSeconds(step)}s</span>
+											</li>
+										{/each}
+									</ul>
+									{#if prepTotalMs !== null}
+										<p class="prep-total" transition:fade={{ duration: motionMs(200) }}>
+											Lesson ready in {(prepTotalMs / 1000).toFixed(1)}s — it's in the pool.
+										</p>
+									{/if}
+								{/if}
+
+								{#if genError}
+									<div class="gen-error">
+										<p class="error-message" role="alert">{genError}</p>
+										<button
+											type="button"
+											class="btn btn-ghost retry-btn"
+											onclick={() => {
+												genOpenChoice = true;
+												void generate();
+											}}
+										>
+											Try again
+										</button>
+									</div>
+								{/if}
 							</div>
 						{/if}
 					</section>
@@ -1184,9 +1326,15 @@
 
 	/* Start ------------------------------------------------------------------- */
 
+	/*
+	  Left-ranged, not centred. The start screen is a page of the journal — a
+	  heading, today's figures, then the action — and a ledger only reads as a
+	  ledger when its columns share a left edge. The summary card stays centred:
+	  that one is a celebration, this one is a plan.
+	*/
 	.start-card {
 		width: 100%;
-		text-align: center;
+		text-align: left;
 	}
 
 	.start-card h1 {
@@ -1194,29 +1342,169 @@
 	}
 
 	.start-card h1 + .stitch {
-		margin: 0.9rem 0 1rem;
+		margin: 0.9rem 0 1.3rem;
 	}
 
-	/* The state of the pool, read as a ledger line: the two figures carry the
-	   display face and sit on the tabular grid, so they stay the thing the eye
-	   lands on however the sentence around them declines. */
-	.pool-status {
-		margin: 0 0 1.25rem;
-		color: var(--text-muted);
-		font-size: 0.92rem;
+	.boot-error {
+		margin-bottom: 1.3rem;
 	}
 
-	.pool-status strong {
+	/*
+	  Today's entry: two ruled columns, hairline between, nothing boxed — the
+	  same treatment the summary gives its figures, because a page of numbers
+	  should read as a page wherever it appears in the app. The figures carry
+	  the display face at h1 scale, which is what makes the pool state the first
+	  thing the eye lands on rather than a muted sentence it has to parse.
+	*/
+	.ledger {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.figure {
+		display: flex;
+		flex-direction: column;
+		gap: 0.3rem;
+		min-width: 0;
+		padding-right: 0.9rem;
+	}
+
+	.figure + .figure {
+		padding-right: 0;
+		padding-left: 1.1rem;
+		border-left: 1px solid var(--border);
+	}
+
+	.fig-num {
 		font-family: var(--font-display);
-		font-size: 1.15rem;
-		font-weight: 700;
-		font-variation-settings: 'SOFT' 26;
+		font-size: clamp(2.1rem, 9.5vw, 2.7rem);
+		font-weight: 800;
+		font-variation-settings:
+			'SOFT' 32,
+			'WONK' 1;
 		font-variant-numeric: tabular-nums;
+		letter-spacing: -0.025em;
+		line-height: 1;
+	}
+
+	/* Work waiting on the learner wears the terracotta; everything else is ink.
+	   One accent, used only where it means "this is the thing that's due". */
+	.fig-num.pending {
+		color: var(--accent);
+	}
+
+	.fig-label {
+		font-size: 0.66rem;
+		font-weight: 700;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--text-muted);
+		text-wrap: balance;
+	}
+
+	/* Mode ------------------------------------------------------------------ */
+
+	.mode-block {
+		margin-top: 1.4rem;
+	}
+
+	/*
+	  Two paper tabs in a ruled tray — the settings switch's vocabulary (inset
+	  trough, hairline frame, `--radius-sm`) laid out as a segmented control.
+	  It sits directly under the figures because it is what produced them: flip
+	  it and both numbers re-plan.
+	*/
+	.mode {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 2px;
+		padding: 2px;
+		border: 1px solid var(--border-strong);
+		border-radius: var(--radius-sm);
+		background: var(--surface-alt);
+		box-shadow: inset 0 1px 2px rgb(60 50 20 / 8%);
+	}
+
+	.mode-opt {
+		padding: 0.45rem 0.5rem;
+		border: 1px solid transparent;
+		border-radius: 4px;
+		background: transparent;
+		color: var(--text-muted);
+		font: inherit;
+		font-size: 0.84rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition:
+			background 0.15s ease,
+			border-color 0.15s ease,
+			color 0.15s ease;
+	}
+
+	.mode-opt:hover:not(.on) {
 		color: var(--text);
 	}
 
+	.mode-opt:focus-visible {
+		outline: none;
+		box-shadow: var(--ring);
+	}
+
+	.mode-opt.on {
+		border-color: var(--border-strong);
+		background: var(--surface);
+		color: var(--text);
+		font-weight: 700;
+	}
+
+	/* The sentence the old checkbox label carried, moved under the control it
+	   describes and swapped for whichever half is active. */
+	.mode-note {
+		margin: 0.45rem 0 0;
+		font-size: 0.78rem;
+		color: var(--text-muted);
+	}
+
+	/* Actions --------------------------------------------------------------- */
+
+	.act {
+		margin-top: 1.35rem;
+	}
+
+	.secondary {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.45rem 0.75rem;
+		margin-top: 0.85rem;
+	}
+
+	/* An outlined ghost, deliberately a third of the green button's weight —
+	   available, never competing. Its full explanation lives in the `title`. */
+	.practice-btn {
+		flex: 0 0 auto;
+		padding: 0.5rem 0.85rem;
+		border-color: var(--border);
+		font-size: 0.85rem;
+	}
+
+	.practice-note {
+		flex: 1 1 9rem;
+		min-width: 0;
+		margin: 0;
+		font-size: 0.78rem;
+		color: var(--text-muted);
+		text-wrap: balance;
+	}
+
+	.practice-note.empty {
+		color: var(--accent);
+		font-weight: 700;
+	}
+
+	/* One message, never a stack; see the `notice` derived for the priority. */
 	.nudge {
-		margin: 0.9rem 0 0;
+		margin: 1.15rem 0 0;
 		padding: 0.6rem 0.85rem;
 		border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
 		border-radius: var(--radius-sm);
@@ -1227,72 +1515,120 @@
 		text-wrap: balance;
 	}
 
-	.review-only-toggle {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		gap: 0.5rem;
-		margin: 0.9rem 0 0;
-		color: var(--text-muted);
-		font-size: 0.85rem;
-		font-weight: 500;
-		cursor: pointer;
-	}
+	/* New lesson ------------------------------------------------------------ */
 
-	.review-only-toggle input {
-		accent-color: var(--primary);
-	}
-
-	/* Closed off with the app's stitched hairline rather than a solid rule:
-	   generating is a separate entry on the same page, not a new card. */
 	.generate {
-		margin-top: 1.75rem;
-		padding-top: 1.35rem;
-		border-top: 1px dashed var(--border-strong);
+		margin-top: 1.5rem;
 	}
 
-	.generate h2 {
-		margin: 0 0 0.3rem;
-		font-family: var(--font);
-		font-size: 0.72rem;
-		font-weight: 700;
-		letter-spacing: 0.11em;
-		text-transform: uppercase;
-		color: color-mix(in srgb, var(--accent) 65%, var(--text-muted));
-	}
-
-	.generate-btn {
-		margin-top: 1.25rem;
-	}
-
-	.gen-error {
+	/* A closed drawer in the page's own hand: hairline frame, Karla 700, a
+	   chevron that turns. Closed it costs one line; open it is the only thing
+	   below the fold. */
+	.disclosure {
 		display: flex;
-		flex-direction: column;
 		align-items: center;
-		gap: 0.7rem;
-		margin-top: 0.9rem;
+		gap: 0.6rem;
+		width: 100%;
+		padding: 0.7rem 0.85rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: transparent;
+		color: var(--text);
+		font: inherit;
+		font-size: 0.9rem;
+		font-weight: 700;
+		text-align: left;
+		cursor: pointer;
+		transition:
+			background 0.15s ease,
+			border-color 0.15s ease,
+			color 0.15s ease;
 	}
 
-	/* The boxed error carries no margins of its own, so each place it lands
-	   spaces it: full width under the generate button, and clear of the
-	   toggle when the boot read failed. */
-	.gen-error .error-message {
-		align-self: stretch;
+	.disclosure:hover {
+		border-color: var(--border-strong);
+		background: var(--surface-alt);
 	}
 
-	.start-card > .error-message {
-		margin-bottom: 1.25rem;
+	.disclosure:focus-visible {
+		outline: none;
+		box-shadow: var(--ring);
+	}
+
+	/* When the pool is thin the drawer picks up the notice's tint, so the
+	   message and the way to answer it read as one move rather than two. */
+	.disclosure.urged {
+		border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+		background: var(--accent-soft);
+	}
+
+	.disclosure.urged:hover {
+		border-color: var(--accent);
+	}
+
+	.disc-meta {
+		font-size: 0.78rem;
+		font-weight: 500;
+		color: var(--text-muted);
+	}
+
+	.disc-caret {
+		display: inline-flex;
+		margin-left: auto;
+		color: var(--text-muted);
+		transition: transform 0.18s cubic-bezier(0.2, 0.7, 0.3, 1);
+	}
+
+	.disc-caret .ico {
+		width: 1rem;
+		height: 1rem;
+	}
+
+	.disclosure.open .disc-caret {
+		transform: rotate(90deg);
+	}
+
+	.gen-panel {
+		padding-top: 1.1rem;
+	}
+
+	.gen-hint {
+		margin: 0 0 0.85rem;
 	}
 
 	.topic-input {
-		margin: 1.1rem 0 1rem;
+		margin: 0 0 0.8rem;
 	}
 
 	.chip-row {
 		display: flex;
 		flex-wrap: wrap;
-		justify-content: center;
-		gap: 0.5rem;
+		gap: 0.45rem;
+	}
+
+	.generate-btn {
+		margin-top: 1.15rem;
+		border-color: var(--border-strong);
+	}
+
+	.gen-error {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.7rem;
+		margin-top: 0.9rem;
+	}
+
+	/* The boxed error carries no margins of its own, so the place it lands
+	   spaces it: full width under the generate button. */
+	.gen-error .error-message {
+		align-self: stretch;
+	}
+
+	.retry-btn {
+		padding: 0.5rem 0.85rem;
+		border-color: var(--border);
+		font-size: 0.85rem;
 	}
 
 	/* True chips, so the pill survives — in the app's settled chip voice:
@@ -1331,12 +1667,19 @@
 		font-weight: 700;
 	}
 
+	/* "+n more": the shelf, in the chip voice but dashed — an opening, not an
+	   option. It disappears the moment the whole row is out. */
+	.chip-more {
+		border-style: dashed;
+		font-weight: 600;
+	}
+
 	.recent {
-		margin-top: 1.1rem;
+		margin-top: 0.9rem;
 	}
 
 	.recent-label {
-		margin: 0 0 0.5rem;
+		margin: 0 0 0.45rem;
 		font-size: 0.7rem;
 		font-weight: 700;
 		letter-spacing: 0.11em;
@@ -1344,15 +1687,11 @@
 		color: var(--text-muted);
 	}
 
+	/* The one thing on the screen that is allowed to be loud. */
 	.start-btn {
-		margin-top: 1.5rem;
-		padding: 1rem 1.5rem;
-		font-size: 1.02rem;
-	}
-
-	.practice-btn {
-		margin-top: 0.6rem;
-		border-color: var(--border);
+		padding: 1.05rem 1.5rem;
+		font-size: 1.05rem;
+		letter-spacing: 0.005em;
 	}
 
 	/* Generation log ------------------------------------------------------- */
@@ -1363,13 +1702,11 @@
 		display: flex;
 		flex-direction: column;
 		width: 100%;
-		max-width: 20rem;
-		margin: 1rem auto 0;
+		margin: 1.1rem 0 0;
 		padding: 0;
 		list-style: none;
 		font-size: 0.84rem;
 		color: var(--text-muted);
-		text-align: left;
 	}
 
 	.prep-steps li {
@@ -1447,7 +1784,6 @@
 		font-size: 0.78rem;
 		font-weight: 500;
 		color: var(--text-muted);
-		text-align: center;
 	}
 
 	/* Errors --------------------------------------------------------------- */
@@ -1998,12 +2334,28 @@
 		.segment,
 		.chip,
 		.combo,
-		.stage {
+		.stage,
+		.mode-opt,
+		.disclosure,
+		.disc-caret {
 			transition: none;
 		}
 	}
 
 	@media (max-width: 480px) {
+		.figure {
+			padding-right: 0.6rem;
+		}
+
+		.figure + .figure {
+			padding-left: 0.8rem;
+		}
+
+		.fig-label {
+			font-size: 0.62rem;
+			letter-spacing: 0.07em;
+		}
+
 		.stat-value {
 			font-size: 1.15rem;
 		}
