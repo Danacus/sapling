@@ -138,6 +138,13 @@
 		return ruby(bank[index]);
 	}
 
+	/**
+	 * The picked word, as the same ruby tokens its bank chip wore — a word must
+	 * not lose its reading by being placed in the gap. `null` (no pick, or no
+	 * local romanizer) falls back to the plain text.
+	 */
+	const gapTokens = $derived(pickedIndex === null ? null : ruby(bank[pickedIndex]));
+
 	function readingOf(index: number): string {
 		return (readings.sentence ? challenge.wordBankRomanization?.[index] : '') ?? '';
 	}
@@ -182,7 +189,9 @@
 				aria-label={pickedIndex === null ? 'Empty blank' : `Blank filled with ${answer}`}
 				onclick={() => (pickedIndex = null)}
 			>
-				{pickedIndex === null ? GAP : answer}
+				{#if pickedIndex === null}{GAP}{:else if gapTokens}<RubyText
+						tokens={gapTokens}
+					/>{:else}{answer}{/if}
 			</button>
 		{:else}
 			<input
