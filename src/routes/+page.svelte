@@ -242,6 +242,7 @@
 					<h2>Word strength</h2>
 					<div class="strength-tools">
 						<span class="strength-count">{items.length} words known</span>
+						<a class="btn btn-ghost manage-btn" href="/words">All words</a>
 						<button
 							type="button"
 							class="btn btn-ghost manage-btn"
@@ -558,6 +559,9 @@
 		padding: 0.28rem 0.7rem;
 		border-color: var(--border);
 		font-size: 0.78rem;
+		/* The pair is one button and one link; only the link would otherwise
+		   arrive underlined, and they have to read as the same control. */
+		text-decoration: none;
 	}
 
 	/* The bar shares its column with the delete button in manage mode; without
