@@ -38,7 +38,7 @@ import {
 	type SyncBookkeeping,
 	type SyncSnapshot
 } from '$lib/sync/snapshot';
-import { db, SINGLETON_KEY } from './database';
+import { challengeOf, db, SINGLETON_KEY } from './database';
 import type { ChallengeRow, OutboxRow } from './database';
 import { toPlain } from './plain';
 
@@ -76,24 +76,16 @@ function itemContent(item: KnowledgeItem): SyncPayloads['item-added'] {
 }
 
 /**
- * Strips a pool row's local bookkeeping, leaving the immutable `Challenge`.
+ * The payload-typed view of {@link challengeOf}.
  *
- * The cast is the price of `challengeContentSchema` being a loose shape check
- * (see its doc comment): `Challenge` is a union of interfaces and so has no
- * implicit index signature, even though every one of its members satisfies the
- * schema. Nothing is lost — the four checked keys are exactly what the merge
- * reads, and the rest travels verbatim.
+ * The cast goes through `unknown` because `challengeContentSchema` is a loose
+ * shape check (see its doc comment) and `Challenge` is a union of interfaces
+ * with no implicit index signature, even though every one of its members
+ * satisfies the schema. Nothing is lost — the four checked keys are exactly
+ * what the merge reads, and the rest travels verbatim.
  */
 function challengeContent(row: ChallengeRow): SyncPayloads['challenge-added']['challenge'] {
-	const {
-		generatedAt: _generatedAt,
-		timesServed: _timesServed,
-		lastServedAt: _lastServedAt,
-		reported: _reported,
-		topic: _topic,
-		...challenge
-	} = row;
-	return challenge as SyncPayloads['challenge-added']['challenge'];
+	return challengeOf(row) as unknown as SyncPayloads['challenge-added']['challenge'];
 }
 
 /** The mutable content fields — what `item-updated` patches. */
@@ -190,7 +182,15 @@ export async function deleteItem(id: string, now: number = Date.now()): Promise<
 }
 
 /**
- * Writes back the FSRS card produced by a review and appends one history entry.
+ * Folds a review into an item: appends one history entry, and writes back the
+ * card `nextCard` derives from the one already stored.
+ *
+ * `nextCard` is a function rather than a finished card because the row has to
+ * be read here anyway — handing callers the prior card they would otherwise
+ * fetch themselves turns the app's hottest write path from two reads per
+ * reviewed item into one. It is called inside the transaction, with `null` for
+ * an item that has never been reviewed. `prior` comes back out for callers that
+ * need to remember where the card stood (see `amendResult`).
  *
  * With `replaceLast`, the entry overwrites the newest one instead of being
  * appended — for a review that is being *recomputed* rather than added (the
@@ -198,21 +198,24 @@ export async function deleteItem(id: string, now: number = Date.now()): Promise<
  * there would double-count the review in `reps` and in `accuracyFromHistory`.
  * An empty history has nothing to replace, so it simply appends.
  *
- * Resolves to `false` when the item no longer exists.
+ * `existed` is `false` when the item no longer exists; `nextCard` is not
+ * called in that case.
  */
 export async function updateItemAfterReview(
 	id: string,
-	fsrsCard: unknown,
+	nextCard: (prior: unknown) => unknown,
 	historyEntry: { at: number; grade: number },
 	opts: { replaceLast?: boolean } = {}
-): Promise<boolean> {
-	const plainCard = toPlain(fsrsCard);
+): Promise<{ existed: boolean; prior: unknown }> {
 	const plainEntry = toPlain(historyEntry);
 	const capturing = syncEnabled();
 
 	return db.transaction('rw', db.items, db.outbox, async () => {
 		const item = await db.items.get(id);
-		if (!item) return false;
+		if (!item) return { existed: false, prior: null };
+
+		const prior = item.fsrsCard ?? null;
+		const plainCard = toPlain(nextCard(prior));
 
 		const replaced =
 			opts.replaceLast && item.history.length > 0
@@ -238,7 +241,7 @@ export async function updateItemAfterReview(
 					: event(EVENT_TYPES.itemReviewed, { itemId: id, ...plainEntry }, plainEntry.at)
 			]);
 		}
-		return true;
+		return { existed: true, prior };
 	});
 }
 

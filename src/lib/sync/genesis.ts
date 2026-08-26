@@ -16,7 +16,7 @@
 
 import { getDeviceId, newUuid } from './config';
 import { EVENT_TYPES, type SyncEvent, type SyncEventType, type SyncPayloads } from './events';
-import { seedOutbox } from '$lib/db';
+import { challengeOf, seedOutbox } from '$lib/db';
 import type { GenesisState } from './snapshot';
 
 /**
@@ -70,11 +70,13 @@ export function synthesizeGenesis(
 	}
 
 	for (const row of state.pool) {
-		const { generatedAt, timesServed, lastServedAt, reported, topic, ...challenge } = row;
+		const { generatedAt, timesServed, lastServedAt, reported, topic } = row;
 		emit(
 			EVENT_TYPES.challengeAdded,
 			{
-				challenge: challenge as SyncPayloads['challenge-added']['challenge'],
+				// Through `unknown`: the payload type is a loose indexed shape, and
+				// `Challenge` is a union of interfaces without an index signature.
+				challenge: challengeOf(row) as unknown as SyncPayloads['challenge-added']['challenge'],
 				generatedAt,
 				topic
 			},
