@@ -145,10 +145,14 @@ export async function runChat(
 	const actions: ActionNote[] = [];
 	let lastText = '';
 
+	// Built once, not per round: the registry is static, so re-deriving JSON
+	// Schema for every tool on each of the rounds is pure repeat work.
+	const tools = toolDefsForClient();
+
 	for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
 		const completion = await chatCompletion({
 			messages,
-			tools: toolDefsForClient(),
+			tools,
 			maxTokens: MAX_REPLY_TOKENS,
 			model: opts.model,
 			apiKey: opts.apiKey,

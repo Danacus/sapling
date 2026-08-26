@@ -65,35 +65,39 @@ function write(key: string, value: string): void {
 	}
 }
 
-/** The chosen engine; anything unrecognised (or unset) reads as the default. */
-export function getTtsEngine(): TtsEngine {
-	const raw = read(ENGINE_KEY);
-	return ENGINES.includes(raw as TtsEngine) ? (raw as TtsEngine) : DEFAULT_TTS_ENGINE;
+/**
+ * One stored enum preference: read it back if it is still a value we recognise,
+ * otherwise report the default, and refuse to write anything off the list.
+ *
+ * The three below were the same eight lines three times over, which is how the
+ * vestigial `device` pair came to exist — copying the block is easier than
+ * asking whether it is needed.
+ */
+function definePref<T extends string>(key: string, allowed: readonly T[], fallback: T) {
+	return {
+		get: (): T => {
+			const raw = read(key);
+			return allowed.includes(raw as T) ? (raw as T) : fallback;
+		},
+		set: (value: T): void => {
+			if (!allowed.includes(value)) return;
+			write(key, value);
+		}
+	};
 }
 
-export function setTtsEngine(engine: TtsEngine): void {
-	if (!ENGINES.includes(engine)) return;
-	write(ENGINE_KEY, engine);
-}
+const enginePref = definePref(ENGINE_KEY, ENGINES, DEFAULT_TTS_ENGINE);
+const devicePref = definePref(DEVICE_KEY, DEVICES, DEFAULT_TTS_DEVICE);
+const voicePref = definePref(VOICE_KEY, VOICES, DEFAULT_TTS_VOICE);
+
+/** The chosen engine; anything unrecognised (or unset) reads as the default. */
+export const getTtsEngine = enginePref.get;
+export const setTtsEngine = enginePref.set;
 
 /** Legacy device preference; unrecognised values read as the default. */
-export function getTtsDevice(): TtsDevice {
-	const raw = read(DEVICE_KEY);
-	return DEVICES.includes(raw as TtsDevice) ? (raw as TtsDevice) : DEFAULT_TTS_DEVICE;
-}
-
-export function setTtsDevice(device: TtsDevice): void {
-	if (!DEVICES.includes(device)) return;
-	write(DEVICE_KEY, device);
-}
+export const getTtsDevice = devicePref.get;
+export const setTtsDevice = devicePref.set;
 
 /** The chosen Mandarin voice; unrecognised values read as the default. */
-export function getTtsVoice(): TtsVoice {
-	const raw = read(VOICE_KEY);
-	return VOICES.includes(raw as TtsVoice) ? (raw as TtsVoice) : DEFAULT_TTS_VOICE;
-}
-
-export function setTtsVoice(voice: TtsVoice): void {
-	if (!VOICES.includes(voice)) return;
-	write(VOICE_KEY, voice);
-}
+export const getTtsVoice = voicePref.get;
+export const setTtsVoice = voicePref.set;

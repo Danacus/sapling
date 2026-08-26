@@ -17,6 +17,7 @@
 
 import { z } from 'zod';
 import type { ToolDef } from '$lib/llm';
+import { toJsonSchema } from '$lib/llm/json-schema';
 import { addWordsTool } from './add-words';
 import type { AssistantToolDef, ToolContext, ToolOutcome } from './def';
 import { listWordsTool } from './list-words';
@@ -76,20 +77,8 @@ export function toolDefsForClient(): ToolDef[] {
 	return ASSISTANT_TOOLS.map((tool) => ({
 		name: tool.name,
 		description: tool.description,
-		parameters: jsonSchemaFor(tool.paramsSchema)
+		parameters: toJsonSchema(tool.paramsSchema)
 	}));
-}
-
-/** One argument schema as JSON Schema, `$defs` inlined (cheap models choke on `$ref`). */
-function jsonSchemaFor(schema: z.ZodType): Record<string, unknown> {
-	const json = z.toJSONSchema(schema, {
-		target: 'draft-2020-12',
-		reused: 'inline',
-		unrepresentable: 'any',
-		io: 'input'
-	}) as Record<string, unknown>;
-	delete json.$schema;
-	return json;
 }
 
 /**

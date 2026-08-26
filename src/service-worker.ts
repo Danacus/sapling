@@ -54,6 +54,9 @@ const isPagesConfigFile = (path: string) =>
  */
 const PRECACHE = [SHELL, ...build, ...files].filter((path) => !isPagesConfigFile(path));
 
+/** The same list as a set: `fetch` asks this question for every request. */
+const PRECACHED = new Set(PRECACHE);
+
 sw.addEventListener('install', (event) => {
 	event.waitUntil(
 		(async () => {
@@ -95,7 +98,7 @@ sw.addEventListener('fetch', (event) => {
 	// without `respondWith` leaves them entirely to the browser.
 	if (url.origin !== location.origin) return;
 
-	const isPrecached = PRECACHE.includes(url.pathname);
+	const isPrecached = PRECACHED.has(url.pathname);
 
 	event.respondWith(
 		(async () => {

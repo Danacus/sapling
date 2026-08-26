@@ -633,6 +633,10 @@ export async function generateBatch(args: BatchArgs, opts: BatchOptions = {}): P
 	const usage: TokenUsage = { promptTokens: 0, completionTokens: 0 };
 	let lastError: LlmError | undefined;
 
+	// Built once, not per attempt: it is a pure function of a static registry,
+	// and the retry sends the very same schema back.
+	const responseFormat = { name: BATCH_SCHEMA_NAME, schema: batchJsonSchema() };
+
 	for (let attempt = 0; attempt < 2; attempt++) {
 		const attemptMessages: ChatMessage[] =
 			attempt === 0
@@ -648,7 +652,7 @@ export async function generateBatch(args: BatchArgs, opts: BatchOptions = {}): P
 			apiKey: opts.apiKey,
 			signal: opts.signal,
 			fetchFn: opts.fetchFn,
-			responseFormat: { name: BATCH_SCHEMA_NAME, schema: batchJsonSchema() },
+			responseFormat,
 			temperature: 0.7
 		});
 		usage.promptTokens += completion.usage.promptTokens;
