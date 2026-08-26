@@ -67,7 +67,9 @@
 			stroke-linecap="round"
 			stroke-linejoin="round"
 		>
-			<path d="M11.5 4.6 6.8 8.4H4.2a.7.7 0 0 0-.7.7v5.8c0 .4.3.7.7.7h2.6l4.7 3.8a.6.6 0 0 0 1-.5V5.1a.6.6 0 0 0-1-.5Z" />
+			<path
+				d="M11.5 4.6 6.8 8.4H4.2a.7.7 0 0 0-.7.7v5.8c0 .4.3.7.7.7h2.6l4.7 3.8a.6.6 0 0 0 1-.5V5.1a.6.6 0 0 0-1-.5Z"
+			/>
 			<path class="wave wave-1" d="M15.6 9.4a3.5 3.5 0 0 1 0 5.2" />
 			<path class="wave wave-2" d="M18.4 6.9a7 7 0 0 1 0 10.2" />
 		</svg>

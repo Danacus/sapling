@@ -148,8 +148,8 @@
 			<p class="hint lead">
 				Written in your own words, and used to build your lessons: scenarios set where you live,
 				examples about what you do, people who fit your life. It is sent along with each lesson
-				request to {profile?.model ?? 'your model'} through OpenRouter with your own key — the same
-				place your lessons already come from, and nowhere else.
+				request to {profile?.model ?? 'your model'} through OpenRouter with your own key — the same place
+				your lessons already come from, and nowhere else.
 			</p>
 
 			<div class="field">
@@ -160,8 +160,7 @@
 					rows="5"
 					maxlength={MAX_ABOUT_CHARS}
 					bind:value={about}
-					placeholder={ABOUT_PLACEHOLDER}
-				></textarea>
+					placeholder={ABOUT_PLACEHOLDER}></textarea>
 				<p class="hint count" class:tight={aboutRemaining <= 50}>
 					{aboutRemaining} character{aboutRemaining === 1 ? '' : 's'} left
 				</p>
@@ -206,7 +205,9 @@
 					<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
 						<circle cx="12" cy="12" r="8.2" />
 						<path d="M3.9 12h16.2" />
-						<path d="M12 3.8c2.3 2.2 3.6 5.1 3.6 8.2s-1.3 6-3.6 8.2c-2.3-2.2-3.6-5.1-3.6-8.2s1.3-6 3.6-8.2Z" />
+						<path
+							d="M12 3.8c2.3 2.2 3.6 5.1 3.6 8.2s-1.3 6-3.6 8.2c-2.3-2.2-3.6-5.1-3.6-8.2s1.3-6 3.6-8.2Z"
+						/>
 					</svg>
 					<h2>Languages</h2>
 				</div>
@@ -214,7 +215,8 @@
 				<p class="readonly-row">
 					<span class="readonly-label">Learning</span>
 					<span class="readonly-value">
-						{profile.targetLanguage} <span class="muted">from</span> {profile.nativeLanguage}
+						{profile.targetLanguage} <span class="muted">from</span>
+						{profile.nativeLanguage}
 					</span>
 				</p>
 				<p class="hint">
@@ -427,5 +429,4 @@
 		font-size: 0.9rem;
 		font-weight: 700;
 	}
-
 </style>

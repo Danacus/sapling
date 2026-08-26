@@ -40,10 +40,7 @@ describe('runtime artifacts', () => {
 	it('loads the vendored glue wrapper-first', () => {
 		// The wrapper defines createOfflineTts, which the glue's
 		// onRuntimeInitialized callback needs the moment it fires.
-		expect(RUNTIME_SCRIPT_FILES).toEqual([
-			'sherpa-onnx-tts.js',
-			'sherpa-onnx-wasm-main-tts.js'
-		]);
+		expect(RUNTIME_SCRIPT_FILES).toEqual(['sherpa-onnx-tts.js', 'sherpa-onnx-wasm-main-tts.js']);
 	});
 
 	it('serves the worker verbatim from static/, not through Vite', () => {
@@ -65,7 +62,7 @@ describe('runtime artifacts', () => {
 });
 
 describe('ttsAssetUrl', () => {
-	it('points at static/tts on the app\'s own origin', () => {
+	it("points at static/tts on the app's own origin", () => {
 		expect(ttsAssetUrl('sherpa-worker.js')).toBe('/tts/sherpa-worker.js');
 		expect(ttsAssetUrl(RUNTIME_SCRIPT_FILES[0])).toBe('/tts/sherpa-onnx-tts.js');
 	});

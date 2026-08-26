@@ -51,8 +51,9 @@
 	  the Latin webfonts do not cover — never let a webfont's metrics decide how
 	  CJK or Arabic looks.
 	*/
-	--font: 'Karla', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
-		'Noto Sans', sans-serif;
+	--font:
+		'Karla', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans',
+		sans-serif;
 	--font-display: 'Fraunces', ui-serif, Georgia, 'Iowan Old Style', 'Times New Roman', serif;
 
 	color-scheme: light;

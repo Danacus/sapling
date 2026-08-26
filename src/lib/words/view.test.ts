@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { KnowledgeItem } from '$lib/types';
 import { CardState, Grade, newCardState, reviewCard, type FsrsCardState } from '$lib/srs';
-import { STATE_LABELS, formatDays, formatRelative, queryWords, toWordRow, type WordQuery } from './view';
+import {
+	STATE_LABELS,
+	formatDays,
+	formatRelative,
+	queryWords,
+	toWordRow,
+	type WordQuery
+} from './view';
 
 /** Fixed instant: 2026-01-01T00:00:00.000Z. Every test computes off this. */
 const NOW = Date.UTC(2026, 0, 1, 0, 0, 0);
@@ -73,7 +80,10 @@ describe('toWordRow', () => {
 
 	it('is due exactly when isDue would say so', () => {
 		const dueRow = toWordRow(item({ fsrsCard: { ...newCardState(NOW), due: NOW - MINUTE } }), NOW);
-		const notDueRow = toWordRow(item({ fsrsCard: { ...newCardState(NOW), due: NOW + MINUTE } }), NOW);
+		const notDueRow = toWordRow(
+			item({ fsrsCard: { ...newCardState(NOW), due: NOW + MINUTE } }),
+			NOW
+		);
 		expect(dueRow.due).toBe(true);
 		expect(notDueRow.due).toBe(false);
 	});
@@ -113,8 +123,20 @@ describe('queryWords: filter', () => {
 
 describe('queryWords: search', () => {
 	const items = [
-		item({ id: 'a', term: 'Katze', meaning: 'cat', romanization: undefined, fsrsCard: newCardState(NOW) }),
-		item({ id: 'b', term: '猫', meaning: 'cat (jp)', romanization: 'neko', fsrsCard: newCardState(NOW) }),
+		item({
+			id: 'a',
+			term: 'Katze',
+			meaning: 'cat',
+			romanization: undefined,
+			fsrsCard: newCardState(NOW)
+		}),
+		item({
+			id: 'b',
+			term: '猫',
+			meaning: 'cat (jp)',
+			romanization: 'neko',
+			fsrsCard: newCardState(NOW)
+		}),
 		item({ id: 'c', term: 'Hund', meaning: 'dog', fsrsCard: newCardState(NOW) })
 	];
 

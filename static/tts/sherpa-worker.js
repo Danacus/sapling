@@ -161,7 +161,13 @@ function loadArtifact(artifact, onProgress) {
 					return hit.arrayBuffer().then(function (cached) {
 						if (cached.byteLength === expected) return cached;
 						console.warn(
-							'[tts] Cached ' + artifact.file + ' was ' + cached.byteLength + ' B, expected ' + expected + ' B.'
+							'[tts] Cached ' +
+								artifact.file +
+								' was ' +
+								cached.byteLength +
+								' B, expected ' +
+								expected +
+								' B.'
 						);
 						return cache.delete(url).then(function () {
 							return null;
@@ -202,7 +208,10 @@ function loadArtifact(artifact, onProgress) {
 					var branches = response.body.tee();
 					toRead = branches[0];
 					cacheWrite = cache
-						.put(url, new Response(branches[1], { headers: { 'content-type': 'application/octet-stream' } }))
+						.put(
+							url,
+							new Response(branches[1], { headers: { 'content-type': 'application/octet-stream' } })
+						)
 						.catch(function (cause) {
 							console.warn('[tts] Could not cache ' + artifact.file + '.', cause);
 						});
@@ -293,7 +302,8 @@ function start() {
 function ensureStarted() {
 	if (tts) return Promise.resolve(tts);
 	if (starting) return starting;
-	if (!config) return Promise.reject(new Error('the speech worker was used before it was configured'));
+	if (!config)
+		return Promise.reject(new Error('the speech worker was used before it was configured'));
 
 	var attempt = start();
 	starting = attempt;
@@ -353,7 +363,11 @@ self.addEventListener('message', function (event) {
 		var id = request.id;
 		ensureStarted()
 			.then(function (engine) {
-				return engine.generate({ text: request.text, sid: request.speakerId, speed: request.speed });
+				return engine.generate({
+					text: request.text,
+					sid: request.speakerId,
+					speed: request.speed
+				});
 			})
 			.then(
 				function (audio) {

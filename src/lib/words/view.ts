@@ -6,7 +6,14 @@
  */
 
 import type { KnowledgeItem } from '$lib/types';
-import { CardState, Grade, isDue, retrievability, wordStrength, type FsrsCardState } from '$lib/srs';
+import {
+	CardState,
+	Grade,
+	isDue,
+	retrievability,
+	wordStrength,
+	type FsrsCardState
+} from '$lib/srs';
 
 /** One word with everything the ledger shows about it, derived once per render. */
 export interface WordRow {
@@ -134,7 +141,8 @@ function matchesFilter(row: WordRow, filter: StateFilter): boolean {
 
 function matchesSearch(row: WordRow, needle: string): boolean {
 	if (needle === '') return true;
-	const haystack = `${row.item.term} ${row.item.meaning} ${row.item.romanization ?? ''}`.toLowerCase();
+	const haystack =
+		`${row.item.term} ${row.item.meaning} ${row.item.romanization ?? ''}`.toLowerCase();
 	return haystack.includes(needle);
 }
 

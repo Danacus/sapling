@@ -317,8 +317,8 @@
 			</div>
 			<hr class="stitch" />
 			<p class="hint">
-				Every word you meet grows here — when it is next due, how firmly it has
-				settled, and every review you have ever given it. Your first session writes the first entry.
+				Every word you meet grows here — when it is next due, how firmly it has settled, and every
+				review you have ever given it. Your first session writes the first entry.
 			</p>
 			<a class="btn btn-primary btn-block" href="/learn">Start a session</a>
 		</section>
@@ -328,7 +328,12 @@
 		  collection, each one a way into it. A separate row of filter chips
 		  under a row of stat tiles would have said the same thing twice.
 		-->
-		<div class="summary ll-rise" style="animation-delay: 60ms" role="group" aria-label="Filter words">
+		<div
+			class="summary ll-rise"
+			style="animation-delay: 60ms"
+			role="group"
+			aria-label="Filter words"
+		>
 			<button
 				type="button"
 				class="tile"
@@ -392,7 +397,12 @@
 						placeholder="Search term, meaning, reading…"
 					/>
 					{#if search !== ''}
-						<button type="button" class="clear" aria-label="Clear search" onclick={() => (search = '')}>
+						<button
+							type="button"
+							class="clear"
+							aria-label="Clear search"
+							onclick={() => (search = '')}
+						>
 							<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
 								<path d="m7 7 10 10M17 7 7 17" />
 							</svg>
@@ -526,7 +536,9 @@
 										<div class="fact">
 											<dt>Last review</dt>
 											<dd>
-												{row.lastReviewAt === null ? 'Never' : formatRelative(row.lastReviewAt, now)}
+												{row.lastReviewAt === null
+													? 'Never'
+													: formatRelative(row.lastReviewAt, now)}
 											</dd>
 											{#if row.lastReviewAt !== null}
 												<p class="sub">{formatAbsolute(row.lastReviewAt)}</p>
@@ -553,7 +565,9 @@
 									<div class="history">
 										<span class="history-label">Review history</span>
 										{#if row.item.history.length === 0}
-											<p class="sub none">No reviews yet — this word is still waiting for its first.</p>
+											<p class="sub none">
+												No reviews yet — this word is still waiting for its first.
+											</p>
 										{:else}
 											{@const shown = row.item.history.slice(-HISTORY_CAP)}
 											{@const earlier = row.item.history.length - shown.length}
@@ -586,7 +600,11 @@
 												>
 													Forget for good
 												</button>
-												<button type="button" class="btn btn-ghost" onclick={() => (confirming = null)}>
+												<button
+													type="button"
+													class="btn btn-ghost"
+													onclick={() => (confirming = null)}
+												>
 													Keep it
 												</button>
 											</div>
@@ -653,8 +671,8 @@
 					<dt>Recall chance</dt>
 					<dd>
 						The estimated probability you would get the word right if it were asked this second. It
-						falls as time passes and resets with each review — reviews are scheduled to land while it
-						is still around 90%, so words you are on top of sit high.
+						falls as time passes and resets with each review — reviews are scheduled to land while
+						it is still around 90%, so words you are on top of sit high.
 					</dd>
 				</div>
 				<div class="entry-def">
@@ -671,8 +689,8 @@
 					<dd>
 						The word's place in the schedule. <strong>New</strong> is waiting for its first outing;
 						<strong>Learning</strong> is finding its feet over minutes and days;
-						<strong>Review</strong> is on a long interval; <strong>Relearning</strong> is a word that had
-						settled, came back wrong, and is being rebuilt.
+						<strong>Review</strong> is on a long interval; <strong>Relearning</strong> is a word that
+						had settled, came back wrong, and is being rebuilt.
 					</dd>
 				</div>
 				<div class="entry-def">

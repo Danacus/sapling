@@ -138,7 +138,10 @@ function idFactory(): () => string {
 }
 
 /** parse + resolve, the pairing every caller of this layer uses. */
-function resolve(batch: { challenges: unknown[]; newItems?: unknown[] }, opts: ResolveOptions = {}) {
+function resolve(
+	batch: { challenges: unknown[]; newItems?: unknown[] },
+	opts: ResolveOptions = {}
+) {
 	return resolveBatch(parseBatch(JSON.stringify({ newItems: [], ...batch })), {
 		newId: idFactory(),
 		now: () => 0,
@@ -268,9 +271,9 @@ describe('buildBatchPrompt', () => {
 		expect(content).not.toContain('k1');
 
 		expect(JSON.parse(messages[1].content)).not.toHaveProperty('known');
-		expect(
-			JSON.parse(buildBatchPrompt({ ...args, knownItems: [] })[1].content)
-		).not.toHaveProperty('known');
+		expect(JSON.parse(buildBatchPrompt({ ...args, knownItems: [] })[1].content)).not.toHaveProperty(
+			'known'
+		);
 	});
 
 	it('states the difficulty-calibration rules in the system message', () => {
@@ -678,8 +681,9 @@ describe('resolveBatch', () => {
 					{ rng: () => seed / 20 }
 				);
 				const [challenge] = resolved.challenges;
-				expect(challenge.type === 'multiple-choice' && challenge.options[challenge.correctIndex])
-					.toBe('the dog');
+				expect(
+					challenge.type === 'multiple-choice' && challenge.options[challenge.correctIndex]
+				).toBe('the dog');
 			}
 		});
 

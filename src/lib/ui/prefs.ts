@@ -157,7 +157,9 @@ export function addRecentTopic(topic: string): string[] {
 	if (!trimmed) return getRecentTopics();
 
 	const key = trimmed.toLowerCase().replace(/\s+/g, ' ');
-	const rest = getRecentTopics().filter((existing) => existing.trim().toLowerCase().replace(/\s+/g, ' ') !== key);
+	const rest = getRecentTopics().filter(
+		(existing) => existing.trim().toLowerCase().replace(/\s+/g, ' ') !== key
+	);
 	const updated = [trimmed, ...rest].slice(0, MAX_RECENT_TOPICS);
 
 	if (hasStorage()) {

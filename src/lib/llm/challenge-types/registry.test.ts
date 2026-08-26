@@ -51,9 +51,7 @@ describe('WIRE_TYPE_DEFS', () => {
 		// app through `../schemas` — if that façade is ever hand-edited into a
 		// second list of members, matching type literals would not catch it but
 		// this will.
-		expect([...generatedChallengeSchema.options]).toEqual(
-			WIRE_TYPE_DEFS.map((def) => def.schema)
-		);
+		expect([...generatedChallengeSchema.options]).toEqual(WIRE_TYPE_DEFS.map((def) => def.schema));
 	});
 
 	it('carries the schema member for its own type', () => {

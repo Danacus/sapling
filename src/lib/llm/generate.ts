@@ -99,13 +99,7 @@ export interface RecentMistake {
  * walks the same list, just instantly).
  */
 export type ProgressStepId =
-	| 'queue-check'
-	| 'select-items'
-	| 'build-prompt'
-	| 'request'
-	| 'validate'
-	| 'retry'
-	| 'save';
+	'queue-check' | 'select-items' | 'build-prompt' | 'request' | 'validate' | 'retry' | 'save';
 
 /**
  * One step *starting*. Duration is the caller's business: it times each step
@@ -279,7 +273,7 @@ const SYSTEM_PROMPT = [
 	spotErrorDef.rulesSpec,
 	'- newItems must fit the learner level; term in the target language, meaning in the native language, romanization as in TargetText (null for Latin scripts), notes only for gender/irregularity/register.',
 	'- Exactly newItemSlots entries in newItems, and every one of them must be used by at least one challenge.',
-	'- known lists vocabulary the learner already has. newItems must NOT repeat anything in it (no exact repeats, no trivial variants of a known term) — introduce genuinely new words. Prefer building sentences out of known words plus this batch\'s newItems, so the learner mostly reads what they can already read.',
+	"- known lists vocabulary the learner already has. newItems must NOT repeat anything in it (no exact repeats, no trivial variants of a known term) — introduce genuinely new words. Prefer building sentences out of known words plus this batch's newItems, so the learner mostly reads what they can already read.",
 	'Difficulty calibration:',
 	'- recentAccuracy (0-1, share of recent answers the learner got right) and recentMistakes are their current form; calibrate the batch to them.',
 	'- recentAccuracy below 0.7: favour recognition — recognize-mc, produce-mc and cloze WITH distractorWords — keep answers to one or two words, and avoid full-sentence translate-to-target.',
@@ -618,13 +612,15 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
  *
  * Remember: returned `newItems` carry `fsrsCard: null` for the caller to fill.
  */
-export async function generateBatch(args: BatchArgs, opts: BatchOptions = {}): Promise<BatchResult> {
+export async function generateBatch(
+	args: BatchArgs,
+	opts: BatchOptions = {}
+): Promise<BatchResult> {
 	const progress = opts.onProgress;
 	progress?.({ id: 'build-prompt', label: 'Building the prompt' });
 	const messages = buildBatchPrompt(args);
 	const model = opts.model?.trim() || getModel();
-	const requested =
-		args.count ?? defaultChallengeCount(args.reviewItems.length, args.newItemSlots);
+	const requested = args.count ?? defaultChallengeCount(args.reviewItems.length, args.newItemSlots);
 	// A two-challenge batch can never reach five; do not demand the impossible.
 	const minimum = Math.min(MIN_BATCH_CHALLENGES, Math.min(requested, MAX_BATCH_CHALLENGES));
 	const knownItemIds = args.reviewItems.map((i) => i.id);
@@ -639,9 +635,7 @@ export async function generateBatch(args: BatchArgs, opts: BatchOptions = {}): P
 
 	for (let attempt = 0; attempt < 2; attempt++) {
 		const attemptMessages: ChatMessage[] =
-			attempt === 0
-				? messages
-				: [...messages, { role: 'user', content: CORRECTIVE_INSTRUCTION }];
+			attempt === 0 ? messages : [...messages, { role: 'user', content: CORRECTIVE_INSTRUCTION }];
 
 		if (attempt > 0) progress?.({ id: 'retry', label: 'Retrying generation' });
 		progress?.({ id: 'request', label: `Waiting for ${model}` });
@@ -687,8 +681,7 @@ export async function generateBatch(args: BatchArgs, opts: BatchOptions = {}): P
 	}
 
 	throw (
-		lastError ??
-		new LlmError('bad-response', 'The model returned no usable challenges. Try again.')
+		lastError ?? new LlmError('bad-response', 'The model returned no usable challenges. Try again.')
 	);
 }
 

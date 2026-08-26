@@ -179,8 +179,7 @@
 				id="tts-text"
 				aria-labelledby="tts-text-label"
 				rows="4"
-				bind:value={text}
-			></textarea>
+				bind:value={text}></textarea>
 		</div>
 
 		<div class="field">

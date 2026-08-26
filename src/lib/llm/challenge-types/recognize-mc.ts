@@ -27,7 +27,8 @@ export type GeneratedRecognizeMc = z.infer<typeof generatedRecognizeMcSchema>;
 export const recognizeMcDef = {
 	type: 'recognize-mc',
 	schema: generatedRecognizeMcSchema,
-	promptSpec: 'recognize-mc — target text shown, native meaning picked. {shown:TargetText, correctMeaning, distractors:[3], instruction} e.g. {"type":"recognize-mc","shown":{"text":"el perro","reading":null},"correctMeaning":"the dog","distractors":["the cat","the bread","the house"],"instruction":null,"itemIds":["i1"],"explanation":null}',
+	promptSpec:
+		'recognize-mc — target text shown, native meaning picked. {shown:TargetText, correctMeaning, distractors:[3], instruction} e.g. {"type":"recognize-mc","shown":{"text":"el perro","reading":null},"correctMeaning":"the dog","distractors":["the cat","the bread","the house"],"instruction":null,"itemIds":["i1"],"explanation":null}',
 	correctiveSpec: 'recognize-mc {shown,correctMeaning,distractors}',
 
 	fixtures: {

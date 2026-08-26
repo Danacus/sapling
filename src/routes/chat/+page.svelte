@@ -250,7 +250,11 @@
 
 			{#if busy}
 				<div class="row assistant-row">
-					<div class="bubble assistant-bubble typing" role="status" aria-label="Assistant is typing">
+					<div
+						class="bubble assistant-bubble typing"
+						role="status"
+						aria-label="Assistant is typing"
+					>
 						<span class="dot"></span>
 						<span class="dot"></span>
 						<span class="dot"></span>
@@ -280,8 +284,7 @@
 				disabled={busy}
 				bind:value={input}
 				onkeydown={onComposerKeydown}
-				oninput={autoGrow}
-			></textarea>
+				oninput={autoGrow}></textarea>
 			<button
 				type="button"
 				class="btn btn-primary send-btn"

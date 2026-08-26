@@ -132,7 +132,10 @@ export function parseRomanizations(raw: string, knownIds: Iterable<string>): Map
 
 	const parsed = romanizationsSchema.safeParse(json);
 	if (!parsed.success) {
-		throw new LlmError('bad-response', 'The model returned JSON in an unexpected shape. Try again.');
+		throw new LlmError(
+			'bad-response',
+			'The model returned JSON in an unexpected shape. Try again.'
+		);
 	}
 
 	const wanted = new Set(knownIds);

@@ -143,9 +143,7 @@ describe('escalate', () => {
 			new Response(
 				JSON.stringify({
 					model: 'test/model',
-					choices: [
-						{ message: { content: '{"answer":"Both are fine here.","overturn":true}' } }
-					],
+					choices: [{ message: { content: '{"answer":"Both are fine here.","overturn":true}' } }],
 					usage: { prompt_tokens: 90, completion_tokens: 20 }
 				}),
 				{ status: 200, headers: { 'Content-Type': 'application/json' } }

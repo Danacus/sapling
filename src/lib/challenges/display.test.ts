@@ -204,9 +204,9 @@ describe('answerIsTargetLanguage', () => {
 
 describe('answerReading', () => {
 	it('reads the correct option for multiple choice', () => {
-		expect(
-			answerReading(mc({ optionsRomanization: ['kuàizi', 'càidān', 'chá', 'shuǐ'] }))
-		).toBe('càidān');
+		expect(answerReading(mc({ optionsRomanization: ['kuàizi', 'càidān', 'chá', 'shuǐ'] }))).toBe(
+			'càidān'
+		);
 	});
 
 	it('reads the stored answer romanization for cloze, typed translation and word order', () => {

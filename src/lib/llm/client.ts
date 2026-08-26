@@ -116,13 +116,7 @@ export interface ChatCompletionResult {
 }
 
 /** Why an LLM call failed, in terms the UI can act on. */
-export type LlmErrorKind =
-	| 'no-key'
-	| 'auth'
-	| 'rate-limit'
-	| 'server'
-	| 'network'
-	| 'bad-response';
+export type LlmErrorKind = 'no-key' | 'auth' | 'rate-limit' | 'server' | 'network' | 'bad-response';
 
 /** Every failure out of `$lib/llm` is one of these. `message` is UI-ready. */
 export class LlmError extends Error {

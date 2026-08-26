@@ -163,8 +163,8 @@
 			</datalist>
 
 			{#if nativeLanguage.trim() && nativeLanguage.trim().toLowerCase() === targetLanguage
-					.trim()
-					.toLowerCase()}
+						.trim()
+						.toLowerCase()}
 				<p class="hint">Pick two different languages to get started.</p>
 			{/if}
 		{:else if step === 2}
@@ -220,8 +220,8 @@
 					spellcheck="false"
 				/>
 				<p class="hint">
-					Stored only in your browser — it never leaves this device except to call OpenRouter. Create
-					one at
+					Stored only in your browser — it never leaves this device except to call OpenRouter.
+					Create one at
 					<a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer noopener"
 						>openrouter.ai/keys</a
 					>.
@@ -413,5 +413,4 @@
 		font-size: 0.9rem;
 		font-weight: 700;
 	}
-
 </style>

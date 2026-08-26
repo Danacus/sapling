@@ -52,7 +52,10 @@ function bearerToken(header: string | undefined): string | undefined {
  * the middleware's mount point is authenticated by default — fail closed, so
  * adding a route can never accidentally add an open one.
  */
-export function bearerAuth(store: SyncStore, skipPaths: readonly string[] = []): MiddlewareHandler<AuthEnv> {
+export function bearerAuth(
+	store: SyncStore,
+	skipPaths: readonly string[] = []
+): MiddlewareHandler<AuthEnv> {
 	return async (c, next) => {
 		if (skipPaths.includes(c.req.path)) return next();
 

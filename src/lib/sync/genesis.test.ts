@@ -55,11 +55,7 @@ function makeItem(
 	};
 }
 
-const poolRow = (
-	id: string,
-	generatedAt: number,
-	extra: Partial<PoolRow> = {}
-): PoolRow =>
+const poolRow = (id: string, generatedAt: number, extra: Partial<PoolRow> = {}): PoolRow =>
 	({
 		id,
 		type: 'typed-translation',
@@ -153,11 +149,7 @@ describe('synthesizeGenesis', () => {
 
 	it('emits nothing for an empty device', () => {
 		expect(
-			synthesizeGenesis(
-				{ items: [], pool: [], results: [], profile: null },
-				DEVICE,
-				idFactory()
-			)
+			synthesizeGenesis({ items: [], pool: [], results: [], profile: null }, DEVICE, idFactory())
 		).toEqual([]);
 	});
 

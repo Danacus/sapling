@@ -62,8 +62,7 @@ export const escalationReplySchema = z.object({
 });
 
 /** Used when the learner taps "explain" without typing a question. */
-export const DEFAULT_QUESTION =
-	'Explain the correct answer and whether my answer should count.';
+export const DEFAULT_QUESTION = 'Explain the correct answer and whether my answer should count.';
 
 /** Word budget for an escalation reply. Kept tight on purpose. */
 export const ANSWER_WORD_LIMIT = 120;

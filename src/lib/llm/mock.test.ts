@@ -125,7 +125,10 @@ describe('mockBatch', () => {
 	});
 
 	it('resolves every placeholder and every review reference', () => {
-		const ids = new Set([...args.reviewItems.map((i) => i.id), ...result.newItems.map((i) => i.id)]);
+		const ids = new Set([
+			...args.reviewItems.map((i) => i.id),
+			...result.newItems.map((i) => i.id)
+		]);
 		for (const challenge of result.challenges) {
 			expect(challenge.itemIds.length).toBeGreaterThan(0);
 			for (const id of challenge.itemIds) {
@@ -139,14 +142,7 @@ describe('mockBatch', () => {
 		const wordOrder = result.challenges.find((c) => c.type === 'word-order');
 		if (wordOrder?.type !== 'word-order') throw new Error('expected a word-order challenge');
 
-		expect(wordOrder.answerTokens).toEqual([
-			'¿Nos',
-			'trae',
-			'la',
-			'cuenta,',
-			'por',
-			'favor?'
-		]);
+		expect(wordOrder.answerTokens).toEqual(['¿Nos', 'trae', 'la', 'cuenta,', 'por', 'favor?']);
 		expect(wordOrder.answer).toBe('¿Nos trae la cuenta, por favor?');
 		// Two distractors on top of the six real tiles, all still available.
 		expect(wordOrder.tiles).toHaveLength(8);

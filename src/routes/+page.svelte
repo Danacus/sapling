@@ -149,9 +149,7 @@
 		return BEDS.map((bed) => ({ ...bed, count: counts[bed.maturity] }));
 	});
 
-	const gardenLabel = $derived(
-		garden.map((bed) => `${bed.count} ${bed.label}`).join(', ')
-	);
+	const gardenLabel = $derived(garden.map((bed) => `${bed.count} ${bed.label}`).join(', '));
 </script>
 
 <svelte:head>

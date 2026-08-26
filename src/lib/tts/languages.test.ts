@@ -84,7 +84,13 @@ describe('kokoroSpeakerFor', () => {
 	});
 
 	it('picks a Mandarin voice for every way of writing Mandarin', () => {
-		for (const language of ['Mandarin Chinese', 'Chinese', 'Mandarin', 'Simplified Chinese', 'zh']) {
+		for (const language of [
+			'Mandarin Chinese',
+			'Chinese',
+			'Mandarin',
+			'Simplified Chinese',
+			'zh'
+		]) {
 			expect(kokoroSpeakerFor(language, 'auto'), language).toEqual(DEFAULT_MANDARIN_SPEAKER);
 			expect(kokoroSupports(language), language).toBe(true);
 		}

@@ -154,8 +154,7 @@ describe('generatedBatchSchema', () => {
 			generatedChallengeSchema.safeParse({ ...validBatch.challenges[3], answers: [] }).success
 		).toBe(false);
 		expect(
-			generatedChallengeSchema.safeParse({ ...validBatch.challenges[4], answersNative: [] })
-				.success
+			generatedChallengeSchema.safeParse({ ...validBatch.challenges[4], answersNative: [] }).success
 		).toBe(false);
 	});
 
@@ -299,9 +298,9 @@ describe('generatedBatchSchema', () => {
 
 		it('treats distractorWords as optional, null or any length', () => {
 			for (const distractorWords of [null, undefined, [], [{ text: 'x', reading: null }]]) {
-				expect(
-					generatedChallengeSchema.safeParse({ ...wordOrder, distractorWords }).success
-				).toBe(true);
+				expect(generatedChallengeSchema.safeParse({ ...wordOrder, distractorWords }).success).toBe(
+					true
+				);
 			}
 		});
 

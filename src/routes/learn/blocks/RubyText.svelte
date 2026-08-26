@@ -39,7 +39,11 @@
 	} = $props();
 </script>
 
-<span class="ruby-text">{#each tokens as token, index (index)}{#if token.reading}<ruby>{token.text}<rt>{token.reading}</rt></ruby>{:else}{token.text}{/if}{/each}</span>
+<span class="ruby-text"
+	>{#each tokens as token, index (index)}{#if token.reading}<ruby
+				>{token.text}<rt>{token.reading}</rt></ruby
+			>{:else}{token.text}{/if}{/each}</span
+>
 
 <style>
 	/*

@@ -167,9 +167,7 @@ export function clozeSentenceRomanization(generated: {
 	const tail = readingOf(generated.after) ?? '';
 	if (!head && !tail) return {};
 	const gapTail = OPENS_WITH_WORD.test(tail) ? ' ' : '';
-	const line = `${head}${head ? ' ' : ''}${CLOZE_GAP}${gapTail}${tail}`
-		.replace(/\s+/g, ' ')
-		.trim();
+	const line = `${head}${head ? ' ' : ''}${CLOZE_GAP}${gapTail}${tail}`.replace(/\s+/g, ' ').trim();
 	return { sentenceRomanization: line };
 }
 

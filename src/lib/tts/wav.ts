@@ -46,7 +46,11 @@ export function encodeWav(samples: Float32Array, sampleRate: number): ArrayBuffe
 	for (let i = 0; i < samples.length; i++) {
 		const sample = Math.max(-1, Math.min(1, samples[i]));
 		// Asymmetric scaling: -1 maps to -32768, +1 to 32767.
-		view.setInt16(WAV_HEADER_BYTES + i * 2, Math.round(sample * (sample < 0 ? 32768 : 32767)), true);
+		view.setInt16(
+			WAV_HEADER_BYTES + i * 2,
+			Math.round(sample * (sample < 0 ? 32768 : 32767)),
+			true
+		);
 	}
 
 	return buffer;

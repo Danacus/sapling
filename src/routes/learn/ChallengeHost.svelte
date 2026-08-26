@@ -58,7 +58,14 @@
 {:else if challenge.type === 'cloze'}
 	<Cloze {challenge} {onanswer} {targetLanguage} {nativeLanguage} {readings} {tokenize} />
 {:else if challenge.type === 'typed-translation'}
-	<TypedTranslation {challenge} {onanswer} {targetLanguage} {nativeLanguage} {readings} {tokenize} />
+	<TypedTranslation
+		{challenge}
+		{onanswer}
+		{targetLanguage}
+		{nativeLanguage}
+		{readings}
+		{tokenize}
+	/>
 {:else if challenge.type === 'word-order'}
 	<WordOrder {challenge} {onanswer} {targetLanguage} {nativeLanguage} {readings} {tokenize} />
 {:else if challenge.type === 'spot-error'}

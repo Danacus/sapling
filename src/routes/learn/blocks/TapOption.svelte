@@ -203,7 +203,6 @@
 		font-weight: 500;
 	}
 
-
 	/* States --------------------------------------------------------------- */
 
 	/* Before the state rules on purpose: a locked-in `correct` tile and a

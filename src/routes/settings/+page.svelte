@@ -36,7 +36,14 @@
 		type TtsEngine,
 		type TtsVoice
 	} from '$lib/tts';
-	import { clearSyncConfig, getSyncKey, getSyncServer, setSyncKey, setSyncServer, syncEnabled } from '$lib/sync/config';
+	import {
+		clearSyncConfig,
+		getSyncKey,
+		getSyncServer,
+		setSyncKey,
+		setSyncServer,
+		syncEnabled
+	} from '$lib/sync/config';
 	import { runSync } from '$lib/sync/run';
 	import type { KnowledgeItem, Profile } from '$lib/types';
 	import InlineStatus from '$lib/ui/InlineStatus.svelte';
@@ -607,7 +614,8 @@
 				<p class="readonly-row">
 					<span class="readonly-label">Learning</span>
 					<span class="readonly-value">
-						{profile.targetLanguage} <span class="muted">from</span> {profile.nativeLanguage}
+						{profile.targetLanguage} <span class="muted">from</span>
+						{profile.nativeLanguage}
 					</span>
 				</p>
 				<p class="readonly-row">
@@ -666,8 +674,8 @@
 				<div class="switch-copy">
 					<span class="label">Listening challenges</span>
 					<p class="hint">
-						Some "what does this mean?" challenges are played instead of shown, with the text one tap
-						away. Needs speech to be on; turn this off to always see the words.
+						Some "what does this mean?" challenges are played instead of shown, with the text one
+						tap away. Needs speech to be on; turn this off to always see the words.
 					</p>
 				</div>
 				<button
@@ -712,15 +720,16 @@
 					value={ttsEngine}
 					onchange={(event) => chooseEngine(event.currentTarget.value as TtsEngine)}
 				>
-					<option value="kokoro">Kokoro (neural) — downloads {downloadSize} once, then offline</option
+					<option value="kokoro"
+						>Kokoro (neural) — downloads {downloadSize} once, then offline</option
 					>
 					<option value="webspeech">Browser built-in — instant, uses your system voices</option>
 					<option value="off">Off — no audio anywhere</option>
 				</select>
 				{#if ttsEngine === 'kokoro' && profile && !kokoroCoversTarget}
 					<p class="hint">
-						Heads up: Kokoro speaks Mandarin and English, so {profile.targetLanguage} will use your
-						browser's built-in voice regardless.
+						Heads up: Kokoro speaks Mandarin and English, so {profile.targetLanguage} will use your browser's
+						built-in voice regardless.
 					</p>
 				{:else if ttsEngine === 'kokoro'}
 					<p class="hint">
@@ -767,15 +776,15 @@
 				</div>
 
 				<p class="hint">
-					{downloadSize} in two files (the sherpa-onnx runtime and the Kokoro model), stored in your
-					browser's cache. It happens once per browser profile, and everything works offline
-					afterwards. The model is the full-precision build on purpose — the small quantized one is
-					half the size but produces silence in WebAssembly.
+					{downloadSize} in two files (the sherpa-onnx runtime and the Kokoro model), stored in your browser's
+					cache. It happens once per browser profile, and everything works offline afterwards. The model
+					is the full-precision build on purpose — the small quantized one is half the size but produces
+					silence in WebAssembly.
 				</p>
 				<p class="hint">
-					Synthesis takes roughly a second or two per phrase on a laptop CPU, in a background thread.
-					Each clip is then kept, so a word you have heard before plays back instantly — including
-					after a reload.
+					Synthesis takes roughly a second or two per phrase on a laptop CPU, in a background
+					thread. Each clip is then kept, so a word you have heard before plays back instantly —
+					including after a reload.
 				</p>
 
 				{#if preloading}
@@ -893,9 +902,9 @@
 			</div>
 			<hr class="stitch" />
 			<p class="hint">
-				When sync is on, your vocabulary, challenge content, review history, results and
-				profile (including your About text) sync to your own server. Your OpenRouter key, this
-				sync key, preferences and TTS caches never leave this device.
+				When sync is on, your vocabulary, challenge content, review history, results and profile
+				(including your About text) sync to your own server. Your OpenRouter key, this sync key,
+				preferences and TTS caches never leave this device.
 			</p>
 
 			<div class="field">
@@ -934,7 +943,9 @@
 
 			{#if syncConfigured}
 				<p class="hint sync-status-line">
-					Last synced {lastSyncLabel} · {pendingOutbox} pending event{pendingOutbox === 1 ? '' : 's'}
+					Last synced {lastSyncLabel} · {pendingOutbox} pending event{pendingOutbox === 1
+						? ''
+						: 's'}
 				</p>
 			{/if}
 
@@ -1001,8 +1012,8 @@
 					<span class="label">Missing pronunciations</span>
 					<p class="hint">
 						{missingReadings.length} word{missingReadings.length === 1 ? '' : 's'} from before pronunciations
-						were supported {missingReadings.length === 1 ? 'has' : 'have'} no reading. One short model call
-						fills them all in.
+						were supported {missingReadings.length === 1 ? 'has' : 'have'} no reading. One short model
+						call fills them all in.
 					</p>
 					<div class="actions-row">
 						<button

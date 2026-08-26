@@ -101,8 +101,7 @@
 		disabled={lock.locked}
 		placeholder="Type your answer"
 		aria-label="Your translation"
-		{onkeydown}
-	></textarea>
+		{onkeydown}></textarea>
 
 	<CheckButton disabled={!ready} onclick={submit} />
 </div>

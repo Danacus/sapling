@@ -169,7 +169,9 @@ describe('shouldShowReading', () => {
 
 		const hideChance = hideReadingProbability(strength);
 		const target = challenge(['mid']);
-		expect(shouldShowReading('adaptive', target, items, NOW, rigged(hideChance - 0.01))).toBe(false);
+		expect(shouldShowReading('adaptive', target, items, NOW, rigged(hideChance - 0.01))).toBe(
+			false
+		);
 		expect(shouldShowReading('adaptive', target, items, NOW, rigged(hideChance + 0.01))).toBe(true);
 	});
 

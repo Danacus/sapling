@@ -131,8 +131,6 @@ describe('tokenizeMandarin', () => {
 	});
 
 	it('is reachable through the Romanizer interface', () => {
-		expect(zhRomanizer.tokenize('银行', ['银行'])).toEqual([
-			{ text: '银行', reading: 'yín háng' }
-		]);
+		expect(zhRomanizer.tokenize('银行', ['银行'])).toEqual([{ text: '银行', reading: 'yín háng' }]);
 	});
 });

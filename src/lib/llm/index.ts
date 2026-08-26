@@ -42,13 +42,7 @@ export async function getEscalation(
 
 // -- The rest of the layer, for callers that want the pieces ---------------
 
-export {
-	APP_REFERER,
-	APP_TITLE,
-	LlmError,
-	OPENROUTER_BASE_URL,
-	chatCompletion
-} from './client';
+export { APP_REFERER, APP_TITLE, LlmError, OPENROUTER_BASE_URL, chatCompletion } from './client';
 export type {
 	AssistantMessage,
 	ChatCompletionOptions,

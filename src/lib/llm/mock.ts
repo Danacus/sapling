@@ -109,7 +109,11 @@ interface Fixture {
  * fixtures there are, and pinyin beats no mock at all.
  */
 export function usesMandarinFixtures(targetLanguage: string): boolean {
-	return bcp47For(targetLanguage ?? '').split('-')[0].toLowerCase() === 'zh';
+	return (
+		bcp47For(targetLanguage ?? '')
+			.split('-')[0]
+			.toLowerCase() === 'zh'
+	);
 }
 
 /**

@@ -733,9 +733,11 @@
 	function reportCurrent(): void {
 		const fb = feedback;
 		if (!fb) return;
-		pendingWrite = pendingWrite.then(() => reportChallenge(fb.challenge)).catch(() => {
-			// A failed write must not eat the session; the banner already said thanks.
-		});
+		pendingWrite = pendingWrite
+			.then(() => reportChallenge(fb.challenge))
+			.catch(() => {
+				// A failed write must not eat the session; the banner already said thanks.
+			});
 	}
 
 	async function continueSession(): Promise<void> {
@@ -1182,10 +1184,19 @@
 	{:else}
 		<header class="topbar">
 			<button type="button" class="quit" onclick={requestQuit} aria-label="Quit session">
-				<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" /></svg>
+				<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"
+					><path d="m7 7 10 10M17 7 7 17" /></svg
+				>
 			</button>
 
-			<div class="progress" role="progressbar" aria-valuenow={stepsDone} aria-valuemin={0} aria-valuemax={totalSteps} aria-label="Session progress">
+			<div
+				class="progress"
+				role="progressbar"
+				aria-valuenow={stepsDone}
+				aria-valuemin={0}
+				aria-valuemax={totalSteps}
+				aria-label="Session progress"
+			>
 				{#each Array.from({ length: totalSteps }, (_, i) => i) as index (index)}
 					<span class="segment" class:filled={index < stepsDone}></span>
 				{/each}
@@ -1196,8 +1207,7 @@
 
 		{#if mock}
 			<p class="mock-banner">
-				Practice mode — add your OpenRouter key in <a href="/settings">Settings</a> for personalized
-				content.
+				Practice mode — add your OpenRouter key in <a href="/settings">Settings</a> for personalized content.
 			</p>
 		{/if}
 
@@ -1274,7 +1284,12 @@
 						<button type="button" class="btn btn-primary" onclick={() => (showQuitConfirm = false)}>
 							Keep going
 						</button>
-						<button type="button" class="btn btn-ghost" onclick={() => void quit()} disabled={leaving}>
+						<button
+							type="button"
+							class="btn btn-ghost"
+							onclick={() => void quit()}
+							disabled={leaving}
+						>
 							Quit
 						</button>
 					</div>

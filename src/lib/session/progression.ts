@@ -108,11 +108,7 @@ function demandForStrength(strength: number): Demand {
  * cleared it — the floors are calibration points, not thresholds anything
  * balances on.
  */
-export function bearableDemand(
-	challenge: Challenge,
-	items: KnowledgeItem[],
-	now: number
-): Demand {
+export function bearableDemand(challenge: Challenge, items: KnowledgeItem[], now: number): Demand {
 	return demandForStrength(weakestWordStrength(challenge, items, now));
 }
 

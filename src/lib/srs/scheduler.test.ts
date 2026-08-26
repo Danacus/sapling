@@ -184,7 +184,10 @@ describe('wordStrength', () => {
 		const old = wordStrength(mature(30, NOW), NOW);
 		expect(young).toBeLessThan(old);
 		// The point of the change: both are perfectly recallable right now.
-		expect(retrievability(mature(1, NOW), NOW)).toBeCloseTo(retrievability(mature(30, NOW), NOW), 3);
+		expect(retrievability(mature(1, NOW), NOW)).toBeCloseTo(
+			retrievability(mature(30, NOW), NOW),
+			3
+		);
 	});
 });
 
@@ -197,7 +200,11 @@ describe('selectSessionItems', () => {
 	}
 
 	it('orders due items most-overdue-first', () => {
-		const items = [dueItem('a', NOW - 1 * DAY), dueItem('b', NOW - 5 * DAY), dueItem('c', NOW - 2 * DAY)];
+		const items = [
+			dueItem('a', NOW - 1 * DAY),
+			dueItem('b', NOW - 5 * DAY),
+			dueItem('c', NOW - 2 * DAY)
+		];
 		const { reviewItems } = selectSessionItems(items, { now: NOW });
 		expect(reviewItems.map((i) => i.id)).toEqual(['b', 'c', 'a']);
 	});
@@ -261,7 +268,11 @@ describe('selectSessionItems', () => {
 
 	it('never returns a negative newItemSlots when review items already exceed the budget', () => {
 		const items = Array.from({ length: 20 }, (_, i) => dueItem(`item-${i}`, NOW - (i + 1) * DAY));
-		const { newItemSlots } = selectSessionItems(items, { now: NOW, maxItems: 12, recentAccuracy: 0.6 });
+		const { newItemSlots } = selectSessionItems(items, {
+			now: NOW,
+			maxItems: 12,
+			recentAccuracy: 0.6
+		});
 		expect(newItemSlots).toBeGreaterThanOrEqual(0);
 	});
 });

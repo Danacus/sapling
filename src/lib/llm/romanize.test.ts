@@ -16,7 +16,10 @@ const items = [
 const args = { items, targetLanguage: 'Mandarin Chinese' };
 
 /** Replies with one canned completion, and records what was sent. */
-function scriptedFetch(content: string): { fetchFn: FetchLike; body: () => Record<string, unknown> } {
+function scriptedFetch(content: string): {
+	fetchFn: FetchLike;
+	body: () => Record<string, unknown>;
+} {
 	let sent: Record<string, unknown> = {};
 	const fetchFn: FetchLike = async (_url, init) => {
 		sent = JSON.parse(String(init?.body)) as Record<string, unknown>;

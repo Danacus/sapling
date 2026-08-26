@@ -44,12 +44,7 @@ export type { TtsProgress } from './sherpa';
  */
 export { onSherpaProgress } from './sherpa';
 export type { KokoroSpeaker } from './languages';
-export {
-	getTtsEngine,
-	getTtsVoice,
-	DEFAULT_TTS_ENGINE,
-	DEFAULT_TTS_VOICE
-} from './prefs';
+export { getTtsEngine, getTtsVoice, DEFAULT_TTS_ENGINE, DEFAULT_TTS_VOICE } from './prefs';
 export {
 	bcp47For,
 	isMandarin,

@@ -89,9 +89,7 @@ export function openStore(path: string): SyncStore {
 	const selectUser = db.prepare<[string], { user_id: string }>(
 		'SELECT user_id FROM keys WHERE hash = ?'
 	);
-	const insertKeyStmt = db.prepare(
-		'INSERT INTO keys (hash, user_id, created_at) VALUES (?, ?, ?)'
-	);
+	const insertKeyStmt = db.prepare('INSERT INTO keys (hash, user_id, created_at) VALUES (?, ?, ?)');
 	const selectLatest = db.prepare<[string], { latest: number }>(
 		'SELECT COALESCE(MAX(seq), 0) AS latest FROM events WHERE user_id = ?'
 	);

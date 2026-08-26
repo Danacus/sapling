@@ -63,7 +63,11 @@ function profile(overrides: Partial<Profile> = {}): Profile {
 }
 
 /** An item whose card is due `dueOffset` ms from `NOW` (negative = overdue). */
-function item(id: string, dueOffset: number, history: KnowledgeItem['history'] = []): KnowledgeItem {
+function item(
+	id: string,
+	dueOffset: number,
+	history: KnowledgeItem['history'] = []
+): KnowledgeItem {
 	const card = newCardState(NOW);
 	return {
 		id,
@@ -104,7 +108,11 @@ function resting(id: string, itemIds: string[], servedAgo: number): ChallengeRow
  * cards {@link item} builds can. The pair is what the bearability tests below
  * choose between.
  */
-function recognition(id: string, itemIds: string[], over: Partial<ChallengeRow> = {}): ChallengeRow {
+function recognition(
+	id: string,
+	itemIds: string[],
+	over: Partial<ChallengeRow> = {}
+): ChallengeRow {
 	return {
 		id,
 		type: 'multiple-choice',
@@ -168,7 +176,17 @@ describe('interleaveMatchRounds', () => {
 
 		expect(queue).toHaveLength(11);
 		expect(types(queue).map((type) => type === 'match-pairs')).toEqual([
-			false, false, false, false, true, false, false, false, false, true, false
+			false,
+			false,
+			false,
+			false,
+			true,
+			false,
+			false,
+			false,
+			false,
+			true,
+			false
 		]);
 		// The generated challenges keep their planned order around the rounds.
 		expect(
@@ -760,7 +778,11 @@ describe('planSession', () => {
 	});
 
 	it('hands back plain challenges, without the pool bookkeeping', () => {
-		const planned = planSession([row('c1', ['due'], { topic: 'at the market' })], [item('due', -DAY)], NOW);
+		const planned = planSession(
+			[row('c1', ['due'], { topic: 'at the market' })],
+			[item('due', -DAY)],
+			NOW
+		);
 
 		expect(planned[0]).not.toHaveProperty('timesServed');
 		expect(planned[0]).not.toHaveProperty('lastServedAt');
@@ -840,11 +862,7 @@ describe('planSession', () => {
 
 			// Rested first in the walk; the two resting rows only arrive with the
 			// last-resort filler, least recently served first.
-			expect(ids(planSession(pool, items, NOW, { target: 3 }))).toEqual([
-				'fresh',
-				'cooler',
-				'hot'
-			]);
+			expect(ids(planSession(pool, items, NOW, { target: 3 }))).toEqual(['fresh', 'cooler', 'hot']);
 		});
 
 		it('fills leftover slots with rested material before resting material', () => {
@@ -919,14 +937,13 @@ describe('planSession', () => {
 
 		it('excludes a never-reviewed item from freshness filler too, not just the due pass', () => {
 			const items = [item('due', -DAY, reviewed), item('never', +DAY)];
-			const pool = [
-				row('due-1', ['due']),
-				row('filler', ['never'], { generatedAt: NOW })
-			];
+			const pool = [row('due-1', ['due']), row('filler', ['never'], { generatedAt: NOW })];
 
 			// With reviewOnly off, `filler` would fill the second slot; with it on,
 			// the never-reviewed item's challenge must never surface, due or filler.
-			expect(ids(planSession(pool, items, NOW, { target: 2, reviewOnly: true }))).toEqual(['due-1']);
+			expect(ids(planSession(pool, items, NOW, { target: 2, reviewOnly: true }))).toEqual([
+				'due-1'
+			]);
 		});
 
 		it('behaves exactly as before when unset', () => {
@@ -1149,11 +1166,7 @@ describe('deriveRecentMistakes', () => {
 			itemIds: ['a']
 		};
 		const mistakes = deriveRecentMistakes(
-			[
-				result('c1', 'correct', 'leo'),
-				result('c2', 'almost', 'leo'),
-				result('m1', 'wrong', 'x')
-			],
+			[result('c1', 'correct', 'leo'), result('c2', 'almost', 'leo'), result('m1', 'wrong', 'x')],
 			[challenge('c1', ['a']), challenge('c2', ['b']), match],
 			items
 		);
@@ -1182,13 +1195,9 @@ describe('deriveRecentMistakes', () => {
 		expect(mistakes).toEqual([{ term: 'term-a', gave: 'newest' }]);
 
 		const many = Array.from({ length: 20 }, (_, i) => result(`c${i}`, 'wrong', `g${i}`));
-		const manyChallenges = Array.from({ length: 20 }, (_, i) =>
-			challenge(`c${i}`, [`i${i}`])
-		);
+		const manyChallenges = Array.from({ length: 20 }, (_, i) => challenge(`c${i}`, [`i${i}`]));
 		const manyItems = Array.from({ length: 20 }, (_, i) => item(`i${i}`, -DAY));
-		expect(deriveRecentMistakes(many, manyChallenges, manyItems)).toHaveLength(
-			MAX_RECENT_MISTAKES
-		);
+		expect(deriveRecentMistakes(many, manyChallenges, manyItems)).toHaveLength(MAX_RECENT_MISTAKES);
 	});
 
 	it('labels a blank answer rather than sending an empty string', () => {

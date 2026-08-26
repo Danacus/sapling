@@ -95,5 +95,4 @@ describe('stored-type purity', () => {
 		};
 		expect(Object.keys(STORED_TYPE_DEFS).sort()).toEqual(Object.keys(expected).sort());
 	});
-
 });

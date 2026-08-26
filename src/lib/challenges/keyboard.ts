@@ -38,9 +38,7 @@ export interface ChoiceKeyState {
 
 /** What the component should do about a key press. */
 export type ChoiceKeyAction =
-	| { kind: 'ignore' }
-	| { kind: 'select'; index: number }
-	| { kind: 'submit' };
+	{ kind: 'ignore' } | { kind: 'select'; index: number } | { kind: 'submit' };
 
 const IGNORE: ChoiceKeyAction = { kind: 'ignore' };
 
