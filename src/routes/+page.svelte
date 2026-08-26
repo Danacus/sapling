@@ -7,42 +7,27 @@
 		getAllResults,
 		getPool,
 		getProfile,
+		localDay,
+		previousDay,
 		streakFrom
 	} from '$lib/db';
-	import { hideReadingProbability } from '$lib/session/romanization';
-	import { isDue, wordStrength, type FsrsCardState } from '$lib/srs';
+	import { maturityOf, type Maturity } from '$lib/session/progression';
+	import { isDue, type FsrsCardState } from '$lib/srs';
 	import type { KnowledgeItem, Profile } from '$lib/types';
-	import ProgressBar from '$lib/ui/ProgressBar.svelte';
-	import { getRomanizationMode } from '$lib/ui/prefs';
-	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
-	const WEAK_PREVIEW_COUNT = 10;
-
-	/** Read once — the setting lives in Settings, not mid-page. */
-	const romanizationMode = getRomanizationMode();
-
-	/**
-	 * Whether a word in the list shows its reading. Adaptive mode deliberately
-	 * does not roll a coin here: a static list has no recall to aid, and a
-	 * reading that appeared and vanished between visits would read as a bug. It
-	 * hides only what the learner fully owns — the same words adaptive mode
-	 * always hides mid-session.
-	 */
-	function showsReading(strength: number): boolean {
-		if (romanizationMode === 'on') return true;
-		if (romanizationMode === 'off') return false;
-		return hideReadingProbability(strength) < 1;
-	}
+	/** Days in the activity strip, ending today. */
+	const STRIP_DAYS = 7;
 
 	let loading = $state(true);
 	let loadError = $state('');
 	let profile = $state<Profile | undefined>(undefined);
 	let items = $state<KnowledgeItem[]>([]);
+	/** Answers per local calendar day, oldest first — the strip and the streak. */
+	let activity = $state<{ day: string; count: number }[]>([]);
 	/** The run of consecutive days with an answer in it, folded out of the log. */
 	let streakDays = $state(0);
 	let now = $state(Date.now());
-	let showAllWeak = $state(false);
 	/** Challenges in the pool — an upper bound on what a session could draw from. */
 	let pooled = $state(0);
 
@@ -58,7 +43,8 @@
 				if (cancelled) return;
 				profile = loadedProfile;
 				items = loadedItems;
-				streakDays = streakFrom(activityByDay(results).map((entry) => entry.day));
+				activity = activityByDay(results);
+				streakDays = streakFrom(activity.map((entry) => entry.day));
 				pooled = pool.length;
 				now = Date.now();
 				loading = false;
@@ -80,9 +66,6 @@
 	}
 
 	const targetLanguage = $derived(profile?.targetLanguage?.trim() || 'your new language');
-	/** The real language name — `targetLanguage` above carries a display fallback. */
-	const speechLanguage = $derived(profile?.targetLanguage?.trim() ?? '');
-
 	const dueCount = $derived(
 		items.filter((item) => {
 			const card = cardState(item);
@@ -90,33 +73,85 @@
 		}).length
 	);
 
-	interface WeightedItem {
-		item: KnowledgeItem;
-		strength: number;
-	}
-
-	const weakestFirst: WeightedItem[] = $derived(
-		items
-			.map((item) => {
-				const card = cardState(item);
-				return { item, strength: card ? wordStrength(card, now) : 0 };
-			})
-			.sort((a, b) => a.strength - b.strength)
-	);
-
-	const visibleWeakest = $derived(
-		showAllWeak ? weakestFirst : weakestFirst.slice(0, WEAK_PREVIEW_COUNT)
-	);
+	const today = $derived(localDay(now));
+	const reviewsToday = $derived(activity.find((entry) => entry.day === today)?.count ?? 0);
 
 	/**
-	 * Red below 0.5, amber below 0.85, green above — which on the `wordStrength`
-	 * scale is roughly "under 5 days of stability", "under 18 days", and "mature".
+	 * The line under the headline. It is about *today*, so it has to stay
+	 * pleasant on the day nothing has happened yet — an empty log is a fine way
+	 * to be, and the card never scolds.
 	 */
-	function strengthColor(strength: number): string {
-		if (strength < 0.5) return 'var(--danger)';
-		if (strength < 0.85) return 'var(--amber)';
-		return 'var(--primary)';
+	const secondaryLine = $derived(
+		reviewsToday > 0
+			? `${reviewsToday} review${reviewsToday === 1 ? '' : 's'} done today`
+			: dueCount > 0
+				? 'Nothing answered yet today'
+				: 'Nothing waiting — more words ripen as the day goes on'
+	);
+
+	interface DayCell {
+		day: string;
+		count: number;
+		/** Single-letter weekday label, in the reader's own locale. */
+		letter: string;
+		isToday: boolean;
 	}
+
+	/**
+	 * The last seven calendar days, oldest first. Built by walking `previousDay`
+	 * backwards from today rather than by slicing the log, so unplayed days are
+	 * present as zeroes instead of missing columns.
+	 */
+	const strip: DayCell[] = $derived.by(() => {
+		const counts = new Map(activity.map((entry) => [entry.day, entry.count]));
+
+		const days = [today];
+		while (days.length < STRIP_DAYS) days.unshift(previousDay(days[0]));
+
+		return days.map((day) => {
+			const [year, month, date] = day.split('-').map(Number);
+			return {
+				day,
+				count: counts.get(day) ?? 0,
+				letter: new Date(year, month - 1, date).toLocaleDateString(undefined, {
+					weekday: 'narrow'
+				}),
+				isToday: day === today
+			};
+		});
+	});
+
+	const stripPeak = $derived(Math.max(1, ...strip.map((cell) => cell.count)));
+
+	/**
+	 * Bar height as a percentage of the column. A day with answers never drops
+	 * below a readable stub, so a quiet day next to a heavy one still reads as
+	 * "something happened" rather than as nothing.
+	 */
+	function barHeight(count: number): number {
+		if (count === 0) return 0;
+		return Math.max(18, Math.round((count / stripPeak) * 100));
+	}
+
+	/**
+	 * The garden's three beds. Botanical rather than clinical on purpose: this
+	 * card is about growth, so nothing here is coloured or worded as a problem.
+	 */
+	const BEDS: { maturity: Maturity; label: string }[] = [
+		{ maturity: 'new', label: 'sprouting' },
+		{ maturity: 'young', label: 'growing' },
+		{ maturity: 'solid', label: 'rooted' }
+	];
+
+	const garden = $derived.by(() => {
+		const counts: Record<Maturity, number> = { new: 0, young: 0, solid: 0 };
+		for (const item of items) counts[maturityOf(item, now)]++;
+		return BEDS.map((bed) => ({ ...bed, count: counts[bed.maturity] }));
+	});
+
+	const gardenLabel = $derived(
+		garden.map((bed) => `${bed.count} ${bed.label}`).join(', ')
+	);
 </script>
 
 <svelte:head>
@@ -178,6 +213,9 @@
 				<path d="M12 12.6c0-3.8 2-5.8 5.6-5.8 0 3.8-2 5.8-5.6 5.8Z" />
 			</svg>
 			<a class="btn btn-primary btn-block start-btn" href="/learn">Start session</a>
+			<!-- Only the empty states speak here. The due count is the card below's
+			     job, and a number stated twice on one screen invites the two to
+			     disagree. -->
 			{#if items.length === 0}
 				<p class="hint centered">
 					Your first session will introduce your first words in {targetLanguage}.
@@ -186,51 +224,72 @@
 				<p class="hint centered">
 					No challenges in your pool — generate a lesson to fill it back up.
 				</p>
-			{:else}
-				<p class="hint centered">
-					{dueCount === 0 ? 'No words due right now — great job staying on top of it!' : `${dueCount} word${dueCount === 1 ? '' : 's'} due for review`}
-				</p>
 			{/if}
 		</section>
 
+		<!-- "Right now", never "today": due counts move through the day as words
+		     fall due, so this card states a moment rather than scoring a day. -->
+		<section class="card now-card ll-rise" style="animation-delay: 180ms">
+			<p class="eyebrow">Right now</p>
+			<p class="now-headline">
+				{#if dueCount === 0}
+					You're all caught up
+				{:else}
+					{dueCount} word{dueCount === 1 ? '' : 's'} ready to review
+				{/if}
+			</p>
+			<p class="now-secondary">{secondaryLine}</p>
+
+			<hr class="stitch" />
+
+			<div
+				class="strip"
+				role="img"
+				aria-label={`Answers over the last ${STRIP_DAYS} days: ${strip.map((cell) => `${cell.day}, ${cell.count}`).join('; ')}`}
+			>
+				{#each strip as cell (cell.day)}
+					<div class="strip-col" class:is-today={cell.isToday}>
+						<div class="strip-track">
+							{#if cell.count > 0}
+								<div class="strip-bar" style="height: {barHeight(cell.count)}%"></div>
+							{:else}
+								<div class="strip-stub"></div>
+							{/if}
+						</div>
+						<span class="strip-letter">{cell.letter}</span>
+					</div>
+				{/each}
+			</div>
+		</section>
+
 		{#if items.length > 0}
-			<section class="card strength-card ll-rise" style="animation-delay: 180ms">
-				<div class="strength-head">
-					<h2>Word strength</h2>
-					<div class="strength-tools">
-						<span class="strength-count">{items.length} words known</span>
+			<section class="card garden-card ll-rise" style="animation-delay: 240ms">
+				<div class="card-head">
+					<h2>Garden</h2>
+					<div class="card-tools">
+						<span class="card-count">{items.length} word{items.length === 1 ? '' : 's'}</span>
 						<a class="btn btn-ghost words-link" href="/words">All words</a>
 					</div>
 				</div>
 				<hr class="stitch" />
-				<ul class="word-list">
-					{#each visibleWeakest as entry (entry.item.id)}
-						<li class="word-row">
-							<div class="word-text">
-								<span class="term-row">
-									<span class="term">{entry.item.term}</span>
-									<SpeakButton text={entry.item.term} lang={speechLanguage} size="sm" />
-								</span>
-								{#if showsReading(entry.strength) && entry.item.romanization}
-									<span class="rom">{entry.item.romanization}</span>
-								{/if}
-								<span class="meaning">{entry.item.meaning}</span>
-							</div>
-							<div class="word-bar">
-								<ProgressBar
-									value={entry.strength}
-									color={strengthColor(entry.strength)}
-									label={`Recall strength for ${entry.item.term}`}
-								/>
-							</div>
+
+				<div class="beds" role="img" aria-label={`Vocabulary: ${gardenLabel}`}>
+					{#each garden as bed (bed.maturity)}
+						{#if bed.count > 0}
+							<div class="bed bed-{bed.maturity}" style="flex-grow: {bed.count}"></div>
+						{/if}
+					{/each}
+				</div>
+
+				<ul class="legend">
+					{#each garden as bed (bed.maturity)}
+						<li class="legend-item">
+							<span class="dot bed-{bed.maturity}" aria-hidden="true"></span>
+							<span class="legend-count">{bed.count}</span>
+							<span class="legend-label">{bed.label}</span>
 						</li>
 					{/each}
 				</ul>
-				{#if weakestFirst.length > WEAK_PREVIEW_COUNT}
-					<button type="button" class="btn btn-ghost show-all" onclick={() => (showAllWeak = !showAllWeak)}>
-						{showAllWeak ? 'Show fewer' : `Show all ${weakestFirst.length}`}
-					</button>
-				{/if}
 			</section>
 		{/if}
 	{/if}
@@ -359,7 +418,7 @@
 		max-width: none;
 	}
 
-	.strength-head {
+	.card-head {
 		display: flex;
 		align-items: baseline;
 		justify-content: space-between;
@@ -367,12 +426,18 @@
 		margin-bottom: 0.75rem;
 	}
 
-	.strength-head h2 {
+	.card-head h2 {
 		margin: 0;
 		font-size: 1.15rem;
 	}
 
-	.strength-count {
+	.card-tools {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.card-count {
 		font-size: 0.82rem;
 		font-weight: 700;
 		font-variant-numeric: tabular-nums;
@@ -380,8 +445,17 @@
 		color: var(--text-muted);
 	}
 
-	.strength-head + .stitch {
+	.card-head + .stitch {
 		margin: 0 0 1rem;
+	}
+
+	.words-link {
+		padding: 0.28rem 0.7rem;
+		border-color: var(--border);
+		font-size: 0.78rem;
+		/* An anchor wearing .btn arrives underlined; the control must read as a
+		   button, not a link in a box. */
+		text-decoration: none;
 	}
 
 	.start-card {
@@ -432,89 +506,152 @@
 		text-wrap: balance;
 	}
 
-	/* A ruled ledger: rows separated by the same hairline the cards use, so a
-	   long word list reads as a page of entries rather than floating chips. */
-	.word-list {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-	}
+	/* Right now ---------------------------------------------------------- */
 
-	.word-row {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-		align-items: center;
-		gap: 0.75rem;
-		padding: 0.6rem 0;
-	}
-
-	.word-row + .word-row {
-		border-top: 1px solid var(--border);
-	}
-
-	.strength-tools {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.words-link {
-		padding: 0.28rem 0.7rem;
-		border-color: var(--border);
-		font-size: 0.78rem;
-		/* An anchor wearing .btn arrives underlined; the control must read as a
-		   button, not a link in a box. */
-		text-decoration: none;
-	}
-
-	.word-bar :global(.bar) {
-		min-width: 0;
-	}
-
-	.word-text {
-		display: flex;
-		flex-direction: column;
-		min-width: 0;
-	}
-
-	.term-row {
-		display: flex;
-		align-items: center;
-		gap: 0.15rem;
-		min-width: 0;
-	}
-
-	.term {
+	.now-headline {
+		margin: 0.15rem 0 0;
+		font-family: var(--font-display);
+		font-size: clamp(1.25rem, 5.5vw, 1.5rem);
 		font-weight: 700;
-		letter-spacing: -0.005em;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+		line-height: 1.2;
+		letter-spacing: -0.01em;
+		text-wrap: balance;
 	}
 
-	.word-text :global(.rom) {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.meaning {
-		font-size: 0.85rem;
+	.now-secondary {
+		margin: 0.3rem 0 0;
+		font-size: 0.9rem;
 		color: var(--text-muted);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+		text-wrap: balance;
 	}
 
-	.show-all {
-		display: block;
+	.now-card .stitch {
+		margin: 1.1rem 0 0.85rem;
+	}
+
+	/* Seven days of answers, drawn in the page's own ink. Deliberately unlabelled
+	   on the vertical axis: it is a shape to recognise at a glance, not a chart
+	   to read values off. */
+	.strip {
+		display: flex;
+		align-items: flex-end;
+		gap: 0.4rem;
+	}
+
+	.strip-col {
+		flex: 1 1 0;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: stretch;
+		gap: 0.35rem;
+	}
+
+	.strip-track {
+		display: flex;
+		align-items: flex-end;
+		height: 2.6rem;
+	}
+
+	.strip-bar {
 		width: 100%;
-		margin-top: 0.9rem;
-		border-top: 1px dashed var(--border-strong);
-		border-radius: 0 0 var(--radius) var(--radius);
+		border-radius: var(--radius-sm);
+		background: color-mix(in srgb, var(--primary) 45%, var(--surface-alt));
+	}
+
+	/* A day with nothing in it is still a day: a hairline sitting on the
+	   baseline, not a gap. */
+	.strip-stub {
+		width: 100%;
+		height: 2px;
+		border-radius: 2px;
+		background: var(--border-strong);
+		opacity: 0.7;
+	}
+
+	.strip-letter {
+		text-align: center;
+		font-size: 0.68rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		color: var(--text-muted);
+	}
+
+	.strip-col.is-today .strip-bar {
+		background: var(--primary);
+	}
+
+	.strip-col.is-today .strip-stub {
+		background: var(--primary);
+		opacity: 0.55;
+	}
+
+	.strip-col.is-today .strip-letter {
+		color: var(--text);
+	}
+
+	/* Garden ------------------------------------------------------------- */
+
+	/* One bar, three beds. Segment widths come from `flex-grow: count`, so they
+	   partition the bar exactly — percentages would have to be rounded, and
+	   rounded percentages do not add up to a whole garden. */
+	.beds {
+		display: flex;
+		gap: 2px;
+		height: 0.85rem;
+		border-radius: 999px;
+		background: var(--surface-alt);
+		overflow: hidden;
+	}
+
+	.bed {
+		flex-basis: 0;
+		min-width: 3px;
+	}
+
+	.bed-new {
+		background: var(--accent);
+	}
+
+	.bed-young {
+		background: color-mix(in srgb, var(--primary) 55%, var(--amber));
+	}
+
+	.bed-solid {
+		background: var(--primary);
+	}
+
+	.legend {
+		list-style: none;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.4rem 1.1rem;
+		margin: 0.85rem 0 0;
+		padding: 0;
+	}
+
+	.legend-item {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 0.35rem;
 		font-size: 0.85rem;
+	}
+
+	.dot {
+		align-self: center;
+		width: 0.55rem;
+		height: 0.55rem;
+		border-radius: 50%;
+		flex: 0 0 auto;
+	}
+
+	.legend-count {
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.legend-label {
+		color: var(--text-muted);
 	}
 
 	.error {
@@ -527,13 +664,6 @@
 		font-weight: 700;
 	}
 
-	@media (max-width: 480px) {
-		.word-row {
-			grid-template-columns: 1fr;
-			gap: 0.35rem;
-		}
-	}
-
 	@media (max-width: 380px) {
 		/* At the narrowest phone the language name needs the whole line; the
 		   controls drop under it rather than squeezing the headline. */
@@ -544,6 +674,10 @@
 
 		.topbar-actions {
 			padding-top: 0;
+		}
+
+		.legend {
+			gap: 0.35rem 0.8rem;
 		}
 	}
 </style>
