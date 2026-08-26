@@ -26,20 +26,19 @@
 	import { audioTextsFor, correctAnswerText } from '$lib/challenges/display';
 	import { ALL_READINGS } from '$lib/challenges/props';
 	import { activityByDay, getAllResults, getProfile, streakFrom } from '$lib/db';
-	import { LlmError, isMockMode, makeMatchPairsChallenge } from '$lib/llm';
+	import { LlmError, isMockMode } from '$lib/llm';
 	import type { ProgressStep } from '$lib/llm';
 	import { loadRomanizer, type Romanizer } from '$lib/romanize';
 	import {
-		MATCH_PAIRS_EVERY,
 		SKIP_ANSWER,
 		amendResult,
 		applyOverturn,
 		applyResult,
 		generateChallenges,
+		interleaveMatchRounds,
 		reportChallenge,
 		sessionSummary,
 		startSession,
-		wantsMatchRound,
 		type AnswerEvent,
 		type SessionAnswer,
 		type SessionPlan
@@ -192,7 +191,10 @@
 
 	/* Session ----------------------------------------------------------------- */
 
-	/** The planned challenges, in order, and how far into them we are. */
+	/**
+	 * The whole session in order — generated challenges *and* the free match
+	 * rounds spliced between them — and how far into it we are.
+	 */
 	let queue: Challenge[] = [];
 	let nextIndex = 0;
 
@@ -217,8 +219,9 @@
 	let feedback = $state<Feedback | null>(null);
 	let answers = $state<SessionAnswer[]>([]);
 	let llmAnswered = $state(0);
-	let lastMatchAfter = $state(-1);
 	let plannedLlm = $state(0);
+	/** {@link queue}'s length, mirrored into state for the progress bar. */
+	let plannedSteps = $state(0);
 
 	/** Day streak after this session, folded out of the answer log by {@link finish}. */
 	let endStreak = $state(0);
@@ -453,17 +456,20 @@
 	async function playPlan(ready: SessionPlan): Promise<void> {
 		if (ready.challenges.length === 0) return;
 
-		queue = ready.challenges;
-		nextIndex = 0;
-		// Match-pairs rounds are drawn from `items` mid-session (see `advance`); under
-		// review-only, a never-reviewed word must not sneak in there either.
+		// Match rounds are drawn from `items`, so it has to be settled first; under
+		// review-only, a never-reviewed word must not sneak into one either.
 		items = reviewOnlyMode ? ready.items.filter((item) => item.history.length > 0) : ready.items;
+		// The free rounds are spliced in here, before anything walks the session —
+		// `warmSession` below is the reason: a round that only came into existence
+		// mid-play could never have its tile audio pre-rendered.
+		queue = interleaveMatchRounds(ready.challenges, items);
+		nextIndex = 0;
 		plannedLlm = ready.challenges.length;
+		plannedSteps = queue.length;
 		newWords = firstTimeWords(ready);
 
 		answers = [];
 		llmAnswered = 0;
-		lastMatchAfter = -1;
 
 		// Audio, ahead of the learner: boot the engine now rather than inside the
 		// first spoken challenge, and start rendering the session's clips in play
@@ -535,10 +541,12 @@
 	 * rather longer, so a loop that starts with the session stays comfortably
 	 * ahead of it after the first challenge or two — which is the difference
 	 * between audio that is simply there and audio that lands after the moment
-	 * it belonged to. Nothing waits on it and every failure is swallowed inside
-	 * `warmSpeech`; the queue is walked by value, and it never grows mid-session
-	 * (a background generation lands in the *pool*, and only the next plan sees
-	 * it), so there is nothing here to keep in sync.
+	 * it belonged to. It sees the *whole* session because the free match rounds
+	 * are spliced into the queue at plan time — improvised rounds used to be
+	 * invisible here, and arrived with cold tiles. Nothing waits on it and every
+	 * failure is swallowed inside `warmSpeech`; the queue is walked by value, and
+	 * it never grows mid-session (a background generation lands in the *pool*, and
+	 * only the next plan sees it), so there is nothing here to keep in sync.
 	 */
 	function warmSession(challenges: Challenge[]): void {
 		const generation = warmGeneration;
@@ -568,35 +576,22 @@
 	/* ---------------------------------------------------------------------- */
 
 	/**
-	 * Total steps the progress bar plans for: the generated challenges we can
-	 * actually serve, plus one free match round after every {@link
-	 * MATCH_PAIRS_EVERY}th of them (never after the last one — the session ends
-	 * there).
+	 * Total steps the progress bar plans for. The queue already *is* the session,
+	 * free match rounds included, so this is just its length — there is no second
+	 * source of challenges left to predict.
 	 */
-	const plannedMatches = $derived(
-		items.length >= 4 ? Math.floor(Math.max(0, plannedLlm - 1) / MATCH_PAIRS_EVERY) : 0
-	);
-	const totalSteps = $derived(Math.max(1, plannedLlm + plannedMatches));
+	const totalSteps = $derived(Math.max(1, plannedSteps));
 	const stepsDone = $derived(answers.length);
 
 	async function advance(): Promise<void> {
 		feedback = null;
 
-		// The plan is the session: when it is walked, we are done. Checked before
-		// the match round below so a session never ends on free filler.
+		// The queue is the session: when it is walked, we are done. The free rounds
+		// are already in it — `interleaveMatchRounds` put them there, and that is
+		// also where the "never end on filler" rule lives.
 		if (nextIndex >= queue.length) {
 			await finish();
 			return;
-		}
-
-		// A free round costs nothing and needs four known words to be worth playing.
-		if (items.length >= 4 && wantsMatchRound(llmAnswered, lastMatchAfter)) {
-			const match = makeMatchPairsChallenge(items);
-			if (match) {
-				lastMatchAfter = llmAnswered;
-				show(match);
-				return;
-			}
 		}
 
 		show(queue[nextIndex++]);
@@ -608,11 +603,11 @@
 		currentReadings = planReadings(romanizationMode, challenge, items, at);
 		current = challenge;
 		// Warm this challenge's own audio while the learner is still reading it.
-		// The queue loop has usually got there first — but not for a match round,
-		// which is built here in `advance` and was never in the plan, and not for
-		// the first challenge of a session, which is shown the same tick the loop
-		// starts. Fire-and-forget: a failed warm just means the real `speak`
-		// synthesizes as it always did.
+		// The queue loop covers the whole session now, so it has usually got there
+		// first — but not for the first challenge, which is shown the same tick the
+		// loop starts, and not for a clip the audio cache has since evicted.
+		// Fire-and-forget: a failed warm just means the real `speak` synthesizes as
+		// it always did.
 		void warmTexts(audioTextsFor(challenge), warmGeneration);
 	}
 

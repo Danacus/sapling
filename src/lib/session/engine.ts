@@ -34,7 +34,7 @@ import {
 	upsertItems
 } from '$lib/db';
 import type { ChallengeRow } from '$lib/db';
-import { getBatch, isMockMode } from '$lib/llm';
+import { getBatch, isMockMode, makeMatchPairsChallenge } from '$lib/llm';
 import type { BatchArgs, OnProgress, RecentMistake, TokenUsage } from '$lib/llm';
 import {
 	Grade,
@@ -85,7 +85,7 @@ export const POOL_LOW_THRESHOLD = 8;
  */
 export const SESSION_LENGTH = 20;
 
-/** A free, locally built match-pairs round is slotted in after every N answers. */
+/** A free, locally built match-pairs round is slotted in after every N challenges. */
 export const MATCH_PAIRS_EVERY = 4;
 
 /**
@@ -195,14 +195,47 @@ export function sessionSummary(answers: SessionAnswer[]): SessionSummary {
 }
 
 /**
- * True when a free match-pairs round should be slotted in before the next
- * generated challenge: after every {@link MATCH_PAIRS_EVERY}th answered LLM
- * challenge, and never twice at the same count.
+ * Splices the free match-pairs rounds into a planned session, returning the one
+ * queue the learn screen walks.
+ *
+ * These rounds used to be improvised mid-session, between queue positions, which
+ * left the session with *two* sources of challenges — and anything that wanted
+ * to see a whole session in advance saw only one of them. The TTS warm loop is
+ * the case that made it hurt: a round that does not exist yet cannot have its
+ * tile audio pre-rendered, so every match round arrived silent-then-late. The
+ * rounds were never improvised for a reason — they are drawn from `items`, which
+ * is frozen for the session, and their positions are pure arithmetic — so
+ * building them at plan time costs nothing and buys one source of truth: the
+ * warm loop, the progress math and the walk all see the same session, and an
+ * early quit wastes only free, locally built material.
+ *
+ * One round goes in after every {@link MATCH_PAIRS_EVERY}th challenge, **never
+ * after the last one** — a session must not end on free filler. Each splice
+ * point builds its own round, so every one is an independent shuffle and pick.
+ * A point where {@link makeMatchPairsChallenge} declines (fewer than four
+ * collision-free items) simply gets no round; with static items that means none
+ * anywhere.
+ *
+ * @param rng Injectable `[0,1)` source, forwarded to every round it builds.
  */
-export function wantsMatchRound(llmAnswered: number, lastMatchAfter: number): boolean {
-	return (
-		llmAnswered > 0 && llmAnswered % MATCH_PAIRS_EVERY === 0 && lastMatchAfter !== llmAnswered
-	);
+export function interleaveMatchRounds(
+	challenges: Challenge[],
+	items: KnowledgeItem[],
+	rng: () => number = Math.random
+): Challenge[] {
+	const queue: Challenge[] = [];
+
+	for (const [index, challenge] of challenges.entries()) {
+		queue.push(challenge);
+
+		const position = index + 1;
+		if (position === challenges.length || position % MATCH_PAIRS_EVERY !== 0) continue;
+
+		const round = makeMatchPairsChallenge(items, rng);
+		if (round) queue.push(round);
+	}
+
+	return queue;
 }
 
 /**

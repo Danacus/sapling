@@ -15,7 +15,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ChallengeRow } from '$lib/db';
-import { getBatch, isMockMode, makeMatchPairsChallenge } from '$lib/llm';
+import { getBatch, isMockMode } from '$lib/llm';
 import type { ProgressStep } from '$lib/llm';
 import { CardState, gradeFromResult, newCardState, reviewCard, Grade } from '$lib/srs';
 import type {
@@ -36,6 +36,7 @@ import {
 	SKIP_ANSWER,
 	dedupeNewItems,
 	deriveRecentMistakes,
+	interleaveMatchRounds,
 	isListeningChallenge,
 	planPractice,
 	dropNewItemChallenges,
@@ -44,7 +45,6 @@ import {
 	remapItemIds,
 	sessionSummary,
 	spokenAnswerFor,
-	wantsMatchRound,
 	type SessionAnswer
 } from './engine';
 
@@ -146,16 +146,72 @@ const ids = (challenges: Challenge[]) => challenges.map((challenge) => challenge
 
 /* -------------------------------------------------------------------------- */
 
-describe('wantsMatchRound', () => {
-	it('fires after every Nth answered challenge', () => {
-		expect(wantsMatchRound(0, -1)).toBe(false);
-		expect(wantsMatchRound(MATCH_PAIRS_EVERY - 1, -1)).toBe(false);
-		expect(wantsMatchRound(MATCH_PAIRS_EVERY, -1)).toBe(true);
-		expect(wantsMatchRound(2 * MATCH_PAIRS_EVERY, MATCH_PAIRS_EVERY)).toBe(true);
+describe('interleaveMatchRounds', () => {
+	/** `n` generated challenges, distinguishable by id. */
+	const generated = (n: number): Challenge[] =>
+		Array.from({ length: n }, (_, i) => row(`c${i}`, ['k0']) as Challenge);
+
+	const known = (n: number) => Array.from({ length: n }, (_, i) => item(`k${i}`, -DAY));
+
+	const types = (challenges: Challenge[]) => challenges.map((challenge) => challenge.type);
+
+	/** A deterministic `[0,1)` sequence, so two rounds get *different* draws. */
+	function lcg(seed: number): () => number {
+		let state = seed;
+		return () => {
+			state = (state * 1664525 + 1013904223) % 4294967296;
+			return state / 4294967296;
+		};
+	}
+
+	it('slots a round in after every Nth challenge', () => {
+		const queue = interleaveMatchRounds(generated(9), known(6));
+
+		expect(queue).toHaveLength(11);
+		expect(types(queue).map((type) => type === 'match-pairs')).toEqual([
+			false, false, false, false, true, false, false, false, false, true, false
+		]);
+		// The generated challenges keep their planned order around the rounds.
+		expect(
+			queue.filter((challenge) => challenge.type !== 'match-pairs').map((challenge) => challenge.id)
+		).toEqual(ids(generated(9)));
 	});
 
-	it('does not repeat itself at the same count', () => {
-		expect(wantsMatchRound(MATCH_PAIRS_EVERY, MATCH_PAIRS_EVERY)).toBe(false);
+	it('never ends a session on free filler', () => {
+		// An exact multiple of N: the last splice point is the last challenge.
+		const queue = interleaveMatchRounds(generated(2 * MATCH_PAIRS_EVERY), known(6));
+
+		expect(queue).toHaveLength(2 * MATCH_PAIRS_EVERY + 1);
+		expect(queue.at(-1)?.type).not.toBe('match-pairs');
+		expect(queue[MATCH_PAIRS_EVERY].type).toBe('match-pairs');
+	});
+
+	it('returns an empty queue for an empty plan', () => {
+		expect(interleaveMatchRounds([], known(6))).toEqual([]);
+	});
+
+	it('leaves the plan alone when a round cannot be built', () => {
+		// Fewer than four usable items: `makeMatchPairsChallenge` declines, and
+		// with static items that means no round anywhere.
+		const plan = generated(9);
+		expect(interleaveMatchRounds(plan, known(3))).toEqual(plan);
+	});
+
+	it('builds each round independently, and deterministically from its rng', () => {
+		const queue = interleaveMatchRounds(generated(9), known(8), lcg(1));
+		const rounds = queue.filter((challenge) => challenge.type === 'match-pairs');
+
+		expect(rounds).toHaveLength(2);
+		expect(rounds[0].id).not.toBe(rounds[1].id);
+		// Fresh shuffle per splice point: the second round is not a copy of the first.
+		expect(rounds[0].itemIds).not.toEqual(rounds[1].itemIds);
+
+		const again = interleaveMatchRounds(generated(9), known(8), lcg(1));
+		expect(
+			again
+				.filter((challenge) => challenge.type === 'match-pairs')
+				.map((challenge) => challenge.itemIds)
+		).toEqual(rounds.map((challenge) => challenge.itemIds));
 	});
 });
 
@@ -1408,34 +1464,20 @@ describe('session walkthrough (mock batch, no database)', () => {
 			reported: false
 		}));
 
-		// The session is planned once, up front — no database read mid-play.
+		// The session is planned once, up front — no database read mid-play — and
+		// the free rounds are spliced in there too, so play is one walk.
 		const planned = planSession(pool, items, NOW);
-		let next = 0;
+		const queue = interleaveMatchRounds(planned, items);
 
 		const answers: SessionAnswer[] = [];
 		let llmAnswered = 0;
-		let lastMatchAfter = -1;
 		let matchRounds = 0;
 
-		for (;;) {
+		for (const challenge of queue) {
 			if (llmAnswered >= SESSION_LENGTH) break;
 
-			let challenge: Challenge | undefined;
-			if (items.length >= 4 && wantsMatchRound(llmAnswered, lastMatchAfter)) {
-				challenge = makeMatchPairsChallenge(items);
-				if (challenge) {
-					lastMatchAfter = llmAnswered;
-					matchRounds++;
-				}
-			}
-			if (!challenge) {
-				const fromPlan = planned[next];
-				if (!fromPlan) break;
-				next++;
-				challenge = fromPlan;
-			}
-
 			const isMatch = challenge.type === 'match-pairs';
+			if (isMatch) matchRounds++;
 			const verdict = isMatch ? 'correct' : answerAs(challenge, llmAnswered);
 
 			if (!isMatch) llmAnswered++;
@@ -1453,7 +1495,7 @@ describe('session walkthrough (mock batch, no database)', () => {
 			llmAnswered,
 			summary: sessionSummary(answers),
 			planned,
-			unplayed: planned.length - next
+			unplayed: planned.length - llmAnswered
 		};
 	}
 
