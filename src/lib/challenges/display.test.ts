@@ -2,7 +2,7 @@
  * Unit tests for the per-type presentation rules.
  *
  * One fixture per stored type, deliberately minimal — only the fields these
- * four functions actually read — and every function is asked about every type,
+ * five functions actually read — and every function is asked about every type,
  * because the bugs this module exists to prevent are the ones where five types
  * were updated and the sixth was not.
  *
@@ -27,6 +27,7 @@ import type {
 import {
 	answerIsTargetLanguage,
 	answerReading,
+	audioTextsFor,
 	correctAnswerText,
 	spokenAnswerFor,
 	unhandledChallenge
@@ -288,6 +289,74 @@ describe('spokenAnswerFor', () => {
 	it('answers for every stored type', () => {
 		for (const challenge of allChallenges) {
 			expect(typeof spokenAnswerFor(challenge)).toBe('string');
+		}
+	});
+});
+
+describe('audioTextsFor', () => {
+	it('warms the prompt of a toNative multiple choice — the clip listening mode plays', () => {
+		expect(audioTextsFor(mc({ direction: 'toNative', prompt: '菜单' }))).toEqual(['菜单']);
+	});
+
+	it('warms the correct option of a toTarget multiple choice, not its native prompt', () => {
+		expect(audioTextsFor(mc())).toEqual(['菜单']);
+	});
+
+	it('warms every left-hand tile of a match round, which speaks one per tap', () => {
+		expect(audioTextsFor(matchPairs())).toEqual(['菜单', '买单']);
+	});
+
+	it('deduplicates a term that appears in two pairs', () => {
+		const challenge = matchPairs({
+			pairs: [
+				{ a: '菜单', b: 'the menu' },
+				{ a: '菜单', b: 'the bill' }
+			]
+		});
+		expect(audioTextsFor(challenge)).toEqual(['菜单']);
+	});
+
+	it('is silent for a word-order round played into the learner’s own language', () => {
+		// Nothing to hear: the tiles carry no speaker and the banner would be
+		// reading English back at an English speaker.
+		expect(audioTextsFor(wordOrder({ direction: 'toNative' }))).toEqual([]);
+		expect(audioTextsFor(wordOrder())).toEqual(['我们想买单']);
+	});
+
+	it('warms the cloze sentence twice — gapped while asking, complete once answered', () => {
+		expect(audioTextsFor(cloze())).toEqual(['请给我一份…。', '请给我一份菜单。']);
+	});
+
+	it('warms only the corrected sentence for spot-error, never the broken one', () => {
+		const challenge = spotError();
+		expect(audioTextsFor(challenge)).toEqual(['我们想买单']);
+		expect(audioTextsFor(challenge)).not.toContain(challenge.tokens.join(''));
+	});
+
+	it('follows the direction for typed translation, as its audible side does', () => {
+		expect(audioTextsFor(typed())).toEqual(['买单']);
+		expect(audioTextsFor(typed({ direction: 'toNative', prompt: '买单' }))).toEqual(['买单']);
+	});
+
+	it('never returns a blank phrase, however empty the row', () => {
+		expect(audioTextsFor(cloze({ acceptedAnswers: [] }))).toEqual(['请给我一份…。']);
+		expect(audioTextsFor(typed({ acceptedAnswers: [] }))).toEqual([]);
+	});
+
+	it('includes whatever spokenAnswerFor would play, for every stored type', () => {
+		// The warm and the play have to agree: a phrase the banner speaks but the
+		// session screen never warmed is exactly the late clip this exists to stop.
+		for (const challenge of allChallenges) {
+			const spoken = spokenAnswerFor(challenge);
+			if (spoken) expect(audioTextsFor(challenge)).toContain(spoken);
+		}
+	});
+
+	it('answers for every stored type, with no duplicates', () => {
+		for (const challenge of allChallenges) {
+			const texts = audioTextsFor(challenge);
+			expect(Array.isArray(texts)).toBe(true);
+			expect(new Set(texts).size).toBe(texts.length);
 		}
 	});
 });

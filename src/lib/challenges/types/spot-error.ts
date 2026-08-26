@@ -69,5 +69,13 @@ export const spotErrorStoredDef = {
 	spokenAnswerFor(challenge) {
 		// No direction gate: see the module note.
 		return challenge.correctedSentence.trim();
+	},
+
+	// Silent until it is answered: the broken sentence is there to be *read*, and
+	// hearing it would teach the learner the mistake. So the only clip is the
+	// corrected sentence the banner plays afterwards.
+	audioTexts(challenge) {
+		const spoken = challenge.correctedSentence.trim();
+		return spoken ? [spoken] : [];
 	}
 } satisfies StoredTypeDef<SpotErrorChallenge>;

@@ -18,9 +18,12 @@
   It is always skippable, in every sense. "Show text" is visible from the first
   frame, one tap turns the challenge back into an ordinary reading one, the mode
   is off entirely for learners who switch it off in Settings, and any sign that
-  audio did not happen — speech unavailable, a synth that never produced a
-  sound, one that is taking too long — reveals the text on its own. Sound never
-  blocks gameplay.
+  audio did not *happen* — speech unavailable, a synth that resolved without
+  ever producing a sound — reveals the text on its own. A slow synth does not:
+  the session screen renders every clip a challenge might speak while the
+  learner is still on the challenges before it, so a clip that has not arrived
+  yet is one that is coming, and revealing the prompt out from under it would
+  cost the learner the exercise. Sound never blocks gameplay.
 -->
 <script lang="ts">
 	import { choiceKeyAction } from '$lib/challenges/keyboard';
@@ -53,13 +56,6 @@
 	 * this to play, so anything faster means nothing came out.
 	 */
 	const MIN_AUDIBLE_MS = 250;
-
-	/**
-	 * How long to wait for audio before giving up and showing the text. Generous
-	 * enough for a synth warming up, short enough that a first-run Kokoro model
-	 * download (minutes) cannot strand the learner in front of a blank prompt.
-	 */
-	const AUDIO_TIMEOUT_MS = 6000;
 
 	let selected = $state<number | null>(null);
 	/** The learner — or a failure — asked for the prompt text. */
@@ -97,21 +93,15 @@
 		if (!listening) return;
 
 		let cancelled = false;
-		const timer = setTimeout(() => {
-			if (!cancelled) revealed = true;
-		}, AUDIO_TIMEOUT_MS);
-
 		const startedAt = Date.now();
 		void speak(prompt, targetLanguage).then(() => {
 			if (cancelled) return;
-			clearTimeout(timer);
 			// Nothing audible happened; do not leave the learner staring at silence.
 			if (Date.now() - startedAt < MIN_AUDIBLE_MS) revealed = true;
 		});
 
 		return () => {
 			cancelled = true;
-			clearTimeout(timer);
 		};
 	});
 

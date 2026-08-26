@@ -4,11 +4,12 @@
  * A `StoredTypeDef` is the whole of what the app knows about a member of the
  * `Challenge` union once it has been generated: the zod schema that validates it
  * (`schema`), how a learner's answer to it is graded (`check`), how much it asks
- * of the learner (`demand`), and the four presentation facts the feedback banner
+ * of the learner (`demand`), and the five presentation facts the feedback banner
  * and the TTS warm-up ask of every challenge — *what was the right answer*
  * (`correctAnswerText`), *is that answer in the target language*
  * (`answerIsTargetLanguage`), *what is its Latin reading* (`answerReading`),
- * *what should the learner hear* (`spokenAnswerFor`).
+ * *what should the learner hear* (`spokenAnswerFor`), *what might it say out
+ * loud at all* (`audioTexts`).
  *
  * Those facts used to live in three files and eight `switch`es. Adding a
  * type meant finding all of them, and the compiler only checked some. Now they
@@ -124,6 +125,27 @@ export interface StoredTypeBehaviour<C extends Challenge> {
 	 * direction gate lives in the defs and not around them.
 	 */
 	spokenAnswerFor(challenge: C): string;
+	/**
+	 * Every target-language phrase this challenge may speak while it is on
+	 * screen, in the order it is likely to want them — `[]` when it never makes
+	 * a sound.
+	 *
+	 * The union of what the *component* can hand `speak()` (the prompt behind the
+	 * header's speaker button, a match tile read out on selection) and what the
+	 * feedback banner plays afterwards ({@link spokenAnswerFor}), because the
+	 * session screen pre-synthesizes this list the moment a challenge is served
+	 * and Kokoro renders one phrase at a time. A phrase missing from here is not
+	 * a bug the learner can see — it simply arrives a second or two late — but a
+	 * phrase in the *wrong form* is wasted work, so the same rule as
+	 * `spokenAnswerFor` holds: always the canonical script, never a romanized
+	 * variant. Deduplicated, since a warm of the same string twice is a wasted
+	 * pass over the cache.
+	 *
+	 * A def that shares a phrase with its own `spokenAnswerFor` computes it once,
+	 * in one place in the module: a drift between the warmed string and the
+	 * spoken one turns every warm into a silent miss.
+	 */
+	audioTexts(challenge: C): string[];
 }
 
 /**

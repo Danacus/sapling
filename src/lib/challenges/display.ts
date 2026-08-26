@@ -1,14 +1,16 @@
 /**
  * Per-type presentation facts, dispatched by challenge type.
  *
- * Every challenge type answers the same four questions once it has been graded:
- * *what was the right answer*, *is that answer in the target language*, *what
- * is its Latin reading*, and *what should the learner hear*. Those are
- * presentation knowledge — nothing about them touches the SRS, the database or
- * the model — and each type's answers live with that type, in
- * `./types/<type>.ts`, next to its schema and its grading rule.
+ * Every challenge type answers the same five questions: *what was the right
+ * answer*, *is that answer in the target language*, *what is its Latin
+ * reading*, *what should the learner hear* — and, before any of that, *what
+ * might this challenge say out loud at all*, which is what the session screen
+ * pre-synthesizes. Those are presentation knowledge — nothing about them
+ * touches the SRS, the database or the model — and each type's answers live
+ * with that type, in `./types/<type>.ts`, next to its schema and its grading
+ * rule.
  *
- * What is left here is the door: four functions with the signatures the banner,
+ * What is left here is the door: five functions with the signatures the banner,
  * the session screen and the engine already import, each one lookup deep. The
  * exhaustiveness guarantee moved with the knowledge — the registry in
  * `./types/index.ts` is a mapped type over `ChallengeType`, so a seventh member
@@ -105,4 +107,25 @@ export function answerReading(challenge: Challenge): string | undefined {
  */
 export function spokenAnswerFor(challenge: Challenge): string {
 	return storedDefFor(challenge).spokenAnswerFor(challenge);
+}
+
+/**
+ * Every target-language phrase this challenge may speak while it is on screen,
+ * in the order it is likely to want them — `[]` when it never makes a sound.
+ *
+ * A superset of {@link spokenAnswerFor}: the answer the banner plays *plus*
+ * whatever the component itself can hand `speak()` — the prompt behind the
+ * header's speaker button (which listening mode plays unprompted), each tile of
+ * a match round's target-language column. The session screen pre-synthesizes
+ * this list, one phrase at a time, both for the challenge on screen and for the
+ * whole planned queue behind it, which is what turns Kokoro's second-or-two per
+ * phrase into an instant tap for everything after the first.
+ *
+ * Warming is only ever an optimization, so the cost of the two failure modes is
+ * asymmetric and the defs are written accordingly: a phrase left out of this
+ * list is merely slow the first time, while a phrase in the wrong form (a
+ * romanization, an uncompleted cloze gap) is a clip nothing will ever ask for.
+ */
+export function audioTextsFor(challenge: Challenge): string[] {
+	return storedDefFor(challenge).audioTexts(challenge);
 }

@@ -23,6 +23,11 @@ export const typedTranslationChallengeSchema = z.object({
 	...storedBase
 });
 
+/** The canonical accepted answer — `''` for a row that carries none. */
+function canonicalAnswer(challenge: TypedTranslationChallenge): string {
+	return challenge.acceptedAnswers[0]?.trim() ?? '';
+}
+
 export const typedTranslationStoredDef = {
 	type: 'typed-translation',
 	schema: typedTranslationChallengeSchema,
@@ -54,6 +59,16 @@ export const typedTranslationStoredDef = {
 
 	spokenAnswerFor(challenge) {
 		if (challenge.direction !== 'toTarget') return '';
-		return challenge.acceptedAnswers[0]?.trim() ?? '';
+		return canonicalAnswer(challenge);
+	},
+
+	// One phrase, on whichever side of the round the target language sits.
+	// `toNative` hands the learner target-language text to translate and hangs a
+	// speaker button off it; `toTarget` shows a native prompt worth nothing to
+	// hear and speaks the answer once it has been graded.
+	audioTexts(challenge) {
+		const spoken =
+			challenge.direction === 'toNative' ? challenge.prompt.trim() : canonicalAnswer(challenge);
+		return spoken ? [spoken] : [];
 	}
 } satisfies StoredTypeDef<TypedTranslationChallenge>;

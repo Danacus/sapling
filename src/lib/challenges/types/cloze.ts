@@ -27,6 +27,20 @@ export const clozeChallengeSchema = z.object({
 	...storedBase
 });
 
+/** The blank, as the resolver joined the sentence around it. */
+const GAP = '___';
+
+/**
+ * The sentence with the blank filled by the canonical accepted answer — `''`
+ * when the row carries no answer to fill it with, because a bare gap read aloud
+ * teaches nothing.
+ */
+function completedSentence(challenge: ClozeChallenge): string {
+	const canonical = challenge.acceptedAnswers[0]?.trim() ?? '';
+	if (!canonical) return '';
+	return challenge.sentence.split(GAP).join(canonical);
+}
+
 export const clozeStoredDef = {
 	type: 'cloze',
 	schema: clozeChallengeSchema,
@@ -58,10 +72,22 @@ export const clozeStoredDef = {
 
 	spokenAnswerFor(challenge) {
 		if (challenge.direction !== 'toTarget') return '';
-		const canonical = challenge.acceptedAnswers[0]?.trim() ?? '';
-		if (!canonical) return '';
 		// The sentence, spoken whole — the blank filled with the canonical script
 		// form the resolver pinned, never a romanized variant.
-		return challenge.sentence.split('___').join(canonical);
+		return completedSentence(challenge);
+	},
+
+	// Two clips, in the order the round asks for them. The speaker button sits in
+	// the sentence line from the first frame and reads the blank as an ellipsis
+	// (every engine renders that as the "…and then?" pause the learner needs);
+	// once the answer is in, both that button and the banner read the sentence
+	// complete. Neither is gated on `direction` the way `spokenAnswerFor` is —
+	// the sentence is target-language whichever way the row is exercised, and
+	// warming a clip nobody plays costs only a cache entry.
+	audioTexts(challenge) {
+		const asked = challenge.sentence.split(GAP).join('…');
+		const answered = completedSentence(challenge);
+		// A sentence with no blank left to fill makes the two identical.
+		return [...new Set([asked, answered])].filter((text) => text !== '');
 	}
 } satisfies StoredTypeDef<ClozeChallenge>;

@@ -20,9 +20,10 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
+	import { onDestroy } from 'svelte';
 	import { fade, fly, scale, slide } from 'svelte/transition';
 
-	import { correctAnswerText, spokenAnswerFor } from '$lib/challenges/display';
+	import { audioTextsFor, correctAnswerText } from '$lib/challenges/display';
 	import { ALL_READINGS } from '$lib/challenges/props';
 	import { activityByDay, getAllResults, getProfile, streakFrom } from '$lib/db';
 	import { LlmError, isMockMode, makeMatchPairsChallenge } from '$lib/llm';
@@ -35,7 +36,6 @@
 		applyOverturn,
 		applyResult,
 		generateChallenges,
-		isListeningChallenge,
 		reportChallenge,
 		sessionSummary,
 		startSession,
@@ -48,11 +48,10 @@
 	import { planReadings, type ReadingPlan } from '$lib/session/romanization';
 	import type { FsrsCardState, Grade } from '$lib/srs';
 	import { runSync } from '$lib/sync/run';
-	import { warmSpeech } from '$lib/tts';
+	import { getTtsEngine, kokoroSupports, preloadKokoro, warmSpeech } from '$lib/tts';
 	import type { Challenge, KnowledgeItem, Profile, Verdict } from '$lib/types';
 	import {
 		addRecentTopic,
-		getListeningMode,
 		getRecentTopics,
 		getReviewOnlyMode,
 		getRomanizationMode,
@@ -466,6 +465,14 @@
 		llmAnswered = 0;
 		lastMatchAfter = -1;
 
+		// Audio, ahead of the learner: boot the engine now rather than inside the
+		// first spoken challenge, and start rendering the session's clips in play
+		// order. A previous run — an early quit straight into another session —
+		// is dropped first, so only this session's queue is being warmed.
+		cancelWarming();
+		bootSpeech();
+		warmSession(queue);
+
 		phase = 'playing';
 		await advance();
 	}
@@ -482,6 +489,78 @@
 	function firstTimeWords(ready: SessionPlan): KnowledgeItem[] {
 		const exercised = new Set(ready.challenges.flatMap((challenge) => challenge.itemIds));
 		return ready.items.filter((item) => exercised.has(item.id) && item.history.length === 0);
+	}
+
+	/* ---------------------------------------------------------------------- */
+	/* Audio warm-up                                                           */
+	/* ---------------------------------------------------------------------- */
+
+	/**
+	 * Which warm-up run is current. Every loop captures it before it starts and
+	 * re-checks it between phrases, so {@link cancelWarming} — one increment — is
+	 * the whole of stopping them: a finished session, an early quit, or the
+	 * screen going away leaves nothing rendering audio for a session that is over.
+	 */
+	let warmGeneration = 0;
+
+	function cancelWarming(): void {
+		warmGeneration++;
+	}
+
+	onDestroy(cancelWarming);
+
+	/**
+	 * Renders `texts` into the audio caches, **one at a time**.
+	 *
+	 * The sequencing is the entire mechanism, and it is deliberate: the sherpa
+	 * worker synthesizes FIFO, so a warm loop that fired the whole session at
+	 * once would put a hundred phrases in front of the one clip the learner just
+	 * asked to hear. Keeping at most one warm in flight means a live `speak`
+	 * waits behind a single synthesis, and `$lib/tts`'s `inflight` map does the
+	 * rest — a real `speak` of a phrase this loop is already rendering joins that
+	 * render instead of queueing a second one. That pair is why there is no
+	 * priority queue here, and why one should not be added.
+	 */
+	async function warmTexts(texts: string[], generation: number): Promise<void> {
+		for (const text of texts) {
+			if (generation !== warmGeneration) return;
+			await warmSpeech(text, targetLanguage);
+		}
+	}
+
+	/**
+	 * Pre-synthesizes the whole session, in the order it will be played.
+	 *
+	 * A clip takes Kokoro a second or two and a challenge takes the learner
+	 * rather longer, so a loop that starts with the session stays comfortably
+	 * ahead of it after the first challenge or two — which is the difference
+	 * between audio that is simply there and audio that lands after the moment
+	 * it belonged to. Nothing waits on it and every failure is swallowed inside
+	 * `warmSpeech`; the queue is walked by value, and it never grows mid-session
+	 * (a background generation lands in the *pool*, and only the next plan sees
+	 * it), so there is nothing here to keep in sync.
+	 */
+	function warmSession(challenges: Challenge[]): void {
+		const generation = warmGeneration;
+		void warmTexts(
+			challenges.flatMap((challenge) => audioTextsFor(challenge)),
+			generation
+		);
+	}
+
+	/**
+	 * Starts Kokoro's worker and model load the moment a session begins.
+	 *
+	 * Not a new download decision — the first `speak` fetches exactly the same
+	 * artifacts — just one taken off the critical path: booting lazily means the
+	 * learner pays for it inside the first spoken challenge, which is the one
+	 * place in the session where they are waiting on audio with nothing to read.
+	 */
+	function bootSpeech(): void {
+		if (getTtsEngine() !== 'kokoro' || !kokoroSupports(targetLanguage)) return;
+		void preloadKokoro().catch(() => {
+			// A failed preload is not the learner's problem: `speak` falls back.
+		});
 	}
 
 	/* ---------------------------------------------------------------------- */
@@ -528,20 +607,13 @@
 		challengeShownAt = at;
 		currentReadings = planReadings(romanizationMode, challenge, items, at);
 		current = challenge;
-		// Warm the answer's audio while the learner is still thinking: Kokoro
-		// takes a second or two per phrase, answering takes longer, so the
-		// banner's auto-play finds the clip already local and plays instantly
-		// instead of trailing the grade. Fire-and-forget; a failed warm just
-		// means the real speak synthesizes as before.
-		const answerAudio = spokenAnswerFor(challenge);
-		if (answerAudio) void warmSpeech(answerAudio, targetLanguage);
-		// A listening challenge plays its *prompt* the moment it appears, with
-		// nothing on screen to read in the meantime — so that clip is the one
-		// warming actually matters for. Warmed here rather than in the component
-		// so the same rule decides both.
-		if (isListeningChallenge(challenge, listeningEnabled) && challenge.type === 'multiple-choice') {
-			void warmSpeech(challenge.prompt, targetLanguage);
-		}
+		// Warm this challenge's own audio while the learner is still reading it.
+		// The queue loop has usually got there first — but not for a match round,
+		// which is built here in `advance` and was never in the plan, and not for
+		// the first challenge of a session, which is shown the same tick the loop
+		// starts. Fire-and-forget: a failed warm just means the real `speak`
+		// synthesizes as it always did.
+		void warmTexts(audioTextsFor(challenge), warmGeneration);
 	}
 
 	function handleAnswer(event: AnswerEvent): void {
@@ -694,6 +766,9 @@
 
 	async function finish(): Promise<void> {
 		await pendingWrite;
+		// Nothing left to say: the summary screen is silent, so any phrase still
+		// queued for synthesis is work nobody asked for.
+		cancelWarming();
 		current = null;
 		feedback = null;
 
@@ -728,6 +803,8 @@
 		if (leaving) return;
 		leaving = true;
 		showQuitConfirm = false;
+		// The rest of the session will not be played; stop rendering its audio.
+		cancelWarming();
 		try {
 			await pendingWrite;
 			// Fire-and-forget (§9) — must not delay the navigation below.
@@ -800,9 +877,8 @@
 	const nativeLanguage = $derived(profile?.nativeLanguage ?? '');
 	const isLastStep = $derived(llmAnswered >= plannedLlm || stepsDone >= totalSteps);
 
-	/** Read once — the toggles live in Settings, not mid-session. */
+	/** Read once — the toggle lives in Settings, not mid-session. */
 	const romanizationMode = getRomanizationMode();
-	const listeningEnabled = getListeningMode();
 	/**
 	 * The summary's new-word list. A word the session just introduced is by
 	 * definition not one the learner owns, so adaptive mode has nothing to fade

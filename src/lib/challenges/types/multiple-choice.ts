@@ -25,6 +25,11 @@ export const multipleChoiceChallengeSchema = z.object({
 	...storedBase
 });
 
+/** The right option in its canonical form — `''` for a row missing it. */
+function correctOption(challenge: MultipleChoiceChallenge): string {
+	return challenge.options[challenge.correctIndex]?.trim() ?? '';
+}
+
 export const multipleChoiceStoredDef = {
 	type: 'multiple-choice',
 	schema: multipleChoiceChallengeSchema,
@@ -56,6 +61,18 @@ export const multipleChoiceStoredDef = {
 
 	spokenAnswerFor(challenge) {
 		if (challenge.direction !== 'toTarget') return '';
-		return challenge.options[challenge.correctIndex]?.trim() ?? '';
+		return correctOption(challenge);
+	},
+
+	// Exactly one phrase either way, and which one follows `direction` — the same
+	// split every other fact here follows. `toNative` puts the target language in
+	// the *prompt*: the header's speaker reads it, and in listening mode it is
+	// played the instant the challenge appears with nothing on screen to read
+	// meanwhile, which makes it the single clip warming matters most for.
+	// `toTarget` says nothing until the grade lands, and then says the answer.
+	audioTexts(challenge) {
+		const spoken =
+			challenge.direction === 'toNative' ? challenge.prompt.trim() : correctOption(challenge);
+		return spoken ? [spoken] : [];
 	}
 } satisfies StoredTypeDef<MultipleChoiceChallenge>;
