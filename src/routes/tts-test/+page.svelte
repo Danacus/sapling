@@ -10,7 +10,7 @@
 
 	import { getProfile } from '$lib/db';
 	import {
-		bcp47For,
+		isMandarin,
 		getTtsEngine,
 		getTtsVoice,
 		kokoroSupports,
@@ -49,12 +49,6 @@
 	/** Distinguishes a manual Stop from natural completion once the awaited call returns. */
 	let stoppedManually = false;
 
-	/** Same "is this actually Mandarin" test `languages.ts` uses internally. */
-	function isMandarinTarget(name: string | undefined): boolean {
-		const tag = bcp47For(name).toLowerCase();
-		return tag.startsWith('zh') && !tag.startsWith('zh-tw');
-	}
-
 	$effect(() => {
 		if (!browser) return;
 		let cancelled = false;
@@ -65,7 +59,7 @@
 				profile = loadedProfile;
 				if (loadedProfile?.targetLanguage) {
 					language = loadedProfile.targetLanguage;
-					if (isMandarinTarget(loadedProfile.targetLanguage)) {
+					if (isMandarin(loadedProfile.targetLanguage)) {
 						text = CHINESE_SAMPLE;
 					}
 				}
@@ -95,7 +89,7 @@
 
 	// Mandarin voice only ever applies to Mandarin (see kokoroSpeakerFor) — no
 	// point showing the picker for a language it can't affect.
-	const showVoicePicker = $derived(ttsEngine === 'kokoro' && isMandarinTarget(language));
+	const showVoicePicker = $derived(ttsEngine === 'kokoro' && isMandarin(language));
 
 	const engineLabel = $derived.by(() => {
 		if (ttsEngine === 'off') return 'Off';

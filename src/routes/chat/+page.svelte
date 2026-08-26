@@ -94,19 +94,17 @@
 		void tick().then(() => textareaEl?.focus());
 	}
 
-	async function send() {
-		const text = input.trim();
-		if (!text || busy || !profile) return;
-
-		const history = [...turns];
-		turns = [...turns, { role: 'user', text }];
-		input = '';
-		void tick().then(autoGrow);
+	/**
+	 * The one round trip: ask, append the reply, and leave `pendingError` holding
+	 * everything {@link retry} needs to have another go. Both callers below do
+	 * exactly this and differ only in what history they consider sent.
+	 */
+	async function ask(history: ChatTurn[], text: string, who: Profile) {
 		busy = true;
 		pendingError = null;
 
 		try {
-			const reply = await sendChatMessage(history, text, profile);
+			const reply = await sendChatMessage(history, text, who);
 			turns = [...turns, reply];
 		} catch (cause) {
 			pendingError = {
@@ -119,28 +117,24 @@
 		}
 	}
 
+	async function send() {
+		const text = input.trim();
+		if (!text || busy || !profile) return;
+
+		const history = [...turns];
+		turns = [...turns, { role: 'user', text }];
+		input = '';
+		void tick().then(autoGrow);
+
+		await ask(history, text, profile);
+	}
+
 	/** Re-sends the last failed turn with the same history it originally used. */
 	async function retry() {
 		if (!pendingError || busy || !profile) return;
-		const { text } = pendingError;
 		// The failed user turn is the last one in `turns` — everything before it
 		// is the history the first attempt sent too.
-		const history = turns.slice(0, -1);
-		pendingError = null;
-		busy = true;
-
-		try {
-			const reply = await sendChatMessage(history, text, profile);
-			turns = [...turns, reply];
-		} catch (cause) {
-			pendingError = {
-				text,
-				message: cause instanceof Error ? cause.message : 'Something went wrong.'
-			};
-		} finally {
-			busy = false;
-			focusComposer();
-		}
+		await ask(turns.slice(0, -1), pendingError.text, profile);
 	}
 
 	function onComposerKeydown(event: KeyboardEvent) {

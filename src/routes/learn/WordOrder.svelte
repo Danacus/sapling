@@ -26,7 +26,7 @@
 	import CheckButton from './blocks/CheckButton.svelte';
 	import PromptHeader from './blocks/PromptHeader.svelte';
 	import TapOption from './blocks/TapOption.svelte';
-	import TapRow from './blocks/TapRow.svelte';
+	import WordBank from './blocks/WordBank.svelte';
 
 	// Both languages are offered to every challenge component; this one needs
 	// neither — the prompt is native, the tiles are target, and both are printed
@@ -141,21 +141,17 @@
 		{/if}
 	</div>
 
-	<div class="bank">
-		<p class="bank-label">Word bank</p>
-		<hr class="stitch" />
-		<TapRow label="Available words">
-			{#each bank as tile (tile.index)}
-				<TapOption
-					text={tile.text}
-					reading={readingOf(tile.index)}
-					tokens={tokensOf(tile.index)}
-					disabled={lock.locked}
-					onclick={() => place(tile.index)}
-				/>
-			{/each}
-		</TapRow>
-	</div>
+	<WordBank label="Available words">
+		{#each bank as tile (tile.index)}
+			<TapOption
+				text={tile.text}
+				reading={readingOf(tile.index)}
+				tokens={tokensOf(tile.index)}
+				disabled={lock.locked}
+				onclick={() => place(tile.index)}
+			/>
+		{/each}
+	</WordBank>
 
 	<CheckButton type="submit" disabled={!ready} />
 </form>
@@ -201,23 +197,6 @@
 		font-size: 0.88rem;
 		font-weight: 500;
 		font-style: italic;
-	}
-
-	.bank {
-		margin-bottom: 1.5rem;
-	}
-
-	.bank-label {
-		margin: 0;
-		font-size: 0.7rem;
-		font-weight: 700;
-		letter-spacing: 0.11em;
-		text-transform: uppercase;
-		color: var(--text-muted);
-	}
-
-	.bank-label + .stitch {
-		margin: 0.35rem 0 0.8rem;
 	}
 
 	@media (prefers-reduced-motion: reduce) {

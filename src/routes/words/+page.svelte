@@ -31,7 +31,7 @@
 	import {
 		formatDays,
 		formatRelative,
-		queryWords,
+		filterWords,
 		STATE_LABELS,
 		toWordRow,
 		type SortDir,
@@ -140,7 +140,7 @@
 	);
 
 	/** The one place filtering, searching and sorting happen. */
-	const rows = $derived(queryWords(items, { search, sort, dir, filter }, now));
+	const rows = $derived(filterWords(allRows, { search, sort, dir, filter }));
 
 	const filtered = $derived(search.trim() !== '' || filter !== 'all');
 

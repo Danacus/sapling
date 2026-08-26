@@ -29,7 +29,7 @@
 	import PromptHeader from './blocks/PromptHeader.svelte';
 	import RubyText from './blocks/RubyText.svelte';
 	import TapOption from './blocks/TapOption.svelte';
-	import TapRow from './blocks/TapRow.svelte';
+	import WordBank from './blocks/WordBank.svelte';
 
 	let {
 		challenge,
@@ -221,22 +221,18 @@
 	<p class="hint translation">{challenge.translationHint}</p>
 
 	{#if usesBank}
-		<div class="bank">
-			<p class="bank-label">Word bank</p>
-			<hr class="stitch" />
-			<TapRow>
-				{#each bank as word, index (index)}
-					<TapOption
-						text={word}
-						reading={readingOf(index)}
-						tokens={tokensOf(index)}
-						state={pickedIndex === index ? 'spent' : 'idle'}
-						disabled={lock.locked}
-						onclick={() => pick(index)}
-					/>
-				{/each}
-			</TapRow>
-		</div>
+		<WordBank>
+			{#each bank as word, index (index)}
+				<TapOption
+					text={word}
+					reading={readingOf(index)}
+					tokens={tokensOf(index)}
+					state={pickedIndex === index ? 'spent' : 'idle'}
+					disabled={lock.locked}
+					onclick={() => pick(index)}
+				/>
+			{/each}
+		</WordBank>
 	{/if}
 
 	<CheckButton type="submit" disabled={!ready} />
@@ -337,25 +333,6 @@
 		border-left: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
 		font-size: 0.98rem;
 		font-style: italic;
-	}
-
-	.bank {
-		margin-bottom: 1.5rem;
-	}
-
-	/* The bank is a list of material, so it opens like every other list on the
-	   paper: a quiet label closed with the stitched hairline. */
-	.bank-label {
-		margin: 0;
-		font-size: 0.7rem;
-		font-weight: 700;
-		letter-spacing: 0.11em;
-		text-transform: uppercase;
-		color: var(--text-muted);
-	}
-
-	.bank-label + .stitch {
-		margin: 0.35rem 0 0.8rem;
 	}
 
 	@media (max-width: 480px) {
