@@ -14,7 +14,6 @@
  * Pure, with an injectable id factory so tests can pin the output.
  */
 
-import { middayOf } from '$lib/db/day';
 import { getDeviceId, newUuid } from './config';
 import { EVENT_TYPES, type SyncEvent, type SyncEventType, type SyncPayloads } from './events';
 import { seedOutbox } from '$lib/db';
@@ -28,16 +27,11 @@ import type { GenesisState } from './snapshot';
  * interleaves correctly with real events from other devices rather than piling
  * up at the moment sync was switched on.
  *
- * Two of them are necessarily approximations, both harmless:
- *
- * - **Serves.** A pool row remembers only `timesServed` and `lastServedAt`, so
- *   all `timesServed` synthetic serve events are stamped at `lastServedAt`
- *   (§5). The count stays exact — which is the field the recycling policy reads
- *   — and only the spacing between past serves is lost, which nothing reads.
- * - **XP days.** `Stats.history` records a day, not a time, so each `xp-banked`
- *   event is stamped at local midday on its day: unambiguously inside the day
- *   it names, whatever the DST situation, and never ordered against a real
- *   event in a way that matters (§4 sums XP per day; order is irrelevant).
+ * One of them is necessarily an approximation, and harmless: a pool row
+ * remembers only `timesServed` and `lastServedAt`, so all `timesServed`
+ * synthetic serve events are stamped at `lastServedAt` (§5). The count stays
+ * exact — which is the field the recycling policy reads — and only the spacing
+ * between past serves is lost, which nothing reads.
  *
  * The result is returned in `(at, device, id)` order, the same order the apply
  * engine will fold it in.
@@ -96,10 +90,6 @@ export function synthesizeGenesis(
 	}
 
 	for (const result of state.results) emit(EVENT_TYPES.resultLogged, result, result.at);
-
-	for (const day of state.days) {
-		emit(EVENT_TYPES.xpBanked, { day: day.day, amount: day.xp }, middayOf(day.day));
-	}
 
 	if (state.profile) {
 		emit(EVENT_TYPES.profileUpdated, state.profile, state.profile.createdAt);

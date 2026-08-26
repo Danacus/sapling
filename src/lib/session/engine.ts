@@ -4,9 +4,8 @@
  * The split is deliberate. `+page.svelte` owns the *feel* (transitions,
  * keyboard, banners); this module owns the *rules* (what to play, what an
  * answer is worth, what gets written to the database). Anything worth a unit
- * test lives here, and the pure half — {@link xpFor}, {@link comboAfter},
- * {@link planRefill}, {@link planSession}, {@link planPractice}, {@link
- * sessionSummary} — is testable without IndexedDB.
+ * test lives here, and the pure half — {@link planRefill}, {@link planSession},
+ * {@link planPractice}, {@link sessionSummary} — is testable without IndexedDB.
  *
  * **Generation and play are decoupled.** Every challenge ever generated lives
  * in a persistent pool (`challenges` in IndexedDB); answering one stamps it
@@ -24,7 +23,6 @@
 import {
 	addResult,
 	addToPool,
-	addXp,
 	getAllItems,
 	getChallengesByIds,
 	getItem,
@@ -48,14 +46,7 @@ import {
 	selectSessionItems,
 	type FsrsCardState
 } from '$lib/srs';
-import type {
-	Challenge,
-	ChallengeResult,
-	KnowledgeItem,
-	Profile,
-	Stats,
-	Verdict
-} from '$lib/types';
+import type { Challenge, ChallengeResult, KnowledgeItem, Profile, Verdict } from '$lib/types';
 import { bearable, maturityOf } from './progression';
 
 /* -------------------------------------------------------------------------- */
@@ -97,19 +88,10 @@ export const SESSION_LENGTH = 20;
 /** A free, locally built match-pairs round is slotted in after every N answers. */
 export const MATCH_PAIRS_EVERY = 4;
 
-/** Flat XP for completing a match-pairs round (see {@link xpFor}). */
-export const MATCH_PAIRS_XP = 5;
-
-/** Combo length at which the streak bonus switches on. */
-export const COMBO_THRESHOLD = 3;
-
-/** Ceiling on the per-answer combo bonus. */
-export const MAX_COMBO_BONUS = 10;
-
 /**
  * `answerGiven` written when the learner presses "Too hard — skip".
  *
- * It is a `wrong` answer in every respect (no XP, combo broken, FSRS `Again`) —
+ * It is a `wrong` answer in every respect, FSRS `Again` included —
  * "I could not produce it" is exactly what `Again` encodes. The literal string
  * also travels into the next batch prompt as a `recentMistakes.gave` value,
  * where it means "that format was too demanding for this word".
@@ -160,47 +142,14 @@ export interface AnswerEvent {
 export type { ChallengeProps } from '$lib/challenges/props';
 
 /* -------------------------------------------------------------------------- */
-/* Scoring (pure)                                                              */
+/* Session accounting (pure)                                                   */
 /* -------------------------------------------------------------------------- */
-
-/**
- * XP for one answered challenge.
- *
- * Base, by verdict:
- * - `correct` → 10
- * - `almost`  → 8 (a missing accent or a one-character typo still counts)
- * - `wrong`   → 0
- *
- * Combo bonus: `comboCount` is the number of consecutive non-`wrong` answers
- * *including this one*. From a combo of {@link COMBO_THRESHOLD} onwards each
- * answer earns `2 × (combo − 2)` extra XP, capped at {@link MAX_COMBO_BONUS} —
- * so combo 3 pays +2, combo 4 pays +4 … combo 7 and up pay +10. A `wrong`
- * answer scores nothing at all (no base, no bonus) and resets the combo, which
- * is what makes a long streak feel worth protecting.
- *
- * Match-pairs rounds do not go through this function: they are worth a flat
- * {@link MATCH_PAIRS_XP} regardless of combo, because they are locally
- * generated filler rather than graded practice.
- */
-export function xpFor(verdict: Verdict, comboCount: number): number {
-	if (verdict === 'wrong') return 0;
-	const base = verdict === 'correct' ? 10 : 8;
-	if (comboCount < COMBO_THRESHOLD) return base;
-	const bonus = Math.min(MAX_COMBO_BONUS, 2 * (comboCount - (COMBO_THRESHOLD - 1)));
-	return base + bonus;
-}
-
-/** The combo counter after `verdict`: `wrong` breaks it, anything else extends it. */
-export function comboAfter(verdict: Verdict, comboCount: number): number {
-	return verdict === 'wrong' ? 0 : comboCount + 1;
-}
 
 /** One answered challenge, as kept by the session for its end screen. */
 export interface SessionAnswer {
 	challengeId: string;
 	type: Challenge['type'];
 	verdict: Verdict;
-	xp: number;
 	/** Item ids exercised; empty for match-pairs (it touches no SRS state). */
 	itemIds: string[];
 }
@@ -211,7 +160,6 @@ export interface SessionSummary {
 	correct: number;
 	almost: number;
 	wrong: number;
-	xp: number;
 	/**
 	 * Share of answers that were accepted (`correct` or `almost`), 0..1.
 	 * `almost` counts as a hit because the UI told the learner it counted.
@@ -226,14 +174,12 @@ export function sessionSummary(answers: SessionAnswer[]): SessionSummary {
 	let correct = 0;
 	let almost = 0;
 	let wrong = 0;
-	let xp = 0;
 	const items = new Set<string>();
 
 	for (const answer of answers) {
 		if (answer.verdict === 'correct') correct++;
 		else if (answer.verdict === 'almost') almost++;
 		else wrong++;
-		xp += answer.xp;
 		for (const id of answer.itemIds) items.add(id);
 	}
 
@@ -243,7 +189,6 @@ export function sessionSummary(answers: SessionAnswer[]): SessionSummary {
 		correct,
 		almost,
 		wrong,
-		xp,
 		accuracy: answered === 0 ? 0 : (correct + almost) / answered,
 		itemsPracticed: items.size
 	};
@@ -1198,8 +1143,8 @@ export interface AnswerOutcome {
  * **Match-pairs deliberately touches no SRS state.** A matching round is a
  * recognition drill built locally from words the learner already has; letting it
  * feed FSRS would inflate stability for items that were never actually recalled
- * (and would let a learner farm easy "Easy" grades for free). It is logged and
- * paid XP, and that is all. Its `itemIds` are still carried on the challenge for
+ * (and would let a learner farm easy "Easy" grades for free). It is logged, and
+ * that is all. Its `itemIds` are still carried on the challenge for
  * traceability — we simply do not grade against them.
  *
  * Missing items are skipped rather than treated as an error: a challenge can
@@ -1319,13 +1264,4 @@ export async function applyOverturn(challenge: Challenge, now: number = Date.now
 			grade: Grade.Good
 		});
 	}
-}
-
-/**
- * Banks the session's XP in one write and returns the fresh stats (streak
- * included). Called once, at the end of a session or on an early quit — never
- * per answer, so a session shows up as a single entry in the day's history.
- */
-export async function bankSessionXp(xp: number, now: number = Date.now()): Promise<Stats> {
-	return addXp(Math.max(0, Math.round(xp)), now);
 }

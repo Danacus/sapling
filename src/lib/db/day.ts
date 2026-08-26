@@ -1,14 +1,12 @@
 /**
- * Calendar-day arithmetic and the XP/streak fold.
+ * Calendar-day arithmetic over the answer log.
  *
- * Split out of `repositories.ts` so it can be imported by pure code — this
- * module touches neither Dexie nor the clock. The sync apply engine
- * (`$lib/sync/apply`) recomputes stats from merged per-day XP totals and must
- * land on exactly the same streak the local incremental path produces, so both
- * sides share this one implementation rather than agreeing by coincidence.
+ * Pure: no Dexie, no clock, nothing but the timestamps it is handed. The streak
+ * is *derived* rather than bookkept — every answered challenge is already
+ * persisted as a `ChallengeResult` with an `at`, and results sync between
+ * devices as a set-union, so a streak folded out of them is automatically
+ * consistent everywhere without a counter to merge.
  */
-
-import type { Stats } from '$lib/types';
 
 /** `YYYY-MM-DD` for an epoch-milliseconds timestamp, in the local time zone. */
 export function localDay(at: number): string {
@@ -25,44 +23,35 @@ export function previousDay(day: string): string {
 }
 
 /**
- * Midday, local time, on `day` — a timestamp that is unambiguously inside the
- * day it names whatever the DST situation. Used by genesis to give a synthetic
- * `xp-banked` event an ordering key, since `Stats.history` records only the day.
+ * How many answers landed on each local calendar day, oldest day first.
+ *
+ * Input order does not matter; days with no answers are simply absent.
  */
-export function middayOf(day: string): number {
-	const [year, month, date] = day.split('-').map(Number);
-	return new Date(year, month - 1, date, 12).getTime();
-}
-
-/** Empty stats, as written on first access. */
-export function defaultStats(): Stats {
-	return { xp: 0, streakDays: 0, lastActiveDay: '', history: [] };
+export function activityByDay(results: { at: number }[]): { day: string; count: number }[] {
+	const counts = new Map<string, number>();
+	for (const result of results) {
+		const day = localDay(result.at);
+		counts.set(day, (counts.get(day) ?? 0) + 1);
+	}
+	return [...counts.entries()]
+		.map(([day, count]) => ({ day, count }))
+		.sort((a, b) => a.day.localeCompare(b.day));
 }
 
 /**
- * Rebuilds whole `Stats` from per-day XP totals.
+ * The run of consecutive calendar days ending at the most recent active one.
  *
- * `streakDays` is the run of consecutive active days ending at the most recent
- * one — the same rule `addXp` applies incrementally, stated as a fold instead
- * of a step. Days with no entry break the run; a zero-XP entry does not, since
- * banking zero XP still means the learner played.
- *
- * Input order does not matter; the returned `history` is sorted oldest-first.
+ * A skipped day breaks the run; today does **not** have to be active for the
+ * streak to stand — a learner who played yesterday and has not played yet today
+ * still has their streak, and loses it only once a whole day passes unplayed.
  */
-export function statsFromDays(days: { day: string; xp: number }[]): Stats {
-	if (days.length === 0) return defaultStats();
+export function streakFrom(days: string[]): number {
+	if (days.length === 0) return 0;
 
-	const history = [...days].sort((a, b) => a.day.localeCompare(b.day));
-	const present = new Set(history.map((entry) => entry.day));
-	const lastActiveDay = history[history.length - 1].day;
+	const present = new Set(days);
+	const lastActiveDay = [...present].sort((a, b) => a.localeCompare(b)).pop() as string;
 
-	let streakDays = 0;
-	for (let day = lastActiveDay; present.has(day); day = previousDay(day)) streakDays++;
-
-	return {
-		xp: history.reduce((total, entry) => total + entry.xp, 0),
-		streakDays,
-		lastActiveDay,
-		history
-	};
+	let streak = 0;
+	for (let day = lastActiveDay; present.has(day); day = previousDay(day)) streak++;
+	return streak;
 }

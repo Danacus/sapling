@@ -1,19 +1,19 @@
 /**
- * `statsFromDays` is the one piece of stats logic that exists twice over: the
- * local path rolls the streak forward a day at a time in `addXp`, and the sync
- * path (docs/sync.md §4 — "streak and `lastActiveDay` are derived from the day
- * totals, not synced") has to rebuild the same number from merged totals. These
- * tests pin the fold; `addXp` is the incremental statement of the same rule.
+ * The streak is derived from the answer log rather than bookkept, so these two
+ * folds are the whole of it: `activityByDay` buckets results into local days,
+ * `streakFrom` counts the run ending at the most recent one.
  */
 
 import { describe, expect, it } from 'vitest';
 
-import { localDay, middayOf, previousDay, statsFromDays } from './day';
+import { activityByDay, localDay, previousDay, streakFrom } from './day';
+
+const at = (year: number, month: number, day: number, hour = 12): number =>
+	new Date(year, month - 1, day, hour).getTime();
 
 describe('localDay', () => {
-	it('round-trips through middayOf', () => {
-		const day = localDay(Date.UTC(2026, 7, 23, 12));
-		expect(localDay(middayOf(day))).toBe(day);
+	it('names the local calendar day', () => {
+		expect(localDay(at(2026, 8, 23))).toBe('2026-08-23');
 	});
 
 	it('steps back one calendar day', () => {
@@ -22,48 +22,42 @@ describe('localDay', () => {
 	});
 });
 
-describe('statsFromDays', () => {
-	it('is empty for a learner who has never played', () => {
-		expect(statsFromDays([])).toEqual({ xp: 0, streakDays: 0, lastActiveDay: '', history: [] });
+describe('activityByDay', () => {
+	it('is empty for a learner who has never answered anything', () => {
+		expect(activityByDay([])).toEqual([]);
 	});
 
-	it('sums XP, sorts history and counts the run ending at the last active day', () => {
-		const stats = statsFromDays([
-			{ day: '2026-08-23', xp: 65 },
-			{ day: '2026-08-21', xp: 40 },
-			{ day: '2026-08-22', xp: 10 }
+	it('counts answers per local day, oldest first, whatever the input order', () => {
+		expect(
+			activityByDay([
+				{ at: at(2026, 8, 23, 9) },
+				{ at: at(2026, 8, 21, 20) },
+				{ at: at(2026, 8, 23, 21) },
+				{ at: at(2026, 8, 22, 8) }
+			])
+		).toEqual([
+			{ day: '2026-08-21', count: 1 },
+			{ day: '2026-08-22', count: 1 },
+			{ day: '2026-08-23', count: 2 }
 		]);
+	});
+});
 
-		expect(stats).toEqual({
-			xp: 115,
-			streakDays: 3,
-			lastActiveDay: '2026-08-23',
-			history: [
-				{ day: '2026-08-21', xp: 40 },
-				{ day: '2026-08-22', xp: 10 },
-				{ day: '2026-08-23', xp: 65 }
-			]
-		});
+describe('streakFrom', () => {
+	it('is zero with no active days', () => {
+		expect(streakFrom([])).toBe(0);
+	});
+
+	it('counts the run ending at the most recent active day', () => {
+		expect(streakFrom(['2026-08-23', '2026-08-21', '2026-08-22'])).toBe(3);
 	});
 
 	it('breaks the streak on a missing day, counting only the trailing run', () => {
-		const stats = statsFromDays([
-			{ day: '2026-08-01', xp: 10 },
-			{ day: '2026-08-02', xp: 10 },
-			{ day: '2026-08-22', xp: 10 },
-			{ day: '2026-08-23', xp: 10 }
-		]);
-
-		expect(stats.streakDays).toBe(2);
-		expect(stats.lastActiveDay).toBe('2026-08-23');
+		expect(streakFrom(['2026-08-01', '2026-08-02', '2026-08-22', '2026-08-23'])).toBe(2);
 	});
 
-	it('counts a day the learner played for zero XP as active', () => {
-		expect(
-			statsFromDays([
-				{ day: '2026-08-22', xp: 0 },
-				{ day: '2026-08-23', xp: 20 }
-			]).streakDays
-		).toBe(2);
+	it('does not require today to be active', () => {
+		// Nothing here says "today"; the run simply ends at the newest day it has.
+		expect(streakFrom(['2026-08-22', '2026-08-23'])).toBe(2);
 	});
 });

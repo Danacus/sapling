@@ -9,7 +9,7 @@
 
   That call can also *win*: when the model agrees a `wrong` answer should have
   counted it replies `overturn: true`, the banner repaints green and
-  `onoverturn` lets the page pay the XP and fix the SRS card.
+  `onoverturn` lets the page fix the SRS card.
 -->
 <script lang="ts">
 	import { fly, slide } from 'svelte/transition';
@@ -31,7 +31,6 @@
 		correctAnswer,
 		closestAccepted,
 		explanation,
-		xp,
 		nativeLanguage,
 		targetLanguage,
 		skipped = false,
@@ -50,7 +49,6 @@
 		/** Nearest accepted form, for the "almost" nudge. */
 		closestAccepted?: string;
 		explanation?: string;
-		xp: number;
 		nativeLanguage: string;
 		targetLanguage: string;
 		/**
@@ -63,8 +61,8 @@
 		last?: boolean;
 		/**
 		 * The session accepted this answer after an escalation overturned the
-		 * grade. Owned by the page (it also owes XP, the summary and an SRS
-		 * review); the banner just repaints itself green.
+		 * grade. Owned by the page (it also owes the summary and an SRS review);
+		 * the banner just repaints itself green.
 		 */
 		overturned?: boolean;
 		oncontinue: () => void;
@@ -319,9 +317,6 @@
 					{/if}
 				</div>
 			</div>
-			{#if xp > 0}
-				<span class="xp" aria-label={`${xp} XP earned`}>+{xp} XP</span>
-			{/if}
 		</div>
 
 		{#if explanation}
@@ -534,21 +529,6 @@
 	.text :global(.speak) {
 		margin: 0.2rem 0 0 -0.55rem;
 		color: var(--tone-strong);
-	}
-
-	/* The receipt: a small stamp in the same ink as the mark. */
-	.xp {
-		flex: 0 0 auto;
-		padding: 0.28rem 0.55rem;
-		border: 1px solid color-mix(in srgb, var(--tone) 55%, transparent);
-		border-radius: var(--radius-sm);
-		background: color-mix(in srgb, var(--tone) 22%, var(--surface));
-		color: var(--tone-strong);
-		font-size: 0.8rem;
-		font-weight: 700;
-		font-variant-numeric: tabular-nums;
-		letter-spacing: 0.02em;
-		white-space: nowrap;
 	}
 
 	.explanation {

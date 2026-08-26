@@ -48,7 +48,6 @@ function emptySnapshot(): SyncSnapshot {
 		items: [],
 		pool: [],
 		results: [],
-		days: [],
 		profile: null,
 		bookkeeping: emptyBookkeeping()
 	};
@@ -96,7 +95,6 @@ const profile = (createdAt: number, targetLanguage: string): Profile => ({
 	targetLanguage,
 	level: 'beginner',
 	interests: ['food'],
-	dailyGoalXp: 50,
 	model: 'test/model',
 	createdAt
 });
@@ -345,7 +343,7 @@ describe('challenges', () => {
 });
 
 /* -------------------------------------------------------------------------- */
-/* Results, XP, profile                                                        */
+/* Results and profile                                                         */
 /* -------------------------------------------------------------------------- */
 
 describe('results', () => {
@@ -362,22 +360,6 @@ describe('results', () => {
 		const state = applyEvents(emptySnapshot(), [first, second, first]);
 		expect(state.results).toEqual([result, result]);
 		expect(applyEvents(state, [first, second])).toEqual(state);
-	});
-});
-
-describe('xp-banked', () => {
-	it('sums a day across devices and never double-counts a re-delivery', () => {
-		const fromA = ev(EVENT_TYPES.xpBanked, { day: '2026-08-23', amount: 30 }, T0, 'devA');
-		const fromB = ev(EVENT_TYPES.xpBanked, { day: '2026-08-23', amount: 20 }, T0 + 1, 'devB');
-		const other = ev(EVENT_TYPES.xpBanked, { day: '2026-08-22', amount: 10 }, T0 - DAY, 'devA');
-
-		const state = applyEvents(emptySnapshot(), [fromA, fromB, other]);
-		expect(state.days).toEqual([
-			{ day: '2026-08-22', xp: 10 },
-			{ day: '2026-08-23', xp: 50 }
-		]);
-		expect(applyEvents(state, [fromA, fromB, other])).toEqual(state);
-		expect(applyEvents(applyEvents(emptySnapshot(), [fromA]), [fromB, other])).toEqual(state);
 	});
 });
 
@@ -407,16 +389,20 @@ describe('applyEvents', () => {
 			T0 + MINUTE,
 			'devA'
 		);
-		const xp = ev(EVENT_TYPES.xpBanked, { day: '2026-08-23', amount: 30 }, T0, 'devA');
+		const mineToo = ev(
+			EVENT_TYPES.resultLogged,
+			{ challengeId: 'c1', verdict: 'correct', answerGiven: 'hola', at: T0 },
+			T0,
+			'devA'
+		);
 
-		const state = applyEvents(base, [mine, xp], 'devA');
+		const state = applyEvents(base, [mine, mineToo], 'devA');
 
 		expect(state.items).toBe(base.items);
-		expect(state.days).toBe(base.days);
 		expect(state.results).toBe(base.results);
 	});
 
-	it('drops events whose payload does not validate, and applies the rest', () => {
+	it('drops events of an unknown type, and events whose payload does not validate, and applies the rest', () => {
 		const base = withItems(makeItem('i1', T0));
 		const junk: SyncEvent = {
 			id: 'e-junk',
@@ -439,7 +425,17 @@ describe('applyEvents', () => {
 			'devB'
 		);
 
-		const state = applyEvents(base, [junk, unknown, good]);
+		// `xp-banked` is a *retired* type: old server logs still hold these, and
+		// they must be dropped exactly like a type from the future.
+		const retired: SyncEvent = {
+			id: 'e-retired',
+			device: 'devB',
+			at: T0 + MINUTE,
+			type: 'xp-banked',
+			payload: { day: '2026-08-23', amount: 40 }
+		};
+
+		const state = applyEvents(base, [junk, unknown, retired, good]);
 		expect(state.items[0].history).toHaveLength(1);
 	});
 
@@ -466,7 +462,6 @@ describe('applyEvents', () => {
 				T0 + MINUTE,
 				'devB'
 			),
-			ev(EVENT_TYPES.xpBanked, { day: '2026-08-23', amount: 40 }, T0 + MINUTE, 'devB'),
 			ev(EVENT_TYPES.profileUpdated, profile(T0, 'es'), T0 + MINUTE, 'devB')
 		];
 

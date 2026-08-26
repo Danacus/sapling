@@ -24,27 +24,22 @@
 
 	import { correctAnswerText, spokenAnswerFor } from '$lib/challenges/display';
 	import { ALL_READINGS } from '$lib/challenges/props';
-	import { getProfile, getStats, localDay } from '$lib/db';
+	import { activityByDay, getAllResults, getProfile, streakFrom } from '$lib/db';
 	import { LlmError, isMockMode, makeMatchPairsChallenge } from '$lib/llm';
 	import type { ProgressStep } from '$lib/llm';
 	import { loadRomanizer, type Romanizer } from '$lib/romanize';
 	import {
 		MATCH_PAIRS_EVERY,
-		MATCH_PAIRS_XP,
 		SKIP_ANSWER,
 		amendResult,
 		applyOverturn,
 		applyResult,
-		bankSessionXp,
-		comboAfter,
-		COMBO_THRESHOLD,
 		generateChallenges,
 		isListeningChallenge,
 		reportChallenge,
 		sessionSummary,
 		startSession,
 		wantsMatchRound,
-		xpFor,
 		type AnswerEvent,
 		type SessionAnswer,
 		type SessionPlan
@@ -54,7 +49,7 @@
 	import type { FsrsCardState, Grade } from '$lib/srs';
 	import { runSync } from '$lib/sync/run';
 	import { warmSpeech } from '$lib/tts';
-	import type { Challenge, KnowledgeItem, Profile, Stats, Verdict } from '$lib/types';
+	import type { Challenge, KnowledgeItem, Profile, Verdict } from '$lib/types';
 	import {
 		addRecentTopic,
 		getListeningMode,
@@ -98,7 +93,6 @@
 		correctAnswer: string;
 		closestAccepted?: string;
 		explanation?: string;
-		xp: number;
 		/** An escalation overturned a `wrong` grade; see {@link overturnCurrent}. */
 		overturned?: boolean;
 	}
@@ -223,20 +217,15 @@
 	let romanizer = $state<Romanizer | null>(null);
 	let feedback = $state<Feedback | null>(null);
 	let answers = $state<SessionAnswer[]>([]);
-	let combo = $state(0);
-	let bestCombo = $state(0);
 	let llmAnswered = $state(0);
 	let lastMatchAfter = $state(-1);
 	let plannedLlm = $state(0);
 
-	let endStats = $state<Stats | undefined>(undefined);
-	let goalNewlyReached = $state(false);
-	let todayXpBefore = 0;
+	/** Day streak after this session, folded out of the answer log by {@link finish}. */
+	let endStreak = $state(0);
 
 	let showQuitConfirm = $state(false);
 	let leaving = $state(false);
-	let toast = $state<{ id: number; amount: number } | null>(null);
-	let toastSeq = 0;
 
 	/** When the current challenge was first shown; used for a skip's response time. */
 	let challengeShownAt = Date.now();
@@ -474,13 +463,8 @@
 		newWords = firstTimeWords(ready);
 
 		answers = [];
-		combo = 0;
-		bestCombo = 0;
 		llmAnswered = 0;
 		lastMatchAfter = -1;
-
-		const stats = await getStats();
-		todayXpBefore = stats.history.find((e) => e.day === localDay(Date.now()))?.xp ?? 0;
 
 		phase = 'playing';
 		await advance();
@@ -566,13 +550,6 @@
 
 		const isMatch = challenge.type === 'match-pairs';
 
-		// A match round neither extends nor breaks the combo: it is a whole
-		// multi-tap round, not one graded answer, and it pays a flat rate.
-		const nextCombo = isMatch ? combo : comboAfter(event.verdict, combo);
-		const xp = isMatch ? MATCH_PAIRS_XP : xpFor(event.verdict, nextCombo);
-
-		combo = nextCombo;
-		if (combo > bestCombo) bestCombo = combo;
 		if (!isMatch) llmAnswered++;
 
 		answers = [
@@ -581,7 +558,6 @@
 				challengeId: challenge.id,
 				type: challenge.type,
 				verdict: event.verdict,
-				xp,
 				itemIds: isMatch ? [] : challenge.itemIds
 			}
 		];
@@ -592,11 +568,8 @@
 			answerGiven: event.answerGiven,
 			correctAnswer: correctAnswerText(challenge),
 			...(event.closestAccepted ? { closestAccepted: event.closestAccepted } : {}),
-			...(challenge.explanation ? { explanation: challenge.explanation } : {}),
-			xp
+			...(challenge.explanation ? { explanation: challenge.explanation } : {})
 		};
-
-		if (xp > 0) toast = { id: ++toastSeq, amount: xp };
 
 		// Fire-and-follow: the banner animates now, the write lands underneath it.
 		// The one promise is held twice — as `pendingPriors` for its value (the
@@ -609,7 +582,7 @@
 			responseMs: event.responseMs,
 			now: Date.now()
 		}).catch(() => {
-			// A failed write must not eat the session; the answer is already scored.
+			// A failed write must not eat the session; the answer is already logged.
 			return new Map<string, FsrsCardState | null>();
 		});
 		pendingWrite = pendingPriors.then(() => undefined);
@@ -629,8 +602,8 @@
 	 * it. `continueSession` awaits the same chain, so even a rating given as the
 	 * learner reaches for Continue lands before the next challenge is pulled.
 	 *
-	 * XP is untouched: it prices the verdict, not the grade — "that was hard" is
-	 * not a smaller correct answer.
+	 * The session summary is untouched: it counts verdicts, not grades — "that
+	 * was hard" is not a less correct answer.
 	 */
 	function assessCurrent(grade: Grade): void {
 		const fb = feedback;
@@ -641,7 +614,7 @@
 				await amendResult(fb.challenge, grade, await priors, Date.now());
 			})
 			.catch(() => {
-				// A failed write must not eat the session; the answer is already scored.
+				// A failed write must not eat the session; the answer is already logged.
 			});
 	}
 
@@ -650,50 +623,36 @@
 	 * (`overturn: true`). Everything the original answer cost is handed back:
 	 *
 	 * - **Banner**: repaints as accepted (`FeedbackBanner`'s `overturned`).
-	 * - **XP**: paid at `xpFor('correct', combo)` minus the 0 already scored.
 	 * - **Summary**: the logged answer flips to `correct`, so `sessionSummary`
 	 *   recomputes correct/wrong and accuracy on its own.
 	 * - **SRS**: `applyOverturn` writes one `Good` review per item, chained
 	 *   *after* the original write so it lands on top of the `Again`.
 	 *
-	 * What it deliberately does **not** do: restore the combo. The streak broke
-	 * live, on screen, and un-breaking it would retro-pay every answer since —
-	 * so the overturned answer is paid at the base rate (combo is 0 here) and
-	 * the next correct answer starts a fresh streak. Nor does it rewrite the
-	 * result log: the learner really did answer this at the time, and the entry
-	 * is history, not score.
+	 * What it deliberately does **not** do: rewrite the result log. The learner
+	 * really did answer this at the time, and the entry is history.
 	 */
 	function overturnCurrent(): void {
 		const fb = feedback;
 		if (!fb || fb.overturned || fb.verdict !== 'wrong') return;
 
-		// `combo` is 0 here — the wrong answer reset it, and no answer has been
-		// taken since (the banner is still up). Written as a lookup anyway so the
-		// XP always matches whatever the combo rules say at this moment.
-		const gained = Math.max(0, xpFor('correct', combo) - fb.xp);
-
-		feedback = { ...fb, overturned: true, xp: fb.xp + gained };
+		feedback = { ...fb, overturned: true };
 
 		answers = answers.map((answer) =>
-			answer.challengeId === fb.challenge.id
-				? { ...answer, verdict: 'correct', xp: answer.xp + gained }
-				: answer
+			answer.challengeId === fb.challenge.id ? { ...answer, verdict: 'correct' } : answer
 		);
-
-		if (gained > 0) toast = { id: ++toastSeq, amount: gained };
 
 		// After the pending `applyResult`: the Again review must already be on the
 		// card before the compensating Good review goes on top of it.
 		pendingWrite = pendingWrite
 			.then(() => applyOverturn(fb.challenge, Date.now()))
 			.catch(() => {
-				// A failed write must not eat the session; the XP is already scored.
+				// A failed write must not eat the session; the banner already repainted.
 			});
 	}
 
 	/**
 	 * "Too hard — skip": an answer event like any other, with the verdict a skip
-	 * honestly deserves. `wrong` costs the combo and pays nothing, and
+	 * honestly deserves. `wrong` counts as a miss in the summary, and
 	 * `applyResult` grades the item FSRS-`Again` — which is exactly "I could not
 	 * produce this". The word then travels into the next batch prompt as a
 	 * `recentMistakes` entry with `gave: '(skipped)'`, asking the model for an
@@ -738,11 +697,9 @@
 		current = null;
 		feedback = null;
 
-		const summary = sessionSummary(answers);
-		const goal = profile?.dailyGoalXp ?? 0;
-		goalNewlyReached = goal > 0 && todayXpBefore < goal && todayXpBefore + summary.xp >= goal;
-
-		endStats = summary.xp > 0 ? await bankSessionXp(summary.xp) : await getStats();
+		// The streak is derived, not bookkept: `pendingWrite` is settled above, so
+		// this session's own results are already in the log being folded.
+		endStreak = streakFrom(activityByDay(await getAllResults()).map((entry) => entry.day));
 		phase = 'summary';
 
 		// Fire-and-forget (§9): a device should pick up what other devices did
@@ -760,11 +717,12 @@
 	}
 
 	/**
-	 * Leaves early, but banks whatever was earned — progress is never punished.
+	 * Leaves early. Everything answered is already written — results and reviews
+	 * land per answer, not at the end — so there is nothing to bank.
 	 *
-	 * Nothing to clean up: challenges are only stamped as served when they are
-	 * answered, so everything the learner did not reach is still in the pool and
-	 * simply gets planned again next time.
+	 * Nothing to clean up either: challenges are only stamped as served when they
+	 * are answered, so everything the learner did not reach is still in the pool
+	 * and simply gets planned again next time.
 	 */
 	async function quit(): Promise<void> {
 		if (leaving) return;
@@ -772,8 +730,6 @@
 		showQuitConfirm = false;
 		try {
 			await pendingWrite;
-			const summary = sessionSummary(answers);
-			if (summary.xp > 0) await bankSessionXp(summary.xp);
 			// Fire-and-forget (§9) — must not delay the navigation below.
 			void runSync();
 		} catch {
@@ -1126,9 +1082,9 @@
 					</p>
 					<h1>Session complete</h1>
 
-					<div class="xp-hero">
-						<span class="xp-number">+{summary.xp}</span>
-						<span class="xp-label">XP</span>
+					<div class="score-hero">
+						<span class="score-number">{summary.correct + summary.almost}/{summary.answered}</span>
+						<span class="score-label">correct</span>
 					</div>
 
 					<hr class="stitch" />
@@ -1149,29 +1105,11 @@
 									<path d="M12 16.2c-3.3 0-5.2-1.9-5.2-5.2 3.3 0 5.2 1.9 5.2 5.2Z" />
 									<path d="M12 12.6c0-3.8 2-5.8 5.6-5.8 0 3.8-2 5.8-5.6 5.8Z" />
 								</svg>
-								{endStats?.streakDays ?? 0}
+								{endStreak}
 							</span>
 							<span class="stat-label">Day streak</span>
 						</div>
 					</div>
-
-					{#if bestCombo >= COMBO_THRESHOLD}
-						<p class="combo-note">
-							<svg class="ico spark" viewBox="0 0 24 24" aria-hidden="true">
-								<path d="M12 3.6 13.7 9.1 19.2 10.8 13.7 12.5 12 18 10.3 12.5 4.8 10.8 10.3 9.1Z" />
-							</svg>
-							Best combo this session: {bestCombo} in a row
-						</p>
-					{/if}
-
-					{#if goalNewlyReached}
-						<p class="goal-hit">
-							<svg class="ico spark" viewBox="0 0 24 24" aria-hidden="true">
-								<path d="M12 3.6 13.7 9.1 19.2 10.8 13.7 12.5 12 18 10.3 12.5 4.8 10.8 10.3 9.1Z" />
-							</svg>
-							Daily goal reached — {profile?.dailyGoalXp} XP. See you tomorrow?
-						</p>
-					{/if}
 
 					{#if learnedWords.length > 0}
 						<section class="new-words">
@@ -1212,22 +1150,7 @@
 				{/each}
 			</div>
 
-			{#if combo >= COMBO_THRESHOLD}
-				<div class="combo" in:scale={{ duration: motionMs(240), start: 0.5 }} title="Answer streak">
-					<svg class="ico spark" viewBox="0 0 24 24" aria-hidden="true">
-						<path d="M12 3.6 13.7 9.1 19.2 10.8 13.7 12.5 12 18 10.3 12.5 4.8 10.8 10.3 9.1Z" />
-					</svg>
-					<span>{combo}</span>
-				</div>
-			{:else}
-				<div class="combo-spacer" aria-hidden="true"></div>
-			{/if}
-
-			{#if toast}
-				{#key toast.id}
-					<span class="xp-toast" aria-hidden="true">+{toast.amount}</span>
-				{/key}
-			{/if}
+			<div class="topbar-spacer" aria-hidden="true"></div>
 		</header>
 
 		{#if mock}
@@ -1286,7 +1209,6 @@
 				correctAnswer={feedback.correctAnswer}
 				closestAccepted={feedback.closestAccepted}
 				explanation={feedback.explanation}
-				xp={feedback.xp}
 				skipped={feedback.answerGiven === SKIP_ANSWER}
 				{nativeLanguage}
 				{targetLanguage}
@@ -1304,8 +1226,8 @@
 				<div class="card quit-card" in:scale={{ duration: motionMs(200), start: 0.92 }}>
 					<h2>Leave the session?</h2>
 					<p class="hint">
-						You've earned {summary.xp} XP so far — we'll keep it. Whatever you haven't played stays in
-						your pool for next time.
+						Everything you've answered is already saved. Whatever you haven't played stays in your
+						pool for next time.
 					</p>
 					<div class="quit-actions">
 						<button type="button" class="btn btn-primary" onclick={() => (showQuitConfirm = false)}>
@@ -1346,8 +1268,7 @@
 
 	/* One hand for every icon on this screen, matching the dashboard: 24-unit
 	   box, hairline stroke, round joins. Set here rather than per-<svg> so the
-	   weight can never drift between the quit ✕, the combo spark and the
-	   summary's sprout. */
+	   weight can never drift between the quit ✕ and the summary's sprout. */
 	.ico {
 		width: 1.2rem;
 		height: 1.2rem;
@@ -1357,12 +1278,6 @@
 		stroke-width: 1.6;
 		stroke-linecap: round;
 		stroke-linejoin: round;
-	}
-
-	/* The one filled mark in the set — it is a burst, not a diagram. */
-	.spark {
-		fill: currentColor;
-		stroke-width: 1.2;
 	}
 
 	/* Start ------------------------------------------------------------------- */
@@ -1912,48 +1827,10 @@
 		box-shadow: none;
 	}
 
-	.combo,
-	.combo-spacer {
+	/* Balances the quit control so the progress row stays optically centred. */
+	.topbar-spacer {
 		flex: 0 0 auto;
 		min-width: 3rem;
-	}
-
-	/* The streak, as a tab in the same row as the quit control. */
-	.combo {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		gap: 0.25rem;
-		height: 2.25rem;
-		padding: 0 0.5rem;
-		border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
-		border-radius: var(--radius);
-		background: color-mix(in srgb, var(--amber) 18%, var(--surface));
-		color: color-mix(in srgb, var(--amber) 62%, var(--text));
-		font-weight: 700;
-		font-size: 0.9rem;
-		font-variant-numeric: tabular-nums;
-	}
-
-	.combo .ico {
-		width: 1rem;
-		height: 1rem;
-	}
-
-	/* The XP receipt floating up out of the bar — a stamp, not a bubble. */
-	.xp-toast {
-		position: absolute;
-		left: 50%;
-		bottom: -0.25rem;
-		padding: 0.15rem 0.5rem;
-		border-radius: var(--radius-sm);
-		background: var(--primary);
-		color: var(--text-inverse);
-		font-size: 0.85rem;
-		font-weight: 700;
-		font-variant-numeric: tabular-nums;
-		pointer-events: none;
-		animation: ll-float-up 1.1s ease-out forwards;
 	}
 
 	/* Mock banner ---------------------------------------------------------- */
@@ -2138,7 +2015,7 @@
 	}
 
 	/* The figure the whole screen is built around. */
-	.xp-hero {
+	.score-hero {
 		display: flex;
 		align-items: baseline;
 		justify-content: center;
@@ -2147,7 +2024,7 @@
 		color: var(--primary-strong);
 	}
 
-	.xp-number {
+	.score-number {
 		font-family: var(--font-display);
 		font-size: 3.2rem;
 		font-weight: 700;
@@ -2159,14 +2036,14 @@
 		line-height: 1;
 	}
 
-	.xp-label {
+	.score-label {
 		font-size: 1rem;
 		font-weight: 700;
 		letter-spacing: 0.1em;
 		text-transform: uppercase;
 	}
 
-	.xp-hero + .stitch {
+	.score-hero + .stitch {
 		margin: 1.25rem 0 1.1rem;
 	}
 
@@ -2219,41 +2096,6 @@
 		text-transform: uppercase;
 		color: var(--text-muted);
 		text-wrap: balance;
-	}
-
-	.combo-note,
-	.goal-hit {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		gap: 0.4rem;
-		text-wrap: balance;
-	}
-
-	.combo-note {
-		margin: 1.1rem 0 0;
-		font-size: 0.92rem;
-		font-weight: 700;
-		color: color-mix(in srgb, var(--amber) 62%, var(--text));
-	}
-
-	.combo-note .spark {
-		color: var(--amber);
-	}
-
-	.goal-hit {
-		margin: 1rem 0 0;
-		padding: 0.65rem 0.8rem;
-		border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
-		border-radius: var(--radius-sm);
-		background: var(--primary-soft);
-		color: var(--primary-strong);
-		font-size: 0.92rem;
-		font-weight: 700;
-	}
-
-	.goal-hit .spark {
-		color: var(--accent);
 	}
 
 	.new-words {
@@ -2366,15 +2208,13 @@
 			display: none;
 		}
 
-		.medal,
-		.xp-toast {
+		.medal {
 			animation: none;
 		}
 
 		.quit,
 		.segment,
 		.chip,
-		.combo,
 		.stage,
 		.mode-opt,
 		.disclosure,
@@ -2406,7 +2246,7 @@
 			letter-spacing: 0.06em;
 		}
 
-		.xp-number {
+		.score-number {
 			font-size: 2.6rem;
 		}
 	}

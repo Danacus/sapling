@@ -22,7 +22,6 @@ const profile = {
 	targetLanguage: 'Spanish',
 	level: 'beginner' as const,
 	interests: [],
-	dailyGoalXp: 50,
 	model: 'test/model',
 	createdAt: NOW
 };

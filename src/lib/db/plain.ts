@@ -3,7 +3,7 @@
  * can't handle) from a value before it reaches Dexie.
  *
  * Every type this app persists (`Profile`, `KnowledgeItem`, `Challenge`,
- * `ChallengeResult`, `Stats`) is plain JSON-shaped data by design — no
+ * `ChallengeResult`) is plain JSON-shaped data by design — no
  * `Date`s, `Map`s, functions or class instances — so a JSON round-trip is a
  * cheap, dependency-free way to produce an equivalent plain object/array
  * graph with no Proxies anywhere in it.

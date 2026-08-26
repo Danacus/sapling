@@ -62,14 +62,12 @@ const payloads: { [T in SyncEventType]: SyncPayloads[T] } = {
 		answerGiven: '爱你',
 		at: AT
 	},
-	[EVENT_TYPES.xpBanked]: { day: '2026-08-23', amount: 65 },
 	[EVENT_TYPES.profileUpdated]: {
 		nativeLanguage: 'en',
 		targetLanguage: 'zh',
 		level: 'beginner',
 		interests: ['food'],
 		about: 'A test learner.',
-		dailyGoalXp: 50,
 		model: 'test/model',
 		createdAt: AT
 	}
@@ -154,7 +152,6 @@ describe('payload schemas', () => {
 		expect(
 			parseSyncPayload(EVENT_TYPES.itemReviewed, { itemId: 'i1', at: AT, grade: 9 })
 		).toBeUndefined();
-		expect(parseSyncPayload(EVENT_TYPES.xpBanked, { day: '23-08-2026', amount: 1 })).toBeUndefined();
 		expect(parseSyncPayload(EVENT_TYPES.itemDeleted, null)).toBeUndefined();
 		expect(
 			parseSyncPayload(EVENT_TYPES.challengeAdded, {
@@ -174,6 +171,16 @@ describe('payload schemas', () => {
 
 	it('treats an unknown event type as undefined, not an error', () => {
 		expect(parseSyncPayload('item-hyperlearned' as SyncEventType, {})).toBeUndefined();
+	});
+
+	it('drops a retired event type — `xp-banked` from before XP was removed', () => {
+		// Old logs still hold these; they are unknown types now, and unknown
+		// types are dropped rather than erroring (the degradation §1 calls for).
+		const retired = { day: '2026-08-23', amount: 65 };
+		expect(parseSyncPayload('xp-banked' as SyncEventType, retired)).toBeUndefined();
+		expect(
+			typeSyncEvent({ id: UUID, device: 'devA', at: AT, type: 'xp-banked', payload: retired })
+		).toBeUndefined();
 	});
 });
 

@@ -1,10 +1,17 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 
-	import { getAllItems, getPool, getProfile, getStats, localDay } from '$lib/db';
+	import {
+		activityByDay,
+		getAllItems,
+		getAllResults,
+		getPool,
+		getProfile,
+		streakFrom
+	} from '$lib/db';
 	import { hideReadingProbability } from '$lib/session/romanization';
 	import { isDue, wordStrength, type FsrsCardState } from '$lib/srs';
-	import type { KnowledgeItem, Profile, Stats } from '$lib/types';
+	import type { KnowledgeItem, Profile } from '$lib/types';
 	import ProgressBar from '$lib/ui/ProgressBar.svelte';
 	import { getRomanizationMode } from '$lib/ui/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
@@ -32,7 +39,8 @@
 	let loadError = $state('');
 	let profile = $state<Profile | undefined>(undefined);
 	let items = $state<KnowledgeItem[]>([]);
-	let stats = $state<Stats | undefined>(undefined);
+	/** The run of consecutive days with an answer in it, folded out of the log. */
+	let streakDays = $state(0);
 	let now = $state(Date.now());
 	let showAllWeak = $state(false);
 	/** Challenges in the pool — an upper bound on what a session could draw from. */
@@ -45,12 +53,12 @@
 		loading = true;
 		loadError = '';
 
-		Promise.all([getProfile(), getAllItems(), getStats(), getPool()])
-			.then(([loadedProfile, loadedItems, loadedStats, pool]) => {
+		Promise.all([getProfile(), getAllItems(), getAllResults(), getPool()])
+			.then(([loadedProfile, loadedItems, results, pool]) => {
 				if (cancelled) return;
 				profile = loadedProfile;
 				items = loadedItems;
-				stats = loadedStats;
+				streakDays = streakFrom(activityByDay(results).map((entry) => entry.day));
 				pooled = pool.length;
 				now = Date.now();
 				loading = false;
@@ -74,12 +82,6 @@
 	const targetLanguage = $derived(profile?.targetLanguage?.trim() || 'your new language');
 	/** The real language name — `targetLanguage` above carries a display fallback. */
 	const speechLanguage = $derived(profile?.targetLanguage?.trim() ?? '');
-	const streakDays = $derived(stats?.streakDays ?? 0);
-
-	const dailyGoalXp = $derived(profile?.dailyGoalXp ?? 0);
-	const todayXp = $derived(stats?.history.find((entry) => entry.day === localDay(now))?.xp ?? 0);
-	const goalFraction = $derived(dailyGoalXp > 0 ? todayXp / dailyGoalXp : 0);
-	const goalReached = $derived(dailyGoalXp > 0 && todayXp >= dailyGoalXp);
 
 	const dueCount = $derived(
 		items.filter((item) => {
@@ -168,29 +170,6 @@
 				</a>
 			</div>
 		</header>
-
-		<section class="card goal-card ll-rise" style="animation-delay: 60ms">
-			<div class="goal-head">
-				<h2>Today's goal</h2>
-				<span class="goal-figure">{todayXp} / {dailyGoalXp} XP</span>
-			</div>
-			<hr class="stitch" />
-			<ProgressBar
-				value={goalFraction}
-				color={goalReached ? 'var(--primary)' : 'var(--accent)'}
-				label="Daily XP goal progress"
-			/>
-			{#if goalReached}
-				<p class="goal-note celebrate">
-					<svg class="ico spark" viewBox="0 0 24 24" aria-hidden="true">
-						<path d="M12 3.6 13.7 9.1 19.2 10.8 13.7 12.5 12 18 10.3 12.5 4.8 10.8 10.3 9.1Z" />
-					</svg>
-					Goal reached — nice work today!
-				</p>
-			{:else if dailyGoalXp > 0}
-				<p class="goal-note">{Math.max(0, dailyGoalXp - todayXp)} XP to go.</p>
-			{/if}
-		</section>
 
 		<section class="card start-card ll-rise" style="animation-delay: 120ms">
 			<svg class="watermark" viewBox="0 0 24 24" aria-hidden="true">
@@ -380,7 +359,6 @@
 		max-width: none;
 	}
 
-	.goal-head,
 	.strength-head {
 		display: flex;
 		align-items: baseline;
@@ -389,13 +367,11 @@
 		margin-bottom: 0.75rem;
 	}
 
-	.goal-head h2,
 	.strength-head h2 {
 		margin: 0;
 		font-size: 1.15rem;
 	}
 
-	.goal-figure,
 	.strength-count {
 		font-size: 0.82rem;
 		font-weight: 700;
@@ -404,32 +380,8 @@
 		color: var(--text-muted);
 	}
 
-	.goal-head + .stitch,
 	.strength-head + .stitch {
 		margin: 0 0 1rem;
-	}
-
-	.goal-note {
-		display: flex;
-		align-items: center;
-		gap: 0.4rem;
-		margin: 0.7rem 0 0;
-		font-size: 0.9rem;
-		color: var(--text-muted);
-	}
-
-	.goal-note.celebrate {
-		color: var(--primary-strong);
-		font-weight: 700;
-	}
-
-	/* The one filled mark in the icon set — it is a burst, not a diagram. */
-	.spark {
-		width: 1.05rem;
-		height: 1.05rem;
-		fill: var(--accent);
-		stroke: var(--accent);
-		stroke-width: 1.2;
 	}
 
 	.start-card {

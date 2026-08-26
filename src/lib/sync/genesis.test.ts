@@ -5,9 +5,9 @@
  * without any snapshot format, bootstrap endpoint or special case — the log
  * really is the only mechanism.
  *
- * The two documented approximations (serve timestamps collapse onto
- * `lastServedAt`, XP days onto local midday) are asserted for what they must
- * preserve — counts and totals — rather than for spacing they cannot.
+ * The one documented approximation — serve timestamps collapsing onto
+ * `lastServedAt` — is asserted for what it must preserve (the count) rather
+ * than for the spacing it cannot.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -80,7 +80,6 @@ const profile: Profile = {
 	level: 'elementary',
 	interests: ['cooking', 'cycling'],
 	about: 'A test learner.',
-	dailyGoalXp: 50,
 	model: 'test/model',
 	createdAt: T0 - DAY
 };
@@ -105,10 +104,6 @@ function state(): GenesisState {
 			poolRow('c3', T0 + 2)
 		],
 		results,
-		days: [
-			{ day: '2026-08-21', xp: 40 },
-			{ day: '2026-08-23', xp: 65 }
-		],
 		profile
 	};
 }
@@ -118,7 +113,6 @@ function emptySnapshot(): SyncSnapshot {
 		items: [],
 		pool: [],
 		results: [],
-		days: [],
 		profile: null,
 		bookkeeping: emptyBookkeeping()
 	};
@@ -145,7 +139,6 @@ describe('synthesizeGenesis', () => {
 			[EVENT_TYPES.challengeServed]: 3,
 			[EVENT_TYPES.challengeReported]: 1,
 			[EVENT_TYPES.resultLogged]: 2,
-			[EVENT_TYPES.xpBanked]: 2,
 			[EVENT_TYPES.profileUpdated]: 1
 		});
 		expect(events.every((event) => event.device === DEVICE)).toBe(true);
@@ -161,7 +154,7 @@ describe('synthesizeGenesis', () => {
 	it('emits nothing for an empty device', () => {
 		expect(
 			synthesizeGenesis(
-				{ items: [], pool: [], results: [], days: [], profile: null },
+				{ items: [], pool: [], results: [], profile: null },
 				DEVICE,
 				idFactory()
 			)
@@ -176,7 +169,6 @@ describe('synthesizeGenesis', () => {
 		expect(rebuilt.items.map(bare)).toEqual(original.items);
 		expect(rebuilt.pool).toEqual(original.pool);
 		expect(rebuilt.results).toEqual(original.results);
-		expect(rebuilt.days).toEqual(original.days);
 		expect(rebuilt.profile).toEqual(original.profile);
 	});
 

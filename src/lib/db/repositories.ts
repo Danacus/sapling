@@ -24,7 +24,7 @@
  * entries and re-folds cards wholesale).
  */
 
-import type { Challenge, ChallengeResult, KnowledgeItem, Profile, Stats } from '$lib/types';
+import type { Challenge, ChallengeResult, KnowledgeItem, Profile } from '$lib/types';
 import { getDeviceId, newUuid, syncEnabled } from '$lib/sync/config';
 import {
 	EVENT_TYPES,
@@ -40,10 +40,9 @@ import {
 } from '$lib/sync/snapshot';
 import { db, SINGLETON_KEY } from './database';
 import type { ChallengeRow, OutboxRow } from './database';
-import { defaultStats, localDay, previousDay, statsFromDays } from './day';
 import { toPlain } from './plain';
 
-export { localDay, previousDay, statsFromDays } from './day';
+export { activityByDay, localDay, previousDay, streakFrom } from './day';
 
 /* -------------------------------------------------------------------------- */
 /* Sync capture plumbing                                                       */
@@ -374,68 +373,14 @@ export async function recentResults(limit: number): Promise<ChallengeResult[]> {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Stats                                                                       */
-/* -------------------------------------------------------------------------- */
-
-/** Returns the stats row, creating the default one on first access. */
-export async function getStats(): Promise<Stats> {
-	return db.transaction('rw', db.stats, async () => {
-		const row = await db.stats.get(SINGLETON_KEY);
-		if (row) {
-			const { id: _id, ...stats } = row;
-			return stats;
-		}
-		const stats = defaultStats();
-		await db.stats.put({ ...stats, id: SINGLETON_KEY });
-		return stats;
-	});
-}
-
-/**
- * Adds XP earned at `now`, updates today's history bucket and rolls the streak.
- *
- * The streak increments when the last active day was yesterday, is left alone
- * when it was today, and restarts at 1 after any longer gap.
- */
-export async function addXp(amount: number, now: number): Promise<Stats> {
-	const day = localDay(now);
-	const capturing = syncEnabled();
-
-	return db.transaction('rw', db.stats, db.outbox, async () => {
-		const row = await db.stats.get(SINGLETON_KEY);
-		const current = row ? { ...row } : { ...defaultStats(), id: SINGLETON_KEY };
-
-		let streakDays: number;
-		if (current.lastActiveDay === day) streakDays = Math.max(current.streakDays, 1);
-		else if (current.lastActiveDay === previousDay(day)) streakDays = current.streakDays + 1;
-		else streakDays = 1;
-
-		const history = [...current.history];
-		const today = history.find((entry) => entry.day === day);
-		if (today) today.xp += amount;
-		else history.push({ day, xp: amount });
-
-		const next: Stats = {
-			xp: current.xp + amount,
-			streakDays,
-			lastActiveDay: day,
-			history
-		};
-		await db.stats.put({ ...next, id: SINGLETON_KEY });
-		// The event carries the *increment*, not the day's running total: §4
-		// sums `xp-banked` amounts per day across devices, so a total would
-		// double-count a device's own earlier sessions.
-		if (capturing) await capture([event(EVENT_TYPES.xpBanked, { day, amount }, now)]);
-		return next;
-	});
-}
-
-/* -------------------------------------------------------------------------- */
 /* Export / import                                                             */
 /* -------------------------------------------------------------------------- */
 
 /** Envelope version written by {@link exportData}. */
-export const EXPORT_VERSION = 1;
+export const EXPORT_VERSION = 2;
+
+/** Envelope versions {@link importData} still understands. */
+const SUPPORTED_EXPORT_VERSIONS = [1, EXPORT_VERSION];
 
 /** Shape of the JSON produced by {@link exportData}. */
 export interface ExportEnvelope {
@@ -443,11 +388,10 @@ export interface ExportEnvelope {
 	exportedAt: number;
 	profile: Profile | null;
 	items: KnowledgeItem[];
-	stats: Stats;
 }
 
 /**
- * Serializes profile, items and stats as JSON.
+ * Serializes profile and items as JSON.
  *
  * Deliberately excludes the API key (it lives in `localStorage`) and the
  * challenge pool (regenerated content, not progress — and the pool's serve
@@ -456,13 +400,12 @@ export interface ExportEnvelope {
  * touching the export format.
  */
 export async function exportData(): Promise<string> {
-	const [profile, items, stats] = await Promise.all([getProfile(), getAllItems(), getStats()]);
+	const [profile, items] = await Promise.all([getProfile(), getAllItems()]);
 	const envelope: ExportEnvelope = {
 		version: EXPORT_VERSION,
 		exportedAt: Date.now(),
 		profile: profile ?? null,
-		items,
-		stats
+		items
 	};
 	return JSON.stringify(envelope, null, 2);
 }
@@ -493,25 +436,24 @@ export async function importData(json: string): Promise<void> {
 	}
 
 	if (!isRecord(parsed)) throw new Error('Import failed: unexpected file contents.');
-	if (parsed.version !== EXPORT_VERSION) {
+	// A v1 envelope still restores: it carries a `stats` field that no longer
+	// means anything, and everything else is unchanged, so it is simply ignored.
+	if (typeof parsed.version !== 'number' || !SUPPORTED_EXPORT_VERSIONS.includes(parsed.version)) {
 		throw new Error(`Import failed: unsupported export version ${String(parsed.version)}.`);
 	}
 	if (!Array.isArray(parsed.items)) throw new Error('Import failed: missing item list.');
 	if (parsed.profile !== null && !isRecord(parsed.profile)) {
 		throw new Error('Import failed: malformed profile.');
 	}
-	if (!isRecord(parsed.stats)) throw new Error('Import failed: malformed stats.');
 
 	const envelope = toPlain(parsed as unknown as ExportEnvelope);
 
-	await db.transaction('rw', db.profile, db.items, db.stats, async () => {
+	await db.transaction('rw', db.profile, db.items, async () => {
 		await db.items.clear();
 		if (envelope.items.length > 0) await db.items.bulkPut(envelope.items);
 
 		if (envelope.profile) await db.profile.put({ ...envelope.profile, id: SINGLETON_KEY });
 		else await db.profile.delete(SINGLETON_KEY);
-
-		await db.stats.put({ ...envelope.stats, id: SINGLETON_KEY });
 	});
 }
 
@@ -586,22 +528,20 @@ export async function drainOutbox(seqs: number[]): Promise<void> {
 export async function seedOutbox(build: (state: GenesisState) => SyncEvent[]): Promise<number> {
 	return db.transaction(
 		'rw',
-		[db.profile, db.items, db.challenges, db.results, db.stats, db.outbox, db.syncState],
+		[db.profile, db.items, db.challenges, db.results, db.outbox, db.syncState],
 		async () => {
 			if (await getSyncState<boolean>('genesisDone')) return 0;
 
-			const [profile, items, pool, results, stats] = await Promise.all([
+			const [profile, items, pool, results] = await Promise.all([
 				getProfile(),
 				getAllItems(),
 				getAllChallenges(),
-				getAllResults(),
-				getStats()
+				getAllResults()
 			]);
 			const events = build({
 				items,
 				pool,
 				results,
-				days: stats.history,
 				profile: profile ?? null
 			});
 
@@ -631,20 +571,18 @@ export async function mergeSyncSnapshot(
 ): Promise<void> {
 	await db.transaction(
 		'rw',
-		[db.profile, db.items, db.challenges, db.results, db.stats, db.syncState],
+		[db.profile, db.items, db.challenges, db.results, db.syncState],
 		async () => {
-			const [profile, items, pool, results, stats] = await Promise.all([
+			const [profile, items, pool, results] = await Promise.all([
 				getProfile(),
 				getAllItems(),
 				getAllChallenges(),
-				getAllResults(),
-				getStats()
+				getAllResults()
 			]);
 			const before: SyncSnapshot = {
 				items,
 				pool,
 				results,
-				days: stats.history,
 				profile: profile ?? null,
 				bookkeeping: (await getSyncState<SyncBookkeeping>('bookkeeping')) ?? emptyBookkeeping()
 			};
@@ -666,9 +604,6 @@ export async function mergeSyncSnapshot(
 			const newResults = after.results.filter((result) => !known.has(result));
 			if (newResults.length > 0) await db.results.bulkAdd(newResults);
 
-			if (after.days !== before.days) {
-				await db.stats.put({ ...statsFromDays(after.days), id: SINGLETON_KEY });
-			}
 			if (after.profile !== before.profile && after.profile) {
 				await db.profile.put({ ...after.profile, id: SINGLETON_KEY });
 			}

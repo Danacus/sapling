@@ -88,8 +88,6 @@ export const EVENT_TYPES = {
 	challengeReported: 'challenge-reported',
 	/** A whole `ChallengeResult`; the results log is a set-union by event id. */
 	resultLogged: 'result-logged',
-	/** `day, amount` — one session's banked XP; per-day totals are a *sum* across devices. */
-	xpBanked: 'xp-banked',
 	/** The whole `Profile` — last-write-wins by `at`. */
 	profileUpdated: 'profile-updated'
 } as const;
@@ -112,8 +110,6 @@ export const SYNC_LIMITS = {
 const nonEmpty = z.string().min(1);
 /** Epoch milliseconds. Positive so `0`/negative junk never orders ahead of real data. */
 const epochMs = z.int().positive();
-/** `YYYY-MM-DD` in the learner's local time, exactly as `localDay()` produces it. */
-const dayString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 /** Mirrors `KnowledgeItem`'s *content* fields: no `fsrsCard`, no `history`. */
 export const itemContentSchema = z.object({
@@ -179,7 +175,6 @@ export const profileContentSchema = z.object({
 	level: z.enum(['beginner', 'elementary', 'intermediate', 'advanced']),
 	interests: z.array(z.string()),
 	about: z.string().optional(),
-	dailyGoalXp: z.number(),
 	model: z.string(),
 	createdAt: epochMs
 });
@@ -235,7 +230,6 @@ export const SYNC_PAYLOAD_SCHEMAS = {
 	[EVENT_TYPES.challengeServed]: z.object({ challengeId: nonEmpty }),
 	[EVENT_TYPES.challengeReported]: z.object({ challengeId: nonEmpty }),
 	[EVENT_TYPES.resultLogged]: resultContentSchema,
-	[EVENT_TYPES.xpBanked]: z.object({ day: dayString, amount: z.number() }),
 	[EVENT_TYPES.profileUpdated]: profileContentSchema
 } as const satisfies Record<SyncEventType, z.ZodType>;
 

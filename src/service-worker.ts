@@ -7,7 +7,7 @@
  * Offline shell for the installed PWA.
  *
  * The app is local-first: the whole session loop (planning, playing, grading,
- * FSRS scheduling, XP) reads and writes IndexedDB and never touches the
+ * FSRS scheduling) reads and writes IndexedDB and never touches the
  * network. So caching the static shell is genuinely all that's needed to make
  * an offline launch a *fully working* app, not a degraded one.
  *

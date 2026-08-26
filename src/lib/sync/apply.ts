@@ -13,7 +13,7 @@
  * - **Idempotent.** Applying an event twice is applying it once. There is no
  *   "already seen" ledger of *all* events — most types dedupe from the data
  *   they produce (an item id, a history entry's `(at, device)`, a boolean flag),
- *   and only the three that contribute to a count or a sum need their event ids
+ *   and only the two that contribute to a count need their event ids
  *   remembered (`bookkeeping.countedEventIds`).
  * - **Commutative across batches.** Applying `[a]` then `[b]` equals applying
  *   `[a, b]` in one call, for any `a`, `b`. Sorting a batch by `(at, device, id)`
@@ -36,7 +36,7 @@ import type { ChallengeResult, KnowledgeItem } from '$lib/types';
 import { mergeSyncSnapshot } from '$lib/db';
 import { EVENT_TYPES, typeSyncEvent, type SyncEvent, type TypedSyncEvent } from './events';
 import { getDeviceId } from './config';
-import type { DayXp, EventKey, PoolRow, SyncBookkeeping, SyncSnapshot } from './snapshot';
+import type { EventKey, PoolRow, SyncBookkeeping, SyncSnapshot } from './snapshot';
 
 /**
  * The total order §4 mandates: `at` first (the domain's own notion of when),
@@ -69,7 +69,6 @@ interface Working {
 	items: Map<string, KnowledgeItem>;
 	pool: Map<string, PoolRow>;
 	results: ChallengeResult[];
-	days: Map<string, number>;
 	profile: SyncSnapshot['profile'];
 	counted: Set<string>;
 	tombstones: Set<string>;
@@ -78,8 +77,6 @@ interface Working {
 	profileUpdate: EventKey | null;
 	/** Item ids whose history changed and whose card therefore needs re-folding. */
 	dirty: Set<string>;
-	/** True once anything under `days` moved, so stats are only rewritten when they must be. */
-	daysChanged: boolean;
 }
 
 /**
@@ -87,7 +84,7 @@ interface Working {
  *
  * `localDevice` is skipped wholesale: those events were applied to the view at
  * write time (§4), and re-applying them would be harmless for most types but
- * would double-count the three that sum. Pass `undefined` to apply everything,
+ * would double-count the two that count. Pass `undefined` to apply everything,
  * which is what genesis round-trip tests want.
  *
  * Anything that fails envelope or payload validation is dropped silently and
@@ -103,15 +100,13 @@ export function applyEvents(
 		items: new Map(state.items.map((item) => [item.id, item])),
 		pool: new Map(state.pool.map((row) => [row.id, row])),
 		results: state.results,
-		days: new Map(state.days.map((entry) => [entry.day, entry.xp])),
 		profile: state.profile,
 		counted: new Set(state.bookkeeping.countedEventIds),
 		tombstones: new Set(state.bookkeeping.tombstones),
 		superseded: new Set(state.bookkeeping.supersededReviews),
 		itemUpdates: new Map(Object.entries(state.bookkeeping.itemUpdates)),
 		profileUpdate: state.bookkeeping.profileUpdate,
-		dirty: new Set(),
-		daysChanged: false
+		dirty: new Set()
 	};
 
 	const incoming = events
@@ -255,17 +250,6 @@ function applyOne(work: Working, event: TypedSyncEvent): void {
 			return;
 		}
 
-		case EVENT_TYPES.xpBanked: {
-			// Sum, not max: playing on two devices on the same day counts twice
-			// (§4). Event ids keep re-delivery from inflating the total.
-			if (work.counted.has(event.id)) return;
-			work.counted.add(event.id);
-			const { day, amount } = event.payload;
-			work.days.set(day, (work.days.get(day) ?? 0) + amount);
-			work.daysChanged = true;
-			return;
-		}
-
 		case EVENT_TYPES.profileUpdated: {
 			// Whole-object LWW, same key comparison as `item-updated`.
 			const key = keyOf(event);
@@ -352,11 +336,6 @@ function definedOnly<T extends object>(fields: T): Partial<T> {
 function collect(state: SyncSnapshot, work: Working): SyncSnapshot {
 	const items = [...work.items.values()];
 	const pool = [...work.pool.values()];
-	const days: DayXp[] = work.daysChanged
-		? [...work.days.entries()]
-				.map(([day, xp]) => ({ day, xp }))
-				.sort((a, b) => a.day.localeCompare(b.day))
-		: state.days;
 
 	// Sorted, not insertion-ordered: two devices that have applied the same
 	// event set must hold byte-identical bookkeeping too, or "same state" would
@@ -373,7 +352,6 @@ function collect(state: SyncSnapshot, work: Working): SyncSnapshot {
 		items: sameRows(state.items, items) ? state.items : items,
 		pool: sameRows(state.pool, pool) ? state.pool : pool,
 		results: work.results,
-		days,
 		profile: work.profile,
 		bookkeeping
 	};

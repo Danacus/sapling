@@ -13,7 +13,6 @@
 		getSyncState,
 		importData,
 		outboxCount,
-		saveProfile,
 		setApiKey,
 		setBaseUrl,
 		setModel,
@@ -53,7 +52,6 @@
 
 	type Status = 'idle' | 'saved' | 'error';
 
-	const GOAL_PRESETS = [30, 60, 120];
 	const MODEL_SUGGESTIONS = [
 		'google/gemini-3.7-flash',
 		'google/gemini-3.5-flash-lite',
@@ -74,12 +72,6 @@
 	let allItems = $state<KnowledgeItem[]>([]);
 	/** No key configured (or the flag is set): nothing here may offer to spend. */
 	let mockMode = $state(false);
-
-	// Profile / goal ------------------------------------------------------------
-	let dailyGoalXp = $state(60);
-	let savingGoal = $state(false);
-	let goalStatus = $state<Status>('idle');
-	let goalMessage = $state('');
 
 	// Display -----------------------------------------------------------------------
 	let romanizationMode = $state<RomanizationMode>('on');
@@ -158,7 +150,6 @@
 				if (cancelled) return;
 				profile = loadedProfile;
 				allItems = loadedItems;
-				dailyGoalXp = loadedProfile?.dailyGoalXp ?? 60;
 
 				mockMode = isMockMode();
 				apiKeySet = getApiKey() !== undefined;
@@ -228,24 +219,6 @@
 	function flash(setStatus: (value: Status) => void, delay = 1800) {
 		setStatus('saved');
 		setTimeout(() => setStatus('idle'), delay);
-	}
-
-	async function saveGoal() {
-		if (!profile || savingGoal) return;
-		savingGoal = true;
-		goalStatus = 'idle';
-		try {
-			const updated: Profile = { ...profile, dailyGoalXp };
-			await saveProfile(updated);
-			profile = updated;
-			goalMessage = 'Saved';
-			flash((value) => (goalStatus = value));
-		} catch (cause) {
-			goalMessage = cause instanceof Error ? cause.message : 'Could not save your goal.';
-			goalStatus = 'error';
-		} finally {
-			savingGoal = false;
-		}
 	}
 
 	function toggleListeningMode() {
@@ -656,42 +629,6 @@
 					</a>
 				</p>
 			{/if}
-
-			<div class="field">
-				<span class="label">Daily XP goal</span>
-				<div class="preset-row">
-					{#each GOAL_PRESETS as preset (preset)}
-						<button
-							type="button"
-							class="chip"
-							class:selected={dailyGoalXp === preset}
-							onclick={() => (dailyGoalXp = preset)}
-						>
-							{preset} XP
-						</button>
-					{/each}
-				</div>
-				<input
-					class="input"
-					type="number"
-					min="10"
-					step="10"
-					bind:value={dailyGoalXp}
-					aria-label="Custom daily XP goal"
-				/>
-			</div>
-
-			<div class="actions-row">
-				<button
-					type="button"
-					class="btn btn-primary"
-					onclick={saveGoal}
-					disabled={savingGoal || !profile}
-				>
-					{savingGoal ? 'Saving…' : 'Save goal'}
-				</button>
-				<InlineStatus status={goalStatus} message={goalMessage} />
-			</div>
 		</section>
 
 		<section class="card ll-rise" style="animation-delay: 110ms">
@@ -956,7 +893,7 @@
 			</div>
 			<hr class="stitch" />
 			<p class="hint">
-				When sync is on, your vocabulary, challenge content, review history, results, XP days and
+				When sync is on, your vocabulary, challenge content, review history, results and
 				profile (including your About text) sync to your own server. Your OpenRouter key, this
 				sync key, preferences and TTS caches never leave this device.
 			</p>

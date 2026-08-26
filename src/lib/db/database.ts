@@ -8,20 +8,15 @@
 
 import Dexie from 'dexie';
 import type { Table } from 'dexie';
-import type { Challenge, ChallengeResult, KnowledgeItem, Profile, Stats } from '$lib/types';
+import type { Challenge, ChallengeResult, KnowledgeItem, Profile } from '$lib/types';
 import type { SyncEvent } from '$lib/sync/events';
 import { poolRowFromLegacy, type LegacyChallengeRow } from './migrate';
 
-/** The `profile` and `stats` tables hold exactly one row under this key. */
+/** The `profile` table holds exactly one row under this key. */
 export const SINGLETON_KEY = 'singleton';
 
 /** Stored profile: the domain `Profile` plus the singleton primary key. */
 export interface ProfileRow extends Profile {
-	id: string;
-}
-
-/** Stored stats: the domain `Stats` plus the singleton primary key. */
-export interface StatsRow extends Stats {
 	id: string;
 }
 
@@ -84,7 +79,6 @@ export class AppDatabase extends Dexie {
 	declare items: Table<KnowledgeItem, string>;
 	declare challenges: Table<ChallengeRow, string>;
 	declare results: Table<ResultRow, number>;
-	declare stats: Table<StatsRow, string>;
 	declare outbox: Table<OutboxRow, number>;
 	declare syncState: Table<SyncStateRow, string>;
 
@@ -125,6 +119,10 @@ export class AppDatabase extends Dexie {
 		// the right starting state (capture is opt-in, and genesis backfills
 		// everything that predates it).
 		this.version(3).stores({ outbox: '++seq', syncState: 'key' });
+
+		// v4: XP is gone. The streak is now derived from the results log, so the
+		// whole `stats` table has nothing left to hold and Dexie drops it.
+		this.version(4).stores({ stats: null });
 	}
 }
 

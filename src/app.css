@@ -481,21 +481,6 @@ a {
 	}
 }
 
-@keyframes ll-float-up {
-	0% {
-		opacity: 0;
-		transform: translate(-50%, 0) scale(0.7);
-	}
-	20% {
-		opacity: 1;
-		transform: translate(-50%, -0.6rem) scale(1.12);
-	}
-	100% {
-		opacity: 0;
-		transform: translate(-50%, -3.2rem) scale(1);
-	}
-}
-
 @keyframes ll-confetti-fall {
 	0% {
 		opacity: 0;

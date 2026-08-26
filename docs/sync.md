@@ -10,8 +10,9 @@ iteration; §12 records all four implementation slices as done.
 Goals:
 
 - Sync **items** (vocabulary + FSRS state), the **challenge pool** (content +
-  serve bookkeeping + reports), the **results log**, **XP/streak**, and the
-  **profile** across devices.
+  serve bookkeeping + reports), the **results log**, and the **profile** across
+  devices. The day streak is *derived* from the results log rather than synced
+  as a counter — set-unioned results make it consistent everywhere for free.
 - **Local-first stays non-negotiable.** The app must remain fully functional
   with sync unconfigured, the server unreachable, or the feature turned off
   mid-life. Sync failures degrade silently (the audio-layer rule, applied to
@@ -89,8 +90,14 @@ payloads as opaque):
 | `challenge-served`  | `challengeId` — one serve                                      |
 | `challenge-reported`| `challengeId` — permanent exclusion                            |
 | `result-logged`     | the `ChallengeResult`                                          |
-| `xp-banked`         | `day, amount` — one session's banked XP                        |
 | `profile-updated`   | the full `Profile` — LWW by `at`                               |
+
+**Retired:** `xp-banked` (`day, amount`), which existed while the app had XP.
+Old logs still hold these events. They are now simply an unknown type, and
+`parseSyncPayload`/apply drop unknown types silently (§4, §1's degrade-silently
+rule) — that is the designed degradation, not a migration step. Old
+`profile-updated` payloads carrying the retired `dailyGoalXp` field still parse:
+`z.object` strips unknown keys.
 
 ## 4. Merge semantics (the apply engine)
 
@@ -108,11 +115,12 @@ Deterministic order everywhere: sort by `(at, device, id)`.
   `timesServed` = count of distinct applied `challenge-served` events (exact,
   since events dedupe by id — better than max-merge); `lastServedAt` = max
   `at` among them. `reported` = OR.
-- **Results**: set-union by event id. Append-only.
-- **Stats**: each day's XP = **sum** of `xp-banked` amounts for that
-  day-string across devices (play on two devices, both count). Streak and
-  `lastActiveDay` are derived from the day totals, not synced.
+- **Results**: set-union by event id. Append-only. The day streak is a pure
+  fold over this log (`activityByDay` → `streakFrom` in `$lib/db/day`), so it
+  needs no merge rule of its own.
 - **Profile**: whole-object LWW by `at`.
+- **Unknown types** (including retired ones) are dropped, and the rest of the
+  batch still applies.
 
 Application is idempotent and commutative by construction, so incremental
 apply (only new events, in server-seq order) reaches the same state as a full
@@ -131,8 +139,8 @@ today; a device skips its own events when they come back in a pull.
 - **Genesis (first sync of a device with existing data)**: synthesize real
   events from current state — `item-added` + one `item-reviewed` per history
   entry, `challenge-added` (+ `timesServed` synthetic `challenge-served`
-  events stamped at `lastServedAt`), `result-logged` per row, `xp-banked` per
-  stats-history day, one `profile-updated`. No snapshot special case: the log
+  events stamped at `lastServedAt`), `result-logged` per row, one
+  `profile-updated`. No snapshot special case: the log
   is the only mechanism. Synthetic serve timestamps are approximate; harmless
   (they only order recycling).
 - **Two devices with independent pre-sync data**: not merged intelligently in
@@ -225,7 +233,7 @@ New `src/lib/sync/` module, following house rules:
   touches the outbox — no `capture:false` flag to forget. It diffs by
   reference identity (the pure engine returns untouched rows as the same
   objects), so a three-review merge writes three rows.
-- Counts and sums (`challenge-served`, `result-logged`, `xp-banked`) dedupe
+- Counts (`challenge-served`, `result-logged`) dedupe
   by remembered event ids in `syncState` bookkeeping; everything else dedupes
   from the data it produces. Bookkeeping is stored sorted so identical event
   sets yield byte-identical snapshots regardless of pull batching.
@@ -244,7 +252,7 @@ New `src/lib/sync/` module, following house rules:
 
 - HTTPS only; keys hashed at rest; payload size caps; rate limits.
 - What leaves the device: vocabulary, challenge content (LLM-generated
-  lesson text), review history, results, XP days, profile — including the
+  lesson text), review history, results, profile — including the
   free-text `about`. What never leaves: OpenRouter key, sync key, prefs, TTS
   caches. The Settings card says this in one sentence.
 - **E2EE path (designed-for)**: because the server already treats payloads as

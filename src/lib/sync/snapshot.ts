@@ -19,12 +19,6 @@ import type { ChallengeResult, KnowledgeItem, Profile } from '$lib/types';
 /** A pool row, exactly as the challenges table stores it. */
 export type PoolRow = ChallengeRow;
 
-/** One day's XP total. `Stats.streakDays`/`lastActiveDay` are derived from these. */
-export interface DayXp {
-	day: string;
-	xp: number;
-}
-
 /**
  * Identity of the event that last won a last-write-wins slot: `(at, device, id)`,
  * the same triple the global sort order uses. Storing the whole triple rather
@@ -44,12 +38,12 @@ export interface EventKey {
  */
 export interface SyncBookkeeping {
 	/**
-	 * Event ids of everything that contributes to a **count or a sum** —
-	 * `challenge-served`, `result-logged`, `xp-banked`. Those three cannot be
-	 * deduped from the data they produce (a serve leaves no trace but a number,
-	 * two results can be genuinely identical), so the event id is the only
-	 * honest key. Grows with the log; a serve id is 36 bytes and an active
-	 * learner produces a few thousand a year.
+	 * Event ids of everything that contributes to a **count** —
+	 * `challenge-served` and `result-logged`. Neither can be deduped from the
+	 * data it produces (a serve leaves no trace but a number, two results can be
+	 * genuinely identical), so the event id is the only honest key. Grows with
+	 * the log; a serve id is 36 bytes and an active learner produces a few
+	 * thousand a year.
 	 */
 	countedEventIds: string[];
 	/** Item ids killed by `item-deleted`. Tombstones win over concurrent adds and reviews. */
@@ -72,8 +66,6 @@ export interface SyncSnapshot {
 	items: KnowledgeItem[];
 	pool: PoolRow[];
 	results: ChallengeResult[];
-	/** Per-day XP totals; whole `Stats` is rebuilt from them by `statsFromDays`. */
-	days: DayXp[];
 	profile: Profile | null;
 	bookkeeping: SyncBookkeeping;
 }

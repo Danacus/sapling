@@ -42,7 +42,6 @@ vi.mock('$lib/db', () => ({
 	// Imported by engine.ts at module load; never called from this test.
 	addResult: async () => undefined,
 	addToPool: async () => undefined,
-	addXp: async () => undefined,
 	getAllItems: async () => [...items.values()],
 	getChallengesByIds: async () => [],
 	getPool: async () => [],

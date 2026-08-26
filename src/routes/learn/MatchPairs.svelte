@@ -3,12 +3,13 @@
 
   These challenges are built locally by `makeMatchPairsChallenge` out of words
   the learner already knows — zero tokens, zero network. They exist to break up
-  the rhythm of a session and to give the combo somewhere to breathe.
+  the rhythm of a session and to give the learner somewhere to breathe.
 
   Interaction: pick one tile from each column. A correct pair locks in with a
   pop; a wrong pair shakes and both tiles deselect. Mistakes are counted, and a
   round finished with at least one mistake reports 'almost' instead of
-  'correct' — that only affects XP, never SRS (see `applyResult`).
+  'correct' — that only affects the session summary, never SRS (see
+  `applyResult`).
 
   Matching is by *text*, not by which pair object a tile happened to come
   from: two tiles count as a match whenever their texts form any valid pair in

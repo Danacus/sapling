@@ -2,11 +2,10 @@
  * Unit tests for the pure half of the session engine.
  *
  * The database-touching half (`applyResult`, `generateChallenges`,
- * `startSession`, `bankSessionXp`) needs IndexedDB, which node does not have,
- * so it is covered by the same "thin wrapper, no logic" rule as
- * `src/lib/db/repositories.ts`: everything worth asserting was pushed down into
- * `planSession` / `planRefill` / `xpFor` / `sessionSummary`, which are
- * exercised here.
+ * `startSession`) needs IndexedDB, which node does not have, so it is covered
+ * by the same "thin wrapper, no logic" rule as `src/lib/db/repositories.ts`:
+ * everything worth asserting was pushed down into `planSession` /
+ * `planRefill` / `sessionSummary`, which are exercised here.
  *
  * The one exception is {@link planRefill}'s output being fed to the real
  * `getBatch` in mock mode (no API key in node ⇒ mock automatically), which
@@ -29,16 +28,12 @@ import type {
 } from '$lib/types';
 import {
 	BATCH_TARGET,
-	COMBO_THRESHOLD,
 	LISTENING_SHARE,
 	MATCH_PAIRS_EVERY,
-	MATCH_PAIRS_XP,
-	MAX_COMBO_BONUS,
 	MAX_RECENT_MISTAKES,
 	RESERVE_GAP,
 	SESSION_LENGTH,
 	SKIP_ANSWER,
-	comboAfter,
 	dedupeNewItems,
 	deriveRecentMistakes,
 	isListeningChallenge,
@@ -50,7 +45,6 @@ import {
 	sessionSummary,
 	spokenAnswerFor,
 	wantsMatchRound,
-	xpFor,
 	type SessionAnswer
 } from './engine';
 
@@ -63,7 +57,6 @@ function profile(overrides: Partial<Profile> = {}): Profile {
 		targetLanguage: 'Spanish',
 		level: 'beginner',
 		interests: ['cooking', 'football'],
-		dailyGoalXp: 50,
 		model: 'google/gemini-2.5-flash-lite',
 		createdAt: NOW - 30 * DAY,
 		...overrides
@@ -152,47 +145,6 @@ function strongItem(id: string, dueOffset: number): KnowledgeItem {
 const ids = (challenges: Challenge[]) => challenges.map((challenge) => challenge.id);
 
 /* -------------------------------------------------------------------------- */
-
-describe('xpFor', () => {
-	it('pays the base rate below the combo threshold', () => {
-		expect(xpFor('correct', 0)).toBe(10);
-		expect(xpFor('correct', 1)).toBe(10);
-		expect(xpFor('correct', COMBO_THRESHOLD - 1)).toBe(10);
-		expect(xpFor('almost', 2)).toBe(8);
-	});
-
-	it('pays nothing for a wrong answer, whatever the combo', () => {
-		expect(xpFor('wrong', 0)).toBe(0);
-		expect(xpFor('wrong', 9)).toBe(0);
-	});
-
-	it('adds a growing combo bonus from the threshold onwards', () => {
-		expect(xpFor('correct', 3)).toBe(12);
-		expect(xpFor('correct', 4)).toBe(14);
-		expect(xpFor('almost', 3)).toBe(10);
-		expect(xpFor('almost', 5)).toBe(14);
-	});
-
-	it('caps the combo bonus', () => {
-		expect(xpFor('correct', 7)).toBe(10 + MAX_COMBO_BONUS);
-		expect(xpFor('correct', 40)).toBe(10 + MAX_COMBO_BONUS);
-		expect(xpFor('almost', 40)).toBe(8 + MAX_COMBO_BONUS);
-	});
-
-	it('never awards more than base + cap', () => {
-		for (let combo = 0; combo < 50; combo++) {
-			expect(xpFor('correct', combo)).toBeLessThanOrEqual(10 + MAX_COMBO_BONUS);
-		}
-	});
-});
-
-describe('comboAfter', () => {
-	it('extends on correct and almost, breaks on wrong', () => {
-		expect(comboAfter('correct', 0)).toBe(1);
-		expect(comboAfter('almost', 4)).toBe(5);
-		expect(comboAfter('wrong', 9)).toBe(0);
-	});
-});
 
 describe('wantsMatchRound', () => {
 	it('fires after every Nth answered challenge', () => {
@@ -425,19 +377,18 @@ describe('isListeningChallenge', () => {
 
 describe('sessionSummary', () => {
 	const answers: SessionAnswer[] = [
-		{ challengeId: 'a', type: 'multiple-choice', verdict: 'correct', xp: 10, itemIds: ['i1'] },
-		{ challengeId: 'b', type: 'cloze', verdict: 'almost', xp: 8, itemIds: ['i1', 'i2'] },
-		{ challengeId: 'c', type: 'typed-translation', verdict: 'wrong', xp: 0, itemIds: ['i3'] },
-		{ challengeId: 'd', type: 'match-pairs', verdict: 'correct', xp: 5, itemIds: [] }
+		{ challengeId: 'a', type: 'multiple-choice', verdict: 'correct', itemIds: ['i1'] },
+		{ challengeId: 'b', type: 'cloze', verdict: 'almost', itemIds: ['i1', 'i2'] },
+		{ challengeId: 'c', type: 'typed-translation', verdict: 'wrong', itemIds: ['i3'] },
+		{ challengeId: 'd', type: 'match-pairs', verdict: 'correct', itemIds: [] }
 	];
 
-	it('totals xp and verdicts', () => {
+	it('totals verdicts', () => {
 		const summary = sessionSummary(answers);
 		expect(summary.answered).toBe(4);
 		expect(summary.correct).toBe(2);
 		expect(summary.almost).toBe(1);
 		expect(summary.wrong).toBe(1);
-		expect(summary.xp).toBe(23);
 	});
 
 	it('counts almost as accepted and de-duplicates practised items', () => {
@@ -452,7 +403,6 @@ describe('sessionSummary', () => {
 			correct: 0,
 			almost: 0,
 			wrong: 0,
-			xp: 0,
 			accuracy: 0,
 			itemsPracticed: 0
 		});
@@ -991,7 +941,7 @@ describe('planRefill', () => {
 			'targetLanguage'
 		]);
 		expect(plan.args.profile).not.toHaveProperty('model');
-		expect(plan.args.profile).not.toHaveProperty('dailyGoalXp');
+		expect(plan.args.profile).not.toHaveProperty('createdAt');
 	});
 
 	it("threads the learner's self-description through, and omits it when blank", () => {
@@ -1259,17 +1209,15 @@ describe('planRefill difficulty feedback', () => {
 });
 
 describe('a skipped challenge', () => {
-	it('is worth nothing, breaks the combo and grades FSRS Again', () => {
-		expect(xpFor('wrong', 5)).toBe(0);
-		expect(comboAfter('wrong', 5)).toBe(0);
+	it('grades FSRS Again', () => {
 		// A skip is "I could not produce it", which is exactly what Again encodes.
 		expect(gradeFromResult('wrong')).toBe(Grade.Again);
 	});
 
 	it('counts as a wrong answer in the session summary', () => {
 		const summary = sessionSummary([
-			{ challengeId: 'a', type: 'cloze', verdict: 'correct', xp: 10, itemIds: ['i1'] },
-			{ challengeId: 'b', type: 'cloze', verdict: 'wrong', xp: 0, itemIds: ['i2'] }
+			{ challengeId: 'a', type: 'cloze', verdict: 'correct', itemIds: ['i1'] },
+			{ challengeId: 'b', type: 'cloze', verdict: 'wrong', itemIds: ['i2'] }
 		]);
 		expect(summary.wrong).toBe(1);
 		expect(summary.accuracy).toBe(0.5);
@@ -1434,9 +1382,10 @@ describe('planRefill → getBatch (mock mode)', () => {
 /**
  * A dry run of the loop `src/routes/learn/+page.svelte` drives, with the
  * database swapped for arrays and the learner swapped for a scripted answer
- * function. It exercises the parts that are easy to get subtly wrong — combo
- * accounting, where the free match rounds land, and what each answer is worth —
- * against a real mock batch, planned the way a real session is planned.
+ * function. It exercises the parts that are easy to get subtly wrong — where
+ * the free match rounds land, how many challenges a session actually plays, and
+ * what the summary makes of them — against a real mock batch, planned the way a
+ * real session is planned.
  */
 describe('session walkthrough (mock batch, no database)', () => {
 	/** Plays a session the way the page does; `answerAs` scripts the learner. */
@@ -1464,7 +1413,6 @@ describe('session walkthrough (mock batch, no database)', () => {
 		let next = 0;
 
 		const answers: SessionAnswer[] = [];
-		let combo = 0;
 		let llmAnswered = 0;
 		let lastMatchAfter = -1;
 		let matchRounds = 0;
@@ -1489,16 +1437,12 @@ describe('session walkthrough (mock batch, no database)', () => {
 
 			const isMatch = challenge.type === 'match-pairs';
 			const verdict = isMatch ? 'correct' : answerAs(challenge, llmAnswered);
-			const nextCombo = isMatch ? combo : comboAfter(verdict, combo);
-			const xp = isMatch ? MATCH_PAIRS_XP : xpFor(verdict, nextCombo);
 
-			combo = nextCombo;
 			if (!isMatch) llmAnswered++;
 			answers.push({
 				challengeId: challenge.id,
 				type: challenge.type,
 				verdict,
-				xp,
 				itemIds: isMatch ? [] : challenge.itemIds
 			});
 		}
@@ -1513,7 +1457,7 @@ describe('session walkthrough (mock batch, no database)', () => {
 		};
 	}
 
-	it('plays a flawless session: the whole plan, 3 free rounds, capped combo', async () => {
+	it('plays a flawless session: the whole plan and 3 free rounds', async () => {
 		const known = Array.from({ length: 6 }, (_, i) => item(`k${i}`, -DAY));
 		const run = await playSession(known, () => 'correct');
 
@@ -1524,24 +1468,18 @@ describe('session walkthrough (mock batch, no database)', () => {
 		expect(run.matchRounds).toBe(3); // after the 4th, 8th and 12th answer
 		expect(run.answers).toHaveLength(BATCH_TARGET + 3);
 		expect(run.summary.accuracy).toBe(1);
-
-		// Combos 1-2 pay the flat 10; from combo 3 the bonus ramps 2,4,6,8,10
-		// (12,14,16,18,20) and every combo from 7 on is capped at 20.
-		const expectedLlmXp = 10 * 2 + (12 + 14 + 16 + 18 + 20) + 20 * 7;
-		expect(run.summary.xp).toBe(expectedLlmXp + 3 * MATCH_PAIRS_XP);
+		expect(run.summary.correct).toBe(BATCH_TARGET + 3);
 	});
 
-	it('a wrong answer resets the combo back to the base rate', async () => {
+	it('counts a single miss without disturbing the rest of the session', async () => {
 		const known = Array.from({ length: 6 }, (_, i) => item(`k${i}`, -DAY));
 		const run = await playSession(known, (_challenge, index) =>
 			index === 4 ? 'wrong' : 'correct'
 		);
 
-		const llmAnswers = run.answers.filter((a) => a.type !== 'match-pairs');
-		expect(llmAnswers[3].xp).toBe(14); // combo 4
-		expect(llmAnswers[4].xp).toBe(0); // the miss
-		expect(llmAnswers[5].xp).toBe(10); // combo restarted at 1
+		expect(run.llmAnswered).toBe(BATCH_TARGET);
 		expect(run.summary.wrong).toBe(1);
+		expect(run.summary.answered).toBe(BATCH_TARGET + 3);
 	});
 
 	it('ends gracefully when the plan is shorter than a full session', async () => {

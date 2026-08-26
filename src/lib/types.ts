@@ -31,8 +31,6 @@ export interface Profile {
 	 * Never required: absent or blank simply personalizes nothing.
 	 */
 	about?: string;
-	/** XP target per day; drives the streak and daily goal ring. */
-	dailyGoalXp: number;
 	/** OpenRouter model id, e.g. `'openai/gpt-4o-mini'`. */
 	model: string;
 	/** Epoch milliseconds. */
@@ -274,12 +272,4 @@ export interface ChallengeResult {
 	answerGiven: string;
 	/** Epoch milliseconds. */
 	at: number;
-}
-
-/** Gamification counters. Days are `YYYY-MM-DD` in the learner's local time. */
-export interface Stats {
-	xp: number;
-	streakDays: number;
-	lastActiveDay: string;
-	history: { day: string; xp: number }[];
 }

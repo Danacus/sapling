@@ -41,12 +41,6 @@
 		{ value: 'advanced', emoji: '🏔️', title: 'Advanced', blurb: 'Polishing the details' }
 	];
 
-	const GOALS = [
-		{ xp: 30, label: 'Casual', minutes: '~5 min/day' },
-		{ xp: 60, label: 'Regular', minutes: '~10 min/day' },
-		{ xp: 120, label: 'Serious', minutes: '~20 min/day' }
-	];
-
 	const INTEREST_SUGGESTIONS = [
 		'travel',
 		'cooking',
@@ -73,7 +67,6 @@
 	let level = $state<Level | undefined>(undefined);
 	let interests = $state<string[]>([]);
 	let interestDraft = $state('');
-	let dailyGoalXp = $state(60);
 	let apiKey = $state('');
 	let model = $state(DEFAULT_MODEL);
 
@@ -138,7 +131,6 @@
 				targetLanguage: targetLanguage.trim(),
 				level: level ?? 'beginner',
 				interests,
-				dailyGoalXp,
 				model: chosenModel,
 				createdAt: Date.now()
 			};
@@ -288,25 +280,6 @@
 						{/each}
 					</div>
 				{/if}
-			</div>
-
-			<div class="field">
-				<span class="label">Daily goal</span>
-				<div class="goals">
-					{#each GOALS as goal (goal.xp)}
-						<button
-							type="button"
-							class="goal"
-							class:selected={dailyGoalXp === goal.xp}
-							aria-pressed={dailyGoalXp === goal.xp}
-							onclick={() => (dailyGoalXp = goal.xp)}
-						>
-							<span class="goal-xp">{goal.xp} XP</span>
-							<span class="goal-label">{goal.label}</span>
-							<span class="goal-minutes">{goal.minutes}</span>
-						</button>
-					{/each}
-				</div>
 			</div>
 		{:else}
 			<header class="head">
@@ -521,7 +494,6 @@
 	}
 
 	.level:focus-visible,
-	.goal:focus-visible,
 	.chip:focus-visible,
 	.skip:focus-visible {
 		outline: none;
@@ -601,59 +573,6 @@
 		opacity: 1;
 	}
 
-	/* Goals ---------------------------------------------------------------- */
-
-	.goals {
-		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: 0.6rem;
-	}
-
-	.goal {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.1rem;
-		padding: 0.75rem 0.4rem;
-		border: 1.5px solid var(--border);
-		border-bottom-width: 3px;
-		border-radius: var(--radius);
-		background: var(--surface);
-		color: var(--text);
-		font: inherit;
-		cursor: pointer;
-		transition:
-			border-color 0.15s ease,
-			background 0.15s ease;
-	}
-
-	.goal:hover {
-		border-color: var(--border-strong);
-	}
-
-	.goal.selected {
-		border-color: var(--primary);
-		background: var(--primary-soft);
-	}
-
-	.goal-xp {
-		font-family: var(--font-display);
-		font-size: 1.1rem;
-		font-weight: 700;
-		font-variation-settings: 'SOFT' 26;
-		font-variant-numeric: tabular-nums;
-	}
-
-	.goal-label {
-		font-size: 0.85rem;
-	}
-
-	.goal-minutes {
-		font-size: 0.72rem;
-		letter-spacing: 0.02em;
-		color: var(--text-muted);
-	}
-
 	/* Footer --------------------------------------------------------------- */
 
 	.actions {
@@ -701,8 +620,7 @@
 	}
 
 	@media (max-width: 420px) {
-		.levels,
-		.goals {
+		.levels {
 			grid-template-columns: 1fr;
 		}
 	}
