@@ -218,7 +218,6 @@
 	let romanizer = $state<Romanizer | null>(null);
 	let feedback = $state<Feedback | null>(null);
 	let answers = $state<SessionAnswer[]>([]);
-	let llmAnswered = $state(0);
 	let plannedLlm = $state(0);
 	/** {@link queue}'s length, mirrored into state for the progress bar. */
 	let plannedSteps = $state(0);
@@ -469,7 +468,6 @@
 		newWords = firstTimeWords(ready);
 
 		answers = [];
-		llmAnswered = 0;
 
 		// Audio, ahead of the learner: boot the engine now rather than inside the
 		// first spoken challenge, and start rendering the session's clips in play
@@ -582,6 +580,8 @@
 	 */
 	const totalSteps = $derived(Math.max(1, plannedSteps));
 	const stepsDone = $derived(answers.length);
+	/** Answered generated challenges: what `plannedLlm` is counted against. */
+	const llmAnswered = $derived(answers.filter((answer) => answer.type !== 'match-pairs').length);
 
 	async function advance(): Promise<void> {
 		feedback = null;
@@ -616,8 +616,6 @@
 		if (!challenge || feedback) return;
 
 		const isMatch = challenge.type === 'match-pairs';
-
-		if (!isMatch) llmAnswered++;
 
 		answers = [
 			...answers,

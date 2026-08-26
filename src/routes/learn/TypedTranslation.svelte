@@ -7,7 +7,7 @@
   Enter submits.
 -->
 <script lang="ts">
-	import { ALL_READINGS, rubyFor, type ChallengeProps } from '$lib/challenges/props';
+	import { ALL_READINGS, rubyFor, storedReading, type ChallengeProps } from '$lib/challenges/props';
 	import type { TypedTranslationChallenge } from '$lib/types';
 	import { validateAnswer } from '$lib/validate';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
@@ -85,7 +85,7 @@
 		kicker={asked}
 		prompt={challenge.prompt}
 		{promptTokens}
-		reading={(readings.sentence ? challenge.promptRomanization : '') ?? ''}
+		reading={storedReading(readings, challenge.promptRomanization)}
 		speakText={promptIsTarget ? challenge.prompt : ''}
 		speakLang={targetLanguage}
 	/>

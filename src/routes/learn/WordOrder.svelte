@@ -18,7 +18,7 @@
   by the same rule as the answer it is graded against, spaces or no spaces.
 -->
 <script lang="ts">
-	import { ALL_READINGS, rubyFor, type ChallengeProps } from '$lib/challenges/props';
+	import { ALL_READINGS, rubyFor, storedReading, type ChallengeProps } from '$lib/challenges/props';
 	import type { RomanizedToken } from '$lib/romanize';
 	import { isPunctuationOnly, joinTokens } from '$lib/text';
 	import type { WordOrderChallenge } from '$lib/types';
@@ -77,7 +77,7 @@
 	}
 
 	function readingOf(index: number): string {
-		return (readings.sentence ? challenge.tilesRomanization?.[index] : '') ?? '';
+		return storedReading(readings, challenge.tilesRomanization?.[index]);
 	}
 
 	function place(index: number): void {

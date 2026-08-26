@@ -101,3 +101,17 @@ export function rubyFor(
 	if (!tokenize) return () => null;
 	return (text) => applyPlan(tokenize(text), readings);
 }
+
+/**
+ * The other half of {@link rubyFor}'s contract: the stored, LLM-written
+ * `…Romanization` string a component falls back to, gated by the learner's
+ * `sentence` preference and normalized to `''` when it is switched off, absent
+ * or was never generated.
+ *
+ * Six components were spelling this out by hand — once per romanized slot,
+ * eight times over — which made "does this respect the reading preference?" a
+ * question you answered by reading every component instead of by construction.
+ */
+export function storedReading(readings: ReadingPlan, stored: string | undefined | null): string {
+	return (readings.sentence ? stored : '') ?? '';
+}
