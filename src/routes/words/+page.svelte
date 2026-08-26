@@ -282,7 +282,7 @@
 </script>
 
 <svelte:head>
-	<title>Word ledger</title>
+	<title>Garden</title>
 </svelte:head>
 
 <main class="shell">
@@ -294,7 +294,7 @@
 		</a>
 		<div class="identity">
 			<p class="eyebrow">Sapling</p>
-			<h1>Word ledger</h1>
+			<h1>Garden</h1>
 		</div>
 	</header>
 
@@ -317,7 +317,7 @@
 			</div>
 			<hr class="stitch" />
 			<p class="hint">
-				Every word you meet gets a page in this ledger — when it is next due, how firmly it has
+				Every word you meet grows here — when it is next due, how firmly it has
 				settled, and every review you have ever given it. Your first session writes the first entry.
 			</p>
 			<a class="btn btn-primary btn-block" href="/learn">Start a session</a>

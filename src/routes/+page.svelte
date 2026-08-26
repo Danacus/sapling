@@ -268,7 +268,7 @@
 					<h2>Garden</h2>
 					<div class="card-tools">
 						<span class="card-count">{items.length} word{items.length === 1 ? '' : 's'}</span>
-						<a class="btn btn-ghost words-link" href="/words">All words</a>
+						<a class="btn btn-ghost words-link" href="/words">Full garden</a>
 					</div>
 				</div>
 				<hr class="stitch" />

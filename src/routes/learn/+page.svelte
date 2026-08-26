@@ -178,7 +178,7 @@
 		if (reviewOnlyMode && !canStart) {
 			return hasPoolMaterial
 				? 'Nothing due for review yet — Extra practice reviews ahead of schedule, or a new lesson below builds fresh challenges from words you already have.'
-				: 'Nothing to review yet. Switch to All words to add your first vocabulary.';
+				: 'Nothing to review yet. Switch to New words to add your first vocabulary.';
 		}
 
 		if (!nudgeGenerate) return '';
@@ -856,7 +856,7 @@
 							aria-pressed={!reviewOnlyMode}
 							onclick={() => toggleReviewOnly(false)}
 						>
-							All words
+							New words
 						</button>
 						<button
 							type="button"
