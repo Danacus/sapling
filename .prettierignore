@@ -1,0 +1,16 @@
+node_modules
+.claude
+/build
+/.svelte-kit
+/server/node_modules
+/server/dist
+pnpm-lock.yaml
+server/pnpm-lock.yaml
+
+# Vendored upstream artifacts — sherpa-onnx's own JS glue, never ours to
+# reformat. `sherpa-worker.js` beside them *is* project code and stays in.
+static/tts/sherpa-onnx-*.js
+
+# Markdown is hand-wrapped prose here, and prettier rewrites *emphasis* to
+# _emphasis_ against the house style. Formatting is for code.
+*.md

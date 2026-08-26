@@ -14,7 +14,11 @@ pnpm build                              # static build -> build/
 pnpm check                              # svelte-check (typecheck)
 pnpm test                               # vitest run (all suites)
 pnpm test src/lib/srs/scheduler.test.ts # single test file
+pnpm format                             # prettier --write . (see below)
+pnpm format:check                       # prettier --check . (verify only)
 ```
+
+**Formatting is prettier's job, never yours.** The repo pins `prettier` + `prettier-plugin-svelte` and settles the style in `.prettierrc` (tabs, single quotes, no trailing comma, `printWidth: 100`, the svelte parser for `.svelte`) — so **run `pnpm format` after editing and never hand-align code to match its neighbours**, and never invoke a bare `npx prettier`: unpinned, it resolves a different version with prettier's *own* defaults (2 spaces, trailing commas, width 80) and silently reformats whole files into a diff that buries the actual change. The same config covers `server/`, so `pnpm format` from the repo root formats both packages — the server's own `package.json` has no prettier of its own. `.prettierignore` holds the exclusions worth knowing: **Markdown is out** (prettier rewrites `*emphasis*` to `_emphasis_`, against the house style in this file and `docs/`), and so are `static/tts/sherpa-onnx-*.js` (vendored upstream glue — `sherpa-worker.js` beside them is project code and *is* formatted).
 
 The sync server in `server/` is a **separate package, deliberately not a workspace member** — its own `package.json`, lockfile, `node_modules` and `pnpm-workspace.yaml`, so the Cloudflare Pages build of the app never sees it. Run its commands from the repo root:
 
