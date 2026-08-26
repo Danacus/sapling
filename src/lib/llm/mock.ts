@@ -32,6 +32,7 @@
  */
 
 import { getApiKey } from '$lib/db/settings';
+import { bcp47For } from '$lib/tts/languages';
 import { WIRE_TYPE_DEFS } from './challenge-types';
 import type { FixtureScenario } from './challenge-types';
 import type { TokenUsage } from './client';
@@ -96,15 +97,19 @@ interface Fixture {
 }
 
 /**
- * Languages whose mock batch uses the Mandarin fixtures. Matched on the
- * free-form `targetLanguage` string the learner typed during onboarding, so
- * "zh", "Chinese" and "Mandarin Chinese" all land on the same set.
+ * True when the mock should serve its non-Latin-script (pinyin) fixtures.
+ *
+ * Asked of the free-form `targetLanguage` the learner typed during onboarding,
+ * so "zh", "Chinese" and "Mandarin Chinese" all land on the same set — via
+ * `bcp47For`, which is where the app's list of what counts as Chinese already
+ * lives. This used to carry a second, private alias regex; the two could only
+ * drift, since an alias added to one had no reason to reach the other.
+ *
+ * Traditional (`zh-TW`) is included deliberately: these are the only non-Latin
+ * fixtures there are, and pinyin beats no mock at all.
  */
-const MANDARIN_NAMES = /(^|\W)(zh|chinese|mandarin|putonghua|普通话|中文)(\W|$)/i;
-
-/** True when the mock should serve its non-Latin-script (pinyin) fixtures. */
 export function usesMandarinFixtures(targetLanguage: string): boolean {
-	return MANDARIN_NAMES.test(targetLanguage ?? '');
+	return bcp47For(targetLanguage ?? '').split('-')[0].toLowerCase() === 'zh';
 }
 
 /**

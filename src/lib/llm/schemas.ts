@@ -47,6 +47,7 @@ import type { Challenge } from '$lib/types';
 // The generated union, imported so `generatedBatchSchema` can wrap it; it is
 // also re-exported below, since this module is the façade for the wire format.
 import { generatedChallengeSchema } from './challenge-types';
+import { toJsonSchema } from './json-schema';
 import { nonEmpty } from './challenge-types/primitives';
 // The stored half, imported so `challengeSchema` can be composed from it. Those
 // modules are leaves — zod, `$lib/types` and the string matchers — so importing
@@ -189,20 +190,12 @@ function tighten(node: unknown): void {
 }
 
 /**
- * The JSON schema sent as `response_format.json_schema.schema`.
- *
- * `$defs`/`$ref` are inlined (`cycles`/`reused` both set to inline where the
- * generator allows it) because several cheap models choke on references — which
- * matters more now that `TargetText` appears in almost every wire type.
+ * The JSON schema sent as `response_format.json_schema.schema`: the shared
+ * `toJsonSchema` conversion (which is where the ref-inlining lives, and why)
+ * plus the `required`-everything pass strict structured outputs want.
  */
 export function batchJsonSchema(): JsonObject {
-	const schema = z.toJSONSchema(generatedBatchSchema, {
-		target: 'draft-2020-12',
-		reused: 'inline',
-		unrepresentable: 'any',
-		io: 'input'
-	}) as JsonObject;
-	delete schema.$schema;
+	const schema = toJsonSchema(generatedBatchSchema) as JsonObject;
 	tighten(schema);
 	return schema;
 }
