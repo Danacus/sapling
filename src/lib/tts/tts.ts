@@ -50,7 +50,13 @@ export {
 	DEFAULT_TTS_ENGINE,
 	DEFAULT_TTS_VOICE
 } from './prefs';
-export { bcp47For, kokoroSupports, kokoroSpeakerFor, MANDARIN_SPEAKERS } from './languages';
+export {
+	bcp47For,
+	isMandarin,
+	kokoroSupports,
+	kokoroSpeakerFor,
+	MANDARIN_SPEAKERS
+} from './languages';
 export { KOKORO_MODEL_ID, RUNTIME_DOWNLOAD_BYTES, formatMb } from './models';
 /** The stored-clip cache, for the Settings row that reports and clears it. */
 export { audioCacheBytes, clearAudioCache } from './audio-store';

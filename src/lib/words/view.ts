@@ -138,15 +138,29 @@ function matchesSearch(row: WordRow, needle: string): boolean {
 	return haystack.includes(needle);
 }
 
-/** Filter + search + sort in one pass; the page's single entry point. */
-export function queryWords(items: KnowledgeItem[], query: WordQuery, now: number): WordRow[] {
+/**
+ * Filter + search + sort over rows that have already been derived.
+ *
+ * Split from {@link queryWords} because the page needs the *unfiltered* rows
+ * anyway for its summary tiles, and `toWordRow` folds FSRS retrievability and
+ * strength per word — deriving them once for the tiles and again for the table
+ * meant doing that work twice over the whole collection on every render.
+ */
+export function filterWords(rows: WordRow[], query: WordQuery): WordRow[] {
 	const needle = query.search.trim().toLowerCase();
 
-	return items
-		.map((item) => toWordRow(item, now))
+	return rows
 		.filter((row) => matchesFilter(row, query.filter))
 		.filter((row) => matchesSearch(row, needle))
 		.sort(compareRows(query));
+}
+
+/** Derive + filter + search + sort, for callers that have no rows in hand. */
+export function queryWords(items: KnowledgeItem[], query: WordQuery, now: number): WordRow[] {
+	return filterWords(
+		items.map((item) => toWordRow(item, now)),
+		query
+	);
 }
 
 /** UI names for the four FSRS card states. */

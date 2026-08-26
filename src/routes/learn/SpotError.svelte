@@ -119,7 +119,7 @@
 		</TapRow>
 	</div>
 
-	<p class="meaning">It should mean: {challenge.meaning}</p>
+	<p class="hint meaning">It should mean: {challenge.meaning}</p>
 
 	<CheckButton disabled={selected === null || lock.locked} onclick={submit} />
 </div>
@@ -146,7 +146,6 @@
 		border-left: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
 		font-size: 0.98rem;
 		font-style: italic;
-		color: var(--text-muted);
 		overflow-wrap: anywhere;
 	}
 </style>

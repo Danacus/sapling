@@ -216,16 +216,25 @@ export function kokoroSpeakerFor(
 	language: string | undefined,
 	voice: TtsVoice = getTtsVoice()
 ): KokoroSpeaker | undefined {
-	const tag = bcp47For(language);
-	const [base, region] = tag.toLowerCase().split('-');
+	const [base, region] = bcp47For(language).toLowerCase().split('-');
 
 	if (base === 'en') return region === 'gb' ? BF_VALE : AF_MAPLE;
-
-	// Mandarin only: zh-TW is Traditional script and `yue` is Cantonese, and
-	// this model speaks neither.
-	if (base !== 'zh' || region === 'tw' || region === 'hant') return undefined;
+	if (!isMandarin(language)) return undefined;
 
 	return MANDARIN_SPEAKERS.find((speaker) => speaker.name === voice) ?? DEFAULT_MANDARIN_SPEAKER;
+}
+
+/**
+ * Whether this language is Mandarin as far as the app is concerned — the one
+ * question the voice picker, the speaker mapping and the mock fixtures all ask.
+ *
+ * `zh-TW` is Traditional script and `yue` is Cantonese; this model speaks
+ * neither, so neither counts. Exported because a caller that re-derived the
+ * rule had already drifted from it (it checked `zh-TW` but not `zh-Hant`).
+ */
+export function isMandarin(language: string | undefined): boolean {
+	const [base, region] = bcp47For(language).toLowerCase().split('-');
+	return base === 'zh' && region !== 'tw' && region !== 'hant';
 }
 
 /** Whether Kokoro covers this language at all. */
