@@ -23,21 +23,21 @@ const NOW = 1_700_000_000_000;
 const items = new Map<string, KnowledgeItem>();
 
 vi.mock('$lib/db', () => ({
-	getItem: async (id: string) => items.get(id),
 	updateItemAfterReview: async (
 		id: string,
-		fsrsCard: unknown,
+		nextCard: (prior: unknown) => unknown,
 		entry: { at: number; grade: number },
 		opts: { replaceLast?: boolean } = {}
 	) => {
 		const item = items.get(id);
-		if (!item) return false;
+		if (!item) return { existed: false, prior: null };
+		const prior = item.fsrsCard ?? null;
 		const history =
 			opts.replaceLast && item.history.length > 0
 				? [...item.history.slice(0, -1), entry]
 				: [...item.history, entry];
-		items.set(id, { ...item, fsrsCard, history });
-		return true;
+		items.set(id, { ...item, fsrsCard: nextCard(prior), history });
+		return { existed: true, prior };
 	},
 	// Imported by engine.ts at module load; never called from this test.
 	addResult: async () => undefined,

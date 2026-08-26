@@ -44,6 +44,32 @@ export type ChallengeRow = Challenge & {
 	topic?: string;
 };
 
+/**
+ * Sheds the bookkeeping above, leaving the immutable domain `Challenge`.
+ *
+ * Lives here, beside the fields it strips, because those two lists have to
+ * agree: three call sites were each destructuring them by hand — the session
+ * engine, the sync capture path and genesis synthesis — so adding a sixth
+ * bookkeeping field (`topic` was the fifth) meant remembering all three, and
+ * missing one would quietly leak a local field into a `Challenge` or into a
+ * synced payload.
+ *
+ * The cast is unavoidable: a rest-destructure over a discriminated union
+ * produces an `Omit` that no longer narrows on `type`, even though every field
+ * of it survived.
+ */
+export function challengeOf(row: ChallengeRow): Challenge {
+	const {
+		generatedAt: _generatedAt,
+		timesServed: _timesServed,
+		lastServedAt: _lastServedAt,
+		reported: _reported,
+		topic: _topic,
+		...challenge
+	} = row;
+	return challenge as Challenge;
+}
+
 /** Stored answer log entry. `seq` is assigned by Dexie's auto-increment key. */
 export interface ResultRow extends ChallengeResult {
 	seq?: number;

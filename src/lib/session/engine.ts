@@ -25,7 +25,6 @@ import {
 	addToPool,
 	getAllItems,
 	getChallengesByIds,
-	getItem,
 	getPool,
 	recentResults,
 	recordServe,
@@ -34,6 +33,7 @@ import {
 	upsertItems
 } from '$lib/db';
 import type { ChallengeRow } from '$lib/db';
+import { challengeOf } from '$lib/db';
 import { getBatch, isMockMode, makeMatchPairsChallenge } from '$lib/llm';
 import type { BatchArgs, OnProgress, RecentMistake, TokenUsage } from '$lib/llm';
 import {
@@ -317,8 +317,12 @@ export interface PlanSessionOptions {
 }
 
 /** `fsrsCard` is `unknown` on the domain type; a missing card means "brand new". */
+function asCard(fsrsCard: unknown): FsrsCardState | null {
+	return (fsrsCard as FsrsCardState | null | undefined) ?? null;
+}
+
 function cardOf(item: KnowledgeItem): FsrsCardState | null {
-	return (item.fsrsCard as FsrsCardState | null | undefined) ?? null;
+	return asCard(item.fsrsCard);
 }
 
 /**
@@ -599,7 +603,7 @@ export function planSession(
 		chosen.push(row);
 	}
 
-	return chosen.map(toChallenge);
+	return chosen.map(challengeOf);
 }
 
 /**
@@ -673,25 +677,7 @@ export function planPractice(
 		chosen.push(row);
 	}
 
-	return chosen.map(toChallenge);
-}
-
-/**
- * Sheds the pool bookkeeping so the session and its components see a plain
- * domain `Challenge`. The cast is unavoidable: a rest-destructure over a
- * discriminated union produces an `Omit` that no longer narrows on `type`,
- * even though every field of it survived.
- */
-function toChallenge(row: ChallengeRow): Challenge {
-	const {
-		generatedAt: _generatedAt,
-		timesServed: _timesServed,
-		lastServedAt: _lastServedAt,
-		reported: _reported,
-		topic: _topic,
-		...challenge
-	} = row;
-	return challenge as Challenge;
+	return chosen.map(challengeOf);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1000,12 +986,15 @@ export async function generateChallenges(
 	const mock = isMockMode();
 
 	progress?.({ id: 'select-items', label: 'Selecting review words' });
-	const items = await getAllItems();
 
 	// The trouble list for the prompt: recent misses, resolved back to the words
 	// they exercised. Answered rows stay in the pool, so this is a plain lookup —
-	// bounded by RECENT_RESULTS_WINDOW so it stays one cheap read.
-	const results = await recentResults(RECENT_RESULTS_WINDOW);
+	// bounded by RECENT_RESULTS_WINDOW so it stays one cheap read. It does not
+	// depend on the items, so the two reads go together.
+	const [items, results] = await Promise.all([
+		getAllItems(),
+		recentResults(RECENT_RESULTS_WINDOW)
+	]);
 	const missed = results.filter((result) => result.verdict === 'wrong');
 	const recentChallenges = await getChallengesByIds([
 		...new Set(missed.map((result) => result.challengeId))
@@ -1199,14 +1188,12 @@ export async function applyResult(
 	if (challenge.type !== 'match-pairs') {
 		const grade = gradeFromResult(outcome.verdict);
 		for (const itemId of challenge.itemIds) {
-			const item = await getItem(itemId);
-			if (!item) continue;
-			const prior = (item.fsrsCard as FsrsCardState | null | undefined) ?? null;
-			priorCards.set(itemId, prior);
-			await updateItemAfterReview(itemId, reviewCard(prior ?? newCardState(now), grade, now), {
-				at: now,
-				grade
-			});
+			const { existed, prior } = await updateItemAfterReview(
+				itemId,
+				(stored) => reviewCard(asCard(stored) ?? newCardState(now), grade, now),
+				{ at: now, grade }
+			);
+			if (existed) priorCards.set(itemId, asCard(prior));
 		}
 	}
 
@@ -1258,9 +1245,11 @@ export async function amendResult(
 	for (const itemId of challenge.itemIds) {
 		if (!priorCards.has(itemId)) continue;
 		const prior = priorCards.get(itemId) ?? newCardState(now);
+		// Deliberately ignores the stored card: what this re-grade must build on
+		// is where the card stood *before* the review it is replacing.
 		await updateItemAfterReview(
 			itemId,
-			reviewCard(prior, grade, now),
+			() => reviewCard(prior, grade, now),
 			{ at: now, grade },
 			{ replaceLast: true }
 		);
@@ -1289,12 +1278,10 @@ export async function applyOverturn(challenge: Challenge, now: number = Date.now
 	if (challenge.type === 'match-pairs') return;
 
 	for (const itemId of challenge.itemIds) {
-		const item = await getItem(itemId);
-		if (!item) continue;
-		const card = (item.fsrsCard as FsrsCardState | null | undefined) ?? newCardState(now);
-		await updateItemAfterReview(itemId, reviewCard(card, Grade.Good, now), {
-			at: now,
-			grade: Grade.Good
-		});
+		await updateItemAfterReview(
+			itemId,
+			(stored) => reviewCard(asCard(stored) ?? newCardState(now), Grade.Good, now),
+			{ at: now, grade: Grade.Good }
+		);
 	}
 }
