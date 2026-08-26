@@ -110,10 +110,6 @@
 	/** A generation is in flight; the button is latched and the log is live. */
 	let generating = $state(false);
 	let genError = $state('');
-	/** "Extra practice" plan is being fetched; latches that button. */
-	let practiceLoading = $state(false);
-	/** The fetched practice plan came back empty — nothing ahead of schedule to review. */
-	let practiceEmpty = $state(false);
 
 	/**
 	 * Presentation-only: the learner's explicit choice about the "New lesson"
@@ -146,11 +142,16 @@
 	const dueCount = $derived(plan?.dueCount ?? 0);
 	const canStart = $derived((plan?.challenges.length ?? 0) > 0);
 	/**
-	 * The pool has ever held material — enough to offer "Extra practice" even
-	 * when nothing is due right now. Whether the practice plan actually turns
-	 * up anything is only known once fetched; see {@link practiceEmpty}.
+	 * There is vocabulary at all — the difference between "generate a lesson" and
+	 * "add some words first".
 	 */
-	const hasPoolMaterial = $derived((plan?.items.length ?? 0) > 0);
+	const hasWords = $derived((plan?.items.length ?? 0) > 0);
+	/**
+	 * The schedule owes nothing, so this session is entirely review-ahead. Worth
+	 * saying out loud; never worth blocking on — the planner reaches past the due
+	 * list on its own, which is why there is no second button for it.
+	 */
+	const aheadOfSchedule = $derived(canStart && dueCount === 0);
 	/**
 	 * Worth nudging towards a fresh lesson: nothing to play, or barely anything.
 	 * Review-only generates too (with zero new-word slots), so the nudge stays —
@@ -158,35 +159,48 @@
 	 * would have nothing to build from and the way out is switching modes.
 	 */
 	const nudgeGenerate = $derived(
-		plan !== null && (plan.poolLow || !canStart) && (!reviewOnlyMode || hasPoolMaterial)
+		plan !== null && (plan.poolLow || !canStart) && (!reviewOnlyMode || hasWords)
 	);
 
 	/**
 	 * The one contextual message the card is allowed to show, picked by priority:
-	 * review-only with nothing due beats nothing-to-play beats a thinning pool.
+	 * nothing to play at all beats a thinning pool beats "you are working ahead".
 	 * Three stacked amber boxes were three ways of saying "here is your next
 	 * move" at once, which is no priority at all — this slot says it once.
+	 *
+	 * Only the first two carry a next move, and only they are urgent: a session
+	 * built out of early reviews is a perfectly good session, it just deserves a
+	 * word so the learner is not left wondering why nothing was due.
 	 */
 	const notice = $derived.by(() => {
 		if (plan === null) return '';
 
-		// Review-only owns the empty case: a lesson generated in this mode brings
-		// fresh challenges without new words, so the ways out are Extra practice,
-		// a review lesson, or switching back.
-		if (reviewOnlyMode && !canStart) {
-			return hasPoolMaterial
-				? 'Nothing due for review yet — Extra practice reviews ahead of schedule, or a new lesson below builds fresh challenges from words you already have.'
-				: 'Nothing to review yet. Switch to New words to add your first vocabulary.';
+		// Nothing to play at all. Every branch here names the one lever that can
+		// help, and the drawer below is tinted to match it — except in review-only
+		// with an empty collection, where generating is *not* that lever (a
+		// review-only batch clamps `newItemSlots` to 0, so it would have no
+		// vocabulary to build from). That message points at the mode toggle, and
+		// `nudgeGenerate` leaves the drawer untinted for the same reason.
+		if (!canStart) {
+			if (reviewOnlyMode && !hasWords) {
+				return 'Nothing to review yet. Switch to New words to add your first vocabulary.';
+			}
+			const body = reviewOnlyMode
+				? 'No reviewed words yet — a new lesson below builds challenges from words you already have, or switch to New words.'
+				: 'Nothing to practise yet. Generate a lesson to get started.';
+			return mock ? `${body} In practice mode it's instant and free.` : body;
 		}
 
-		if (!nudgeGenerate) return '';
-
-		const body = canStart
-			? 'Running low on fresh material — a new lesson tops the pool back up.'
-			: hasPoolMaterial
-				? 'Nothing due right now — try Extra practice above, or open New lesson below.'
-				: 'Nothing to practise yet. Generate a lesson to get started.';
-		return mock ? `${body} In practice mode it's instant and free.` : body;
+		// Playable, but say what kind of session it is going to be. Thin material
+		// wins over review-ahead: it is the one that has a next move attached.
+		if (nudgeGenerate) {
+			const body = 'Running low on fresh material — a new lesson tops the pool back up.';
+			return mock ? `${body} In practice mode it's instant and free.` : body;
+		}
+		if (aheadOfSchedule) {
+			return "Nothing due right now — this session reviews words before they're due.";
+		}
+		return '';
 	});
 
 	/* Session ----------------------------------------------------------------- */
@@ -425,32 +439,8 @@
 	}
 
 	/**
-	 * "Extra practice": fetches a plan that reviews words *ahead* of schedule
-	 * from the existing pool — no generation, no new vocabulary — and, if it
-	 * turns up anything, plays it through the exact same setup as a normal
-	 * session. Latched like {@link generate}'s button while the fetch is in
-	 * flight; an empty result surfaces inline rather than silently no-opping.
-	 */
-	async function beginPractice(): Promise<void> {
-		if (practiceLoading) return;
-		practiceLoading = true;
-		practiceEmpty = false;
-		try {
-			const ready = await startSession({ practice: true, reviewOnly: reviewOnlyMode });
-			if (ready.challenges.length === 0) {
-				practiceEmpty = true;
-				return;
-			}
-			await playPlan(ready);
-		} finally {
-			practiceLoading = false;
-		}
-	}
-
-	/**
-	 * Shared setup for both "Start session" and "Extra practice": turns a
-	 * {@link SessionPlan} into the playing phase. Kept as one function so the
-	 * two entry points can never drift on match-pairs filtering or bookkeeping.
+	 * Turns a {@link SessionPlan} into the playing phase: match-pairs filtering,
+	 * queue assembly, audio warm-up.
 	 */
 	async function playPlan(ready: SessionPlan): Promise<void> {
 		if (ready.challenges.length === 0) return;
@@ -890,11 +880,12 @@
 	{:else if phase === 'start'}
 		<!--
 		  The start screen as one journal entry: today's figures ruled into two
-		  columns, the mode that produced them directly under, then the single
-		  green button the whole card exists for. Everything else is quieter than
-		  that button by construction — the secondary action is a hairline ghost,
-		  the guidance is one message rather than a stack of boxes, and the
-		  generator is folded away until it is asked for or genuinely needed.
+		  columns, the mode that produced them directly under, then the one green
+		  button the whole card exists for. There is no second way to start — the
+		  plan reaches past what is due on its own — so everything else here is
+		  quieter than that button by construction: the guidance is one message
+		  rather than a stack of boxes, and the generator is folded away until it
+		  is asked for or genuinely needed.
 		-->
 		<div class="centered">
 			<div class="card start-card ll-rise">
@@ -953,25 +944,6 @@
 					>
 						Start session
 					</button>
-
-					{#if hasPoolMaterial}
-						<div class="secondary">
-							<button
-								type="button"
-								class="btn btn-ghost practice-btn"
-								disabled={practiceLoading}
-								title="Reviews words before they're due, from material you already have — no new words, nothing generated."
-								onclick={() => void beginPractice()}
-							>
-								{practiceLoading ? 'Fetching…' : 'Extra practice'}
-							</button>
-							<p class="practice-note" class:empty={practiceEmpty}>
-								{practiceEmpty
-									? 'Nothing to practise yet — generate a lesson first.'
-									: "Reviews words before they're due."}
-							</p>
-						</div>
-					{/if}
 				</div>
 
 				{#if notice}
@@ -1494,37 +1466,6 @@
 
 	.act {
 		margin-top: 1.35rem;
-	}
-
-	.secondary {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 0.45rem 0.75rem;
-		margin-top: 0.85rem;
-	}
-
-	/* An outlined ghost, deliberately a third of the green button's weight —
-	   available, never competing. Its full explanation lives in the `title`. */
-	.practice-btn {
-		flex: 0 0 auto;
-		padding: 0.5rem 0.85rem;
-		border-color: var(--border);
-		font-size: 0.85rem;
-	}
-
-	.practice-note {
-		flex: 1 1 9rem;
-		min-width: 0;
-		margin: 0;
-		font-size: 0.78rem;
-		color: var(--text-muted);
-		text-wrap: balance;
-	}
-
-	.practice-note.empty {
-		color: var(--accent);
-		font-weight: 700;
 	}
 
 	/* One message, never a stack; see the `notice` derived for the priority. */

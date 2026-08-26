@@ -5,7 +5,7 @@
  * keyboard, banners); this module owns the *rules* (what to play, what an
  * answer is worth, what gets written to the database). Anything worth a unit
  * test lives here, and the pure half — {@link planRefill}, {@link planSession},
- * {@link planPractice}, {@link sessionSummary} — is testable without IndexedDB.
+ * {@link sessionSummary} — is testable without IndexedDB.
  *
  * **Generation and play are decoupled.** Every challenge ever generated lives
  * in a persistent pool (`challenges` in IndexedDB); answering one stamps it
@@ -65,16 +65,21 @@ export const BATCH_TARGET = 14;
  * long enough that the sentence has to be re-read rather than recognized, and
  * short enough that a modest pool still covers a daily habit.
  *
- * A preference, not a rule: {@link planSession} bends it when a due word has
- * nothing else to offer, and {@link planPractice} bends it throughout.
+ * A preference, not a rule: {@link planSession} bends it when a word that owes
+ * a review has nothing else to offer.
  */
 export const RESERVE_GAP = 3 * 24 * 60 * 60 * 1000;
 
 /**
- * A planned session shorter than this is reported as `poolLow`, so the start
+ * Fewer rested challenges than this is reported as `poolLow`, so the start
  * screen can nudge towards generating. Deliberately below {@link BATCH_TARGET}:
- * a slightly short session is still a session, and nagging on every visit is
- * how a nudge becomes wallpaper.
+ * a session built partly from re-reads is still a session, and nagging on every
+ * visit is how a nudge becomes wallpaper.
+ *
+ * Measured against *rested* material rather than plan length, because the plan
+ * is never short any more — it fills the tail with early reviews. "How much can
+ * you play without re-reading a sentence you saw this week" is the figure that
+ * actually tells you when to generate.
  */
 export const POOL_LOW_THRESHOLD = 8;
 
@@ -352,9 +357,9 @@ function isRested(row: ChallengeRow, now: number): boolean {
 /**
  * The items a plan may draw on: everything, or — under {@link
  * PlanSessionOptions.reviewOnly} — only items with at least one review in
- * their history. Shared by {@link isPlayable}'s pool filter and the item walks
- * in {@link planSession} / {@link planPractice}, so review-only excludes new
- * vocabulary from every pass, not just one of them.
+ * their history. Shared by {@link isPlayable}'s pool filter and {@link
+ * planSession}'s item walk, so review-only excludes new vocabulary from every
+ * pass, not just one of them.
  */
 function allowedItemIds(items: KnowledgeItem[], reviewOnly: boolean): Set<string> {
 	return new Set(
@@ -499,26 +504,24 @@ function bearableFirst(
 
 /**
  * Slots a plan may fill: the caller's target, floored at zero and clamped to
- * the hard ceiling. Shared so the two planners cannot drift on sizing.
+ * the hard ceiling.
  */
 function targetSlots(opts: PlanSessionOptions): number {
 	const limit = Math.max(0, opts.limit ?? SESSION_LENGTH);
 	return Math.min(Math.max(0, opts.target ?? BATCH_TARGET), limit);
 }
 
-/** The items a plan may draw on, most overdue first; `allowed` gates them. */
-function dueItemsFirst(items: KnowledgeItem[], allowed: Set<string>, now: number): KnowledgeItem[] {
-	// A card-less item is treated as due right now: it was introduced but never
-	// scheduled, so it belongs in this session, just not ahead of words the
-	// learner is actually late on. `allowed` gates this too, so a never-reviewed
-	// item is never "due right now" under review-only.
-	return items
-		.filter((item) => {
-			if (!allowed.has(item.id)) return false;
-			const card = cardOf(item);
-			return card === null || isDue(card, now);
-		})
-		.sort(byDueDate(now));
+/**
+ * True while the schedule actually owes this word a review.
+ *
+ * A card-less item counts: it was introduced but never scheduled, so it belongs
+ * in this session — just not ahead of words the learner is genuinely late on,
+ * which {@link byDueDate} takes care of. The one thing this gates is whether a
+ * word may spend the rest gap; everything else in a plan walks every word.
+ */
+function owesReview(item: KnowledgeItem, now: number): boolean {
+	const card = cardOf(item);
+	return card === null || isDue(card, now);
 }
 
 /** Soonest-due first, id as tiebreak; a card-less item counts as due now. */
@@ -533,25 +536,39 @@ function byDueDate(now: number): (a: KnowledgeItem, b: KnowledgeItem) => number 
  * — score every challenge by freshness and take the top N — quietly kills
  * spaced repetition, because each new batch is newer than everything already
  * pooled and so crowds out every review that came due in the meantime. So the
- * walk is item-first: every due word, most overdue first, claims the best
- * challenge that exercises it; freshness only decides *which* of that word's
- * challenges wins, and only then fills whatever slots are left over.
+ * walk is item-first: every word that owes a review, most overdue first, claims
+ * the best challenge that exercises it; freshness only decides *which* of that
+ * word's challenges wins, and only then fills whatever slots are left over. A
+ * second pass gives each of those words a second challenge before anything else
+ * is served: two angles on a word that is genuinely due is worth more than one
+ * more sentence about a word that is not.
  *
- * A second pass gives due items a second challenge each before the leftovers
- * are handed to fresh material: two angles on a word that is genuinely due is
- * worth more than one more sentence about a word that is not.
+ * **Then it keeps going.** Once the schedule has been paid off, the same two
+ * passes run over the words that are *not* due yet, soonest first, and the
+ * leftovers reach into material still inside its rest gap. That tail is why
+ * there is no separate "practice" mode to press: when the schedule has work,
+ * the session is the due session; when it has run dry, the session degrades
+ * into review-ahead instead of into nothing, and a start button that is always
+ * live needs no second button beside it. Early review is safe under FSRS — a
+ * review is graded whenever it happens, it simply banks a smaller stability
+ * gain when taken ahead of time — so nothing downstream changes; only the
+ * choice of what to play does. Nothing is generated and no new word is
+ * introduced either way: this is the existing pool, replayed. What tells the
+ * learner it is time to generate is `poolLow`, not an empty session.
  *
  * Two gates decide what any of that may draw on, and only one of them is firm.
  * *Playable* ({@link isPlayable}) is absolute. *Rested* ({@link isRested}) is a
- * preference, and the first due pass will spend it: when a due word has no
- * rested challenge left, it takes its longest-resting one instead. Otherwise a
+ * preference, and it is spent in two places, in this order. A word that owes a
+ * review ({@link owesReview}) spends it on its very first challenge: when it has
+ * nothing rested left it takes its longest-resting one instead, because a
  * learner who played hard for two days — serve-stamping the whole pool while
- * their young cards come due within hours — would be shown words due and
- * nothing to do about them, which is the priority above inverted. A slightly
- * too familiar sentence still reviews the word; silence does not. Everything
- * after that first guaranteed review — the second-angle pass, the freshness
- * filler — stays rested-only, because variety is precisely what those are for
- * and neither is worth bending a rule to get.
+ * their young cards come due within hours — would otherwise be shown words due
+ * and nothing to do about them, which is the priority above inverted. And the
+ * final filler spends it once every rested row is used up, since by then the
+ * alternative is a shorter session. In between — second angles, words not yet
+ * due, the freshness filler — rested is strictly preferred, because variety is
+ * precisely what those are for. A slightly too familiar sentence still reviews
+ * the word; silence does not.
  *
  * A third preference rides *inside* that structure rather than beside it:
  * **bearability** ({@link bearable}, `./progression`). Where a word has several
@@ -574,99 +591,43 @@ export function planSession(
 
 	const allowed = allowedItemIds(items, opts.reviewOnly ?? false);
 	const board = planBoard(pool, items, allowed, now);
-	const dueItems = dueItemsFirst(items, allowed, now);
+	const walk = items.filter((item) => allowed.has(item.id)).sort(byDueDate(now));
+	const owed = walk.filter((item) => owesReview(item, now));
+	const ahead = walk.filter((item) => !owesReview(item, now));
 
 	const chosen: ChallengeRow[] = [];
 	const taken = new Set<string>();
 
-	for (let pass = 0; pass < 2 && chosen.length < target; pass++) {
-		for (const item of dueItems) {
-			if (chosen.length >= target) break;
-			const next =
-				firstFree(board.restedByItem.get(item.id), taken, board.bearable) ??
-				(pass === 0
-					? firstFree(board.restingByItem.get(item.id), taken, board.bearable)
-					: undefined);
-			if (!next) continue;
-			taken.add(next.id);
-			chosen.push(next);
+	/**
+	 * Two passes over one queue of words, each word claiming its best unclaimed
+	 * challenge: one angle apiece, then a second apiece. `spendGap` is whether a
+	 * word with nothing rested left may take its longest-resting challenge on the
+	 * first pass — true for the words that owe a review, false for the rest.
+	 */
+	const claimEach = (queue: KnowledgeItem[], spendGap: boolean): void => {
+		for (let pass = 0; pass < 2 && chosen.length < target; pass++) {
+			for (const item of queue) {
+				if (chosen.length >= target) break;
+				const next =
+					firstFree(board.restedByItem.get(item.id), taken, board.bearable) ??
+					(spendGap && pass === 0
+						? firstFree(board.restingByItem.get(item.id), taken, board.bearable)
+						: undefined);
+				if (!next) continue;
+				taken.add(next.id);
+				chosen.push(next);
+			}
 		}
-	}
+	};
 
-	// Whatever is left: the fresh batch that no due word claimed, then the
-	// least-recently-served leftovers. `board.rested` is already in that order,
-	// with the challenges their words can bear brought to the front of it.
-	for (const row of bearableFirst(board.rested, board.bearable)) {
-		if (chosen.length >= target) break;
-		if (taken.has(row.id)) continue;
-		taken.add(row.id);
-		chosen.push(row);
-	}
+	claimEach(owed, true);
+	claimEach(ahead, false);
 
-	return chosen.map(challengeOf);
-}
-
-/**
- * Builds a practice session: the same pool, ranked by *soonest due* instead of
- * *already due*.
- *
- * {@link planSession} answers "what does the schedule owe me". This answers "I
- * would like to practise anyway", which the scheduler alone can never say yes
- * to: a learner who has cleared their reviews and still has ten minutes should
- * not be told to come back tomorrow, and their only other lever is generating,
- * which spends tokens and drags in new vocabulary they did not ask for. Early
- * review is safe under FSRS — a review is graded whenever it happens, it simply
- * banks a smaller stability gain when taken ahead of time — so nothing
- * downstream changes; only the choice of what to play does. Nothing is
- * generated and no new word is introduced: this is the existing pool, replayed.
- *
- * Most-at-risk first: every allowed item by due date ascending, past or future
- * (a card-less item counts as due now), each claiming its best challenge over
- * two passes, then leftovers. That ordering is what makes practice degrade
- * gracefully — when things really are due, the soonest-due walk *is* the
- * due walk, and a practice session is simply a longer one.
- *
- * The rest gap is soft throughout here rather than only on a word's first
- * challenge: practice is the learner explicitly asking for volume, and once
- * they have, there is no scheduler-shaped reason left to ration it.
- *
- * Bearability applies exactly as it does in {@link planSession}, and for the
- * same reason: asking for more practice is not asking to be over-faced, and a
- * word that is still new gets recognition here too.
- *
- * Pure and deterministic, on the same terms as {@link planSession}.
- */
-export function planPractice(
-	pool: ChallengeRow[],
-	items: KnowledgeItem[],
-	now: number,
-	opts: PlanSessionOptions = {}
-): Challenge[] {
-	const target = targetSlots(opts);
-	if (target === 0) return [];
-
-	const allowed = allowedItemIds(items, opts.reviewOnly ?? false);
-	const board = planBoard(pool, items, allowed, now);
-	const atRisk = items.filter((item) => allowed.has(item.id)).sort(byDueDate(now));
-
-	const chosen: ChallengeRow[] = [];
-	const taken = new Set<string>();
-
-	for (let pass = 0; pass < 2 && chosen.length < target; pass++) {
-		for (const item of atRisk) {
-			if (chosen.length >= target) break;
-			const next =
-				firstFree(board.restedByItem.get(item.id), taken, board.bearable) ??
-				firstFree(board.restingByItem.get(item.id), taken, board.bearable);
-			if (!next) continue;
-			taken.add(next.id);
-			chosen.push(next);
-		}
-	}
-
-	// Leftovers, rested material first: the gap is soft, not worthless. Bearable
-	// first *within* each half, so preferring a fitting challenge never promotes
-	// resting material over rested.
+	// Whatever is left: the fresh batch that no word claimed, then the
+	// least-recently-served leftovers, and only then material still inside its
+	// gap. Each list is already in serve order, with the challenges their words
+	// can bear brought to the front of it — bearable-first *within* each half, so
+	// preferring a fitting challenge never promotes resting material over rested.
 	for (const row of [
 		...bearableFirst(board.rested, board.bearable),
 		...bearableFirst(board.resting, board.bearable)
@@ -1068,8 +1029,10 @@ export interface SessionPlan {
 	/** Words whose card is due at `now`. */
 	dueCount: number;
 	/**
-	 * The plan came up short — recycling gaps and reported rows have eaten the
-	 * pool. The UI nudges towards generating; it does not block starting.
+	 * Fresh material is thinning out: fewer than {@link POOL_LOW_THRESHOLD}
+	 * rested challenges left, so a session is starting to be built out of
+	 * sentences the learner saw this week. The UI nudges towards generating; it
+	 * never blocks starting, because a re-read still reviews the word.
 	 */
 	poolLow: boolean;
 }
@@ -1077,12 +1040,6 @@ export interface SessionPlan {
 export interface StartSessionOptions extends PlanSessionOptions {
 	/** Epoch ms; defaults to `Date.now()`. */
 	now?: number;
-	/**
-	 * Plan with {@link planPractice} instead of {@link planSession}: review
-	 * ahead of schedule out of the pool that already exists. Strictly the
-	 * learner's call — nothing in here decides to practise on their behalf.
-	 */
-	practice?: boolean;
 }
 
 /**
@@ -1092,30 +1049,26 @@ export interface StartSessionOptions extends PlanSessionOptions {
  *
  * Cheap enough to re-run whenever the pool may have moved (a background
  * generation finishing, say) so the start screen's counts stay honest. The
- * counts describe the *schedule* either way: `dueCount` is what is actually
- * due, whether or not this plan went looking beyond it.
+ * counts describe the *schedule*, not the plan: `dueCount` is what is actually
+ * due, and the plan routinely reaches past it into early review.
  */
 export async function startSession(opts: StartSessionOptions = {}): Promise<SessionPlan> {
 	const now = opts.now ?? Date.now();
-	const { now: _now, practice = false, ...planOpts } = opts;
+	const { now: _now, ...planOpts } = opts;
 
 	const [pool, items] = await Promise.all([getPool(), getAllItems()]);
-	const challenges = (practice ? planPractice : planSession)(pool, items, now, planOpts);
+	const challenges = planSession(pool, items, now, planOpts);
 
 	const allowed = allowedItemIds(items, planOpts.reviewOnly ?? false);
 	const readyCount = pool.filter((row) => isPlayable(row, allowed) && isRested(row, now)).length;
-	const dueCount = items.filter((item) => {
-		if (!allowed.has(item.id)) return false;
-		const card = cardOf(item);
-		return card === null || isDue(card, now);
-	}).length;
+	const dueCount = items.filter((item) => allowed.has(item.id) && owesReview(item, now)).length;
 
 	return {
 		challenges,
 		items,
 		readyCount,
 		dueCount,
-		poolLow: challenges.length < POOL_LOW_THRESHOLD
+		poolLow: readyCount < POOL_LOW_THRESHOLD
 	};
 }
 
