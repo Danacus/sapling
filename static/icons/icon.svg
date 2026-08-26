@@ -1,21 +1,25 @@
 <!--
-  Source artwork for the PWA / apple-touch icons: a white sapling on the
-  light-theme primary green — the app is called Sapling, and the onboarding
-  levels already speak this language (🌱 → 🌳). Flat, no gradients and no
-  small detail, so it survives being rasterised down to 192px and rendered at
-  favicon size. Colors are the light-theme primary/surface tokens from
-  src/app.css; keep them in sync if the palette ever moves.
+  Source artwork for the PWA / apple-touch icons: a green sprout in a
+  terracotta pot on the app's warm paper, with the hairline card edge the UI
+  uses — the Garden made literal. Flat, no gradients and no small detail, so
+  it survives being rasterised down to 192px and rendered at favicon size.
+  Colors are the light-theme tokens from src/app.css (bg / border / primary /
+  primary-strong / accent); keep them in sync if the palette ever moves.
 
   Rasterise with:  resvg icon.svg icon-512.png -w 512 -h 512
+  (apple-touch-icon.png is the same artwork full-bleed: see icon-maskable.svg)
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <rect width="512" height="512" rx="112" fill="#58cc02" />
-  <!-- Stem, gently curved toward the right leaf. -->
-  <path d="M256 400 C 256 352 250 312 256 268" stroke="#ffffff" stroke-width="34" stroke-linecap="round" fill="none" />
+  <rect width="512" height="512" rx="112" fill="#f4efe4" />
+  <!-- Hairline inner edge, same trick as the app's cards. -->
+  <rect x="7" y="7" width="498" height="498" rx="105" fill="none" stroke="#ddd3bd" stroke-width="14" />
+  <!-- Stem, drawn first so the pot rim covers its base. -->
+  <path d="M256 318 C 256 284 252 254 256 226" stroke="#3c7030" stroke-width="26" stroke-linecap="round" fill="none" />
   <!-- Left leaf -->
-  <path d="M251 282 C 190 288 122 258 100 158 C 208 158 254 210 251 282 Z" fill="#ffffff" />
+  <path d="M252 238 C 206 242 158 220 144 148 C 220 148 254 188 252 238 Z" fill="#4f8c3d" />
   <!-- Right leaf -->
-  <path d="M261 282 C 322 288 390 258 412 158 C 304 158 258 210 261 282 Z" fill="#ffffff" />
-  <!-- Soil mound -->
-  <path d="M148 420 a108 64 0 0 1 216 0 Z" fill="#ffffff" />
+  <path d="M260 238 C 306 242 354 220 368 148 C 292 148 258 188 260 238 Z" fill="#4f8c3d" />
+  <!-- Pot rim and tapered body -->
+  <rect x="150" y="312" width="212" height="40" rx="14" fill="#c96a3b" />
+  <path d="M176 364 L 336 364 L 314 434 Q 309 452 290 452 L 222 452 Q 203 452 198 434 Z" fill="#c96a3b" />
 </svg>
