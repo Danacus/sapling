@@ -18,7 +18,7 @@
 -->
 <script lang="ts">
 	import { choiceKeyAction } from '$lib/challenges/keyboard';
-	import { ALL_READINGS, rubyFor, type ChallengeProps } from '$lib/challenges/props';
+	import { ALL_READINGS, rubyFor, storedReading, type ChallengeProps } from '$lib/challenges/props';
 	import type { RomanizedToken } from '$lib/romanize';
 	import type { SpotErrorChallenge } from '$lib/types';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
@@ -60,7 +60,7 @@
 	}
 
 	function readingOf(index: number): string {
-		return (readings.sentence ? challenge.tokensRomanization?.[index] : '') ?? '';
+		return storedReading(readings, challenge.tokensRomanization?.[index]);
 	}
 
 	function select(index: number): void {

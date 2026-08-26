@@ -27,7 +27,7 @@
 -->
 <script lang="ts">
 	import { choiceKeyAction } from '$lib/challenges/keyboard';
-	import { ALL_READINGS, rubyFor, type ChallengeProps } from '$lib/challenges/props';
+	import { ALL_READINGS, rubyFor, storedReading, type ChallengeProps } from '$lib/challenges/props';
 	import type { RomanizedToken } from '$lib/romanize';
 	import { isListeningChallenge } from '$lib/session/engine';
 	import { speak, ttsAvailable } from '$lib/tts';
@@ -140,7 +140,7 @@
 	}
 
 	function readingOf(index: number): string {
-		return (readings.sentence ? challenge.optionsRomanization?.[index] : '') ?? '';
+		return storedReading(readings, challenge.optionsRomanization?.[index]);
 	}
 
 	function select(index: number): void {
@@ -178,7 +178,7 @@
 		kicker={askedIn}
 		prompt={challenge.prompt}
 		{promptTokens}
-		reading={(readings.sentence ? challenge.promptRomanization : '') ?? ''}
+		reading={storedReading(readings, challenge.promptRomanization)}
 		hidePrompt={hidingPrompt}
 		speakText={promptIsTarget ? challenge.prompt : ''}
 		speakLang={targetLanguage}

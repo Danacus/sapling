@@ -6,6 +6,7 @@
 	import favicon from '$lib/assets/favicon.svg';
 	import { getProfile } from '$lib/db';
 	import { runSync } from '$lib/sync/run';
+	import Spinner from '$lib/ui/Spinner.svelte';
 
 	import '../app.css';
 
@@ -79,8 +80,8 @@
 </svelte:head>
 
 {#if checking}
-	<div class="boot" role="status" aria-label="Loading">
-		<div class="spinner"></div>
+	<div class="boot">
+		<Spinner />
 	</div>
 {:else}
 	{@render children()}
@@ -91,44 +92,5 @@
 		display: grid;
 		place-items: center;
 		min-height: 100dvh;
-	}
-
-	/* Deliberately the same two counter-turning hairline arcs as
-	   `$lib/ui/Spinner.svelte` — this is the first thing the app ever draws, so
-	   it has to be the app's spinner and not a placeholder. Both arcs are the
-	   same hue at two strengths (see that component for why). */
-	.spinner {
-		--spinner-tone: var(--primary);
-		position: relative;
-		width: 2.25rem;
-		height: 2.25rem;
-		border: 2px solid var(--border);
-		border-top-color: var(--spinner-tone);
-		border-radius: 50%;
-		animation: spin 0.9s cubic-bezier(0.55, 0.15, 0.4, 0.85) infinite;
-	}
-
-	.spinner::after {
-		content: '';
-		position: absolute;
-		inset: 0.3rem;
-		border: 2px solid transparent;
-		border-bottom-color: color-mix(in srgb, var(--spinner-tone) 45%, transparent);
-		border-radius: 50%;
-		animation: spin 1.4s linear infinite reverse;
-	}
-
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.spinner,
-		.spinner::after {
-			animation-duration: 2.4s;
-			animation-timing-function: linear;
-		}
 	}
 </style>

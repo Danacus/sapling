@@ -25,7 +25,7 @@
   its per-challenge reset.
 -->
 <script lang="ts">
-	import { ALL_READINGS, rubyFor, type ChallengeProps } from '$lib/challenges/props';
+	import { ALL_READINGS, rubyFor, storedReading, type ChallengeProps } from '$lib/challenges/props';
 	import { speak } from '$lib/tts';
 	import type { MatchPairsChallenge } from '$lib/types';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
@@ -248,7 +248,7 @@
 			{#each left as tile (tile.pair)}
 				<TapOption
 					text={tile.text}
-					reading={(readings.sentence ? tile.rom : '') ?? ''}
+					reading={storedReading(readings, tile.rom)}
 					tokens={ruby(tile.text)}
 					fill
 					selection="toggle"
@@ -268,7 +268,7 @@
 			{#each right as tile (tile.pair)}
 				<TapOption
 					text={tile.text}
-					reading={(readings.sentence ? tile.rom : '') ?? ''}
+					reading={storedReading(readings, tile.rom)}
 					fill
 					selection="toggle"
 					state={stateOf(

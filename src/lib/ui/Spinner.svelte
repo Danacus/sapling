@@ -1,8 +1,8 @@
 <!--
-  Small centered loading spinner. Mirrors the boot spinner in
-  `src/routes/+layout.svelte` so the loading feel is consistent across the
-  app; kept here as a shared component since dashboard and settings both
-  show a spinner while their data loads.
+  Small centered loading spinner — the app's only one. The boot shell in
+  `src/routes/+layout.svelte` renders it too, so the very first thing the app
+  draws and every later loading state are the same object, not two that have
+  to be kept looking alike.
 -->
 <div class="spinner" role="status" aria-label="Loading"></div>
 
