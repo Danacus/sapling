@@ -14,30 +14,14 @@
 	import { getProfile, saveProfile } from '$lib/db';
 	import { MAX_ABOUT_CHARS } from '$lib/llm';
 	import type { Level, Profile } from '$lib/types';
+	import InterestPicker from '$lib/ui/InterestPicker.svelte';
+	import LevelPicker from '$lib/ui/LevelPicker.svelte';
 	import InlineStatus from '$lib/ui/InlineStatus.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	type Status = 'idle' | 'saved' | 'error';
 
 	/** Same four cards as onboarding, so the level means the same thing here. */
-	const LEVELS: { value: Level; emoji: string; title: string; blurb: string }[] = [
-		{ value: 'beginner', emoji: '🌱', title: 'Beginner', blurb: 'Starting from zero' },
-		{ value: 'elementary', emoji: '🌿', title: 'Elementary', blurb: 'Know a few basics' },
-		{ value: 'intermediate', emoji: '🌳', title: 'Intermediate', blurb: 'Can hold a chat' },
-		{ value: 'advanced', emoji: '🏔️', title: 'Advanced', blurb: 'Polishing the details' }
-	];
-
-	const INTEREST_SUGGESTIONS = [
-		'travel',
-		'cooking',
-		'music',
-		'films & TV',
-		'football',
-		'work & business',
-		'video games',
-		'books'
-	];
-
 	const ABOUT_PLACEHOLDER =
 		'e.g. I am a nurse in Valencia, I live with my partner and two kids, and I climb most weekends.';
 
@@ -50,7 +34,7 @@
 	let about = $state('');
 	let level = $state<Level>('beginner');
 	let interests = $state<string[]>([]);
-	let interestDraft = $state('');
+	let interestPicker = $state<InterestPicker | undefined>(undefined);
 
 	let saving = $state(false);
 	let saveStatus = $state<Status>('idle');
@@ -89,34 +73,6 @@
 	 */
 	const aboutRemaining = $derived(MAX_ABOUT_CHARS - about.length);
 
-	const remainingSuggestions = $derived(
-		INTEREST_SUGGESTIONS.filter(
-			(suggestion) => !interests.some((i) => i.toLowerCase() === suggestion.toLowerCase())
-		)
-	);
-
-	function addInterest(raw: string) {
-		const value = raw.trim().replace(/,+$/, '').trim();
-		if (!value) return;
-		if (!interests.some((i) => i.toLowerCase() === value.toLowerCase())) {
-			interests = [...interests, value];
-		}
-		interestDraft = '';
-	}
-
-	function removeInterest(value: string) {
-		interests = interests.filter((i) => i !== value);
-	}
-
-	function onInterestKeydown(event: KeyboardEvent) {
-		if (event.key === 'Enter' || event.key === ',') {
-			event.preventDefault();
-			addInterest(interestDraft);
-		} else if (event.key === 'Backspace' && interestDraft === '' && interests.length > 0) {
-			interests = interests.slice(0, -1);
-		}
-	}
-
 	async function save() {
 		if (!profile || saving) return;
 		saving = true;
@@ -124,8 +80,7 @@
 
 		// A tag still sitting in the input is one the learner clearly meant to add;
 		// making them press Enter first would just lose it silently.
-		const pending = interestDraft.trim();
-		if (pending) addInterest(pending);
+		interestPicker?.commitDraft();
 
 		const trimmed = about.trim();
 		try {
@@ -214,59 +169,12 @@
 
 			<div class="field">
 				<span class="label">Interests</span>
-				{#if interests.length > 0}
-					<div class="chips">
-						{#each interests as interest (interest)}
-							<button
-								type="button"
-								class="chip selected"
-								onclick={() => removeInterest(interest)}
-								aria-label={`Remove ${interest}`}
-							>
-								{interest}<svg class="ico x" viewBox="0 0 24 24" aria-hidden="true">
-									<path d="m7 7 10 10M17 7 7 17" />
-								</svg>
-							</button>
-						{/each}
-					</div>
-				{/if}
-				<input
-					class="input"
-					bind:value={interestDraft}
-					onkeydown={onInterestKeydown}
-					onblur={() => addInterest(interestDraft)}
-					placeholder="Type a topic and press Enter"
-					autocomplete="off"
-					aria-label="Add an interest"
-				/>
-				{#if remainingSuggestions.length > 0}
-					<div class="chips suggestions">
-						{#each remainingSuggestions as suggestion (suggestion)}
-							<button type="button" class="chip" onclick={() => addInterest(suggestion)}>
-								+ {suggestion}
-							</button>
-						{/each}
-					</div>
-				{/if}
+				<InterestPicker bind:interests bind:this={interestPicker} label="Add an interest" />
 			</div>
 
 			<div class="field">
 				<span class="label">Your level</span>
-				<div class="levels">
-					{#each LEVELS as option (option.value)}
-						<button
-							type="button"
-							class="level"
-							class:selected={level === option.value}
-							aria-pressed={level === option.value}
-							onclick={() => (level = option.value)}
-						>
-							<span class="level-emoji" aria-hidden="true">{option.emoji}</span>
-							<span class="level-title">{option.title}</span>
-							<span class="level-blurb">{option.blurb}</span>
-						</button>
-					{/each}
-				</div>
+				<LevelPicker bind:level />
 			</div>
 
 			<div class="actions-row">
@@ -502,128 +410,6 @@
 		font-weight: 400;
 	}
 
-	/* Chips ---------------------------------------------------------------- */
-
-	.chips {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.4rem;
-		margin-bottom: 0.6rem;
-	}
-
-	.suggestions {
-		margin: 0.6rem 0 0;
-	}
-
-	.chip {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.3rem;
-		padding: 0.3rem 0.7rem;
-		border: 1px solid var(--border-strong);
-		border-radius: 999px;
-		background: var(--surface);
-		color: var(--text-muted);
-		font: inherit;
-		font-size: 0.83rem;
-		font-weight: 500;
-		cursor: pointer;
-		transition:
-			border-color 0.15s ease,
-			background 0.15s ease,
-			color 0.15s ease;
-	}
-
-	.chip:hover {
-		border-color: var(--text-muted);
-		background: var(--surface-alt);
-		color: var(--text);
-	}
-
-	.chip.selected {
-		border-color: var(--accent);
-		background: var(--accent-soft);
-		color: var(--text);
-		font-weight: 700;
-	}
-
-	.chip .x {
-		width: 0.8rem;
-		height: 0.8rem;
-		stroke-width: 2;
-		opacity: 0.55;
-	}
-
-	.chip:hover .x {
-		opacity: 1;
-	}
-
-	/* Level cards ---------------------------------------------------------- */
-
-	.levels {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 0.6rem;
-	}
-
-	/* The same four cards as onboarding, down to the press: a hairline frame
-	   with a thicker bottom edge that collapses under the tap. */
-	.level {
-		display: flex;
-		flex-direction: column;
-		gap: 0.15rem;
-		padding: 0.85rem 0.9rem;
-		border: 1.5px solid var(--border);
-		border-bottom-width: 3px;
-		border-radius: var(--radius);
-		background: var(--surface);
-		color: var(--text);
-		font: inherit;
-		text-align: left;
-		cursor: pointer;
-		transition:
-			border-color 0.15s ease,
-			background 0.15s ease,
-			transform 0.08s ease;
-	}
-
-	.level:hover {
-		border-color: var(--border-strong);
-	}
-
-	.level:active {
-		transform: translateY(1px);
-		border-bottom-width: 1.5px;
-	}
-
-	.level.selected {
-		border-color: var(--primary);
-		background: var(--primary-soft);
-	}
-
-	.level:focus-visible,
-	.chip:focus-visible {
-		outline: none;
-		box-shadow: var(--ring);
-	}
-
-	.level-emoji {
-		font-size: 1.25rem;
-		line-height: 1.2;
-	}
-
-	.level-title {
-		font-family: var(--font-display);
-		font-size: 1.02rem;
-		font-weight: 700;
-		font-variation-settings: 'SOFT' 26;
-	}
-
-	.level-blurb {
-		font-size: 0.8rem;
-		color: var(--text-muted);
-	}
-
 	.actions-row {
 		display: flex;
 		align-items: center;
@@ -642,9 +428,4 @@
 		font-weight: 700;
 	}
 
-	@media (max-width: 420px) {
-		.levels {
-			grid-template-columns: 1fr;
-		}
-	}
 </style>
