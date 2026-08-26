@@ -1,11 +1,14 @@
 node_modules
-.claude
 /build
 /.svelte-kit
 /server/node_modules
 /server/dist
 pnpm-lock.yaml
 server/pnpm-lock.yaml
+
+# Tracked, but Claude Code owns it and rewrites it two-space on every plugin
+# change — formatting it to tabs would just start a tug-of-war.
+.claude
 
 # Vendored upstream artifacts — sherpa-onnx's own JS glue, never ours to
 # reformat. `sherpa-worker.js` beside them *is* project code and stays in.
