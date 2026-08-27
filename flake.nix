@@ -16,6 +16,11 @@
           packages = [
             pkgs.nodejs_22
             pkgs.pnpm
+            # Language servers behind the Claude Code LSP tool. Their READMEs
+            # all say `npm install -g`; here they come from the devShell like
+            # everything else. `svelte-language-server` provides `svelteserver`.
+            pkgs.typescript-language-server
+            pkgs.svelte-language-server
           ];
         };
       });
