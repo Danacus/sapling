@@ -15,6 +15,17 @@
             "timeout": 60
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/format-changed.mjs\"",
+            "statusMessage": "prettier",
+            "timeout": 60
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -24,6 +35,11 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-bash.mjs\"",
+            "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/bash-rules.mjs\"",
             "timeout": 20
           }
         ]
