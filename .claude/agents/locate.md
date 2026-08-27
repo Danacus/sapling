@@ -69,21 +69,30 @@ is usually the clearest statement of what X guarantees.
 
 ## Grep vs LSP
 
-`LSP` is precise where grep is textual, but it covers **`.ts`/`.js` only — it is
-blind to every `.svelte` file**, which is all six challenge components, all of
-`routes/learn/blocks/` and every route. It also needs a `filePath` + `line` +
-`character` you already know, so it is a *second* step, never the first.
+Both halves of the repo are covered: `typescript-language-server` handles
+`.ts`/`.js`, `svelteserver` handles `.svelte`, and svelteserver resolves `$lib`
+aliases — a `goToDefinition` inside a component lands in the `.ts` file that
+defines the symbol. So LSP is never the wrong tool for a file type here.
 
-- **Grep first, always.** It is the only thing that sees `.svelte`, and it finds
-  the position LSP needs.
-- **Then `LSP findReferences`** when the question is "what actually calls this"
-  and grep returned noisy textual matches — a common name, a re-exported
-  symbol, something whose string appears in tests and prose. LSP gives real call
-  sites; grep gives every occurrence.
-- `LSP incomingCalls` / `goToDefinition` are worth it for the same reason when
-  tracing a chain through `src/lib/`.
-- If `LSP` errors (the language server may not be on PATH), **say nothing about
-  it and finish with grep**. It is an accelerator, not a dependency.
+It is still the *second* step. Every operation needs a `filePath` + `line` +
+`character` you must already have, so it cannot start a search.
+
+**Grep to find a position, LSP to resolve it.**
+
+- `goToDefinition` — from any usage to the real definition, across the
+  `.svelte` → `.ts` boundary. Better than grepping for `export` and hoping.
+- `findReferences` — when the question is "what actually calls this" and grep
+  gave noisy matches: a common word, a re-exported symbol, a name that also
+  appears in tests and prose. LSP gives call sites; grep gives occurrences.
+- `documentSymbol` — the outline of one file, with line numbers, **without
+  reading it**. On a `.svelte` file it returns script symbols, runes, markup
+  elements and CSS selectors. Prefer it over `Read` when you only need to know
+  what is in a file and where.
+- `incomingCalls` — tracing a chain backwards through `src/lib/`.
+
+If `LSP` errors — the language servers come from this repo's devShell and may
+not be on PATH elsewhere — **say nothing about it and finish with grep**. It is
+an accelerator, not a dependency.
 
 ## Completion criteria
 
