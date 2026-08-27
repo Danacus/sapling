@@ -40,9 +40,19 @@ try {
 const rulesDir = path.join(root, '.claude', 'rules');
 if (!existsSync(rulesDir)) bail();
 
+// Heredoc bodies are prose — commit messages, file contents — not paths the
+// command operates on. Scanning them matches paths that are merely *mentioned*,
+// and because injection is once-per-session a spurious match burns the budget
+// for the rule, so a later real edit to that area would get nothing. (Observed:
+// a `git commit -F -` whose message named src/lib/db/settings.ts.)
+const withoutHeredocs = command.replace(
+	/<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?[\s\S]*?^\s*\1\s*$/gm,
+	' '
+);
+
 // Paths the command names, e.g. `sed -i ... src/lib/tts/sherpa.ts`.
 const PATH_RE = /(?:^|[\s'"=(:])((?:src|server|static)\/[A-Za-z0-9_@.+\-/]+)/g;
-const mentioned = [...command.matchAll(PATH_RE)].map((m) => m[1]);
+const mentioned = [...withoutHeredocs.matchAll(PATH_RE)].map((m) => m[1]);
 if (!mentioned.length) bail();
 
 // Minimal glob: ** spans separators, * does not. No middle-** patterns in use.
