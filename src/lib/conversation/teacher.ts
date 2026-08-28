@@ -15,12 +15,13 @@
  * - **Two rounds, not five.** There is exactly one tool and no read-then-write
  *   pattern, so a second round is for recovering from a failed call and nothing
  *   else.
- * - **History replays as dialogue.** Prior teacher turns go back as plain
- *   `assistant` messages carrying only what was said; learner turns go back as
- *   what the learner actually typed, never the corrected version — correcting
- *   the record would teach the model that the learner writes better than they
- *   do. The envelope never travels in the history: the system prompt restates
- *   the output contract and `responseFormat` pins it every turn.
+ * - **History replays as dialogue.** Learner turns go back as what the learner
+ *   actually typed, never the corrected version — correcting the record would
+ *   teach the model that the learner writes better than they do. Prior teacher
+ *   turns go back as the whole envelope they came from, because a turn replayed
+ *   as a bare line is a worked example of the wrong contract and there is one
+ *   more of them every round. `heard` and `correction` are paired back onto the
+ *   turn they were about, which is where the model has to learn to put them.
  *
  * The one tool is `add_words`, reused verbatim from `$lib/assistant/tools`, so
  * a word the teacher hears goes into the list through the same executor the
@@ -163,6 +164,17 @@ export function buildWordBlock(items: KnowledgeItem[]): string {
  * only real mistakes" is the instruction a model reliably over-reads: left to
  * itself it will treat asking for the wrong thing, or saying something odd, as
  * an error to be fixed, and the role-play dies on the second turn.
+ *
+ * The rules are joined with newlines, not spaces. One rule per line costs
+ * nothing — whitespace is the same token either way — and a cheap model that
+ * skims a wall of prose will still work down a list. The same reasoning shapes
+ * the three output-contract rules: `reading` and `translation` are stated as
+ * imperatives with the always/never spelled out, and the envelope is shown once
+ * as a filled shape, because both fields are `.nullish()` in the schema and a
+ * weak model reads any permitted null as the cheaper answer. `null` then parses
+ * cleanly and the learner silently loses their romanization and translation —
+ * a defect no validator can catch, since a Latin-script target legitimately has
+ * no reading.
  */
 export function buildSystemPrompt(
 	profile: Profile,
@@ -177,9 +189,11 @@ export function buildSystemPrompt(
 		`Speak only ${target}, and keep "reply" to ${REPLY_LENGTH[profile.level]} Ask about one thing at a time. Do not explain, do not list what they did not ask about, do not stack questions. A reply that runs long is a worse reply.`,
 		`The learner may have no ${target} keyboard. Writing ${target} in Latin-script romanization is normal input, not a mistake: read it phonetically, be generous about spelling, spacing, tone marks and accents, and answer what they meant. Never correct them for having written in romanization. They may also mix ${target} script and romanization in one message, a word here and a word there; that is not a mistake either.`,
 		'If you genuinely cannot tell what they meant, stay in character and ask them to say it another way. Never invent a message they did not send, and never answer a question they did not ask.',
-		'Return one JSON object and nothing else, no markdown fences: {"reply":{"text","reading"},"translation","heard","correction"}.',
-		`"reply" is your line in ${target}. "reading" is its Latin-script reading when ${target} is not written in the Latin script, and null when it is.`,
-		`"translation" is that same line in ${native}.`,
+		'Return one JSON object and nothing else, no markdown fences: {"reply":{"text","reading"},"translation","heard","correction"}. Every key is present on every turn. null is a real answer for "heard" and "correction" and never a way to skip work.',
+		`"reply" is your line in ${target}.`,
+		`"reply.reading" is that line's Latin-script reading — pinyin with tone marks for Mandarin, romaji for Japanese, revised romanization for Korean, the standard scheme otherwise. Write it on every turn. It is null only when ${target} is itself written in the Latin alphabet, and then it is null on every turn: there is no turn in between.`,
+		`"translation" is that same line in ${native}. Write it on every turn, whatever ${target} is and however short the line. It is never null.`,
+		`A complete turn has this shape: {"reply":{"text":"<your line in ${target}>","reading":"<its Latin reading, or null>"},"translation":"<that line in ${native}>","heard":{"text":"<their message in ${target}>","reading":"<its reading>"},"correction":{"corrected":{"text":"...","reading":"..."},"note":"<what was wrong, in ${native}>"}}`,
 		`"heard" is {"text","reading"} holding the learner's last message written properly in ${target}: what you understood them to say, in the ${target} script, with their meaning untouched. Set it whenever any part of what they typed was not already written in ${target} — romanization, or a mix of the two. Set it to null when their message was already written entirely in ${target}, and null when ${target} is written in the Latin script. It is not a correction and never becomes one: if their message also had a language mistake, "heard" is the fixed sentence too, the same one "correction.corrected" carries.`,
 		`"correction" is about the learner's last message only, and about their ${target} and nothing else: grammar, spelling, agreement, word endings, a word that does not exist or cannot be used that way. It is never a comment on what they said. If they ask for a pizza in an ice cream shop, you answer in character that you only have ice cream and set "correction" to null — ordering the wrong thing is not a language mistake.`,
 		'Correct as little as possible, and never change what they meant. Fix the wrong word or the wrong ending and leave every other word exactly as they wrote it. Keep their meaning even when it is odd, mistaken about the scene, or rude: if they tell you that you are not their boss, the correction still says that you are not their boss. Never swap a word for one that means something different, never change who or what they were talking about, and never add information they did not give. If you are not sure something is a mistake, it is not one: set "correction" to null.',
@@ -188,7 +202,7 @@ export function buildSystemPrompt(
 		'Never mention a correction in "reply". The learner sees corrections separately; your spoken line stays in character.',
 		`Most turns need no tool call at all. Call add_words only for a word that appears in the learner's own message, that is not in the list below, and that they used correctly. Never for a word you introduced, never for a word you are about to teach them, never for a word they got wrong, and never to be helpful. If you are in any doubt, do not call it: the list is theirs, and it records what they have shown they can use. Fill in "romanization" for every word you add when ${target} is not written in the Latin script.`,
 		'A tool result with an "error" field means the call did not happen. Read it and carry on with the conversation rather than repeating the call.'
-	].join(' ');
+	].join('\n');
 
 	const block = buildWordBlock(items);
 	const words = block
@@ -198,11 +212,52 @@ export function buildSystemPrompt(
 	return `${rules}\n\n${words}`;
 }
 
-/** Prior turns as dialogue; the tool traffic and the envelope are dropped. */
-function historyMessage(turn: ConversationTurn): ChatMessage {
-	return turn.role === 'learner'
-		? { role: 'user', content: turn.text }
-		: { role: 'assistant', content: turn.reply.text };
+/** A `{text, reading}` line with the key always present, or `null`. */
+function replayLine(line: TargetLine | undefined): { text: string; reading: string | null } | null {
+	return line ? { text: line.text, reading: line.reading ?? null } : null;
+}
+
+/**
+ * Prior turns as dialogue: learner messages as what was typed, teacher turns as
+ * the whole envelope they came from. Only the tool traffic is dropped.
+ *
+ * Replayed as a bare line, every prior teacher turn is a worked example of the
+ * wrong contract, and the pile grows by one each round until the system prompt
+ * is one voice against ten counter-examples; a cheap model reads the room and
+ * drops the fields a few rounds in. Demonstration beats instruction, so the
+ * demonstration has to be right — and once it is, recency works for the
+ * contract instead of against it.
+ *
+ * All four keys travel for that reason, `heard` and `correction` included: an
+ * envelope replayed with two keys teaches just as surely that the envelope
+ * *has* two keys. They are written even when empty, so the shape is on every
+ * turn and a `null` only ever echoes a turn that really did come back without
+ * one.
+ *
+ * Both describe the learner message the turn was answering, and the app stores
+ * them on that message rather than on the reply, so each teacher turn is paired
+ * with the turn before it. That pairing is also the demonstration worth making:
+ * every correction in the history sits against the message it was about, which
+ * is the rule the prompt states in words.
+ */
+function historyMessages(history: ConversationTurn[]): ChatMessage[] {
+	return history.map((turn, index): ChatMessage => {
+		if (turn.role === 'learner') return { role: 'user', content: turn.text };
+
+		const previous = history[index - 1];
+		const answered = previous?.role === 'learner' ? previous : undefined;
+		const correction = answered?.correction;
+
+		const envelope = {
+			reply: { text: turn.reply.text, reading: turn.reply.reading ?? null },
+			translation: turn.translation ?? null,
+			heard: replayLine(answered?.heard),
+			correction: correction
+				? { corrected: replayLine(correction.corrected), note: correction.note ?? null }
+				: null
+		};
+		return { role: 'assistant', content: JSON.stringify(envelope) };
+	});
 }
 
 /** `null`/blank normalized away, so a missing field is one state and not three. */
@@ -357,7 +412,7 @@ export async function runTurn(
 
 	const messages: ChatMessage[] = [
 		{ role: 'system', content: buildSystemPrompt(profile, scenario, items) },
-		...history.map(historyMessage),
+		...historyMessages(history),
 		{ role: 'user', content: text }
 	];
 

@@ -334,10 +334,111 @@ describe('runTurn', () => {
 		const [system, ...rest] = calls[0].messages;
 		expect(system.role).toBe('system');
 		expect(rest).toEqual([
-			{ role: 'assistant', content: 'Wat mag het zijn?' },
+			{
+				role: 'assistant',
+				content: JSON.stringify({
+					reply: { text: 'Wat mag het zijn?', reading: null },
+					translation: 'What?',
+					heard: null,
+					correction: null
+				})
+			},
 			{ role: 'user', content: 'ik wilt een ijsje' },
 			{ role: 'user', content: 'en een koffie' }
 		]);
+	});
+
+	it('replays a teacher turn as the envelope, so the contract is demonstrated', async () => {
+		const { fetchFn, calls } = fakeOpenRouter([saying({ reply: { text: '好的。' } })]);
+		const store = fakeDeps([]);
+
+		const history: ConversationTurn[] = [
+			{
+				role: 'teacher',
+				reply: { text: '你要什么？', reading: 'nǐ yào shénme' },
+				translation: 'What would you like?',
+				actions: []
+			}
+		];
+
+		await runTurn(history, scenario, '我要咖啡', profile, {
+			apiKey: 'test',
+			fetchFn,
+			deps: store.deps
+		});
+
+		const replayed = calls[0].messages[1];
+		expect(replayed.role).toBe('assistant');
+		expect(JSON.parse(replayed.content)).toEqual({
+			reply: { text: '你要什么？', reading: 'nǐ yào shénme' },
+			translation: 'What would you like?',
+			heard: null,
+			correction: null
+		});
+	});
+
+	it('keeps every key when a turn came back without them', async () => {
+		const { fetchFn, calls } = fakeOpenRouter([saying({ reply: { text: 'Prima.' } })]);
+		const store = fakeDeps([]);
+
+		const history: ConversationTurn[] = [
+			{ role: 'teacher', reply: { text: 'Wat mag het zijn?' }, actions: [] }
+		];
+
+		await runTurn(history, scenario, 'een ijsje', profile, {
+			apiKey: 'test',
+			fetchFn,
+			deps: store.deps
+		});
+
+		expect(JSON.parse(calls[0].messages[1].content)).toEqual({
+			reply: { text: 'Wat mag het zijn?', reading: null },
+			translation: null,
+			heard: null,
+			correction: null
+		});
+	});
+
+	it('pairs heard and correction back onto the turn that answered them', async () => {
+		const { fetchFn, calls } = fakeOpenRouter([saying({ reply: { text: '好的。' } })]);
+		const store = fakeDeps([]);
+
+		const history: ConversationTurn[] = [
+			{
+				role: 'learner',
+				text: 'wo yao kafe',
+				heard: { text: '我要咖啡', reading: 'wǒ yào kāfēi' },
+				correction: {
+					corrected: { text: '我要咖啡', reading: 'wǒ yào kāfēi' },
+					note: 'kafe should be kāfēi.'
+				}
+			},
+			{
+				role: 'teacher',
+				reply: { text: '好的，请稍等。', reading: 'hǎo de, qǐng shāo děng' },
+				translation: 'Alright, one moment.',
+				actions: []
+			}
+		];
+
+		await runTurn(history, scenario, '谢谢', profile, {
+			apiKey: 'test',
+			fetchFn,
+			deps: store.deps
+		});
+
+		// The learner's message replays as typed; the teacher turn that answered
+		// it carries what was heard and what was corrected.
+		expect(calls[0].messages[1]).toEqual({ role: 'user', content: 'wo yao kafe' });
+		expect(JSON.parse(calls[0].messages[2].content)).toEqual({
+			reply: { text: '好的，请稍等。', reading: 'hǎo de, qǐng shāo děng' },
+			translation: 'Alright, one moment.',
+			heard: { text: '我要咖啡', reading: 'wǒ yào kāfēi' },
+			correction: {
+				corrected: { text: '我要咖啡', reading: 'wǒ yào kāfēi' },
+				note: 'kafe should be kāfēi.'
+			}
+		});
 	});
 
 	it('returns the correction beside the turn, not on it', async () => {
