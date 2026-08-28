@@ -120,6 +120,18 @@ it. In the target language's own spelling every mark counts: French `ecole` for
 `école` *is* the correction, and folding it would hide the mistake. Nothing here
 touches a Latin-script target.
 
+**The unit of the diff is what the script delimits.** A whitespace split is only
+a word split where the writing system puts spaces between words. Chinese,
+Japanese and the mainland South-East Asian scripts do not, so a learner who
+typed 我要什么咖啡 for 我有什么咖啡 handed the aligner a single token and got the
+entire sentence struck through and rewritten — the one outcome the inline markup
+exists to avoid. So `tokens` in `diff.ts` cuts those scripts one character at a
+time and leaves everything else on whitespace, and `spanGap` — the same rule,
+exported because the template needs the same answer between two spans that the
+merge needs inside one — puts them back together without inventing spaces the
+script does not have. Hangul is deliberately not in that set: Korean spaces its
+words.
+
 **And the script is not a reward for getting it wrong.** A learner typing pinyin
 only ever saw 我要咖啡 — with its speaker button — when they slipped: a correct
 message drew no correction, so it drew no script either, and the one turn worth
@@ -191,7 +203,8 @@ src/lib/conversation/
   scenario.ts     scenario prompt + parse + the one setup call
   teacher.ts      system prompt, the turn loop, reply parse
   schemas.ts      zod for both envelopes
-  diff.ts         word-level diff of typed vs. corrected, for the markup
+  diff.ts         diff of typed vs. corrected (word- or character-wise,
+                  per script), for the markup
   mock.ts         the offline path
 src/routes/converse/+page.svelte
 ```

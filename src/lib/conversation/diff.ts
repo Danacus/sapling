@@ -11,6 +11,14 @@
  * confetti, and "you wrote two words where there is one" is exactly the class of
  * mistake this has to show. Comparison is exact, capitals included — a wrong
  * capital is a real correction in most languages.
+ *
+ * "Word" is whatever the script delimits, though. Chinese, Japanese and the
+ * mainland South-East Asian scripts write without spaces, so a whitespace split
+ * hands the aligner one token for the whole sentence and every correction comes
+ * out as "you wrote all of this, write all of that" — the one thing the markup
+ * exists to avoid. There a character *is* the unit, so those characters
+ * tokenize one by one; the same rule then puts the spans back together without
+ * inventing spaces the script does not have.
  */
 
 import { foldDiacritics } from '$lib/validate';
@@ -40,9 +48,36 @@ export interface DiffOptions {
 	romanized?: boolean;
 }
 
+/**
+ * Scripts written without spaces between words, where a character is the unit
+ * the learner can be corrected on. Hangul is *not* one of them — Korean spaces
+ * its words like a Latin script does.
+ */
+const UNSPACED =
+	'\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}\\p{Script=Thai}\\p{Script=Lao}\\p{Script=Khmer}\\p{Script=Myanmar}';
+
+/** One unspaced character, or a run of everything else up to the next space. */
+const TOKEN = new RegExp(`[${UNSPACED}]|[^\\s${UNSPACED}]+`, 'gu');
+
+/** True of a character that its script writes flush against its neighbour. */
+const UNSPACED_CHAR = new RegExp(`[${UNSPACED}]`, 'u');
+
 function tokens(text: string): string[] {
-	const trimmed = text.trim();
-	return trimmed ? trimmed.split(/\s+/) : [];
+	return text.match(TOKEN) ?? [];
+}
+
+/**
+ * What goes between two pieces of text that were adjacent in the message: a
+ * space, unless either side belongs to a script that writes without them.
+ *
+ * The UI needs the same answer between two spans that the merge below needs
+ * within one, so it is exported rather than duplicated in the template — an
+ * inserted 有 must sit flush against 你, and an inserted `wil` must not.
+ */
+export function spanGap(left: string, right: string): string {
+	const before = [...left].pop() ?? '';
+	const after = [...right][0] ?? '';
+	return UNSPACED_CHAR.test(before) || UNSPACED_CHAR.test(after) ? '' : ' ';
 }
 
 /** One romanized word, reduced to what is actually being compared. */
@@ -100,7 +135,7 @@ export function diffCorrection(
 	const spans: DiffSpan[] = [];
 	const push = (kind: DiffKind, word: string) => {
 		const last = spans[spans.length - 1];
-		if (last && last.kind === kind) last.text += ` ${word}`;
+		if (last && last.kind === kind) last.text += spanGap(last.text, word) + word;
 		else spans.push({ kind, text: word });
 	};
 

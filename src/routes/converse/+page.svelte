@@ -21,7 +21,13 @@
 	import { browser } from '$app/environment';
 	import { tick } from 'svelte';
 
-	import { alignedForm, correctionSpans, sendTurn, startConversation } from '$lib/conversation';
+	import {
+		alignedForm,
+		correctionSpans,
+		sendTurn,
+		spanGap,
+		startConversation
+	} from '$lib/conversation';
 	import type { ConversationTurn, Scenario } from '$lib/conversation';
 	import { getProfile } from '$lib/db';
 	import { isMockMode } from '$lib/llm';
@@ -305,11 +311,18 @@
 						<div class="row learner-row">
 							<div class="bubble learner-bubble">
 								{#if turn.correction}
-									<span class="marked">
-										{#each correctionSpans(turn.text, turn.correction) as span, spanIndex (spanIndex)}
-											<span class="span {span.kind}">{span.text}</span>
-										{/each}
-									</span>
+									{@const spans = correctionSpans(turn.text, turn.correction)}
+									<!--
+									  Spans sit flush against each other: the gap between two of them
+									  is the script's, not the template's, so an inserted 有 lands
+									  against 你 while an inserted `wil` still gets its space.
+									-->
+									<span class="marked"
+										>{#each spans as span, spanIndex (spanIndex)}{#if spanIndex > 0}{spanGap(
+													spans[spanIndex - 1].text,
+													span.text
+												)}{/if}<span class="span {span.kind}">{span.text}</span>{/each}</span
+									>
 									{#if alignedForm(turn.text, turn.correction.corrected) !== turn.correction.corrected.text}
 										<!--
 										  The markup above ran against the reading, because the reading

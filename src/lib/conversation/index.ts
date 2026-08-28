@@ -51,7 +51,14 @@ export async function sendTurn(
 	return runTurn(history, scenario, text, profile, opts);
 }
 
-export { alignedForm, correctionSpans, diffCorrection, hasChanges, sameRomanization } from './diff';
+export {
+	alignedForm,
+	correctionSpans,
+	diffCorrection,
+	hasChanges,
+	sameRomanization,
+	spanGap
+} from './diff';
 export type { DiffKind, DiffOptions, DiffSpan } from './diff';
 
 export { mockScenario, mockTurn } from './mock';

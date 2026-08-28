@@ -6,7 +6,14 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { alignedForm, correctionSpans, diffCorrection, hasChanges, sameRomanization } from './diff';
+import {
+	alignedForm,
+	correctionSpans,
+	diffCorrection,
+	hasChanges,
+	sameRomanization,
+	spanGap
+} from './diff';
 
 describe('diffCorrection', () => {
 	it('returns one unchanged span when nothing changed', () => {
@@ -144,5 +151,82 @@ describe('alignedForm on a mixed-script message', () => {
 
 	it('still uses the script when they typed the script', () => {
 		expect(alignedForm('我不是你的主理人', corrected)).toBe('我不是你的主理人');
+	});
+});
+
+describe('diffCorrection on a script written without spaces', () => {
+	it('marks the one wrong character, not the whole sentence', () => {
+		expect(diffCorrection('我要什么咖啡', '我有什么咖啡')).toEqual([
+			{ kind: 'same', text: '我' },
+			{ kind: 'removed', text: '要' },
+			{ kind: 'added', text: '有' },
+			{ kind: 'same', text: '什么咖啡' }
+		]);
+	});
+
+	it('joins characters without inventing spaces', () => {
+		const spans = diffCorrection('我喜欢咖啡', '我喜欢茶');
+		expect(spans).toEqual([
+			{ kind: 'same', text: '我喜欢' },
+			{ kind: 'removed', text: '咖啡' },
+			{ kind: 'added', text: '茶' }
+		]);
+	});
+
+	it('marks a missing character as an insertion', () => {
+		expect(diffCorrection('我咖啡', '我要咖啡')).toEqual([
+			{ kind: 'same', text: '我' },
+			{ kind: 'added', text: '要' },
+			{ kind: 'same', text: '咖啡' }
+		]);
+	});
+
+	it('marks Japanese kana at the character it went wrong', () => {
+		expect(diffCorrection('コーヒをください', 'コーヒーをください')).toEqual([
+			{ kind: 'same', text: 'コーヒ' },
+			{ kind: 'added', text: 'ー' },
+			{ kind: 'same', text: 'をください' }
+		]);
+	});
+
+	it('keeps a Latin word inside a mixed message whole', () => {
+		expect(diffCorrection('我要coffe', '我要coffee')).toEqual([
+			{ kind: 'same', text: '我要' },
+			{ kind: 'removed', text: 'coffe' },
+			{ kind: 'added', text: 'coffee' }
+		]);
+	});
+
+	it('still splits a Latin-script message on spaces, not characters', () => {
+		expect(diffCorrection('ik wilt een ijsje', 'ik wil een ijsje')).toEqual([
+			{ kind: 'same', text: 'ik' },
+			{ kind: 'removed', text: 'wilt' },
+			{ kind: 'added', text: 'wil' },
+			{ kind: 'same', text: 'een ijsje' }
+		]);
+	});
+
+	it('spaces Korean like a Latin script, because Korean spaces its words', () => {
+		expect(diffCorrection('저는 학생 이에요', '저는 학생이에요')).toEqual([
+			{ kind: 'same', text: '저는' },
+			{ kind: 'removed', text: '학생 이에요' },
+			{ kind: 'added', text: '학생이에요' }
+		]);
+	});
+});
+
+describe('spanGap', () => {
+	it('spaces two Latin spans', () => {
+		expect(spanGap('ik wil', 'een')).toBe(' ');
+	});
+
+	it('leaves no gap where either side is written without spaces', () => {
+		expect(spanGap('我', '要')).toBe('');
+		expect(spanGap('coffee', '？')).toBe(' ');
+		expect(spanGap('我要', 'coffee')).toBe('');
+	});
+
+	it('handles an empty side', () => {
+		expect(spanGap('', 'ik')).toBe(' ');
 	});
 });
