@@ -188,6 +188,12 @@
 						<path d="M9 11.9h.01M12 11.9h.01M15 11.9h.01" />
 					</svg>
 				</a>
+				<a class="gear" href="/converse" aria-label="Conversation">
+					<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+						<path d="M4.6 6.4h9.6v7.2H8.2l-3.6 3v-3H4.6Z" />
+						<path d="M10.6 9.4h8.8v6.2h-2.4v2.6l-3-2.6h-3.4Z" />
+					</svg>
+				</a>
 				<a class="gear" href="/profile" aria-label="Profile">
 					<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
 						<circle cx="12" cy="8.4" r="3.4" />
