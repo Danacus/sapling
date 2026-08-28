@@ -194,6 +194,13 @@ describe('buildSystemPrompt', () => {
 		expect(prompt).toContain("the learner's last message only");
 		expect(prompt).toContain('never the line you just spoke');
 	});
+
+	it('asks for the smallest correction that keeps their meaning', () => {
+		const prompt = buildSystemPrompt(profile, scenario, []);
+		expect(prompt).toContain('Correct as little as possible');
+		expect(prompt).toContain('never change who or what they were talking about');
+		expect(prompt).toContain('If you are not sure something is a mistake, it is not one');
+	});
 });
 
 describe('parseTeacherReply', () => {

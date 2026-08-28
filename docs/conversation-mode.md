@@ -41,6 +41,16 @@ cream shop, the teacher answers in fiction ("sorry, we only have ice cream") and
 emits no correction. The rule has to be stated in the prompt with an example,
 because this is the failure mode a model will fall into on its own.
 
+Two rules do the work, and the second is the one that has to be spelled out. The
+correction is about the language, never the content — that is the pizza rule
+above. And it is the **smallest edit that keeps their meaning**: fix the wrong
+word or ending, leave every other word as they wrote it, and keep what they said
+even when it is odd, mistaken about the scene, or rude. Without that second
+rule, "word choice" and "unnatural phrasing" become a licence to rewrite — a
+learner saying *I am not your boss* gets back *I am not the boss here*, which
+corrects nothing and silently changes who they were talking about. When in doubt
+the correction is null.
+
 Corrections never appear in the spoken reply. They travel in a separate field so
 the app can mark them up quietly next to what the learner wrote, and the
 conversation itself reads as a conversation.
@@ -93,7 +103,10 @@ case, not an edge case. Three things follow, and each of them is load-bearing:
   cannot tell what was meant rather than answer a message it invented.
 - `correction.corrected.reading` is the only side of a correction such a learner
   can be aligned against; `alignedForm` in `diff.ts` picks it when what they
-  typed is Latin-script and the corrected text is not.
+  typed is *mostly* Latin-script and the corrected text is not. Mostly, not
+  purely: real messages are mixed — someone typing pinyin pastes in the one
+  character they know — and a single 主理人 in a line of romanization must not
+  throw the alignment back onto the script.
 - That comparison is loosened: tone marks folded (`foldDiacritics` from
   `$lib/validate`), case ignored, apostrophes dropped, and — as a whole-message
   test in `sameRomanization` — syllable spacing ignored, so a message that was

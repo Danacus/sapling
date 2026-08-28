@@ -128,8 +128,13 @@ export function hasChanges(spans: DiffSpan[]): boolean {
 	return spans.some((span) => span.kind !== 'same');
 }
 
-/** A letter that is not Latin — what tells 汉字 from the pinyin spelling it. */
-const NON_LATIN_LETTER = /[^\P{L}\p{Script=Latin}]/u;
+/** Letters that are, and are not, Latin — what tells 汉字 from the pinyin for it. */
+const LATIN_LETTERS = /\p{Script=Latin}/gu;
+const NON_LATIN_LETTERS = /[^\P{L}\p{Script=Latin}]/gu;
+
+function countMatches(text: string, pattern: RegExp): number {
+	return text.match(pattern)?.length ?? 0;
+}
 
 /**
  * Which side of a correction the learner's message can be aligned against.
@@ -137,11 +142,18 @@ const NON_LATIN_LETTER = /[^\P{L}\p{Script=Latin}]/u;
  * Normally the corrected text itself. But a learner whose keyboard cannot type
  * the target script writes the *reading* — `ni yao kafe shenme` for 你要什么咖啡
  * — and diffing those two marks every word wrong, which is noise exactly where
- * the markup had one job. When what they typed is Latin-script and the
- * correction is not, the reading is the comparable side.
+ * the markup had one job.
+ *
+ * Decided by which script the message is mostly in, rather than by whether it
+ * is purely one of them: real messages are mixed. Someone typing pinyin will
+ * paste in the one character they know, or the word they were just taught, and
+ * a single 主理人 in a line of romanization must not throw the whole alignment
+ * back onto the script.
  */
 export function alignedForm(typed: string, corrected: Correction['corrected']): string {
-	const romanized = !NON_LATIN_LETTER.test(typed) && NON_LATIN_LETTER.test(corrected.text);
+	const romanized =
+		countMatches(typed, LATIN_LETTERS) > countMatches(typed, NON_LATIN_LETTERS) &&
+		countMatches(corrected.text, NON_LATIN_LETTERS) > 0;
 	return corrected.reading && romanized ? corrected.reading : corrected.text;
 }
 

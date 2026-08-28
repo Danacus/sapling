@@ -134,3 +134,15 @@ describe('correctionSpans, loosened for readings only', () => {
 		expect(spans.some((span) => span.kind === 'removed' && span.text.includes('a'))).toBe(true);
 	});
 });
+
+describe('alignedForm on a mixed-script message', () => {
+	const corrected = { text: '我不是你的主理人', reading: 'wǒ bù shì nǐ de zhǔlǐrén' };
+
+	it('follows the script the learner mostly typed', () => {
+		expect(alignedForm('wo bu shi ni de 主理人', corrected)).toBe('wǒ bù shì nǐ de zhǔlǐrén');
+	});
+
+	it('still uses the script when they typed the script', () => {
+		expect(alignedForm('我不是你的主理人', corrected)).toBe('我不是你的主理人');
+	});
+});
