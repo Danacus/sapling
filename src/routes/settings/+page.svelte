@@ -579,7 +579,7 @@
 	<title>Settings</title>
 </svelte:head>
 
-<main class="shell">
+<main class="shell shell-broad">
 	<header class="topbar ll-rise">
 		<a class="back" href="/" aria-label="Back to home">
 			<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
@@ -601,508 +601,526 @@
 			<p class="error" role="alert">{loadError}</p>
 		</section>
 	{:else}
-		<section class="card ll-rise" style="animation-delay: 60ms">
-			<div class="card-head">
-				<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
-					<circle cx="12" cy="8.4" r="3.4" />
-					<path d="M4.9 19.6c.7-3.4 3.5-5.5 7.1-5.5s6.4 2.1 7.1 5.5" />
-				</svg>
-				<h2>Profile</h2>
-			</div>
-			<hr class="stitch" />
-			{#if profile}
-				<p class="readonly-row">
-					<span class="readonly-label">Learning</span>
-					<span class="readonly-value">
-						{profile.targetLanguage} <span class="muted">from</span>
-						{profile.nativeLanguage}
-					</span>
-				</p>
-				<p class="readonly-row">
-					<span class="readonly-label">Level</span>
-					<span class="readonly-value capitalize">{profile.level}</span>
-				</p>
-				<!--
+		<div class="spread-flow">
+			<section class="card ll-rise" style="animation-delay: 60ms">
+				<div class="card-head">
+					<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
+						<circle cx="12" cy="8.4" r="3.4" />
+						<path d="M4.9 19.6c.7-3.4 3.5-5.5 7.1-5.5s6.4 2.1 7.1 5.5" />
+					</svg>
+					<h2>Profile</h2>
+				</div>
+				<hr class="stitch" />
+				{#if profile}
+					<p class="readonly-row">
+						<span class="readonly-label">Learning</span>
+						<span class="readonly-value">
+							{profile.targetLanguage} <span class="muted">from</span>
+							{profile.nativeLanguage}
+						</span>
+					</p>
+					<p class="readonly-row">
+						<span class="readonly-label">Level</span>
+						<span class="readonly-value capitalize">{profile.level}</span>
+					</p>
+					<!--
 				  Read-only on purpose: level, interests and the self-description are
 				  edited in one place (/profile) so there is never a second copy of
 				  that form to keep in step with this one.
 				-->
-				<p class="hint profile-link">
-					<a href="/profile">
-						Edit level, interests and about you
+					<p class="hint profile-link">
+						<a href="/profile">
+							Edit level, interests and about you
+							<svg class="ico jump-ico" viewBox="0 0 24 24" aria-hidden="true">
+								<path d="M4.8 12h14" />
+								<path d="m13.4 6.6 5.4 5.4-5.4 5.4" />
+							</svg>
+						</a>
+					</p>
+				{/if}
+			</section>
+
+			<section class="card ll-rise" style="animation-delay: 110ms">
+				<div class="card-head">
+					<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
+						<path d="M2.9 12S6.7 6.4 12 6.4 21.1 12 21.1 12 17.3 17.6 12 17.6 2.9 12 2.9 12Z" />
+						<circle cx="12" cy="12" r="2.6" />
+					</svg>
+					<h2>Display</h2>
+				</div>
+				<hr class="stitch" />
+				<div class="field">
+					<span class="label">Pronunciation (romanization)</span>
+					<p class="hint">
+						Pinyin, romaji and the like under words written in a non-Latin script. Only shows up for
+						languages that need it. Adaptive hides the reading for words you know well, so the
+						crutch fades as a word sticks.
+					</p>
+					<div class="preset-row" role="group" aria-label="Pronunciation (romanization)">
+						{#each ROMANIZATION_MODES as option (option.value)}
+							<button
+								type="button"
+								class="chip"
+								class:selected={romanizationMode === option.value}
+								aria-pressed={romanizationMode === option.value}
+								onclick={() => setRomanization(option.value)}
+							>
+								{option.label}
+							</button>
+						{/each}
+					</div>
+				</div>
+
+				<div class="switch-row">
+					<div class="switch-copy">
+						<span class="label">Listening challenges</span>
+						<p class="hint">
+							Some "what does this mean?" challenges are played instead of shown, with the text one
+							tap away. Needs speech to be on; turn this off to always see the words.
+						</p>
+					</div>
+					<button
+						type="button"
+						class="switch"
+						class:on={listeningMode}
+						role="switch"
+						aria-checked={listeningMode}
+						aria-label="Listening challenges"
+						onclick={toggleListeningMode}
+					>
+						<span class="switch-thumb"></span>
+					</button>
+				</div>
+			</section>
+
+			<section class="card ll-rise" style="animation-delay: 160ms">
+				<div class="card-head">
+					<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
+						<path d="M4.6 9.6h3.1L12 6.1v11.8l-4.3-3.5H4.6Z" />
+						<path d="M15.6 9.7a3.4 3.4 0 0 1 0 4.6" />
+						<path d="M18.1 7.4a6.7 6.7 0 0 1 0 9.2" />
+					</svg>
+					<h2>Speech</h2>
+				</div>
+				<hr class="stitch" />
+				<p class="hint test-bench-link">
+					<a href="/tts-test">
+						Test voices
 						<svg class="ico jump-ico" viewBox="0 0 24 24" aria-hidden="true">
 							<path d="M4.8 12h14" />
 							<path d="m13.4 6.6 5.4 5.4-5.4 5.4" />
 						</svg>
 					</a>
 				</p>
-			{/if}
-		</section>
 
-		<section class="card ll-rise" style="animation-delay: 110ms">
-			<div class="card-head">
-				<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
-					<path d="M2.9 12S6.7 6.4 12 6.4 21.1 12 21.1 12 17.3 17.6 12 17.6 2.9 12 2.9 12Z" />
-					<circle cx="12" cy="12" r="2.6" />
-				</svg>
-				<h2>Display</h2>
-			</div>
-			<hr class="stitch" />
-			<div class="field">
-				<span class="label">Pronunciation (romanization)</span>
-				<p class="hint">
-					Pinyin, romaji and the like under words written in a non-Latin script. Only shows up for
-					languages that need it. Adaptive hides the reading for words you know well, so the crutch
-					fades as a word sticks.
-				</p>
-				<div class="preset-row" role="group" aria-label="Pronunciation (romanization)">
-					{#each ROMANIZATION_MODES as option (option.value)}
-						<button
-							type="button"
-							class="chip"
-							class:selected={romanizationMode === option.value}
-							aria-pressed={romanizationMode === option.value}
-							onclick={() => setRomanization(option.value)}
-						>
-							{option.label}
-						</button>
-					{/each}
-				</div>
-			</div>
-
-			<div class="switch-row">
-				<div class="switch-copy">
-					<span class="label">Listening challenges</span>
-					<p class="hint">
-						Some "what does this mean?" challenges are played instead of shown, with the text one
-						tap away. Needs speech to be on; turn this off to always see the words.
-					</p>
-				</div>
-				<button
-					type="button"
-					class="switch"
-					class:on={listeningMode}
-					role="switch"
-					aria-checked={listeningMode}
-					aria-label="Listening challenges"
-					onclick={toggleListeningMode}
-				>
-					<span class="switch-thumb"></span>
-				</button>
-			</div>
-		</section>
-
-		<section class="card ll-rise" style="animation-delay: 160ms">
-			<div class="card-head">
-				<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
-					<path d="M4.6 9.6h3.1L12 6.1v11.8l-4.3-3.5H4.6Z" />
-					<path d="M15.6 9.7a3.4 3.4 0 0 1 0 4.6" />
-					<path d="M18.1 7.4a6.7 6.7 0 0 1 0 9.2" />
-				</svg>
-				<h2>Speech</h2>
-			</div>
-			<hr class="stitch" />
-			<p class="hint test-bench-link">
-				<a href="/tts-test">
-					Test voices
-					<svg class="ico jump-ico" viewBox="0 0 24 24" aria-hidden="true">
-						<path d="M4.8 12h14" />
-						<path d="m13.4 6.6 5.4 5.4-5.4 5.4" />
-					</svg>
-				</a>
-			</p>
-
-			<div class="field">
-				<span class="label" id="tts-engine-label">Voice engine</span>
-				<select
-					class="input"
-					aria-labelledby="tts-engine-label"
-					value={ttsEngine}
-					onchange={(event) => chooseEngine(event.currentTarget.value as TtsEngine)}
-				>
-					<option value="kokoro"
-						>Kokoro (neural) — downloads {downloadSize} once, then offline</option
-					>
-					<option value="webspeech">Browser built-in — instant, uses your system voices</option>
-					<option value="off">Off — no audio anywhere</option>
-				</select>
-				{#if ttsEngine === 'kokoro' && profile && !kokoroCoversTarget}
-					<p class="hint">
-						Heads up: Kokoro speaks Mandarin and English, so {profile.targetLanguage} will use your browser's
-						built-in voice regardless.
-					</p>
-				{:else if ttsEngine === 'kokoro'}
-					<p class="hint">
-						Kokoro v1.1-zh speaks Mandarin (including sentences that mix in English) and English.
-						Every other language uses your browser's own voices.
-					</p>
-				{/if}
-			</div>
-
-			{#if ttsEngine === 'kokoro'}
 				<div class="field">
-					<span class="label" id="tts-voice-label">Mandarin voice</span>
+					<span class="label" id="tts-engine-label">Voice engine</span>
 					<select
 						class="input"
-						aria-labelledby="tts-voice-label"
-						value={ttsVoice}
-						onchange={(event) => chooseVoice(event.currentTarget.value as TtsVoice)}
+						aria-labelledby="tts-engine-label"
+						value={ttsEngine}
+						onchange={(event) => chooseEngine(event.currentTarget.value as TtsEngine)}
 					>
-						<option value="auto">Default (zf_001, female)</option>
-						{#each MANDARIN_SPEAKERS as speaker (speaker.name)}
-							<option value={speaker.name}>{speaker.label}</option>
-						{/each}
+						<option value="kokoro"
+							>Kokoro (neural) — downloads {downloadSize} once, then offline</option
+						>
+						<option value="webspeech">Browser built-in — instant, uses your system voices</option>
+						<option value="off">Off — no audio anywhere</option>
 					</select>
-					<p class="hint">
-						Three of the model's 100 Mandarin speakers. English always uses its own voice (Maple, or
-						Vale if your language is set to British English).
-					</p>
-					<p class="hint">
-						Runs on your CPU (WASM + SIMD) in a background thread — there is no GPU path, and none
-						is needed for single words and short sentences.
-					</p>
+					{#if ttsEngine === 'kokoro' && profile && !kokoroCoversTarget}
+						<p class="hint">
+							Heads up: Kokoro speaks Mandarin and English, so {profile.targetLanguage} will use your
+							browser's built-in voice regardless.
+						</p>
+					{:else if ttsEngine === 'kokoro'}
+						<p class="hint">
+							Kokoro v1.1-zh speaks Mandarin (including sentences that mix in English) and English.
+							Every other language uses your browser's own voices.
+						</p>
+					{/if}
 				</div>
 
-				<div class="actions-row">
-					<button
-						type="button"
-						class="btn btn-primary"
-						onclick={() => void preloadVoiceModel()}
-						disabled={preloading}
-					>
-						{preloading ? 'Downloading…' : 'Preload voice model now'}
-					</button>
-					<InlineStatus status={preloadStatus} message={preloadMessage} />
-				</div>
-
-				<p class="hint">
-					{downloadSize} in two files (the sherpa-onnx runtime and the Kokoro model), stored in your browser's
-					cache. It happens once per browser profile, and everything works offline afterwards. The model
-					is the full-precision build on purpose — the small quantized one is half the size but produces
-					silence in WebAssembly.
-				</p>
-				<p class="hint">
-					Synthesis takes roughly a second or two per phrase on a laptop CPU, in a background
-					thread. Each clip is then kept, so a word you have heard before plays back instantly —
-					including after a reload.
-				</p>
-
-				{#if preloading}
-					<div class="preload-progress">
-						{#if preloadPercent === null}
-							<Spinner />
-							<p class="hint">Starting the download…</p>
-						{:else}
-							<ProgressBar
-								value={preloadPercent / 100}
-								color="var(--accent)"
-								label="Voice model download progress"
-							/>
-							<p class="hint">{preloadPercent}% downloaded</p>
-						{/if}
+				{#if ttsEngine === 'kokoro'}
+					<div class="field">
+						<span class="label" id="tts-voice-label">Mandarin voice</span>
+						<select
+							class="input"
+							aria-labelledby="tts-voice-label"
+							value={ttsVoice}
+							onchange={(event) => chooseVoice(event.currentTarget.value as TtsVoice)}
+						>
+							<option value="auto">Default (zf_001, female)</option>
+							{#each MANDARIN_SPEAKERS as speaker (speaker.name)}
+								<option value={speaker.name}>{speaker.label}</option>
+							{/each}
+						</select>
+						<p class="hint">
+							Three of the model's 100 Mandarin speakers. English always uses its own voice (Maple,
+							or Vale if your language is set to British English).
+						</p>
+						<p class="hint">
+							Runs on your CPU (WASM + SIMD) in a background thread — there is no GPU path, and none
+							is needed for single words and short sentences.
+						</p>
 					</div>
-				{/if}
-			{/if}
 
-			<!--
-			  Outside the Kokoro block on purpose: only Kokoro fills this cache, but
-			  someone who has just switched to the browser voice is exactly the
-			  person who wants to reclaim the space.
-			-->
-			<div class="field">
-				<span class="label">Audio cache</span>
-				<p class="hint">
-					{audioCacheSize} of spoken clips, out of {audioCacheCap}. Stored in your browser alongside
-					the voice model; once it is full the clips you have not played in longest are dropped.
-					Clearing them costs nothing but a moment's re-synthesis — the {downloadSize} voice model is
-					a separate cache and stays put.
-				</p>
-				<div class="actions-row">
-					<button
-						type="button"
-						class="btn btn-ghost"
-						onclick={() => void clearAudioClips()}
-						disabled={clearingAudio || audioBytes === 0}
-					>
-						{clearingAudio ? 'Clearing…' : 'Clear audio cache'}
-					</button>
-					<InlineStatus status={audioCacheStatus} message={audioCacheMessage} />
-				</div>
-			</div>
-		</section>
-
-		<section class="card ll-rise" style="animation-delay: 200ms">
-			<div class="card-head">
-				<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
-					<circle cx="7.2" cy="12" r="3.9" />
-					<path d="M11.1 12h9.3" />
-					<path d="M17.2 12v3.3" />
-					<path d="M20.4 12v2.3" />
-				</svg>
-				<h2>Language model</h2>
-			</div>
-			<hr class="stitch" />
-
-			<div class="field">
-				<span class="label">API endpoint</span>
-				<input
-					class="input"
-					type="url"
-					bind:value={baseUrlInput}
-					placeholder="https://openrouter.ai/api/v1"
-					autocomplete="off"
-					spellcheck="false"
-				/>
-			</div>
-			<div class="field">
-				<span class="label">API key</span>
-				<input
-					class="input"
-					type="password"
-					bind:value={apiKeyInput}
-					placeholder={apiKeySet ? '••• saved' : 'sk-or-v1-...'}
-					autocomplete="off"
-					spellcheck="false"
-				/>
-			</div>
-			<div class="field">
-				<span class="label">Model</span>
-				<input
-					class="input"
-					list="settings-models"
-					bind:value={modelInput}
-					placeholder={DEFAULT_MODEL}
-					autocomplete="off"
-					spellcheck="false"
-				/>
-				<datalist id="settings-models">
-					{#each MODEL_SUGGESTIONS as suggestion (suggestion)}
-						<option value={suggestion}></option>
-					{/each}
-				</datalist>
-			</div>
-			<p class="hint">
-				Any OpenAI-compatible endpoint; blank means OpenRouter. The key stays in this browser.
-			</p>
-			<div class="actions-row">
-				<button type="button" class="btn btn-primary" onclick={applyLlmSettings}>Apply</button>
-				<InlineStatus status={llmStatus} message={llmMessage} />
-			</div>
-		</section>
-
-		<section class="card ll-rise" style="animation-delay: 200ms">
-			<div class="card-head">
-				<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
-					<path d="M19.6 11.2A7.8 7.8 0 0 0 6.4 6.6L4.2 8.8" />
-					<path d="M4.4 12.8a7.8 7.8 0 0 0 13.2 4.6l2.2-2.2" />
-					<path d="M4.2 4.6v4.2h4.2" />
-					<path d="M19.8 19.4v-4.2h-4.2" />
-				</svg>
-				<h2>Sync</h2>
-			</div>
-			<hr class="stitch" />
-			<p class="hint">
-				When sync is on, your vocabulary, challenge content, review history, results and profile
-				(including your About text) sync to your own server. Your OpenRouter key, this sync key,
-				preferences and TTS caches never leave this device.
-			</p>
-
-			<div class="field">
-				<span class="label">Sync server URL</span>
-				<input
-					class="input"
-					type="text"
-					bind:value={syncServerInput}
-					placeholder="https://sync.example.com"
-					autocomplete="off"
-					spellcheck="false"
-				/>
-			</div>
-
-			<div class="field sync-key-field">
-				<span class="label">Sync API key</span>
-				<input
-					class="input"
-					type="password"
-					bind:value={syncKeyInput}
-					placeholder={syncKeySet ? '••• saved' : 'from your server operator'}
-					autocomplete="off"
-					spellcheck="false"
-				/>
-			</div>
-
-			<div class="actions-row">
-				<button type="button" class="btn btn-primary" onclick={saveSyncConfig}>
-					Save sync settings
-				</button>
-				{#if syncConfigured}
-					<button type="button" class="btn btn-ghost" onclick={turnOffSync}>Turn off sync</button>
-				{/if}
-				<InlineStatus status={syncConfigStatus} message={syncConfigMessage} />
-			</div>
-
-			{#if syncConfigured}
-				<p class="hint sync-status-line">
-					Last synced {lastSyncLabel} · {pendingOutbox} pending event{pendingOutbox === 1
-						? ''
-						: 's'}
-				</p>
-			{/if}
-
-			<div class="actions-row sync-now-row">
-				<button
-					type="button"
-					class="btn btn-primary"
-					onclick={() => void syncNow()}
-					disabled={syncing}
-				>
-					{syncing ? 'Syncing…' : 'Sync now'}
-				</button>
-				<InlineStatus status={syncStatus} message={syncMessage} />
-			</div>
-		</section>
-
-		<section class="card ll-rise" style="animation-delay: 200ms">
-			<div class="card-head">
-				<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
-					<path d="M4.4 19.4h15.2" />
-					<path d="M8 19.4v-5.6" />
-					<path d="M12 19.4V8.2" />
-					<path d="M16 19.4v-3.4" />
-				</svg>
-				<h2>Usage</h2>
-			</div>
-			<hr class="stitch" />
-			<dl class="usage-grid">
-				<div class="usage-item">
-					<dt>Requests</dt>
-					<dd>{usageRequests.toLocaleString()}</dd>
-				</div>
-				<div class="usage-item">
-					<dt>Prompt tokens</dt>
-					<dd>{usagePromptTokens.toLocaleString()}</dd>
-				</div>
-				<div class="usage-item">
-					<dt>Completion tokens</dt>
-					<dd>{usageCompletionTokens.toLocaleString()}</dd>
-				</div>
-			</dl>
-			<p class="hint">Actual cost depends on the model you've chosen above.</p>
-		</section>
-
-		<section class="card ll-rise" style="animation-delay: 200ms">
-			<div class="card-head">
-				<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
-					<path d="M4.6 8.4h14.8v9.6a1.4 1.4 0 0 1-1.4 1.4H6a1.4 1.4 0 0 1-1.4-1.4Z" />
-					<path d="M3.6 5.2h16.8v3.2H3.6Z" />
-					<path d="M10.2 12h3.6" />
-				</svg>
-				<h2>Data</h2>
-			</div>
-			<hr class="stitch" />
-			<div class="actions-row">
-				<button type="button" class="btn btn-primary" onclick={handleExport}>
-					Export progress
-				</button>
-				<InlineStatus status={exportStatus} message={exportMessage} />
-			</div>
-
-			{#if !mockMode && missingReadings.length > 0}
-				<div class="field backfill-field">
-					<span class="label">Missing pronunciations</span>
-					<p class="hint">
-						{missingReadings.length} word{missingReadings.length === 1 ? '' : 's'} from before pronunciations
-						were supported {missingReadings.length === 1 ? 'has' : 'have'} no reading. One short model
-						call fills them all in.
-					</p>
 					<div class="actions-row">
 						<button
 							type="button"
 							class="btn btn-primary"
-							onclick={() => void backfillReadings()}
-							disabled={backfilling}
+							onclick={() => void preloadVoiceModel()}
+							disabled={preloading}
 						>
-							{backfilling ? 'Fetching…' : `Add missing readings (${missingReadings.length})`}
+							{preloading ? 'Downloading…' : 'Preload voice model now'}
 						</button>
-						<InlineStatus status={backfillStatus} message={backfillMessage} />
+						<InlineStatus status={preloadStatus} message={preloadMessage} />
 					</div>
-				</div>
-			{/if}
 
-			<div class="field import-field">
-				<span class="label">Import progress</span>
-				<input
-					class="input"
-					type="file"
-					accept="application/json"
-					onchange={handleImportChange}
-					disabled={importing}
-				/>
-				<p class="hint">Replaces all current progress on this device with the backup's contents.</p>
-			</div>
-			<InlineStatus status={importStatus} message={importMessage} />
-		</section>
+					<p class="hint">
+						{downloadSize} in two files (the sherpa-onnx runtime and the Kokoro model), stored in your
+						browser's cache. It happens once per browser profile, and everything works offline afterwards.
+						The model is the full-precision build on purpose — the small quantized one is half the size
+						but produces silence in WebAssembly.
+					</p>
+					<p class="hint">
+						Synthesis takes roughly a second or two per phrase on a laptop CPU, in a background
+						thread. Each clip is then kept, so a word you have heard before plays back instantly —
+						including after a reload.
+					</p>
 
-		<section class="card danger-card ll-rise" style="animation-delay: 200ms">
-			<div class="card-head">
-				<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
-					<path d="M12 4.4 21 19.6H3Z" />
-					<path d="M12 10.2v4" />
-					<path d="M12 17.1h.01" />
-				</svg>
-				<h2>Danger zone</h2>
-			</div>
-			<hr class="stitch" />
-			<p class="hint">
-				Permanently deletes every word, review, and stat on this device. This cannot be undone.
-			</p>
+					{#if preloading}
+						<div class="preload-progress">
+							{#if preloadPercent === null}
+								<Spinner />
+								<p class="hint">Starting the download…</p>
+							{:else}
+								<ProgressBar
+									value={preloadPercent / 100}
+									color="var(--accent)"
+									label="Voice model download progress"
+								/>
+								<p class="hint">{preloadPercent}% downloaded</p>
+							{/if}
+						</div>
+					{/if}
+				{/if}
 
-			{#if resetStage === 'idle'}
-				<button type="button" class="btn danger-btn" onclick={startReset}>
-					Reset all progress
-				</button>
-			{:else}
-				<div class="reset-confirm">
-					<label class="field" for="reset-confirm-input">
-						<span class="label">Type RESET to confirm</span>
-						<input
-							id="reset-confirm-input"
-							class="input"
-							bind:value={resetInput}
-							autocomplete="off"
-							spellcheck="false"
-						/>
-					</label>
+				<!--
+			  Outside the Kokoro block on purpose: only Kokoro fills this cache, but
+			  someone who has just switched to the browser voice is exactly the
+			  person who wants to reclaim the space.
+			-->
+				<div class="field">
+					<span class="label">Audio cache</span>
+					<p class="hint">
+						{audioCacheSize} of spoken clips, out of {audioCacheCap}. Stored in your browser
+						alongside the voice model; once it is full the clips you have not played in longest are
+						dropped. Clearing them costs nothing but a moment's re-synthesis — the {downloadSize} voice
+						model is a separate cache and stays put.
+					</p>
 					<div class="actions-row">
 						<button
 							type="button"
-							class="btn danger-btn"
-							disabled={resetInput.trim().toUpperCase() !== 'RESET' || resetting}
-							onclick={confirmReset}
+							class="btn btn-ghost"
+							onclick={() => void clearAudioClips()}
+							disabled={clearingAudio || audioBytes === 0}
 						>
-							{resetting ? 'Resetting…' : 'Confirm reset'}
+							{clearingAudio ? 'Clearing…' : 'Clear audio cache'}
 						</button>
-						<button type="button" class="btn btn-ghost" onclick={cancelReset} disabled={resetting}>
-							Cancel
-						</button>
+						<InlineStatus status={audioCacheStatus} message={audioCacheMessage} />
 					</div>
-					{#if resetError}
-						<p class="error" role="alert">{resetError}</p>
-					{/if}
 				</div>
-			{/if}
-		</section>
+			</section>
+
+			<section class="card ll-rise" style="animation-delay: 200ms">
+				<div class="card-head">
+					<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
+						<circle cx="7.2" cy="12" r="3.9" />
+						<path d="M11.1 12h9.3" />
+						<path d="M17.2 12v3.3" />
+						<path d="M20.4 12v2.3" />
+					</svg>
+					<h2>Language model</h2>
+				</div>
+				<hr class="stitch" />
+
+				<div class="field">
+					<span class="label">API endpoint</span>
+					<input
+						class="input"
+						type="url"
+						bind:value={baseUrlInput}
+						placeholder="https://openrouter.ai/api/v1"
+						autocomplete="off"
+						spellcheck="false"
+					/>
+				</div>
+				<div class="field">
+					<span class="label">API key</span>
+					<input
+						class="input"
+						type="password"
+						bind:value={apiKeyInput}
+						placeholder={apiKeySet ? '••• saved' : 'sk-or-v1-...'}
+						autocomplete="off"
+						spellcheck="false"
+					/>
+				</div>
+				<div class="field">
+					<span class="label">Model</span>
+					<input
+						class="input"
+						list="settings-models"
+						bind:value={modelInput}
+						placeholder={DEFAULT_MODEL}
+						autocomplete="off"
+						spellcheck="false"
+					/>
+					<datalist id="settings-models">
+						{#each MODEL_SUGGESTIONS as suggestion (suggestion)}
+							<option value={suggestion}></option>
+						{/each}
+					</datalist>
+				</div>
+				<p class="hint">
+					Any OpenAI-compatible endpoint; blank means OpenRouter. The key stays in this browser.
+				</p>
+				<div class="actions-row">
+					<button type="button" class="btn btn-primary" onclick={applyLlmSettings}>Apply</button>
+					<InlineStatus status={llmStatus} message={llmMessage} />
+				</div>
+			</section>
+
+			<section class="card ll-rise" style="animation-delay: 200ms">
+				<div class="card-head">
+					<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
+						<path d="M19.6 11.2A7.8 7.8 0 0 0 6.4 6.6L4.2 8.8" />
+						<path d="M4.4 12.8a7.8 7.8 0 0 0 13.2 4.6l2.2-2.2" />
+						<path d="M4.2 4.6v4.2h4.2" />
+						<path d="M19.8 19.4v-4.2h-4.2" />
+					</svg>
+					<h2>Sync</h2>
+				</div>
+				<hr class="stitch" />
+				<p class="hint">
+					When sync is on, your vocabulary, challenge content, review history, results and profile
+					(including your About text) sync to your own server. Your OpenRouter key, this sync key,
+					preferences and TTS caches never leave this device.
+				</p>
+
+				<div class="field">
+					<span class="label">Sync server URL</span>
+					<input
+						class="input"
+						type="text"
+						bind:value={syncServerInput}
+						placeholder="https://sync.example.com"
+						autocomplete="off"
+						spellcheck="false"
+					/>
+				</div>
+
+				<div class="field sync-key-field">
+					<span class="label">Sync API key</span>
+					<input
+						class="input"
+						type="password"
+						bind:value={syncKeyInput}
+						placeholder={syncKeySet ? '••• saved' : 'from your server operator'}
+						autocomplete="off"
+						spellcheck="false"
+					/>
+				</div>
+
+				<div class="actions-row">
+					<button type="button" class="btn btn-primary" onclick={saveSyncConfig}>
+						Save sync settings
+					</button>
+					{#if syncConfigured}
+						<button type="button" class="btn btn-ghost" onclick={turnOffSync}>Turn off sync</button>
+					{/if}
+					<InlineStatus status={syncConfigStatus} message={syncConfigMessage} />
+				</div>
+
+				{#if syncConfigured}
+					<p class="hint sync-status-line">
+						Last synced {lastSyncLabel} · {pendingOutbox} pending event{pendingOutbox === 1
+							? ''
+							: 's'}
+					</p>
+				{/if}
+
+				<div class="actions-row sync-now-row">
+					<button
+						type="button"
+						class="btn btn-primary"
+						onclick={() => void syncNow()}
+						disabled={syncing}
+					>
+						{syncing ? 'Syncing…' : 'Sync now'}
+					</button>
+					<InlineStatus status={syncStatus} message={syncMessage} />
+				</div>
+			</section>
+
+			<section class="card ll-rise" style="animation-delay: 200ms">
+				<div class="card-head">
+					<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
+						<path d="M4.4 19.4h15.2" />
+						<path d="M8 19.4v-5.6" />
+						<path d="M12 19.4V8.2" />
+						<path d="M16 19.4v-3.4" />
+					</svg>
+					<h2>Usage</h2>
+				</div>
+				<hr class="stitch" />
+				<dl class="usage-grid">
+					<div class="usage-item">
+						<dt>Requests</dt>
+						<dd>{usageRequests.toLocaleString()}</dd>
+					</div>
+					<div class="usage-item">
+						<dt>Prompt tokens</dt>
+						<dd>{usagePromptTokens.toLocaleString()}</dd>
+					</div>
+					<div class="usage-item">
+						<dt>Completion tokens</dt>
+						<dd>{usageCompletionTokens.toLocaleString()}</dd>
+					</div>
+				</dl>
+				<p class="hint">Actual cost depends on the model you've chosen above.</p>
+			</section>
+
+			<section class="card ll-rise" style="animation-delay: 200ms">
+				<div class="card-head">
+					<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
+						<path d="M4.6 8.4h14.8v9.6a1.4 1.4 0 0 1-1.4 1.4H6a1.4 1.4 0 0 1-1.4-1.4Z" />
+						<path d="M3.6 5.2h16.8v3.2H3.6Z" />
+						<path d="M10.2 12h3.6" />
+					</svg>
+					<h2>Data</h2>
+				</div>
+				<hr class="stitch" />
+				<div class="actions-row">
+					<button type="button" class="btn btn-primary" onclick={handleExport}>
+						Export progress
+					</button>
+					<InlineStatus status={exportStatus} message={exportMessage} />
+				</div>
+
+				{#if !mockMode && missingReadings.length > 0}
+					<div class="field backfill-field">
+						<span class="label">Missing pronunciations</span>
+						<p class="hint">
+							{missingReadings.length} word{missingReadings.length === 1 ? '' : 's'} from before pronunciations
+							were supported {missingReadings.length === 1 ? 'has' : 'have'} no reading. One short model
+							call fills them all in.
+						</p>
+						<div class="actions-row">
+							<button
+								type="button"
+								class="btn btn-primary"
+								onclick={() => void backfillReadings()}
+								disabled={backfilling}
+							>
+								{backfilling ? 'Fetching…' : `Add missing readings (${missingReadings.length})`}
+							</button>
+							<InlineStatus status={backfillStatus} message={backfillMessage} />
+						</div>
+					</div>
+				{/if}
+
+				<div class="field import-field">
+					<span class="label">Import progress</span>
+					<input
+						class="input"
+						type="file"
+						accept="application/json"
+						onchange={handleImportChange}
+						disabled={importing}
+					/>
+					<p class="hint">
+						Replaces all current progress on this device with the backup's contents.
+					</p>
+				</div>
+				<InlineStatus status={importStatus} message={importMessage} />
+			</section>
+
+			<section class="card danger-card ll-rise" style="animation-delay: 200ms">
+				<div class="card-head">
+					<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
+						<path d="M12 4.4 21 19.6H3Z" />
+						<path d="M12 10.2v4" />
+						<path d="M12 17.1h.01" />
+					</svg>
+					<h2>Danger zone</h2>
+				</div>
+				<hr class="stitch" />
+				<p class="hint">
+					Permanently deletes every word, review, and stat on this device. This cannot be undone.
+				</p>
+
+				{#if resetStage === 'idle'}
+					<button type="button" class="btn danger-btn" onclick={startReset}>
+						Reset all progress
+					</button>
+				{:else}
+					<div class="reset-confirm">
+						<label class="field" for="reset-confirm-input">
+							<span class="label">Type RESET to confirm</span>
+							<input
+								id="reset-confirm-input"
+								class="input"
+								bind:value={resetInput}
+								autocomplete="off"
+								spellcheck="false"
+							/>
+						</label>
+						<div class="actions-row">
+							<button
+								type="button"
+								class="btn danger-btn"
+								disabled={resetInput.trim().toUpperCase() !== 'RESET' || resetting}
+								onclick={confirmReset}
+							>
+								{resetting ? 'Resetting…' : 'Confirm reset'}
+							</button>
+							<button
+								type="button"
+								class="btn btn-ghost"
+								onclick={cancelReset}
+								disabled={resetting}
+							>
+								Cancel
+							</button>
+						</div>
+						{#if resetError}
+							<p class="error" role="alert">{resetError}</p>
+						{/if}
+					</div>
+				{/if}
+			</section>
+		</div>
 	{/if}
 </main>
 
 <style>
+	/*
+	  Width and the horizontal gutter belong to the global `.shell`/`.shell-broad`
+	  pair now; only the vertical rhythm — the page's own top/bottom padding and
+	  the stack of header and the spread below it — stays scoped here. `--gap`
+	  rather than a literal keeps this in step with the gap inside the spread.
+
+	  The sections use `.spread-flow`, not `.spread`: they are eight independent
+	  cards of very different heights with no meaningful pairing between them, so
+	  what is wanted is two self-balancing columns in source order — which also
+	  keeps the danger zone at the foot of the page, where it belongs.
+	*/
 	.shell {
-		max-width: 34rem;
-		margin: 0 auto;
-		padding: 2rem 1rem 4rem;
+		padding-block: 2rem 4rem;
 		display: flex;
 		flex-direction: column;
-		gap: 1.25rem;
+		gap: var(--gap);
 	}
 
 	.loading {

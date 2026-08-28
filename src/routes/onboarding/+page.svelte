@@ -274,11 +274,16 @@
 </main>
 
 <style>
+	/* Width and horizontal padding are the global `.shell`'s job — this stays
+	   at the default `--measure`. One focused card, one column, at every
+	   width: `place-items: center` already gives it air on a wide screen by
+	   leaving the space either side empty, and none of the three steps has
+	   content that reads better stretched wider. */
 	.shell {
 		display: grid;
 		place-items: center;
 		min-height: 100dvh;
-		padding: 2rem 1rem;
+		padding-block: 2rem;
 	}
 
 	/* One hand for every icon on this screen, matching the dashboard: 24-unit

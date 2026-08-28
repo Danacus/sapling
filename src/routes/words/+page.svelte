@@ -285,7 +285,7 @@
 	<title>Garden</title>
 </svelte:head>
 
-<main class="shell">
+<main class="shell shell-full">
 	<header class="topbar ll-rise">
 		<a class="back" href="/" aria-label="Back to home">
 			<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
@@ -707,12 +707,15 @@
 </main>
 
 <style>
-	/* Wider than profile's 34rem: this page is a table in all but name, and the
-	   extra 6rem is what lets a stat sit beside a word instead of under it. */
+	/*
+	  This page is a list of many small, independent entries — exactly what
+	  `.shell-full` is for: on a wide screen the win is more columns, not a
+	  wider line, so horizontal width is left entirely to the global `.shell` +
+	  `.shell-full` rules. Only the vertical rhythm (top/bottom padding, the
+	  column flex, the gap between sections) is this route's own concern.
+	*/
 	.shell {
-		max-width: 40rem;
-		margin: 0 auto;
-		padding: 2rem 1rem 4rem;
+		padding-block: 2rem 4rem;
 		display: flex;
 		flex-direction: column;
 		gap: 1.25rem;
@@ -1468,6 +1471,62 @@
 		background: color-mix(in srgb, var(--danger) 12%, transparent);
 		color: var(--danger);
 		font-weight: 700;
+	}
+
+	/* Wide layout: the ledger becomes a grid --------------------------------- */
+
+	/*
+	  48rem buys room for two entries side by side. Explicit column counts
+	  rather than `auto-fill`/minmax: the point is a steady count pegged to the
+	  two breakpoints, not however many ~18rem cells happen to fit at whatever
+	  width the window is in between — a table that quietly gains a column at
+	  900px and loses it again at 850px would read as a bug. Each row picks up
+	  a full border of its own here — the plain top hairline reads fine as a
+	  stacked list, but says nothing about entries sitting side by side — and
+	  an opened row spans every column, so its detail reads as a note pinned
+	  across the page rather than being squeezed into one narrow cell.
+	*/
+	@media (min-width: 48rem) {
+		.ledger {
+			display: grid;
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+			gap: var(--gap);
+		}
+
+		.row + .row {
+			border-top: 0;
+		}
+
+		.row {
+			padding-inline: 0.4rem;
+			border: 1px solid var(--border);
+			border-radius: var(--radius);
+		}
+
+		.row.open {
+			grid-column: 1 / -1;
+		}
+
+		/* The detail is a facts sheet and a note, not a grid of small things —
+		   it keeps the same reading width it would have in a single column,
+		   whichever column count the row it belongs to is currently spanning. */
+		.row.open .detail {
+			max-width: var(--measure);
+		}
+
+		/* The row above already spans the full control width; only the input
+		   itself is capped, so a wide card doesn't hand a search box the
+		   whole width of a grid meant for something else. */
+		.search {
+			max-width: 24rem;
+		}
+	}
+
+	/* 72rem: a third column, once the viewport is genuinely desktop-sized. */
+	@media (min-width: 72rem) {
+		.ledger {
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+		}
 	}
 
 	/* At phone width the meaning line is worth more than a second stat column,

@@ -1166,75 +1166,84 @@
 			</div>
 		</div>
 	{:else}
-		<header class="topbar">
-			<button type="button" class="quit" onclick={requestQuit} aria-label="Quit session">
-				<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"
-					><path d="m7 7 10 10M17 7 7 17" /></svg
+		<!--
+		  Header, the mock banner and the stage travel together as one column —
+		  see `.session` below, which is what a wide/tall viewport caps and
+		  centres without touching the fixed-position banner or overlay that
+		  follow it.
+		-->
+		<div class="session">
+			<header class="topbar">
+				<button type="button" class="quit" onclick={requestQuit} aria-label="Quit session">
+					<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"
+						><path d="m7 7 10 10M17 7 7 17" /></svg
+					>
+				</button>
+
+				<div
+					class="progress"
+					role="progressbar"
+					aria-valuenow={stepsDone}
+					aria-valuemin={0}
+					aria-valuemax={totalSteps}
+					aria-label="Session progress"
 				>
-			</button>
+					{#each Array.from({ length: totalSteps }, (_, i) => i) as index (index)}
+						<span class="segment" class:filled={index < stepsDone}></span>
+					{/each}
+				</div>
 
-			<div
-				class="progress"
-				role="progressbar"
-				aria-valuenow={stepsDone}
-				aria-valuemin={0}
-				aria-valuemax={totalSteps}
-				aria-label="Session progress"
-			>
-				{#each Array.from({ length: totalSteps }, (_, i) => i) as index (index)}
-					<span class="segment" class:filled={index < stepsDone}></span>
-				{/each}
-			</div>
+				<div class="topbar-spacer" aria-hidden="true"></div>
+			</header>
 
-			<div class="topbar-spacer" aria-hidden="true"></div>
-		</header>
-
-		{#if mock}
-			<p class="mock-banner">
-				Practice mode — add your OpenRouter key in <a href="/settings">Settings</a> for personalized content.
-			</p>
-		{/if}
-
-		<section class="stage" class:with-banner={feedback !== null}>
-			{#if current}
-				{#key current.id}
-					<!--
-					  The app's one entrance beat, borrowed for the challenge swap: the
-					  same 9px lift `.ll-rise` plays on the home cards, so a new challenge
-					  settles onto the page rather than sliding in from the side.
-					  `motionMs` collapses it to an instant cut under
-					  `prefers-reduced-motion`.
-
-					  Deliberately an `in:` on its own. An `out:` here keeps the leaving
-					  challenge mounted *alongside* the arriving one for the length of its
-					  transition, and the stage then has to find room for both — which is
-					  what the swap used to flicker: two `width: 100%` children in one
-					  flex row, each shrunk to half the stage, every line rewrapped, then
-					  snapped back. The single-cell grid below makes that impossible now;
-					  one transition keeps it that way. There is no delay either — a delay
-					  only ever existed to let an outgoing element get out of the way.
-					-->
-					<div class="challenge" in:fly={{ y: 9, duration: motionMs(320) }}>
-						<ChallengeHost
-							challenge={current}
-							onanswer={handleAnswer}
-							{targetLanguage}
-							{nativeLanguage}
-							readings={currentReadings}
-							{tokenize}
-						/>
-
-						{#if current.type !== 'match-pairs' && !feedback}
-							<button type="button" class="btn btn-ghost skip-btn" onclick={skipCurrent}>
-								Too hard — skip
-							</button>
-						{/if}
-					</div>
-				{/key}
-			{:else}
-				<div class="centered"><Spinner /></div>
+			{#if mock}
+				<p class="mock-banner">
+					Practice mode — add your OpenRouter key in <a href="/settings">Settings</a> for personalized
+					content.
+				</p>
 			{/if}
-		</section>
+
+			<section class="stage" class:with-banner={feedback !== null}>
+				{#if current}
+					{#key current.id}
+						<!--
+						  The app's one entrance beat, borrowed for the challenge swap: the
+						  same 9px lift `.ll-rise` plays on the home cards, so a new challenge
+						  settles onto the page rather than sliding in from the side.
+						  `motionMs` collapses it to an instant cut under
+						  `prefers-reduced-motion`.
+
+						  Deliberately an `in:` on its own. An `out:` here keeps the leaving
+						  challenge mounted *alongside* the arriving one for the length of its
+						  transition, and the stage then has to find room for both — which is
+						  what the swap used to flicker: two `width: 100%` children in one
+						  flex row, each shrunk to half the stage, every line rewrapped, then
+						  snapped back. The single-cell grid below makes that impossible now;
+						  one transition keeps it that way. There is no delay either — a delay
+						  only ever existed to let an outgoing element get out of the way.
+						-->
+						<div class="challenge" in:fly={{ y: 9, duration: motionMs(320) }}>
+							<ChallengeHost
+								challenge={current}
+								onanswer={handleAnswer}
+								{targetLanguage}
+								{nativeLanguage}
+								readings={currentReadings}
+								{tokenize}
+							/>
+
+							{#if current.type !== 'match-pairs' && !feedback}
+								<button type="button" class="btn btn-ghost skip-btn" onclick={skipCurrent}>
+									Too hard — skip
+								</button>
+							{/if}
+						</div>
+					{/key}
+				{:else}
+					<div class="centered"><Spinner /></div>
+				{/if}
+			</section>
+		</div>
 
 		{#if feedback}
 			<FeedbackBanner
@@ -1284,15 +1293,33 @@
 </main>
 
 <style>
+	/*
+	  Width and horizontal padding now come from the global `.shell` in
+	  app.css — this scoped block only keeps what genuinely differs on this
+	  route: the full viewport height, and the flex column that gives
+	  `.check`'s `margin-top: auto` something stretched to pin itself against.
+	*/
 	.shell {
 		position: relative;
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
-		max-width: 34rem;
 		min-height: 100dvh;
-		margin: 0 auto;
-		padding: 1rem 1rem 2rem;
+		padding-block: 1rem 2rem;
+	}
+
+	@media (min-width: 72rem) {
+		/*
+		  72rem is "broad" — a real desk, with height to spare as well as
+		  width. `.session` below stops filling the viewport and centring the
+		  leftover space here is what turns a challenge that used to stretch
+		  the length of the window into a card sitting in the middle of it.
+		  Harmless on the start/summary screens: their one child is already
+		  `flex: 1` and leaves no leftover space to centre.
+		*/
+		.shell {
+			justify-content: center;
+		}
 	}
 
 	.centered {
@@ -1721,6 +1748,39 @@
 		color: var(--danger);
 		font-size: 0.88rem;
 		font-weight: 700;
+	}
+
+	/* Session column --------------------------------------------------------- */
+
+	/*
+	  Header, the mock banner and the stage, kept in one flex column so a wide
+	  viewport can cap and centre this group (see the `min-width: 72rem` rule
+	  below) without touching the start or summary screens, which already
+	  centre their own single child. `min-height: 0` is what lets `.stage`
+	  shrink inside it instead of a flex item's default `auto` blowing past a
+	  short viewport.
+	*/
+	.session {
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+		width: 100%;
+		flex: 1;
+		min-height: 0;
+	}
+
+	@media (min-width: 72rem) {
+		/*
+		  `.check`'s `margin-top: auto` only needs *some* stretched ancestor to
+		  pin itself against — it does not need that ancestor to be the full
+		  viewport. Letting `.session` size to its own content instead of
+		  filling the screen is the other half of the `.shell` rule above: the
+		  challenge card is now exactly as tall as it needs to be, centred in
+		  whatever room is left.
+		*/
+		.session {
+			flex: none;
+		}
 	}
 
 	/* Top bar -------------------------------------------------------------- */

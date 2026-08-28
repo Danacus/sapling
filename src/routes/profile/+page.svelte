@@ -230,13 +230,16 @@
 </main>
 
 <style>
+	/* Width and horizontal padding are the global `.shell`'s job. This page
+	   stays at the default `--measure`: the "About me" textarea is prose, and
+	   the other card is a short ledger, so there is no case for widening past
+	   the reading column, and only two cards (one of them conditional) is not
+	   enough to justify a `.spread`. */
 	.shell {
-		max-width: 34rem;
-		margin: 0 auto;
-		padding: 2rem 1rem 4rem;
+		padding-block: 2rem 4rem;
 		display: flex;
 		flex-direction: column;
-		gap: 1.25rem;
+		gap: var(--gap);
 	}
 
 	.loading {

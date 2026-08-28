@@ -156,7 +156,7 @@
 	<title>{profile ? `Sapling · ${targetLanguage}` : 'Sapling'}</title>
 </svelte:head>
 
-<main class="shell">
+<main class="shell shell-broad">
 	{#if loading}
 		<div class="loading">
 			<Spinner />
@@ -166,189 +166,225 @@
 			<p class="error" role="alert">{loadError}</p>
 		</div>
 	{:else}
-		<header class="topbar ll-rise">
-			<div class="identity">
-				<p class="eyebrow">Learning</p>
-				<h1>{targetLanguage}</h1>
-			</div>
-			<div class="topbar-actions">
-				<div class="streak" class:dimmed={streakDays === 0} title="Current streak">
-					<svg class="ico sprout" viewBox="0 0 24 24" aria-hidden="true">
+		<!-- A field journal opened wide is a spread: the topbar is the running
+		     head across both pages, then the *doing* (start a session, have a
+		     conversation) and the *state* (right now, the garden) split into
+		     facing columns. On a phone `.spread` collapses to one column, which
+		     reproduces the original stacking order exactly. -->
+		<div class="spread home-spread">
+			<header class="topbar spread-full ll-rise">
+				<div class="identity">
+					<p class="eyebrow">Learning</p>
+					<h1>{targetLanguage}</h1>
+				</div>
+				<div class="topbar-actions">
+					<div class="streak" class:dimmed={streakDays === 0} title="Current streak">
+						<svg class="ico sprout" viewBox="0 0 24 24" aria-hidden="true">
+							<path d="M12 21v-8.6" />
+							<path d="M12 16.2c-3.3 0-5.2-1.9-5.2-5.2 3.3 0 5.2 1.9 5.2 5.2Z" />
+							<path d="M12 12.6c0-3.8 2-5.8 5.6-5.8 0 3.8-2 5.8-5.6 5.8Z" />
+						</svg>
+						<span>{streakDays}</span>
+					</div>
+					<a class="gear" href="/chat" aria-label="Assistant">
+						<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+							<path
+								d="M20.3 12.2c0 4-3.7 7.2-8.2 7.2a9.4 9.4 0 0 1-2.5-.3L4.6 20.5l1.3-3.7a6.9 6.9 0 0 1-2.2-4.6C3.7 8.2 7.4 5 11.9 5s8.4 3.2 8.4 7.2Z"
+							/>
+							<path d="M9 11.9h.01M12 11.9h.01M15 11.9h.01" />
+						</svg>
+					</a>
+					<!-- No conversation icon here: it has the card below. One of the two
+					     ways vocabulary enters the app does not belong in the corner row
+					     with settings. -->
+					<a class="gear" href="/profile" aria-label="Profile">
+						<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+							<circle cx="12" cy="8.4" r="3.4" />
+							<path d="M4.9 19.6c.7-3.4 3.5-5.5 7.1-5.5s6.4 2.1 7.1 5.5" />
+						</svg>
+					</a>
+					<a class="gear" href="/settings" aria-label="Settings">
+						<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+							<path d="M4 8.2h8.4M17.4 8.2H20M4 15.8h2.6M11.6 15.8H20" />
+							<circle cx="15" cy="8.2" r="2.3" />
+							<circle cx="9" cy="15.8" r="2.3" />
+						</svg>
+					</a>
+				</div>
+			</header>
+
+			<!-- Doing: the two ways to act right now. -->
+			<div class="col-do">
+				<section class="card start-card ll-rise" style="animation-delay: 120ms">
+					<svg class="watermark" viewBox="0 0 24 24" aria-hidden="true">
 						<path d="M12 21v-8.6" />
 						<path d="M12 16.2c-3.3 0-5.2-1.9-5.2-5.2 3.3 0 5.2 1.9 5.2 5.2Z" />
 						<path d="M12 12.6c0-3.8 2-5.8 5.6-5.8 0 3.8-2 5.8-5.6 5.8Z" />
 					</svg>
-					<span>{streakDays}</span>
-				</div>
-				<a class="gear" href="/chat" aria-label="Assistant">
-					<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-						<path
-							d="M20.3 12.2c0 4-3.7 7.2-8.2 7.2a9.4 9.4 0 0 1-2.5-.3L4.6 20.5l1.3-3.7a6.9 6.9 0 0 1-2.2-4.6C3.7 8.2 7.4 5 11.9 5s8.4 3.2 8.4 7.2Z"
-						/>
-						<path d="M9 11.9h.01M12 11.9h.01M15 11.9h.01" />
-					</svg>
-				</a>
-				<!-- No conversation icon here: it has the card below. One of the two
-				     ways vocabulary enters the app does not belong in the corner row
-				     with settings. -->
-				<a class="gear" href="/profile" aria-label="Profile">
-					<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-						<circle cx="12" cy="8.4" r="3.4" />
-						<path d="M4.9 19.6c.7-3.4 3.5-5.5 7.1-5.5s6.4 2.1 7.1 5.5" />
-					</svg>
-				</a>
-				<a class="gear" href="/settings" aria-label="Settings">
-					<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-						<path d="M4 8.2h8.4M17.4 8.2H20M4 15.8h2.6M11.6 15.8H20" />
-						<circle cx="15" cy="8.2" r="2.3" />
-						<circle cx="9" cy="15.8" r="2.3" />
-					</svg>
-				</a>
-			</div>
-		</header>
-
-		<section class="card start-card ll-rise" style="animation-delay: 120ms">
-			<svg class="watermark" viewBox="0 0 24 24" aria-hidden="true">
-				<path d="M12 21v-8.6" />
-				<path d="M12 16.2c-3.3 0-5.2-1.9-5.2-5.2 3.3 0 5.2 1.9 5.2 5.2Z" />
-				<path d="M12 12.6c0-3.8 2-5.8 5.6-5.8 0 3.8-2 5.8-5.6 5.8Z" />
-			</svg>
-			<!-- A session only revisits words the learner already has, so on an empty
-			     garden "Start session" would open onto nothing. The card hands its
-			     primary button over to the two places words actually come from, and
-			     takes it back the moment there is something to review. -->
-			{#if items.length === 0}
-				<p class="start-lead">
-					Nothing planted yet — your first words in {targetLanguage} come from talking.
-				</p>
-				<a class="btn btn-primary btn-block start-btn" href="/converse">Start a conversation</a>
-				<a class="btn btn-ghost btn-block ask-link" href="/chat">Or ask the assistant for a few</a>
-			{:else}
-				<a class="btn btn-primary btn-block start-btn" href="/learn">Start session</a>
-				<!-- Only the empty pool speaks here. The due count is the card below's
-				     job, and a number stated twice on one screen invites the two to
-				     disagree. -->
-				{#if pooled === 0}
-					<p class="hint centered">
-						No challenges waiting — a new lesson grows a fresh set from the words you have.
-					</p>
-				{/if}
-			{/if}
-		</section>
-
-		<!-- Conversation sits directly under the drill because the two are peers
-		     with different jobs: a session revisits what is already growing, this
-		     is where new words enter at all. Quieter than the start card by a
-		     whole background, but a card rather than a topbar icon — one of the
-		     two ways vocabulary arrives cannot live in a corner.
-
-		     Skipped on an empty garden, where the start card above is already
-		     this same door and one screen does not need it twice. -->
-		{#if items.length > 0}
-			<section class="card talk-card ll-rise" style="animation-delay: 180ms">
-				<a class="talk-link" href="/converse">
-					<span class="talk-mark" aria-hidden="true">
-						<svg class="ico" viewBox="0 0 24 24">
-							<path d="M4.6 6.4h9.6v7.2H8.2l-3.6 3v-3H4.6Z" />
-							<path d="M10.6 9.4h8.8v6.2h-2.4v2.6l-3-2.6h-3.4Z" />
-						</svg>
-					</span>
-					<span class="talk-body">
-						<span class="talk-title">Have a conversation</span>
-						<span class="talk-copy">
-							A scene you talk your way through — new words get planted as you reach for them.
-						</span>
-					</span>
-					<svg class="ico talk-arrow" viewBox="0 0 24 24" aria-hidden="true">
-						<path d="M4.8 12h14" />
-						<path d="m13.4 6.6 5.4 5.4-5.4 5.4" />
-					</svg>
-				</a>
-			</section>
-		{/if}
-
-		<!-- "Right now", never "today": due counts move through the day as words
-		     fall due, so this card states a moment rather than scoring a day. -->
-		<section class="card now-card ll-rise" style="animation-delay: 240ms">
-			<p class="eyebrow">Right now</p>
-			<p class="now-headline">
-				{#if dueCount === 0}
-					You're all caught up
-				{:else}
-					{dueCount} word{dueCount === 1 ? '' : 's'} ready to review
-				{/if}
-			</p>
-			<p class="now-secondary">{secondaryLine}</p>
-
-			<hr class="stitch" />
-
-			<div
-				class="strip"
-				role="img"
-				aria-label={`Answers over the last ${STRIP_DAYS} days: ${strip.map((cell) => `${cell.day}, ${cell.count}`).join('; ')}`}
-			>
-				{#each strip as cell (cell.day)}
-					<div class="strip-col" class:is-today={cell.isToday}>
-						<div class="strip-track">
-							{#if cell.count > 0}
-								<div class="strip-bar" style="height: {barHeight(cell.count)}%"></div>
-							{:else}
-								<div class="strip-stub"></div>
-							{/if}
-						</div>
-						<span class="strip-letter">{cell.letter}</span>
-					</div>
-				{/each}
-			</div>
-		</section>
-
-		{#if items.length > 0}
-			<section class="card garden-card ll-rise" style="animation-delay: 300ms">
-				<div class="card-head">
-					<h2>Garden</h2>
-					<div class="card-tools">
-						<span class="card-count">{items.length} word{items.length === 1 ? '' : 's'}</span>
-						<a class="btn btn-ghost words-link" href="/words">Full garden</a>
-					</div>
-				</div>
-				<hr class="stitch" />
-
-				<div class="beds" role="img" aria-label={`Vocabulary: ${gardenLabel}`}>
-					{#each garden as bed (bed.maturity)}
-						{#if bed.count > 0}
-							<div class="bed bed-{bed.maturity}" style="flex-grow: {bed.count}"></div>
+					<!-- A session only revisits words the learner already has, so on an empty
+					     garden "Start session" would open onto nothing. The card hands its
+					     primary button over to the two places words actually come from, and
+					     takes it back the moment there is something to review. -->
+					{#if items.length === 0}
+						<p class="start-lead">
+							Nothing planted yet — your first words in {targetLanguage} come from talking.
+						</p>
+						<a class="btn btn-primary btn-block start-btn" href="/converse">Start a conversation</a>
+						<a class="btn btn-ghost btn-block ask-link" href="/chat"
+							>Or ask the assistant for a few</a
+						>
+					{:else}
+						<a class="btn btn-primary btn-block start-btn" href="/learn">Start session</a>
+						<!-- Only the empty pool speaks here. The due count is the card below's
+						     job, and a number stated twice on one screen invites the two to
+						     disagree. -->
+						{#if pooled === 0}
+							<p class="hint centered">
+								No challenges waiting — a new lesson grows a fresh set from the words you have.
+							</p>
 						{/if}
-					{/each}
-				</div>
+					{/if}
+				</section>
 
-				<ul class="legend">
-					{#each garden as bed (bed.maturity)}
-						<li class="legend-item">
-							<span class="dot bed-{bed.maturity}" aria-hidden="true"></span>
-							<span class="legend-count">{bed.count}</span>
-							<span class="legend-label">{bed.label}</span>
-						</li>
-					{/each}
-				</ul>
-			</section>
-		{/if}
+				<!-- Conversation sits directly under the drill because the two are peers
+				     with different jobs: a session revisits what is already growing, this
+				     is where new words enter at all. Quieter than the start card by a
+				     whole background, but a card rather than a topbar icon — one of the
+				     two ways vocabulary arrives cannot live in a corner.
+
+				     Skipped on an empty garden, where the start card above is already
+				     this same door and one screen does not need it twice. -->
+				{#if items.length > 0}
+					<section class="card talk-card ll-rise" style="animation-delay: 180ms">
+						<a class="talk-link" href="/converse">
+							<span class="talk-mark" aria-hidden="true">
+								<svg class="ico" viewBox="0 0 24 24">
+									<path d="M4.6 6.4h9.6v7.2H8.2l-3.6 3v-3H4.6Z" />
+									<path d="M10.6 9.4h8.8v6.2h-2.4v2.6l-3-2.6h-3.4Z" />
+								</svg>
+							</span>
+							<span class="talk-body">
+								<span class="talk-title">Have a conversation</span>
+								<span class="talk-copy">
+									A scene you talk your way through — new words get planted as you reach for them.
+								</span>
+							</span>
+							<svg class="ico talk-arrow" viewBox="0 0 24 24" aria-hidden="true">
+								<path d="M4.8 12h14" />
+								<path d="m13.4 6.6 5.4 5.4-5.4 5.4" />
+							</svg>
+						</a>
+					</section>
+				{/if}
+			</div>
+
+			<!-- State: where things stand, read rather than acted on. -->
+			<div class="col-state">
+				<!-- "Right now", never "today": due counts move through the day as words
+				     fall due, so this card states a moment rather than scoring a day. -->
+				<section class="card now-card ll-rise" style="animation-delay: 240ms">
+					<p class="eyebrow">Right now</p>
+					<p class="now-headline">
+						{#if dueCount === 0}
+							You're all caught up
+						{:else}
+							{dueCount} word{dueCount === 1 ? '' : 's'} ready to review
+						{/if}
+					</p>
+					<p class="now-secondary">{secondaryLine}</p>
+
+					<hr class="stitch" />
+
+					<div
+						class="strip"
+						role="img"
+						aria-label={`Answers over the last ${STRIP_DAYS} days: ${strip.map((cell) => `${cell.day}, ${cell.count}`).join('; ')}`}
+					>
+						{#each strip as cell (cell.day)}
+							<div class="strip-col" class:is-today={cell.isToday}>
+								<div class="strip-track">
+									{#if cell.count > 0}
+										<div class="strip-bar" style="height: {barHeight(cell.count)}%"></div>
+									{:else}
+										<div class="strip-stub"></div>
+									{/if}
+								</div>
+								<span class="strip-letter">{cell.letter}</span>
+							</div>
+						{/each}
+					</div>
+				</section>
+
+				{#if items.length > 0}
+					<section class="card garden-card ll-rise" style="animation-delay: 300ms">
+						<div class="card-head">
+							<h2>Garden</h2>
+							<div class="card-tools">
+								<span class="card-count">{items.length} word{items.length === 1 ? '' : 's'}</span>
+								<a class="btn btn-ghost words-link" href="/words">Full garden</a>
+							</div>
+						</div>
+						<hr class="stitch" />
+
+						<div class="beds" role="img" aria-label={`Vocabulary: ${gardenLabel}`}>
+							{#each garden as bed (bed.maturity)}
+								{#if bed.count > 0}
+									<div class="bed bed-{bed.maturity}" style="flex-grow: {bed.count}"></div>
+								{/if}
+							{/each}
+						</div>
+
+						<ul class="legend">
+							{#each garden as bed (bed.maturity)}
+								<li class="legend-item">
+									<span class="dot bed-{bed.maturity}" aria-hidden="true"></span>
+									<span class="legend-count">{bed.count}</span>
+									<span class="legend-label">{bed.label}</span>
+								</li>
+							{/each}
+						</ul>
+					</section>
+				{/if}
+			</div>
+		</div>
 	{/if}
 </main>
 
 <style>
+	/* Width and horizontal padding are the global `.shell`'s job — the
+	   `.shell-broad` modifier in the markup caps this page at
+	   `--measure-broad`, room enough for the spread below. Only the vertical
+	   rhythm is this route's own. */
 	.shell {
-		max-width: 34rem;
-		margin: 0 auto;
-		padding: 2rem 1rem 4rem;
+		padding-block: 2rem 4rem;
 		display: flex;
 		flex-direction: column;
-		gap: 1.25rem;
+		gap: var(--gap);
 	}
 
 	.loading {
 		display: grid;
 		place-items: center;
 		min-height: 60dvh;
+	}
+
+	/* Doing and state are ordinary flex stacks inside the spread's two grid
+	   columns — the grid only decides the arrangement, each side still
+	   controls its own card rhythm. */
+	.col-do,
+	.col-state {
+		display: flex;
+		flex-direction: column;
+		gap: var(--gap);
+	}
+
+	@media (min-width: 72rem) {
+		/* Full desktop: starting a session or a conversation is the louder,
+		   primary path through this page, so the doing column gets more of
+		   the extra width than the read-only state column opposite it. */
+		.home-spread {
+			grid-template-columns: 3fr 2fr;
+		}
 	}
 
 	/* Every icon on this screen is the same hand: 24-unit box, hairline stroke,
@@ -684,6 +720,14 @@
 		height: 2.6rem;
 	}
 
+	@media (min-width: 48rem) {
+		/* The spread gives the "Right now" card a whole column to itself, so
+		   the strip can stand taller and read as less cramped. */
+		.strip-track {
+			height: 3.4rem;
+		}
+	}
+
 	.strip-bar {
 		width: 100%;
 		border-radius: var(--radius-sm);
@@ -733,6 +777,14 @@
 		border-radius: 999px;
 		background: var(--surface-alt);
 		overflow: hidden;
+	}
+
+	@media (min-width: 48rem) {
+		/* Same reasoning as the activity strip above: a column of its own
+		   buys the garden bar a bit more presence. */
+		.beds {
+			height: 1.1rem;
+		}
 	}
 
 	.bed {

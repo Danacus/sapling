@@ -340,4 +340,13 @@
 			font-size: 1.22rem;
 		}
 	}
+
+	/* Mirrors `PromptHeader`'s `.prompt.md` bump — the sentence plays the same
+	   role here, just laid out as this component's own interactive line
+	   instead of through the shared block (see the component note above). */
+	@media (min-width: 72rem) {
+		.sentence {
+			font-size: 1.65rem;
+		}
+	}
 </style>

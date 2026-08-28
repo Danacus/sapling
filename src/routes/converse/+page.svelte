@@ -275,7 +275,7 @@
 	</p>
 {/snippet}
 
-<main class="shell">
+<main class="shell shell-wide">
 	{#if loading}
 		<div class="loading">
 			<Spinner />
@@ -531,11 +531,15 @@
 </main>
 
 <style>
+	/*
+	  Width and the horizontal gutter are the global `.shell`/`.shell-wide`
+	  pair's job now; what stays scoped is genuinely vertical — pinning the page
+	  to the viewport and stacking topbar, scene, transcript and composer inside
+	  it.
+	*/
 	.shell {
-		max-width: 34rem;
-		margin: 0 auto;
 		height: 100dvh;
-		padding: 1.25rem 1rem 0;
+		padding-block: 1.25rem 0;
 		display: flex;
 		flex-direction: column;
 		gap: 0.85rem;
@@ -735,10 +739,15 @@
 		padding: 0.7rem 2rem;
 	}
 
-	/* The scene, written out like the header of a script: what the page is
-	   about, before a word of the target language appears. */
+	/*
+	  The scene, written out like the header of a script: what the page is
+	  about, before a word of the target language appears. Its setting line is
+	  prose, so it keeps the reading measure even though the shell around it is
+	  wider — the wider shell is for the transcript, not for this sentence.
+	*/
 	.scene {
 		flex: 0 0 auto;
+		max-width: var(--measure);
 		padding: 0.7rem 0.9rem;
 		border: 1px solid var(--border);
 		border-left: 3px solid color-mix(in srgb, var(--primary) 45%, var(--border-strong));

@@ -163,4 +163,18 @@
 			font-size: 1.25rem;
 		}
 	}
+
+	/*
+	  A little more size once there is a real desk to read from. The column
+	  itself stays at `--measure` — this buys legibility, never a longer line.
+	*/
+	@media (min-width: 72rem) {
+		.prompt.lg {
+			font-size: 2.15rem;
+		}
+
+		.prompt.md {
+			font-size: 1.65rem;
+		}
+	}
 </style>

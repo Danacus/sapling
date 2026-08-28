@@ -321,6 +321,22 @@
 		gap: 0.7rem;
 	}
 
+	@media (min-width: 48rem) {
+		/*
+		  Each side of the seam is a single-file list of tiles; once there is
+		  room for two, wrapping a side into its own two-column grid roughly
+		  halves the round's height instead of leaving two equally tall single
+		  columns either side of the seam. The seam itself does not move — it
+		  is still the midpoint of `.columns`, never of either side's own grid.
+		*/
+		.column {
+			display: grid;
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+			align-items: start;
+			gap: 0.7rem;
+		}
+	}
+
 	@media (max-width: 400px) {
 		.columns {
 			gap: 0.6rem;

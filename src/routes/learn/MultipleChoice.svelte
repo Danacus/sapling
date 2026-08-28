@@ -37,6 +37,7 @@
 	import CheckButton from './blocks/CheckButton.svelte';
 	import PromptHeader from './blocks/PromptHeader.svelte';
 	import TapOption from './blocks/TapOption.svelte';
+	import TapRow from './blocks/TapRow.svelte';
 
 	let {
 		challenge,
@@ -198,21 +199,23 @@
 		</button>
 	{/if}
 
-	<div class="options" role="radiogroup" aria-label="Answer options">
-		{#each challenge.options as option, index (index)}
-			<TapOption
-				text={option}
-				reading={readingOf(index)}
-				tokens={tokensOf(index)}
-				badge={index + 1}
-				size="card"
-				align="start"
-				selection="radio"
-				state={selected === index ? 'selected' : 'idle'}
-				disabled={lock.locked}
-				onclick={() => select(index)}
-			/>
-		{/each}
+	<div class="options">
+		<TapRow role="radiogroup" label="Answer options" twoUp>
+			{#each challenge.options as option, index (index)}
+				<TapOption
+					text={option}
+					reading={readingOf(index)}
+					tokens={tokensOf(index)}
+					badge={index + 1}
+					size="card"
+					align="start"
+					selection="radio"
+					state={selected === index ? 'selected' : 'idle'}
+					disabled={lock.locked}
+					onclick={() => select(index)}
+				/>
+			{/each}
+		</TapRow>
 	</div>
 
 	<CheckButton disabled={selected === null || lock.locked} onclick={submit} />
@@ -248,9 +251,10 @@
 		opacity: 0.5;
 	}
 
+	/* The grid itself now lives in `TapRow`'s `twoUp` mode, shared with any
+	   future type that offers a short, fixed set of full-width options; this
+	   wrapper only owns the gap before the check button. */
 	.options {
-		display: grid;
-		gap: 0.6rem;
 		margin-bottom: 1.5rem;
 	}
 </style>

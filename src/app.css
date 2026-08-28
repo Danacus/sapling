@@ -31,6 +31,30 @@
 	--danger: #c94f35;
 	--amber: #d89035;
 
+	/* Measure & gutters ----------------------------------------------------- */
+	/*
+	  The app is a field journal, and a journal opened on a desk is a *spread*:
+	  narrow viewports get one page, wide ones get two facing columns. Width is
+	  therefore never spent on making a line of prose longer — it buys a second
+	  column, a wider gutter, or a denser grid of small things, and nothing else.
+
+	  `--measure` is the reading column and the default cap for any shell that
+	  holds sentences. The wider steps are for shells whose content is *not* a
+	  paragraph: a chat transcript, a two-column dashboard, a grid of cards.
+	  Picking one is a per-route decision — see the `.shell` block below.
+	*/
+	--measure: 34rem; /* prose — the only width a paragraph may have */
+	--measure-wide: 46rem; /* roomier single column (transcripts) */
+	--measure-broad: 64rem; /* two facing columns */
+	--measure-full: 78rem; /* a grid of many small cards */
+
+	/*
+	  Page padding and the rhythm between cards. Both grow with the viewport, so
+	  a desktop window gets margin rather than edge-to-edge content.
+	*/
+	--gutter: 1rem;
+	--gap: 1.25rem;
+
 	/* Shape & motion -------------------------------------------------------- */
 	--radius-sm: 6px;
 	--radius: 10px;
@@ -85,6 +109,33 @@
 		--grain: 0.035;
 
 		color-scheme: dark;
+	}
+}
+
+/*
+  The app has exactly two breakpoints above mobile, and they are declared here
+  once so no component has to invent a third:
+
+    48rem (768px) — "wide".  A spread becomes possible: two facing columns.
+    72rem (1152px) — "broad". Full desktop; gutters open up further.
+
+  Both are `min-width` because the mobile layout is the base case, not a
+  fallback. A component that needs a breakpoint uses one of these two values
+  literally — CSS custom properties cannot be used in media queries, so the
+  numbers are repeated at the call site; these comments are the source of
+  truth for *which* numbers. Small `max-width` queries already in components
+  (380/400/420/480px) are narrow-phone touch-ups and are a separate concern.
+*/
+@media (min-width: 48rem) {
+	:root {
+		--gutter: 2rem;
+		--gap: 1.5rem;
+	}
+}
+
+@media (min-width: 72rem) {
+	:root {
+		--gutter: 3rem;
 	}
 }
 
@@ -390,9 +441,122 @@ a {
 
 /* Layout helpers ----------------------------------------------------------- */
 
+/*
+  The page shell. Every route's `<main>` wears `.shell`, which owns exactly one
+  thing: how wide the page is allowed to get and how much air sits either side
+  of it. Vertical behaviour (min-height, flex direction, sticky feet) stays in
+  the route's own scoped block, because that genuinely differs — a chat pinned
+  to the viewport and a scrolling settings page are not the same page.
+
+  A route picks its cap by adding at most one modifier. The choice is about
+  what the content *is*, not about how much room happens to be available:
+
+    (none)         prose and forms — a paragraph never gets wider than this
+    .shell-wide    a transcript: bubbles are short, but the column can breathe
+    .shell-broad   a dashboard of independent cards, laid out as a spread
+    .shell-full    a grid of many small cards, where density is the point
+
+  The caps are unconditional rather than breakpoint-gated: a `max-width` of
+  64rem simply does not bind on a phone. What *is* gated is the arrangement —
+  see `.spread`.
+*/
+.shell {
+	width: 100%;
+	max-width: var(--measure);
+	margin-inline: auto;
+	padding-inline: var(--gutter);
+}
+
+.shell-wide {
+	max-width: var(--measure-wide);
+}
+
+.shell-broad {
+	max-width: var(--measure-broad);
+}
+
+.shell-full {
+	max-width: var(--measure-full);
+}
+
+/*
+  The spread: one column on a phone, two facing columns once there is room for
+  them. Children are ordinary cards — the grid is `align-items: start` so a
+  short card in one column does not stretch to match a tall one opposite, which
+  is what makes the two sides read as facing pages rather than as a table.
+
+  `.spread-full` is the escape hatch for the pieces that belong to the whole
+  spread rather than to one side of it: a page header, a search bar, a footer.
+
+  Cards inside a spread give up their own `max-width` — the column already
+  bounds them, and a card that stops at 34rem inside a 30rem column just leaves
+  a ragged edge.
+*/
+.spread {
+	display: grid;
+	gap: var(--gap);
+}
+
+@media (min-width: 48rem) {
+	.spread {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		align-items: start;
+	}
+
+	/*
+	  A descendant selector, not a child one. A spread whose two sides each hold
+	  several cards wraps them in a column element, which puts the cards a level
+	  further down — and a `>` here would quietly miss exactly that case, leaving
+	  a 34rem card ragged inside a 37rem column. Anything inside a spread is
+	  already bounded by its column, so releasing the cap at any depth is right.
+	*/
+	.spread .card {
+		max-width: none;
+	}
+
+	.spread-full {
+		grid-column: 1 / -1;
+	}
+}
+
+/*
+  The other spread. `.spread` pairs things deliberately — one side means one
+  thing, the other means another — and it is right when the pairing carries
+  meaning. `.spread-flow` is for the opposite case: a long run of independent
+  cards where nothing in particular belongs opposite anything else, and the
+  only goal is two columns that end at roughly the same place.
+
+  It is CSS multi-column rather than grid on purpose. A grid puts cards in
+  *rows*, so every short card leaves a gap under it while it waits for the tall
+  one beside it — with eight cards of wildly different heights that reads as
+  holes punched in the page. Columns flow instead, and they balance themselves,
+  so nothing has to be reordered by hand to keep the two sides even. That
+  matters more than it sounds: hand-tuned ordering has to be re-tuned every
+  time a card's content grows, and it silently divorces tab order from what the
+  eye sees. Here the reading order is the source order — down the first column,
+  then down the second — so whatever was last in the markup is still last on
+  screen, which is what keeps a "danger zone" at the foot of the page.
+
+  Cards carry their own bottom margin because `gap` does not apply to the flow
+  direction of a multi-column container.
+*/
+@media (min-width: 48rem) {
+	.spread-flow {
+		column-count: 2;
+		column-gap: var(--gap);
+	}
+
+	.spread-flow > .card {
+		max-width: none;
+		margin-bottom: var(--gap);
+		/* Without this a card is free to be split across the column break. */
+		break-inside: avoid;
+	}
+}
+
 .card {
 	width: 100%;
-	max-width: 34rem;
+	max-width: var(--measure);
 	padding: 1.75rem;
 	border: 1px solid var(--border);
 	border-radius: var(--radius-lg);

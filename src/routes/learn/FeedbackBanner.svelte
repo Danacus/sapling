@@ -464,8 +464,13 @@
 		stroke-linejoin: round;
 	}
 
+	/*
+	  Same measure as the session shell (`--measure` in app.css), centred the
+	  same way, so the banner's card lines up with the challenge column above
+	  it rather than with the viewport, at every width.
+	*/
 	.inner {
-		max-width: 34rem;
+		max-width: var(--measure);
 		margin: 0 auto;
 		padding: 1rem 1rem 1.25rem;
 	}

@@ -259,11 +259,14 @@
 </main>
 
 <style>
+	/* Width and side padding come from the global `.shell`; this is a debug page
+	   holding one card, so the default prose measure is already the right cap
+	   and there is nothing here that a wider viewport would improve. */
 	.shell {
 		display: grid;
 		place-items: center;
 		min-height: 100dvh;
-		padding: 2rem 1rem;
+		padding-block: 2rem;
 	}
 
 	.card {

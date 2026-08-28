@@ -153,7 +153,7 @@
 	<title>Sapling · Assistant</title>
 </svelte:head>
 
-<main class="shell">
+<main class="shell shell-wide">
 	{#if loading}
 		<div class="loading">
 			<Spinner />
@@ -298,11 +298,14 @@
 </main>
 
 <style>
+	/*
+	  Width and the horizontal gutter are the global `.shell`/`.shell-wide`
+	  pair's job now; what stays scoped is genuinely vertical — pinning the page
+	  to the viewport and stacking topbar, transcript and composer inside it.
+	*/
 	.shell {
-		max-width: 34rem;
-		margin: 0 auto;
 		height: 100dvh;
-		padding: 1.25rem 1rem 0;
+		padding-block: 1.25rem 0;
 		display: flex;
 		flex-direction: column;
 		gap: 0.85rem;

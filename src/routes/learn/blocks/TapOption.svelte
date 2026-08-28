@@ -203,6 +203,15 @@
 		font-weight: 500;
 	}
 
+	/* Matches the prompt-text bump in `PromptHeader` and `Cloze` — the
+	   sentence spot-the-error lays out as tappable words plays the same
+	   "prompt" role, just built out of `.tap` targets instead of plain text. */
+	@media (min-width: 72rem) {
+		.opt.inline {
+			font-size: 1.45rem;
+		}
+	}
+
 	/* States --------------------------------------------------------------- */
 
 	/* Before the state rules on purpose: a locked-in `correct` tile and a
