@@ -21,6 +21,8 @@
 	import { browser } from '$app/environment';
 	import { tick } from 'svelte';
 
+	import { appendDictation, dictationAvailable, listen } from '$lib/asr';
+	import type { DictationSession } from '$lib/asr';
 	import {
 		alignedForm,
 		correctionSpans,
@@ -55,11 +57,30 @@
 	/** Teacher turns whose translation the learner asked to see, by index. */
 	let revealed = $state<Record<number, boolean>>({});
 
+	// -- Dictation ------------------------------------------------------------
+	//
+	// The microphone is an *input method*: what it hears lands in the composer,
+	// where the learner reads it and presses Send. So a misheard word is a typo
+	// they fix, never a mistake the teacher corrects them for — and the whole
+	// correction pipeline goes on aligning against a message they endorsed.
+	//
+	// Recognition is not in every browser (see `$lib/asr`), so the control is
+	// rendered only where it works rather than degrading to a dead button.
+
+	let micSupported = $state(false);
+	let recording = $state(false);
+	let micError = $state('');
+	let session: DictationSession | undefined;
+	/** The composer as it stood when the mic opened; every interim re-splices onto it. */
+	let dictationBase = '';
+
 	let messagesEl: HTMLDivElement | undefined = $state();
 	let textareaEl: HTMLTextAreaElement | undefined = $state();
 
 	$effect(() => {
 		if (!browser) return;
+
+		micSupported = dictationAvailable();
 
 		let cancelled = false;
 		loading = true;
@@ -107,6 +128,46 @@
 
 	function focusComposer() {
 		void tick().then(() => textareaEl?.focus());
+	}
+
+	/** Drops an open microphone on the way out of the page. */
+	$effect(() => () => session?.abort());
+
+	/**
+	 * Opens the mic, or closes it if it is already open. Interim results stream
+	 * into the composer so the learner can see they are being heard; each one
+	 * replaces the last by re-splicing onto {@link dictationBase}.
+	 */
+	function toggleMic() {
+		if (recording) {
+			session?.stop();
+			return;
+		}
+		if (busy) return;
+
+		micError = '';
+		dictationBase = input;
+
+		const started = listen(profile?.targetLanguage, {
+			onTranscript: (text) => {
+				input = appendDictation(dictationBase, text);
+				void tick().then(autoGrow);
+			},
+			onEnd: (message) => {
+				recording = false;
+				session = undefined;
+				if (message) micError = message;
+				focusComposer();
+			}
+		});
+
+		if (!started) {
+			micError = 'Dictation could not start. Type your reply instead.';
+			return;
+		}
+
+		session = started;
+		recording = true;
 	}
 
 	/** The setup call. Its failure is its own, so the start screen can offer another go. */
@@ -170,6 +231,11 @@
 	async function send() {
 		const text = input.trim();
 		if (!text || busy || !profile || !scenario) return;
+
+		// Sending mid-utterance takes what is already in the composer; the rest of
+		// the sentence is not owed a bubble the learner never read.
+		session?.abort();
+		micError = '';
 
 		const history = [...turns];
 		turns = [...turns, { role: 'learner', text }];
@@ -420,17 +486,37 @@
 				{/if}
 			</div>
 
+			{#if micError}
+				<p class="error mic-error" role="alert">{micError}</p>
+			{/if}
+
 			<form class="composer" onsubmit={(event) => event.preventDefault()}>
 				<textarea
 					bind:this={textareaEl}
 					class="composer-input"
 					rows="1"
-					placeholder={`Reply in ${profile?.targetLanguage ?? 'the target language'}…`}
+					placeholder={recording
+						? 'Listening…'
+						: `Reply in ${profile?.targetLanguage ?? 'the target language'}…`}
 					aria-label="Your reply"
 					disabled={busy}
 					bind:value={input}
 					onkeydown={onComposerKeydown}
 					oninput={autoGrow}></textarea>
+				{#if micSupported}
+					<button
+						type="button"
+						class="btn btn-ghost mic-btn"
+						class:recording
+						disabled={busy}
+						aria-pressed={recording}
+						aria-label={recording ? 'Stop dictating' : 'Dictate your reply'}
+						title={recording ? 'Stop dictating' : 'Dictate your reply'}
+						onclick={toggleMic}
+					>
+						<span aria-hidden="true">{recording ? '■' : '🎤'}</span>
+					</button>
+				{/if}
 				<button
 					type="button"
 					class="btn btn-primary send-btn"
@@ -966,6 +1052,30 @@
 		padding: 0.7rem 1.2rem;
 	}
 
+	.mic-btn {
+		flex: 0 0 auto;
+		padding: 0.7rem 0.8rem;
+		line-height: 1.35;
+	}
+
+	/* Recording is a state the learner has to be able to see at a glance, since
+	   the only other cue is the browser's own tab indicator. */
+	.mic-btn.recording {
+		border-color: var(--danger);
+		color: var(--danger);
+		animation: pulse 1.4s ease-in-out infinite;
+	}
+
+	.mic-error {
+		margin-bottom: 0.5rem;
+	}
+
+	@keyframes pulse {
+		50% {
+			opacity: 0.55;
+		}
+	}
+
 	.error {
 		margin: 0;
 		padding: 0.65rem 0.85rem;
@@ -987,6 +1097,11 @@
 		.dot {
 			animation: none;
 			opacity: 0.6;
+		}
+
+		/* The colour still says "recording"; only the throb goes. */
+		.mic-btn.recording {
+			animation: none;
 		}
 	}
 

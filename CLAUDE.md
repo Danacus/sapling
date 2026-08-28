@@ -61,6 +61,7 @@ Every area is a registry with one module per member; forgetting a registration f
 | `src/lib/sync/` + `server/` | `events.ts` is **zod-only and import-free** — the server compiles it by relative path. The server merges nothing. | `sync.md` |
 | `src/lib/romanize/` | Never romanize a term in isolation — context resolves polyphones. | `content.md` |
 | `src/lib/tts/` | Audio failures degrade silently; sound never blocks gameplay. | `content.md` |
+| `src/lib/asr/` | Dictation is an **input method, not a grader**: the transcript lands in the composer for the learner to send. Recognition isn't universal — the fallback is typing. | `content.md` |
 | `static/`, deploy | A missing `/_app/immutable/*` chunk must **404**, never fall through to the SPA shell. | `deploy.md` |
 
 ### Testing
