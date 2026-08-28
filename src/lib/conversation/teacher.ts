@@ -7,11 +7,11 @@
  * each of them is the feature:
  *
  * - **The reply is structured.** A turn carries what the teacher says, what it
- *   means, and what the learner got wrong, in three separate fields — because a
- *   correction mixed into the spoken line stops the conversation being a
- *   conversation. `responseFormat` pins the envelope on every request, and
- *   {@link parseTeacherReply} falls back to prose rather than letting a
- *   malformed turn end the session.
+ *   means, what it understood the learner to have said, and what the learner got
+ *   wrong, in four separate fields — because a correction mixed into the spoken
+ *   line stops the conversation being a conversation. `responseFormat` pins the
+ *   envelope on every request, and {@link parseTeacherReply} falls back to prose
+ *   rather than letting a malformed turn end the session.
  * - **Two rounds, not five.** There is exactly one tool and no read-then-write
  *   pattern, so a second round is for recovering from a failed call and nothing
  *   else.
@@ -44,6 +44,8 @@ export interface LearnerTurn {
 	role: 'learner';
 	/** Exactly what they typed. Never overwritten by `correction.corrected`. */
 	text: string;
+	/** Their message in the target script, when they typed something else. */
+	heard?: TargetLine;
 	correction?: Correction;
 }
 
@@ -62,10 +64,13 @@ export type ConversationTurn = LearnerTurn | TeacherTurn;
 /**
  * One completed exchange. The correction is returned beside the teacher's turn
  * rather than on it, because it belongs to the learner's *previous* bubble —
- * the caller attaches it there and the bubble updates in place.
+ * the caller attaches it there and the bubble updates in place. {@link heard}
+ * belongs to that same bubble and travels the same way.
  */
 export interface TurnResult {
 	teacher: TeacherTurn;
+	/** The learner's message in the target script; absent when they wrote it there. */
+	heard?: TargetLine;
 	correction?: Correction;
 }
 
@@ -93,8 +98,8 @@ export const MAX_CONTEXT_WORDS = 200;
 export const MAX_TOOL_ROUNDS = 2;
 
 /**
- * Room for a reply, its reading, a translation and a correction that rewrites
- * the learner's whole message.
+ * Room for a reply, its reading, a translation, and two rewrites of the
+ * learner's whole message — what the teacher heard, and the correction.
  *
  * Set well clear of the worst case rather than close to the typical one. It is
  * a ceiling, not a budget — an unused token is not billed — and the only thing
@@ -172,9 +177,10 @@ export function buildSystemPrompt(
 		`Speak only ${target}, and keep "reply" to ${REPLY_LENGTH[profile.level]} Ask about one thing at a time. Do not explain, do not list what they did not ask about, do not stack questions. A reply that runs long is a worse reply.`,
 		`The learner may have no ${target} keyboard. Writing ${target} in Latin-script romanization is normal input, not a mistake: read it phonetically, be generous about spelling, spacing, tone marks and accents, and answer what they meant. Never correct them for having written in romanization. They may also mix ${target} script and romanization in one message, a word here and a word there; that is not a mistake either.`,
 		'If you genuinely cannot tell what they meant, stay in character and ask them to say it another way. Never invent a message they did not send, and never answer a question they did not ask.',
-		'Return one JSON object and nothing else, no markdown fences: {"reply":{"text","reading"},"translation","correction"}.',
+		'Return one JSON object and nothing else, no markdown fences: {"reply":{"text","reading"},"translation","heard","correction"}.',
 		`"reply" is your line in ${target}. "reading" is its Latin-script reading when ${target} is not written in the Latin script, and null when it is.`,
 		`"translation" is that same line in ${native}.`,
+		`"heard" is {"text","reading"} holding the learner's last message written properly in ${target}: what you understood them to say, in the ${target} script, with their meaning untouched. Set it whenever any part of what they typed was not already written in ${target} — romanization, or a mix of the two. Set it to null when their message was already written entirely in ${target}, and null when ${target} is written in the Latin script. It is not a correction and never becomes one: if their message also had a language mistake, "heard" is the fixed sentence too, the same one "correction.corrected" carries.`,
 		`"correction" is about the learner's last message only, and about their ${target} and nothing else: grammar, spelling, agreement, word endings, a word that does not exist or cannot be used that way. It is never a comment on what they said. If they ask for a pizza in an ice cream shop, you answer in character that you only have ice cream and set "correction" to null — ordering the wrong thing is not a language mistake.`,
 		'Correct as little as possible, and never change what they meant. Fix the wrong word or the wrong ending and leave every other word exactly as they wrote it. Keep their meaning even when it is odd, mistaken about the scene, or rude: if they tell you that you are not their boss, the correction still says that you are not their boss. Never swap a word for one that means something different, never change who or what they were talking about, and never add information they did not give. If you are not sure something is a mistake, it is not one: set "correction" to null.',
 		`When their message had no language mistake, "correction" is null. Otherwise "corrected" is {"text","reading"} holding their sentence and nothing else: their whole message rewritten, every word of it and not just the part you changed, but never your own words, never the line you just spoke, and never a sentence you have added.`,
@@ -254,11 +260,12 @@ export function parseTeacherReply(raw: string): TeacherReply {
 
 	const parsed = teacherReplySchema.safeParse(json);
 	if (parsed.success) {
-		const { reply, translation, correction } = parsed.data;
+		const { reply, translation, heard, correction } = parsed.data;
 		const note = correction?.note?.trim();
 		return {
 			reply: toLine(reply),
 			...(translation?.trim() ? { translation: translation.trim() } : {}),
+			...(heard ? { heard: toLine(heard) } : {}),
 			...(correction
 				? {
 						correction: {
@@ -302,6 +309,25 @@ function isNoOpCorrection(typed: string, corrected: TargetLine): boolean {
 	const written = typed.trim();
 	if (written === corrected.text.trim()) return true;
 	return corrected.reading ? sameRomanization(written, corrected.reading) : false;
+}
+
+/**
+ * The learner's own sentence in the target script, or nothing.
+ *
+ * Two fields can carry it. `heard` is the one asked for, but a model that has
+ * decided the message needs correcting will often fill only
+ * `correction.corrected` — and when that correction turns out to have corrected
+ * nothing ({@link isNoOpCorrection}: they typed the reading, and typed it right)
+ * the sentence would be discarded along with it. It is the same sentence either
+ * way, so the one being thrown away is the fallback.
+ *
+ * A line identical to what they typed is dropped: they wrote the script
+ * themselves, and echoing it back under their own bubble says nothing.
+ */
+function interpretation(typed: string, parsed: TeacherReply): TargetLine | undefined {
+	const line = parsed.heard ?? parsed.correction?.corrected;
+	if (!line) return undefined;
+	return line.text.trim() === typed.trim() ? undefined : line;
 }
 
 /**
@@ -379,6 +405,9 @@ export async function runTurn(
 		parsed.correction && !isNoOpCorrection(text, parsed.correction.corrected)
 			? parsed.correction
 			: undefined;
+	// A surviving correction already carries the sentence in the script, and the
+	// UI shows it there; two copies under one bubble would be one too many.
+	const heard = correction ? undefined : interpretation(text, parsed);
 
 	return {
 		teacher: {
@@ -387,6 +416,7 @@ export async function runTurn(
 			...(parsed.translation ? { translation: parsed.translation } : {}),
 			actions
 		},
+		...(heard ? { heard } : {}),
 		...(correction ? { correction } : {})
 	};
 }

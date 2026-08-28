@@ -201,6 +201,13 @@ describe('buildSystemPrompt', () => {
 		expect(prompt).toContain('never change who or what they were talking about');
 		expect(prompt).toContain('If you are not sure something is a mistake, it is not one');
 	});
+
+	it('asks for the learner’s own message back in the target script', () => {
+		const prompt = buildSystemPrompt(profile, scenario, []);
+		expect(prompt).toContain('"heard" is {"text","reading"}');
+		expect(prompt).toContain('with their meaning untouched');
+		expect(prompt).toContain('It is not a correction and never becomes one');
+	});
 });
 
 describe('parseTeacherReply', () => {
@@ -226,6 +233,18 @@ describe('parseTeacherReply', () => {
 		expect(parseTeacherReply(raw)).toEqual({
 			reply: { text: 'Prima.' },
 			correction: { corrected: { text: 'goedenavond' } }
+		});
+	});
+
+	it('reads the message back in the script beside the reply', () => {
+		const raw = JSON.stringify({
+			reply: { text: 'Prima.' },
+			heard: { text: '我要咖啡', reading: 'wǒ yào kāfēi' },
+			correction: null
+		});
+		expect(parseTeacherReply(raw)).toEqual({
+			reply: { text: 'Prima.' },
+			heard: { text: '我要咖啡', reading: 'wǒ yào kāfēi' }
 		});
 	});
 
@@ -374,6 +393,79 @@ describe('runTurn', () => {
 		});
 
 		expect(result.correction).toBeUndefined();
+	});
+
+	it('reads the message back in the script when nothing needed correcting', async () => {
+		const { fetchFn } = fakeOpenRouter([
+			saying({
+				reply: { text: 'Prima.' },
+				heard: { text: '我要咖啡', reading: 'wǒ yào kāfēi' }
+			})
+		]);
+		const store = fakeDeps();
+
+		const result = await runTurn([], scenario, 'wo yao kafei', profile, {
+			apiKey: 'test',
+			fetchFn,
+			deps: store.deps
+		});
+
+		expect(result.heard).toEqual({ text: '我要咖啡', reading: 'wǒ yào kāfēi' });
+		expect(result.correction).toBeUndefined();
+	});
+
+	it('keeps the script of a correction that corrected nothing', async () => {
+		const { fetchFn } = fakeOpenRouter([
+			saying({
+				reply: { text: 'Prima.' },
+				correction: { corrected: { text: '我要咖啡', reading: 'wǒ yào kā fēi' } }
+			})
+		]);
+		const store = fakeDeps();
+
+		const result = await runTurn([], scenario, 'wo yao kafei', profile, {
+			apiKey: 'test',
+			fetchFn,
+			deps: store.deps
+		});
+
+		expect(result.correction).toBeUndefined();
+		expect(result.heard).toEqual({ text: '我要咖啡', reading: 'wǒ yào kā fēi' });
+	});
+
+	it('does not read the message back when they typed the script themselves', async () => {
+		const { fetchFn } = fakeOpenRouter([
+			saying({ reply: { text: 'Prima.' }, heard: { text: '我要咖啡' } })
+		]);
+		const store = fakeDeps();
+
+		const result = await runTurn([], scenario, ' 我要咖啡 ', profile, {
+			apiKey: 'test',
+			fetchFn,
+			deps: store.deps
+		});
+
+		expect(result.heard).toBeUndefined();
+	});
+
+	it('does not read the message back twice when a correction carries it', async () => {
+		const { fetchFn } = fakeOpenRouter([
+			saying({
+				reply: { text: 'Prima.' },
+				heard: { text: '我要咖啡', reading: 'wǒ yào kāfēi' },
+				correction: { corrected: { text: '我要咖啡', reading: 'wǒ yào kāfēi' } }
+			})
+		]);
+		const store = fakeDeps();
+
+		const result = await runTurn([], scenario, 'wo yao cha', profile, {
+			apiKey: 'test',
+			fetchFn,
+			deps: store.deps
+		});
+
+		expect(result.correction).toBeDefined();
+		expect(result.heard).toBeUndefined();
 	});
 
 	it('runs an add_words call and feeds its result back under the same id', async () => {

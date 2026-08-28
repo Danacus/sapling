@@ -18,7 +18,7 @@ import type { ActionNote } from '$lib/assistant';
 import { defaultToolContext, executeToolCall } from '$lib/assistant/tools';
 import type { Profile } from '$lib/types';
 import type { ScenarioArgs } from './scenario';
-import type { Correction, Scenario } from './schemas';
+import type { Correction, Scenario, TargetLine } from './schemas';
 import type { ConversationTurn, TurnOptions, TurnResult } from './teacher';
 
 /** The canned scene. Roles are native-language, as a real scenario's are. */
@@ -41,6 +41,9 @@ const MOCK_REPLIES: { text: string; translation: string }[] = [
 /** Which message gets the canned correction — the second, so the first turn reads clean. */
 const CORRECTED_TURN = 1;
 
+/** Which message gets the canned "heard" line. Not the corrected one: they are exclusive. */
+const HEARD_TURN = 2;
+
 /** One fixed scene, with the learner's topic threaded in when they named one. */
 export async function mockScenario(args: ScenarioArgs): Promise<Scenario> {
 	const topic = args.topic?.trim();
@@ -53,20 +56,42 @@ export async function mockScenario(args: ScenarioArgs): Promise<Scenario> {
 }
 
 /**
- * The offline "correction": capitalize the opening word and end with a full
- * stop. Not language teaching — it is a rewrite of the *whole* message that
- * reliably differs from what was typed, which is what the diff and the inline
- * markup need to be developable without a key.
+ * Capitalize the opening word and end with a full stop; `undefined` when that
+ * changes nothing.
+ *
+ * Not language teaching — it is a rewrite of the *whole* message that reliably
+ * differs from what was typed, which is what the diff and the inline markup need
+ * to be developable without a key. Both canned lines below are built from it.
  */
-function demoCorrection(text: string): Correction | undefined {
+function tidied(text: string): string | undefined {
 	const typed = text.trim();
 	const capitalized = typed.charAt(0).toUpperCase() + typed.slice(1);
-	const corrected = /[.!?]$/.test(capitalized) ? capitalized : `${capitalized}.`;
-	if (corrected === typed) return undefined;
+	const rewritten = /[.!?]$/.test(capitalized) ? capitalized : `${capitalized}.`;
+	return rewritten === typed ? undefined : rewritten;
+}
+
+/** The offline "correction", offered as a fix with a note. */
+function demoCorrection(text: string): Correction | undefined {
+	const corrected = tidied(text);
+	if (!corrected) return undefined;
 	return {
 		corrected: { text: corrected },
 		note: 'A sentence opens with a capital and closes with a full stop.'
 	};
+}
+
+/**
+ * The offline "interpretation": the same rewrite, offered as what the teacher
+ * understood rather than as a fix.
+ *
+ * The mock scene is Spanish, so there is no script to render the learner's
+ * message into and nothing here is a real reading. What it does exercise is the
+ * path — a target-script line under an *uncorrected* learner bubble, with its
+ * speaker button — which is otherwise unreachable without a key.
+ */
+function demoHeard(text: string): TargetLine | undefined {
+	const heard = tidied(text);
+	return heard ? { text: heard } : undefined;
 }
 
 /** One turn, offline. Deterministic: same history and message, same reply, same writes. */
@@ -92,6 +117,7 @@ export async function mockTurn(
 	}
 
 	const correction = spoken === CORRECTED_TURN ? demoCorrection(text) : undefined;
+	const heard = spoken === HEARD_TURN ? demoHeard(text) : undefined;
 
 	return {
 		teacher: {
@@ -100,6 +126,7 @@ export async function mockTurn(
 			translation: canned.translation,
 			actions
 		},
+		...(heard ? { heard } : {}),
 		...(correction ? { correction } : {})
 	};
 }

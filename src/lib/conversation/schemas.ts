@@ -61,10 +61,14 @@ export const correctionSchema = z.object({
 	note: z.string().nullish()
 });
 
-/** One teacher turn: what it says, what that means, and what the learner got wrong. */
+/**
+ * One teacher turn: what it says, what that means, what it understood the
+ * learner to have said, and what the learner got wrong.
+ */
 export const teacherReplySchema = z.object({
 	reply: targetTextSchema,
 	translation: z.string().nullish(),
+	heard: targetTextSchema.nullish(),
 	correction: correctionSchema.nullish()
 });
 
@@ -96,6 +100,17 @@ export interface TeacherReply {
 	reply: TargetLine;
 	/** Native language, hidden behind a tap in the UI so reading it stays a choice. */
 	translation?: string;
+	/**
+	 * The learner's own message in the target script — what the teacher understood
+	 * them to have said, not a judgement on it.
+	 *
+	 * A learner typing the reading never gets to see the script they are learning
+	 * unless they make a mistake, which turns the script into a reward for getting
+	 * it wrong. This is the same sentence a correction would have carried, minus
+	 * the correction, so a message that was right is shown in the script and can
+	 * be played back exactly as a corrected one is.
+	 */
+	heard?: TargetLine;
 	/** About the message the learner just sent, never about an earlier one. */
 	correction?: Correction;
 }

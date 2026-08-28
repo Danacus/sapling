@@ -12,6 +12,10 @@
   transcript, a translation the learner has to ask for, and corrections marked
   inline on their own bubble — which arrive one turn late, because the teacher
   only sees a message once it has been sent.
+
+  A learner typing romanization sees their own sentence in the target script
+  under their bubble whether or not it needed correcting: the script is the thing
+  being learned, and making it the reward for a mistake is exactly backwards.
 -->
 <script lang="ts">
 	import { browser } from '$app/environment';
@@ -130,7 +134,10 @@
 		try {
 			const result = await sendTurn(history, scene, text, who);
 			const last = turns[turns.length - 1];
-			if (result.correction && last?.role === 'learner') last.correction = result.correction;
+			if (last?.role === 'learner') {
+				if (result.correction) last.correction = result.correction;
+				if (result.heard) last.heard = result.heard;
+			}
 			turns = [...turns, result.teacher];
 		} catch (cause) {
 			pendingError = {
@@ -172,6 +179,18 @@
 <svelte:head>
 	<title>Sapling · Conversation</title>
 </svelte:head>
+
+<!--
+  The learner's sentence in the target script, with its speaker button. Reached
+  from both halves of a learner bubble: the corrected sentence, and the
+  uncorrected one the teacher simply read back.
+-->
+{#snippet scriptLine(text: string)}
+	<p class="script-line">
+		<span>{text}</span>
+		<SpeakButton {text} lang={profile?.targetLanguage ?? ''} size="sm" />
+	</p>
+{/snippet}
 
 <main class="shell">
 	{#if loading}
@@ -286,20 +305,22 @@
 										  is what they typed. The script itself is the thing being
 										  learned, so it is shown rather than left out.
 										-->
-										<p class="corrected-script">
-											<span>{turn.correction.corrected.text}</span>
-											<SpeakButton
-												text={turn.correction.corrected.text}
-												lang={profile?.targetLanguage ?? ''}
-												size="sm"
-											/>
-										</p>
+										{@render scriptLine(turn.correction.corrected.text)}
 									{/if}
 									{#if turn.correction.note}
 										<p class="note">{turn.correction.note}</p>
 									{/if}
 								{:else}
 									{turn.text}
+									{#if turn.heard}
+										<!--
+										  Same line, no mistake behind it: what they typed, in the
+										  script. The two branches are exclusive — a correction already
+										  carries this sentence — so the script arrives either way and
+										  is not something a mistake has to be made to see.
+										-->
+										{@render scriptLine(turn.heard.text)}
+									{/if}
 								{/if}
 							</div>
 						</div>
@@ -747,9 +768,9 @@
 		font-weight: 700;
 	}
 
-	/* The corrected sentence in the target script, under markup that ran against
-	   its reading. */
-	.corrected-script {
+	/* The learner's sentence in the target script, under what they actually
+	   typed — a correction's rewrite, or the teacher's plain read-back. */
+	.script-line {
 		display: flex;
 		align-items: center;
 		gap: 0.35rem;

@@ -97,6 +97,15 @@ describe('mockTurn', () => {
 		expect(second.correction?.note).toBeTruthy();
 	});
 
+	it('reads one set turn back in "script", on a bubble with no correction', async () => {
+		const third = await mockTurn(history(2), scene, 'quiero un helado', profile, {
+			deps: fakeDeps().deps
+		});
+
+		expect(third.correction).toBeUndefined();
+		expect(third.heard).toEqual({ text: 'Quiero un helado.' });
+	});
+
 	it('adds a "term = meaning" line through the real add_words executor', async () => {
 		const store = fakeDeps();
 		const result = await mockTurn([], scene, 'helado = ice cream', profile, { deps: store.deps });

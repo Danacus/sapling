@@ -83,6 +83,7 @@ Teacher turn:
 {
   "reply": { "text": "Wat mag het zijn?", "reading": null },
   "translation": "What can I get you?",   // native language, hidden until tapped
+  "heard": { "text": "...", "reading": null } | null, // their message, in the script
   "correction": {
     "corrected": { "text": "...", "reading": null }, // their message, rewritten
     "note": "One word, and 'goeden-'."               // short native sentence, or null
@@ -118,6 +119,30 @@ The loosening is scoped to the reading, and that scoping is the whole safety of
 it. In the target language's own spelling every mark counts: French `ecole` for
 `école` *is* the correction, and folding it would hide the mistake. Nothing here
 touches a Latin-script target.
+
+**And the script is not a reward for getting it wrong.** A learner typing pinyin
+only ever saw 我要咖啡 — with its speaker button — when they slipped: a correct
+message drew no correction, so it drew no script either, and the one turn worth
+imitating was the one turn that showed nothing to imitate. `heard` closes that.
+It is the learner's own message written properly in the target language — the
+same sentence `corrected` would have carried, minus the claim that anything was
+wrong — asked for whenever any part of what they typed was not already in the
+script, and null when it was, or when the target is Latin-script anyway.
+
+The two fields are exclusive downstream, and `runTurn` is what makes them so:
+
+- A surviving correction already carries the sentence in the script, so `heard`
+  is dropped rather than rendered twice under one bubble.
+- When a "correction" turns out to have corrected nothing (`isNoOpCorrection` —
+  they typed the reading, and typed it right), its `corrected` line becomes the
+  `heard` line instead of being discarded with it. Models fill `corrected` and
+  leave `heard` null far more readily than the reverse, and it is the same
+  sentence either way.
+- A line identical to what they typed is dropped: they wrote the script
+  themselves, and echoing it back says nothing.
+
+Cost is one sentence per turn on a non-Latin target, which is what the feature
+is worth: without it the script is invisible on every turn the learner gets right.
 
 Schemas live in `src/lib/conversation/schemas.ts` as zod, projected to JSON
 Schema with the existing `toJsonSchema`. Model-emitted optional fields are
@@ -205,9 +230,12 @@ across unchanged, and do not refactor the chat page as part of this work.
   spans are marked inline (from `diff.ts`) with the note shown quietly
   underneath — visible, not modal, never interrupting the flow. When the markup
   ran against the reading, the corrected sentence in the target script is shown
-  under it, since that script is the thing being learned.
-  The correction arrives with the *next* teacher turn, so the learner's bubble
-  updates in place when the reply lands.
+  under it, since that script is the thing being learned. When *no* correction
+  came back, `heard` is shown in exactly the same place, through the same
+  `scriptLine` snippet and with the same speaker button — so the script and its
+  audio arrive on a turn they got right, not only on one they got wrong.
+  Both arrive with the *next* teacher turn, so the learner's bubble updates in
+  place when the reply lands.
 - `add_words` calls surface as one subtle line, the same `ActionNote` treatment
   the chat page already gives them.
 - Entry point: alongside the existing assistant link on the home page.
@@ -216,7 +244,9 @@ across unchanged, and do not refactor the chat page as part of this work.
 
 Node tests are always in mock mode and the whole app must stay developable
 without a key, so `mock.ts` follows `assistant/mock.ts`: a fixed scenario, a
-short cycle of canned teacher replies, a canned correction on a set turn, and —
+short cycle of canned teacher replies, a canned correction on one set turn, a
+canned `heard` line on another (the two are exclusive, so they need separate
+turns), and —
 so the tool path is genuinely exercised offline — a `term = meaning` line in the
 learner's message routed through the real `executeToolCall`/`add_words`.
 Deterministic: same input, same reply, same writes.
