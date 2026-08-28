@@ -113,7 +113,18 @@
 			const scene = await startConversation({ profile, topic });
 			scenario = scene;
 			// The opener is already a teacher turn; the loop takes over from there.
-			turns = scene.opener ? [{ role: 'teacher', reply: scene.opener, actions: [] }] : [];
+			// Its translation is seeded with it: replayed into the next request it is
+			// the first example the turn model sees of its own envelope.
+			turns = scene.opener
+				? [
+						{
+							role: 'teacher',
+							reply: scene.opener,
+							...(scene.openerTranslation ? { translation: scene.openerTranslation } : {}),
+							actions: []
+						}
+					]
+				: [];
 			focusComposer();
 		} catch (cause) {
 			startError = cause instanceof Error ? cause.message : 'Could not start a conversation.';

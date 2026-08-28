@@ -41,7 +41,14 @@ export const scenarioSchema = z.object({
 	learnerRole: nonEmpty,
 	firstSpeaker: z.enum(['teacher', 'learner']),
 	/** The teacher's first line — present exactly when it speaks first. */
-	opener: targetTextSchema.nullish()
+	opener: targetTextSchema.nullish(),
+	/**
+	 * The opener in the native language. Asked for here because the opener is
+	 * seeded straight into the transcript as a teacher turn, and a teacher turn
+	 * with no translation is the first thing the turn model sees of its own
+	 * output contract — see `historyMessages` in `./teacher`.
+	 */
+	openerTranslation: z.string().nullish()
 });
 
 /**
@@ -86,6 +93,8 @@ export interface Scenario {
 	learnerRole: string;
 	firstSpeaker: 'teacher' | 'learner';
 	opener?: TargetLine;
+	/** The opener in the native language; travels with it or not at all. */
+	openerTranslation?: string;
 }
 
 /** One language mistake, rewritten and optionally explained. */

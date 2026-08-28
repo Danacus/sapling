@@ -27,7 +27,8 @@ const MOCK_SCENARIO: Scenario = {
 	teacherRole: 'the person behind the counter',
 	learnerRole: 'a customer',
 	firstSpeaker: 'teacher',
-	opener: { text: '¡Hola! ¿Qué te pongo?' }
+	opener: { text: '¡Hola! ¿Qué te pongo?' },
+	openerTranslation: 'Hello! What can I get you?'
 };
 
 /** Cycled by the learner's message count, so the same input always replies the same. */

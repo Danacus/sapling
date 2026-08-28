@@ -52,12 +52,13 @@ export function buildScenarioPrompt(args: ScenarioArgs): ChatMessage[] {
 
 	const system = [
 		`You set up role-play scenes for a ${profile.level} learner of ${profile.targetLanguage} whose native language is ${profile.nativeLanguage}.`,
-		'Return one JSON object and nothing else: {"setting","teacherRole","learnerRole","firstSpeaker","opener"}.',
+		'Return one JSON object and nothing else: {"setting","teacherRole","learnerRole","firstSpeaker","opener","openerTranslation"}.',
 		`Write "setting", "teacherRole" and "learnerRole" in ${profile.nativeLanguage}: the learner has to understand the setup before the ${profile.targetLanguage} starts. "setting" is one sentence; the two roles are short noun phrases such as "the person behind the counter".`,
 		'Pick an everyday scene two people can talk their way through, with a reason to keep asking each other things. Nothing that resolves in two lines.',
 		'"firstSpeaker" is "teacher" or "learner", whichever the scene makes natural.',
 		`"opener" is your first line in ${profile.targetLanguage} as {"text","reading"} — a natural greeting or question in character, at the learner's level. Set it to null when "firstSpeaker" is "learner".`,
-		`"reading" is the Latin-script reading of "text" when ${profile.targetLanguage} is not written in the Latin script, and null when it is.`
+		`"reading" is the Latin-script reading of "text" when ${profile.targetLanguage} is not written in the Latin script, and null when it is.`,
+		`"openerTranslation" is that same opening line in ${profile.nativeLanguage}. Write it whenever there is an opener, and null only when "opener" is null.`
 	].join(' ');
 
 	const user = topic
@@ -103,16 +104,19 @@ export function parseScenario(raw: string): Scenario {
 		throw new LlmError('bad-response', 'The model returned a scene in an unexpected shape.');
 	}
 
-	const { setting, teacherRole, learnerRole, opener } = parsed.data;
+	const { setting, teacherRole, learnerRole, opener, openerTranslation } = parsed.data;
 	const line = opener ? toLine(opener) : undefined;
 	const firstSpeaker = parsed.data.firstSpeaker === 'teacher' && line ? 'teacher' : 'learner';
+	const translation = openerTranslation?.trim();
 
 	return {
 		setting,
 		teacherRole,
 		learnerRole,
 		firstSpeaker,
-		...(firstSpeaker === 'teacher' && line ? { opener: line } : {})
+		...(firstSpeaker === 'teacher' && line
+			? { opener: line, ...(translation ? { openerTranslation: translation } : {}) }
+			: {})
 	};
 }
 

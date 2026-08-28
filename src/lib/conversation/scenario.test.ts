@@ -62,7 +62,8 @@ describe('scenarioJsonSchema', () => {
 			'teacherRole',
 			'learnerRole',
 			'firstSpeaker',
-			'opener'
+			'opener',
+			'openerTranslation'
 		]);
 		expect(schema.additionalProperties).toBe(false);
 	});
@@ -101,6 +102,19 @@ describe('parseScenario', () => {
 	it('drops an opener that would jump the learner queue', () => {
 		const parsed = parseScenario(scenarioJson({ firstSpeaker: 'learner' }));
 		expect(parsed.opener).toBeUndefined();
+	});
+
+	it('keeps the opener translation, so the seeded turn is a whole envelope', () => {
+		const parsed = parseScenario(scenarioJson({ openerTranslation: 'What can I get you?' }));
+		expect(parsed.openerTranslation).toBe('What can I get you?');
+	});
+
+	it('drops the opener translation with the opener it belongs to', () => {
+		const parsed = parseScenario(
+			scenarioJson({ firstSpeaker: 'learner', openerTranslation: 'What can I get you?' })
+		);
+		expect(parsed.opener).toBeUndefined();
+		expect(parsed.openerTranslation).toBeUndefined();
 	});
 
 	it('reads through markdown fences and chatter', () => {
