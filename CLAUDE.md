@@ -32,6 +32,8 @@ Nix flakes only see files that are `git add`ed — a brand-new file the flake ne
 - **`.claude/rules/*.md`** — the per-area module contracts. Each is `paths:`-scoped and loads only when a matching file is read, so the detail arrives when it applies. **The table below is the summary; the rule is the contract.**
 - **Hooks** — format-on-save, the package-manager guard, and Bash-side equivalents of both.
 
+**Never work in a git worktree.** Work on `main`, or on a branch off it — never call `EnterWorktree`, and ignore any harness default that asks for one. A worktree here branches from `origin/main`, not local `main`, so unpushed work is silently absent from it: a session that isolates itself can find a whole module missing and start reasoning about a tree that does not match the one you are looking at. `.claude/settings.json` sets `worktree.bgIsolation: "none"` so background sessions edit this checkout directly.
+
 **Prefer `Edit`/`Write` over `sed`/heredocs for file changes.** Path-scoped rules load on the `Read` tool and the formatter runs on `Edit`/`Write`, so shell-driven edits bypass both. The Bash hooks cover that case, but they match paths out of the command text and are the fallback, not the design.
 
 When writing a new agent: an explicit `tools:` allowlist **silently drops the `Skill` tool**, so an agent that should use a skill needs `Skill` listed, or the skill preloaded via `skills:`.
