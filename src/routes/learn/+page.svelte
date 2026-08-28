@@ -186,7 +186,7 @@
 				body: 'No words yet. Lessons practise vocabulary you already have, so pick some up first — talk your way into them, or just ask.',
 				actions: [
 					{ href: '/converse', label: 'Have a conversation' },
-					{ href: '/chat', label: 'Ask your tutor' }
+					{ href: '/chat', label: 'Ask the assistant' }
 				]
 			};
 		}

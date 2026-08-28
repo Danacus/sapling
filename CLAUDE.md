@@ -52,6 +52,7 @@ Every area is a registry with one module per member; forgetting a registration f
 | `src/lib/challenges/` | Registry is a **mapped type over `ChallengeType`** — a new member fails `pnpm check` at the registry. Grading is deliberately **type-blind**. | `challenges.md` |
 | `src/lib/session/` | The orchestrator owns **all DB writes during play**. Components emit answer events; they don't write. | `session.md` |
 | `src/lib/assistant/` | Every mutation goes through the injectable `ToolContext`, never Dexie directly — that's what captures sync events. | `assistant.md` |
+| `src/lib/conversation/` | Role-play on the assistant's seam: **never imports `$lib/db`**, and exposes exactly one tool — `add_words`, reused verbatim. Corrections travel beside the spoken line, never inside it. | `assistant.md` |
 | `src/lib/db/` | Repositories are the **only** Dexie access. Every write passes `toPlain()`; a `$state` proxy throws `DataCloneError`. | `data.md` |
 | `src/lib/srs/` | Pure and deterministic: every function takes `now` (epoch ms). | `data.md` |
 | `src/lib/types.ts` | Treat as frozen; extend with **additive optional fields only**. | `data.md` |

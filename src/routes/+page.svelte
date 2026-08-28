@@ -188,6 +188,9 @@
 						<path d="M9 11.9h.01M12 11.9h.01M15 11.9h.01" />
 					</svg>
 				</a>
+				<!-- No conversation icon here: it has the card below. One of the two
+				     ways vocabulary enters the app does not belong in the corner row
+				     with settings. -->
 				<a class="gear" href="/profile" aria-label="Profile">
 					<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
 						<circle cx="12" cy="8.4" r="3.4" />
@@ -227,7 +230,7 @@
 				     disagree. -->
 				{#if pooled === 0}
 					<p class="hint centered">
-						No challenges waiting — starting a session grows a fresh set from the words you have.
+						No challenges waiting — a new lesson grows a fresh set from the words you have.
 					</p>
 				{/if}
 			{/if}
