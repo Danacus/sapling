@@ -48,7 +48,7 @@ Every area is a registry with one module per member; forgetting a registration f
 
 | Area | The invariant that bites | Rule |
 |---|---|---|
-| `src/lib/llm/` | **Stateless** — never touches the DB. `getBatch` returns `fsrsCard: null`; the caller initializes card state. | `llm.md` |
+| `src/lib/llm/` | **Stateless** — never touches the DB. `getBatch` returns challenges only: a lesson is written *about* the vocabulary it is given and introduces none. | `llm.md` |
 | `src/lib/challenges/` | Registry is a **mapped type over `ChallengeType`** — a new member fails `pnpm check` at the registry. Grading is deliberately **type-blind**. | `challenges.md` |
 | `src/lib/session/` | The orchestrator owns **all DB writes during play**. Components emit answer events; they don't write. | `session.md` |
 | `src/lib/assistant/` | Every mutation goes through the injectable `ToolContext`, never Dexie directly — that's what captures sync events. | `assistant.md` |

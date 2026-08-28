@@ -34,14 +34,11 @@ import {
 	RESERVE_GAP,
 	SESSION_LENGTH,
 	SKIP_ANSWER,
-	dedupeNewItems,
 	deriveRecentMistakes,
 	interleaveMatchRounds,
 	isListeningChallenge,
-	dropNewItemChallenges,
 	planRefill,
 	planSession,
-	remapItemIds,
 	sessionSummary,
 	spokenAnswerFor,
 	type SessionAnswer
@@ -612,11 +609,13 @@ describe('planSession', () => {
 			expect(ids(planSession(pool, items, NOW))).toEqual([]);
 		});
 
-		it('keeps a never-reviewed word out of the fallback under reviewOnly', () => {
+		it('spends the gap for a never-reviewed word exactly as for a reviewed one', () => {
 			const items = [item('never', -DAY), item('seen', -DAY, [{ at: NOW - DAY, grade: 3 }])];
 			const pool = [resting('c-never', ['never'], DAY), resting('c-seen', ['seen'], DAY)];
 
-			expect(ids(planSession(pool, items, NOW, { reviewOnly: true }))).toEqual(['c-seen']);
+			// A word the learner picked up in conversation and has never been drilled
+			// on is due work like any other; nothing about a plan sorts on history.
+			expect(ids(planSession(pool, items, NOW)).sort()).toEqual(['c-never', 'c-seen']);
 		});
 	});
 
@@ -914,39 +913,32 @@ describe('planSession', () => {
 			]);
 		});
 
-		it('respects reviewOnly past the schedule too', () => {
+		it('walks words past the schedule regardless of review history', () => {
 			const reviewed = [{ at: NOW - DAY, grade: 3 }];
 			const items = [item('never', +DAY), item('seen', +2 * DAY, reviewed)];
 			const pool = [resting('c-never', ['never'], DAY), resting('c-seen', ['seen'], DAY)];
 
-			expect(ids(planSession(pool, items, NOW, { target: 4, reviewOnly: true }))).toEqual([
-				'c-seen'
-			]);
+			// Soonest-due first, and that is the only thing that orders them.
+			expect(ids(planSession(pool, items, NOW, { target: 4 }))).toEqual(['c-never', 'c-seen']);
 		});
 	});
 
-	describe('reviewOnly', () => {
-		const reviewed = [{ at: NOW - DAY, grade: 3 }];
-
-		it('excludes a due item with no review history, but keeps one that has been reviewed', () => {
-			const items = [item('never', -DAY), item('seen', -DAY, reviewed)];
+	describe('the whole vocabulary participates', () => {
+		it('serves a never-reviewed word its due challenge like any other', () => {
+			const items = [item('never', -DAY), item('seen', -DAY, [{ at: NOW - DAY, grade: 3 }])];
 			const pool = [row('c-never', ['never']), row('c-seen', ['seen'])];
 
-			expect(ids(planSession(pool, items, NOW, { reviewOnly: true }))).toEqual(['c-seen']);
+			expect(ids(planSession(pool, items, NOW)).sort()).toEqual(['c-never', 'c-seen']);
 		});
 
-		it('excludes a never-reviewed item from freshness filler too, not just the due pass', () => {
-			const items = [item('due', -DAY, reviewed), item('never', +DAY)];
+		it('lets a never-reviewed word fill a leftover slot too', () => {
+			const items = [item('due', -DAY, [{ at: NOW - DAY, grade: 3 }]), item('never', +DAY)];
 			const pool = [row('due-1', ['due']), row('filler', ['never'], { generatedAt: NOW })];
 
-			// With reviewOnly off, `filler` would fill the second slot; with it on,
-			// the never-reviewed item's challenge must never surface, due or filler.
-			expect(ids(planSession(pool, items, NOW, { target: 2, reviewOnly: true }))).toEqual([
-				'due-1'
-			]);
+			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['due-1', 'filler']);
 		});
 
-		it('behaves exactly as before when unset', () => {
+		it('still puts a due word ahead of a fresher challenge for one that is not', () => {
 			const items = [item('due', -5 * DAY), item('fine', +5 * DAY)];
 			const pool = [
 				row('fresh', ['fine'], { generatedAt: NOW }),
@@ -966,8 +958,6 @@ describe('planRefill', () => {
 
 		expect(plan.reviewItems).toEqual([]);
 		expect(plan.recentAccuracy).toBeUndefined();
-		// Unknown accuracy ⇒ the SRS base rate of 3 new words.
-		expect(plan.newItemSlots).toBe(3);
 		expect(plan.args).toEqual({
 			profile: {
 				nativeLanguage: 'English',
@@ -976,15 +966,16 @@ describe('planRefill', () => {
 				interests: ['cooking', 'football']
 			},
 			reviewItems: [],
-			newItemSlots: 3,
 			count: BATCH_TARGET
 		});
 	});
 
-	it('reviewOnly clamps the new-item slots to zero', () => {
-		const plan = planRefill([], profile(), NOW, { reviewOnly: true });
-		expect(plan.newItemSlots).toBe(0);
-		expect(plan.args.newItemSlots).toBe(0);
+	it('never asks for new vocabulary, however well the learner is doing', () => {
+		// The batch args are the whole request; nothing in them can introduce a
+		// word, so there is no slot count to get wrong.
+		const plan = planRefill([], profile(), NOW);
+		expect(plan.args).not.toHaveProperty('newItemSlots');
+		expect(plan).not.toHaveProperty('newItemSlots');
 	});
 
 	it('carries only the profile fields the prompt needs', () => {
@@ -1022,16 +1013,19 @@ describe('planRefill', () => {
 		]);
 	});
 
-	it('sends due items as {id, term, meaning, maturity}, most overdue first', () => {
+	it('sends words as {id, term, meaning, maturity}, due first and then review-ahead', () => {
 		const items = [item('a', -1 * DAY), item('b', -5 * DAY), item('c', +2 * DAY)];
 		const plan = planRefill(items, profile(), NOW);
 
 		// `maturity` is the prompt's type hint (see `./progression`): these cards
-		// are freshly created, so both words are still 'new' and the batch will be
-		// asked for recognition about them.
+		// are freshly created, so every word is still 'new' and the batch will be
+		// asked for recognition about them. `c` is not due — it rides along because
+		// a lesson has no other source of vocabulary and must not come back empty
+		// for a learner who is caught up.
 		expect(plan.args.reviewItems).toEqual([
 			{ id: 'b', term: 'term-b', meaning: 'meaning-b', maturity: 'new' },
-			{ id: 'a', term: 'term-a', meaning: 'meaning-a', maturity: 'new' }
+			{ id: 'a', term: 'term-a', meaning: 'meaning-a', maturity: 'new' },
+			{ id: 'c', term: 'term-c', meaning: 'meaning-c', maturity: 'new' }
 		]);
 	});
 
@@ -1050,13 +1044,7 @@ describe('planRefill', () => {
 		expect(byId.get('b')).not.toBe('new');
 	});
 
-	it('paces new words off recent accuracy', () => {
-		const strong = [
-			item('a', -DAY, [
-				{ at: NOW - DAY, grade: Grade.Good },
-				{ at: NOW - DAY, grade: Grade.Easy }
-			])
-		];
+	it('sends recent accuracy to the prompt as its difficulty dial', () => {
 		const weak = [
 			item('a', -DAY, [
 				{ at: NOW - DAY, grade: Grade.Again },
@@ -1065,9 +1053,12 @@ describe('planRefill', () => {
 			])
 		];
 
-		expect(planRefill(strong, profile(), NOW).recentAccuracy).toBe(1);
-		expect(planRefill(strong, profile(), NOW).newItemSlots).toBe(5);
-		expect(planRefill(weak, profile(), NOW).newItemSlots).toBe(1);
+		// The only thing accuracy still decides: how hard the batch is written.
+		// It used to pace new-word introduction as well, and there is no such
+		// thing to pace any more.
+		const plan = planRefill(weak, profile(), NOW);
+		expect(plan.recentAccuracy).toBeCloseTo(1 / 3);
+		expect(plan.args.recentAccuracy).toBe(0.33);
 	});
 
 	it('honours maxItems, count and recentMistakes overrides', () => {
@@ -1107,14 +1098,17 @@ describe('planRefill', () => {
 		expect(items).toEqual(snapshot);
 	});
 
-	it('reacts to a card that was just reviewed (no longer due)', () => {
+	it('still writes about a card that was just reviewed, as review-ahead', () => {
+		// It is no longer due, and it is the only word there is. Excluding it would
+		// hand the model an empty lesson; a batch about it is graded normally when
+		// it is played, just for a smaller stability gain.
 		const reviewed = item('a', -DAY);
 		const plan = planRefill(
 			[{ ...reviewed, fsrsCard: reviewCard(reviewed.fsrsCard as never, Grade.Easy, NOW) }],
 			profile(),
 			NOW
 		);
-		expect(plan.args.reviewItems).toEqual([]);
+		expect(plan.args.reviewItems.map((i) => i.id)).toEqual(['a']);
 	});
 });
 
@@ -1271,117 +1265,24 @@ describe('a skipped challenge', () => {
 	});
 });
 
-describe('dedupeNewItems', () => {
-	it('drops a proposed item whose term matches an existing one case/whitespace-insensitively, and remaps its id', () => {
-		const existing = item('e1', -DAY);
-		const proposed: KnowledgeItem = { ...item('new1', 0), term: '  Term-E1  ' };
-
-		const { newItems, idRemap } = dedupeNewItems([existing], [proposed]);
-
-		expect(newItems).toEqual([]);
-		expect(idRemap.get('new1')).toBe('e1');
-	});
-
-	it('keeps a genuinely new item and leaves the remap empty', () => {
-		const existing = item('e1', -DAY);
-		const proposed = item('new1', 0);
-
-		const { newItems, idRemap } = dedupeNewItems([existing], [proposed]);
-
-		expect(newItems).toEqual([proposed]);
-		expect(idRemap.size).toBe(0);
-	});
-
-	it('is pure: it does not mutate either list it is given', () => {
-		const existing = [item('e1', -DAY)];
-		const proposed = [item('new1', 0), { ...item('new2', 0), term: 'Term-E1' }];
-		const existingSnapshot = structuredClone(existing);
-		const proposedSnapshot = structuredClone(proposed);
-
-		dedupeNewItems(existing, proposed);
-
-		expect(existing).toEqual(existingSnapshot);
-		expect(proposed).toEqual(proposedSnapshot);
-	});
-});
-
-describe('remapItemIds', () => {
-	function challenge(id: string, itemIds: string[]): Challenge {
-		return {
-			id,
-			type: 'typed-translation',
-			direction: 'toTarget',
-			prompt: 'p',
-			acceptedAnswers: ['a'],
-			itemIds
-		};
-	}
-
-	it('rewrites itemIds through the remap, leaving unmapped ids untouched', () => {
-		const idRemap = new Map([['dup', 'real']]);
-		const challenges = [challenge('c1', ['dup', 'other'])];
-
-		const remapped = remapItemIds(challenges, idRemap);
-
-		expect(remapped[0].itemIds).toEqual(['real', 'other']);
-	});
-
-	it('is a no-op (same array) when the remap is empty', () => {
-		const challenges = [challenge('c1', ['x'])];
-		expect(remapItemIds(challenges, new Map())).toBe(challenges);
-	});
-});
-
-describe('dropNewItemChallenges', () => {
-	function challenge(id: string, itemIds: string[]): Challenge {
-		return {
-			id,
-			type: 'typed-translation',
-			direction: 'toTarget',
-			prompt: 'p',
-			acceptedAnswers: ['a'],
-			itemIds
-		};
-	}
-
-	it('drops every challenge citing a banned new item, keeping the rest', () => {
-		const challenges = [
-			challenge('keep', ['existing']),
-			challenge('drop', ['existing', 'new1']),
-			challenge('drop-too', ['new2'])
-		];
-		const kept = dropNewItemChallenges(challenges, [item('new1', 0), item('new2', 0)]);
-		expect(ids(kept)).toEqual(['keep']);
-	});
-
-	it('is a no-op (same array) when there is nothing to ban', () => {
-		const challenges = [challenge('c1', ['x'])];
-		expect(dropNewItemChallenges(challenges, [])).toBe(challenges);
-	});
-});
-
 describe('planRefill → getBatch (mock mode)', () => {
 	it('runs in mock mode under node (no API key)', () => {
 		expect(isMockMode()).toBe(true);
 	});
 
-	it('produces a playable batch whose new items need card initialization', async () => {
+	it('produces a playable batch that introduces no vocabulary', async () => {
 		const items = [item('a', -2 * DAY), item('b', -DAY)];
 		const plan = planRefill(items, profile(), NOW);
 		const batch = await getBatch(plan.args);
 
 		expect(batch.challenges.length).toBeGreaterThanOrEqual(5);
-		expect(batch.newItems.length).toBeGreaterThan(0);
+		// The invariant the whole generation path now rests on: a lesson is
+		// challenges and nothing else, so `generateChallenges` has no item write to
+		// make and the collection cannot grow behind the learner's back.
+		expect(batch).not.toHaveProperty('newItems');
 
-		// The contract the engine exists to honour: the LLM layer never sets a
-		// card, so `runRefillIfNeeded` must fill one in before persisting.
-		for (const newItem of batch.newItems) {
-			expect(newItem.fsrsCard).toBeNull();
-		}
-
-		// Every challenge references a real id: either a review item we sent or
-		// one of the freshly minted new items.
-		const known = new Set([...items.map((i) => i.id), ...batch.newItems.map((i) => i.id)]);
+		// Every challenge stands on a word we actually sent.
+		const known = new Set(items.map((i) => i.id));
 		for (const challenge of batch.challenges) {
 			expect(challenge.itemIds.length).toBeGreaterThan(0);
 			for (const id of challenge.itemIds) expect(known.has(id)).toBe(true);
@@ -1391,20 +1292,9 @@ describe('planRefill → getBatch (mock mode)', () => {
 		expect(batch.usage).toEqual({ promptTokens: 0, completionTokens: 0 });
 	});
 
-	it('reviewOnly yields a batch with no new items, built on known words only', async () => {
-		const items = [item('a', -2 * DAY), item('b', -DAY)];
-		const plan = planRefill(items, profile(), NOW, { reviewOnly: true });
-		const batch = await getBatch(plan.args);
-
-		expect(batch.newItems).toEqual([]);
-		expect(batch.challenges.length).toBeGreaterThan(0);
-
-		// No new items means every challenge must stand on the words we sent.
-		const known = new Set(items.map((i) => i.id));
-		for (const challenge of batch.challenges) {
-			expect(challenge.itemIds.length).toBeGreaterThan(0);
-			for (const id of challenge.itemIds) expect(known.has(id)).toBe(true);
-		}
+	it('has nothing to build from when the learner has no words', async () => {
+		const batch = await getBatch(planRefill([], profile(), NOW).args);
+		expect(batch.challenges).toEqual([]);
 	});
 
 	it('walks the same progress steps as the real path, instantly', async () => {
@@ -1414,7 +1304,8 @@ describe('planRefill → getBatch (mock mode)', () => {
 	});
 
 	it('covers every gradeable challenge type the session renders', async () => {
-		const plan = planRefill([], profile(), NOW);
+		const items = [item('a', -2 * DAY), item('b', -DAY)];
+		const plan = planRefill(items, profile(), NOW);
 		const batch = await getBatch(plan.args);
 		const types = new Set(batch.challenges.map((c) => c.type));
 
@@ -1443,10 +1334,9 @@ describe('session walkthrough (mock batch, no database)', () => {
 		const plan = planRefill(known, profile(), NOW);
 		const batch = await getBatch(plan.args);
 
-		// What `generateChallenges` does before anything is persisted...
-		const newItems = batch.newItems.map((i) => ({ ...i, fsrsCard: newCardState(NOW) }));
-		const items = [...known, ...newItems];
-		// ...and what `addToPool` writes: a fresh, never-served batch.
+		// The vocabulary is exactly what went in — generating changes nothing about
+		// it — and what `addToPool` writes is a fresh, never-served batch.
+		const items = known;
 		const pool: ChallengeRow[] = batch.challenges.map((challenge, index) => ({
 			...challenge,
 			generatedAt: NOW + index,

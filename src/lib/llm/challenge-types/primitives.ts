@@ -19,8 +19,9 @@ import { z } from 'zod';
 export const nonEmpty = z.string().min(1);
 
 /**
- * A reference to a `KnowledgeItem`: either an existing id, or `new:<index>`
- * pointing at an entry of the batch's `newItems` array.
+ * A reference to a `KnowledgeItem` the learner already has: its id, or — for a
+ * word the model was shown by term rather than by id — the term itself. A
+ * batch introduces no vocabulary, so there is nothing else to point at.
  */
 export const itemRefSchema = nonEmpty;
 

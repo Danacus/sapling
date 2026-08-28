@@ -48,14 +48,10 @@ import type { Challenge } from '$lib/types';
 // also re-exported below, since this module is the façade for the wire format.
 import { generatedChallengeSchema } from './challenge-types';
 import { toJsonSchema } from './json-schema';
-import { nonEmpty } from './challenge-types/primitives';
 // The stored half, imported so `challengeSchema` can be composed from it. Those
 // modules are leaves — zod, `$lib/types` and the string matchers — so importing
 // *down* into them from here closes no cycle.
 import { storedChallengeSchemas } from '$lib/challenges/types';
-
-/** `new:0`, `new:12`, ... */
-export const NEW_ITEM_REF = /^new:(\d+)$/;
 
 // --------------------------------------------------------------------------
 // What the model generates: content only, direction implied by the type.
@@ -87,18 +83,15 @@ export type {
 	TargetText
 } from './challenge-types';
 
-export const generatedItemSchema = z.object({
-	term: nonEmpty,
-	meaning: nonEmpty,
-	/** Latin-script reading of `term`; null for Latin-script target languages. */
-	romanization: z.string().nullish(),
-	notes: z.string().nullish()
-});
-
-/** The full envelope the model is asked for. */
+/**
+ * The full envelope the model is asked for: challenges, and only challenges.
+ *
+ * A batch never introduces vocabulary — the learner's words arrive through the
+ * assistant's `add_words`, never through a lesson — so there is no second array
+ * here and no way for a completion to smuggle one in.
+ */
 export const generatedBatchSchema = z.object({
-	challenges: z.array(generatedChallengeSchema),
-	newItems: z.array(generatedItemSchema)
+	challenges: z.array(generatedChallengeSchema)
 });
 
 /**
@@ -107,11 +100,9 @@ export const generatedBatchSchema = z.object({
  * the whole (already paid for) batch.
  */
 export const looseBatchSchema = z.object({
-	challenges: z.array(z.unknown()).optional(),
-	newItems: z.array(z.unknown()).optional()
+	challenges: z.array(z.unknown()).optional()
 });
 
-export type GeneratedItem = z.infer<typeof generatedItemSchema>;
 export type GeneratedBatch = z.infer<typeof generatedBatchSchema>;
 
 // --------------------------------------------------------------------------

@@ -1,6 +1,12 @@
 /**
- * Batch generation: turn the learner's profile plus their due/new items into a
- * playable set of challenges.
+ * Batch generation: turn the learner's profile plus the words their schedule
+ * has reached into a playable set of challenges.
+ *
+ * A batch is drilling practice for vocabulary the learner already has, and it
+ * introduces none of its own — new words enter the collection through the
+ * assistant's `add_words` tool (`$lib/assistant`, `$lib/conversation`), which
+ * is a different job and a different conversation. Everything the model is told
+ * about words, it is told so that it can *write about* them.
  *
  * This is the token-economy heart of the app. One batched call produces a whole
  * lesson; grading happens locally for free (`$lib/validate`, `$lib/srs`) and
@@ -18,8 +24,8 @@
  * below from `./schemas` — is a projection of that same registry. The pipeline
  * it keeps for itself is the part
  * that is the same for every type: the call and its one corrective retry,
- * salvage-parsing, id minting, `new:<index>` and term-citation resolution, and
- * counting what had to be dropped.
+ * salvage-parsing, id minting, term-citation resolution, and counting what had
+ * to be dropped.
  */
 
 import { getModel } from '$lib/db/settings';
@@ -38,13 +44,11 @@ import type { ChatMessage, FetchLike, TokenUsage } from './client';
 import { labelKey, optionalString, shuffled, undefinedIfBlank } from './resolve-helpers';
 import {
 	BATCH_SCHEMA_NAME,
-	NEW_ITEM_REF,
 	batchJsonSchema,
 	generatedChallengeSchema,
-	generatedItemSchema,
 	looseBatchSchema
 } from './schemas';
-import type { GeneratedChallenge, GeneratedItem } from './schemas';
+import type { GeneratedChallenge } from './schemas';
 
 /**
  * Re-exported for callers (and tests) that knew them as part of this module
@@ -59,6 +63,7 @@ export const MAX_BATCH_CHALLENGES = 20;
 /** Below this many salvaged challenges a batch is not worth playing. */
 export const MIN_BATCH_CHALLENGES = 5;
 
+/** One word the batch is to be written about: the id, the word, its meaning. */
 export interface ReviewItemRef {
 	id: string;
 	term: string;
@@ -133,10 +138,13 @@ export type BatchProfile = Pick<
 
 export interface BatchArgs {
 	profile: BatchProfile;
-	/** Items the SRS says are due; challenges should exercise these. */
+	/**
+	 * The words this batch is for: what the SRS says is due, topped up with what
+	 * comes due soonest (see `selectSessionItems`). Every challenge should
+	 * exercise one of them — they are the subject of the lesson, and a batch has
+	 * no other source of vocabulary.
+	 */
 	reviewItems: ReviewItemRef[];
-	/** How many brand-new items the batch may introduce. */
-	newItemSlots: number;
 	recentMistakes?: RecentMistake[];
 	/**
 	 * Share of recent reviews the learner got right, 0..1 — the difficulty dial
@@ -154,13 +162,11 @@ export interface BatchArgs {
 	 */
 	topic?: string;
 	/**
-	 * Every item the learner already has, review-due or not. Three jobs:
-	 * `newItems` must not repeat any of their terms (the model only sees due
-	 * items otherwise, so it re-proposes common words and the dedupe silently
-	 * eats the batch's new-word slots); sentences should prefer drawing on them,
-	 * so new material is mostly readable instead of full of untracked strangers;
-	 * and a challenge built on one of them may cite it in `itemIds` **by its
-	 * term** — the resolver maps terms back to ids locally.
+	 * Every item the learner already has, whether or not this batch is aimed at
+	 * it. Two jobs: sentences should prefer drawing on these, so a challenge is
+	 * mostly made of words the learner can already read instead of untracked
+	 * strangers; and a challenge built on one of them may cite it in `itemIds`
+	 * **by its term** — the resolver maps terms back to ids locally.
 	 *
 	 * Only the terms travel in the prompt (a few hundred words costs well under
 	 * 1k tokens, paid only on explicit generation). The ids stay on this side:
@@ -183,8 +189,6 @@ export interface BatchOptions {
 	signal?: AbortSignal;
 	/** Injectable id factory; defaults to `crypto.randomUUID()`. */
 	newId?: () => string;
-	/** Injectable clock in epoch ms; defaults to `Date.now()`. */
-	now?: () => number;
 	/** Called as each generation step starts; see {@link ProgressStep}. */
 	onProgress?: OnProgress;
 	/**
@@ -196,12 +200,6 @@ export interface BatchOptions {
 
 export interface BatchResult {
 	challenges: Challenge[];
-	/**
-	 * Freshly introduced vocabulary. `fsrsCard` is `null`: this layer does not
-	 * depend on ts-fsrs. **The caller must initialize card state** (see
-	 * `$lib/srs`) before persisting these.
-	 */
-	newItems: KnowledgeItem[];
 	usage: TokenUsage;
 }
 
@@ -211,7 +209,7 @@ export interface BatchResult {
 
 /**
  * The system prompt. Written for tokens, not for looks: no pleasantries, one
- * inline example per challenge type, rules as bare imperatives. Roughly 1450
+ * inline example per challenge type, rules as bare imperatives. Roughly 1400
  * prompt tokens — seven types cost more to spell out than five, and the whole
  * per-field romanization block they replace is gone — unchanged across every
  * call, so it caches well on providers that support prompt caching. It buys
@@ -251,13 +249,13 @@ export interface BatchResult {
  */
 const SYSTEM_PROMPT = [
 	'You are an expert language-course author. Output one JSON object and nothing else: no prose, no markdown fences.',
-	'Shape: {"challenges":[Challenge],"newItems":[{"term","meaning","romanization","notes"}]}',
+	'Shape: {"challenges":[Challenge]}',
 	'Every Challenge has: type, itemIds, explanation (one short sentence or null). The rest of its fields depend on the type.',
 	'TargetText, written {"text":..,"reading":..}, is one string of the TARGET language plus its Latin reading: pinyin with tone marks for Mandarin, romaji for Japanese, revised romanization for Korean, the standard scheme otherwise. "reading" is ALWAYS null when the target language is written in the Latin script. Every field that is not a TargetText is plain text in the NATIVE language.',
 	'Types:',
 	...WIRE_TYPE_DEFS.map((def) => def.promptSpec),
 	'Rules:',
-	'- itemIds: the id of a reviewItem, "new:<index>" for an entry of newItems (0-based), or — for a challenge built on a word from known — that word exactly as it appears in known. Never invent anything else.',
+	'- itemIds: the id of a reviewItem, or — for a challenge built on a word from known — that word exactly as it appears in known. Never invent anything else.',
 	'- Produce exactly one challenge object per requested slot; give the same review item different types.',
 	'- Mix recognition and production across the batch.',
 	'- Match type to maturity ("maturity" on each reviewItem): new → recognize-mc, produce-mc, translate-to-native, spot-error, cloze WITH distractorWords; young adds word-order; solid adds translate-to-target and cloze without distractorWords. A new word\'s first challenges must be recognition.',
@@ -271,9 +269,7 @@ const SYSTEM_PROMPT = [
 	'- Segmentation (word-order, spot-error): one tile per WORD, never per character or syllable, and punctuation rides on the tile it touches — never a tile of its own ("吗？" is one tile, "？" alone is not a tile). For Chinese and Japanese split on word boundaries — 菜单 is one tile, not 菜 + 单. Each tile is a TargetText and carries its own reading under the usual rule.',
 	wordOrderDef.rulesSpec,
 	spotErrorDef.rulesSpec,
-	'- newItems must fit the learner level; term in the target language, meaning in the native language, romanization as in TargetText (null for Latin scripts), notes only for gender/irregularity/register.',
-	'- Exactly newItemSlots entries in newItems, and every one of them must be used by at least one challenge.',
-	"- known lists vocabulary the learner already has. newItems must NOT repeat anything in it (no exact repeats, no trivial variants of a known term) — introduce genuinely new words. Prefer building sentences out of known words plus this batch's newItems, so the learner mostly reads what they can already read.",
+	"- known is the learner's whole vocabulary and it is what you build with: every challenge is about a reviewItem, and the words around it come from known, so the learner mostly reads what they can already read. Teach nothing new — a word outside known may appear as glue when a sentence needs it, never as the thing being tested.",
 	'Difficulty calibration:',
 	'- recentAccuracy (0-1, share of recent answers the learner got right) and recentMistakes are their current form; calibrate the batch to them.',
 	'- recentAccuracy below 0.7: favour recognition — recognize-mc, produce-mc and cloze WITH distractorWords — keep answers to one or two words, and avoid full-sentence translate-to-target.',
@@ -282,7 +278,7 @@ const SYSTEM_PROMPT = [
 	'- gave "(skipped)" means the format was too demanding for that term: re-practise it with a recognition format.',
 	'Voice:',
 	'- Conversation, not flashcards: every prompt, sentence and translation is a line someone would really say — a dialogue turn, a question put to the learner, a request, a reaction, an opinion. Never an isolated textbook statement.',
-	'- With a "topic", EVERY challenge happens inside that scenario: cloze sentences are turns of that dialogue, translations are things you would really say there, newItems are words the scenario needs. "interests" then only colour word choice, never the sentence frame.',
+	'- With a "topic", EVERY challenge happens inside that scenario: cloze sentences are turns of that dialogue, translations are things you would really say there, and the reviewItems are worked into it. "interests" then only colour word choice, never the sentence frame.',
 	'- "about" is the learner in their own words. Set scenarios in their life — their city, work, people, tastes — and let it colour word choice and examples. Never recite it back to them, never contradict it, and "topic" still outranks it.',
 	'- Banned: "I like <interest>", "<interest> is fun", any sentence whose only content is that the learner likes their interest, and reusing a sentence frame twice in one batch. Vary speaker, question vs statement, and register for the level.',
 	'- explanation: one line of usage or culture (register, politeness, word order) when non-obvious, written in the NATIVE language (target-language words may be quoted inside it); null when it would only restate the answer.'
@@ -292,9 +288,12 @@ const SYSTEM_PROMPT = [
 	.filter((line): line is string => line !== undefined)
 	.join('\n');
 
-/** Default batch size: two challenges per review item, two per new item. */
-export function defaultChallengeCount(reviewItems: number, newItemSlots: number): number {
-	return Math.min(MAX_BATCH_CHALLENGES, Math.max(1, reviewItems * 2 + newItemSlots * 2));
+/**
+ * Default batch size: two challenges per word the batch is about — one
+ * recognition, one production, which is the shape a session wants to serve.
+ */
+export function defaultChallengeCount(reviewItems: number): number {
+	return Math.min(MAX_BATCH_CHALLENGES, Math.max(1, reviewItems * 2));
 }
 
 /**
@@ -302,8 +301,8 @@ export function defaultChallengeCount(reviewItems: number, newItemSlots: number)
  * — no field labels in prose, no restating of the rules.
  */
 export function buildBatchPrompt(args: BatchArgs): ChatMessage[] {
-	const { profile, reviewItems, newItemSlots } = args;
-	const count = args.count ?? defaultChallengeCount(reviewItems.length, newItemSlots);
+	const { profile, reviewItems } = args;
+	const count = args.count ?? defaultChallengeCount(reviewItems.length);
 
 	const topic = args.topic?.trim();
 	const about = profile.about?.trim().slice(0, MAX_ABOUT_CHARS);
@@ -321,7 +320,6 @@ export function buildBatchPrompt(args: BatchArgs): ChatMessage[] {
 		// {@link MAX_ABOUT_CHARS}.
 		...(about ? { about } : {}),
 		challengeCount: Math.min(count, MAX_BATCH_CHALLENGES),
-		newItemSlots,
 		reviewItems: reviewItems.map((i) => ({
 			id: i.id,
 			t: i.term,
@@ -356,7 +354,7 @@ export function buildBatchPrompt(args: BatchArgs): ChatMessage[] {
  * from the registry in the same order as the prompt's `Types:` block.
  */
 export const CORRECTIVE_INSTRUCTION =
-	'Your previous reply was rejected. Return ONLY a raw JSON object {"challenges":[...],"newItems":[...]}, no fences, no commentary. Every challenge needs type, itemIds and its own fields: ' +
+	'Your previous reply was rejected. Return ONLY a raw JSON object {"challenges":[...]}, no fences, no commentary. Every challenge needs type, itemIds and its own fields: ' +
 	WIRE_TYPE_DEFS.map((def) => def.correctiveSpec).join(', ') +
 	'. Every target-language slot is a TargetText object {"text","reading"}, reading null for Latin scripts; distractors is exactly 3 entries.';
 
@@ -383,7 +381,6 @@ export function stripFences(text: string): string {
 
 export interface ParsedBatch {
 	challenges: GeneratedChallenge[];
-	newItems: GeneratedItem[];
 	/** Entries thrown away because they failed validation. */
 	dropped: number;
 }
@@ -418,14 +415,7 @@ export function parseBatch(raw: string): ParsedBatch {
 		else dropped++;
 	}
 
-	const newItems: GeneratedItem[] = [];
-	for (const entry of envelope.data.newItems ?? []) {
-		const parsed = generatedItemSchema.safeParse(entry);
-		if (parsed.success) newItems.push(parsed.data);
-		else dropped++;
-	}
-
-	return { challenges, newItems, dropped };
+	return { challenges, dropped };
 }
 
 // --------------------------------------------------------------------------
@@ -461,8 +451,7 @@ export function knownTermIndex(args: BatchArgs): Map<string, string> {
 
 export interface ResolveOptions {
 	newId?: () => string;
-	now?: () => number;
-	/** Ids the model was allowed to reference. Omit to accept any non-`new:` id. */
+	/** Ids the model was allowed to reference. Omit to accept any id it gives. */
 	knownItemIds?: Iterable<string>;
 	/**
 	 * Term → item id, for references the model makes *by term*. Known words
@@ -477,7 +466,6 @@ export interface ResolveOptions {
 
 export interface ResolvedBatch {
 	challenges: Challenge[];
-	newItems: KnowledgeItem[];
 	/** Challenges discarded because none of their itemIds resolved. */
 	dropped: number;
 }
@@ -503,9 +491,8 @@ function resolveOne(generated: GeneratedChallenge, ctx: ResolveContext): Challen
 
 /**
  * Turns validated model output into domain objects: mints challenge ids,
- * materializes `newItems` as `KnowledgeItem`s, rewrites every `new:<index>`
- * reference to the real id — and assembles the presentation the model was never
- * asked for.
+ * resolves every `itemIds` reference onto a word the learner actually has —
+ * and assembles the presentation the model was never asked for.
  *
  * That assembly is where the wire format pays off. The model supplies content;
  * this function decides direction, option order, the position of the blank and
@@ -514,51 +501,28 @@ function resolveOne(generated: GeneratedChallenge, ctx: ResolveContext): Challen
  * word behind the blank, a reading under the wrong option) cannot be expressed
  * in the first place.
  *
+ * **Nothing here creates vocabulary.** A reference that is neither a known id
+ * nor a known term is simply not carried, and a challenge left with no
+ * references at all is dropped — which is what keeps a batch from pooling a row
+ * that points at a word the database has never heard of.
+ *
  * Salvage philosophy is unchanged: a cosmetic defect — a missing or partial
  * reading, a word bank that dedupes down to nothing — degrades silently, and
  * only a structural failure (no resolvable `itemIds`) costs a challenge.
- *
- * The returned `KnowledgeItem.fsrsCard` is `null` — a deliberate placeholder.
- * The caller owns card initialization (`$lib/srs`); this layer stays free of
- * ts-fsrs.
  *
  * Mock generation runs through this exact function, so the mock exercises the
  * real code path.
  */
 export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): ResolvedBatch {
-	const now = options.now?.() ?? Date.now();
 	const known = options.knownItemIds ? new Set(options.knownItemIds) : undefined;
 	const rng = options.rng ?? Math.random;
 
-	const newItems: KnowledgeItem[] = batch.newItems.map((item) => ({
-		id: makeId(options.newId),
-		kind: 'vocab',
-		term: item.term.trim(),
-		meaning: item.meaning.trim(),
-		...optionalString('romanization', item.romanization),
-		...(undefinedIfBlank(item.notes) ? { notes: undefinedIfBlank(item.notes) } : {}),
-		// Placeholder: the caller initializes real FSRS card state.
-		fsrsCard: null,
-		introducedAt: now,
-		history: []
-	}));
-
-	const usedNewIndexes = new Set<number>();
 	const challenges: Challenge[] = [];
 	let dropped = 0;
 
 	for (const generated of batch.challenges) {
 		const itemIds: string[] = [];
 		for (const ref of generated.itemIds) {
-			const placeholder = NEW_ITEM_REF.exec(ref);
-			if (placeholder) {
-				const index = Number.parseInt(placeholder[1], 10);
-				const item = newItems[index];
-				if (!item) continue; // Dangling placeholder.
-				usedNewIndexes.add(index);
-				itemIds.push(item.id);
-				continue;
-			}
 			// A term citation: known words reach the model without ids, so "this
 			// challenge is about 护照" can only be said with the word itself.
 			const byTerm = options.termToId?.get(termKey(ref));
@@ -592,10 +556,7 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
 		challenges.push(resolved);
 	}
 
-	// Never introduce vocabulary the lesson does not actually practise.
-	const keptItems = newItems.filter((_, index) => usedNewIndexes.has(index));
-
-	return { challenges, newItems: keptItems, dropped };
+	return { challenges, dropped };
 }
 
 // --------------------------------------------------------------------------
@@ -610,7 +571,8 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
  * survive, one corrective retry is made, after which it gives up with
  * `LlmError('bad-response')`.
  *
- * Remember: returned `newItems` carry `fsrsCard: null` for the caller to fill.
+ * It returns challenges and nothing else: the caller pools them, and no part of
+ * the learner's vocabulary is touched by generating a lesson.
  */
 export async function generateBatch(
 	args: BatchArgs,
@@ -620,7 +582,7 @@ export async function generateBatch(
 	progress?.({ id: 'build-prompt', label: 'Building the prompt' });
 	const messages = buildBatchPrompt(args);
 	const model = opts.model?.trim() || getModel();
-	const requested = args.count ?? defaultChallengeCount(args.reviewItems.length, args.newItemSlots);
+	const requested = args.count ?? defaultChallengeCount(args.reviewItems.length);
 	// A two-challenge batch can never reach five; do not demand the impossible.
 	const minimum = Math.min(MIN_BATCH_CHALLENGES, Math.min(requested, MAX_BATCH_CHALLENGES));
 	const knownItemIds = args.reviewItems.map((i) => i.id);
@@ -658,7 +620,6 @@ export async function generateBatch(
 		try {
 			resolved = resolveBatch(parseBatch(completion.content), {
 				newId: opts.newId,
-				now: opts.now,
 				knownItemIds,
 				termToId,
 				rng: opts.rng
@@ -672,7 +633,7 @@ export async function generateBatch(
 		}
 
 		if (resolved.challenges.length >= minimum) {
-			return { challenges: resolved.challenges, newItems: resolved.newItems, usage };
+			return { challenges: resolved.challenges, usage };
 		}
 		lastError = new LlmError(
 			'bad-response',

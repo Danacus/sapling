@@ -209,10 +209,29 @@ describe('selectSessionItems', () => {
 		expect(reviewItems.map((i) => i.id)).toEqual(['b', 'c', 'a']);
 	});
 
-	it('excludes items not yet due', () => {
-		const items = [dueItem('due', NOW - DAY), dueItem('future', NOW + DAY)];
+	it('puts due work ahead of everything not yet due', () => {
+		const items = [dueItem('future', NOW + DAY), dueItem('due', NOW - DAY)];
 		const { reviewItems } = selectSessionItems(items, { now: NOW });
-		expect(reviewItems.map((i) => i.id)).toEqual(['due']);
+		expect(reviewItems.map((i) => i.id)).toEqual(['due', 'future']);
+	});
+
+	it('tops up with the soonest-due items when the schedule owes less than maxItems', () => {
+		// Generation introduces no vocabulary, so a learner who is caught up would
+		// otherwise hand the model nothing to write a lesson about.
+		const items = [
+			dueItem('later', NOW + 9 * DAY),
+			dueItem('soon', NOW + 1 * DAY),
+			dueItem('owed', NOW - DAY)
+		];
+		const { reviewItems } = selectSessionItems(items, { now: NOW, maxItems: 2 });
+		expect(reviewItems.map((i) => i.id)).toEqual(['owed', 'soon']);
+	});
+
+	it('builds a lesson out of never-reviewed words alone', () => {
+		// A word added yesterday by the assistant: card due now, no history.
+		const items = [item({ id: 'fresh', fsrsCard: newCardState(NOW), history: [] })];
+		const { reviewItems } = selectSessionItems(items, { now: NOW });
+		expect(reviewItems.map((i) => i.id)).toEqual(['fresh']);
 	});
 
 	it('caps review items at maxItems (default 12)', () => {
@@ -231,49 +250,10 @@ describe('selectSessionItems', () => {
 		expect(reviewItems).toHaveLength(2);
 	});
 
-	it('defaults newItemSlots to 3 when recentAccuracy is undefined', () => {
-		const { newItemSlots } = selectSessionItems([], { now: NOW });
-		expect(newItemSlots).toBe(3);
-	});
-
-	it('raises newItemSlots to 5 at the >=0.85 boundary', () => {
-		expect(selectSessionItems([], { now: NOW, recentAccuracy: 0.85 }).newItemSlots).toBe(5);
-		expect(selectSessionItems([], { now: NOW, recentAccuracy: 1 }).newItemSlots).toBe(5);
-	});
-
-	it('stays at the base rate just below the 0.85 boundary', () => {
-		expect(selectSessionItems([], { now: NOW, recentAccuracy: 0.84999 }).newItemSlots).toBe(3);
-	});
-
-	it('lowers newItemSlots to 1 at the <=0.6 boundary', () => {
-		expect(selectSessionItems([], { now: NOW, recentAccuracy: 0.6 }).newItemSlots).toBe(1);
-		expect(selectSessionItems([], { now: NOW, recentAccuracy: 0 }).newItemSlots).toBe(1);
-	});
-
-	it('stays at the base rate just above the 0.6 boundary', () => {
-		expect(selectSessionItems([], { now: NOW, recentAccuracy: 0.60001 }).newItemSlots).toBe(3);
-	});
-
-	it('reduces newItemSlots so total stays within maxItems + 3', () => {
-		const items = Array.from({ length: 12 }, (_, i) => dueItem(`item-${i}`, NOW - (i + 1) * DAY));
-		const { reviewItems, newItemSlots } = selectSessionItems(items, {
-			now: NOW,
-			maxItems: 12,
-			recentAccuracy: 0.9
-		});
-		expect(reviewItems).toHaveLength(12);
-		// base would be 5, but 12 + 5 > 12 + 3, so it's clamped to 3.
-		expect(newItemSlots).toBe(3);
-	});
-
-	it('never returns a negative newItemSlots when review items already exceed the budget', () => {
-		const items = Array.from({ length: 20 }, (_, i) => dueItem(`item-${i}`, NOW - (i + 1) * DAY));
-		const { newItemSlots } = selectSessionItems(items, {
-			now: NOW,
-			maxItems: 12,
-			recentAccuracy: 0.6
-		});
-		expect(newItemSlots).toBeGreaterThanOrEqual(0);
+	it('returns nothing at all for an empty collection', () => {
+		// The honest answer, and the reason the learn screen has a "no words yet"
+		// message: there is no lesson to build.
+		expect(selectSessionItems([], { now: NOW }).reviewItems).toEqual([]);
 	});
 });
 

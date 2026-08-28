@@ -31,8 +31,8 @@ export interface WirePayload {
 
 /**
  * The type-agnostic half of a stored challenge, already worked out by the
- * pipeline: the minted id, the `itemIds` with `new:<index>` placeholders and
- * term citations resolved, and the explanation normalized to absent-or-string.
+ * pipeline: the minted id, the `itemIds` with their term citations resolved to
+ * real item ids, and the explanation normalized to absent-or-string.
  *
  * A resolver spreads this first and then writes its own fields on top; it never
  * mints an id and never re-reads `generated.itemIds`.
@@ -123,6 +123,10 @@ export interface WireTypeDef<T extends WirePayload = WirePayload> {
 	 * The canned examples practice mode plays, in the wire format — they go
 	 * through the *same* parse and resolve path as a paid batch, so a fixture is
 	 * a schema conformance test as much as it is content.
+	 *
+	 * A fixture cites its subject in `itemIds` **by term** — `'la cuenta'`, not
+	 * an id, since a scenario cannot know the learner's ids. The mock binds those
+	 * terms to real items before resolving; see `mock.ts`.
 	 */
 	readonly fixtures: WireTypeFixtures<T>;
 	/**

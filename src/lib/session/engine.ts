@@ -29,8 +29,7 @@ import {
 	recentResults,
 	recordServe,
 	reportChallenge as flagChallengeReported,
-	updateItemAfterReview,
-	upsertItems
+	updateItemAfterReview
 } from '$lib/db';
 import type { ChallengeRow } from '$lib/db';
 import { challengeOf } from '$lib/db';
@@ -312,13 +311,6 @@ export interface PlanSessionOptions {
 	target?: number;
 	/** Hard ceiling, whatever `target` says. Defaults to {@link SESSION_LENGTH}. */
 	limit?: number;
-	/**
-	 * Restrict the plan to words the learner has already been reviewed on at
-	 * least once (`item.history.length > 0`). Brand-new vocabulary — freshly
-	 * generated or simply never played — is excluded entirely rather than
-	 * deprioritized, both from the due pass and from freshness filler.
-	 */
-	reviewOnly?: boolean;
 }
 
 /** `fsrsCard` is `unknown` on the domain type; a missing card means "brand new". */
@@ -339,10 +331,10 @@ function cardOf(item: KnowledgeItem): FsrsCardState | null {
  * practice. Nothing here is about *timing* — that is the negotiable half, and
  * it lives in its own predicate for exactly that reason.
  */
-function isPlayable(row: ChallengeRow, allowedItemIds: Set<string>): boolean {
+function isPlayable(row: ChallengeRow, known: Set<string>): boolean {
 	if (row.reported) return false;
 	if (row.itemIds.length === 0) return false;
-	return row.itemIds.every((id) => allowedItemIds.has(id));
+	return row.itemIds.every((id) => known.has(id));
 }
 
 /**
@@ -355,16 +347,16 @@ function isRested(row: ChallengeRow, now: number): boolean {
 }
 
 /**
- * The items a plan may draw on: everything, or — under {@link
- * PlanSessionOptions.reviewOnly} — only items with at least one review in
- * their history. Shared by {@link isPlayable}'s pool filter and {@link
- * planSession}'s item walk, so review-only excludes new vocabulary from every
- * pass, not just one of them.
+ * Every word the learner has, as a set of ids.
+ *
+ * The learner's whole vocabulary participates in every session — a word added
+ * yesterday and never reviewed is as eligible as one they have seen ten times,
+ * because a session *is* the FSRS review of what they have. So this is not a
+ * filter, and the set exists only for the lookup: {@link isPlayable} uses it to
+ * check that a pooled challenge's words all still resolve.
  */
-function allowedItemIds(items: KnowledgeItem[], reviewOnly: boolean): Set<string> {
-	return new Set(
-		items.filter((item) => !reviewOnly || item.history.length > 0).map((item) => item.id)
-	);
+function knownItemIds(items: KnowledgeItem[]): Set<string> {
+	return new Set(items.map((item) => item.id));
 }
 
 /**
@@ -380,9 +372,9 @@ function byRecency(a: ChallengeRow, b: ChallengeRow): number {
 /**
  * Ranks two rested challenges by how much we want to serve them *next*.
  *
- * Never-served first (a fresh batch — and the new vocabulary in it — has to be
- * able to surface at all), newest generation first within those so the batch
- * the learner just paid for leads; then served ones by {@link byRecency}.
+ * Never-served first (a fresh batch has to be able to surface at all), newest
+ * generation first within those so the batch the learner just paid for leads;
+ * then served ones by {@link byRecency}.
  */
 function byFreshness(a: ChallengeRow, b: ChallengeRow): number {
 	const aNew = a.lastServedAt === null;
@@ -433,10 +425,10 @@ function bucketByItem(rows: ChallengeRow[]): Map<string, ChallengeRow[]> {
 function planBoard(
 	pool: ChallengeRow[],
 	items: KnowledgeItem[],
-	allowed: Set<string>,
+	known: Set<string>,
 	now: number
 ): PlanBoard {
-	const playable = pool.filter((row) => isPlayable(row, allowed));
+	const playable = pool.filter((row) => isPlayable(row, known));
 	const rested = playable.filter((row) => isRested(row, now)).sort(byFreshness);
 	const resting = playable.filter((row) => !isRested(row, now)).sort(byRecency);
 
@@ -589,9 +581,9 @@ export function planSession(
 	const target = targetSlots(opts);
 	if (target === 0) return [];
 
-	const allowed = allowedItemIds(items, opts.reviewOnly ?? false);
-	const board = planBoard(pool, items, allowed, now);
-	const walk = items.filter((item) => allowed.has(item.id)).sort(byDueDate(now));
+	const known = knownItemIds(items);
+	const board = planBoard(pool, items, known, now);
+	const walk = [...items].sort(byDueDate(now));
 	const owed = walk.filter((item) => owesReview(item, now));
 	const ahead = walk.filter((item) => !owesReview(item, now));
 
@@ -649,11 +641,9 @@ export function planSession(
 export interface RefillPlan {
 	/** Exactly the argument object `getBatch` expects. */
 	args: BatchArgs;
-	/** The due items the batch will exercise (full objects, for the UI). */
+	/** The words the batch will be written about (full objects, for the UI). */
 	reviewItems: KnowledgeItem[];
-	/** How many brand-new words the batch may introduce. */
-	newItemSlots: number;
-	/** Trailing-week accuracy that paced `newItemSlots`; `undefined` on day one. */
+	/** Trailing-week accuracy sent as the prompt's difficulty dial; `undefined` on day one. */
 	recentAccuracy: number | undefined;
 }
 
@@ -707,7 +697,7 @@ export function deriveRecentMistakes(
 }
 
 export interface PlanRefillOptions {
-	/** Cap on due items pulled into one batch. Defaults to the SRS default (12). */
+	/** Cap on words pulled into one batch. Defaults to the SRS default (12). */
 	maxItems?: number;
 	/** Challenges requested. Defaults to {@link BATCH_TARGET}. */
 	count?: number;
@@ -726,18 +716,16 @@ export interface PlanRefillOptions {
 	 * added to {@link BatchArgs} when it carries real content.
 	 */
 	topic?: string;
-	/**
-	 * Generate review material only: `newItemSlots` is clamped to 0, so the
-	 * batch builds fresh challenges out of vocabulary the learner already has
-	 * and introduces nothing. The generation-side twin of {@link
-	 * PlanSessionOptions.reviewOnly} — the learn screen sets both from the one
-	 * toggle.
-	 */
-	reviewOnly?: boolean;
 }
 
 /**
  * Turns the learner's whole item collection into one batch request.
+ *
+ * A batch is written *about* vocabulary the learner already has and introduces
+ * none of its own: new words arrive through the assistant and conversation
+ * mode. {@link selectSessionItems} therefore decides the whole subject matter —
+ * due work first, review-ahead behind it — and a learner with no words at all
+ * has no lesson to generate.
  *
  * Pure: no clock, no database, no network. `now` is passed in so the SRS
  * decisions are reproducible in tests.
@@ -748,17 +736,13 @@ export function planRefill(
 	now: number,
 	opts: PlanRefillOptions = {}
 ): RefillPlan {
+	// Not a pacing input any more — it travels to the prompt as the difficulty
+	// dial and nothing else. See `accuracyFromHistory`.
 	const recentAccuracy = accuracyFromHistory(items, { now });
-	const selected = selectSessionItems(items, {
+	const { reviewItems } = selectSessionItems(items, {
 		now,
-		recentAccuracy,
 		...(opts.maxItems === undefined ? {} : { maxItems: opts.maxItems })
 	});
-	const reviewItems = selected.reviewItems;
-	// Clamped after pacing rather than inside it: the pacing answers "how much
-	// new material can this learner absorb", review-only answers "they declined
-	// any at all" — different questions, and the second one always wins.
-	const newItemSlots = opts.reviewOnly ? 0 : selected.newItemSlots;
 
 	const topic = opts.topic?.trim();
 
@@ -788,13 +772,12 @@ export function planRefill(
 			meaning: item.meaning,
 			maturity: maturityOf(item, now)
 		})),
-		newItemSlots,
 		count: opts.count ?? BATCH_TARGET,
-		// The whole vocabulary, not just the due slice: without it the model
-		// re-proposes words the learner already has and the dedupe silently eats
-		// the batch's new-word slots ("asked for 3 new words, got 1"). The ids
-		// ride along for the resolver's term index; only the terms reach the
-		// prompt.
+		// The whole vocabulary, not just the slice the batch is aimed at: it is
+		// what the model may build sentences out of, so a challenge about a due
+		// word can be a real sentence made of words the learner can already read
+		// rather than one padded with strangers. The ids ride along for the
+		// resolver's term index; only the terms reach the prompt.
 		...(items.length
 			? { knownItems: items.map((item) => ({ id: item.id, term: item.term })) }
 			: {}),
@@ -808,7 +791,7 @@ export function planRefill(
 		...(topic ? { topic } : {})
 	};
 
-	return { args, reviewItems, newItemSlots, recentAccuracy };
+	return { args, reviewItems, recentAccuracy };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -818,12 +801,10 @@ export function planRefill(
 /** What one generation run produced, for the UI's status area and dev console. */
 export interface GenerateInfo {
 	addedChallenges: number;
-	/** Freshly introduced words, already persisted with initialized card state. */
-	newItems: KnowledgeItem[];
 	usage: TokenUsage;
 	/** True when the offline mock produced this batch (no key configured). */
 	mock: boolean;
-	/** Every item known afterwards — the match-pairs pool. */
+	/** The vocabulary the batch was written about — unchanged by the run. */
 	items: KnowledgeItem[];
 	plan: RefillPlan;
 }
@@ -835,8 +816,6 @@ export interface GenerateOptions {
 	count?: number;
 	/** Forwarded to {@link planRefill}; see {@link PlanRefillOptions.topic}. */
 	topic?: string;
-	/** Forwarded to {@link planRefill}; see {@link PlanRefillOptions.reviewOnly}. */
-	reviewOnly?: boolean;
 	/**
 	 * Called as each phase of generation starts, so the learn screen can show
 	 * what is being waited on. Steps are reported, not measured: the caller times
@@ -850,76 +829,6 @@ function termKey(term: string): string {
 	return term.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-/** What {@link dedupeNewItems} decided about one batch of freshly proposed vocabulary. */
-export interface DedupeResult {
-	/** Proposed items that are genuinely new — safe to persist. */
-	newItems: KnowledgeItem[];
-	/** Proposed-item id → existing item id, for every proposed item dropped as a duplicate. */
-	idRemap: Map<string, string>;
-}
-
-/**
- * Filters newly proposed vocabulary against what the learner already has.
- *
- * The LLM only sees *due* items, so nothing stops it from re-proposing a word
- * the learner already knows under a fresh id (a different due item nudged the
- * model toward a word it had already taught). Persisting that would fork the
- * vocabulary into two entries with separate SRS histories, so any proposed
- * item whose `term` matches an existing item case/whitespace-insensitively is
- * dropped here instead, with its id remapped to the existing item's.
- *
- * Pure: no clock, no database.
- */
-export function dedupeNewItems(
-	existingItems: KnowledgeItem[],
-	proposed: KnowledgeItem[]
-): DedupeResult {
-	const existingByTerm = new Map<string, KnowledgeItem>();
-	for (const item of existingItems) existingByTerm.set(termKey(item.term), item);
-
-	const newItems: KnowledgeItem[] = [];
-	const idRemap = new Map<string, string>();
-	for (const item of proposed) {
-		const existing = existingByTerm.get(termKey(item.term));
-		if (existing) idRemap.set(item.id, existing.id);
-		else newItems.push(item);
-	}
-	return { newItems, idRemap };
-}
-
-/**
- * Drops every challenge that cites one of `newItems` — the enforcement half of
- * review-only generation. The prompt asks for exactly zero new items, but a
- * model that proposes some anyway must not smuggle them in: the items are
- * discarded before persisting, and the challenges built on them have to go
- * too, because a kept one would cite an id that never reaches the database and
- * sit in the pool forever as an unplayable row.
- *
- * Pure: no clock, no database.
- */
-export function dropNewItemChallenges(
-	challenges: Challenge[],
-	newItems: KnowledgeItem[]
-): Challenge[] {
-	if (newItems.length === 0) return challenges;
-	const banned = new Set(newItems.map((item) => item.id));
-	return challenges.filter((challenge) => !challenge.itemIds.some((id) => banned.has(id)));
-}
-
-/**
- * Rewrites every `itemIds` entry through `idRemap`, so challenges that
- * referenced a proposed item {@link dedupeNewItems} dropped now point at the
- * existing item instead. A no-op (same array, not a copy) when the remap is
- * empty, which is the common case.
- */
-export function remapItemIds(challenges: Challenge[], idRemap: Map<string, string>): Challenge[] {
-	if (idRemap.size === 0) return challenges;
-	return challenges.map((challenge) => ({
-		...challenge,
-		itemIds: challenge.itemIds.map((id) => idRemap.get(id) ?? id)
-	}));
-}
-
 /**
  * Writes one new lesson into the pool. The learner asked for this.
  *
@@ -929,11 +838,14 @@ export function remapItemIds(challenges: Challenge[], idRemap: Map<string, strin
  * background — a session can be played from existing material while it is in
  * flight, and the batch simply shows up in the pool for next time.
  *
- * Order matters: new items are persisted *with real FSRS card state* before the
- * challenges that reference them are pooled, so the pool can never point at an
- * item that does not exist yet (which {@link planSession} would then discard as
- * ineligible). `getBatch` hands back `fsrsCard: null` by design — the LLM layer
- * must not depend on ts-fsrs — so initializing it is this function's job.
+ * **It writes challenges and nothing else.** A lesson is drilling practice for
+ * vocabulary the learner already has, so nothing here touches the item table:
+ * new words are added deliberately, by the learner and the assistant, through
+ * `add_words` (`$lib/assistant`, `$lib/conversation`). That is why the batch
+ * needs no dedupe pass and no id remapping — there is no proposed vocabulary to
+ * fork the collection with — and why a challenge citing an id the resolver
+ * could not place is simply dropped over in `resolveBatch` rather than dragging
+ * an item into the database behind it.
  *
  * `LlmError` is deliberately **not** caught: its `message` is already written
  * for a human, and the learn screen renders it inline with a retry button.
@@ -963,8 +875,7 @@ export async function generateChallenges(
 		recentChallenges,
 		...(opts.maxItems === undefined ? {} : { maxItems: opts.maxItems }),
 		...(opts.count === undefined ? {} : { count: opts.count }),
-		...(opts.topic === undefined ? {} : { topic: opts.topic }),
-		...(opts.reviewOnly === undefined ? {} : { reviewOnly: opts.reviewOnly })
+		...(opts.topic === undefined ? {} : { topic: opts.topic })
 	});
 
 	const batch = await getBatch(plan.args, {
@@ -972,36 +883,14 @@ export async function generateChallenges(
 		...(progress ? { onProgress: progress } : {})
 	});
 
-	// The model can re-propose a word the learner already knows (it only sees
-	// due items, not the whole collection); drop those before they fork the
-	// vocabulary, and point any challenge that referenced one at the real item.
-	const { newItems: deduped, idRemap } = dedupeNewItems(items, batch.newItems);
-	const remapped = remapItemIds(batch.challenges, idRemap);
-
-	// Review-only is a promise, not a request: whatever new vocabulary the
-	// model proposed despite the zero slots is discarded, challenges included.
-	// Challenges remapped onto *existing* items survive — the model "reusing" a
-	// known word is exactly what this mode wants.
-	const proposed = opts.reviewOnly ? [] : deduped;
-	const challenges = opts.reviewOnly ? dropNewItemChallenges(remapped, deduped) : remapped;
-
-	// The LLM layer leaves `fsrsCard` null on purpose; give every new word a
-	// real, due-now card before it reaches the database.
-	const newItems: KnowledgeItem[] = proposed.map((item) => ({
-		...item,
-		fsrsCard: newCardState(now)
-	}));
-
 	progress?.({ id: 'save', label: 'Saving your lesson' });
-	await upsertItems(newItems);
-	await addToPool(challenges, now, opts.topic);
+	await addToPool(batch.challenges, now, opts.topic);
 
 	return {
-		addedChallenges: challenges.length,
-		newItems,
+		addedChallenges: batch.challenges.length,
 		usage: batch.usage,
 		mock,
-		items: [...items, ...newItems],
+		items,
 		plan
 	};
 }
@@ -1056,9 +945,9 @@ export async function startSession(opts: StartSessionOptions = {}): Promise<Sess
 	const [pool, items] = await Promise.all([getPool(), getAllItems()]);
 	const challenges = planSession(pool, items, now, planOpts);
 
-	const allowed = allowedItemIds(items, planOpts.reviewOnly ?? false);
-	const readyCount = pool.filter((row) => isPlayable(row, allowed) && isRested(row, now)).length;
-	const dueCount = items.filter((item) => allowed.has(item.id) && owesReview(item, now)).length;
+	const known = knownItemIds(items);
+	const readyCount = pool.filter((row) => isPlayable(row, known) && isRested(row, now)).length;
+	const dueCount = items.filter((item) => owesReview(item, now)).length;
 
 	return {
 		challenges,

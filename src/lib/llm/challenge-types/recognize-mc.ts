@@ -48,7 +48,7 @@ export const recognizeMcDef = {
 					// bare vocabulary lookup, so the default "What does this mean?"
 					// heading undersells it.
 					instruction: 'What is the customer asking for?',
-					itemIds: ['new:0'],
+					itemIds: ['la cuenta'],
 					explanation: 'Waiters are addressed with "usted", hence "trae" rather than "traes".'
 				}
 			}
@@ -62,7 +62,7 @@ export const recognizeMcDef = {
 					correctMeaning: 'the menu',
 					distractors: ['the bill', 'the chopsticks', 'the waiter'],
 					instruction: null,
-					itemIds: ['new:0'],
+					itemIds: ['菜单'],
 					explanation: null
 				}
 			}

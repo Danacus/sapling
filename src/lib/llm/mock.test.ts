@@ -22,8 +22,7 @@ const args: BatchArgs = {
 	reviewItems: [
 		{ id: 'i1', term: 'el perro', meaning: 'the dog' },
 		{ id: 'i2', term: 'la canción', meaning: 'the song' }
-	],
-	newItemSlots: 2
+	]
 };
 
 describe('isMockMode', () => {
@@ -43,7 +42,12 @@ describe('mockBatchCompletion', () => {
 	it('loses nothing to the real parser', () => {
 		const parsed = parseBatch(mockBatchCompletion(args));
 		expect(parsed.dropped).toBe(0);
-		expect(parsed.newItems).toHaveLength(2);
+		expect(parsed.challenges.length).toBeGreaterThan(0);
+	});
+
+	it('offers the model nothing to introduce vocabulary with', () => {
+		const json = JSON.parse(stripFences(mockBatchCompletion(args))) as Record<string, unknown>;
+		expect(Object.keys(json)).toEqual(['challenges']);
 	});
 });
 
@@ -57,12 +61,11 @@ describe('mockBatch', () => {
 		}
 	});
 
-	it('honors zero new-item slots: review-only batches introduce nothing', () => {
-		const reviewOnly = mockBatch({ ...args, newItemSlots: 0 });
-		expect(reviewOnly.newItems).toEqual([]);
-		expect(reviewOnly.challenges.length).toBeGreaterThan(0);
+	it('introduces no vocabulary: every challenge stands on a word it was given', () => {
+		expect(result.challenges.length).toBeGreaterThan(0);
+		expect(result).not.toHaveProperty('newItems');
 		const known = new Set(args.reviewItems.map((i) => i.id));
-		for (const challenge of reviewOnly.challenges) {
+		for (const challenge of result.challenges) {
 			for (const id of challenge.itemIds) expect(known.has(id)).toBe(true);
 		}
 	});
@@ -93,15 +96,14 @@ describe('mockBatch', () => {
 		expect(new Set(mc.map((c) => c.correctIndex)).size).toBeGreaterThan(1);
 	});
 
-	it('introduces two new items with placeholder card state', () => {
-		expect(result.newItems).toHaveLength(2);
-		for (const item of result.newItems) {
-			expect(item.kind).toBe('vocab');
-			// The caller owns FSRS initialization.
-			expect(item.fsrsCard).toBeNull();
-			expect(item.history).toEqual([]);
-		}
-		expect(result.newItems.map((i) => i.term)).toEqual(['la cuenta', 'pedir']);
+	it("binds the scene's own words onto the learner's review items, in order", () => {
+		// The canned lesson is about "la cuenta" and "pedir", which are not the
+		// mock's to add; each is pinned to one of the words the caller sent, so the
+		// scene still reads as itself while every id it cites is real.
+		const cuenta = result.challenges.find((c) => c.type === 'word-order');
+		const pedir = result.challenges.find((c) => c.type === 'spot-error');
+		expect(cuenta?.itemIds).toEqual(['i1']);
+		expect(pedir?.itemIds).toEqual(['i2']);
 	});
 
 	it('carries a conversational instruction on exactly one canned multiple-choice challenge', () => {
@@ -117,24 +119,15 @@ describe('mockBatch', () => {
 	});
 
 	it('carries no romanization at all for a Latin-script target', () => {
-		for (const item of result.newItems) {
-			expect('romanization' in item).toBe(false);
-		}
 		const serialized = JSON.stringify(result.challenges);
 		expect(serialized).not.toContain('Romanization');
 	});
 
-	it('resolves every placeholder and every review reference', () => {
-		const ids = new Set([
-			...args.reviewItems.map((i) => i.id),
-			...result.newItems.map((i) => i.id)
-		]);
+	it('resolves every reference, by term or by id, onto a real item', () => {
+		const ids = new Set(args.reviewItems.map((i) => i.id));
 		for (const challenge of result.challenges) {
 			expect(challenge.itemIds.length).toBeGreaterThan(0);
-			for (const id of challenge.itemIds) {
-				expect(id.startsWith('new:')).toBe(false);
-				expect(ids.has(id)).toBe(true);
-			}
+			for (const id of challenge.itemIds) expect(ids.has(id)).toBe(true);
 		}
 	});
 
@@ -166,10 +159,11 @@ describe('mockBatch', () => {
 		expect(result.usage).toEqual({ promptTokens: 0, completionTokens: 0 });
 	});
 
-	it('works with no review items at all (first lesson)', () => {
+	it('has nothing to build a lesson from with no words at all', () => {
+		// Not a degraded mock: the paid path answers the same way. A learner with
+		// an empty collection is sent to conversation and chat, not to generate.
 		const cold = mockBatch({ ...args, reviewItems: [] });
-		expect(cold.challenges.length).toBeGreaterThanOrEqual(5);
-		expect(cold.newItems).toHaveLength(2);
+		expect(cold.challenges).toEqual([]);
 	});
 });
 
@@ -177,7 +171,13 @@ describe('the Mandarin fixtures', () => {
 	const zhArgs: BatchArgs = {
 		...args,
 		profile: { ...args.profile, targetLanguage: 'Chinese' },
-		reviewItems: []
+		// Two words for the scene's own 菜单/买单 to be pinned to — without them
+		// nothing binds and the canned half resolves to nothing, which is the
+		// "no vocabulary, no lesson" case covered above.
+		reviewItems: [
+			{ id: 'z1', term: '狗', meaning: 'the dog' },
+			{ id: 'z2', term: '歌', meaning: 'the song' }
+		]
 	};
 
 	it('is selected by the target language, however it was typed', () => {
@@ -200,8 +200,6 @@ describe('the Mandarin fixtures', () => {
 		for (const challenge of result.challenges) {
 			expect(challengeSchema.safeParse(challenge).success).toBe(true);
 		}
-
-		expect(result.newItems.map((i) => i.romanization)).toEqual(['càidān', 'mǎidān']);
 
 		const readings: Record<string, string> = {
 			菜单: 'càidān',

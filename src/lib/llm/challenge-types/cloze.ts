@@ -68,7 +68,7 @@ export const clozeDef = {
 						{ text: 'propina', reading: null },
 						{ text: 'mesa', reading: null }
 					],
-					itemIds: ['new:0'],
+					itemIds: ['la cuenta'],
 					explanation: null
 				}
 			},
@@ -82,7 +82,7 @@ export const clozeDef = {
 					after: { text: '?', reading: null },
 					hintNative: 'Can we order now?',
 					distractorWords: null,
-					itemIds: ['new:1'],
+					itemIds: ['pedir'],
 					explanation: null
 				}
 			}
@@ -104,7 +104,7 @@ export const clozeDef = {
 						{ text: '茶', reading: 'chá' },
 						{ text: '水', reading: 'shuǐ' }
 					],
-					itemIds: ['new:0'],
+					itemIds: ['菜单'],
 					explanation: '份 (fèn) is the measure word for a menu or a portion.'
 				}
 			},
@@ -117,7 +117,7 @@ export const clozeDef = {
 					after: { text: '。', reading: '.' },
 					hintNative: 'We would like to pay the bill.',
 					distractorWords: null,
-					itemIds: ['new:1'],
+					itemIds: ['买单'],
 					explanation: null
 				}
 			}

@@ -43,7 +43,7 @@ export const translateToTargetDef = {
 						{ text: 'quisiera pedir el pescado, por favor', reading: null },
 						{ text: 'quiero pedir el pescado, por favor', reading: null }
 					],
-					itemIds: ['new:1'],
+					itemIds: ['pedir'],
 					explanation: '"Quisiera" is the polite way to ask; "quiero" is fine but blunter.'
 				}
 			}
@@ -58,7 +58,7 @@ export const translateToTargetDef = {
 						{ text: '服务员，买单', reading: 'fúwùyuán, mǎidān' },
 						{ text: '买单', reading: 'mǎidān' }
 					],
-					itemIds: ['new:1'],
+					itemIds: ['买单'],
 					explanation: 'Calling 服务员 (fúwùyuán) across the room is normal, not rude.'
 				}
 			}

@@ -56,7 +56,7 @@ export const spotErrorDef = {
 					wrongWord: { text: 'pagar', reading: null },
 					wrongPosition: 1,
 					meaningNative: 'I would like to order the fish.',
-					itemIds: ['new:1'],
+					itemIds: ['pedir'],
 					explanation: '"Pagar" is to pay; ordering is "pedir".'
 				}
 			}
@@ -74,7 +74,7 @@ export const spotErrorDef = {
 					wrongWord: { text: '菜单', reading: 'càidān' },
 					wrongPosition: 2,
 					meaningNative: 'We would like to pay the bill.',
-					itemIds: ['new:1'],
+					itemIds: ['买单'],
 					explanation: '菜单 (càidān) is the menu; paying the bill is 买单 (mǎidān).'
 				}
 			}

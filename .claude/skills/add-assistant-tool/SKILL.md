@@ -29,8 +29,10 @@ are kebab-case (`add-words.ts`). Follow the existing four.
   through the repositories is what captures sync events for free; a direct Dexie
   call silently breaks multi-device sync.
 - Anything creating vocabulary must initialise FSRS cards via `$lib/srs` and
-  dedupe by term key, exactly as `add_words` does. `$lib/llm` returns
-  `newItems` with `fsrsCard: null`; the caller owns card init.
+  dedupe by term key, exactly as `add_words` does. **`add_words` is the only
+  way words enter the collection** — lesson generation writes challenges and
+  never items — so that dedupe is the app's single guard against a forked SRS
+  history.
 - Tool failures are **returned**, not thrown — `chat.ts` feeds `{error}` back to
   the model as a tool result so it can recover. Only `LlmError` escapes the loop.
 - A turn is atomic: tool traffic is never replayed into later turns; prior turns

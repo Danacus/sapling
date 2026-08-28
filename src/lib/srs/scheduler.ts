@@ -175,60 +175,53 @@ export function wordStrength(state: FsrsCardState, now: number): number {
 }
 
 /**
- * Picks what to show in a review session: which existing items are due, and
- * how many brand-new items the LLM batch should introduce.
+ * Picks the vocabulary a generated batch is written about: what the schedule
+ * owes now, topped up with what it will owe soonest.
  *
- * Policy:
- * - Due items are sorted most-overdue-first (earliest `due` timestamp
- *   first) and capped at `maxItems` (default 12).
- * - `newItemSlots` paces new-item introduction off `recentAccuracy`:
- *   - unknown accuracy (undefined) → 3
- *   - accuracy ≥ 0.85 (doing well) → 5
- *   - accuracy ≤ 0.6 (struggling) → 1
- *   - anything in between → 3 (the base rate)
- *   This keeps struggling learners from being buried in new material while
- *   letting learners who are keeping up absorb more of it.
- * - Finally `newItemSlots` is reduced (never increased) so that
- *   `reviewItems.length + newItemSlots <= maxItems + 3` — a review-heavy
- *   session leaves little room for new items, but we always allow a small
- *   overflow above `maxItems` so a light review day still introduces
- *   something.
+ * Generation never introduces vocabulary — new words reach the learner through
+ * the assistant and conversation mode, never through a lesson — so this list is
+ * the *only* material a batch has to build from, and stopping at the due items
+ * would mean a learner who is caught up asks for a lesson and hands the model
+ * nothing to write about. Hence the two tiers: due items first, most overdue
+ * first, capped at `maxItems` (default 12); then, while there is room left, the
+ * soonest-due items that are not due yet.
+ *
+ * That is the same degradation `planSession` performs on the play side — a
+ * session runs out of due work and continues into review-ahead rather than into
+ * nothing — applied one step earlier, to what gets *written* rather than to
+ * what gets served. Early review is native to FSRS: a review is graded whenever
+ * it happens, it simply banks a smaller stability gain.
  */
 export function selectSessionItems(
 	items: KnowledgeItem[],
-	opts: { now: number; maxItems?: number; recentAccuracy?: number }
-): { reviewItems: KnowledgeItem[]; newItemSlots: number } {
+	opts: { now: number; maxItems?: number }
+): { reviewItems: KnowledgeItem[] } {
 	const maxItems = opts.maxItems ?? 12;
+	const byDue = (a: KnowledgeItem, b: KnowledgeItem) =>
+		(a.fsrsCard as FsrsCardState).due - (b.fsrsCard as FsrsCardState).due;
+	const dueNow = (item: KnowledgeItem) => isDue(item.fsrsCard as FsrsCardState, opts.now);
 
-	const due = items
-		.filter((item) => isDue(item.fsrsCard as FsrsCardState, opts.now))
-		.sort((a, b) => (a.fsrsCard as FsrsCardState).due - (b.fsrsCard as FsrsCardState).due);
+	const owed = items.filter(dueNow).sort(byDue);
+	const ahead = items.filter((item) => !dueNow(item)).sort(byDue);
 
-	const reviewItems = due.slice(0, maxItems);
+	// The two tiers spelled out rather than folded into one sort over everything
+	// (which would give the same list): the boundary between them is the thing
+	// worth being able to see, and the second tier only ever fills what the first
+	// left over.
+	const reviewItems = [...owed, ...ahead].slice(0, maxItems);
 
-	let base: number;
-	if (opts.recentAccuracy === undefined) {
-		base = 3;
-	} else if (opts.recentAccuracy >= 0.85) {
-		base = 5;
-	} else if (opts.recentAccuracy <= 0.6) {
-		base = 1;
-	} else {
-		base = 3;
-	}
-
-	const budget = Math.max(0, maxItems + 3 - reviewItems.length);
-	const newItemSlots = Math.min(base, budget);
-
-	return { reviewItems, newItemSlots };
+	return { reviewItems };
 }
 
 /**
  * Recent-accuracy helper: fraction of reviews in the trailing `window` ms
- * (default 7 days) up to `now` that were graded Good or better. Feed the
- * result into `selectSessionItems`' `recentAccuracy` option. Returns
- * `undefined` when there's no review history in the window, matching
- * `selectSessionItems`' "unknown accuracy" case.
+ * (default 7 days) up to `now` that were graded Good or better. Returns
+ * `undefined` when there's no review history in the window — day one, where
+ * there is nothing to calibrate on.
+ *
+ * It no longer paces anything locally; it is a difficulty dial for the
+ * generation prompt (`BatchArgs.recentAccuracy`), which is where "how is this
+ * learner doing" now changes what a lesson looks like.
  */
 export function accuracyFromHistory(
 	items: KnowledgeItem[],

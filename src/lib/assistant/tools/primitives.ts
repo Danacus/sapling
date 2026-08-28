@@ -12,12 +12,15 @@ import type { ToolOutcome } from './def';
 
 /**
  * Case/whitespace-insensitive key used to tell whether two terms name the same
- * word — the same rule `dedupeNewItems` in `$lib/session/engine` applies to
- * model-proposed vocabulary, re-implemented here rather than shared, because
- * neither module should be able to change the other's dedupe by accident.
+ * word — the same rule `deriveRecentMistakes` in `$lib/session/engine` applies
+ * when it folds missed words into prompt hints, re-implemented here rather than
+ * shared, because neither module should be able to change the other's notion of
+ * sameness by accident.
  *
  * It is what makes "Hola" and "hola" one word, so the assistant cannot fork a
- * learner's SRS history in two by adding a word they already have.
+ * learner's SRS history in two by adding a word they already have — and since
+ * `add_words` is now the *only* way vocabulary enters the collection, this is
+ * the app's one guard against a duplicate word.
  */
 export function termKey(term: string): string {
 	return term.trim().toLowerCase().replace(/\s+/g, ' ');

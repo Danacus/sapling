@@ -25,10 +25,15 @@
  * beside the schema they have to satisfy, and this module folds them back into
  * one lesson by their `order`. That is what makes coverage automatic — a type
  * with no fixture is a type with no example, and `registry.test.ts` says so —
- * and it is why the two `newItems` lists, which belong to the scenario rather
- * than to any one challenge, are the only fixture data left below.
+ * and it is why each scenario's own two-word vocabulary, which belongs to the
+ * scene rather than to any one challenge, is the only fixture data left below.
  *
- * Both sets introduce exactly two new vocabulary items.
+ * That vocabulary is **borrowed, never introduced**: generation adds no words
+ * to a collection, so the mock cannot either. Each scenario word is bound to
+ * one of the learner's own review items before resolving — see
+ * {@link mockTermIndex} — which keeps the canned lesson readable as the scene
+ * it was written as while every id it ends up citing is one the caller really
+ * asked about.
  */
 
 import { getApiKey } from '$lib/db/settings';
@@ -45,7 +50,6 @@ import {
 	resolveBatch
 } from './generate';
 import type { EscalationArgs, EscalationResult } from './escalation';
-import { NEW_ITEM_REF } from './schemas';
 
 /** localStorage flag that forces the mock even when a key is present. */
 export const MOCK_FLAG_KEY = 'll.mockMode';
@@ -90,10 +94,11 @@ const DISTRACTORS = [
 	'slowly'
 ];
 
-/** One canned fixture set: eight challenges hanging off two new items. */
+/** One canned fixture set: eight challenges hanging off the scene's two words. */
 interface Fixture {
 	challenges: unknown[];
-	newItems: unknown[];
+	/** The scene's own vocabulary, as the fixtures cite it in `itemIds`. */
+	terms: string[];
 }
 
 /**
@@ -136,10 +141,7 @@ function scenarioChallenges(scenario: FixtureScenario): unknown[] {
 function spanishRestaurant(): Fixture {
 	return {
 		challenges: scenarioChallenges('spanish'),
-		newItems: [
-			{ term: 'la cuenta', meaning: 'the bill', romanization: null, notes: 'feminine noun' },
-			{ term: 'pedir', meaning: 'to order', romanization: null, notes: 'stem-changing: pido' }
-		]
+		terms: ['la cuenta', 'pedir']
 	};
 }
 
@@ -152,15 +154,7 @@ function spanishRestaurant(): Fixture {
 function mandarinRestaurant(): Fixture {
 	return {
 		challenges: scenarioChallenges('mandarin'),
-		newItems: [
-			{ term: '菜单', meaning: 'the menu', romanization: 'càidān', notes: null },
-			{
-				term: '买单',
-				meaning: 'to pay the bill',
-				romanization: 'mǎidān',
-				notes: 'colloquial; 结账 (jiézhàng) is the neutral form'
-			}
-		]
+		terms: ['菜单', '买单']
 	};
 }
 
@@ -213,45 +207,48 @@ function reviewChallenges(items: ReviewItemRef[]): unknown[] {
  */
 export function mockBatchCompletion(args: BatchArgs): string {
 	const count = Math.min(
-		args.count ?? defaultChallengeCount(args.reviewItems.length, args.newItemSlots),
+		args.count ?? defaultChallengeCount(args.reviewItems.length),
 		MAX_BATCH_CHALLENGES
 	);
-	const fixture = fixtureFor(args);
+	const canned = fixtureFor(args).challenges;
 	const review = reviewChallenges(args.reviewItems);
 
-	// Zero slots is review-only generation, and the mock honors it the way the
-	// prompt tells the real model to ("exactly newItemSlots entries"): no new
-	// items, and the half of the canned set that hangs off them stays home —
-	// so the offline path exercises the same all-review batches the real one
-	// produces.
-	const canned =
-		args.newItemSlots === 0
-			? fixture.challenges.filter((challenge) => !citesNewItem(challenge))
-			: fixture.challenges;
-	const newItems = args.newItemSlots === 0 ? [] : fixture.newItems;
-
 	// Always keep the canned set — it is what makes the mock cover every
-	// challenge type and both new items — and always let at least a couple of
-	// per-review-item challenges ride along, so the mock exercises review
-	// references even when the derived `count` is no bigger than the canned set.
+	// challenge type — and always let at least a couple of per-review-item
+	// challenges ride along, so the mock exercises id references even when the
+	// derived `count` is no bigger than the canned set.
 	const floor = canned.length + Math.min(review.length, 2);
 	const challenges = [...canned, ...review].slice(0, Math.max(floor, count));
 
-	const batch = { challenges, newItems };
-
-	return '```json\n' + JSON.stringify(batch, null, 1) + '\n```';
+	return '```json\n' + JSON.stringify({ challenges }, null, 1) + '\n```';
 }
 
 /**
- * Whether a fixture challenge cites a `new:<index>` item — the half of the
- * canned set that review-only generation must leave out. The fixtures are
- * untyped wire objects, hence the structural peek.
+ * The term → id index the mock hands the resolver: the real one, plus a
+ * binding for each of the scenario's own words.
+ *
+ * The canned challenges are *about* la cuenta and pedir, and a batch introduces
+ * no vocabulary, so those words are not the mock's to add. Each is bound
+ * instead to one of the learner's review items, taken in order and wrapping
+ * round when there are fewer of them than the scene has words. A binding never
+ * overwrites a real one: a learner who genuinely has "la cuenta" gets their own
+ * item, which is the whole point of resolving by term.
+ *
+ * With no review items at all nothing binds, the canned challenges resolve to
+ * nothing and are dropped — the same answer the paid path gives a collection
+ * with no vocabulary to build a lesson from.
  */
-function citesNewItem(challenge: unknown): boolean {
-	const itemIds = (challenge as { itemIds?: unknown }).itemIds;
-	return (
-		Array.isArray(itemIds) && itemIds.some((id) => typeof id === 'string' && NEW_ITEM_REF.test(id))
-	);
+function mockTermIndex(args: BatchArgs, scenario: Fixture): Map<string, string> {
+	const index = knownTermIndex(args);
+	const anchors = args.reviewItems;
+	if (anchors.length === 0) return index;
+
+	scenario.terms.forEach((term, position) => {
+		const key = term.trim().toLowerCase();
+		if (index.has(key)) return;
+		index.set(key, anchors[position % anchors.length].id);
+	});
+	return index;
 }
 
 /** Deterministic ids, so a mock batch is byte-identical across runs. */
@@ -277,8 +274,8 @@ function mockRng(): () => number {
 /**
  * A full mock batch, post-processed by the real resolver.
  *
- * Like the real path, `newItems` come back with `fsrsCard: null` for the caller
- * to initialize.
+ * Like the real path it produces challenges and nothing else: practice mode
+ * cannot teach the learner a word any more than a paid batch can.
  */
 export function mockBatch(args: BatchArgs, opts: BatchOptions = {}): BatchResult {
 	// Same step sequence as the real path, so the learn screen's progress log is
@@ -289,14 +286,14 @@ export function mockBatch(args: BatchArgs, opts: BatchOptions = {}): BatchResult
 
 	const resolved = resolveBatch(parseBatch(mockBatchCompletion(args)), {
 		newId: opts.newId ?? mockIdFactory(),
-		now: opts.now ?? (() => 0),
 		knownItemIds: args.reviewItems.map((i) => i.id),
-		// The fixtures cite ids properly, but the mock walks the real resolve
-		// path — term citations included — so it gets the same index.
-		termToId: knownTermIndex(args),
+		// The canned half cites its words by term, so the mock leans on exactly the
+		// term-citation path a paid batch uses — with the scenario's own words bound
+		// in on top. See {@link mockTermIndex}.
+		termToId: mockTermIndex(args, fixtureFor(args)),
 		rng: opts.rng ?? mockRng()
 	});
-	return { challenges: resolved.challenges, newItems: resolved.newItems, usage: NO_USAGE };
+	return { challenges: resolved.challenges, usage: NO_USAGE };
 }
 
 /**

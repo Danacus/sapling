@@ -75,7 +75,7 @@ export const wordOrderDef = {
 						{ text: 'propina', reading: null }
 					],
 					instruction: null,
-					itemIds: ['new:0'],
+					itemIds: ['la cuenta'],
 					explanation: null
 				}
 			}
@@ -101,7 +101,7 @@ export const wordOrderDef = {
 						{ text: '茶', reading: 'chá' }
 					],
 					instruction: null,
-					itemIds: ['new:0'],
+					itemIds: ['菜单'],
 					explanation: null
 				}
 			}

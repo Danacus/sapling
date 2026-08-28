@@ -210,24 +210,63 @@
 				<path d="M12 16.2c-3.3 0-5.2-1.9-5.2-5.2 3.3 0 5.2 1.9 5.2 5.2Z" />
 				<path d="M12 12.6c0-3.8 2-5.8 5.6-5.8 0 3.8-2 5.8-5.6 5.8Z" />
 			</svg>
-			<a class="btn btn-primary btn-block start-btn" href="/learn">Start session</a>
-			<!-- Only the empty states speak here. The due count is the card below's
-			     job, and a number stated twice on one screen invites the two to
-			     disagree. -->
+			<!-- A session only revisits words the learner already has, so on an empty
+			     garden "Start session" would open onto nothing. The card hands its
+			     primary button over to the two places words actually come from, and
+			     takes it back the moment there is something to review. -->
 			{#if items.length === 0}
-				<p class="hint centered">
-					Your first session will introduce your first words in {targetLanguage}.
+				<p class="start-lead">
+					Nothing planted yet — your first words in {targetLanguage} come from talking.
 				</p>
-			{:else if pooled === 0}
-				<p class="hint centered">
-					No challenges in your pool — generate a lesson to fill it back up.
-				</p>
+				<a class="btn btn-primary btn-block start-btn" href="/converse">Start a conversation</a>
+				<a class="btn btn-ghost btn-block ask-link" href="/chat">Or ask the assistant for a few</a>
+			{:else}
+				<a class="btn btn-primary btn-block start-btn" href="/learn">Start session</a>
+				<!-- Only the empty pool speaks here. The due count is the card below's
+				     job, and a number stated twice on one screen invites the two to
+				     disagree. -->
+				{#if pooled === 0}
+					<p class="hint centered">
+						No challenges waiting — starting a session grows a fresh set from the words you have.
+					</p>
+				{/if}
 			{/if}
 		</section>
 
+		<!-- Conversation sits directly under the drill because the two are peers
+		     with different jobs: a session revisits what is already growing, this
+		     is where new words enter at all. Quieter than the start card by a
+		     whole background, but a card rather than a topbar icon — one of the
+		     two ways vocabulary arrives cannot live in a corner.
+
+		     Skipped on an empty garden, where the start card above is already
+		     this same door and one screen does not need it twice. -->
+		{#if items.length > 0}
+			<section class="card talk-card ll-rise" style="animation-delay: 180ms">
+				<a class="talk-link" href="/converse">
+					<span class="talk-mark" aria-hidden="true">
+						<svg class="ico" viewBox="0 0 24 24">
+							<path d="M4.6 6.4h9.6v7.2H8.2l-3.6 3v-3H4.6Z" />
+							<path d="M10.6 9.4h8.8v6.2h-2.4v2.6l-3-2.6h-3.4Z" />
+						</svg>
+					</span>
+					<span class="talk-body">
+						<span class="talk-title">Have a conversation</span>
+						<span class="talk-copy">
+							A scene you talk your way through — new words get planted as you reach for them.
+						</span>
+					</span>
+					<svg class="ico talk-arrow" viewBox="0 0 24 24" aria-hidden="true">
+						<path d="M4.8 12h14" />
+						<path d="m13.4 6.6 5.4 5.4-5.4 5.4" />
+					</svg>
+				</a>
+			</section>
+		{/if}
+
 		<!-- "Right now", never "today": due counts move through the day as words
 		     fall due, so this card states a moment rather than scoring a day. -->
-		<section class="card now-card ll-rise" style="animation-delay: 180ms">
+		<section class="card now-card ll-rise" style="animation-delay: 240ms">
 			<p class="eyebrow">Right now</p>
 			<p class="now-headline">
 				{#if dueCount === 0}
@@ -261,7 +300,7 @@
 		</section>
 
 		{#if items.length > 0}
-			<section class="card garden-card ll-rise" style="animation-delay: 240ms">
+			<section class="card garden-card ll-rise" style="animation-delay: 300ms">
 				<div class="card-head">
 					<h2>Garden</h2>
 					<div class="card-tools">
@@ -504,6 +543,97 @@
 		text-wrap: balance;
 	}
 
+	/* The empty garden's line sits *above* its button, unlike the hints, because
+	   here it is the reason for the button rather than a footnote to it. */
+	.start-lead {
+		margin: 0 0 1rem;
+		font-family: var(--font-display);
+		font-size: 1.05rem;
+		font-weight: 700;
+		line-height: 1.3;
+		letter-spacing: -0.01em;
+		text-wrap: balance;
+	}
+
+	.ask-link {
+		margin-top: 0.55rem;
+		font-size: 0.85rem;
+		/* An anchor wearing .btn arrives underlined. */
+		text-decoration: none;
+	}
+
+	/* Conversation -------------------------------------------------------- */
+
+	/* The whole card is the target — on a phone this should not require finding
+	   a button inside it — so the padding moves off the card and onto the link.
+	   It keeps the plain surface while the start card above keeps the wash:
+	   same footprint, one step quieter. */
+	.talk-card {
+		padding: 0;
+		overflow: hidden;
+	}
+
+	.talk-link {
+		display: flex;
+		align-items: center;
+		gap: 0.9rem;
+		padding: 1.15rem 1.25rem;
+		color: var(--text);
+		text-decoration: none;
+		transition: background 0.15s ease;
+	}
+
+	.talk-link:hover {
+		background: var(--surface-alt);
+	}
+
+	.talk-link:focus-visible {
+		outline: none;
+		box-shadow: var(--ring);
+	}
+
+	.talk-mark {
+		display: grid;
+		place-items: center;
+		flex: 0 0 auto;
+		width: 2.5rem;
+		height: 2.5rem;
+		border-radius: 50%;
+		background: var(--primary-soft);
+		color: var(--primary);
+	}
+
+	.talk-mark .ico {
+		width: 1.35rem;
+		height: 1.35rem;
+	}
+
+	.talk-body {
+		min-width: 0;
+	}
+
+	.talk-title {
+		display: block;
+		font-family: var(--font-display);
+		font-size: 1.05rem;
+		font-weight: 700;
+		letter-spacing: -0.01em;
+	}
+
+	.talk-copy {
+		display: block;
+		margin-top: 0.15rem;
+		font-size: 0.85rem;
+		line-height: 1.4;
+		color: var(--text-muted);
+		text-wrap: balance;
+	}
+
+	.talk-arrow {
+		margin-left: auto;
+		color: var(--text-muted);
+	}
+
 	/* Right now ---------------------------------------------------------- */
 
 	.now-headline {
@@ -672,6 +802,18 @@
 
 		.topbar-actions {
 			padding-top: 0;
+		}
+
+		/* The copy is what has to survive here, so the row gives back its own
+		   padding and gaps rather than squeezing the line to three words. */
+		.talk-link {
+			gap: 0.7rem;
+			padding: 1rem;
+		}
+
+		.talk-mark {
+			width: 2.2rem;
+			height: 2.2rem;
 		}
 
 		.legend {

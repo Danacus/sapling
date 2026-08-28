@@ -49,13 +49,7 @@
 	import { runSync } from '$lib/sync/run';
 	import { getTtsEngine, kokoroSupports, preloadKokoro, warmSpeech } from '$lib/tts';
 	import type { Challenge, KnowledgeItem, Profile, Verdict } from '$lib/types';
-	import {
-		addRecentTopic,
-		getRecentTopics,
-		getReviewOnlyMode,
-		getRomanizationMode,
-		setReviewOnlyMode
-	} from '$lib/ui/prefs';
+	import { addRecentTopic, getRecentTopics, getRomanizationMode } from '$lib/ui/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
@@ -106,7 +100,6 @@
 	let plan = $state<SessionPlan | null>(null);
 	let topicInput = $state('');
 	let recentTopics = $state<string[]>([]);
-	let reviewOnlyMode = $state(false);
 	/** A generation is in flight; the button is latched and the log is live. */
 	let generating = $state(false);
 	let genError = $state('');
@@ -143,7 +136,8 @@
 	const canStart = $derived((plan?.challenges.length ?? 0) > 0);
 	/**
 	 * There is vocabulary at all — the difference between "generate a lesson" and
-	 * "add some words first".
+	 * "add some words first". A lesson is written *about* words the learner
+	 * already has, so with none there is nothing generation could do.
 	 */
 	const hasWords = $derived((plan?.items.length ?? 0) > 0);
 	/**
@@ -153,54 +147,71 @@
 	 */
 	const aheadOfSchedule = $derived(canStart && dueCount === 0);
 	/**
-	 * Worth nudging towards a fresh lesson: nothing to play, or barely anything.
-	 * Review-only generates too (with zero new-word slots), so the nudge stays —
-	 * except for a collection with no words at all, where a review-only batch
-	 * would have nothing to build from and the way out is switching modes.
+	 * Worth nudging towards a fresh lesson: nothing to play, or barely anything —
+	 * but only once there is vocabulary to write a lesson about. With an empty
+	 * collection, generating is not the lever, so the drawer is left untinted and
+	 * the message below sends the learner somewhere that can actually help.
 	 */
-	const nudgeGenerate = $derived(
-		plan !== null && (plan.poolLow || !canStart) && (!reviewOnlyMode || hasWords)
-	);
+	const nudgeGenerate = $derived(plan !== null && (plan.poolLow || !canStart) && hasWords);
+
+	/** A route out of whatever {@link notice} is describing. */
+	interface NoticeAction {
+		href: string;
+		label: string;
+	}
 
 	/**
 	 * The one contextual message the card is allowed to show, picked by priority:
-	 * nothing to play at all beats a thinning pool beats "you are working ahead".
-	 * Three stacked amber boxes were three ways of saying "here is your next
-	 * move" at once, which is no priority at all — this slot says it once.
+	 * no vocabulary at all beats nothing to play beats a thinning pool beats "you
+	 * are working ahead". Three stacked amber boxes were three ways of saying
+	 * "here is your next move" at once, which is no priority at all — this slot
+	 * says it once.
 	 *
-	 * Only the first two carry a next move, and only they are urgent: a session
+	 * Only the first three carry a next move, and only they are urgent: a session
 	 * built out of early reviews is a perfectly good session, it just deserves a
 	 * word so the learner is not left wondering why nothing was due.
+	 *
+	 * The first branch is the only one whose next move is not a button already on
+	 * this screen, so it is the only one that carries `actions`. Drills are pure
+	 * review of vocabulary the learner already has — generating cannot invent
+	 * words, and neither can this screen — so an empty collection has to hand
+	 * them the two places that *do* teach words rather than a sentence telling
+	 * them to go find one.
 	 */
-	const notice = $derived.by(() => {
-		if (plan === null) return '';
+	const notice = $derived.by((): { body: string; actions: NoticeAction[] } | null => {
+		if (plan === null) return null;
 
-		// Nothing to play at all. Every branch here names the one lever that can
-		// help, and the drawer below is tinted to match it — except in review-only
-		// with an empty collection, where generating is *not* that lever (a
-		// review-only batch clamps `newItemSlots` to 0, so it would have no
-		// vocabulary to build from). That message points at the mode toggle, and
-		// `nudgeGenerate` leaves the drawer untinted for the same reason.
-		if (!canStart) {
-			if (reviewOnlyMode && !hasWords) {
-				return 'Nothing to review yet. Switch to New words to add your first vocabulary.';
-			}
-			const body = reviewOnlyMode
-				? 'No reviewed words yet — a new lesson below builds challenges from words you already have, or switch to New words.'
-				: 'Nothing to practise yet. Generate a lesson to get started.';
-			return mock ? `${body} In practice mode it's instant and free.` : body;
+		if (!hasWords) {
+			return {
+				body: 'No words yet. Lessons practise vocabulary you already have, so pick some up first — talk your way into them, or just ask.',
+				actions: [
+					{ href: '/converse', label: 'Have a conversation' },
+					{ href: '/chat', label: 'Ask your tutor' }
+				]
+			};
 		}
+
+		const say = (body: string) => ({
+			body: mock ? `${body} In practice mode it's instant and free.` : body,
+			actions: []
+		});
+
+		// Nothing to play, but there are words to build from: the generator below
+		// is the lever, and it is tinted to match (see `nudgeGenerate`).
+		if (!canStart) return say('Nothing to practise yet. Generate a lesson to get started.');
 
 		// Playable, but say what kind of session it is going to be. Thin material
 		// wins over review-ahead: it is the one that has a next move attached.
 		if (nudgeGenerate) {
-			const body = 'Running low on fresh material — a new lesson tops the pool back up.';
-			return mock ? `${body} In practice mode it's instant and free.` : body;
+			return say('Running low on fresh material — a new lesson tops the pool back up.');
 		}
 		if (aheadOfSchedule) {
-			return "Nothing due right now — this session reviews words before they're due.";
+			return {
+				body: "Nothing due right now — this session reviews words before they're due.",
+				actions: []
+			};
 		}
-		return '';
+		return null;
 	});
 
 	/* Session ----------------------------------------------------------------- */
@@ -357,7 +368,6 @@
 			});
 			mock = isMockMode();
 			recentTopics = getRecentTopics();
-			reviewOnlyMode = getReviewOnlyMode();
 			await refreshPlan();
 		} catch (cause) {
 			bootError = cause instanceof Error ? cause.message : 'Could not read your progress.';
@@ -367,14 +377,7 @@
 
 	/** Re-plans from the pool: at boot, and whenever a generation has landed. */
 	async function refreshPlan(): Promise<void> {
-		plan = await startSession({ reviewOnly: reviewOnlyMode });
-	}
-
-	/** The learner flipped Review only: persist it and re-plan immediately. */
-	function toggleReviewOnly(on: boolean): void {
-		reviewOnlyMode = on;
-		setReviewOnlyMode(on);
-		void refreshPlan();
+		plan = await startSession();
 	}
 
 	/**
@@ -400,10 +403,7 @@
 		try {
 			await generateChallenges(profile, {
 				onProgress: recordPrepStep,
-				...(topic ? { topic } : {}),
-				// The one toggle governs both halves: sessions serve reviewed words
-				// only, and a lesson generated meanwhile introduces none either.
-				reviewOnly: reviewOnlyMode
+				...(topic ? { topic } : {})
 			});
 
 			// Close the last step and keep the total on screen, so "that felt long"
@@ -445,9 +445,10 @@
 	async function playPlan(ready: SessionPlan): Promise<void> {
 		if (ready.challenges.length === 0) return;
 
-		// Match rounds are drawn from `items`, so it has to be settled first; under
-		// review-only, a never-reviewed word must not sneak into one either.
-		items = reviewOnlyMode ? ready.items.filter((item) => item.history.length > 0) : ready.items;
+		// Match rounds are drawn from `items`, so it has to be settled first. Every
+		// word the learner has is fair game, never-reviewed ones included — that is
+		// exactly the vocabulary a session exists to drill.
+		items = ready.items;
 		// The free rounds are spliced in here, before anything walks the session —
 		// `warmSession` below is the reason: a round that only came into existence
 		// mid-play could never have its tile audio pre-rendered.
@@ -475,10 +476,11 @@
 	 * The words in this session the learner has never been reviewed on — what the
 	 * summary calls "New words".
 	 *
-	 * Generation no longer bookends a session, so "introduced by this batch" is
-	 * not a thing the session can know any more; an empty review history is the
-	 * honest local stand-in, and it stays true for a word that was generated
-	 * yesterday but is only being met now.
+	 * A session introduces no vocabulary; these words were added elsewhere — in
+	 * conversation, or by asking the tutor — and this is simply the first time
+	 * the learner is being *drilled* on them. An empty review history is the
+	 * honest local test for that, and it stays true for a word added a week ago
+	 * that is only now coming up.
 	 */
 	function firstTimeWords(ready: SessionPlan): KnowledgeItem[] {
 		const exercised = new Set(ready.challenges.flatMap((challenge) => challenge.itemIds));
@@ -865,9 +867,9 @@
 	/** Read once — the toggle lives in Settings, not mid-session. */
 	const romanizationMode = getRomanizationMode();
 	/**
-	 * The summary's new-word list. A word the session just introduced is by
-	 * definition not one the learner owns, so adaptive mode has nothing to fade
-	 * out here — only an explicit Off hides these readings.
+	 * The summary's new-word list. A word the learner has just been drilled on
+	 * for the first time is by definition not one they own yet, so adaptive mode
+	 * has nothing to fade out here — only an explicit Off hides these readings.
 	 */
 	const showNewWordReadings = romanizationMode !== 'off';
 </script>
@@ -882,12 +884,13 @@
 	{:else if phase === 'start'}
 		<!--
 		  The start screen as one journal entry: today's figures ruled into two
-		  columns, the mode that produced them directly under, then the one green
-		  button the whole card exists for. There is no second way to start — the
-		  plan reaches past what is due on its own — so everything else here is
-		  quieter than that button by construction: the guidance is one message
-		  rather than a stack of boxes, and the generator is folded away until it
-		  is asked for or genuinely needed.
+		  columns, then the one green button the whole card exists for. There is no
+		  second way to start and no mode to pick — a session is the FSRS review of
+		  everything the learner has, and the plan reaches past what is due on its
+		  own — so everything else here is quieter than that button by
+		  construction: the guidance is one message rather than a stack of boxes,
+		  and the generator is folded away until it is asked for or genuinely
+		  needed.
 		-->
 		<div class="centered">
 			<div class="card start-card ll-rise">
@@ -909,34 +912,6 @@
 					</div>
 				{/if}
 
-				<div class="mode-block ll-rise" style="animation-delay: 120ms">
-					<div class="mode" role="group" aria-label="Session mode">
-						<button
-							type="button"
-							class="mode-opt"
-							class:on={!reviewOnlyMode}
-							aria-pressed={!reviewOnlyMode}
-							onclick={() => toggleReviewOnly(false)}
-						>
-							New words
-						</button>
-						<button
-							type="button"
-							class="mode-opt"
-							class:on={reviewOnlyMode}
-							aria-pressed={reviewOnlyMode}
-							onclick={() => toggleReviewOnly(true)}
-						>
-							Review only
-						</button>
-					</div>
-					<p class="mode-note">
-						{reviewOnlyMode
-							? 'No new words — lessons practise what you already have.'
-							: 'New words can join the session.'}
-					</p>
-				</div>
-
 				<div class="act ll-rise" style="animation-delay: 170ms">
 					<button
 						type="button"
@@ -949,7 +924,16 @@
 				</div>
 
 				{#if notice}
-					<p class="nudge ll-rise" style="animation-delay: 220ms">{notice}</p>
+					<div class="nudge ll-rise" style="animation-delay: 220ms">
+						<p>{notice.body}</p>
+						{#if notice.actions.length > 0}
+							<div class="nudge-acts">
+								{#each notice.actions as action (action.href)}
+									<a class="btn btn-ghost nudge-btn" href={action.href}>{action.label}</a>
+								{/each}
+							</div>
+						{/if}
+					</div>
 				{/if}
 
 				<section class="generate ll-rise" style="animation-delay: 260ms">
@@ -1414,69 +1398,6 @@
 		text-wrap: balance;
 	}
 
-	/* Mode ------------------------------------------------------------------ */
-
-	.mode-block {
-		margin-top: 1.4rem;
-	}
-
-	/*
-	  Two paper tabs in a ruled tray — the settings switch's vocabulary (inset
-	  trough, hairline frame, `--radius-sm`) laid out as a segmented control.
-	  It sits directly under the figures because it is what produced them: flip
-	  it and both numbers re-plan.
-	*/
-	.mode {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 2px;
-		padding: 2px;
-		border: 1px solid var(--border-strong);
-		border-radius: var(--radius-sm);
-		background: var(--surface-alt);
-		box-shadow: inset 0 1px 2px rgb(60 50 20 / 8%);
-	}
-
-	.mode-opt {
-		padding: 0.45rem 0.5rem;
-		border: 1px solid transparent;
-		border-radius: 4px;
-		background: transparent;
-		color: var(--text-muted);
-		font: inherit;
-		font-size: 0.84rem;
-		font-weight: 600;
-		cursor: pointer;
-		transition:
-			background 0.15s ease,
-			border-color 0.15s ease,
-			color 0.15s ease;
-	}
-
-	.mode-opt:hover:not(.on) {
-		color: var(--text);
-	}
-
-	.mode-opt:focus-visible {
-		outline: none;
-		box-shadow: var(--ring);
-	}
-
-	.mode-opt.on {
-		border-color: var(--border-strong);
-		background: var(--surface);
-		color: var(--text);
-		font-weight: 700;
-	}
-
-	/* The sentence the old checkbox label carried, moved under the control it
-	   describes and swapped for whichever half is active. */
-	.mode-note {
-		margin: 0.45rem 0 0;
-		font-size: 0.78rem;
-		color: var(--text-muted);
-	}
-
 	/* Actions --------------------------------------------------------------- */
 
 	.act {
@@ -1494,6 +1415,27 @@
 		font-size: 0.85rem;
 		font-weight: 500;
 		text-wrap: balance;
+	}
+
+	.nudge p {
+		margin: 0;
+	}
+
+	/* The message's own way out, for the one case whose next move is not already
+	   a button on this screen. Inside the tinted box, in the quiet button voice:
+	   these are where words come from, but Start still owns the card. */
+	.nudge-acts {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin-top: 0.7rem;
+	}
+
+	.nudge-btn {
+		padding: 0.42rem 0.8rem;
+		border-color: var(--border-strong);
+		background: var(--surface);
+		font-size: 0.82rem;
 	}
 
 	/* New lesson ------------------------------------------------------------ */
@@ -2241,7 +2183,6 @@
 		.segment,
 		.chip,
 		.stage,
-		.mode-opt,
 		.disclosure,
 		.disc-caret {
 			transition: none;

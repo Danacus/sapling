@@ -37,7 +37,7 @@ export const translateToNativeDef = {
 					type: 'translate-to-native',
 					prompt: { text: 'la cuenta', reading: null },
 					answersNative: ['the bill', 'the check'],
-					itemIds: ['new:0'],
+					itemIds: ['la cuenta'],
 					explanation: null
 				}
 			}
@@ -49,7 +49,7 @@ export const translateToNativeDef = {
 					type: 'translate-to-native',
 					prompt: { text: '买单', reading: 'mǎidān' },
 					answersNative: ['to pay the bill', 'pay the bill'],
-					itemIds: ['new:1'],
+					itemIds: ['买单'],
 					explanation: null
 				}
 			}

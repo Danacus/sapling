@@ -13,7 +13,6 @@ const ROMANIZATION_MODE_KEY = 'll.romanizationMode';
 const SHOW_ROMANIZATION_KEY = 'll.showRomanization';
 const LISTENING_MODE_KEY = 'll.listeningMode';
 const RECENT_TOPICS_KEY = 'll.recentTopics';
-const REVIEW_ONLY_KEY = 'll.reviewOnlyMode';
 
 /** At most this many recent topics are remembered. */
 export const MAX_RECENT_TOPICS = 5;
@@ -89,38 +88,6 @@ export function setListeningMode(on: boolean): void {
 	if (!hasStorage()) return;
 	try {
 		localStorage.setItem(LISTENING_MODE_KEY, on ? '1' : '0');
-	} catch {
-		/* ignore: storage unavailable */
-	}
-}
-
-/**
- * Whether the learner has declined new vocabulary: sessions are built only
- * from words they have already been reviewed on at least once, and a lesson
- * generated while it's on clamps its new-word slots to zero — fresh
- * challenges, nothing new to learn (see `$lib/session/engine`'s `reviewOnly`
- * options on both the session and the generation side).
- *
- * Off by default, unlike listening mode: this is a deliberate restriction the
- * learner opts into (e.g. "just let me review, don't teach me anything new
- * today"), not a convenience that should apply until they notice and turn it
- * off.
- */
-export function getReviewOnlyMode(): boolean {
-	if (!hasStorage()) return false;
-	try {
-		const raw = localStorage.getItem(REVIEW_ONLY_KEY);
-		return raw === '1';
-	} catch {
-		return false;
-	}
-}
-
-/** Persists the review-only toggle. */
-export function setReviewOnlyMode(on: boolean): void {
-	if (!hasStorage()) return;
-	try {
-		localStorage.setItem(REVIEW_ONLY_KEY, on ? '1' : '0');
 	} catch {
 		/* ignore: storage unavailable */
 	}

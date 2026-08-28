@@ -51,7 +51,7 @@ export const produceMcDef = {
 						{ text: 'servir', reading: null }
 					],
 					instruction: null,
-					itemIds: ['new:1'],
+					itemIds: ['pedir'],
 					explanation: null
 				}
 			}
@@ -69,7 +69,7 @@ export const produceMcDef = {
 						{ text: '茶', reading: 'chá' }
 					],
 					instruction: null,
-					itemIds: ['new:0'],
+					itemIds: ['菜单'],
 					explanation: null
 				}
 			}

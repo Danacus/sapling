@@ -30,8 +30,7 @@ const systemPrompt = (): string => {
 			level: 'beginner',
 			interests: []
 		},
-		reviewItems: [],
-		newItemSlots: 0
+		reviewItems: []
 	});
 	return system.content;
 };
@@ -127,8 +126,12 @@ describe('prompt composition', () => {
 describe('mock coverage', () => {
 	const args = (targetLanguage: string): BatchArgs => ({
 		profile: { nativeLanguage: 'English', targetLanguage, level: 'beginner', interests: [] },
-		reviewItems: [{ id: 'i1', term: 'el perro', meaning: 'the dog' }],
-		newItemSlots: 2
+		// Two words for the scenario's own pair to be bound onto — with none, the
+		// canned half has nothing to cite and resolves away. See `mock.ts`.
+		reviewItems: [
+			{ id: 'i1', term: 'el perro', meaning: 'the dog' },
+			{ id: 'i2', term: 'la canción', meaning: 'the song' }
+		]
 	});
 
 	it('gives every def an example in every scenario', () => {

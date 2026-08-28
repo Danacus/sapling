@@ -28,8 +28,7 @@ const args: BatchArgs = {
 	reviewItems: [
 		{ id: 'i1', term: 'el perro', meaning: 'the dog' },
 		{ id: 'i2', term: 'leer', meaning: 'to read' }
-	],
-	newItemSlots: 2
+	]
 };
 
 /**
@@ -72,7 +71,7 @@ const cloze = {
 		{ text: 'bebo', reading: null },
 		{ text: 'corro', reading: null }
 	],
-	itemIds: ['new:0'],
+	itemIds: ['i2'],
 	explanation: 'leer -> leo in the first person.'
 };
 
@@ -86,7 +85,7 @@ const produce = {
 		{ text: 'pronto', reading: null }
 	],
 	instruction: null,
-	itemIds: ['new:1'],
+	itemIds: ['i2'],
 	explanation: null
 };
 
@@ -96,12 +95,8 @@ const goodBatch = {
 		translate('i1', 'the dog'),
 		recognize('i2', 'leer', 'to read'),
 		cloze,
-		translate('new:0', 'to read', 'leer'),
+		translate('i2', 'to read', 'leer'),
 		produce
-	],
-	newItems: [
-		{ term: 'leer', meaning: 'to read', notes: 'irregular in some tenses' },
-		{ term: 'temprano', meaning: 'early', notes: null }
 	]
 };
 
@@ -127,7 +122,6 @@ const callOpts = (fetchFn: FetchLike) => ({
 	fetchFn,
 	apiKey: 'sk-or-test',
 	model: 'test/model',
-	now: () => 1700000000000,
 	newId: idFactory(),
 	rng: IDENTITY_RNG
 });
@@ -138,13 +132,9 @@ function idFactory(): () => string {
 }
 
 /** parse + resolve, the pairing every caller of this layer uses. */
-function resolve(
-	batch: { challenges: unknown[]; newItems?: unknown[] },
-	opts: ResolveOptions = {}
-) {
-	return resolveBatch(parseBatch(JSON.stringify({ newItems: [], ...batch })), {
+function resolve(batch: { challenges: unknown[] }, opts: ResolveOptions = {}) {
+	return resolveBatch(parseBatch(JSON.stringify(batch)), {
 		newId: idFactory(),
-		now: () => 0,
 		rng: IDENTITY_RNG,
 		...opts
 	});
@@ -188,7 +178,10 @@ describe('buildBatchPrompt', () => {
 			expect(system).toContain(type);
 		}
 		expect(system).not.toContain('match-pairs');
-		expect(system).toContain('new:<index>');
+		// A batch has no vocabulary of its own to point at, so the only legal
+		// references are an id it was given and a term it was shown.
+		expect(system).not.toContain('new:<index>');
+		expect(system).not.toContain('newItems');
 	});
 
 	it('spells out the segmentation and answerability rules for the tile types', () => {
@@ -221,8 +214,8 @@ describe('buildBatchPrompt', () => {
 		expect(payload.native).toBe('English');
 		expect(payload.target).toBe('Spanish');
 		expect(payload.level).toBe('beginner');
-		expect(payload.newItemSlots).toBe(2);
-		expect(payload.challengeCount).toBe(8);
+		expect(payload).not.toHaveProperty('newItemSlots');
+		expect(payload.challengeCount).toBe(4);
 		expect(payload.reviewItems).toEqual([
 			{ id: 'i1', t: 'el perro', m: 'the dog' },
 			{ id: 'i2', t: 'leer', m: 'to read' }
@@ -286,9 +279,9 @@ describe('buildBatchPrompt', () => {
 		expect(system).toContain('(skipped)');
 	});
 
-	it('caps the derived count', () => {
-		expect(defaultChallengeCount(2, 2)).toBe(8);
-		expect(defaultChallengeCount(40, 5)).toBe(MAX_BATCH_CHALLENGES);
+	it('derives two challenges per word, and caps the count', () => {
+		expect(defaultChallengeCount(2)).toBe(4);
+		expect(defaultChallengeCount(40)).toBe(MAX_BATCH_CHALLENGES);
 	});
 
 	it('threads the session topic into the user message, ahead of interests', () => {
@@ -377,37 +370,21 @@ describe('buildBatchPrompt', () => {
 });
 
 describe('generateBatch', () => {
-	it('assigns ids, resolves new:<i> and builds KnowledgeItems', async () => {
+	it('assigns ids and returns challenges only, never vocabulary', async () => {
 		const scripted = scriptedFetch([JSON.stringify(goodBatch)]);
 		const result = await generateBatch(args, callOpts(scripted.fetchFn));
 
 		expect(result.challenges).toHaveLength(6);
 		expect(result.usage).toEqual({ promptTokens: 600, completionTokens: 900 });
+		// The learner's collection is not this layer's to grow — there is nothing
+		// in the result for a caller to persist but the pool.
+		expect(result).not.toHaveProperty('newItems');
 
 		// Every emitted challenge is a valid domain Challenge.
 		for (const challenge of result.challenges) {
 			expect(challengeSchema.safeParse(challenge).success).toBe(true);
 			expect(challenge.id).toMatch(/^id-\d+$/);
 		}
-
-		expect(result.newItems).toHaveLength(2);
-		const [leer, temprano] = result.newItems;
-		expect(leer).toMatchObject({
-			kind: 'vocab',
-			term: 'leer',
-			meaning: 'to read',
-			notes: 'irregular in some tenses',
-			fsrsCard: null,
-			introducedAt: 1700000000000,
-			history: []
-		});
-		// `notes: null` is normalized away rather than stored as null.
-		expect('notes' in temprano).toBe(false);
-
-		// `new:0` now points at the generated id, not the placeholder.
-		const clozeOut = result.challenges.find((c) => c.type === 'cloze');
-		expect(clozeOut?.itemIds).toEqual([leer.id]);
-		expect(result.challenges.flatMap((c) => c.itemIds)).not.toContain('new:0');
 
 		// Existing ids pass through untouched.
 		expect(result.challenges[0].itemIds).toEqual(['i1']);
@@ -483,7 +460,7 @@ describe('generateBatch', () => {
 	});
 
 	it('retries once with a corrective instruction, then succeeds', async () => {
-		const thin = { challenges: [recognize('i1', 'el perro')], newItems: [] };
+		const thin = { challenges: [recognize('i1', 'el perro')] };
 		const scripted = scriptedFetch([JSON.stringify(thin), JSON.stringify(goodBatch)]);
 		const result = await generateBatch(args, callOpts(scripted.fetchFn));
 
@@ -503,7 +480,7 @@ describe('generateBatch', () => {
 	});
 
 	it('throws bad-response when too few challenges survive twice', async () => {
-		const thin = JSON.stringify({ challenges: [recognize('i1', 'el perro')], newItems: [] });
+		const thin = JSON.stringify({ challenges: [recognize('i1', 'el perro')] });
 		const scripted = scriptedFetch([thin, thin]);
 		await expect(generateBatch(args, callOpts(scripted.fetchFn))).rejects.toMatchObject({
 			kind: 'bad-response'
@@ -522,7 +499,7 @@ describe('generateBatch', () => {
 	});
 
 	it('reports the retry step only when the corrective retry fires', async () => {
-		const thin = { challenges: [recognize('i1', 'el perro')], newItems: [] };
+		const thin = { challenges: [recognize('i1', 'el perro')] };
 		const scripted = scriptedFetch([JSON.stringify(thin), JSON.stringify(goodBatch)]);
 		const steps: ProgressStep[] = [];
 		await generateBatch(args, { ...callOpts(scripted.fetchFn), onProgress: (s) => steps.push(s) });
@@ -538,10 +515,10 @@ describe('generateBatch', () => {
 	});
 
 	it('does not demand five challenges from a two-challenge batch', async () => {
-		const tiny = JSON.stringify({ challenges: [recognize('i1', 'el perro')], newItems: [] });
+		const tiny = JSON.stringify({ challenges: [recognize('i1', 'el perro')] });
 		const scripted = scriptedFetch([tiny]);
 		const result = await generateBatch(
-			{ ...args, newItemSlots: 0, reviewItems: args.reviewItems.slice(0, 1), count: 1 },
+			{ ...args, reviewItems: args.reviewItems.slice(0, 1), count: 1 },
 			callOpts(scripted.fetchFn)
 		);
 		expect(scripted.calls).toBe(1);
@@ -550,21 +527,10 @@ describe('generateBatch', () => {
 });
 
 describe('resolveBatch', () => {
-	it('discards new items no challenge actually uses', () => {
-		const resolved = resolve({
-			challenges: [recognize('new:0', 'x')],
-			newItems: [
-				{ term: 'a', meaning: 'A' },
-				{ term: 'b', meaning: 'B' }
-			]
-		});
-		expect(resolved.newItems).toHaveLength(1);
-		expect(resolved.newItems[0].term).toBe('a');
-		expect(resolved.challenges[0].itemIds).toEqual([resolved.newItems[0].id]);
-	});
-
 	it('drops a challenge whose every reference is unresolvable', () => {
-		const resolved = resolve({ challenges: [recognize('new:9', 'x')] });
+		// Neither a known id nor a known term: with no vocabulary to mint, there is
+		// nothing for this challenge to be about, so it never reaches the pool.
+		const resolved = resolve({ challenges: [recognize('who?', 'x')] }, { knownItemIds: ['i1'] });
 		expect(resolved.challenges).toHaveLength(0);
 		expect(resolved.dropped).toBe(1);
 	});
@@ -645,10 +611,10 @@ describe('resolveBatch', () => {
 
 	it('counts malformed entries as dropped rather than failing', () => {
 		const parsed = parseBatch(
-			JSON.stringify({ challenges: [recognize('i1', 'ok'), { type: 'cloze' }], newItems: [{}] })
+			JSON.stringify({ challenges: [recognize('i1', 'ok'), { type: 'cloze' }] })
 		);
 		expect(parsed.challenges).toHaveLength(1);
-		expect(parsed.dropped).toBe(2);
+		expect(parsed.dropped).toBe(1);
 	});
 
 	it('rejects a completion whose envelope is the wrong shape', () => {
@@ -920,10 +886,7 @@ describe('resolveBatch', () => {
 		});
 
 		it('adds no reading for a Latin-script cloze', () => {
-			const resolved = resolve({
-				challenges: [cloze],
-				newItems: [{ term: 'leer', meaning: 'to read' }]
-			});
+			const resolved = resolve({ challenges: [cloze] });
 			const [challenge] = resolved.challenges;
 			if (challenge.type !== 'cloze') throw new Error('expected cloze');
 			expect(challenge.sentence).toBe('Yo ___ un libro.');

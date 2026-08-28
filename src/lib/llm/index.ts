@@ -6,9 +6,9 @@
  * path and the offline mock automatically, based on whether a key is
  * configured.
  *
- * Nothing in this layer touches the database. `getBatch` returns `newItems`
- * with `fsrsCard: null`; the caller initializes card state via `$lib/srs` and
- * persists the result.
+ * Nothing in this layer touches the database. `getBatch` returns challenges and
+ * nothing else — a lesson is written *about* the vocabulary it is handed and
+ * never introduces any — so the caller has only the pool to persist.
  */
 
 import { escalate } from './escalation';
@@ -125,10 +125,9 @@ export {
 	batchJsonSchema,
 	challengeSchema,
 	generatedBatchSchema,
-	generatedChallengeSchema,
-	generatedItemSchema
+	generatedChallengeSchema
 } from './schemas';
-export type { GeneratedBatch, GeneratedChallenge, GeneratedItem } from './schemas';
+export type { GeneratedBatch, GeneratedChallenge } from './schemas';
 
 export { getUsageTotals, recordUsage, resetUsage } from './usage';
 export type { UsageTotals } from './usage';

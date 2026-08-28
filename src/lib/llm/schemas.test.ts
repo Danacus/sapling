@@ -47,7 +47,7 @@ const validBatch = {
 				{ text: 'bebo', reading: null },
 				{ text: 'corro', reading: null }
 			],
-			itemIds: ['new:0'],
+			itemIds: ['i1'],
 			explanation: 'leer -> leo'
 		},
 		{
@@ -73,7 +73,7 @@ const validBatch = {
 			],
 			distractorWords: [{ text: 'bebo', reading: null }],
 			instruction: null,
-			itemIds: ['new:0'],
+			itemIds: ['i1'],
 			explanation: null
 		},
 		{
@@ -87,11 +87,10 @@ const validBatch = {
 			wrongWord: { text: 'bebo', reading: null },
 			wrongPosition: 1,
 			meaningNative: 'I read a book.',
-			itemIds: ['new:0'],
+			itemIds: ['i1'],
 			explanation: null
 		}
-	],
-	newItems: [{ term: 'leer', meaning: 'to read', notes: null }]
+	]
 };
 
 describe('targetTextSchema', () => {
@@ -177,7 +176,7 @@ describe('generatedBatchSchema', () => {
 						{ text: '茶', reading: 'chá' }
 					],
 					instruction: null,
-					itemIds: ['new:0'],
+					itemIds: ['i1'],
 					explanation: null
 				},
 				{
@@ -187,26 +186,21 @@ describe('generatedBatchSchema', () => {
 					after: { text: '。', reading: '.' },
 					hintNative: 'Please give me a menu.',
 					distractorWords: null,
-					itemIds: ['new:0'],
+					itemIds: ['i1'],
 					explanation: null
 				},
 				{
 					type: 'translate-to-target',
 					promptNative: 'the bill, please',
 					answers: [{ text: '买单', reading: 'mǎidān' }],
-					itemIds: ['new:1']
+					itemIds: ['i2']
 				}
-			],
-			newItems: [
-				{ term: '菜单', meaning: 'the menu', romanization: 'càidān', notes: null },
-				{ term: '买单', meaning: 'to pay the bill', romanization: 'mǎidān' }
 			]
 		};
 
 		const parsed = generatedBatchSchema.safeParse(zhBatch);
 		expect(parsed.success).toBe(true);
 		if (!parsed.success) return;
-		expect(parsed.data.newItems[0].romanization).toBe('càidān');
 		const produce = parsed.data.challenges[0];
 		expect(produce.type === 'produce-mc' && produce.distractors.map((d) => d.reading)).toEqual([
 			'kuàizi',
@@ -434,9 +428,9 @@ describe('batchJsonSchema', () => {
 		visit(schema);
 	});
 
-	it('describes both envelope arrays at the top level', () => {
+	it('offers the model one envelope array and no way to introduce vocabulary', () => {
 		expect(schema.type).toBe('object');
-		expect(Object.keys(schema.properties as object)).toEqual(['challenges', 'newItems']);
+		expect(Object.keys(schema.properties as object)).toEqual(['challenges']);
 	});
 
 	it('offers every wire type and the reading slot to the model', () => {
@@ -452,9 +446,6 @@ describe('batchJsonSchema', () => {
 			expect(serialized).toContain(type);
 		}
 		expect(serialized).toContain('reading');
-		const newItems = (schema.properties as Record<string, Record<string, JsonNode>>).newItems;
-		const itemProps = (newItems.items as JsonNode).properties as object;
-		expect(Object.keys(itemProps)).toContain('romanization');
 	});
 
 	it('leaves match-pairs out of the generation schema entirely', () => {
