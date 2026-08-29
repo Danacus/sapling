@@ -1,17 +1,5 @@
 # Sync — the architecture, and how to stand it up
 
-> ## ⚠️ Sync is unsafe as of 2026-08-29 — turn it off
->
-> A device that accumulates more than ~100 unsynced events and then reconnects
-> to a server that has moved ahead **silently loses its own unsynced writes**.
-> Not "fails to sync" — *loses*. In the reproduction below a client holding 400
-> of its own events ends with 101, in its own local database, with nothing
-> logged at any level.
->
-> This is **not** Sapling's bug. It reproduces with every Sapling-specific
-> ingredient removed (see "The divergence data-loss bug"). Do not re-enable sync
-> until it is resolved upstream or a guard is in place.
-
 Status: **deployed, 2026-08-29.** The Worker is live at
 `https://sapling-sync.vanoverloop.xyz` and answers on `/`. No learner has yet
 synced two real *browsers* through it — the convergence check below ran through
@@ -201,51 +189,6 @@ with `'ignore'`, which would swallow exactly the failures being looked for.
   literal digest. A change that made a phrase hash differently would not fail
   loudly — it would move every learner into a fresh empty room, which reads as
   lost data.
-
-## The divergence data-loss bug (open, upstream)
-
-Found 2026-08-29 while debugging a second device that would not sync.
-
-**Signature.** Client B holds N unsynced events. Server has advanced beyond B's
-last known head. B connects, pulls the server's events successfully, pushes
-**exactly one batch (~100, `MAX_PUSH_EVENTS_PER_REQUEST`)**, and stops. B's
-remaining N-100 events are then gone from *B's own local state*, not merely
-unpushed. No error is logged — not at the client, not in the Durable Object.
-With N=400 the result is reliably `own=101`.
-
-**It is not ours.** Each ingredient was removed in turn and the failure
-survived every time:
-
-| Removed | Still loses data |
-|---|---|
-| The Dexie migration (plain `itemAdded` events) | yes |
-| `offline-backend.ts` (LiveStore's own no-`sync` path) | yes |
-| Large payloads (`challengeAdded` with ~12KB content) | yes |
-| `onSyncError` / `onBackendIdMismatch` overrides (library defaults) | yes |
-| `worker/index.ts` entirely — stock `makeWorker`, no storeId rewrite, no auth, local `wrangler dev` | yes |
-
-So it is a defect in LiveStore 0.4.0's reconciliation (or `@livestore/sync-cf`),
-not in this repo. It wants a minimal upstream report.
-
-**Reproducing it.** Two `@livestore/adapter-node` stores on `fs` storage against
-any sync backend. A commits 400 events and pushes. B is opened with *no* `sync`
-option, commits 400 events, and is shut down. B is reopened *with* the sync
-backend. Count items by id prefix: B settles at `own=101 remote=400` instead of
-`own=400 remote=400`, and A agrees at 501 — so the events are not merely
-unpushed, they are gone. Roughly two minutes per run; needs network, so it
-cannot live in `pnpm test`.
-
-**A boundary worth knowing.** An earlier run with a 100-event backlog converged
-correctly; 400 and 1500 both fail. The threshold sits at about one push batch,
-which is consistent with the push sequence failing to continue after the first
-batch moves the head.
-
-**What made it invisible.** `onSyncError: 'ignore'` is the right policy for
-staying usable offline, and it is also what turns a recoverable condition into
-permanent silence. Worse, the Settings connection check only proves the endpoint
-is reachable and the phrase accepted — it reported "Connected" throughout, while
-a device sat parked. Any future work here should surface the store's own sync
-state (pending count, last confirmed head), not a ping.
 
 ## Open items, roughly by value
 
