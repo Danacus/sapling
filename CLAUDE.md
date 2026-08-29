@@ -9,9 +9,11 @@ The repo ships a `flake.nix` devShell (Node 22 + pnpm + the language servers) wi
 ```sh
 pnpm dev                                # dev server
 pnpm build                              # static build -> build/
-pnpm check                              # svelte-check (typecheck)
+pnpm check                              # svelte-check + tsc -p worker (typecheck both targets)
 pnpm test                               # vitest run (all suites)
 pnpm test src/lib/srs/scheduler.test.ts # single test file
+pnpm sync:dev                           # sync Worker locally (localhost:8787)
+pnpm sync:deploy                        # deploy the sync Worker (wrangler)
 pnpm format                             # prettier --write . (bulk pass)
 pnpm format:check                       # prettier --check . (verify only)
 ```
@@ -38,7 +40,7 @@ When writing a new agent: an explicit `tools:` allowlist **silently drops the `S
 
 ## Architecture
 
-Local-first static SPA (SvelteKit 2 + Svelte 5, `adapter-static`, `ssr=false`), no backend. All user state lives in the browser — in **LiveStore** (WASM SQLite in OPFS, an append-only eventlog with the tables derived from it). Single-device today: there is no sync backend, and adding one means a LiveStore sync provider rather than a bespoke relay. The one external call is a batched LLM request from the browser to OpenRouter with the user's own key.
+Local-first static SPA (SvelteKit 2 + Svelte 5, `adapter-static`, `ssr=false`). All user state lives in the browser — in **LiveStore** (WASM SQLite in OPFS, an append-only eventlog with the tables derived from it). The only server anywhere is `worker/`, a Cloudflare Worker that **sequences and relays the eventlog and nothing else** — it never merges, never reads a payload, and the app is fully usable with it unreachable or switched off. Sync is opt-in per device and off unless the build sets `VITE_SYNC_URL`. The one other external call is a batched LLM request from the browser to OpenRouter with the user's own key.
 
 **There is no `svelte.config.js`** — SvelteKit *and* vitest config live inline in `vite.config.ts`. **Runes mode is forced** project-wide: `$state`/`$derived`/`$effect`, `onclick` (not `on:click`).
 
@@ -55,6 +57,7 @@ Every area is a registry with one module per member; forgetting a registration f
 | `src/lib/conversation/` | Role-play on the assistant's seam: **never imports `$lib/db`**, and exposes exactly one tool — `add_words`, reused verbatim. Corrections travel beside the spoken line, never inside it — and `heard` puts the target script under a learner bubble that needed no correction. | `assistant.md` |
 | `src/lib/db/` | Repositories are the **only** store access, and every write is an event. The Dexie tables survive read-only, purely to be migrated — never edit a `version(n).stores(...)` declaration. | `data.md` |
 | `src/lib/livestore/` | The **eventlog is the source of truth**; the tables are a projection. A materializer that throws kills the store permanently. Order is the log's, never a timestamp. | `livestore.md` |
+| `src/lib/sync/`, `worker/` | The backend **orders and relays; it never merges**. A learner is a pairing phrase; the *Worker* hashes it to pick the room, so the client's `storeId` stays the constant `'sapling'` and no OPFS database is ever renamed. | `livestore.md`, `deploy.md` |
 | `src/lib/srs/` | Pure and deterministic: every function takes `now` (epoch ms). | `data.md` |
 | `src/lib/types.ts` | Treat as frozen; extend with **additive optional fields only**. | `data.md` |
 | `src/lib/romanize/` | Never romanize a term in isolation — context resolves polyphones. | `content.md` |

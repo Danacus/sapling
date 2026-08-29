@@ -16,7 +16,21 @@ import type { Store } from '@livestore/livestore';
 
 import { schema } from './schema';
 
-/** The id of this learner's single local store. Sync would make it per-user. */
+/**
+ * The id of this browser's local store. Constant, and it stays constant even
+ * once sync is on.
+ *
+ * That is worth stating plainly, because the obvious design is the opposite
+ * one: derive the store's name from the pairing phrase so that two paired
+ * devices share a name. It would be a mistake. `storeId` is what names the
+ * database *in OPFS*, so deriving it from the phrase would mean that pairing a
+ * device renames its store — which is to say, opens a new, empty one, and
+ * leaves everything written before pairing stranded in the old.
+ *
+ * So local identity and remote identity are separated. Nothing on disk ever
+ * moves; what the phrase selects is the *room* the events are relayed through,
+ * and `worker/index.ts` does that server-side, where it costs nothing.
+ */
 const STORE_ID = 'sapling';
 
 let pending: Promise<Store<typeof schema>> | undefined;

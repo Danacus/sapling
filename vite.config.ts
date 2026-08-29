@@ -44,8 +44,14 @@ export default defineConfig({
 
 	test: {
 		// Pure-logic unit tests: plain `*.test.ts` files under src/ run in node.
+		//
+		// `worker/` is in scope too. It is a second build target with its own
+		// tsconfig, but it is the same repo and the same green light: the sync
+		// backend derives a room name from a pairing phrase, and that derivation
+		// has to keep agreeing with the client's forever, so it needs a test that
+		// `pnpm test` actually runs.
 		environment: 'node',
-		include: ['src/**/*.test.ts'],
+		include: ['src/**/*.test.ts', 'worker/**/*.test.ts'],
 		exclude: ['src/**/*.svelte.test.ts']
 	}
 });

@@ -1,12 +1,14 @@
 # Sapling Sync — design (historical)
 
 Status: **retired as an architecture, 2026-08-29. Kept as the record of why.**
+The *reasoning* was not retired — it is still what the current system enforces.
 
 This was the spec for multi-device sync built on Dexie plus a homebrew
 event-log server. **That code no longer exists** — `src/lib/sync/` and
-`server/` were deleted once LiveStore had carried real data. The app is
-single-device today; adding sync back means a LiveStore sync provider, not a
-new relay.
+`server/` were deleted once LiveStore had carried real data. Sync came back in
+2026-08 as a LiveStore sync provider rather than a new relay: `worker/` on
+Cloudflare, with `src/lib/sync/` as the client half. See
+`docs/livestore-sync.md` for what was actually built.
 
 The document survives because the *reasoning* survives. Nearly every merge rule
 argued out here is still enforced, and the code still cites this file by
@@ -24,8 +26,8 @@ Where each part ended up:
 | §5 genesis — back-dating the log a device never wrote | `sync/genesis.ts` | `src/lib/livestore/migrate-dexie.ts`, which carries a Dexie learner across once. Its `timesServed` approximation is kept deliberately. |
 | §5 clock skew | a merge input, and a hazard | No longer a merge input at all. `at` is domain data only. |
 | §§6–9 protocol, server, outbox, cursor | `server/`, Dexie `outbox`/`syncState` | **Deleted.** LiveStore's sync backend does the equivalent job, and the Dexie tables remain on disk unread. |
-| §7 secrets stay device-local | `sync/config.ts` | The device id lives in `src/lib/device.ts`; nothing else remained. |
-| §10 end-to-end encryption | designed for, not built | Moot — no backend. The user has since confirmed E2EE is not a requirement. |
+| §7 secrets stay device-local | `sync/config.ts` | The device id lives in `src/lib/device.ts`; the pairing phrase is back in `src/lib/sync/config.ts`, `localStorage` and out of the export, for exactly the reason argued here. |
+| §10 end-to-end encryption | designed for, not built | Still not built, and no longer moot: there is a backend again, and the pairing phrase reaches it in a query string. The user has confirmed E2EE is not a requirement; the room is named by a hash rather than the phrase to limit what that exposure is worth. |
 
 One decision recorded here was later reversed on evidence: §4's total order
 `(at, device, id)` was replaced by the eventlog's own order, because a wall

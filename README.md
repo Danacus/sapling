@@ -321,23 +321,31 @@ gone with it.
 
 ## Sync
 
-**There isn't any, today.** Sapling is single-device: everything lives in your
-browser and nothing is uploaded. Export and import from Settings is how you move
-between machines.
+**Optional, and off unless you set it up.** Out of the box Sapling is
+single-device: everything lives in your browser and nothing is uploaded. Export
+and import from Settings still works and needs no server at all.
 
-It is, however, built on a data layer that is designed to sync. Every change is
-an event appended to a log, and the SQLite tables you actually read are a
-projection of that log — so the hard part, making two devices converge without
-asking you to resolve conflicts, is already settled by construction. Reviews of
-the same word on two devices would both be kept and the FSRS card recomputed
-from the merged history; results are a set-union; the day streak is derived from
-those results and needs no merge rule at all.
+If you deploy the sync backend (`worker/` — a Cloudflare Worker, one Durable
+Object per learner, comfortably inside the free plan), Settings grows a **Sync**
+section. Turning it on mints a **pairing phrase**; typing that phrase on another
+device joins it to the same library. There are no accounts and no sign-up: the
+phrase *is* the credential, and the Worker names your private room by hashing
+it. Treat it like a password.
 
-Turning it on means pointing LiveStore at a sync provider — Cloudflare Workers +
-Durable Objects, for instance — rather than writing a relay. An earlier
-self-hosted server did exist and was retired; [`docs/sync.md`](docs/sync.md)
-keeps the design reasoning, and the merge rules it argued out are still the ones
-enforced in `src/lib/livestore/`.
+The hard part — making two devices converge without asking you to resolve
+conflicts — is settled by construction rather than by the server. Every change
+is an event appended to a log, and the SQLite tables you read are a projection
+of it, so the backend only has to put events in an order and hand them back; it
+never merges and never looks inside one. Reviews of the same word on two devices
+are both kept and the FSRS card recomputed from the merged history; results are
+a set-union; the day streak is derived from those results and needs no merge
+rule at all. Sync failures degrade silently, so the app stays fully usable
+offline, with the server down, or with sync switched off mid-life.
+
+[`docs/livestore-sync.md`](docs/livestore-sync.md) is the architecture and the
+setup runbook; [`docs/sync.md`](docs/sync.md) keeps the original design
+reasoning, and the merge rules it argued out are still the ones enforced in
+`src/lib/livestore/`.
 
 ## Deploying
 

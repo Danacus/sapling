@@ -18,6 +18,16 @@
 	} from '$lib/db';
 	import { fillRomanizations, isMockMode } from '$lib/llm';
 	import {
+		clearSyncPhrase,
+		formatPhrase,
+		getSyncPhrase,
+		isSyncAvailable,
+		isSyncEnabled,
+		setSyncEnabled,
+		setSyncPhrase,
+		SYNC_URL
+	} from '$lib/sync';
+	import {
 		audioCacheBytes,
 		AUDIO_CACHE_MAX_BYTES,
 		clearAudioCache,
@@ -107,6 +117,22 @@
 	let backfillStatus = $state<Status>('idle');
 	let backfillMessage = $state('');
 
+	// Sync --------------------------------------------------------------------------
+	// Everything here takes effect on the *next* boot: the sync backend is chosen
+	// when the leader worker builds the store, so the UI offers a reload rather
+	// than pretending a switch flipped mid-session did anything.
+	let syncAvailable = $state(false);
+	let syncEnabled = $state(false);
+	let syncPhrase = $state<string | undefined>(undefined);
+	/** The phrase is a credential; it is covered until asked for. */
+	let syncRevealed = $state(false);
+	let pairInput = $state('');
+	/** Adopting a *different* phrase re-points this device, so it asks first. */
+	let pairStage = $state<'idle' | 'confirm'>('idle');
+	let syncStatus = $state<Status>('idle');
+	let syncMessage = $state('');
+	let syncNeedsReload = $state(false);
+
 	// Export / import -----------------------------------------------------------
 	let exportStatus = $state<Status>('idle');
 	let exportMessage = $state('');
@@ -142,6 +168,10 @@
 
 				ttsEngine = getTtsEngine();
 				ttsVoice = getTtsVoice();
+
+				syncAvailable = isSyncAvailable();
+				syncEnabled = isSyncEnabled();
+				syncPhrase = getSyncPhrase();
 
 				// Walks Cache Storage, so it must not hold up the rest of the page;
 				// it reports 0 rather than failing if the cache is unreachable.
@@ -199,6 +229,94 @@
 	function toggleListeningMode() {
 		listeningMode = !listeningMode;
 		setListeningMode(listeningMode);
+	}
+
+	/**
+	 * Turns sync on or off for the next boot.
+	 *
+	 * Enabling mints a phrase if this device has none. Disabling deliberately
+	 * *keeps* it, so switching back on rejoins the same library rather than
+	 * stranding the device in a fresh empty one.
+	 */
+	function toggleSync() {
+		const next = !syncEnabled;
+		setSyncEnabled(next);
+		syncEnabled = isSyncEnabled();
+		syncPhrase = getSyncPhrase();
+
+		if (next && !syncEnabled) {
+			// `setSyncEnabled` refused, which it only does when the phrase could not
+			// be stored — a browser with localStorage blocked. Sync needs a phrase
+			// that survives a reload, so say so rather than showing a switch that
+			// silently springs back.
+			syncStatus = 'error';
+			syncMessage = 'This browser will not let the app store the pairing phrase.';
+			return;
+		}
+
+		syncNeedsReload = true;
+		syncStatus = 'saved';
+		syncMessage = next ? 'Sync on after reload.' : 'Sync off after reload.';
+	}
+
+	async function copyPhrase() {
+		if (!syncPhrase) return;
+		try {
+			await navigator.clipboard.writeText(formatPhrase(syncPhrase));
+			syncMessage = 'Phrase copied.';
+			flash((value) => (syncStatus = value));
+		} catch {
+			// Clipboard access is refused often enough (permissions, insecure
+			// origins) that it has to be a nudge rather than a failure.
+			syncRevealed = true;
+			syncStatus = 'error';
+			syncMessage = 'Could not copy — the phrase is shown above.';
+		}
+	}
+
+	/**
+	 * Adopts a phrase from another device.
+	 *
+	 * Confirmed rather than immediate when it replaces a *different* phrase:
+	 * this device stops syncing with whatever it was syncing with, and anything
+	 * it holds that never reached that library stays only on this device.
+	 */
+	function pairDevice() {
+		const adopting = setSyncPhrase(pairInput);
+		if (adopting === undefined) {
+			syncStatus = 'error';
+			syncMessage = 'That does not look like a pairing phrase.';
+			return;
+		}
+		syncPhrase = adopting;
+		setSyncEnabled(true);
+		syncEnabled = isSyncEnabled();
+		pairInput = '';
+		pairStage = 'idle';
+		syncNeedsReload = true;
+		syncStatus = 'saved';
+		syncMessage = 'Paired. Reload to start syncing.';
+	}
+
+	function requestPair() {
+		const replacing = syncPhrase !== undefined;
+		if (replacing && pairStage === 'idle') {
+			pairStage = 'confirm';
+			return;
+		}
+		pairDevice();
+	}
+
+	/** Forgets the phrase and turns sync off. The local library is untouched. */
+	function unpair() {
+		clearSyncPhrase();
+		syncPhrase = undefined;
+		syncEnabled = false;
+		syncRevealed = false;
+		pairStage = 'idle';
+		syncNeedsReload = true;
+		syncStatus = 'saved';
+		syncMessage = 'This device is no longer paired.';
 	}
 
 	function setRomanization(mode: RomanizationMode) {
@@ -792,6 +910,115 @@
 			<section class="card ll-rise" style="animation-delay: 200ms">
 				<div class="card-head">
 					<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
+						<path d="M4.6 12a7.4 7.4 0 0 1 12.6-5.2l2.2 2.2" />
+						<path d="M19.4 12a7.4 7.4 0 0 1-12.6 5.2l-2.2-2.2" />
+						<path d="M19.4 4.8V9h-4.2" />
+						<path d="M4.6 19.2V15h4.2" />
+					</svg>
+					<h2>Sync</h2>
+				</div>
+				<hr class="stitch" />
+
+				{#if !syncAvailable}
+					<p class="hint">
+						This build has no sync backend, so everything stays on this device. Deploying the worker
+						and rebuilding with a sync URL turns this section on.
+					</p>
+				{:else}
+					<div class="switch-row">
+						<div class="switch-copy">
+							<span class="label">Sync this device</span>
+							<p class="hint">
+								Keeps your words, reviews and lessons the same on every device you pair. Sync only
+								ever adds to what a device already knows, and the app keeps working with the server
+								unreachable.
+							</p>
+						</div>
+						<button
+							type="button"
+							class="switch"
+							class:on={syncEnabled}
+							role="switch"
+							aria-checked={syncEnabled}
+							aria-label="Sync this device"
+							onclick={toggleSync}
+						>
+							<span class="switch-thumb"></span>
+						</button>
+					</div>
+
+					{#if syncPhrase}
+						<div class="field">
+							<span class="label">Pairing phrase</span>
+							<p class="hint">
+								Type this on another device to join it to this library. It is the only thing
+								protecting your progress — treat it like a password.
+							</p>
+							<p class="phrase" class:covered={!syncRevealed}>
+								{syncRevealed ? formatPhrase(syncPhrase) : '•••••-•••••-•••••-•••••'}
+							</p>
+							<div class="actions-row">
+								<button
+									type="button"
+									class="btn btn-ghost"
+									onclick={() => (syncRevealed = !syncRevealed)}
+								>
+									{syncRevealed ? 'Hide' : 'Show'}
+								</button>
+								<button type="button" class="btn" onclick={() => void copyPhrase()}>Copy</button>
+								<button type="button" class="btn btn-ghost" onclick={unpair}>Unpair</button>
+							</div>
+						</div>
+					{/if}
+
+					<div class="field">
+						<span class="label">Pair with another device</span>
+						<input
+							class="input"
+							bind:value={pairInput}
+							oninput={() => (pairStage = 'idle')}
+							placeholder="ABCDE-FGHJK-MNPQR-STVWX"
+							autocomplete="off"
+							spellcheck="false"
+						/>
+						<p class="hint">
+							Paste the phrase from a device that already has your progress. Capitals, dashes and
+							spaces don't matter.
+						</p>
+						{#if pairStage === 'confirm'}
+							<p class="hint">
+								This device will follow that library instead of its own. Anything it has learned
+								that never reached another device stays here and stops being synced. Press again to
+								confirm.
+							</p>
+						{/if}
+						<div class="actions-row">
+							<button
+								type="button"
+								class="btn btn-primary"
+								onclick={requestPair}
+								disabled={pairInput.trim() === ''}
+							>
+								{pairStage === 'confirm' ? 'Yes, pair to that library' : 'Pair this device'}
+							</button>
+						</div>
+					</div>
+
+					<div class="actions-row">
+						{#if syncNeedsReload}
+							<button type="button" class="btn btn-primary" onclick={() => location.reload()}>
+								Reload now
+							</button>
+						{/if}
+						<InlineStatus status={syncStatus} message={syncMessage} />
+					</div>
+					<p class="hint">Syncing through {SYNC_URL}.</p>
+				{/if}
+			</section>
+
+			<section class="card ll-rise" style="animation-delay: 200ms">
+				<div class="card-head">
+					<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
 						<path d="M4.6 8.4h14.8v9.6a1.4 1.4 0 0 1-1.4 1.4H6a1.4 1.4 0 0 1-1.4-1.4Z" />
 						<path d="M3.6 5.2h16.8v3.2H3.6Z" />
 						<path d="M10.2 12h3.6" />
@@ -1070,6 +1297,25 @@
 		display: flex;
 		gap: 0.5rem;
 		margin-bottom: 0.6rem;
+	}
+
+	/*
+	 * The pairing phrase is read off one screen and typed into another, so it is
+	 * set monospaced and spaced out: the groups have to stay countable and the
+	 * characters distinguishable. `break-all` because a narrow phone must wrap it
+	 * rather than push the card sideways — width never buys a longer line here.
+	 */
+	.phrase {
+		margin: 0 0 0.6rem;
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 1.05rem;
+		letter-spacing: 0.08em;
+		word-break: break-all;
+		color: var(--text);
+	}
+
+	.phrase.covered {
+		color: var(--text-muted);
 	}
 
 	.chip {

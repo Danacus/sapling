@@ -1,0 +1,27 @@
+{
+	// The Worker is a second compilation target and needs its own config: it runs
+	// on workerd, not in a browser, so it must be typechecked against
+	// `@cloudflare/workers-types` with no `lib.dom` in scope. The app's
+	// `tsconfig.json` extends SvelteKit's generated one, which covers `src/**`
+	// only — so nothing here is checked by `svelte-check`, and `pnpm check` runs
+	// `tsc -p worker` after it to close that gap.
+	//
+	// `../src/lib/sync/phrase.ts` is reachable from here on purpose. The Worker
+	// hashes the pairing phrase and the client mints it; a second copy of the
+	// normalisation rules that drifted by one character would silently put two
+	// devices in two different rooms.
+	"compilerOptions": {
+		"target": "ES2022",
+		"lib": ["ES2022"],
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"types": ["@cloudflare/workers-types"],
+		"strict": true,
+		"noEmit": true,
+		"skipLibCheck": true,
+		"forceConsistentCasingInFileNames": true,
+		"isolatedModules": true,
+		"resolveJsonModule": true
+	},
+	"include": ["**/*.ts"]
+}

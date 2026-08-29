@@ -1,0 +1,25 @@
+{
+	// The sync backend. Deployed separately from the app: Cloudflare Pages still
+	// builds and serves the SPA from git on every push to the default branch,
+	// and this Worker is pushed on its own with `pnpm sync:deploy`. Keeping them
+	// apart leaves `static/_headers` and `static/_redirects` — and the two
+	// caching incidents they encode — exactly as they are.
+	//
+	// See `worker/index.ts` for what it does and `docs/livestore-sync.md` for
+	// how to stand it up the first time.
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "sapling-sync",
+	"main": "worker/index.ts",
+	"compatibility_date": "2026-08-01",
+	// Effect (which LiveStore is built on) uses AsyncLocalStorage.
+	"compatibility_flags": ["nodejs_als"],
+	"observability": { "enabled": true },
+
+	// One Durable Object per room, keyed by the hash of a pairing phrase. The
+	// eventlog lives in the DO's own SQLite: no D1, nothing else to provision,
+	// and it is on the free plan.
+	"durable_objects": {
+		"bindings": [{ "name": "SYNC_BACKEND_DO", "class_name": "SyncBackendDO" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SyncBackendDO"] }]
+}

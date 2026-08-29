@@ -12,7 +12,16 @@
 # and neither is reachable from the browser bundle CF actually builds.
 #   - @parcel/watcher — dev-time file watching (falls back to polling).
 #   - msgpackr-extract — native msgpack decode; msgpackr ships a JS path.
+#
+# workerd is the exception, and allowed on purpose: it is the Cloudflare
+# runtime `wrangler dev` executes the sync Worker in, and unlike the three
+# above it has no fallback — denying its postinstall leaves no binary to run,
+# so the only way to exercise the sync backend locally would be to deploy it.
+# The cost is one platform binary download in CF Pages' install, which does not
+# need it. If that install time ever matters more than a local sync backend,
+# this is the line to flip.
 allowBuilds:
   '@parcel/watcher': false
   esbuild: false
   msgpackr-extract: false
+  workerd: true

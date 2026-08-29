@@ -8,15 +8,18 @@
 		"build": "vite build",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
-		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && tsc -p worker/tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"test": "vitest run",
 		"test:watch": "vitest",
+		"sync:dev": "wrangler dev",
+		"sync:deploy": "wrangler deploy",
 		"format": "prettier --write .",
 		"format:check": "prettier --check ."
 	},
 	"packageManager": "pnpm@11.21.0",
 	"devDependencies": {
+		"@cloudflare/workers-types": "^4.20251118.0",
 		"@livestore/adapter-node": "0.4.0",
 		"@sveltejs/adapter-static": "^3.0.10",
 		"@sveltejs/kit": "^2.63.0",
@@ -27,12 +30,16 @@
 		"svelte-check": "^4.6.0",
 		"typescript": "^6.0.3",
 		"vite": "^8.0.16",
-		"vitest": "^4.1.11"
+		"vitest": "^4.1.11",
+		"wrangler": "^4.127.0"
 	},
 	"dependencies": {
 		"@livestore/adapter-web": "0.4.0",
+		"@livestore/common": "0.4.0",
 		"@livestore/livestore": "0.4.0",
 		"@livestore/svelte": "0.4.0",
+		"@livestore/sync-cf": "0.4.0",
+		"@livestore/utils": "0.4.0",
 		"dexie": "^4.4.5",
 		"pinyin-pro": "^3.29.3",
 		"ts-fsrs": "^5.4.1",
