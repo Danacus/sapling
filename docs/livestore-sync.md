@@ -206,7 +206,8 @@ same scenario converge perfectly: `own=400 remote=400` on both sides, verified
 by reopening the client with **no sync backend** and re-materialising from its
 own log. See the `gotchas` skill.
 
-**So the following are verified working**, each against a real backend:
+**So the following are verified working**, each against a real backend, with a
+harness that settles before every shutdown:
 
 - Two clients converge, in both directions, including through the deployed
   Worker on its custom domain.
@@ -217,15 +218,33 @@ own log. See the `gotchas` skill.
   900KB frame cap) push and pull intact, so transport chunking is fine.
 - Room isolation: a different phrase sees nothing.
 - The offline backend keeps local writes across a restart.
+- **The full shape of the reported failure**: a client syncs and shares history,
+  goes offline and writes 600 events, the other client independently races 600
+  ahead, and the first reconnects. It converges to all 1600 on both sides —
+  confirmed by reopening it with no network and re-materialising from its own
+  log. Six full push batches, so the push sequence does continue past the first.
+- The same again where the offline backlog *duplicates by content* what the
+  server already holds — two devices that migrated the same library. Converges.
 
-**What remains unexplained.** The original symptom — a browser whose desktop
-client sat at a stale view while the phone synced correctly, having logged one
+**What remains unexplained.** The original symptom — a desktop browser sat at a
+stale view while the phone synced correctly, having logged one
 `ServerAheadError` with `providedNum: 712` against a server head of 2607 — was
-never reproduced. Every attempt converged once the harness bug was removed. The
-distinguishing features not yet tested are the *browser* adapter path
-(OPFS + SharedWorker leader, which no Node test exercises) and the much larger
-scale (~1900 events pending). Sync is **not** known to be broken; it is known
-to have failed once, on one device, for reasons still unestablished.
+never reproduced. Note what the passing runs do *not* cover: in every one of
+them the reconnecting client pulled before it pushed, so `ServerAheadError`
+never fired at all. The untested branch is therefore not "does batching work"
+(it does, six batches deep) but **what happens after that error is raised** —
+and `onSyncError: 'ignore'` is precisely what would turn a recoverable signal
+into permanent silence. Provoking it in Node has so far failed; the browser
+provokes it presumably because its leader starts slowly enough that a queued
+backlog pushes first.
+
+The other untested difference is the **browser adapter itself** — OPFS plus the
+SharedWorker leader — which no Node test can reach, and where both of this
+feature's real bugs have lived. A browser harness is the missing piece; the
+LiveStore migration brief called for one and it still does not exist.
+
+Sync is **not** known to be broken. It is known to have failed once, on one
+device, for reasons still unestablished.
 
 ## Open items, roughly by value
 
