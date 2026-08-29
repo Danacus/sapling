@@ -20,6 +20,12 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   `$lib/db`, which strips them. Repositories are the only Dexie access.
 - API key and prefs live in **localStorage** (`ll.*` keys, via `db/settings.ts`
   and `ui/prefs.ts`) — never in IndexedDB, and never in the JSON export.
+- **A LiveStore materializer that throws kills the store permanently.** It does
+  not skip the event: the exception propagates and every later `query` fails
+  with "Store has been shut down". A bare `insert` of a duplicate primary key is
+  enough. Materializers must be total — `.onConflict('id', 'ignore')` is what
+  makes them so. Committing an event type the schema does not define does the
+  same thing, from the client API side.
 
 ## TTS
 
@@ -39,8 +45,29 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   stale-client request for a dead hashed chunk gets edge-cached under the
   immutable header and poisons that URL for everyone for up to a year.
   `static/_redirects` encodes this — don't simplify it to a blanket fallback.
-- `static/_headers` deliberately sets **no COOP/COEP**. Cross-origin isolation
-  breaks the TTS model-mirror fetches.
+- **2026-08-29, a correction:** this file used to say cross-origin isolation
+  breaks the TTS model-mirror fetches. It does not. Measured under
+  `COOP: same-origin` + `COEP: require-corp`, the app boots with
+  `crossOriginIsolated = true` and both sherpa artifacts still load 200. COEP
+  imposes CORP on **no-cors** subresources only, and `sherpa-worker.js` uses a
+  bare `fetch(url)` (mode `cors`) against a mirror sending
+  `access-control-allow-origin: *`. `static/_headers` still sets no COOP/COEP —
+  because nothing needs isolation, not because it is unavailable. Firefox only;
+  re-check in Chrome before enabling. The wrong version of this note nearly cost
+  a needless plan to self-host 439MB of Kokoro voices.
+- **SvelteKit's `$service-worker` `build` list omits Vite worker output.** It is
+  assembled purely from Vite's *client manifest*, and a `?worker` import is a
+  separate Rollup build that never appears there. Anything loaded via `?worker`
+  is served but never precached, so it works everywhere except offline, and only
+  for users who already installed the PWA — `install` still succeeds, so nothing
+  looks wrong. `kit.serviceWorker.files` cannot reach it either; it filters
+  `static/` only.
+- **A `?worker` graph emits its own copy of every shared asset.** SvelteKit gives
+  it a separate asset directory *and* naming pattern (`workers/assets/[name]-[hash]`
+  vs `assets/[name].[hash]`), so an asset both graphs need is downloaded and
+  compiled twice. `vite.config.ts` realigns the patterns from a plugin ordered
+  **after** `sveltekit()` — setting `worker.rollupOptions` at the top level is
+  silently overridden by SvelteKit's own `config` hook.
 - `pnpm-workspace.yaml` records pnpm's dependency build-script decisions
   (`allowBuilds`). An **undecided** script hard-fails Cloudflare Pages' CI
   install. Keep decisions explicit there.
