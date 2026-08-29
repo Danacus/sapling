@@ -1,7 +1,17 @@
 # Sync — the architecture, and how to stand it up
 
-Status: **built, not yet deployed.** The code is here and green; nobody has run
-`pnpm sync:deploy` yet, and no learner has synced two real devices.
+Status: **deployed, 2026-08-29.** The Worker is live at
+`https://sapling-sync.vanoverloop.xyz` and answers on `/`. No learner has yet
+synced two real *browsers* through it — the convergence check below ran through
+the node adapter, which shares LiveStore's leader thread but not the
+OPFS/SharedWorker path.
+
+**The app only offers sync if `VITE_SYNC_URL` was set when it was built.** It is
+inlined at build time (`src/lib/sync/url.ts`), so setting it in the Pages
+environment does nothing to deployments that already exist — Settings will keep
+saying "this build has no sync backend" until a *new* build runs. Set the
+variable for the Production environment, then redeploy (retry the deployment or
+push a commit).
 
 Read `.claude/rules/livestore.md` first for how the data layer works, and
 `docs/sync.md` for why each merge rule is what it is. This file covers what

@@ -15,6 +15,15 @@
 	"compatibility_flags": ["nodejs_als"],
 	"observability": { "enabled": true },
 
+	// The public address, and the one the app is built against
+	// (`VITE_SYNC_URL`). Declared here rather than left in the dashboard so it
+	// is versioned and survives the Worker being recreated: `wrangler deploy`
+	// provisions the domain and its certificate, and a Custom Domain sends every
+	// path on the hostname to this Worker. It creates a Cloudflare-managed DNS
+	// record rather than an ordinary A/CNAME, so the DNS tab showing nothing
+	// editable is expected — the hostname resolving is the real test.
+	"routes": [{ "pattern": "sapling-sync.vanoverloop.xyz", "custom_domain": true }],
+
 	// One Durable Object per room, keyed by the hash of a pairing phrase. The
 	// eventlog lives in the DO's own SQLite: no D1, nothing else to provision,
 	// and it is on the free plan.
