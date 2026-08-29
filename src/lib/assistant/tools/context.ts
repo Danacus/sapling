@@ -8,7 +8,7 @@
  */
 
 import { deleteItem, getAllItems, upsertItems } from '$lib/db';
-import { newUuid } from '$lib/sync/config';
+import { newUuid } from '$lib/device';
 import type { ToolContext } from './def';
 
 /**

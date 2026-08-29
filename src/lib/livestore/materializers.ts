@@ -65,6 +65,7 @@
  * does *not* pay for a tombstone lookup to avoid writing it: that would be a
  * query per review, and a migration replays thousands of them.
  */
+import type { ChallengeType } from '$lib/types';
 import { State } from '@livestore/livestore';
 
 import { events } from './events';
@@ -73,27 +74,61 @@ import { PROFILE_ID, reviewKey, tables } from './tables';
 /**
  * The challenge types this build knows how to play.
  *
- * Mirrors the allow-list in `challengeContentSchema` (`sync/events.ts`) and
- * carries the same obligation: **every new member of the `Challenge` union has
- * to be added here too**, or challenges of that type are dropped on arrival
- * instead of pooled. Enforcing it here rather than in the event schema means an
- * unknown type costs one skipped row, not a rejected event — the eventlog keeps
- * it, and a later build that knows the type will materialize it on replay.
+ * **Every new member of the `Challenge` union has to be added here**, or
+ * challenges of that type are dropped on arrival instead of pooled. Enforcing
+ * it in the materializer rather than the event schema is deliberate: an unknown
+ * type costs one skipped row, not a rejected event, so the eventlog keeps it
+ * and a later build that knows the type materializes it on replay.
+ *
+ * Typed as a `Record` over `ChallengeType` so forgetting is a `pnpm check`
+ * failure at this literal rather than a silent drop at runtime — the same trick
+ * the stored-type registry uses. It replaces the parity table that used to live
+ * in the retired `sync/events.test.ts`; deleting that file took the gate with
+ * it, which is exactly the kind of quiet loss this codebase tries not to have.
  */
-const CHALLENGE_TYPES = new Set([
-	'multiple-choice',
-	'cloze',
-	'typed-translation',
-	'match-pairs',
-	'word-order',
-	'spot-error'
-]);
+const CHALLENGE_TYPE_TABLE: Record<ChallengeType, true> = {
+	'multiple-choice': true,
+	cloze: true,
+	'typed-translation': true,
+	'match-pairs': true,
+	'word-order': true,
+	'spot-error': true
+};
+
+const CHALLENGE_TYPES = new Set<string>(Object.keys(CHALLENGE_TYPE_TABLE));
 
 /** Drops `undefined` values so an absent patch field never blanks a set one. */
 function definedOnly<T extends object>(fields: T): Partial<T> {
 	return Object.fromEntries(
 		Object.entries(fields).filter(([, value]) => value !== undefined)
 	) as Partial<T>;
+}
+
+/**
+ * The `profile` row a profile payload becomes.
+ *
+ * Shared by `v1.ProfileUpdated` and `v1.ProfileImported`, which differ only in
+ * their conflict clause — keeping the column mapping in one place is what stops
+ * the two drifting into writing different shapes of the same row.
+ */
+function profileRow(payload: {
+	nativeLanguage: string;
+	targetLanguage: string;
+	level: 'beginner' | 'elementary' | 'intermediate' | 'advanced';
+	interests: readonly string[];
+	about?: string | undefined;
+	model: string;
+	createdAt: number;
+}) {
+	return {
+		nativeLanguage: payload.nativeLanguage,
+		targetLanguage: payload.targetLanguage,
+		level: payload.level,
+		interests: payload.interests,
+		about: payload.about ?? null,
+		model: payload.model,
+		createdAt: payload.createdAt
+	};
 }
 
 export const materializers = State.SQLite.materializers(events, {
@@ -211,16 +246,17 @@ export const materializers = State.SQLite.materializers(events, {
 
 	/** The whole profile, overwritten by whichever event is last in the log. */
 	'v1.ProfileUpdated': (payload) =>
-		tables.profile
-			.insert({
-				id: PROFILE_ID,
-				nativeLanguage: payload.nativeLanguage,
-				targetLanguage: payload.targetLanguage,
-				level: payload.level,
-				interests: payload.interests,
-				about: payload.about ?? null,
-				model: payload.model,
-				createdAt: payload.createdAt
-			})
-			.onConflict('id', 'replace')
+		tables.profile.insert({ id: PROFILE_ID, ...profileRow(payload) }).onConflict('id', 'replace'),
+
+	/**
+	 * The migration's profile: written only when there is no profile at all.
+	 *
+	 * `'ignore'` rather than `'replace'`, and that single word is the whole
+	 * mechanism. A migrated profile describes the learner *before* the upgrade,
+	 * so it must never win against one edited since — which is exactly what a
+	 * second device migrating a week later would otherwise do, silently
+	 * reverting interests, model and `about` on the device that had been in use.
+	 */
+	'v1.ProfileImported': (payload) =>
+		tables.profile.insert({ id: PROFILE_ID, ...profileRow(payload) }).onConflict('id', 'ignore')
 });

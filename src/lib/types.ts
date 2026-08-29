@@ -67,11 +67,12 @@ export interface KnowledgeItem {
 	/**
 	 * Review log, newest last. `grade` is the ts-fsrs `Rating`.
 	 *
-	 * `device` is stamped only while sync is enabled (see `$lib/sync`), and it
-	 * is what makes a merged history dedupe exactly: an entry's identity is
-	 * `(at, device)`, so two devices reviewing the same word in the same
-	 * millisecond stay two reviews rather than collapsing into one. Entries
-	 * without it predate sync on this device and are its own by construction.
+	 * `device` is stamped by `$lib/device`'s stable per-browser id, and it is
+	 * what makes a merged history dedupe exactly: an entry's identity is
+	 * `(itemId, at, device)`, so two devices reviewing the same word in the
+	 * same millisecond stay two reviews rather than collapsing into one.
+	 * Entries without it predate the id and are attributed to a constant by
+	 * the Dexie migration, so that both devices name them identically.
 	 */
 	history: { at: number; grade: number; device?: string }[];
 }

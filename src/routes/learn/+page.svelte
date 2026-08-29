@@ -46,7 +46,6 @@
 	import { motionMs } from '$lib/session/motion';
 	import { planReadings, type ReadingPlan } from '$lib/session/romanization';
 	import type { FsrsCardState, Grade } from '$lib/srs';
-	import { runSync } from '$lib/sync/run';
 	import { getTtsEngine, kokoroSupports, preloadKokoro, warmSpeech } from '$lib/tts';
 	import type { Challenge, KnowledgeItem, Profile, Verdict } from '$lib/types';
 	import { addRecentTopic, getRecentTopics, getRomanizationMode } from '$lib/ui/prefs';
@@ -763,11 +762,6 @@
 		// this session's own results are already in the log being folded.
 		endStreak = streakFrom(activityByDay(await getAllResults()).map((entry) => entry.day));
 		phase = 'summary';
-
-		// Fire-and-forget (§9): a device should pick up what other devices did
-		// while this session was in progress, but the summary screen must never
-		// wait on the network. `runSync` never throws and no-ops when unconfigured.
-		void runSync();
 	}
 
 	function requestQuit(): void {
@@ -794,8 +788,6 @@
 		cancelWarming();
 		try {
 			await pendingWrite;
-			// Fire-and-forget (§9) — must not delay the navigation below.
-			void runSync();
 		} catch {
 			/* leaving anyway */
 		}

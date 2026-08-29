@@ -6,7 +6,6 @@
 	import favicon from '$lib/assets/favicon.svg';
 	import { getProfile } from '$lib/db';
 	import { storeReady } from '$lib/livestore/store';
-	import { runSync } from '$lib/sync/run';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	import '../app.css';
@@ -25,16 +24,6 @@
 	// the learner happened to visit. Idempotent, and every repository call
 	// awaits the same promise.
 	if (browser) void storeReady();
-
-	// Fire-and-forget, once per boot (§9) — not in the `$effect` below, which
-	// re-runs on every navigation. The layout instance itself is created once
-	// for the life of the app (SvelteKit does not remount it between routes),
-	// so this top-level call already is "once on boot"; it must never delay
-	// rendering, so it is not awaited and nothing here reads its result. A
-	// device picks up what other devices did overnight before the start
-	// screen plans a session; `runSync` never throws and no-ops when sync is
-	// not configured.
-	if (browser) void runSync();
 
 	/**
 	 * A tab left open across a deploy keeps running the old build's JS. When it

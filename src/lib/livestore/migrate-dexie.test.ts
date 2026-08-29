@@ -67,9 +67,11 @@ describe('migrationEvents', () => {
 		expect(migrationEvents(empty)).toEqual([]);
 	});
 
-	it('emits the profile before anything else', () => {
+	it('emits the profile before anything else, as a non-destructive import', () => {
 		const events = migrationEvents({ ...empty, profile, items: [item()] });
-		expect(events[0].name).toBe('v1.ProfileUpdated');
+		// `ProfileImported`, not `ProfileUpdated`: a migrated profile is old news,
+		// and must never overwrite one a second device has edited since.
+		expect(events[0].name).toBe('v1.ProfileImported');
 	});
 
 	it('omits an absent optional rather than sending undefined', () => {

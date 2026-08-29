@@ -1,10 +1,7 @@
 node_modules
 /build
 /.svelte-kit
-/server/node_modules
-/server/dist
 pnpm-lock.yaml
-server/pnpm-lock.yaml
 
 # Tracked, but Claude Code owns it and rewrites it two-space on every plugin
 # change — formatting it to tabs would just start a tug-of-war.

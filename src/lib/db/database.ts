@@ -1,15 +1,26 @@
 /**
- * Dexie database definition.
+ * Dexie database definition — now read-only, and kept only to be migrated.
  *
- * All learner state lives in IndexedDB under the `language-learning` database.
- * Only `src/lib/db/repositories.ts` should talk to these tables directly; the
- * rest of the app goes through the repository functions.
+ * Learner state lives in LiveStore (`$lib/livestore`). This database is what
+ * was there before: `legacy-snapshot.ts` reads it once, on the first boot after
+ * the upgrade, and `$lib/livestore/migrate-dexie` turns it into an eventlog.
+ * Nothing writes here any more.
+ *
+ * **The version declarations below are not a schema you own.** They are a
+ * description of what is already on learners' disks, and Dexie compares them
+ * against it: changing one — including "tidying away" the unused `outbox` and
+ * `syncState` tables, or adding a v5 that drops them — makes Dexie run an
+ * *upgrade* the moment the migration opens the database, mutating the very data
+ * being migrated before it has been carried across. Leave them exactly as they
+ * are. Stale rows in unread tables cost nothing.
+ *
+ * The database itself is deliberately not deleted either: until a learner has
+ * successfully migrated, it is the only copy of their library.
  */
 
 import Dexie from 'dexie';
 import type { Table } from 'dexie';
 import type { Challenge, ChallengeResult, KnowledgeItem, Profile } from '$lib/types';
-import type { SyncEvent } from '$lib/sync/events';
 import { poolRowFromLegacy, type LegacyChallengeRow } from './migrate';
 
 /** The `profile` table holds exactly one row under this key. */
@@ -48,11 +59,10 @@ export type ChallengeRow = Challenge & {
  * Sheds the bookkeeping above, leaving the immutable domain `Challenge`.
  *
  * Lives here, beside the fields it strips, because those two lists have to
- * agree: three call sites were each destructuring them by hand — the session
- * engine, the sync capture path and genesis synthesis — so adding a sixth
- * bookkeeping field (`topic` was the fifth) meant remembering all three, and
- * missing one would quietly leak a local field into a `Challenge` or into a
- * synced payload.
+ * agree: call sites were each destructuring them by hand, so adding a sixth
+ * bookkeeping field (`topic` was the fifth) meant remembering every one of
+ * them, and missing one would quietly leak a local field into a `Challenge`.
+ * The remaining caller is the Dexie migration.
  *
  * The cast is unavoidable: a rest-destructure over a discriminated union
  * produces an `Omit` that no longer narrows on `type`, even though every field
@@ -76,37 +86,18 @@ export interface ResultRow extends ChallengeResult {
 }
 
 /**
- * One locally produced sync event, waiting to be pushed (docs/sync.md §9).
+ * The four tables the migration reads.
  *
- * `seq` is Dexie's auto-increment key and the *only* ordering: the outbox
- * drains oldest-first. It is a separate field rather than the table's `id`
- * because a {@link SyncEvent} already has an `id` of its own — the client-minted
- * UUID the server dedupes on — and shadowing it would be a trap.
+ * `outbox` and `syncState` are absent on purpose. They still exist on disk —
+ * v3 below created them and that declaration must stay — but they belonged to
+ * the retired sync client, nothing reads them, and typing them here would only
+ * invite something to start.
  */
-export interface OutboxRow {
-	seq?: number;
-	event: SyncEvent;
-}
-
-/**
- * Key-value scratch space for the sync client: the pull cursor, the
- * genesis-done flag, and the apply engine's dedupe bookkeeping.
- *
- * Untyped `value` on purpose — this is one table for several unrelated
- * singletons, each owned and typed by its reader in `$lib/sync`.
- */
-export interface SyncStateRow {
-	key: string;
-	value: unknown;
-}
-
 export class AppDatabase extends Dexie {
 	declare profile: Table<ProfileRow, string>;
 	declare items: Table<KnowledgeItem, string>;
 	declare challenges: Table<ChallengeRow, string>;
 	declare results: Table<ResultRow, number>;
-	declare outbox: Table<OutboxRow, number>;
-	declare syncState: Table<SyncStateRow, string>;
 
 	constructor() {
 		super('language-learning');
@@ -139,11 +130,10 @@ export class AppDatabase extends Dexie {
 					})
 			);
 
-		// v3: sync (docs/sync.md §9). Purely additive — two new tables, no
-		// existing table touched, so Dexie needs no `upgrade` callback: a v2
-		// database opens as v3 with both tables simply empty, which is exactly
-		// the right starting state (capture is opt-in, and genesis backfills
-		// everything that predates it).
+		// v3: the retired sync client's outbox and scratch space. Both tables are
+		// now unread — nothing declares them on the class above — but the
+		// declaration stays, because removing it is what would make Dexie decide
+		// this database needs upgrading.
 		this.version(3).stores({ outbox: '++seq', syncState: 'key' });
 
 		// v4: XP is gone. The streak is now derived from the results log, so the

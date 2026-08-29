@@ -79,13 +79,24 @@ describe('runDexieMigration', () => {
 		expect(store.query(tables.reviews)).toHaveLength(1);
 	});
 
-	it('marks an empty legacy database so a fresh install stops looking', async () => {
+	it('leaves an empty legacy database unmarked, and looks again next boot', async () => {
 		snapshot = emptySnapshot;
 		const store = await makeTestStore();
 
 		expect(await runDexieMigration(store)).toBe(0);
+		// Deliberately still 0. Marking here would save a cheap read per boot for
+		// learners who never had Dexie, at the price of the one unrecoverable
+		// failure this module can have: a read that *succeeds* while returning
+		// nothing for a database that was merely not ready would set the marker
+		// permanently against a full library.
+		expect(migratedAt(store)).toBe(0);
+
+		// And because it stays unmarked, a later boot that can read the database
+		// still carries it across.
+		snapshot = { profile, items: [item], pool: [], results: [] };
+		expect(await runDexieMigration(store)).toBeGreaterThan(0);
+		expect(store.query(tables.items).map((i) => i.id)).toEqual(['i1']);
 		expect(migratedAt(store)).toBeGreaterThan(0);
-		expect(await runDexieMigration(store)).toBe(0);
 	});
 
 	it('survives a store that has already been migrated into by hand', async () => {

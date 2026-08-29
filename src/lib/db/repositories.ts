@@ -30,25 +30,13 @@
  * already-resolved promise.
  */
 
+import { getDeviceId, newUuid } from '$lib/device';
 import { deriveCard, serveStats, sortHistory } from '$lib/livestore/derive';
 import { events, PROFILE_ID, tables } from '$lib/livestore/schema';
 import { storeReady } from '$lib/livestore/store';
-import { getDeviceId, newUuid, syncEnabled } from '$lib/sync/config';
-import {
-	EVENT_TYPES,
-	type SyncEvent,
-	type SyncEventType,
-	type SyncPayloads
-} from '$lib/sync/events';
-import {
-	emptyBookkeeping,
-	type GenesisState,
-	type SyncBookkeeping,
-	type SyncSnapshot
-} from '$lib/sync/snapshot';
 import type { Challenge, ChallengeResult, KnowledgeItem, Profile, Verdict } from '$lib/types';
-import { challengeOf, db, SINGLETON_KEY } from './database';
-import type { ChallengeRow, OutboxRow } from './database';
+import { challengeOf } from './database';
+import type { ChallengeRow } from './database';
 import { toPlain } from './plain';
 
 export { activityByDay, localDay, previousDay, streakFrom } from './day';
@@ -570,153 +558,4 @@ export async function importData(json: string): Promise<void> {
 	if (envelope.profile) await saveProfile(envelope.profile);
 }
 
-/* -------------------------------------------------------------------------- */
-/* Sync: outbox, state, and the non-capturing apply path                       */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Everything below still speaks Dexie, and still works, and is no longer
- * reached from the app.
- *
- * `src/lib/sync/` is the homebrew event-log sync LiveStore replaces, and it is
- * deliberately left standing until the new path has carried real data (step 5
- * of the migration). Its functions are kept compiling — and its Dexie tables
- * kept intact — because step 4 still has to read that database to migrate it.
- *
- * **It is, however, now disconnected from the app's actual state.** The three
- * routes that call `runSync` still do; that cycle now pushes an outbox nothing
- * fills and folds pulled events into Dexie tables nothing reads. It is inert
- * rather than wrong, with one sharp edge worth naming before step 4: a device
- * that still has sync configured will run genesis against the *Dexie* snapshot
- * and set `genesisDone`, which a migration must not mistake for "this data has
- * already been carried across". Wiring, or removing, is step 5's job.
- */
-
-/** localStorage-style `syncState` keys, all in one place. */
-const SYNC_STATE = {
-	/** Server `seq` of the last event this device has pulled *and applied*. */
-	cursor: 'cursor',
-	/** Set once genesis synthesis has run; keeps it from ever running twice. */
-	genesisDone: 'genesisDone',
-	/** The apply engine's dedupe bookkeeping (`SyncBookkeeping`). */
-	bookkeeping: 'bookkeeping',
-	/** Epoch ms of the last sync that completed end to end. */
-	lastSync: 'lastSync'
-} as const;
-
-/** Mints one event envelope. `at` is the write's own domain timestamp where it has one. */
-function event<T extends SyncEventType>(type: T, payload: SyncPayloads[T], at: number): SyncEvent {
-	return { id: newUuid(), device: getDeviceId(), at, type, payload };
-}
-
-/** Appends events to the legacy outbox. */
-async function capture(pending: SyncEvent[]): Promise<void> {
-	if (pending.length === 0) return;
-	await db.outbox.bulkAdd(pending.map((e) => ({ event: toPlain(e) })));
-}
-
-/** Reads one `syncState` value, or `undefined` when unset. */
-export async function getSyncState<T>(key: keyof typeof SYNC_STATE): Promise<T | undefined> {
-	const row = await db.syncState.get(SYNC_STATE[key]);
-	return row?.value as T | undefined;
-}
-
-/** Writes one `syncState` value. */
-export async function setSyncState(key: keyof typeof SYNC_STATE, value: unknown): Promise<void> {
-	await db.syncState.put({ key: SYNC_STATE[key], value: toPlain(value) });
-}
-
-/** How many locally produced events are waiting to be pushed. */
-export async function outboxCount(): Promise<number> {
-	return db.outbox.count();
-}
-
-/** The oldest `limit` outbox rows, in `seq` order — one push batch. */
-export async function peekOutbox(limit: number): Promise<OutboxRow[]> {
-	return db.outbox.orderBy('seq').limit(limit).toArray();
-}
-
-/** Deletes the rows a push has been acknowledged for. */
-export async function drainOutbox(seqs: number[]): Promise<void> {
-	if (seqs.length === 0) return;
-	await db.outbox.bulkDelete(seqs);
-}
-
-/** Runs genesis synthesis (docs/sync.md §5) exactly once, over the Dexie tables. */
-export async function seedOutbox(build: (state: GenesisState) => SyncEvent[]): Promise<number> {
-	return db.transaction(
-		'rw',
-		[db.profile, db.items, db.challenges, db.results, db.outbox, db.syncState],
-		async () => {
-			if (await getSyncState<boolean>('genesisDone')) return 0;
-
-			const profileRow = await db.profile.get(SINGLETON_KEY);
-			const items = await db.items.toArray();
-			const pool = await db.challenges.toArray();
-			const results = (await db.results.orderBy('at').toArray()).map(
-				({ seq: _seq, ...result }) => result
-			);
-			const profile = profileRow ? (({ id: _id, ...rest }) => rest)(profileRow) : null;
-
-			const pending = build({ items, pool, results, profile });
-			await capture(pending);
-			await setSyncState('genesisDone', true);
-			return pending.length;
-		}
-	);
-}
-
-/** The legacy apply path's write-back, still against Dexie. */
-export async function mergeSyncSnapshot(
-	fold: (before: SyncSnapshot) => SyncSnapshot
-): Promise<void> {
-	await db.transaction(
-		'rw',
-		[db.profile, db.items, db.challenges, db.results, db.syncState],
-		async () => {
-			const profileRow = await db.profile.get(SINGLETON_KEY);
-			const before: SyncSnapshot = {
-				items: await db.items.toArray(),
-				pool: await db.challenges.toArray(),
-				results: (await db.results.orderBy('at').toArray()).map(
-					({ seq: _seq, ...result }) => result
-				),
-				profile: profileRow ? (({ id: _id, ...rest }) => rest)(profileRow) : null,
-				bookkeeping: (await getSyncState<SyncBookkeeping>('bookkeeping')) ?? emptyBookkeeping()
-			};
-
-			const after = fold(before);
-
-			const changedItems = diffById(before.items, after.items);
-			if (changedItems.puts.length > 0) await db.items.bulkPut(changedItems.puts);
-			if (changedItems.deletes.length > 0) await db.items.bulkDelete(changedItems.deletes);
-
-			const changedPool = diffById(before.pool, after.pool);
-			if (changedPool.puts.length > 0) await db.challenges.bulkPut(changedPool.puts);
-
-			const known = new Set(before.results);
-			const newResults = after.results.filter((result) => !known.has(result));
-			if (newResults.length > 0) await db.results.bulkAdd(newResults);
-
-			if (after.profile !== before.profile && after.profile) {
-				await db.profile.put({ ...after.profile, id: SINGLETON_KEY });
-			}
-			await setSyncState('bookkeeping', after.bookkeeping);
-		}
-	);
-}
-
-/** Rows to write and ids to drop, by reference-identity comparison against `before`. */
-function diffById<T extends { id: string }>(
-	before: T[],
-	after: T[]
-): { puts: T[]; deletes: string[] } {
-	const previous = new Map(before.map((row) => [row.id, row]));
-	const puts = after.filter((row) => previous.get(row.id) !== row);
-	const kept = new Set(after.map((row) => row.id));
-	const deletes = before.filter((row) => !kept.has(row.id)).map((row) => row.id);
-	return { puts, deletes };
-}
-
-/* Kept for the legacy sync module's imports. */
-export { challengeOf, syncEnabled, EVENT_TYPES };
+export { challengeOf };

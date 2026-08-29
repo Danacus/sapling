@@ -162,5 +162,36 @@ export const events = {
 			model: Schema.String,
 			createdAt: Schema.Number
 		})
+	}),
+
+	/**
+	 * The same profile, but only if there isn't one already. Emitted *solely*
+	 * by the Dexie migration.
+	 *
+	 * A migration's profile is old news by definition: it describes the learner
+	 * as they were before the upgrade. `profileUpdated` is a blind overwrite in
+	 * log order, so a second device migrating late would undo every profile edit
+	 * made on the first since — the laptop opened a week after the phone quietly
+	 * reverting the learner's interests and model.
+	 *
+	 * Filtering at migration time cannot fix that: each device migrates against
+	 * its own empty store, sees no profile, and emits the event regardless. It
+	 * still arrives late. So the *event* has to be the non-destructive one, and
+	 * its materializer is `'ignore'` rather than `'replace'`.
+	 *
+	 * The payload is identical to `profileUpdated` on purpose — the difference
+	 * is entirely in what the two are allowed to do on arrival.
+	 */
+	profileImported: Events.synced({
+		name: 'v1.ProfileImported',
+		schema: Schema.Struct({
+			nativeLanguage: Schema.String,
+			targetLanguage: Schema.String,
+			level: Schema.Literal('beginner', 'elementary', 'intermediate', 'advanced'),
+			interests: Schema.Array(Schema.String),
+			about: Schema.optional(Schema.String),
+			model: Schema.String,
+			createdAt: Schema.Number
+		})
 	})
 };

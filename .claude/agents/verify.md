@@ -21,20 +21,9 @@ and never `git add`/`commit`. If a gate fails, report it — do not fix it.
 Run from the repo root. The devShell is loaded by direnv; if a `pnpm: command
 not found` appears, retry that command once prefixed with `nix develop -c`.
 
-Always:
-
 1. `pnpm check` — svelte-check typecheck
 2. `pnpm test` — vitest, all suites
 3. `pnpm format:check` — prettier verify (must not need `--write`)
-
-Only when the change touches `server/` (check with `git status --porcelain` and
-`git diff --name-only HEAD`):
-
-4. `cd server && pnpm typecheck`
-5. `cd server && pnpm test`
-
-If `server/node_modules` is missing, report gates 4-5 as SKIPPED (deps not
-installed, `cd server && pnpm install`) — do not install anything yourself.
 
 ## Completion criteria
 
@@ -53,8 +42,6 @@ Return only this — no preamble, no restatement of the task:
 | pnpm check            | PASS / FAIL / SKIPPED |
 | pnpm test             | ... |
 | pnpm format:check     | ... |
-| server typecheck      | ... |
-| server test           | ... |
 ```
 
 Then, for each FAIL only, the shortest excerpt that identifies it: the file:line

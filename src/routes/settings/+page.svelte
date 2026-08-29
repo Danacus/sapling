@@ -10,9 +10,7 @@
 		getBaseUrl,
 		getModel,
 		getProfile,
-		getSyncState,
 		importData,
-		outboxCount,
 		setApiKey,
 		setBaseUrl,
 		setModel,
@@ -36,15 +34,6 @@
 		type TtsEngine,
 		type TtsVoice
 	} from '$lib/tts';
-	import {
-		clearSyncConfig,
-		getSyncKey,
-		getSyncServer,
-		setSyncKey,
-		setSyncServer,
-		syncEnabled
-	} from '$lib/sync/config';
-	import { runSync } from '$lib/sync/run';
 	import type { KnowledgeItem, Profile } from '$lib/types';
 	import InlineStatus from '$lib/ui/InlineStatus.svelte';
 	import {
@@ -108,20 +97,6 @@
 	let llmStatus = $state<Status>('idle');
 	let llmMessage = $state('');
 
-	// Sync --------------------------------------------------------------------------
-	let syncServerInput = $state('');
-	let syncKeyInput = $state('');
-	/** Whether a key is currently saved — the input itself stays blank, like the API key field. */
-	let syncKeySet = $state(false);
-	let syncConfigured = $state(false);
-	let syncConfigStatus = $state<Status>('idle');
-	let syncConfigMessage = $state('');
-	let syncing = $state(false);
-	let syncStatus = $state<Status>('idle');
-	let syncMessage = $state('');
-	let lastSyncAt = $state<number | undefined>(undefined);
-	let pendingOutbox = $state(0);
-
 	// Usage -------------------------------------------------------------------------
 	let usagePromptTokens = $state(0);
 	let usageCompletionTokens = $state(0);
@@ -168,11 +143,6 @@
 				ttsEngine = getTtsEngine();
 				ttsVoice = getTtsVoice();
 
-				syncServerInput = getSyncServer() ?? '';
-				syncKeySet = getSyncKey() !== undefined;
-				syncConfigured = syncEnabled();
-				// Best-effort, like the audio cache size below — must not hold up the page.
-				void refreshSyncStatus();
 				// Walks Cache Storage, so it must not hold up the rest of the page;
 				// it reports 0 rather than failing if the cache is unreachable.
 				void audioCacheBytes().then((bytes) => {
@@ -210,8 +180,6 @@
 	/** e.g. "37 MB of 105 MB" — both halves come from the cache module. */
 	const audioCacheSize = $derived(formatCacheSize(audioBytes));
 	const audioCacheCap = formatCacheSize(AUDIO_CACHE_MAX_BYTES);
-
-	const lastSyncLabel = $derived(formatLastSync(lastSyncAt));
 
 	function readUsage(key: string): number {
 		try {
@@ -327,104 +295,6 @@
 			llmMessage = cause instanceof Error ? cause.message : 'Could not save.';
 			llmStatus = 'error';
 		}
-	}
-
-	/** Refreshes the status line. Best-effort — a failed read leaves the previous values on screen. */
-	async function refreshSyncStatus(): Promise<void> {
-		try {
-			const [last, pending] = await Promise.all([getSyncState<number>('lastSync'), outboxCount()]);
-			lastSyncAt = last;
-			pendingOutbox = pending;
-		} catch {
-			/* ignore: status is best-effort */
-		}
-	}
-
-	/**
-	 * Saves the server URL and, if one was typed, the key. The key input mirrors
-	 * the OpenRouter field: it starts blank and stays blank after a save, so a
-	 * saved key is never redisplayed. Leaving it blank on a later save keeps the
-	 * key that's already there — only "Turn off sync" clears both together.
-	 */
-	function saveSyncConfig(): void {
-		const server = syncServerInput.trim();
-		const key = syncKeyInput.trim();
-		if (!server || (!key && !syncKeySet)) {
-			syncConfigMessage = 'Enter both a server URL and an API key.';
-			syncConfigStatus = 'error';
-			return;
-		}
-		try {
-			setSyncServer(server);
-			if (key) setSyncKey(key);
-			syncServerInput = getSyncServer() ?? '';
-			syncKeyInput = '';
-			syncKeySet = getSyncKey() !== undefined;
-			syncConfigured = syncEnabled();
-			syncConfigMessage = 'Sync settings saved';
-			flash((value) => (syncConfigStatus = value));
-			void refreshSyncStatus();
-		} catch (cause) {
-			syncConfigMessage = cause instanceof Error ? cause.message : 'Could not save sync settings.';
-			syncConfigStatus = 'error';
-		}
-	}
-
-	function turnOffSync(): void {
-		clearSyncConfig();
-		syncServerInput = '';
-		syncKeyInput = '';
-		syncKeySet = false;
-		syncConfigured = false;
-		syncConfigMessage = 'Sync turned off';
-		flash((value) => (syncConfigStatus = value));
-	}
-
-	/** Runs one sync cycle and reports the outcome; `runSync` itself never throws. */
-	async function syncNow(): Promise<void> {
-		if (syncing) return;
-		syncing = true;
-		syncStatus = 'idle';
-		syncMessage = '';
-		try {
-			const outcome = await runSync();
-			if (outcome.skipped) {
-				syncMessage = 'Add a sync server and key above first.';
-				syncStatus = 'error';
-			} else if (outcome.ok) {
-				syncMessage = `Synced — ${outcome.pushed} pushed, ${outcome.pulled} pulled`;
-				flash((value) => (syncStatus = value), 3000);
-			} else {
-				syncMessage = outcome.error ?? 'Sync failed.';
-				syncStatus = 'error';
-			}
-		} finally {
-			syncing = false;
-			void refreshSyncStatus();
-		}
-	}
-
-	/** e.g. "3 minutes ago" — falls back to a locale timestamp past a week. */
-	function formatLastSync(at: number | undefined): string {
-		if (at === undefined) return 'never';
-		const deltaMs = Date.now() - at;
-		const minute = 60_000;
-		const hour = 3_600_000;
-		const day = 86_400_000;
-		if (deltaMs < minute) return 'just now';
-		if (deltaMs < hour) {
-			const mins = Math.round(deltaMs / minute);
-			return `${mins} minute${mins === 1 ? '' : 's'} ago`;
-		}
-		if (deltaMs < day) {
-			const hours = Math.round(deltaMs / hour);
-			return `${hours} hour${hours === 1 ? '' : 's'} ago`;
-		}
-		if (deltaMs < 7 * day) {
-			const days = Math.round(deltaMs / day);
-			return `${days} day${days === 1 ? '' : 's'} ago`;
-		}
-		return new Date(at).toLocaleString();
 	}
 
 	/**
@@ -888,78 +758,6 @@
 				<div class="actions-row">
 					<button type="button" class="btn btn-primary" onclick={applyLlmSettings}>Apply</button>
 					<InlineStatus status={llmStatus} message={llmMessage} />
-				</div>
-			</section>
-
-			<section class="card ll-rise" style="animation-delay: 200ms">
-				<div class="card-head">
-					<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
-						<path d="M19.6 11.2A7.8 7.8 0 0 0 6.4 6.6L4.2 8.8" />
-						<path d="M4.4 12.8a7.8 7.8 0 0 0 13.2 4.6l2.2-2.2" />
-						<path d="M4.2 4.6v4.2h4.2" />
-						<path d="M19.8 19.4v-4.2h-4.2" />
-					</svg>
-					<h2>Sync</h2>
-				</div>
-				<hr class="stitch" />
-				<p class="hint">
-					When sync is on, your vocabulary, challenge content, review history, results and profile
-					(including your About text) sync to your own server. Your OpenRouter key, this sync key,
-					preferences and TTS caches never leave this device.
-				</p>
-
-				<div class="field">
-					<span class="label">Sync server URL</span>
-					<input
-						class="input"
-						type="text"
-						bind:value={syncServerInput}
-						placeholder="https://sync.example.com"
-						autocomplete="off"
-						spellcheck="false"
-					/>
-				</div>
-
-				<div class="field sync-key-field">
-					<span class="label">Sync API key</span>
-					<input
-						class="input"
-						type="password"
-						bind:value={syncKeyInput}
-						placeholder={syncKeySet ? '••• saved' : 'from your server operator'}
-						autocomplete="off"
-						spellcheck="false"
-					/>
-				</div>
-
-				<div class="actions-row">
-					<button type="button" class="btn btn-primary" onclick={saveSyncConfig}>
-						Save sync settings
-					</button>
-					{#if syncConfigured}
-						<button type="button" class="btn btn-ghost" onclick={turnOffSync}>Turn off sync</button>
-					{/if}
-					<InlineStatus status={syncConfigStatus} message={syncConfigMessage} />
-				</div>
-
-				{#if syncConfigured}
-					<p class="hint sync-status-line">
-						Last synced {lastSyncLabel} · {pendingOutbox} pending event{pendingOutbox === 1
-							? ''
-							: 's'}
-					</p>
-				{/if}
-
-				<div class="actions-row sync-now-row">
-					<button
-						type="button"
-						class="btn btn-primary"
-						onclick={() => void syncNow()}
-						disabled={syncing}
-					>
-						{syncing ? 'Syncing…' : 'Sync now'}
-					</button>
-					<InlineStatus status={syncStatus} message={syncMessage} />
 				</div>
 			</section>
 
@@ -1432,18 +1230,6 @@
 		.jump-ico {
 			transition: none;
 		}
-	}
-
-	.sync-key-field {
-		margin-top: 1.25rem;
-	}
-
-	.sync-status-line {
-		margin: 0.9rem 0 0;
-	}
-
-	.sync-now-row {
-		margin-top: 0.9rem;
 	}
 
 	.backfill-field {

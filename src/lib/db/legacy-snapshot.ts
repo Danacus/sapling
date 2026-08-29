@@ -2,16 +2,17 @@
  * Reading the pre-LiveStore Dexie database, for the one purpose of migrating
  * it (`$lib/livestore/migrate-dexie`).
  *
- * Thin by design, in the shape `sync/genesis.ts` established: this module does
- * the part that cannot be unit-tested — talking to IndexedDB — and nothing
- * else. Every decision worth testing lives in the pure synthesis next door.
+ * Thin by design: this module does the part that cannot be unit-tested —
+ * talking to IndexedDB — and nothing else. Every decision worth testing lives
+ * in the pure synthesis next door.
  *
- * It deliberately does **not** go through `seedOutbox`, even though that
- * function reads exactly these tables. `seedOutbox` is gated on the
- * `genesisDone` flag, and that flag means "the outbox has been seeded", not
- * "this data has reached LiveStore". A device that had sync configured has
- * already set it, so reusing that path would skip the migration for precisely
- * the users with the most history to lose.
+ * The retired sync client had a `seedOutbox` that read exactly these tables,
+ * and reusing it would have been the obvious move. It was deliberately not
+ * reused, and the reason is worth keeping now that the code is gone: it was
+ * gated on a `genesisDone` flag meaning "the outbox has been seeded", *not*
+ * "this data has reached LiveStore". Any device that had sync configured had
+ * already set it, so that path would have skipped the migration for precisely
+ * the learners with the most history to lose.
  */
 
 import type { ChallengeResult, KnowledgeItem, Profile } from '$lib/types';
@@ -44,10 +45,12 @@ export function isEmptySnapshot(snapshot: LegacySnapshot): boolean {
 /**
  * Reads the whole legacy database.
  *
- * Read-only and non-destructive: the Dexie tables are the only copy of this
- * data until step 5 removes them, so nothing here writes, clears or upgrades
- * anything. `results` keeps its `seq` because the migration needs a stable
- * per-row identity and `ChallengeResult` has no id of its own.
+ * Read-only and non-destructive: until a learner has successfully migrated,
+ * these tables are the only copy of their library, so nothing here writes,
+ * clears or upgrades anything — and the database is not deleted afterwards
+ * either. `results` keeps its `seq` only so a caller *could* order by it; the
+ * migration deliberately does not use it for identity, because it is a
+ * device-local autoincrement (see `resultKey`).
  */
 export async function readLegacySnapshot(): Promise<LegacySnapshot> {
 	const [profileRow, items, pool, results] = await Promise.all([

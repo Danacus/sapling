@@ -197,6 +197,34 @@ describe('two devices migrating independently', () => {
 		expect(store.query(tables.items).map((i) => i.id)).toEqual(['i2']);
 	});
 
+	it('does not let a late migration revert a profile edited since', async () => {
+		// The same shape as the tombstone case, on the profile. The phone
+		// migrates, the learner changes their interests and model, and the laptop
+		// migrates a week later carrying the profile as it was *before* the
+		// upgrade. A blind overwrite would silently undo the edit; `ProfileImported`
+		// only writes when there is no profile at all.
+		const store = await makeTestStore();
+		for (const event of a()) store.commit(event);
+
+		store.commit(
+			events.profileUpdated({ ...profile, interests: ['cycling'], model: 'edited-since' })
+		);
+		for (const event of b()) store.commit(event);
+
+		const after = store.query(tables.profile)[0];
+		expect(after?.model).toBe('edited-since');
+		expect(after?.interests).toEqual(['cycling']);
+	});
+
+	it('still writes the migrated profile when there is no profile yet', async () => {
+		// Guarding the guard: `'ignore'` must not make the migration's profile a
+		// no-op on the ordinary first-device path, which would send a learner with
+		// months of history to onboarding.
+		const store = await makeTestStore();
+		for (const event of a()) store.commit(event);
+		expect(store.query(tables.profile)[0]?.model).toBe(profile.model);
+	});
+
 	it('still deletes normally when the delete is the last word on the subject', async () => {
 		// Guarding the guard: a tombstone must not make deletion itself sticky in
 		// some way that breaks the ordinary single-device path.

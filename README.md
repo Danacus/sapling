@@ -10,11 +10,10 @@ conversation with an LLM teacher, or ask the assistant for some, and the drill
 sessions then review what you already have. Lessons never introduce a word.
 
 It is a single-page app that works with no server at all. Your profile, your
-vocabulary and your progress live in your browser's IndexedDB. What leaves the
-device is one compact prompt per lesson batch (and one per conversation turn),
-sent straight from your browser to [OpenRouter](https://openrouter.ai) with your
-own API key. Multi-device sync is optional and self-hosted — see
-[Sync](#sync-optional).
+vocabulary and your progress live in your own browser, in a SQLite database
+(LiveStore, compiled to WebAssembly). What leaves the device is one compact
+prompt per lesson batch (and one per conversation turn), sent straight from your
+browser to [OpenRouter](https://openrouter.ai) with your own API key.
 
 > The repo and package are still named `language-learning` / `language-app`;
 > the app is Sapling.
@@ -88,14 +87,13 @@ own API key. Multi-device sync is optional and self-hosted — see
   to forget one outright.
 - **A day streak, and nothing else to score.** There is no XP, no combo bonus
   and no daily goal; the streak is *derived* from the results log rather than
-  stored as a counter, so it can't drift and it survives a sync for free. The
+  stored as a counter, so it can't drift. The
   dashboard states a moment ("N words ready to review") rather than grading your
   day. Segmented session progress and a confetti finish remain, and every
   animation respects `prefers-reduced-motion`.
 - **Practice mode.** The whole app is playable with no API key at all, against a
   deterministic offline fixture. Good for a look around, and for development.
-- **Your data is yours.** Export and import everything as JSON from Settings,
-  and sync between your own devices through a server you run — or don't.
+- **Your data is yours.** Export and import everything as JSON from Settings.
 
 ## Quickstart
 
@@ -122,9 +120,6 @@ pnpm format          # prettier --write .
 pnpm format:check    # prettier --check .
 ```
 
-The sync server has its own gates, run from `server/` — see
-[Sync](#sync-optional).
-
 ### Practice mode (no key needed)
 
 With no API key configured the app runs in **practice mode**: lessons, chat
@@ -144,18 +139,20 @@ wire type. Node tests are always in mock mode.
 1. Create a key at [openrouter.ai/keys](https://openrouter.ai/keys).
 2. Open **Settings** in the app, paste it, and pick a model.
 
-The key is stored in `localStorage` on that device only. It is deliberately
-excluded from exports and from sync, so even a sync server you run never sees
-it. The default model is a cheap, fast one (`google/gemini-3.7-flash`); anything
-on OpenRouter that can follow a JSON schema will work.
+The key is stored in `localStorage` on that device only, and is deliberately
+excluded from exports. The default model is a cheap, fast one
+(`google/gemini-3.7-flash`); anything on OpenRouter that can follow a JSON
+schema will work.
 
 ## Architecture
 
 ```
 src/lib/types.ts      Domain types. Dependency-free; everything imports it.
-src/lib/db/           Dexie/IndexedDB. Repositories are the only sanctioned
-                      way to touch storage. Device secrets live in
-                      localStorage (settings.ts), never in the database.
+src/lib/db/           Repositories: the only sanctioned way to touch storage,
+                      and every write is an event. Also the read-only Dexie
+                      remnant, kept solely so an old database can still be
+                      migrated. Device secrets live in localStorage
+                      (settings.ts), never in the database.
 src/lib/srs/          Spaced repetition (ts-fsrs). Pure and deterministic:
                       `now` is always a parameter, never `Date.now()`.
                       The single place `KnowledgeItem.fsrsCard` is cast.
@@ -175,8 +172,10 @@ src/lib/assistant/    The chat assistant: an LLM managing learner state through
 src/lib/conversation/ Conversation mode on the same seam — scenario call,
                       teacher turn loop, and the typed-vs-corrected diff that
                       produces the inline markup. Imports no database.
-src/lib/sync/         Multi-device sync: the shared event envelope, the outbox,
-                      genesis, and the push/pull/apply cycle.
+src/lib/livestore/    The data layer. An append-only eventlog is the source of
+                      truth; the SQLite tables are a projection of it, produced
+                      by materializers. Also the one-time migration that turns
+                      an old Dexie database into that log.
 src/lib/romanize/     Local pinyin/romaji readings. Never romanizes a term in
                       isolation — context resolves polyphones.
 src/lib/asr/          Speech recognition for the conversation composer. An
@@ -194,8 +193,6 @@ src/routes/           Dashboard, onboarding, settings, the Garden (`/words`),
                       the assistant (`/chat`), conversation mode
                       (`/converse`), and the session screen (`/learn`) with its
                       six challenge components.
-server/               The optional sync server. A separate package, deliberately
-                      not a workspace member. See Sync.
 ```
 
 ### The token economy
@@ -240,8 +237,8 @@ A verdict is evidence about a *word*, and its only consumer is FSRS; grading is
 deliberately blind to which challenge type produced it, because what difficulty
 shapes is the question stream, never what an answer is worth. The one number the
 app still keeps is the day streak, and it is folded out of the results log on
-read rather than stored — which is also why it survives a multi-device sync
-without a merge rule.
+read rather than stored — which is also why it would survive a multi-device
+merge without a rule of its own.
 
 ## Speech
 
@@ -322,47 +319,25 @@ There is no longer a "runs on" setting (the old `ll.ttsDevice` preference is
 left readable but unused), and the old Firefox/WebGPU garbled-audio caveat is
 gone with it.
 
-## Sync (optional)
+## Sync
 
-The app is local-first and stays fully usable with sync unconfigured, the server
-unreachable, or the feature turned off mid-life — failures degrade silently, the
-same rule the audio layer follows. Nothing below is required to use Sapling.
+**There isn't any, today.** Sapling is single-device: everything lives in your
+browser and nothing is uploaded. Export and import from Settings is how you move
+between machines.
 
-When you do want a second device, `server/` is a small self-hosted relay
-(TypeScript + Hono + SQLite, a few hundred lines). It stores an **append-only
-log of opaque events** and hands them back in order. It merges nothing and
-understands nothing about the data — every semantic lives in the client, which
-keeps the server small and leaves an end-to-end-encrypted payload as a
-client-only change later.
+It is, however, built on a data layer that is designed to sync. Every change is
+an event appended to a log, and the SQLite tables you actually read are a
+projection of that log — so the hard part, making two devices converge without
+asking you to resolve conflicts, is already settled by construction. Reviews of
+the same word on two devices would both be kept and the FSRS card recomputed
+from the merged history; results are a set-union; the day streak is derived from
+those results and needs no merge rule at all.
 
-```sh
-cd server && pnpm install
-cd server && pnpm new-key --user you   # prints a key, once
-cd server && pnpm dev                  # :8787
-```
-
-Paste the key and the server URL into **Settings → Sync**. Syncing is
-fire-and-forget at three moments — a manual *Sync now*, after a session banks,
-and once on app load — and never blocks boot or play.
-
-State is a fold over the log, so conflicts resolve by construction rather than
-by asking you: reviews of the same word on two devices are both kept and the
-FSRS card is recomputed by replaying the merged history, results set-union by
-event id, and the day streak — being derived from those results — needs no merge
-rule at all. Applying is idempotent and commutative, so an incremental pull
-reaches the same state as a full replay.
-
-Two things to know before you start. Your API key, sync key, preferences and TTS
-caches **never leave the device**; your vocabulary, challenge content, review
-history, results and profile do. And a device joining an existing setup should
-start **empty**: enable sync on your primary device first and let the others
-pull, because two devices that independently built up vocabulary before their
-first sync will keep two separate items for the same term. Term-level dedup
-across independently seeded devices is deferred.
-
-`server/` is a separate package, deliberately **not** a workspace member, so the
-static build never sees it. The full design is in [`docs/sync.md`](docs/sync.md)
-and the operational detail in [`server/README.md`](server/README.md).
+Turning it on means pointing LiveStore at a sync provider — Cloudflare Workers +
+Durable Objects, for instance — rather than writing a relay. An earlier
+self-hosted server did exist and was retired; [`docs/sync.md`](docs/sync.md)
+keeps the design reasoning, and the merge rules it argued out are still the ones
+enforced in `src/lib/livestore/`.
 
 ## Deploying
 

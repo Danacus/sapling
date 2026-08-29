@@ -1,18 +1,36 @@
-# Sapling Sync — design (draft for iteration)
+# Sapling Sync — design (historical)
 
-Status: **superseded in part, 2026-08-29.** This document is the spec for the
-first Sapling "service": multi-device synchronization of progress, vocabulary,
-and the challenge pool. §11 records the decisions made during iteration; §12
-records all four implementation slices as done.
+Status: **retired as an architecture, 2026-08-29. Kept as the record of why.**
 
-> **What has changed.** The storage layer has moved from Dexie/IndexedDB to
-> LiveStore (WASM SQLite with a built-in event log), which supplies the
-> append-only log and the total order this document specified by hand. §2's
-> core idea survives intact and is now someone else's implementation. **§4's
-> ordering rule does not** — see the note at the head of that section. §§6–9
-> describe the homebrew protocol and server, which still exist in
-> `src/lib/sync/` and `server/` but are no longer wired to the app; they are
-> removed once the new path has carried real data.
+This was the spec for multi-device sync built on Dexie plus a homebrew
+event-log server. **That code no longer exists** — `src/lib/sync/` and
+`server/` were deleted once LiveStore had carried real data. The app is
+single-device today; adding sync back means a LiveStore sync provider, not a
+new relay.
+
+The document survives because the *reasoning* survives. Nearly every merge rule
+argued out here is still enforced, and the code still cites this file by
+section number, so the sections are stable on purpose. Read it for why a rule
+exists; read the code for what it does.
+
+Where each part ended up:
+
+| Section | Then | Now |
+|---|---|---|
+| §2 core idea — state is a fold over an event log | hand-built outbox + apply engine | **Intact**, and LiveStore's own model. The eventlog is the source of truth; `src/lib/livestore/tables.ts` is a projection of it. |
+| §3 the ten event types | `sync/events.ts` zod payloads | `src/lib/livestore/events.ts`, same ten names, minus the envelope fields the merge no longer needs. |
+| §4 merge rules | `sync/apply.ts` | `src/lib/livestore/materializers.ts`. The *rules* survive; **the ordering does not** — see the note at that section's head. |
+| §4 identity — `(itemId, at, device)`, set-union by event id | bookkeeping sets in the apply engine | Primary keys. `reviewKey` in `tables.ts`. |
+| §5 genesis — back-dating the log a device never wrote | `sync/genesis.ts` | `src/lib/livestore/migrate-dexie.ts`, which carries a Dexie learner across once. Its `timesServed` approximation is kept deliberately. |
+| §5 clock skew | a merge input, and a hazard | No longer a merge input at all. `at` is domain data only. |
+| §§6–9 protocol, server, outbox, cursor | `server/`, Dexie `outbox`/`syncState` | **Deleted.** LiveStore's sync backend does the equivalent job, and the Dexie tables remain on disk unread. |
+| §7 secrets stay device-local | `sync/config.ts` | The device id lives in `src/lib/device.ts`; nothing else remained. |
+| §10 end-to-end encryption | designed for, not built | Moot — no backend. The user has since confirmed E2EE is not a requirement. |
+
+One decision recorded here was later reversed on evidence: §4's total order
+`(at, device, id)` was replaced by the eventlog's own order, because a wall
+clock that can be wrong is a worse proxy for causality than arrival. The
+argument is in `materializers.ts`.
 
 ## 1. Goals and non-goals
 
@@ -130,14 +148,23 @@ rule) — that is the designed degradation, not a migration step. Old
 > contest indefinitely, including against edits genuinely made later. Log order
 > is a better proxy for causality than a clock nobody can audit.
 >
-> Three things fell out of the schema with it, each because the property it
+> Two things fell out of the schema with it, each because the property it
 > defended is now guaranteed rather than merely likely: the `patchAt` /
-> `patchDevice` / `patchEventId` columns, the `tombstones` table, and the
-> `supersededReviews` table. An `item-deleted` cannot lose to a later
-> `item-added` because only a device already holding the item can delete it,
-> and a `review-amended` cannot precede the review it replaces because the same
-> device wrote both moments apart — and rebase moves a client's events as a
-> block without reordering them internally.
+> `patchDevice` / `patchEventId` columns, and the `supersededReviews` table. A
+> `review-amended` cannot precede the review it replaces, because the same
+> device wrote both moments apart and rebase moves a client's events as a block
+> without reordering them internally.
+>
+> **A third was dropped and then put back (2026-08-29, step 4b): `tombstones`.**
+> The argument for removing it was that an `item-deleted` cannot lose to a
+> later `item-added`, since only a device already holding the item can delete
+> it. Every clause of that is true, and the conclusion is still wrong: it
+> assumes both events come from the same causal line. Two devices migrating off
+> Dexie independently break the assumption — both back-date an `item-added` for
+> the same word, so if one deletes it and the other migrates a week later, the
+> late add is causally unrelated to the delete and simply arrives after it.
+> `tombstones` is therefore not an ordering mechanism at all, and retiring this
+> section's order was never a reason to drop it.
 >
 > Everything below still holds *except* the ordering sentence and the two
 > last-write-wins rules. The identity rules — a history entry is

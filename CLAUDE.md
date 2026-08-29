@@ -16,8 +16,6 @@ pnpm format                             # prettier --write . (bulk pass)
 pnpm format:check                       # prettier --check . (verify only)
 ```
 
-The sync server in `server/` is a **separate package, deliberately not a workspace member** — its own `package.json`, lockfile and `node_modules`, so the Cloudflare Pages build never sees it. `cd server && pnpm install` once, then `pnpm test` / `pnpm typecheck` / `pnpm dev` (tsx watch on :8787).
-
 **Formatting is automatic — never hand-align code.** A `PostToolUse` hook runs the repo-pinned prettier on every file Claude edits; a `PreToolUse` hook blocks unpinned `prettier` and `npm`/`yarn install`. Style lives in `.prettierrc`. `.prettierignore` keeps markdown and the vendored `static/tts/sherpa-onnx-*.js` out.
 
 Nix flakes only see files that are `git add`ed — a brand-new file the flake needs must be staged first. `pnpm-workspace.yaml` records pnpm's `allowBuilds` decisions; an undecided one hard-fails Cloudflare Pages' CI install.
@@ -27,8 +25,8 @@ Nix flakes only see files that are `git add`ed — a brand-new file the flake ne
 `.claude/` carries the repetitive parts so they don't have to be re-explained:
 
 - **`locate` agent** (Haiku, read-only) — "where does X live, what touches it". Delegate sweeps to it rather than grepping in the main context.
-- **`verify` agent** (Haiku, read-only) — runs `pnpm check`, `pnpm test`, `pnpm format:check` plus the `server/` gates when `server/` changed, and reports a table.
-- **Skills** — `add-challenge-type`, `add-assistant-tool` (procedures + the gate that catches each omission), `prompt-tuning` (content-quality bugs), `sync-contract` and `gotchas` (auto-loaded reference).
+- **`verify` agent** (Haiku, read-only) — runs `pnpm check`, `pnpm test` and `pnpm format:check`, and reports a table.
+- **Skills** — `add-challenge-type`, `add-assistant-tool` (procedures + the gate that catches each omission), `prompt-tuning` (content-quality bugs), and `gotchas` (auto-loaded reference).
 - **`.claude/rules/*.md`** — the per-area module contracts. Each is `paths:`-scoped and loads only when a matching file is read, so the detail arrives when it applies. **The table below is the summary; the rule is the contract.**
 - **Hooks** — format-on-save, the package-manager guard, and Bash-side equivalents of both.
 
@@ -40,7 +38,7 @@ When writing a new agent: an explicit `tools:` allowlist **silently drops the `S
 
 ## Architecture
 
-Local-first static SPA (SvelteKit 2 + Svelte 5, `adapter-static`, `ssr=false`), no backend. All user state lives in the browser. The one external call is a batched LLM request from the browser to OpenRouter with the user's own key.
+Local-first static SPA (SvelteKit 2 + Svelte 5, `adapter-static`, `ssr=false`), no backend. All user state lives in the browser — in **LiveStore** (WASM SQLite in OPFS, an append-only eventlog with the tables derived from it). Single-device today: there is no sync backend, and adding one means a LiveStore sync provider rather than a bespoke relay. The one external call is a batched LLM request from the browser to OpenRouter with the user's own key.
 
 **There is no `svelte.config.js`** — SvelteKit *and* vitest config live inline in `vite.config.ts`. **Runes mode is forced** project-wide: `$state`/`$derived`/`$effect`, `onclick` (not `on:click`).
 
@@ -53,12 +51,12 @@ Every area is a registry with one module per member; forgetting a registration f
 | `src/lib/llm/` | **Stateless** — never touches the DB. `getBatch` returns challenges only: a lesson is written *about* the vocabulary it is given and introduces none. | `llm.md` |
 | `src/lib/challenges/` | Registry is a **mapped type over `ChallengeType`** — a new member fails `pnpm check` at the registry. Grading is deliberately **type-blind**. | `challenges.md` |
 | `src/lib/session/` | The orchestrator owns **all DB writes during play**. Components emit answer events; they don't write. | `session.md` |
-| `src/lib/assistant/` | Every mutation goes through the injectable `ToolContext`, never Dexie directly — that's what captures sync events. | `assistant.md` |
+| `src/lib/assistant/` | Every mutation goes through the injectable `ToolContext`, never the store directly — that's the seam the tests and the conversation layer both hang on. | `assistant.md` |
 | `src/lib/conversation/` | Role-play on the assistant's seam: **never imports `$lib/db`**, and exposes exactly one tool — `add_words`, reused verbatim. Corrections travel beside the spoken line, never inside it — and `heard` puts the target script under a learner bubble that needed no correction. | `assistant.md` |
-| `src/lib/db/` | Repositories are the **only** Dexie access. Every write passes `toPlain()`; a `$state` proxy throws `DataCloneError`. | `data.md` |
+| `src/lib/db/` | Repositories are the **only** store access, and every write is an event. The Dexie tables survive read-only, purely to be migrated — never edit a `version(n).stores(...)` declaration. | `data.md` |
+| `src/lib/livestore/` | The **eventlog is the source of truth**; the tables are a projection. A materializer that throws kills the store permanently. Order is the log's, never a timestamp. | `livestore.md` |
 | `src/lib/srs/` | Pure and deterministic: every function takes `now` (epoch ms). | `data.md` |
 | `src/lib/types.ts` | Treat as frozen; extend with **additive optional fields only**. | `data.md` |
-| `src/lib/sync/` + `server/` | `events.ts` is **zod-only and import-free** — the server compiles it by relative path. The server merges nothing. | `sync.md` |
 | `src/lib/romanize/` | Never romanize a term in isolation — context resolves polyphones. | `content.md` |
 | `src/lib/tts/` | Audio failures degrade silently; sound never blocks gameplay. | `content.md` |
 | `src/lib/asr/` | Dictation is an **input method, not a grader**: the transcript lands in the composer for the learner to send. Recognition isn't universal — the fallback is typing. | `content.md` |
@@ -67,4 +65,4 @@ Every area is a registry with one module per member; forgetting a registration f
 
 ### Testing
 
-Vitest, **node environment**, `src/**/*.test.ts` — pure logic only. No IndexedDB (Dexie code is covered by typecheck/build), no WASM, no network. DB-dependent engine logic is tested by mocking `$lib/db` per-file.
+Vitest, **node environment**, `src/**/*.test.ts`. No network, and no browser APIs — but **WASM SQLite runs here**, so the data layer is tested against a real store (`livestore/store.testing.ts`) rather than mocked. That is the payoff of the LiveStore migration for testing: there is one implementation of the merge rules, not a write path and a replay path that have to be kept agreeing. What still gets mocked is the IndexedDB read the Dexie migration does, which is why `migrationEvents` is pure and its wrapper is thin.
