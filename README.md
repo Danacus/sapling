@@ -1,30 +1,61 @@
-# Language Learning
+# Sapling
 
-A gamified, local-first language-learning web app. Pick a language you speak, a
-language you want, a few things you're interested in — and the app writes you a
+A local-first language-learning web app. Pick a language you speak, a language
+you want, a few things you're interested in — and the app writes you a
 personalized lesson, grades it, and schedules what you should see again and
 when.
 
-It is a single-page app with no backend. Your profile, your vocabulary and your
-progress live in your browser's IndexedDB. The only thing that ever leaves the
-device is one compact prompt per lesson batch, sent straight from your browser
-to [OpenRouter](https://openrouter.ai) with your own API key.
+Vocabulary grows out of **talking**: you meet new words in a role-played
+conversation with an LLM teacher, or ask the assistant for some, and the drill
+sessions then review what you already have. Lessons never introduce a word.
+
+It is a single-page app that works with no server at all. Your profile, your
+vocabulary and your progress live in your browser's IndexedDB. What leaves the
+device is one compact prompt per lesson batch (and one per conversation turn),
+sent straight from your browser to [OpenRouter](https://openrouter.ai) with your
+own API key. Multi-device sync is optional and self-hosted — see
+[Sync](#sync-optional).
+
+> The repo and package are still named `language-learning` / `language-app`;
+> the app is Sapling.
 
 ## Features
 
-- **Four challenge types.** Multiple choice, cloze (fill the blank, with a
-  tappable word bank when it helps), typed translation, and match-pairs.
+- **Conversation mode.** Name a scenario — "ordering coffee", "arguing about
+  football" — or leave it blank and let the model pick one. It casts you both in
+  roles and you talk, in the target language. The teacher stays in character and
+  corrects only *language* mistakes, never what you said: ask for a pizza in an
+  ice cream shop and you get "sorry, we only have ice cream", not a correction.
+  Corrections arrive quietly beside your own message with the changed words
+  marked inline, never inside the reply. Words **you** produced correctly and
+  didn't have yet are added to your collection — that is where vocabulary comes
+  from.
+- **Type the reading if you have no keyboard for the script.** On Mandarin or
+  Japanese you can write pinyin or romaji and be understood; it is read
+  phonetically and never "corrected" for being romanized. Every turn you get
+  right still shows your own sentence in the real script, with a speaker button
+  — the script is not a reward for getting it wrong.
+- **Six challenge types.** Multiple choice, cloze (fill the blank, with a
+  tappable word bank when it helps), typed translation, match-pairs, word-order,
+  and spot-the-error.
 - **Content written for you.** Challenges are generated from your level, your
   interests and — crucially — the exact words your spaced-repetition schedule
-  says you are about to forget.
-- **Per-session topics.** Before a session starts you can name a scenario —
-  "ordering in a restaurant", "asking for directions" — and that batch's
-  dialogue leans into it; leave it blank to just review. Recent topics and a
-  handful of suggested ones (plus a couple drawn from your interests) are
-  offered as chips, and the last few you typed are remembered on the device.
-  If you quit a session early, `/learn` opens to a small choice instead: keep
-  going on the leftover queue (no new topic, no refill — it just plays out),
-  or clear it and pick a new topic.
+  says you are about to forget. A lesson is written *about* the vocabulary you
+  already have and introduces none of its own.
+- **Difficulty that follows the word, not the clock.** A new word is shown for
+  recognition; production is unlocked per-word once you've actually recalled it
+  a few times, so you are never asked to produce something you only just met.
+- **Per-session topics.** When you generate a lesson you can name a scenario —
+  "ordering in a restaurant", "asking for directions" — and that batch leans
+  into it; leave it blank to just review. Recent topics and a handful of
+  suggested ones (plus a couple drawn from your interests) are offered as chips,
+  and the last few you typed are remembered on the device.
+- **Starting is instant, generating is deliberate.** Every challenge ever
+  generated stays in a persistent pool, and starting a session only plans over
+  it — no network call, no waiting, ever. *Generate new lesson* is a separate
+  button that spends one batched call in the background while you are already
+  playing. Answering doesn't consume a challenge, so quitting early is
+  self-cleaning: what you never saw simply comes back in the next plan.
 - **Romanization for non-Latin scripts.** Learning Mandarin, Japanese or
   another language not written in the Latin alphabet gets you a pinyin/romaji
   reading under every target-script string — prompts, options, sentences and
@@ -35,6 +66,13 @@ to [OpenRouter](https://openrouter.ai) with your own API key.
   word in the dashboard and end-of-session lists. Mandarin and English get a
   real neural voice (Kokoro v1.1-zh, in your browser); everything else uses your
   system voices. See [Speech](#speech).
+- **Say it.** Conversation mode has a mic button: speak, and the transcript
+  lands in the composer for you to edit and send. It is an input method, not a
+  grader — nothing scores your pronunciation, and where the browser has no
+  recognition for your target language the button simply isn't offered and you
+  type instead.
+- **A chat assistant.** `/chat` is an LLM that manages your vocabulary through
+  tool calls — add words, look them up, edit or remove them — in plain language.
 - **Forgiving grading.** A missing accent or a one-character typo is graded
   "almost", counted as correct, and shown the right form. Grading is local,
   instant and free.
@@ -45,19 +83,28 @@ to [OpenRouter](https://openrouter.ai) with your own API key.
 - **FSRS scheduling.** Real spaced repetition via
   [ts-fsrs](https://github.com/open-spaced-repetition/ts-fsrs), not a
   homegrown interval table.
-- **Game feel.** XP, combo streaks with a bonus that ramps, a daily goal, a day
-  streak, segmented session progress, and a confetti finish. Every animation
-  respects `prefers-reduced-motion`.
+- **The Garden.** `/words` is the full vocabulary ledger with the FSRS state
+  made legible — what each word's stability and due date actually are, and a way
+  to forget one outright.
+- **A day streak, and nothing else to score.** There is no XP, no combo bonus
+  and no daily goal; the streak is *derived* from the results log rather than
+  stored as a counter, so it can't drift and it survives a sync for free. The
+  dashboard states a moment ("N words ready to review") rather than grading your
+  day. Segmented session progress and a confetti finish remain, and every
+  animation respects `prefers-reduced-motion`.
 - **Practice mode.** The whole app is playable with no API key at all, against a
   deterministic offline fixture. Good for a look around, and for development.
-- **Your data is yours.** Export and import everything as JSON from Settings.
+- **Your data is yours.** Export and import everything as JSON from Settings,
+  and sync between your own devices through a server you run — or don't.
 
 ## Quickstart
 
-The repo ships a Nix flake with the exact toolchain.
+The repo ships a Nix flake with the exact toolchain (Node 22, pnpm, and the
+language servers) plus an `.envrc`, so [direnv](https://direnv.net) loads the
+dev shell automatically on `cd`.
 
 ```sh
-nix develop          # enter the dev shell (node + pnpm)
+nix develop          # or just `cd` in, with direnv
 pnpm install
 pnpm dev             # http://localhost:5173
 ```
@@ -71,15 +118,26 @@ pnpm test            # vitest, node environment, pure-logic unit tests
 pnpm check           # svelte-check + tsc
 pnpm build           # static production build into build/
 pnpm preview         # serve the production build
+pnpm format          # prettier --write .
+pnpm format:check    # prettier --check .
 ```
+
+The sync server has its own gates, run from `server/` — see
+[Sync](#sync-optional).
 
 ### Practice mode (no key needed)
 
-With no API key configured the app runs in **practice mode**: lessons come from
-a built-in Spanish-for-English-speakers fixture, explanations are canned, and
-nothing is sent anywhere. The session screen shows a small banner so you always
-know which mode you are in. It exercises the real parse/resolve/grade code path,
-so it is a faithful preview — just not personalized.
+With no API key configured the app runs in **practice mode**: lessons, chat
+replies and conversation turns all come from built-in fixtures, and nothing is
+sent anywhere. The session screen shows a small banner so you always know which
+mode you are in. It exercises the real parse/resolve/grade code path, so it is a
+faithful preview — just not personalized.
+
+There are two fixture sets, chosen by your target language: **Spanish for
+English speakers** by default, and **Mandarin for English speakers** if you name
+Chinese in onboarding — the latter carries pinyin on every target-script string,
+so the romanization UI can be seen without spending a token. Both cover every
+wire type. Node tests are always in mock mode.
 
 ### Using your own OpenRouter key
 
@@ -87,9 +145,9 @@ so it is a faithful preview — just not personalized.
 2. Open **Settings** in the app, paste it, and pick a model.
 
 The key is stored in `localStorage` on that device only. It is deliberately
-excluded from exports, and there is no server that could see it. The default
-model is a cheap, fast one (`google/gemini-2.5-flash-lite`); anything on
-OpenRouter that can follow a JSON schema will work.
+excluded from exports and from sync, so even a sync server you run never sees
+it. The default model is a cheap, fast one (`google/gemini-3.7-flash`); anything
+on OpenRouter that can follow a JSON schema will work.
 
 ## Architecture
 
@@ -103,10 +161,26 @@ src/lib/srs/          Spaced repetition (ts-fsrs). Pure and deterministic:
                       The single place `KnowledgeItem.fsrsCard` is cast.
 src/lib/validate/     Fuzzy answer grading. Unicode-aware normalization plus
                       Damerau-Levenshtein, producing correct/almost/wrong.
+src/lib/challenges/   The stored side of the challenge union: one module per
+                      type carrying its schema, its grading rule, its
+                      difficulty tier and its presentation facts. The registry
+                      is a mapped type, so a new member fails typecheck.
 src/lib/llm/          OpenRouter client, batch generation, escalation, and the
-                      offline mock. Touches no database.
-src/lib/session/      Session rules: refill planning, XP/combo, applying an
-                      answer. The bridge between the four modules above.
+                      offline mock. Stateless — touches no database.
+src/lib/session/      Session rules: planning over the pool, per-word
+                      difficulty progression, applying an answer. Owns every
+                      DB write during play.
+src/lib/assistant/    The chat assistant: an LLM managing learner state through
+                      tool calls, against an injectable ToolContext.
+src/lib/conversation/ Conversation mode on the same seam — scenario call,
+                      teacher turn loop, and the typed-vs-corrected diff that
+                      produces the inline markup. Imports no database.
+src/lib/sync/         Multi-device sync: the shared event envelope, the outbox,
+                      genesis, and the push/pull/apply cycle.
+src/lib/romanize/     Local pinyin/romaji readings. Never romanizes a term in
+                      isolation — context resolves polyphones.
+src/lib/asr/          Speech recognition for the conversation composer. An
+                      input method; the fallback is typing.
 src/lib/tts/          Text to speech: Kokoro v1.1-zh running in a Web Worker on
                       the sherpa-onnx WASM runtime, with the Web Speech API as
                       fallback. Language→voice mapping, the audio cache, the
@@ -116,8 +190,12 @@ src/lib/ui/           Shared presentational bits (spinner, progress bar,
                       speaker button) plus lightweight display preferences in
                       localStorage (romanization toggle, recent session
                       topics).
-src/routes/           Dashboard, onboarding, settings, and the session screen
-                      (`/learn`) with its four challenge components.
+src/routes/           Dashboard, onboarding, settings, the Garden (`/words`),
+                      the assistant (`/chat`), conversation mode
+                      (`/converse`), and the session screen (`/learn`) with its
+                      six challenge components.
+server/               The optional sync server. A separate package, deliberately
+                      not a workspace member. See Sync.
 ```
 
 ### The token economy
@@ -126,17 +204,18 @@ Generating one challenge at a time would be both slow and expensive. The design
 instead concentrates spending into rare, batched calls and does everything else
 locally.
 
-- **Batched generation.** One `getBatch` call produces a whole lesson: ~14
-  challenges plus a few new vocabulary items, from a ~480-token system prompt
-  that never changes (so it caches well) and a compact JSON user message.
-  Roughly **2.5k tokens per batch** — a fraction of a cent on a small model.
-  The queue is only topped up when fewer than five challenges are left.
+- **Batched generation.** One `getBatch` call produces a whole lesson — up to
+  20 challenges, written about vocabulary you already have — from a static
+  system prompt (so it caches well) and a compact JSON user message. Roughly
+  **2.5k tokens per batch**, a fraction of a cent on a small model. It is
+  spent only when you press *Generate new lesson*; the start card nudges you
+  when the pool runs low, but nothing generates behind your back.
 - **Local grading.** Every answer is graded in the browser by
   `$lib/validate` — no judge call, no latency, no cost. The three-way verdict is
   what lets "café" typed as "cafe" be accepted *and* corrected.
 - **Zero-token rounds.** Match-pairs challenges are assembled locally from words
-  you already know. They cost nothing and are slotted in after every fourth
-  generated challenge to vary the rhythm.
+  you already know. They cost nothing and are spliced into the queue at plan
+  time to vary the rhythm.
 - **On-demand escalation.** A second model call happens only when you press
   *Explain*, and it carries just that one challenge, your answer and your
   question — a few hundred tokens, capped at a 120-word reply.
@@ -144,24 +223,25 @@ locally.
   whole batch you already paid for. Only an unusable envelope triggers a single
   corrective retry.
 
-Two consequences worth knowing: match-pairs rounds pay a flat 5 XP and
-deliberately do **not** feed the scheduler (they are recognition drills built
-from known words, so letting them grade would inflate your recall estimates),
-and a session banks its XP in a single write at the end — including when you
-quit early, so partial progress is never lost.
+- **Conversation costs one call per turn.** The teacher's reply, its
+  translation, any correction and the sentence in the target script all come
+  back in a single structured envelope, so a turn is one request and not four.
+  Your word list rides in the cacheable part of the prompt, capped at the 200
+  most recently introduced.
 
-### XP and combos
+One consequence worth knowing: match-pairs rounds deliberately do **not** feed
+the scheduler. They are recognition drills built from words you already know, so
+letting them grade would inflate your recall estimates.
 
-| Verdict  | Base XP |
-| -------- | ------- |
-| correct  | 10      |
-| almost   | 8       |
-| wrong    | 0       |
+### What isn't scored
 
-From a combo of 3 consecutive non-wrong answers, each answer earns a bonus of
-`2 × (combo − 2)`, capped at +10 — so combo 3 pays +2, combo 7 and beyond pay
-+10. A wrong answer scores nothing and resets the combo. Match-pairs rounds pay
-a flat 5 XP and leave the combo untouched.
+There is no XP, no combo multiplier and no daily goal — all three were removed.
+A verdict is evidence about a *word*, and its only consumer is FSRS; grading is
+deliberately blind to which challenge type produced it, because what difficulty
+shapes is the question stream, never what an answer is worth. The one number the
+app still keeps is the day streak, and it is folded out of the results log on
+read rather than stored — which is also why it survives a multi-device sync
+without a merge rule.
 
 ## Speech
 
@@ -242,6 +322,48 @@ There is no longer a "runs on" setting (the old `ll.ttsDevice` preference is
 left readable but unused), and the old Firefox/WebGPU garbled-audio caveat is
 gone with it.
 
+## Sync (optional)
+
+The app is local-first and stays fully usable with sync unconfigured, the server
+unreachable, or the feature turned off mid-life — failures degrade silently, the
+same rule the audio layer follows. Nothing below is required to use Sapling.
+
+When you do want a second device, `server/` is a small self-hosted relay
+(TypeScript + Hono + SQLite, a few hundred lines). It stores an **append-only
+log of opaque events** and hands them back in order. It merges nothing and
+understands nothing about the data — every semantic lives in the client, which
+keeps the server small and leaves an end-to-end-encrypted payload as a
+client-only change later.
+
+```sh
+cd server && pnpm install
+cd server && pnpm new-key --user you   # prints a key, once
+cd server && pnpm dev                  # :8787
+```
+
+Paste the key and the server URL into **Settings → Sync**. Syncing is
+fire-and-forget at three moments — a manual *Sync now*, after a session banks,
+and once on app load — and never blocks boot or play.
+
+State is a fold over the log, so conflicts resolve by construction rather than
+by asking you: reviews of the same word on two devices are both kept and the
+FSRS card is recomputed by replaying the merged history, results set-union by
+event id, and the day streak — being derived from those results — needs no merge
+rule at all. Applying is idempotent and commutative, so an incremental pull
+reaches the same state as a full replay.
+
+Two things to know before you start. Your API key, sync key, preferences and TTS
+caches **never leave the device**; your vocabulary, challenge content, review
+history, results and profile do. And a device joining an existing setup should
+start **empty**: enable sync on your primary device first and let the others
+pull, because two devices that independently built up vocabulary before their
+first sync will keep two separate items for the same term. Term-level dedup
+across independently seeded devices is deferred.
+
+`server/` is a separate package, deliberately **not** a workspace member, so the
+static build never sees it. The full design is in [`docs/sync.md`](docs/sync.md)
+and the operational detail in [`server/README.md`](server/README.md).
+
 ## Deploying
 
 The app builds to a fully static SPA (`@sveltejs/adapter-static` with an
@@ -252,11 +374,22 @@ pnpm build     # → build/
 ```
 
 Upload `build/` to any static host — GitHub Pages, Netlify, Vercel, Cloudflare
-Pages, S3, or `python -m http.server` in that directory. The only requirement is
-the usual SPA rewrite: serve `index.html` for unknown paths so client-side
-routes resolve. There is nothing to configure server-side, no environment
-variables and no secrets in the bundle — the API key is supplied by each user in
-their own browser.
+Pages, S3, or `python -m http.server` in that directory. There is nothing to
+configure server-side, no environment variables and no secrets in the bundle —
+the API key is supplied by each user in their own browser.
+
+Two rewrite rules, and the second one matters more than it looks. The usual SPA
+fallback serves `index.html` for unknown paths so client-side routes resolve —
+**except** under `/_app/immutable/*`, where a missing hashed chunk must return a
+real 404. `static/_headers` caches that prefix as immutable, so a request for a
+dead chunk that falls through to the HTML shell gets edge-cached as a successful
+response and poisons that URL for up to a year. `static/_redirects` and
+`static/404.html` encode both rules for Cloudflare Pages; on another host you
+have to reproduce them.
+
+The app is also an installable PWA (`static/manifest.webmanifest` plus a service
+worker registered in production builds only) — installable from the browser's
+"Install app" control, or on iOS via Share → Add to Home Screen.
 
 The build itself is small (well under a megabyte, plus ~140 KB of vendored
 speech-runtime JS in `static/tts/`). The speech model is *not* part of it: it is
