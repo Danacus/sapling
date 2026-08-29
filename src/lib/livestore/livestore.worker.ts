@@ -5,8 +5,8 @@
  * cross-tab election), and Vite needs that to be its own module imported with
  * `?worker`; see `adapter.ts`. The sync backend is configured *here* rather
  * than beside the store, because the leader is the only thread that talks to
- * the network — every tab's writes funnel through it, so there is exactly one
- * connection per browser no matter how many tabs are open.
+ * the network — every tab's writes funnel through it, so a browser makes one
+ * set of sync requests no matter how many tabs are open.
  *
  * The backend is chosen per store, from two inputs:
  *
@@ -35,7 +35,7 @@
  *   converging, which is visible, survivable, and recoverable by hand.
  */
 import { makeWorker } from '@livestore/adapter-web/worker';
-import { makeWsSync } from '@livestore/sync-cf/client';
+import { makeHttpSync } from '@livestore/sync-cf/client';
 
 import { offlineSyncBackend } from '$lib/sync/offline-backend';
 import { SyncPayload } from '$lib/sync/payload';
@@ -43,16 +43,52 @@ import { SYNC_URL } from '$lib/sync/url';
 
 import { schema } from './schema';
 
-/** Built once per worker, not per store: the URL cannot change at runtime. */
-const wsSync = SYNC_URL === undefined ? undefined : makeWsSync({ url: SYNC_URL });
+/**
+ * Built once per worker, not per store: the URL cannot change at runtime.
+ *
+ * **`ping.enabled: false` is not an optimisation, it is the whole point.** The
+ * HTTP backend otherwise forks a ping every ten seconds for the life of the
+ * store, which is a poll — 8,600 requests a day per open tab, for a value
+ * nobody reads between syncs. `connect` still runs the same ping exactly once
+ * when the leader boots, and that is what sets `isConnected`.
+ *
+ * The cost is worth stating plainly: a device that launches with no network
+ * gets `isConnected: false` for that session, so its writes stay pending until
+ * the next launch. Nothing is lost, and it is the same contract as the pull
+ * below — this app syncs when it starts, not continuously. Turning the repeat
+ * back on would not buy reliable recovery anyway: `Effect.repeat` stops on
+ * failure, and a ping made while offline fails rather than timing out, so the
+ * loop dies on the first one that matters.
+ */
+const httpSync =
+	SYNC_URL === undefined ? undefined : makeHttpSync({ url: SYNC_URL, ping: { enabled: false } });
 
 makeWorker({
 	schema,
 	syncPayloadSchema: SyncPayload,
 	sync: {
 		backend: (args) =>
-			wsSync !== undefined && args.payload !== undefined ? wsSync(args) : offlineSyncBackend(args),
+			httpSync !== undefined && args.payload !== undefined
+				? httpSync(args)
+				: offlineSyncBackend(args),
 		onSyncError: 'ignore',
-		onBackendIdMismatch: 'ignore'
+		onBackendIdMismatch: 'ignore',
+		/**
+		 * Sync at boot, and only at boot.
+		 *
+		 * `livePull: true` (the default) asks the backend for a reactive stream.
+		 * Over HTTP `makeHttpSync` has no such thing and emulates it by polling
+		 * every five seconds, which is the wrong shape for a language app used in
+		 * sessions. `false` makes the leader pull the backlog once, when the store
+		 * opens, and then stop. Pushing is unaffected and stays event-driven: the
+		 * push loop blocks on an empty queue, so a device that writes nothing
+		 * sends nothing.
+		 *
+		 * So a device catches up when the app starts. Its own writes leave
+		 * immediately and are confirmed by the server, which was measured rather
+		 * than assumed — a push advances `upstreamHead` and drains `pending` with
+		 * no pull stream open at all.
+		 */
+		livePull: false
 	}
 });

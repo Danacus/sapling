@@ -11,9 +11,18 @@
  * inferred from the sync engine's silence. It sends the same credential to the
  * same endpoint the real connection uses, and reads the status code:
  *
- * - **426** — the phrase was accepted and the request reached the Durable
- *   Object, which then asked for a WebSocket upgrade this plain `fetch` is not
- *   offering. That is success: the only thing missing is the upgrade.
+ * - **426** — the phrase was accepted. `handleSyncRequest` checks the pairing
+ *   phrase first and the `Upgrade:` header second, so a 426 is proof that the
+ *   URL is a real deployment *and* that authorisation passed, which is exactly
+ *   what this can usefully establish.
+ *
+ *   The request asks for `transport=ws` even though the app now syncs over
+ *   HTTP, and that is deliberate rather than left over: 426 is a distinctive
+ *   sentinel produced before any transport is dispatched, whereas the HTTP
+ *   endpoint answers a bare `GET` with **200** — indistinguishable from the
+ *   root health check, which is the one status this must never read as
+ *   success (`probe.test.ts` pins that). It has never proved a handshake
+ *   completes, under either transport.
  * - **401** — the phrase was refused, either because it is malformed or because
  *   the deployment has a `SYNC_ALLOWED_PHRASES` allow-list it is not on. The
  *   Worker deliberately does not say which, so neither does this.
@@ -62,9 +71,9 @@ export function interpretProbe(status: number): SyncProbeResult {
  * settings page that must keep rendering.
  */
 export async function probeSync(url: string, phrase: string): Promise<SyncProbeResult> {
-	// The same shape the sync client builds, minus the upgrade: `storeId` is the
-	// constant every client sends (the Worker derives the real room from the
-	// phrase), and the payload is the credential.
+	// `storeId` is the constant every client sends (the Worker derives the real
+	// room from the phrase) and the payload is the credential. `transport=ws` is
+	// the sentinel described above, not the transport sync uses.
 	const payload = encodeURIComponent(JSON.stringify({ phrase }));
 	const target = `${url.replace(/\/+$/, '')}/?storeId=sapling&transport=ws&payload=${payload}`;
 

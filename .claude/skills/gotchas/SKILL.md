@@ -28,6 +28,20 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   count taken from a live, syncing store confuses "not yet materialised" with
   "gone".
 
+- **No client-side signal means "the server has my events" (2026-08-29).** Two
+  look like they do and neither does. `store.syncStatus().pendingCount` is
+  *session-to-leader* and hits 0 the instant the leader accepts a commit — it
+  says nothing about the network, which is exactly why the original sync stall
+  showed `isSynced: true` throughout. The leader's own `pending.length` (via
+  `_dev.syncStates()`) is 0 *before* the commits have crossed into it as well as
+  after they have been pushed, so polling it passes instantly. `upstreamHead`
+  is the honest one — it only advances on a confirmed push — but the truly safe
+  probe is to boot a second store and see what it pulls. Related: with
+  `livePull: false`, `createStorePromise` resolves *before* the boot pull
+  finishes (`initialSyncOptions` defaults to `Skip`), so a reader counted right
+  after `open()` reads zero. Both cost an hour of chasing a "broken" transport
+  that was working the whole time.
+
 - **Never hand a Svelte `$state` proxy to Dexie.** IndexedDB's structured clone
   throws `DataCloneError` on proxies. Every write goes through `toPlain()` in
   `$lib/db`, which strips them. Repositories are the only Dexie access.

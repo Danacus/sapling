@@ -1,10 +1,12 @@
 # Sync — the architecture, and how to stand it up
 
 Status: **deployed, 2026-08-29.** The Worker is live at
-`https://sapling-sync.vanoverloop.xyz` and answers on `/`. No learner has yet
-synced two real *browsers* through it — the convergence check below ran through
-the node adapter, which shares LiveStore's leader thread but not the
-OPFS/SharedWorker path.
+`https://sapling-sync.vanoverloop.xyz` and answers on `/`. It now speaks **HTTP,
+not WebSocket**, and the client pulls **once at boot** rather than reactively —
+see below, and `docs/sync-stall.md` for the failure that forced both. The
+convergence check has been re-run against that configuration, but still through
+the node adapter: **no learner has yet synced two real browsers**, so the
+OPFS/SharedWorker path remains unverified.
 
 **The app only offers sync if `VITE_SYNC_URL` was set when it was built.** It is
 inlined at build time (`src/lib/sync/url.ts`), so setting it in the Pages
@@ -26,11 +28,30 @@ relays them on pull. It never merges and never interprets a payload.
 
 `worker/index.ts` is a Cloudflare Worker over `@livestore/sync-cf`, with one
 SQLite-backed Durable Object per learner. Free-plan Workers run SQLite DOs and
-free-plan storage is not billed. WebSocket is the only transport enabled: it is
-what a browser uses, and it hibernates between messages, so an idle learner
-costs no CPU.
+free-plan storage is not billed.
 
-Only two things are ours rather than stock `makeWorker`, and both are worth
+**HTTP is the only transport enabled, and sync happens at boot.** Both are
+reversals of the original design and both are load-bearing; `docs/sync-stall.md`
+is why. In short: `@effect/rpc` streams a paginated pull one page at a time and
+will not send the next until the client acknowledges the last — an
+acknowledgement the client sends only *after* materialising the page. Over a
+hibernating WebSocket that coupling is fatal, because a Durable Object that
+sees no message for ten seconds is evicted along with the in-memory server that
+owns the in-flight pull, and the acknowledgement then arrives at a freshly-woken
+server that has never heard of the request and silently drops it. Over HTTP a
+pull is one request: Cloudflare keeps the object in memory for its duration,
+there is no cross-message state to lose, and `makeProtocolHttp` reports
+`supportsAck: false` so the server never waits on the client at all.
+
+What that costs is hibernation. It is bought back by `livePull: false`
+(`src/lib/livestore/livestore.worker.ts`), which is what keeps this from
+becoming a poller: the leader pulls the backlog once when the store opens and
+then stops, so between launches a device makes no requests at all. Pushing is
+unaffected and stays event-driven — the push loop blocks on an empty queue, so a
+device that writes nothing sends nothing. A learner therefore catches up when
+the app starts, which is the cadence this app actually wants.
+
+Three things are ours rather than stock `makeWorker`, and all three are worth
 understanding before changing anything here.
 
 ### 1. The room is named by the phrase, not by the client's `storeId`
@@ -51,10 +72,9 @@ one and strand everything written before pairing in the old. Local identity and
 remote identity are kept separate, nothing on disk ever moves, and pairing
 changes only which room events are relayed through.
 
-The phrase travels in the connection's query string, because
-`@livestore/sync-cf` puts the sync payload there and a browser cannot set
-headers on a WebSocket. TLS covers it in transit; it may still appear in request
-logs. That is why the room is named by a hash rather than by the phrase itself,
+The phrase travels in the query string, because that is where
+`@livestore/sync-cf` puts the sync payload. TLS covers it in transit; it may
+still appear in request logs. That is why the room is named by a hash rather than by the phrase itself,
 and it is the strongest argument left for `docs/sync.md` §10's end-to-end
 encryption if this ever serves more than one person's own devices.
 
@@ -70,6 +90,31 @@ simpler: a backend whose `push` quietly succeeds would have LiveStore mark
 events as confirmed by a server that has never seen them, and the day sync was
 switched on the client would arrive with a cursor describing a log that does not
 exist.
+
+### 3. CORS is answered by hand, and it is not optional
+
+The app and the Worker are separate origins on purpose (`.claude/rules/deploy.md`),
+which cost nothing while sync ran over a WebSocket — those are not subject to
+CORS. Over HTTP every sync call is a cross-origin `POST` carrying `content-type`
+and `x-livestore-store-id`, and a custom header always earns a preflight. Two
+pieces are needed and neither is stock:
+
+- **`http: { responseHeaders: CORS }`** on `makeDurableObject`, because
+  `handleSyncRequest` returns the Durable Object's response *verbatim* — the
+  `headers` argument it takes is only applied to its own 400/424/426 replies.
+- **An `OPTIONS` branch ahead of the routing** in `worker/index.ts`. A preflight
+  goes to the same URL as the request it precedes, query string and all, so it
+  would otherwise match as a sync request and be forwarded to a Durable Object
+  that answers it with no CORS header at all. It is answered without checking
+  the phrase, because it carries no credentials to check and rejecting it would
+  break the authorised request behind it.
+
+`Access-Control-Max-Age` matters more than it looks: without it every RPC call
+pays for a second round trip. And `wrangler.jsonc` needs
+**`enable_request_signal`** in `compatibility_flags` — the HTTP transport streams
+its pull response and uses `Request.signal` to notice a client that walks away
+mid-stream. That flag has no default-on compatibility date, so a recent
+`compatibility_date` does not grant it.
 
 ## Standing it up
 
@@ -150,22 +195,49 @@ curl -s $B/                                              # 200, "Sapling sync ba
 curl -so/dev/null -w'%{http_code}\n' $B/nope             # 404
 curl -so/dev/null -w'%{http_code}\n' "$B/?storeId=sapling&transport=ws"            # 401
 curl -so/dev/null -w'%{http_code}\n' "$B/?storeId=sapling&transport=ws&payload=$P" # 426
+curl -s -i -X OPTIONS "$B/?storeId=sapling&transport=http&payload=$P" \
+  -H 'Origin: https://example.com' -H 'Access-Control-Request-Method: POST' \
+  -H 'Access-Control-Request-Headers: content-type,x-livestore-store-id' | head -5
 ```
 
-`426` is the pass: it means the phrase was accepted and the request reached the
-Durable Object, which then asked for a WebSocket upgrade.
+`426` is the pass for authorisation: `handleSyncRequest` checks the phrase
+first and the `Upgrade:` header second, so it proves the phrase was accepted
+without depending on which transport is enabled. This is also what
+`src/lib/sync/probe.ts` sends. The `OPTIONS` call must come back **204** with
+`Access-Control-Allow-Origin` — if it does not, no browser will ever send the
+real request, and the failure appears only as a console message inside a Web
+Worker.
 
 For convergence, a temporary vitest file under `src/` (so `$lib` resolves) that
-builds two `@livestore/adapter-node` stores with
-`sync: { backend: makeWsSync({ url: 'http://localhost:8787' }), onSyncError: 'shutdown' }`,
-`storeId: 'sapling'`, differing `clientId`s and `syncPayload: { phrase }`. Commit
-an `itemAdded` on one and poll `tables.items.select()` on the other. **Verified
-2026-08-29:** events cross in both directions, and a third store opened with a
-*different* phrase sees nothing — the rooms are isolated. Delete the file
-afterwards; the committed suite must stay network-free.
+builds `@livestore/adapter-node` stores with the *production* sync options —
+`sync: { backend: makeHttpSync({ url: 'http://localhost:8787', ping: { enabled: false } }), onSyncError: 'shutdown', livePull: false }`,
+`storeId: 'sapling'`, differing `clientId`s and `syncPayload: { phrase }`.
+Put it under `src/lib/livestore/`, **not** `src/lib/sync/`: `wrangler dev`
+watches the Worker's import graph, which reaches into `src/lib/sync/`, so a file
+added there reloads the backend mid-run. Delete it afterwards; the committed
+suite must stay network-free.
+
+**Verified 2026-08-29, over HTTP with `livePull: false`:** a fresh client pulls
+a 300-event backlog at boot — that crosses both the 256-event Durable Object
+page and the 100-events-per-message split, so the pagination is real; a client
+that has pulled can still push; a third client sees both; and a client that
+already pulled does *not* see later writes, which is the whole point of turning
+live pull off. A push is confirmed with no pull stream open at all
+(`localHead 5, upstreamHead 5, pending 0`), so the pending queue does drain and
+the next boot pulls only what is genuinely new.
 
 `onSyncError: 'shutdown'` is what makes that check worth anything. The app ships
 with `'ignore'`, which would swallow exactly the failures being looked for.
+
+**Two traps in writing that check**, both of which cost time here. First, there
+is no client-side signal meaning "the server has my events": `syncStatus().pendingCount`
+is session-to-leader and hits 0 the instant the leader accepts a commit, and the
+leader's own `pending.length` is 0 *before* the commits reach it as well as
+after they are pushed — so polling either passes immediately and opens the next
+store against an empty room. Booting a fresh reader is the only honest probe.
+Second, `createStorePromise` resolves *before* the boot pull finishes
+(`initialSyncOptions` defaults to `Skip`), so a reader counted straight after
+`open()` reads zero. Both are in the `gotchas` skill.
 
 ## What the backend must not break
 
@@ -226,25 +298,17 @@ harness that settles before every shutdown:
 - The same again where the offline backlog *duplicates by content* what the
   server already holds — two devices that migrated the same library. Converges.
 
-**What remains unexplained.** The original symptom — a desktop browser sat at a
-stale view while the phone synced correctly, having logged one
-`ServerAheadError` with `providedNum: 712` against a server head of 2607 — was
-never reproduced. Note what the passing runs do *not* cover: in every one of
-them the reconnecting client pulled before it pushed, so `ServerAheadError`
-never fired at all. The untested branch is therefore not "does batching work"
-(it does, six batches deep) but **what happens after that error is raised** —
-and `onSyncError: 'ignore'` is precisely what would turn a recoverable signal
-into permanent silence. Provoking it in Node has so far failed; the browser
-provokes it presumably because its leader starts slowly enough that a queued
-backlog pushes first.
+**What came of it.** The stall was traced afterwards by reading the transport,
+not by reproducing it again: `docs/sync-stall.md` has the mechanism and the
+`file:line` evidence. `ServerAheadError` turned out to be a red herring —
+a symptom of the pull dying, not its cause. The fix was to change transport and
+cadence rather than to patch around it, which is what the rest of this file now
+describes.
 
-The other untested difference is the **browser adapter itself** — OPFS plus the
-SharedWorker leader — which no Node test can reach, and where both of this
-feature's real bugs have lived. A browser harness is the missing piece; the
-LiveStore migration brief called for one and it still does not exist.
-
-Sync is **not** known to be broken. It is known to have failed once, on one
-device, for reasons still unestablished.
+The **browser adapter itself** — OPFS plus the SharedWorker leader — is still
+the untested difference, and it is where every real bug in this feature has
+lived. A browser harness remains the missing piece; the LiveStore migration
+brief called for one and it still does not exist.
 
 ## Open items, roughly by value
 
@@ -298,8 +362,12 @@ Both were raised and deferred as orthogonal, and both remain true:
   `pnpm build`, which does not typecheck and does not run tests, so a failing
   test or a type error can reach production. A workflow running
   `pnpm check`/`test`/`format:check` would close that.
-- **The browser checks are not in the repo.** Every runtime claim in the
+- **The browser checks are still not automated.** Every runtime claim in the
   LiveStore migration was proved by a throwaway puppeteer + Firefox harness that
-  no longer exists. For a local-first app whose riskiest properties are all
-  runtime ones — and which now has a network partner — promoting a smoke test
-  into the repo would be worth more than most unit tests.
+  no longer exists. `src/routes/onboarding/harness/+page.svelte` is the tracked
+  replacement and it is driven by hand — see `docs/sync-stall.md` for the
+  procedure and the two things to fix in it before the next run. For a
+  local-first app whose riskiest properties are all runtime ones, promoting that
+  into a scripted smoke test would be worth more than most unit tests. It also
+  ships in the production SPA and writes arbitrary events into the real store,
+  so it should not stay there indefinitely.

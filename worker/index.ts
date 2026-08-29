@@ -45,15 +45,54 @@ import { normalizePhrase } from '../src/lib/sync/phrase';
 import { roomIdForPhrase } from './room';
 
 /**
+ * Lets the app read these replies from its own origin.
+ *
+ * Declared above the Durable Object because the class body below is evaluated
+ * at module load and passes this object to `makeDurableObject` — a `const`
+ * declared further down would still be in its temporal dead zone.
+ *
+ * `*` looks broad and is not, because it is not what protects the log. The
+ * pairing phrase is: it names the room, it travels in the query string, and a
+ * caller who cannot produce it gets a 401 before the Durable Object is ever
+ * addressed. CORS only decides which *browser* origins may read a reply, and it
+ * has never applied to `curl`, so restricting it would defend against nobody
+ * who is not already stopped. Pinning it to the Pages origin is also not
+ * available: preview deployments each get their own hostname.
+ *
+ * (This used to say `*` was safe because the replies "carry no data". That
+ * stopped being true when sync moved to HTTP — these responses now carry the
+ * eventlog. The reason it is still safe is the phrase, not the emptiness.)
+ */
+const CORS = { 'Access-Control-Allow-Origin': '*' };
+
+/**
  * One Durable Object per room, storing that room's eventlog in DO SQLite.
  *
- * WebSocket is the only transport enabled. It is the one a browser client uses,
- * it hibernates between messages so an idle learner costs no CPU, and leaving
- * HTTP off means there is no second, stateless path into the same log to reason
- * about (or to have to answer CORS preflights for).
+ * **HTTP is the only transport enabled**, and that is a deliberate reversal.
+ * WebSocket was chosen first because it hibernates between messages, so an idle
+ * learner costs no CPU. What that traded away was worse: a hibernating Durable
+ * Object drops the in-memory Effect RPC server that owns an in-flight pull,
+ * and `@effect/rpc`'s streaming protocol only advances when the *client*
+ * acknowledges each page — an acknowledgement it sends after materialising it.
+ * A leader slow enough to take ten seconds over a page therefore let the
+ * Durable Object hibernate mid-stream, and the acknowledgement then arrived at
+ * a freshly-woken server that had never heard of the request and dropped it on
+ * the floor. Sync stopped, in silence, with the socket still open. See
+ * `docs/sync-stall.md`.
+ *
+ * Over HTTP a pull is one request. Cloudflare keeps the Durable Object in
+ * memory for its duration, there is no cross-message state to lose, and
+ * `makeProtocolHttp` reports `supportsAck: false` so the server never waits on
+ * the client at all. Between syncs there is no connection, and therefore
+ * nothing to hibernate, time out or orphan.
+ *
+ * The bill is CORS: a cross-origin POST carrying `content-type` and
+ * `x-livestore-store-id` is preflighted, and `handleSyncRequest` returns the
+ * Durable Object's response verbatim, so the header has to come from here.
  */
 export class SyncBackendDO extends makeDurableObject({
-	enabledTransports: new Set<'ws'>(['ws'])
+	enabledTransports: new Set<'http'>(['http']),
+	http: { responseHeaders: CORS }
 }) {}
 
 type Env = {
@@ -77,19 +116,40 @@ type Env = {
 };
 
 /**
- * Allows the app to *read* these replies from its own origin.
+ * Answers a CORS preflight.
  *
- * WebSocket traffic is not subject to CORS, so sync itself never needed this.
- * The connection test in Settings does: it is an ordinary cross-origin `fetch`
- * from the Pages site, and without this header the browser hands the app an
- * opaque response it cannot get a status code out of — which would leave the
- * learner exactly as blind as having no test at all.
+ * Every sync request is now a cross-origin POST carrying `content-type` and
+ * `x-livestore-store-id`, and a custom header always earns a preflight. Without
+ * this the browser never sends the real request, and the failure surfaces only
+ * as a console message inside a Web Worker — which is the *worst* place for
+ * this app to hide a fault, given how much of `docs/sync-stall.md` is about
+ * failures that made no noise.
  *
- * `*` is safe here because these responses carry no data and no cookies. Every
- * one of them is a status code that any client could obtain by attempting to
- * connect; nothing is disclosed that was not already public.
+ * The requested headers are echoed rather than listed, so that a header
+ * `@livestore/sync-cf` adds in some future version cannot silently break
+ * pairing. Allowing a request header discloses nothing: the reply is still
+ * gated by the phrase.
+ *
+ * A preflight is answered without checking the phrase, because it carries no
+ * credentials to check and rejecting it would break the authorised request
+ * behind it. It leaks nothing either — the answer is identical whether or not
+ * the phrase that follows is any good.
  */
-const CORS = { 'Access-Control-Allow-Origin': '*' };
+function preflight(request: Request): Response {
+	return new Response(null, {
+		status: 204,
+		headers: {
+			...CORS,
+			'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+			'Access-Control-Allow-Headers':
+				request.headers.get('Access-Control-Request-Headers') ??
+				'content-type, x-livestore-store-id',
+			// Browsers cap this themselves (Chrome at two hours), but without it
+			// every RPC call pays for a second round trip.
+			'Access-Control-Max-Age': '86400'
+		}
+	});
+}
 
 /** The phrase a client presented, or `undefined` if it presented none. */
 function phraseFromPayload(payload: unknown): string | undefined {
@@ -110,6 +170,12 @@ function isAllowed(env: Env, phrase: string): boolean {
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+		// Before the routing below, not after: a preflight goes to the same URL as
+		// the request it precedes, query string and all, so it would otherwise
+		// match as a sync request and be forwarded to a Durable Object that
+		// answers it without any CORS header at all.
+		if (request.method === 'OPTIONS') return preflight(request);
+
 		const searchParams = matchSyncRequest(request as never);
 
 		if (searchParams === undefined) {
