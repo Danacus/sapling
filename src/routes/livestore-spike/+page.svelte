@@ -60,7 +60,13 @@
 
 	const review = (itemId: string) =>
 		store?.commit(
-			events.itemReviewed({ id: crypto.randomUUID(), itemId, at: Date.now(), grade: 3 })
+			events.itemReviewed({
+				eventId: crypto.randomUUID(),
+				device: 'spike-device',
+				itemId,
+				at: Date.now(),
+				grade: 3
+			})
 		);
 </script>
 

@@ -1,35 +1,24 @@
 /**
- * SPIKE — does a LiveStore store run under this repo's node-environment
- * vitest?
+ * Does a LiveStore store run under this repo's node-environment vitest, and do
+ * the basic materializers do what they say?
  *
- * This is the test-side half of step 1. Today `vite.config.ts` runs
- * `src/**\/*.test.ts` in `environment: 'node'` with the standing rule "pure
- * logic only — no IndexedDB, no WASM, no network", and DB-dependent logic is
- * covered by mocking `$lib/db` per file. LiveStore would change that: the
- * store *is* WASM SQLite, so either these tests run WASM or the data layer
- * goes untested.
+ * The step-1 spike's infrastructure question, kept: `vite.config.ts` runs
+ * `src/**\/*.test.ts` in `environment: 'node'` under a standing "pure logic
+ * only — no WASM" rule, and these tests deliberately break it. They pass, and
+ * the whole suite still runs in about two seconds, which is the evidence for
+ * changing that rule rather than working around it.
  *
- * The upside if it works: `apply.test.ts` currently asserts that a hand-written
- * merge reproduces what the write path did. Against a real store there is only
- * one path to test.
+ * The merge rules of `docs/sync.md` §4 are asserted next door in `merge.test.ts`.
  */
-import { makeAdapter } from '@livestore/adapter-node';
-import { createStorePromise } from '@livestore/livestore';
 import { describe, expect, it } from 'vitest';
 
-import { events, schema, tables } from './schema';
+import { events, tables } from './schema';
+import { makeTestStore } from './store.testing';
 
-const store = () =>
-	createStorePromise({
-		adapter: makeAdapter({ storage: { type: 'in-memory' } }),
-		schema,
-		storeId: 'spike'
-	});
-
-describe('livestore spike', () => {
+describe('livestore schema', () => {
 	it('materializes an added item', async () => {
-		const s = await store();
-		s.commit(
+		const store = await makeTestStore();
+		store.commit(
 			events.itemAdded({
 				id: 'i1',
 				kind: 'vocab',
@@ -40,56 +29,53 @@ describe('livestore spike', () => {
 			})
 		);
 
-		expect(s.query(tables.items)).toMatchObject([{ id: 'i1', term: '银行', meaning: 'bank' }]);
+		expect(store.query(tables.items)).toMatchObject([
+			{ id: 'i1', term: '银行', meaning: 'bank', romanization: 'yínháng' }
+		]);
+	});
+
+	it('leaves an absent optional field null rather than undefined', async () => {
+		const store = await makeTestStore();
+		store.commit(
+			events.itemAdded({ id: 'i1', kind: 'vocab', term: '书', meaning: 'book', introducedAt: 1 })
+		);
+
+		expect(store.query(tables.items)[0]).toMatchObject({ romanization: null, notes: null });
 	});
 
 	it('collapses a review the app submits twice instead of killing the store', async () => {
-		const s = await store();
-		s.commit(
-			events.itemAdded({
-				id: 'i1',
-				kind: 'vocab',
-				term: '书',
-				meaning: 'book',
-				introducedAt: 1000
-			})
+		const store = await makeTestStore();
+		store.commit(
+			events.itemAdded({ id: 'i1', kind: 'vocab', term: '书', meaning: 'book', introducedAt: 1000 })
 		);
 
-		const review = { id: 'r1', itemId: 'i1', at: 2000, grade: 3, device: 'dev-a' };
-		s.commit(events.itemReviewed(review));
+		const review = { itemId: 'i1', at: 2000, grade: 3, device: 'dev-a' };
+		store.commit(events.itemReviewed({ ...review, eventId: 'e1' }));
+		// A distinct event carrying the same `(itemId, at, device)` identity — a
+		// retried write, or a replayed outbox. Without `.onConflict` this is not
+		// merely wrong, it is fatal: the materializer throws and the store shuts
+		// down for good.
+		store.commit(events.itemReviewed({ ...review, eventId: 'e2' }));
 
-		// NB: these are two *distinct* events — LiveStore mints its own event id
-		// per commit, so `id` here is only a payload field. This is the
-		// double-submit case (a retried write, a replayed outbox), not eventlog
-		// replay, and without `.onConflict` it is fatal rather than merely wrong:
-		// the materializer throws and the store shuts down for good.
-		s.commit(events.itemReviewed(review));
-
-		expect(s.query(tables.reviews)).toHaveLength(1);
+		expect(store.query(tables.reviews)).toHaveLength(1);
+		// The store is still alive, which is the half that actually mattered.
+		expect(store.query(tables.items)).toHaveLength(1);
 	});
 
-	it('derives history in order, which is what the FSRS fold consumes', async () => {
-		const s = await store();
-		s.commit(
+	it('orders history by at, which is what the FSRS fold consumes', async () => {
+		const store = await makeTestStore();
+		store.commit(
 			events.itemAdded({ id: 'i1', kind: 'vocab', term: '水', meaning: 'water', introducedAt: 0 })
 		);
-		// Committed out of order on purpose: ordering is the query's job.
-		s.commit({ ...events.itemReviewed({ id: 'r2', itemId: 'i1', at: 3000, grade: 1 }) });
-		s.commit({ ...events.itemReviewed({ id: 'r1', itemId: 'i1', at: 2000, grade: 3 }) });
-
-		const history = s.query(tables.reviews.where({ itemId: 'i1' }).orderBy('at', 'asc'));
-		expect(history.map((r) => r.at)).toEqual([2000, 3000]);
-	});
-
-	it('a tombstone removes the item and its reviews', async () => {
-		const s = await store();
-		s.commit(
-			events.itemAdded({ id: 'i1', kind: 'vocab', term: '火', meaning: 'fire', introducedAt: 0 })
+		// Committed newest-first on purpose: ordering is the query's job.
+		store.commit(
+			events.itemReviewed({ eventId: 'e2', itemId: 'i1', at: 3000, grade: 1, device: 'dev-a' })
 		);
-		s.commit(events.itemReviewed({ id: 'r1', itemId: 'i1', at: 2000, grade: 3 }));
-		s.commit(events.itemDeleted({ id: 'i1' }));
+		store.commit(
+			events.itemReviewed({ eventId: 'e1', itemId: 'i1', at: 2000, grade: 3, device: 'dev-a' })
+		);
 
-		expect(s.query(tables.items)).toHaveLength(0);
-		expect(s.query(tables.reviews)).toHaveLength(0);
+		const history = store.query(tables.reviews.where({ itemId: 'i1' }).orderBy('at', 'asc'));
+		expect(history.map((row) => row.at)).toEqual([2000, 3000]);
 	});
 });
