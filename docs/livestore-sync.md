@@ -108,6 +108,23 @@ a room — fine for a URL nobody knows, wrong for one that leaks:
 npx wrangler secret put SYNC_ALLOWED_PHRASES   # comma-separated, canonical form
 ```
 
+The value is the learner's own phrase — the Worker runs each entry through the
+same `normalizePhrase` as the client, so dashes and case do not matter. Mint one
+*before* first run rather than reading it out of the app afterwards, and there
+is never a window in which the deployment accepts anything:
+
+```sh
+node -e "const A='0123456789ABCDEFGHJKMNPQRSTVWXYZ';console.log([...crypto.getRandomValues(new Uint8Array(20))].map(b=>A[b%32]).join(''))"
+```
+
+Then enter it on each device through Settings → Sync → *Pair with another
+device*, rather than using the switch, which would mint a different one. If the
+phrase ever changes, the secret has to change with it — otherwise the learner
+locks their own devices out.
+
+For `pnpm sync:dev`, the same value goes in `.dev.vars`
+(`SYNC_ALLOWED_PHRASES=...`), which is gitignored.
+
 ## Checking it actually works
 
 The unit suite is offline by design, so the live path is checked by hand. This
