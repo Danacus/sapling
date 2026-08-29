@@ -37,6 +37,7 @@
 import { makeWorker } from '@livestore/adapter-web/worker';
 import { makeHttpSync } from '@livestore/sync-cf/client';
 
+import { withCoalescedPull } from '$lib/sync/coalesce-pull';
 import { offlineSyncBackend } from '$lib/sync/offline-backend';
 import { SyncPayload } from '$lib/sync/payload';
 import { SYNC_URL } from '$lib/sync/url';
@@ -61,7 +62,14 @@ import { schema } from './schema';
  * loop dies on the first one that matters.
  */
 const httpSync =
-	SYNC_URL === undefined ? undefined : makeHttpSync({ url: SYNC_URL, ping: { enabled: false } });
+	SYNC_URL === undefined
+		? undefined
+		: // `withCoalescedPull` is why a device that has been away for a while
+			// catches up in minutes rather than an hour. The backend pages at 100
+			// events and LiveStore rebases the *entire* pending queue on every page,
+			// so merging pages before it sees them divides that cost directly. See
+			// `$lib/sync/coalesce-pull` for the arithmetic.
+			withCoalescedPull(makeHttpSync({ url: SYNC_URL, ping: { enabled: false } }));
 
 makeWorker({
 	schema,

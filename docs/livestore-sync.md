@@ -51,6 +51,25 @@ unaffected and stays event-driven — the push loop blocks on an empty queue, so
 device that writes nothing sends nothing. A learner therefore catches up when
 the app starts, which is the cadence this app actually wants.
 
+**One more thing stands between that and a usable catch-up.** LiveStore rebases
+the *entire* pending queue on every pulled page — `syncstate.ts:232`, where a
+rebase's `newEvents` is `[...payload.newEvents, ...rebasedPending]`, after which
+`onNewPullChunk` rolls back `N` changesets and re-materialises `N + page`
+events. The backend pages at 100, so a device 7,000 events behind rebases the
+same queue seventy times and writes rollback data for events the next page will
+roll back again. That is what turned one real catch-up into an hour, at roughly
+100 events a minute, with the app unusable throughout because the pull holds
+`localPushBackendPullMutex` for the whole pagination.
+
+`src/lib/sync/coalesce-pull.ts` wraps the backend's `pull` and merges pages
+before LiveStore sees them, so the rebase is paid per *batch* rather than per
+page. Measured through the node adapter against a local Worker, with 3,000
+remote events and 800 pending: **44.7s per-page against 9.3s coalesced, a 4.8×
+saving**, which matches the `(2N + page) × batches` model to within fixed
+overhead. It cannot remove the `2N` term — rebasing a diverged device is
+required, because its events' parents genuinely do not match the server's head.
+Rebasing seventy times is not.
+
 Three things are ours rather than stock `makeWorker`, and all three are worth
 understanding before changing anything here.
 
