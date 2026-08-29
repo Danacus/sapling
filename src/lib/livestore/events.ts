@@ -2,33 +2,31 @@
  * The write model: `docs/sync.md` §3's ten event types.
  *
  * These mirror `SYNC_PAYLOAD_SCHEMAS` in `sync/events.ts` — the same ten
- * names, the same payload fields — with one addition. Today's payloads travel
- * inside an envelope carrying `id`, `device` and `at`, and §4's merge rules
- * read all three. LiveStore has an envelope of its own, but it is a *different*
- * envelope: its event id and sequence are assigned per client session, so
- * ordering by them is deterministic yet not the order §4 specifies. The three
- * fields the merge actually reads are therefore carried **in the payload**, on
- * the events whose rules need them, and nowhere else:
+ * names, the same payload fields — minus the envelope data §4 used to need.
  *
- * - `eventId` — set-union key for serves and results, tie-break for LWW.
- * - `device` — part of a history entry's identity, and an LWW tie-break.
- * - `at` — the domain's own notion of when, and the primary LWW key.
+ * The old design carried `(eventId, device, at)` on every order-sensitive
+ * event so the merge could reconstruct §4's total order. **It no longer does.**
+ * The eventlog *is* the order now (see §4 in `docs/sync.md`), so a rule that
+ * used to compare timestamps just applies in the order it is handed. What
+ * remains is carried only where it means something to the domain:
  *
- * `item-added`, `item-deleted` and `challenge-reported` carry none of them:
- * their rules dedupe on the id of the thing itself, so envelope data would be
- * dead weight.
+ * - `at` — when the learner did the thing. Reviews need it (FSRS folds on it),
+ *   serves and results record it. It is no longer a merge input.
+ * - `device` — half of a history entry's identity, so two devices that logged
+ *   the same review in the same millisecond stay two reviews.
+ * - `eventId` — the set-union key for serves and results, which must dedupe
+ *   across a replay. Reviews do *not* carry one: their identity is
+ *   `(itemId, at, device)`, LiveStore's own envelope already provides
+ *   provenance, and a stored copy would only make two clients' rows differ in
+ *   a field neither of them reads.
+ *
+ * `item-updated` and `profile-updated` carry none of the three: they are plain
+ * overwrites, and the log decides which one is last.
  *
  * The retired `xp-banked` (§3) is deliberately absent. LiveStore 0.4's
  * `unknownEventHandling` covers it at the schema level — see `schema.ts`.
  */
 import { Events, Schema } from '@livestore/livestore';
-
-/** Fields shared by every rule that resolves ties by `(at, device, id)`. */
-const ordering = {
-	eventId: Schema.String,
-	device: Schema.String,
-	at: Schema.Number
-};
 
 export const events = {
 	/** Item content only — no card, no history (§3). */
@@ -49,7 +47,8 @@ export const events = {
 	itemReviewed: Events.synced({
 		name: 'v1.ItemReviewed',
 		schema: Schema.Struct({
-			...ordering,
+			device: Schema.String,
+			at: Schema.Number,
 			itemId: Schema.String,
 			grade: Schema.Number
 		})
@@ -66,7 +65,8 @@ export const events = {
 	reviewAmended: Events.synced({
 		name: 'v1.ReviewAmended',
 		schema: Schema.Struct({
-			...ordering,
+			device: Schema.String,
+			at: Schema.Number,
 			itemId: Schema.String,
 			grade: Schema.Number,
 			replaces: Schema.optional(Schema.Number)
@@ -74,16 +74,15 @@ export const events = {
 	}),
 
 	/**
-	 * Last-write-wins field patch.
+	 * Field patch, applied in log order.
 	 *
 	 * Deliberately cannot carry `id`, `kind` or `introducedAt`: identity and
-	 * birth date are immutable, and a patch able to rewrite them would make LWW
-	 * dangerous rather than merely lossy.
+	 * birth date are immutable, and a patch able to rewrite them would make a
+	 * blind overwrite dangerous rather than merely lossy.
 	 */
 	itemUpdated: Events.synced({
 		name: 'v1.ItemUpdated',
 		schema: Schema.Struct({
-			...ordering,
 			itemId: Schema.String,
 			fields: Schema.Struct({
 				term: Schema.optional(Schema.String),
@@ -94,7 +93,7 @@ export const events = {
 		})
 	}),
 
-	/** Tombstone. Wins over anything concurrent, and over anything later. */
+	/** Tombstone. The item and its history go. */
 	itemDeleted: Events.synced({
 		name: 'v1.ItemDeleted',
 		schema: Schema.Struct({ itemId: Schema.String })
@@ -151,11 +150,10 @@ export const events = {
 		})
 	}),
 
-	/** The whole profile, last-write-wins by `(at, device, id)`. */
+	/** The whole profile, overwritten in log order. */
 	profileUpdated: Events.synced({
 		name: 'v1.ProfileUpdated',
 		schema: Schema.Struct({
-			...ordering,
 			nativeLanguage: Schema.String,
 			targetLanguage: Schema.String,
 			level: Schema.Literal('beginner', 'elementary', 'intermediate', 'advanced'),

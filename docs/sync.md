@@ -1,9 +1,18 @@
 # Sapling Sync — design (draft for iteration)
 
-Status: **stable — signed off, and implemented.** This document is the spec
-for the first Sapling "service": multi-device synchronization of progress,
-vocabulary, and the challenge pool. §11 records the decisions made during
-iteration; §12 records all four implementation slices as done.
+Status: **superseded in part, 2026-08-29.** This document is the spec for the
+first Sapling "service": multi-device synchronization of progress, vocabulary,
+and the challenge pool. §11 records the decisions made during iteration; §12
+records all four implementation slices as done.
+
+> **What has changed.** The storage layer has moved from Dexie/IndexedDB to
+> LiveStore (WASM SQLite with a built-in event log), which supplies the
+> append-only log and the total order this document specified by hand. §2's
+> core idea survives intact and is now someone else's implementation. **§4's
+> ordering rule does not** — see the note at the head of that section. §§6–9
+> describe the homebrew protocol and server, which still exist in
+> `src/lib/sync/` and `server/` but are no longer wired to the app; they are
+> removed once the new path has carried real data.
 
 ## 1. Goals and non-goals
 
@@ -101,6 +110,40 @@ rule) — that is the designed degradation, not a migration step. Old
 
 ## 4. Merge semantics (the apply engine)
 
+> **Superseded, 2026-08-29 — the ordering rule changed.**
+>
+> This section originally specified a total order of its own: *sort by
+> `(at, device, id)`, then replay*, so that the merged state was a function of
+> the event **set** and never of arrival order. `sync/apply.ts` implemented it,
+> and carried the bookkeeping to reconstruct it on every apply.
+>
+> The order is now **the eventlog's own**. LiveStore gives every client the
+> same totally ordered log and rebases a client's unsynced events onto the
+> remote ones it had not seen, so materializing in log order is already
+> deterministic across devices. Rather than rebuild the old order on top of a
+> perfectly good one, the merge rules use it directly.
+>
+> The consequence is a real behaviour change, taken deliberately rather than
+> inherited: **"last write wins" now means last to reach the log, not the
+> greatest `at`.** The old rule trusted a wall clock, which meant a device
+> whose clock ran fast could stamp an edit into the future and win every
+> contest indefinitely, including against edits genuinely made later. Log order
+> is a better proxy for causality than a clock nobody can audit.
+>
+> Three things fell out of the schema with it, each because the property it
+> defended is now guaranteed rather than merely likely: the `patchAt` /
+> `patchDevice` / `patchEventId` columns, the `tombstones` table, and the
+> `supersededReviews` table. An `item-deleted` cannot lose to a later
+> `item-added` because only a device already holding the item can delete it,
+> and a `review-amended` cannot precede the review it replaces because the same
+> device wrote both moments apart — and rebase moves a client's events as a
+> block without reordering them internally.
+>
+> Everything below still holds *except* the ordering sentence and the two
+> last-write-wins rules. The identity rules — a history entry is
+> `(itemId, at, device)`, serves and results dedupe by event id — are unchanged
+> and were never orderings in the first place.
+
 Deterministic order everywhere: sort by `(at, device, id)`.
 
 - **Items**: `item-added` creates (or is a no-op if the id exists). The FSRS
@@ -129,10 +172,13 @@ today; a device skips its own events when they come back in a pull.
 
 ## 5. Edge cases, decided
 
-- **Clock skew**: ordering by client `at` is safe for this domain — reviews
-  are minutes apart, and second-level skew only reorders near-simultaneous
-  reviews of the same word, where either order is a defensible FSRS outcome.
-  `(device, id)` tie-breaks keep it deterministic. No vector clocks.
+- **Clock skew**: *largely moot since 2026-08-29* (§4). Nothing is ordered by
+  client `at` any more, so a wrong clock can no longer decide a merge. `at`
+  survives only where it is domain data: it is half of a history entry's
+  identity, and it is what FSRS folds on. The residual exposure is therefore
+  the one this bullet always described and always accepted — a skewed clock
+  writes a review at the wrong instant, which shifts that item's schedule by
+  the skew. No vector clocks, and now no tie-breaks either.
 - **Amend after sync**: `review-amended` may arrive after the original
   review was already applied on another device; replacing by `(itemId, at)`
   and re-folding the history makes it exact, in any arrival order.

@@ -50,12 +50,12 @@ describe('livestore schema', () => {
 		);
 
 		const review = { itemId: 'i1', at: 2000, grade: 3, device: 'dev-a' };
-		store.commit(events.itemReviewed({ ...review, eventId: 'e1' }));
+		store.commit(events.itemReviewed({ ...review }));
 		// A distinct event carrying the same `(itemId, at, device)` identity — a
 		// retried write, or a replayed outbox. Without `.onConflict` this is not
 		// merely wrong, it is fatal: the materializer throws and the store shuts
 		// down for good.
-		store.commit(events.itemReviewed({ ...review, eventId: 'e2' }));
+		store.commit(events.itemReviewed({ ...review }));
 
 		expect(store.query(tables.reviews)).toHaveLength(1);
 		// The store is still alive, which is the half that actually mattered.
@@ -68,12 +68,8 @@ describe('livestore schema', () => {
 			events.itemAdded({ id: 'i1', kind: 'vocab', term: '水', meaning: 'water', introducedAt: 0 })
 		);
 		// Committed newest-first on purpose: ordering is the query's job.
-		store.commit(
-			events.itemReviewed({ eventId: 'e2', itemId: 'i1', at: 3000, grade: 1, device: 'dev-a' })
-		);
-		store.commit(
-			events.itemReviewed({ eventId: 'e1', itemId: 'i1', at: 2000, grade: 3, device: 'dev-a' })
-		);
+		store.commit(events.itemReviewed({ itemId: 'i1', at: 3000, grade: 1, device: 'dev-a' }));
+		store.commit(events.itemReviewed({ itemId: 'i1', at: 2000, grade: 3, device: 'dev-a' }));
 
 		const history = store.query(tables.reviews.where({ itemId: 'i1' }).orderBy('at', 'asc'));
 		expect(history.map((row) => row.at)).toEqual([2000, 3000]);

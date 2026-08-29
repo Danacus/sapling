@@ -57,6 +57,25 @@ const PRECACHE = [SHELL, ...build, ...files].filter((path) => !isPagesConfigFile
 /** The same list as a set: `fetch` asks this question for every request. */
 const PRECACHED = new Set(PRECACHE);
 
+/**
+ * Everything under `/_app/immutable/` is content-hashed — but not all of it
+ * reaches {@link PRECACHE}.
+ *
+ * SvelteKit assembles `build` from Vite's *client manifest*, and a `?worker`
+ * import is a separate Rollup build that never appears there. The LiveStore
+ * leader and shared workers are therefore emitted, served, and absent from the
+ * precache list. `install` still succeeds, so nothing looks wrong — right up
+ * until a learner who installed the PWA opens it offline and the database
+ * cannot start, which is the whole local-first promise gone.
+ *
+ * Adopting these URLs on first fetch closes that without having to predict
+ * their filenames, which matters while LiveStore is pre-1.0 and free to rename
+ * its output. It also stays out of `cache.addAll`: that call rejects
+ * atomically, so every path added to it is another way for `install` to fail
+ * silently.
+ */
+const isImmutable = (path: string) => path.startsWith('/_app/immutable/');
+
 sw.addEventListener('install', (event) => {
 	event.waitUntil(
 		(async () => {
@@ -99,6 +118,7 @@ sw.addEventListener('fetch', (event) => {
 	if (url.origin !== location.origin) return;
 
 	const isPrecached = PRECACHED.has(url.pathname);
+	const immutable = isImmutable(url.pathname);
 
 	event.respondWith(
 		(async () => {
@@ -114,7 +134,7 @@ sw.addEventListener('fetch', (event) => {
 			// stuck on an old service worker could never recover — not even via a
 			// hard reload, which bypasses the browser's HTTP cache but not an active
 			// SW's own fetch interception.
-			if (isPrecached && request.mode !== 'navigate') {
+			if ((isPrecached || immutable) && request.mode !== 'navigate') {
 				const hit = await cache.match(url.pathname);
 				if (hit) return hit;
 			}
@@ -126,6 +146,24 @@ sw.addEventListener('fetch', (event) => {
 			try {
 				const response = await fetch(request);
 				if (request.mode === 'navigate' && !response.ok) throw new Error('bad response');
+				// Adopt a hashed asset the precache list never knew about.
+				//
+				// Deliberately *not* awaited. The response has to reach the page as
+				// soon as it arrives — the biggest assets here are the LiveStore
+				// worker and its WASM, and holding those behind a cache write would
+				// put a storage round-trip in front of the app's own boot.
+				//
+				// The `response.ok` guard is load-bearing: `static/_redirects` makes
+				// a missing `/_app/immutable/*` chunk a real 404 precisely so a dead
+				// chunk cannot be cached, and caching one *here* would recreate that
+				// bug inside the client instead of at the edge — surviving every
+				// later deploy, since this cache is only swept by version.
+				if (immutable && !isPrecached && response.ok) {
+					void cache.put(url.pathname, response.clone()).catch(() => {
+						// Storage pressure or a private-mode browser. The asset still
+						// works online; only the offline copy is missed.
+					});
+				}
 				return response;
 			} catch (err) {
 				const fallback = await cache.match(request.mode === 'navigate' ? SHELL : request);

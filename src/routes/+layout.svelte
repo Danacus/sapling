@@ -5,6 +5,7 @@
 
 	import favicon from '$lib/assets/favicon.svg';
 	import { getProfile } from '$lib/db';
+	import { storeReady } from '$lib/livestore/store';
 	import { runSync } from '$lib/sync/run';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
@@ -14,6 +15,16 @@
 
 	/** Blocks rendering until we know whether onboarding is still required. */
 	let checking = $state(browser);
+
+	// Boot the data layer here rather than on first use, and deliberately so.
+	// The service worker adopts `/_app/immutable/**` into its cache on first
+	// *fetch*, so a learner who installs the PWA, never opens a lesson and then
+	// goes offline would otherwise have no cached leader worker — and therefore
+	// no database at all — on the next launch. Booting from the layout means
+	// every route pays for it once and offline never depends on which screens
+	// the learner happened to visit. Idempotent, and every repository call
+	// awaits the same promise.
+	if (browser) void storeReady();
 
 	// Fire-and-forget, once per boot (§9) — not in the `$effect` below, which
 	// re-runs on every navigation. The layout instance itself is created once

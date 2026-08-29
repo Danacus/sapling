@@ -14,27 +14,32 @@
  * - **`serves` and `results` are tables keyed by event id.** §4 counts
  *   *distinct applied* serve events and set-unions results by event id; both
  *   were bookkeeping sets in `sync/apply.ts` (`countedEventIds`) and are now
- *   just rows. `timesServed` and `lastServedAt` are `COUNT` and `MAX`.
+ *   just rows.  `timesServed` and `lastServedAt` are `COUNT` and `MAX`.
  *
- * The two tables that exist purely to make out-of-order delivery safe —
- * `tombstones` and `supersededReviews` — are the bookkeeping §4 could not
- * avoid either. They are the price of a rule that has to hold whichever event
- * lands first.
+ * What is *not* here any more: the `patchAt`/`patchDevice`/`patchEventId`
+ * columns, and the `tombstones` and `supersededReviews` tables. All five
+ * existed to reconstruct a merge order the eventlog now supplies directly —
+ * see the note on ordering in `materializers.ts`.
  */
 import { Schema, State } from '@livestore/livestore';
 
 /** The `profile` table holds exactly one row under this key, as Dexie's does. */
 export const PROFILE_ID = 'singleton';
 
+/**
+ * Identity of one history entry: `(itemId, at, device)` (§4).
+ *
+ * This is the `reviews` primary key rather than the originating event id, and
+ * it survives the move to log order untouched, because it was never an
+ * *ordering* — it is what makes two devices that recorded the same review
+ * collapse to one entry even though their events differ.
+ */
+export function reviewKey(itemId: string, at: number, device: string): string {
+	return `${itemId}|${at}|${device}`;
+}
+
 export const tables = {
-	/**
-	 * `KnowledgeItem` content. No card and no history — both are derived.
-	 *
-	 * `patchAt` / `patchDevice` / `patchEventId` record which `item-updated`
-	 * currently owns the mutable fields, so a patch arriving out of order can
-	 * be compared against the incumbent instead of blindly overwriting it.
-	 * Null until the first patch lands.
-	 */
+	/** `KnowledgeItem` content. No card and no history — both are derived. */
 	items: State.SQLite.table({
 		name: 'items',
 		columns: {
@@ -44,18 +49,11 @@ export const tables = {
 			meaning: State.SQLite.text(),
 			romanization: State.SQLite.text({ nullable: true }),
 			notes: State.SQLite.text({ nullable: true }),
-			introducedAt: State.SQLite.integer(),
-			patchAt: State.SQLite.integer({ nullable: true }),
-			patchDevice: State.SQLite.text({ nullable: true }),
-			patchEventId: State.SQLite.text({ nullable: true })
+			introducedAt: State.SQLite.integer()
 		}
 	}),
 
-	/**
-	 * One row per review. `id` is `reviewKey(itemId, at, device)` — §4's history
-	 * identity — so two devices recording the same review converge to one row.
-	 * `eventId` is kept for provenance only; nothing merges on it.
-	 */
+	/** One row per review, keyed by {@link reviewKey}. */
 	reviews: State.SQLite.table({
 		name: 'reviews',
 		columns: {
@@ -63,30 +61,8 @@ export const tables = {
 			itemId: State.SQLite.text(),
 			at: State.SQLite.integer(),
 			grade: State.SQLite.integer(),
-			device: State.SQLite.text(),
-			eventId: State.SQLite.text()
+			device: State.SQLite.text()
 		}
-	}),
-
-	/**
-	 * History entries a `review-amended` has replaced, by `reviewKey`.
-	 *
-	 * §4's out-of-order half: the amend may be materialized before the review
-	 * it supersedes, so the supersession is recorded permanently and
-	 * `item-reviewed` consults it before inserting.
-	 */
-	supersededReviews: State.SQLite.table({
-		name: 'supersededReviews',
-		columns: { key: State.SQLite.text({ primaryKey: true }) }
-	}),
-
-	/**
-	 * Deleted item ids. Permanent, because §4 gives a tombstone priority over
-	 * anything concurrent — including an `item-added` that arrives afterwards.
-	 */
-	tombstones: State.SQLite.table({
-		name: 'tombstones',
-		columns: { itemId: State.SQLite.text({ primaryKey: true }) }
 	}),
 
 	/**
@@ -131,10 +107,7 @@ export const tables = {
 		}
 	}),
 
-	/**
-	 * The singleton profile, whole-object last-write-wins by `(at, device, id)`.
-	 * The same three `patch*` columns carry the incumbent's key.
-	 */
+	/** The singleton profile. Overwritten wholesale by the latest event in the log. */
 	profile: State.SQLite.table({
 		name: 'profile',
 		columns: {
@@ -145,10 +118,7 @@ export const tables = {
 			interests: State.SQLite.json({ schema: Schema.Array(Schema.String) }),
 			about: State.SQLite.text({ nullable: true }),
 			model: State.SQLite.text(),
-			createdAt: State.SQLite.integer(),
-			patchAt: State.SQLite.integer(),
-			patchDevice: State.SQLite.text(),
-			patchEventId: State.SQLite.text()
+			createdAt: State.SQLite.integer()
 		}
 	})
 };

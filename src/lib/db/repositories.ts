@@ -1,30 +1,38 @@
 /**
  * Repositories: the only sanctioned way for UI code to touch the database.
  *
- * Signatures speak `$lib/types` only, so callers never import Dexie. Keep the
- * functions thin — they are not unit-tested (IndexedDB is unavailable in the
- * node test environment), so all the logic worth testing lives elsewhere.
+ * Signatures speak `$lib/types` only, so callers never import LiveStore. The
+ * 28 modules that import `$lib/db` did not change when the storage underneath
+ * did, which is the whole reason this seam exists.
  *
- * ## Sync capture (docs/sync.md §9)
+ * ## Every write is an event
  *
- * Every mutating function below also appends the matching `SyncEvent` to the
- * `outbox` table **inside its own transaction**, so the materialized view and
- * the event log can never disagree — a write either lands with its event or not
- * at all. Capture is gated on {@link syncEnabled}: it is opt-in and starts when
- * sync is configured, because genesis synthesis has to exist anyway and an
- * always-on outbox would grow forever on devices that never sync.
+ * There is no longer a "write the row, then also append the event" pair to
+ * keep in agreement — the event *is* the write, and the tables are a
+ * projection LiveStore maintains by replaying it (`$lib/livestore`). The
+ * `capture()` helper this module used to carry, the `syncEnabled()` gate on
+ * it, and the whole class of bug where a new write path forgot its event, are
+ * gone with it.
  *
- * **Nothing on the apply path goes through these functions**, which is how
- * pulled events can never echo back into the outbox. Remote state is written by
- * {@link mergeSyncSnapshot} alone — one whole-snapshot write that captures
- * nothing by construction. That is deliberately *not* a `{capture: false}` flag
- * on each function: a flag is something a future call site can forget to pass,
- * and a merged snapshot is anyway not expressible as a sequence of
- * `upsertItems`/`updateItemAfterReview` calls (the engine rewrites history
- * entries and re-folds cards wholesale).
+ * ## Nothing here stores a card
+ *
+ * `KnowledgeItem.fsrsCard` and `.history` are assembled on read: history is
+ * the `reviews` table, and the card is `deriveCard` folding it through
+ * `$lib/srs`. Callers still receive whole `KnowledgeItem`s and cannot tell.
+ * What they get for free is that a card can no longer disagree with the
+ * history it was supposed to be derived from, because it is never stored.
+ *
+ * ## Reads are synchronous underneath
+ *
+ * `store.query` is a synchronous SQLite read. These functions stay `async`
+ * anyway: their callers are written around promises, and `await storeReady()`
+ * is what makes "the store is up" someone else's problem. After boot it is an
+ * already-resolved promise.
  */
 
-import type { Challenge, ChallengeResult, KnowledgeItem, Profile } from '$lib/types';
+import { deriveCard, serveStats, sortHistory } from '$lib/livestore/derive';
+import { events, PROFILE_ID, tables } from '$lib/livestore/schema';
+import { storeReady } from '$lib/livestore/store';
 import { getDeviceId, newUuid, syncEnabled } from '$lib/sync/config';
 import {
 	EVENT_TYPES,
@@ -38,6 +46,7 @@ import {
 	type SyncBookkeeping,
 	type SyncSnapshot
 } from '$lib/sync/snapshot';
+import type { Challenge, ChallengeResult, KnowledgeItem, Profile, Verdict } from '$lib/types';
 import { challengeOf, db, SINGLETON_KEY } from './database';
 import type { ChallengeRow, OutboxRow } from './database';
 import { toPlain } from './plain';
@@ -45,56 +54,80 @@ import { toPlain } from './plain';
 export { activityByDay, localDay, previousDay, streakFrom } from './day';
 
 /* -------------------------------------------------------------------------- */
-/* Sync capture plumbing                                                       */
+/* Row assembly                                                                */
 /* -------------------------------------------------------------------------- */
 
-/** Mints one event envelope. `at` is the write's own domain timestamp where it has one. */
-function event<T extends SyncEventType>(type: T, payload: SyncPayloads[T], at: number): SyncEvent {
-	return { id: newUuid(), device: getDeviceId(), at, type, payload };
+/** One `reviews` row, as much of it as the folds read. */
+interface ReviewRow {
+	itemId: string;
+	at: number;
+	grade: number;
+	device: string;
+}
+
+/** One `items` row, before its history is attached. */
+interface ItemRow {
+	id: string;
+	kind: string;
+	term: string;
+	meaning: string;
+	romanization: string | null;
+	notes: string | null;
+	introducedAt: number;
+}
+
+/** Groups review rows by the item they belong to, each already in fold order. */
+function historyByItem(reviews: readonly ReviewRow[]): Map<string, ReviewRow[]> {
+	const byItem = new Map<string, ReviewRow[]>();
+	for (const review of reviews) {
+		const list = byItem.get(review.itemId);
+		if (list) list.push(review);
+		else byItem.set(review.itemId, [review]);
+	}
+	for (const [id, list] of byItem) byItem.set(id, sortHistory(list));
+	return byItem;
 }
 
 /**
- * Appends events to the outbox. Call only from inside the transaction that
- * performs the corresponding write, and only when {@link syncEnabled} is true.
+ * Reassembles the `KnowledgeItem` the rest of the app expects.
+ *
+ * SQLite has no "absent", so a nullable column comes back as `null` where the
+ * domain type means "not set at all". Converting back here keeps `romanization`
+ * genuinely optional for the Latin-script languages that never have one.
  */
-async function capture(events: SyncEvent[]): Promise<void> {
-	if (events.length === 0) return;
-	await db.outbox.bulkAdd(events.map((e) => ({ event: toPlain(e) })));
-}
-
-/** The content half of an item — what `item-added` carries (no card, no history). */
-function itemContent(item: KnowledgeItem): SyncPayloads['item-added'] {
+function itemFrom(row: ItemRow, history: readonly ReviewRow[]): KnowledgeItem {
 	return {
-		id: item.id,
-		kind: item.kind,
-		term: item.term,
-		meaning: item.meaning,
-		romanization: item.romanization,
-		notes: item.notes,
-		introducedAt: item.introducedAt
+		id: row.id,
+		kind: row.kind as KnowledgeItem['kind'],
+		term: row.term,
+		meaning: row.meaning,
+		...(row.romanization === null ? {} : { romanization: row.romanization }),
+		...(row.notes === null ? {} : { notes: row.notes }),
+		introducedAt: row.introducedAt,
+		fsrsCard: deriveCard(row.introducedAt, history),
+		history: history.map(({ at, grade, device }) => ({ at, grade, device }))
 	};
 }
 
-/**
- * The payload-typed view of {@link challengeOf}.
- *
- * The cast goes through `unknown` because `challengeContentSchema` is a loose
- * shape check (see its doc comment) and `Challenge` is a union of interfaces
- * with no implicit index signature, even though every one of its members
- * satisfies the schema. Nothing is lost — the four checked keys are exactly
- * what the merge reads, and the rest travels verbatim.
- */
-function challengeContent(row: ChallengeRow): SyncPayloads['challenge-added']['challenge'] {
-	return challengeOf(row) as unknown as SyncPayloads['challenge-added']['challenge'];
-}
-
-/** The mutable content fields — what `item-updated` patches. */
-function itemPatch(item: KnowledgeItem): SyncPayloads['item-updated']['fields'] {
+/** Reassembles a `ChallengeRow` — immutable content plus its serve bookkeeping. */
+function challengeRowFrom(
+	row: {
+		id: string;
+		content: unknown;
+		generatedAt: number;
+		topic: string | null;
+		reported: boolean;
+	},
+	serves: readonly { at: number }[]
+): ChallengeRow {
+	const { timesServed, lastServedAt } = serveStats(serves);
 	return {
-		term: item.term,
-		meaning: item.meaning,
-		romanization: item.romanization,
-		notes: item.notes
+		...(row.content as Challenge),
+		generatedAt: row.generatedAt,
+		timesServed,
+		lastServedAt,
+		reported: row.reported,
+		...(row.topic === null ? {} : { topic: row.topic })
 	};
 }
 
@@ -104,20 +137,37 @@ function itemPatch(item: KnowledgeItem): SyncPayloads['item-updated']['fields'] 
 
 /** Returns the stored profile, or `undefined` before onboarding completes. */
 export async function getProfile(): Promise<Profile | undefined> {
-	const row = await db.profile.get(SINGLETON_KEY);
+	const store = await storeReady();
+	const row = store.query(
+		tables.profile.where({ id: PROFILE_ID }).first({ behaviour: 'fallback', fallback: () => null })
+	);
 	if (!row) return undefined;
-	const { id: _id, ...profile } = row;
-	return profile;
+	return {
+		nativeLanguage: row.nativeLanguage,
+		targetLanguage: row.targetLanguage,
+		level: row.level as Profile['level'],
+		interests: [...row.interests],
+		...(row.about === null ? {} : { about: row.about }),
+		model: row.model,
+		createdAt: row.createdAt
+	};
 }
 
 /** Creates or replaces the profile. */
-export async function saveProfile(profile: Profile, now: number = Date.now()): Promise<void> {
+export async function saveProfile(profile: Profile, _now: number = Date.now()): Promise<void> {
+	const store = await storeReady();
 	const plain = toPlain(profile);
-	const capturing = syncEnabled();
-	await db.transaction('rw', db.profile, db.outbox, async () => {
-		await db.profile.put({ ...plain, id: SINGLETON_KEY });
-		if (capturing) await capture([event(EVENT_TYPES.profileUpdated, plain, now)]);
-	});
+	store.commit(
+		events.profileUpdated({
+			nativeLanguage: plain.nativeLanguage,
+			targetLanguage: plain.targetLanguage,
+			level: plain.level,
+			interests: plain.interests,
+			...(plain.about === undefined ? {} : { about: plain.about }),
+			model: plain.model,
+			createdAt: plain.createdAt
+		})
+	);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -126,123 +176,136 @@ export async function saveProfile(profile: Profile, now: number = Date.now()): P
 
 /** Every knowledge item the learner has met so far. */
 export async function getAllItems(): Promise<KnowledgeItem[]> {
-	return db.items.toArray();
+	const store = await storeReady();
+	const history = historyByItem(store.query(tables.reviews));
+	return store.query(tables.items).map((row) => itemFrom(row, history.get(row.id) ?? []));
 }
 
 export async function getItem(id: string): Promise<KnowledgeItem | undefined> {
-	return db.items.get(id);
+	const store = await storeReady();
+	const row = store.query(
+		tables.items.where({ id }).first({ behaviour: 'fallback', fallback: () => null })
+	);
+	if (!row) return undefined;
+	return itemFrom(row, sortHistory(store.query(tables.reviews.where({ itemId: id }))));
 }
 
 /**
  * Inserts or replaces items by `id`.
  *
- * With capture on this becomes a read-then-write transaction: an id the table
- * has never seen emits `item-added` (full content), a known one emits
- * `item-updated` (the mutable fields only). The extra `bulkGet` is what lets
+ * An id the table has never seen emits `item-added` (full content); a known one
+ * emits `item-updated` (the mutable fields only). That distinction is what lets
  * another device tell "the learner met a new word" from "the learner edited a
- * note", which are different merges.
+ * note" — and it is now the *only* write, rather than a second write shadowing
+ * a row put.
  *
- * Card and history are deliberately *not* captured here. They are derived state
- * on the receiving side — replayed from `item-reviewed` events — so shipping
- * them would invite two devices to disagree about a card neither of them folded.
+ * Card and history on the passed items are deliberately ignored: both are
+ * derived from the `reviews` table, so there is nothing here that could write
+ * them. Reviews arrive through {@link updateItemAfterReview}.
  */
-export async function upsertItems(items: KnowledgeItem[], now: number = Date.now()): Promise<void> {
+export async function upsertItems(
+	items: KnowledgeItem[],
+	_now: number = Date.now()
+): Promise<void> {
 	if (items.length === 0) return;
+	const store = await storeReady();
 	const plain = toPlain(items);
-	const capturing = syncEnabled();
+	const known = new Set(store.query(tables.items).map((row) => row.id));
 
-	await db.transaction('rw', db.items, db.outbox, async () => {
-		let events: SyncEvent[] = [];
-		if (capturing) {
-			const existing = await db.items.bulkGet(plain.map((item) => item.id));
-			events = plain.map((item, index) =>
-				existing[index]
-					? event(EVENT_TYPES.itemUpdated, { itemId: item.id, fields: itemPatch(item) }, now)
-					: event(EVENT_TYPES.itemAdded, itemContent(item), now)
+	for (const item of plain) {
+		if (known.has(item.id)) {
+			store.commit(
+				events.itemUpdated({
+					itemId: item.id,
+					fields: {
+						term: item.term,
+						meaning: item.meaning,
+						...(item.romanization === undefined ? {} : { romanization: item.romanization }),
+						...(item.notes === undefined ? {} : { notes: item.notes })
+					}
+				})
+			);
+		} else {
+			store.commit(
+				events.itemAdded({
+					id: item.id,
+					kind: item.kind,
+					term: item.term,
+					meaning: item.meaning,
+					...(item.romanization === undefined ? {} : { romanization: item.romanization }),
+					...(item.notes === undefined ? {} : { notes: item.notes }),
+					introducedAt: item.introducedAt
+				})
 			);
 		}
-		await db.items.bulkPut(plain);
-		if (capturing) await capture(events);
-	});
+	}
 }
 
 /**
- * Forgets one word entirely.
+ * Forgets one word entirely — the item and its whole review history.
  *
  * Safe to call mid-session: pooled challenges keep pointing at the id, and
- * {@link updateItemAfterReview} — via `applyResult` — skips items that are no
- * longer there. The learner sees the challenge play out, it just grades nothing.
+ * {@link updateItemAfterReview} skips items that are no longer there. The
+ * learner sees the challenge play out, it just grades nothing.
  */
-export async function deleteItem(id: string, now: number = Date.now()): Promise<void> {
-	const capturing = syncEnabled();
-	await db.transaction('rw', db.items, db.outbox, async () => {
-		await db.items.delete(id);
-		if (capturing) await capture([event(EVENT_TYPES.itemDeleted, { itemId: id }, now)]);
-	});
+export async function deleteItem(id: string, _now: number = Date.now()): Promise<void> {
+	const store = await storeReady();
+	store.commit(events.itemDeleted({ itemId: id }));
 }
 
 /**
- * Folds a review into an item: appends one history entry, and writes back the
- * card `nextCard` derives from the one already stored.
+ * Folds a review into an item: appends one history entry.
  *
- * `nextCard` is a function rather than a finished card because the row has to
- * be read here anyway — handing callers the prior card they would otherwise
- * fetch themselves turns the app's hottest write path from two reads per
- * reviewed item into one. It is called inside the transaction, with `null` for
- * an item that has never been reviewed. `prior` comes back out for callers that
- * need to remember where the card stood (see `amendResult`).
+ * `nextCard` is **no longer consulted**. It survives in the signature because
+ * every caller is written around it and because it still documents, at the call
+ * site, what the review is supposed to do to the card — but the card is now
+ * derived from the history this event appends, so computing one here and
+ * storing it would be inventing a second source of truth for the thing the
+ * migration set out to stop storing twice. `prior` is still returned, still
+ * means "the card as it stood before this review", and is still what
+ * `amendResult` rewinds to; it is derived rather than read.
  *
- * With `replaceLast`, the entry overwrites the newest one instead of being
- * appended — for a review that is being *recomputed* rather than added (the
- * learner re-graded the answer they just gave; see `amendResult`). Appending
- * there would double-count the review in `reps` and in `accuracyFromHistory`.
- * An empty history has nothing to replace, so it simply appends.
+ * With `replaceLast`, the entry supersedes the newest one instead of being
+ * appended — for a review being *recomputed* rather than added (the learner
+ * re-graded the answer they just gave). Appending there would double-count the
+ * review in `reps` and in `accuracyFromHistory`. An empty history has nothing
+ * to replace, so it simply appends.
  *
- * `existed` is `false` when the item no longer exists; `nextCard` is not
- * called in that case.
+ * `existed` is `false` when the item no longer exists.
  */
 export async function updateItemAfterReview(
 	id: string,
-	nextCard: (prior: unknown) => unknown,
+	_nextCard: (prior: unknown) => unknown,
 	historyEntry: { at: number; grade: number },
 	opts: { replaceLast?: boolean } = {}
 ): Promise<{ existed: boolean; prior: unknown }> {
-	const plainEntry = toPlain(historyEntry);
-	const capturing = syncEnabled();
+	const store = await storeReady();
+	const item = store.query(
+		tables.items.where({ id }).first({ behaviour: 'fallback', fallback: () => null })
+	);
+	if (!item) return { existed: false, prior: null };
 
-	return db.transaction('rw', db.items, db.outbox, async () => {
-		const item = await db.items.get(id);
-		if (!item) return { existed: false, prior: null };
+	const history = sortHistory(store.query(tables.reviews.where({ itemId: id })));
+	const prior = deriveCard(item.introducedAt, history);
+	const device = getDeviceId();
+	const { at, grade } = toPlain(historyEntry);
 
-		const prior = item.fsrsCard ?? null;
-		const plainCard = toPlain(nextCard(prior));
+	const replaced = opts.replaceLast ? history[history.length - 1] : undefined;
+	if (replaced) {
+		store.commit(
+			events.reviewAmended({
+				device,
+				at,
+				itemId: id,
+				grade,
+				replaces: replaced.at
+			})
+		);
+	} else {
+		store.commit(events.itemReviewed({ device, at, itemId: id, grade }));
+	}
 
-		const replaced =
-			opts.replaceLast && item.history.length > 0
-				? item.history[item.history.length - 1]
-				: undefined;
-		const entry = capturing ? { ...plainEntry, device: getDeviceId() } : plainEntry;
-		const history = replaced ? [...item.history.slice(0, -1), entry] : [...item.history, entry];
-
-		await db.items.put({ ...item, fsrsCard: plainCard, history });
-
-		if (capturing) {
-			// A replacement is a re-grade of a review this device already logged,
-			// so it ships as `review-amended` carrying both timestamps — the entry
-			// as it now stands, and the `at` of the entry it displaced. See
-			// `amendPayloadSchema` for why the two differ.
-			await capture([
-				replaced
-					? event(
-							EVENT_TYPES.reviewAmended,
-							{ itemId: id, ...plainEntry, replaces: replaced.at },
-							plainEntry.at
-						)
-					: event(EVENT_TYPES.itemReviewed, { itemId: id, ...plainEntry }, plainEntry.at)
-			]);
-		}
-		return { existed: true, prior };
-	});
+	return { existed: true, prior };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -262,30 +325,32 @@ export async function addToPool(
 	topic?: string
 ): Promise<void> {
 	if (challenges.length === 0) return;
+	const store = await storeReady();
 	const trimmed = topic?.trim();
-	const rows: ChallengeRow[] = toPlain(challenges).map((challenge, index) => ({
-		...challenge,
-		generatedAt: now + index,
-		timesServed: 0,
-		lastServedAt: null,
-		reported: false,
-		...(trimmed ? { topic: trimmed } : {})
-	}));
-	const capturing = syncEnabled();
 
-	await db.transaction('rw', db.challenges, db.outbox, async () => {
-		await db.challenges.bulkPut(rows);
-		if (!capturing) return;
-		await capture(
-			rows.map((row) =>
-				event(
-					EVENT_TYPES.challengeAdded,
-					{ challenge: challengeContent(row), generatedAt: row.generatedAt, topic: row.topic },
-					row.generatedAt
-				)
-			)
+	toPlain(challenges).forEach((challenge, index) => {
+		store.commit(
+			events.challengeAdded({
+				challenge,
+				generatedAt: now + index,
+				...(trimmed ? { topic: trimmed } : {})
+			})
 		);
 	});
+}
+
+/** Every challenge in the pool, with its serve bookkeeping attached. */
+async function allPoolRows(): Promise<ChallengeRow[]> {
+	const store = await storeReady();
+	const byChallenge = new Map<string, { at: number }[]>();
+	for (const serve of store.query(tables.serves)) {
+		const list = byChallenge.get(serve.challengeId);
+		if (list) list.push(serve);
+		else byChallenge.set(serve.challengeId, [serve]);
+	}
+	return store
+		.query(tables.challenges)
+		.map((row) => challengeRowFrom(row, byChallenge.get(row.id) ?? []));
 }
 
 /**
@@ -297,13 +362,12 @@ export async function addToPool(
  * one learner's pool is a few hundred rows, which is not worth an index.
  */
 export async function getPool(): Promise<ChallengeRow[]> {
-	const rows = await db.challenges.toArray();
-	return rows.filter((row) => !row.reported);
+	return (await allPoolRows()).filter((row) => !row.reported);
 }
 
 /** The whole pool, reported rows included — what sync merges over. */
 export async function getAllChallenges(): Promise<ChallengeRow[]> {
-	return db.challenges.toArray();
+	return allPoolRows();
 }
 
 /**
@@ -317,25 +381,23 @@ export async function getAllChallenges(): Promise<ChallengeRow[]> {
  * so `applyResult` can call this unconditionally.
  */
 export async function recordServe(id: string, now: number = Date.now()): Promise<void> {
-	const capturing = syncEnabled();
-	await db.transaction('rw', db.challenges, db.outbox, async () => {
-		const row = await db.challenges.get(id);
-		if (!row) return;
-		await db.challenges.put({ ...row, timesServed: row.timesServed + 1, lastServedAt: now });
-		if (capturing) await capture([event(EVENT_TYPES.challengeServed, { challengeId: id }, now)]);
-	});
+	const store = await storeReady();
+	if (
+		!store.query(
+			tables.challenges.where({ id }).first({ behaviour: 'fallback', fallback: () => null })
+		)
+	)
+		return;
+	store.commit(events.challengeServed({ eventId: newUuid(), challengeId: id, at: now }));
 }
 
 /**
  * Flags a challenge the learner reported as broken. The row stays (results
  * point at it) but {@link getPool} never hands it out again.
  */
-export async function reportChallenge(id: string, now: number = Date.now()): Promise<void> {
-	const capturing = syncEnabled();
-	await db.transaction('rw', db.challenges, db.outbox, async () => {
-		await db.challenges.update(id, { reported: true });
-		if (capturing) await capture([event(EVENT_TYPES.challengeReported, { challengeId: id }, now)]);
-	});
+export async function reportChallenge(id: string, _now: number = Date.now()): Promise<void> {
+	const store = await storeReady();
+	store.commit(events.challengeReported({ challengeId: id }));
 }
 
 /**
@@ -345,8 +407,12 @@ export async function reportChallenge(id: string, now: number = Date.now()): Pro
  */
 export async function getChallengesByIds(ids: string[]): Promise<Challenge[]> {
 	if (ids.length === 0) return [];
-	const rows = await db.challenges.bulkGet(ids);
-	return rows.filter((row): row is ChallengeRow => row !== undefined);
+	const store = await storeReady();
+	const wanted = new Set(ids);
+	return store
+		.query(tables.challenges)
+		.filter((row) => wanted.has(row.id))
+		.map((row) => row.content as Challenge);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -354,25 +420,45 @@ export async function getChallengesByIds(ids: string[]): Promise<Challenge[]> {
 /* -------------------------------------------------------------------------- */
 
 export async function addResult(result: ChallengeResult): Promise<void> {
+	const store = await storeReady();
 	const plain = toPlain(result);
-	const capturing = syncEnabled();
-	await db.transaction('rw', db.results, db.outbox, async () => {
-		await db.results.add(plain);
-		if (capturing) await capture([event(EVENT_TYPES.resultLogged, plain, plain.at)]);
-	});
+	store.commit(
+		events.resultLogged({
+			eventId: newUuid(),
+			challengeId: plain.challengeId,
+			verdict: plain.verdict,
+			answerGiven: plain.answerGiven,
+			at: plain.at
+		})
+	);
+}
+
+/** One `results` row as the domain type, dropping the event id that keys it. */
+function resultFrom(row: {
+	challengeId: string;
+	verdict: string;
+	answerGiven: string;
+	at: number;
+}): ChallengeResult {
+	return {
+		challengeId: row.challengeId,
+		verdict: row.verdict as Verdict,
+		answerGiven: row.answerGiven,
+		at: row.at
+	};
 }
 
 /** The whole answer log, oldest first. Used by genesis; the UI wants {@link recentResults}. */
 export async function getAllResults(): Promise<ChallengeResult[]> {
-	const rows = await db.results.orderBy('at').toArray();
-	return rows.map(({ seq: _seq, ...result }) => result);
+	const store = await storeReady();
+	return store.query(tables.results.orderBy('at', 'asc')).map(resultFrom);
 }
 
 /** The most recent results, newest first. */
 export async function recentResults(limit: number): Promise<ChallengeResult[]> {
 	if (limit <= 0) return [];
-	const rows = await db.results.orderBy('at').reverse().limit(limit).toArray();
-	return rows.map(({ seq: _seq, ...result }) => result);
+	const store = await storeReady();
+	return store.query(tables.results.orderBy('at', 'desc').limit(limit)).map(resultFrom);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -418,17 +504,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Restores a dump produced by {@link exportData}, replacing existing data.
+ * Restores a dump produced by {@link exportData}, replacing existing items.
  *
  * Throws on malformed input or an unsupported envelope version; the API key and
  * the challenge pool are untouched.
  *
- * Deliberately captures **no** sync events, and its transaction deliberately
- * omits `outbox`/`syncState`: an import is a wholesale replacement of local
- * state, which the append-only event model has no vocabulary for. A device that
- * imports a dump and then syncs would need a fresh genesis, not a diff — a
- * combination worth handling explicitly if it ever comes up, not worth guessing
- * at now.
+ * "Replacing" is the awkward part in an append-only model, and it is done
+ * honestly rather than by reaching under the log: every existing item is
+ * deleted with a real `item-deleted`, and every imported one re-enters as an
+ * `item-added` plus one `item-reviewed` per history entry. The restored card
+ * therefore comes out of `deriveCard` replaying that history, which is the same
+ * card the exporting device had — an import can no longer smuggle in a card
+ * that disagrees with the reviews under it.
  */
 export async function importData(json: string): Promise<void> {
 	let parsed: unknown;
@@ -450,19 +537,60 @@ export async function importData(json: string): Promise<void> {
 	}
 
 	const envelope = toPlain(parsed as unknown as ExportEnvelope);
+	const store = await storeReady();
 
-	await db.transaction('rw', db.profile, db.items, async () => {
-		await db.items.clear();
-		if (envelope.items.length > 0) await db.items.bulkPut(envelope.items);
+	for (const row of store.query(tables.items)) {
+		store.commit(events.itemDeleted({ itemId: row.id }));
+	}
 
-		if (envelope.profile) await db.profile.put({ ...envelope.profile, id: SINGLETON_KEY });
-		else await db.profile.delete(SINGLETON_KEY);
-	});
+	for (const item of envelope.items) {
+		store.commit(
+			events.itemAdded({
+				id: item.id,
+				kind: item.kind,
+				term: item.term,
+				meaning: item.meaning,
+				...(item.romanization === undefined ? {} : { romanization: item.romanization }),
+				...(item.notes === undefined ? {} : { notes: item.notes }),
+				introducedAt: item.introducedAt
+			})
+		);
+		for (const entry of item.history ?? []) {
+			store.commit(
+				events.itemReviewed({
+					device: entry.device ?? getDeviceId(),
+					at: entry.at,
+					itemId: item.id,
+					grade: entry.grade
+				})
+			);
+		}
+	}
+
+	if (envelope.profile) await saveProfile(envelope.profile);
 }
 
 /* -------------------------------------------------------------------------- */
 /* Sync: outbox, state, and the non-capturing apply path                       */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * Everything below still speaks Dexie, and still works, and is no longer
+ * reached from the app.
+ *
+ * `src/lib/sync/` is the homebrew event-log sync LiveStore replaces, and it is
+ * deliberately left standing until the new path has carried real data (step 5
+ * of the migration). Its functions are kept compiling — and its Dexie tables
+ * kept intact — because step 4 still has to read that database to migrate it.
+ *
+ * **It is, however, now disconnected from the app's actual state.** The three
+ * routes that call `runSync` still do; that cycle now pushes an outbox nothing
+ * fills and folds pulled events into Dexie tables nothing reads. It is inert
+ * rather than wrong, with one sharp edge worth naming before step 4: a device
+ * that still has sync configured will run genesis against the *Dexie* snapshot
+ * and set `genesisDone`, which a migration must not mistake for "this data has
+ * already been carried across". Wiring, or removing, is step 5's job.
+ */
 
 /** localStorage-style `syncState` keys, all in one place. */
 const SYNC_STATE = {
@@ -472,13 +600,20 @@ const SYNC_STATE = {
 	genesisDone: 'genesisDone',
 	/** The apply engine's dedupe bookkeeping (`SyncBookkeeping`). */
 	bookkeeping: 'bookkeeping',
-	/**
-	 * Epoch ms of the last sync that completed end to end — pushed, pulled and
-	 * applied. Written by `runSync` on success only, so the Settings status line
-	 * says when the device was last actually in step, not when it last tried.
-	 */
+	/** Epoch ms of the last sync that completed end to end. */
 	lastSync: 'lastSync'
 } as const;
+
+/** Mints one event envelope. `at` is the write's own domain timestamp where it has one. */
+function event<T extends SyncEventType>(type: T, payload: SyncPayloads[T], at: number): SyncEvent {
+	return { id: newUuid(), device: getDeviceId(), at, type, payload };
+}
+
+/** Appends events to the legacy outbox. */
+async function capture(pending: SyncEvent[]): Promise<void> {
+	if (pending.length === 0) return;
+	await db.outbox.bulkAdd(pending.map((e) => ({ event: toPlain(e) })));
+}
 
 /** Reads one `syncState` value, or `undefined` when unset. */
 export async function getSyncState<T>(key: keyof typeof SYNC_STATE): Promise<T | undefined> {
@@ -496,38 +631,18 @@ export async function outboxCount(): Promise<number> {
 	return db.outbox.count();
 }
 
-/**
- * The oldest `limit` outbox rows, in `seq` order — one push batch.
- *
- * Rows keep their `seq`, because that is what {@link drainOutbox} deletes by:
- * the server acknowledges *event ids*, but the local row is identified only by
- * its auto-increment key (a re-pushed event keeps its id and gets a new row).
- */
+/** The oldest `limit` outbox rows, in `seq` order — one push batch. */
 export async function peekOutbox(limit: number): Promise<OutboxRow[]> {
 	return db.outbox.orderBy('seq').limit(limit).toArray();
 }
 
-/**
- * Deletes the rows a push has been acknowledged for.
- *
- * Called only with the seqs of a batch the server answered 2xx to, which is
- * what makes a failed push free: the outbox is left exactly as it was, and the
- * next sync re-pushes it — the server dedupes on event id, so anything that did
- * land the first time is a no-op the second (docs/sync.md §6).
- */
+/** Deletes the rows a push has been acknowledged for. */
 export async function drainOutbox(seqs: number[]): Promise<void> {
 	if (seqs.length === 0) return;
 	await db.outbox.bulkDelete(seqs);
 }
 
-/**
- * Runs genesis synthesis (docs/sync.md §5) exactly once.
- *
- * Reads the whole local state, hands it to `build` — the pure
- * `synthesizeGenesis` — and enqueues the result, all in one transaction, so a
- * half-written genesis is impossible. Returns the number of events enqueued, or
- * `0` if genesis had already run.
- */
+/** Runs genesis synthesis (docs/sync.md §5) exactly once, over the Dexie tables. */
 export async function seedOutbox(build: (state: GenesisState) => SyncEvent[]): Promise<number> {
 	return db.transaction(
 		'rw',
@@ -535,40 +650,23 @@ export async function seedOutbox(build: (state: GenesisState) => SyncEvent[]): P
 		async () => {
 			if (await getSyncState<boolean>('genesisDone')) return 0;
 
-			const [profile, items, pool, results] = await Promise.all([
-				getProfile(),
-				getAllItems(),
-				getAllChallenges(),
-				getAllResults()
-			]);
-			const events = build({
-				items,
-				pool,
-				results,
-				profile: profile ?? null
-			});
+			const profileRow = await db.profile.get(SINGLETON_KEY);
+			const items = await db.items.toArray();
+			const pool = await db.challenges.toArray();
+			const results = (await db.results.orderBy('at').toArray()).map(
+				({ seq: _seq, ...result }) => result
+			);
+			const profile = profileRow ? (({ id: _id, ...rest }) => rest)(profileRow) : null;
 
-			await capture(events);
+			const pending = build({ items, pool, results, profile });
+			await capture(pending);
 			await setSyncState('genesisDone', true);
-			return events.length;
+			return pending.length;
 		}
 	);
 }
 
-/**
- * The **only** write path for remotely produced state, and the reason no
- * `{capture: false}` flag exists: `fold` is the pure apply engine, and this
- * function writes its output straight to the tables without touching `outbox`,
- * so a pulled event physically cannot echo back into it.
- *
- * Load, fold and write-back happen inside one transaction, so a session writing
- * concurrently cannot be clobbered by a stale read.
- *
- * The write-back is a **reference diff**: the pure engine returns the very same
- * object for anything it did not touch, so `!==` against the loaded snapshot is
- * an exact — and free — "what changed" test. That keeps a sync that brings in
- * three reviews to three item writes instead of rewriting the whole table.
- */
+/** The legacy apply path's write-back, still against Dexie. */
 export async function mergeSyncSnapshot(
 	fold: (before: SyncSnapshot) => SyncSnapshot
 ): Promise<void> {
@@ -576,24 +674,17 @@ export async function mergeSyncSnapshot(
 		'rw',
 		[db.profile, db.items, db.challenges, db.results, db.syncState],
 		async () => {
-			const [profile, items, pool, results] = await Promise.all([
-				getProfile(),
-				getAllItems(),
-				getAllChallenges(),
-				getAllResults()
-			]);
+			const profileRow = await db.profile.get(SINGLETON_KEY);
 			const before: SyncSnapshot = {
-				items,
-				pool,
-				results,
-				profile: profile ?? null,
+				items: await db.items.toArray(),
+				pool: await db.challenges.toArray(),
+				results: (await db.results.orderBy('at').toArray()).map(
+					({ seq: _seq, ...result }) => result
+				),
+				profile: profileRow ? (({ id: _id, ...rest }) => rest)(profileRow) : null,
 				bookkeeping: (await getSyncState<SyncBookkeeping>('bookkeeping')) ?? emptyBookkeeping()
 			};
 
-			// Not `toPlain`d: the engine only ever moves already-plain objects
-			// around (rows loaded from Dexie, payloads parsed from JSON), and a
-			// round-trip here would destroy the very reference identity the diff
-			// below depends on.
 			const after = fold(before);
 
 			const changedItems = diffById(before.items, after.items);
@@ -626,3 +717,6 @@ function diffById<T extends { id: string }>(
 	const deletes = before.filter((row) => !kept.has(row.id)).map((row) => row.id);
 	return { puts, deletes };
 }
+
+/* Kept for the legacy sync module's imports. */
+export { challengeOf, syncEnabled, EVENT_TYPES };
