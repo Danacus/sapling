@@ -38,6 +38,7 @@ import { makeWorker } from '@livestore/adapter-web/worker';
 import { makeHttpSync } from '@livestore/sync-cf/client';
 
 import { withCoalescedPull } from '$lib/sync/coalesce-pull';
+import { withResilientConnect } from '$lib/sync/liveness';
 import { offlineSyncBackend } from '$lib/sync/offline-backend';
 import { SyncPayload } from '$lib/sync/payload';
 import { SYNC_URL } from '$lib/sync/url';
@@ -47,19 +48,31 @@ import { schema } from './schema';
 /**
  * Built once per worker, not per store: the URL cannot change at runtime.
  *
- * **`ping.enabled: false` is not an optimisation, it is the whole point.** The
- * HTTP backend otherwise forks a ping every ten seconds for the life of the
- * store, which is a poll — 8,600 requests a day per open tab, for a value
- * nobody reads between syncs. `connect` still runs the same ping exactly once
- * when the leader boots, and that is what sets `isConnected`.
+ * **`isConnected` is a gate, not a status readout**, and getting that wrong
+ * broke sync completely for a day. The leader waits on it before processing a
+ * pulled batch (`LeaderSyncProcessor.ts:831`) and before every push (`:869`,
+ * `:873`); `makeHttpSync` starts it `false` and sets it `true` in exactly one
+ * place, after a successful `Ping`. So whether a device syncs at all comes down
+ * to whether one request worked — and on a freshly paired device that request
+ * is the first cross-origin POST, preflight included, against a cold Durable
+ * Object. It is the likeliest request in the whole session to be slow.
  *
- * The cost is worth stating plainly: a device that launches with no network
- * gets `isConnected: false` for that session, so its writes stay pending until
- * the next launch. Nothing is lost, and it is the same contract as the pull
- * below — this app syncs when it starts, not continuously. Turning the repeat
- * back on would not buy reliable recovery anyway: `Effect.repeat` stops on
- * failure, and a ping made while offline fails rather than timing out, so the
- * loop dies on the first one that matters.
+ * This file previously passed `ping: { enabled: false }` to avoid a ping every
+ * ten seconds (~8,600 requests a day per open tab). That removed the only way
+ * the flag could ever recover. Worse, the failure is invisible from every side:
+ * a ping that takes over ten seconds raises `TimeoutException`, which
+ * `makeHttpSync` *catches*, sets `isConnected: false`, and then **succeeds** —
+ * so nothing logs, nothing errors, and the device never syncs again.
+ *
+ * Both halves are needed, and neither substitutes for the other:
+ *
+ * - `withResilientConnect` retries the initial connect, because `Effect.repeat`
+ *   stops on a hard failure and would not save a device whose first ping failed
+ *   outright.
+ * - a ping every minute recovers a device that *was* connected and later was
+ *   not. A minute rather than ten seconds keeps it at ~1,400 requests a day,
+ *   which is a liveness check rather than a poll for data — the pull cadence is
+ *   still `livePull: false` below.
  */
 const httpSync =
 	SYNC_URL === undefined
@@ -69,7 +82,9 @@ const httpSync =
 			// events and LiveStore rebases the *entire* pending queue on every page,
 			// so merging pages before it sees them divides that cost directly. See
 			// `$lib/sync/coalesce-pull` for the arithmetic.
-			withCoalescedPull(makeHttpSync({ url: SYNC_URL, ping: { enabled: false } }));
+			withCoalescedPull(
+				withResilientConnect(makeHttpSync({ url: SYNC_URL, ping: { requestInterval: 60_000 } }))
+			);
 
 makeWorker({
 	schema,
