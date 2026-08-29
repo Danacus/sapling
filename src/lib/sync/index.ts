@@ -25,4 +25,5 @@ export {
 } from './config';
 export { formatPhrase, isValidPhrase, mintPhrase, normalizePhrase, PHRASE_LENGTH } from './phrase';
 export { SyncPayload } from './payload';
+export { interpretProbe, probeSync, type SyncProbeResult } from './probe';
 export { SYNC_URL } from './url';

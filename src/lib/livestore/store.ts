@@ -48,16 +48,48 @@ let pending: Promise<Store<typeof schema>> | undefined;
  * `getProfile()` cannot — and a learner with months of history is never shown
  * the onboarding screen and invited to start again.
  */
+/**
+ * Everything `createStorePromise` needs except the adapter.
+ *
+ * Split out of {@link storeReady} so it can be tested, because the adapter
+ * cannot: `./adapter` is browser-only by construction, so node can never
+ * execute the boot path around it. That left the *contents* of this object
+ * unexercised, and it is where the sync credential lives — a `syncPayload` that
+ * silently stopped being passed produced no error anywhere. The leader worker
+ * read the missing payload as "sync is off", chose the offline backend, and two
+ * paired devices sat there syncing nothing at all, exactly as designed for the
+ * case where the learner had switched sync off. `store.test.ts` now pins it.
+ */
+async function storeOptions() {
+	// The credential, read here and passed down to the leader worker, which has
+	// no `localStorage` of its own to read it from. `undefined` is how "sync is
+	// off" reaches it — see `$lib/sync/offline-backend`.
+	const [{ syncPayload }, { SyncPayload }] = await Promise.all([
+		import('$lib/sync/config'),
+		import('$lib/sync/payload')
+	]);
+
+	return {
+		schema,
+		storeId: STORE_ID,
+		syncPayloadSchema: SyncPayload,
+		syncPayload: syncPayload()
+	};
+}
+
+/** The boot options, for tests. The adapter is browser-only and stays out. */
+export const storeOptionsForTesting = storeOptions;
+
 export function storeReady(): Promise<Store<typeof schema>> {
 	pending ??= (async () => {
 		const [{ makeWebAdapter }, { createStorePromise }] = await Promise.all([
 			import('./adapter'),
 			import('@livestore/livestore')
 		]);
+
 		const store = await createStorePromise({
 			adapter: makeWebAdapter(),
-			schema,
-			storeId: STORE_ID
+			...(await storeOptions())
 		});
 		const { runDexieMigration } = await import('./migrate-dexie');
 		await runDexieMigration(store);

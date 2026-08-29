@@ -23,9 +23,11 @@
 		getSyncPhrase,
 		isSyncAvailable,
 		isSyncEnabled,
+		probeSync,
 		setSyncEnabled,
 		setSyncPhrase,
-		SYNC_URL
+		SYNC_URL,
+		type SyncProbeResult
 	} from '$lib/sync';
 	import {
 		audioCacheBytes,
@@ -132,6 +134,9 @@
 	let syncStatus = $state<Status>('idle');
 	let syncMessage = $state('');
 	let syncNeedsReload = $state(false);
+	/** Live connection check — the only honest feedback sync can give. */
+	let probing = $state(false);
+	let probe = $state<SyncProbeResult | undefined>(undefined);
 
 	// Export / import -----------------------------------------------------------
 	let exportStatus = $state<Status>('idle');
@@ -172,6 +177,8 @@
 				syncAvailable = isSyncAvailable();
 				syncEnabled = isSyncEnabled();
 				syncPhrase = getSyncPhrase();
+				// Goes to the network, so it must not hold up the page.
+				if (syncEnabled) void checkSyncConnection();
 
 				// Walks Cache Storage, so it must not hold up the rest of the page;
 				// it reports 0 rather than failing if the cache is unreachable.
@@ -259,6 +266,22 @@
 		syncMessage = next ? 'Sync on after reload.' : 'Sync off after reload.';
 	}
 
+	/**
+	 * Asks the server whether this device could connect, and shows the answer.
+	 *
+	 * Runs on load as well as on demand. Sync's failure mode is silence — the
+	 * app is designed to keep working when the backend is gone — so without
+	 * something that actively goes and looks, a refused phrase and a healthy
+	 * connection are indistinguishable from this page.
+	 */
+	async function checkSyncConnection() {
+		const phrase = getSyncPhrase();
+		if (!SYNC_URL || !phrase) return;
+		probing = true;
+		probe = await probeSync(SYNC_URL, phrase);
+		probing = false;
+	}
+
 	async function copyPhrase() {
 		if (!syncPhrase) return;
 		try {
@@ -296,6 +319,7 @@
 		syncNeedsReload = true;
 		syncStatus = 'saved';
 		syncMessage = 'Paired. Reload to start syncing.';
+		void checkSyncConnection();
 	}
 
 	function requestPair() {
@@ -947,6 +971,31 @@
 						</button>
 					</div>
 
+					{#if syncEnabled}
+						<div class="field">
+							<span class="label">Connection</span>
+							<p class="sync-state" class:bad={probe && !probe.ok} class:good={probe?.ok}>
+								{#if probing}
+									Checking the sync server…
+								{:else if probe}
+									{probe.message}
+								{:else}
+									Not checked yet.
+								{/if}
+							</p>
+							<div class="actions-row">
+								<button
+									type="button"
+									class="btn btn-ghost"
+									onclick={() => void checkSyncConnection()}
+									disabled={probing}
+								>
+									{probing ? 'Checking…' : 'Check again'}
+								</button>
+							</div>
+						</div>
+					{/if}
+
 					{#if syncPhrase}
 						<div class="field">
 							<span class="label">Pairing phrase</span>
@@ -1316,6 +1365,24 @@
 
 	.phrase.covered {
 		color: var(--text-muted);
+	}
+
+	/*
+	 * The connection verdict. Colour is a second signal on top of the sentence,
+	 * never the only one — the message says what happened on its own.
+	 */
+	.sync-state {
+		margin: 0 0 0.6rem;
+		font-size: 0.9rem;
+		color: var(--text-muted);
+	}
+
+	.sync-state.good {
+		color: var(--text);
+	}
+
+	.sync-state.bad {
+		color: var(--danger);
 	}
 
 	.chip {

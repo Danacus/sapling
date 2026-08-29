@@ -76,6 +76,21 @@ type Env = {
 	SYNC_ALLOWED_PHRASES?: string;
 };
 
+/**
+ * Allows the app to *read* these replies from its own origin.
+ *
+ * WebSocket traffic is not subject to CORS, so sync itself never needed this.
+ * The connection test in Settings does: it is an ordinary cross-origin `fetch`
+ * from the Pages site, and without this header the browser hands the app an
+ * opaque response it cannot get a status code out of — which would leave the
+ * learner exactly as blind as having no test at all.
+ *
+ * `*` is safe here because these responses carry no data and no cookies. Every
+ * one of them is a status code that any client could obtain by attempting to
+ * connect; nothing is disclosed that was not already public.
+ */
+const CORS = { 'Access-Control-Allow-Origin': '*' };
+
 /** The phrase a client presented, or `undefined` if it presented none. */
 function phraseFromPayload(payload: unknown): string | undefined {
 	if (typeof payload !== 'object' || payload === null) return undefined;
@@ -103,9 +118,12 @@ export default {
 			const url = new URL(request.url);
 			return url.pathname === '/' && request.method === 'GET'
 				? new Response('Sapling sync backend.\n', {
-						headers: { 'Content-Type': 'text/plain' }
+						headers: { 'Content-Type': 'text/plain', ...CORS }
 					})
-				: new Response('Not found\n', { status: 404, headers: { 'Content-Type': 'text/plain' } });
+				: new Response('Not found\n', {
+						status: 404,
+						headers: { 'Content-Type': 'text/plain', ...CORS }
+					});
 		}
 
 		const presented = phraseFromPayload(searchParams.payload);
@@ -115,10 +133,10 @@ export default {
 		// allow-list" alike: telling a caller *which* of those it got would let
 		// them use the endpoint to test phrases.
 		if (presented === undefined || roomId === undefined) {
-			return new Response('Unauthorized\n', { status: 401 });
+			return new Response('Unauthorized\n', { status: 401, headers: CORS });
 		}
 		if (!isAllowed(env, normalizePhrase(presented))) {
-			return new Response('Unauthorized\n', { status: 401 });
+			return new Response('Unauthorized\n', { status: 401, headers: CORS });
 		}
 
 		// Rewrite the request itself, not just the value handed to
@@ -138,7 +156,8 @@ export default {
 			searchParams: { ...searchParams, storeId: roomId },
 			env,
 			ctx: ctx as never,
-			syncBackendBinding: 'SYNC_BACKEND_DO'
+			syncBackendBinding: 'SYNC_BACKEND_DO',
+			headers: CORS
 		});
 		return response as unknown as Response;
 	}
