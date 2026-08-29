@@ -17,14 +17,22 @@
  *   just rows.  `timesServed` and `lastServedAt` are `COUNT` and `MAX`.
  *
  * What is *not* here any more: the `patchAt`/`patchDevice`/`patchEventId`
- * columns, and the `tombstones` and `supersededReviews` tables. All five
- * existed to reconstruct a merge order the eventlog now supplies directly —
- * see the note on ordering in `materializers.ts`.
+ * columns and the `supersededReviews` table. Both existed to reconstruct a
+ * merge order the eventlog now supplies directly — see the note on ordering in
+ * `materializers.ts`.
+ *
+ * `tombstones` **is** here, having been removed in step 3 and reinstated in
+ * step 4b. That reversal is explained where the argument for removing it lived,
+ * in `materializers.ts`; the short version is that it was never about ordering,
+ * so retiring §4's order was never a reason to drop it.
  */
 import { Schema, State } from '@livestore/livestore';
 
 /** The `profile` table holds exactly one row under this key, as Dexie's does. */
 export const PROFILE_ID = 'singleton';
+
+/** The single row of {@link tables.migrationState}. */
+export const MIGRATION_STATE_ID = 'local';
 
 /**
  * Identity of one history entry: `(itemId, at, device)` (§4).
@@ -105,6 +113,51 @@ export const tables = {
 			answerGiven: State.SQLite.text(),
 			at: State.SQLite.integer()
 		}
+	}),
+
+	/**
+	 * Ids that have been deleted, and must stay deleted.
+	 *
+	 * A delete has to outrank an `item-added` that reaches this client *later*,
+	 * and step 3 was wrong to conclude that could not happen — see the note in
+	 * `materializers.ts`. The row is the whole mechanism: `v1.ItemAdded` checks
+	 * for it, and it is never removed, because an id is a UUID that is never
+	 * re-minted and a resurrected word is indistinguishable from a new one.
+	 *
+	 * Grow-only, and tiny: one short row per word the learner ever deleted.
+	 */
+	tombstones: State.SQLite.table({
+		name: 'tombstones',
+		columns: {
+			itemId: State.SQLite.text({ primaryKey: true })
+		}
+	}),
+
+	/**
+	 * Whether this browser's legacy Dexie database has been carried across.
+	 *
+	 * A `clientDocument`, which is **client-only** — its derived `set` event
+	 * carries `clientOnly: true`, so it is never synced (verified in
+	 * `@livestore/common/src/schema/state/sqlite/client-document-def.ts`). That
+	 * matters: a synced marker would reach the learner's *other* device, which
+	 * has its own un-migrated Dexie database, and that device would skip its own
+	 * migration and lose everything it learned before the upgrade.
+	 *
+	 * It lives here rather than in `localStorage` because **a marker belongs in
+	 * the same storage as the data it describes.** `localStorage` and OPFS are
+	 * separate buckets that can be cleared independently, and that divergence was
+	 * the bug: clearing `localStorage` alone re-ran the migration against a store
+	 * that already held its output. Kept in OPFS the marker is self-correcting —
+	 * if OPFS is cleared the migrated data is gone too, so re-migrating is then
+	 * the *correct* behaviour rather than a duplicate.
+	 *
+	 * `0` means "not yet"; the default makes an absent row read that way without
+	 * a special case.
+	 */
+	migrationState: State.SQLite.clientDocument({
+		name: 'MigrationState',
+		schema: Schema.Struct({ dexieMigratedAt: Schema.Number }),
+		default: { id: MIGRATION_STATE_ID, value: { dexieMigratedAt: 0 } }
 	}),
 
 	/** The singleton profile. Overwritten wholesale by the latest event in the log. */

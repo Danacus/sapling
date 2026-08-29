@@ -151,21 +151,35 @@ describe('migrationEvents', () => {
 		expect(events.map((e) => e.name)).toEqual(['v1.ChallengeAdded', 'v1.ChallengeReported']);
 	});
 
-	it('gives each result a stable id derived from its Dexie key', () => {
-		const events = migrationEvents({
+	it('ignores the Dexie key entirely when identifying a result', () => {
+		// `seq` is an autoincrement handed out in *local* insertion order, so two
+		// devices that synced the same answer gave it different keys. Deriving the
+		// id from content is what makes two independently migrated devices
+		// converge instead of duplicating each other's answer log.
+		const results = [
+			{ challengeId: 'c1', verdict: 'correct' as const, answerGiven: '书', at: 100 },
+			{ challengeId: 'c1', verdict: 'wrong' as const, answerGiven: '水', at: 200 }
+		];
+		const deviceA = migrationEvents({
 			...empty,
-			results: [
-				{ seq: 7, challengeId: 'c1', verdict: 'correct', answerGiven: '书', at: 100 },
-				{ seq: 8, challengeId: 'c1', verdict: 'wrong', answerGiven: '水', at: 200 }
-			]
+			results: results.map((r, i) => ({ ...r, seq: 7 + i }))
 		});
-		expect(events.map((e) => (e.args as { eventId: string }).eventId)).toEqual([
-			'dexie:result:7',
-			'dexie:result:8'
-		]);
+		const deviceB = migrationEvents({
+			...empty,
+			// Same answers, different keys, and handed out in the other order.
+			results: [...results].reverse().map((r, i) => ({ ...r, seq: 41 + i }))
+		});
+
+		const ids = (events: ReturnType<typeof migrationEvents>) =>
+			new Set(events.map((e) => (e.args as { eventId: string }).eventId));
+		expect(ids(deviceA)).toEqual(ids(deviceB));
 	});
 
 	it('keeps two byte-identical results apart', () => {
+		// Two answers can be genuinely identical — same challenge, same typo, same
+		// millisecond — which is why `resultLogged` is a set-union by id at all. A
+		// content-only key would collapse them and lose one, so an occurrence
+		// index separates them without reintroducing anything device-local.
 		const one = { challengeId: 'c1', verdict: 'correct' as const, answerGiven: '书', at: 100 };
 		const events = migrationEvents({
 			...empty,
@@ -176,6 +190,18 @@ describe('migrationEvents', () => {
 		});
 		const ids = events.map((e) => (e.args as { eventId: string }).eventId);
 		expect(new Set(ids).size).toBe(2);
+	});
+
+	it('agrees on identical results across devices that stored them differently', () => {
+		const one = { challengeId: 'c1', verdict: 'correct' as const, answerGiven: '书', at: 100 };
+		const ids = (seqs: number[]) =>
+			migrationEvents({ ...empty, results: seqs.map((seq) => ({ ...one, seq })) }).map(
+				(e) => (e.args as { eventId: string }).eventId
+			);
+
+		// Same two indistinguishable answers, unrelated local keys: same two ids,
+		// so the merge unions them rather than producing four rows.
+		expect(ids([1, 2])).toEqual(ids([88, 91]));
 	});
 
 	it('is deterministic: the same database yields the same events twice', () => {
@@ -242,7 +268,9 @@ describe('migrating into a real store', () => {
 
 	it('doubles nothing when the whole migration runs twice', async () => {
 		const store = await migrateInto(full);
-		// Exactly what a cleared `localStorage` would cause on the next boot.
+		// What a lost marker, or a tab killed mid-migration, causes on the next
+		// boot. The events have to be idempotent on their own; the marker only
+		// saves the work, it is not what makes a re-run safe.
 		for (const event of migrationEvents(full)) store.commit(event);
 
 		expect(store.query(tables.items)).toHaveLength(2);

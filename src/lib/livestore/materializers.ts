@@ -26,28 +26,44 @@
  * now means last to arrive rather than latest timestamp; for a single learner
  * on a handful of devices that is the more predictable of the two.
  *
- * Three pieces of machinery fell out with it, and it is worth recording *why*
+ * Two pieces of machinery fell out with it, and it is worth recording *why*
  * each is unnecessary rather than merely unused:
  *
  * - **The `patch*` columns**, which recorded the incumbent's `(at, device, id)`
  *   so a patch could be compared against it. With a single order there is no
  *   contest to arbitrate: the later event in the log wins by being applied
  *   second.
- * - **`tombstones`**, which kept `item-deleted` winning against an
- *   `item-added` that arrived afterwards. It cannot arrive afterwards. A
- *   delete is only ever emitted by a device that already holds the item, so
- *   the add precedes it in that device's own event order, and rebase preserves
- *   a client's internal order. Ids are minted as UUIDs and never reused, so
- *   there is no second `item-added` to lose to.
  * - **`supersededReviews`**, which let a `review-amended` land before the
- *   `item-reviewed` it replaces. Same argument, more tightly: an amend
- *   re-grades a review *this device wrote moments earlier*, so the two are
- *   always adjacent in one client's own order.
+ *   `item-reviewed` it replaces. An amend re-grades a review *this device wrote
+ *   moments earlier*, so the two are always adjacent in one client's own order.
+ *
+ * ## `tombstones` came back (step 4b), and the step-3 argument for dropping it
+ *
+ * Step 3 removed `tombstones` too, reasoning: *"an `item-added` cannot arrive
+ * after a delete. A delete is only ever emitted by a device that already holds
+ * the item, so the add precedes it in that device's own event order, and rebase
+ * preserves a client's internal order."*
+ *
+ * Every clause of that is true and the conclusion is still wrong, because it
+ * quietly assumes the two events come from the same causal line. **A second
+ * device's Dexie migration breaks the assumption.** Both devices were synced
+ * under the old system, so both hold word *W*; both back-date their own
+ * `item-added` for it. If the phone migrates, the learner deletes *W*, and the
+ * laptop is opened a week later, the laptop's migration emits an `item-added`
+ * for *W* that is causally unrelated to the phone's delete and simply lands
+ * after it. Under log order that add wins, and the deleted word returns.
+ *
+ * So a tombstone was never really about *ordering* — it is about an add and a
+ * delete that never shared a history. Retiring §4's order was therefore never a
+ * reason to drop it, and reinstating it is **not** a partial reversal of the
+ * arrival-order decision: the ordering semantics above are untouched.
  *
  * What a post-delete review still leaves behind is an inert `reviews` row for
  * an item that no longer exists. Nothing reads it — every read joins from
- * `items` — and the id can never be re-minted, so it is unreachable rather
- * than merely harmless.
+ * `items`, and with a tombstone in place the item can never come back — so it
+ * is unreachable rather than merely harmless. `v1.ItemReviewed` deliberately
+ * does *not* pay for a tombstone lookup to avoid writing it: that would be a
+ * query per review, and a migration replays thousands of them.
  */
 import { State } from '@livestore/livestore';
 
@@ -81,9 +97,18 @@ function definedOnly<T extends object>(fields: T): Partial<T> {
 }
 
 export const materializers = State.SQLite.materializers(events, {
-	/** Creates, or is a no-op if the id exists. */
-	'v1.ItemAdded': (payload) =>
-		tables.items
+	/**
+	 * Creates, or is a no-op if the id exists — or if it was ever deleted.
+	 *
+	 * The tombstone check is what stops a second device's migration resurrecting
+	 * a word deleted on the first (see the note above). It costs one indexed
+	 * lookup on a primary key per added item, which is paid once per item rather
+	 * than once per review.
+	 */
+	'v1.ItemAdded': (payload, { query }) => {
+		const deleted = query(tables.tombstones.where({ itemId: payload.id }).first());
+		if (deleted !== undefined) return [];
+		return tables.items
 			.insert({
 				id: payload.id,
 				kind: payload.kind,
@@ -93,7 +118,8 @@ export const materializers = State.SQLite.materializers(events, {
 				notes: payload.notes ?? null,
 				introducedAt: payload.introducedAt
 			})
-			.onConflict('id', 'ignore'),
+			.onConflict('id', 'ignore');
+	},
 
 	/**
 	 * Inserts one history entry, keyed by `(itemId, at, device)`.
@@ -136,8 +162,14 @@ export const materializers = State.SQLite.materializers(events, {
 		return tables.items.update(patch).where({ id: itemId });
 	},
 
-	/** The item and its history go together. */
+	/**
+	 * The item and its history go together, and the id is remembered.
+	 *
+	 * The tombstone outlives both, because the whole point is to refuse an
+	 * `item-added` that has not arrived yet.
+	 */
 	'v1.ItemDeleted': ({ itemId }) => [
+		tables.tombstones.insert({ itemId }).onConflict('itemId', 'ignore'),
 		tables.reviews.delete().where({ itemId }),
 		tables.items.delete().where({ id: itemId })
 	],

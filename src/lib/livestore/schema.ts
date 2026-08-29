@@ -25,11 +25,24 @@ import { tables } from './tables';
 
 const state = State.SQLite.makeState({ tables, materializers });
 
+/**
+ * The ten domain events, plus the setter `tables.migrationState` derives.
+ *
+ * `makeSchema` registers a client document's `set` event itself when it is
+ * missing, and `makeState` registers the matching materializer — but only at
+ * runtime. The *type* of `schema` is derived from what is passed in, so
+ * `store.commit(tables.migrationState.set(...))` does not typecheck unless the
+ * setter is named here too. Listing it is a no-op for the runtime (the
+ * registration is guarded on the name already) and the difference between
+ * compiling and not for us.
+ */
+const allEvents = { ...events, migrationStateSet: tables.migrationState.set };
+
 export const schema = makeSchema({
-	events,
+	events: allEvents,
 	state,
 	unknownEventHandling: { strategy: 'ignore' }
 });
 
 export { events } from './events';
-export { PROFILE_ID, tables } from './tables';
+export { MIGRATION_STATE_ID, PROFILE_ID, tables } from './tables';
