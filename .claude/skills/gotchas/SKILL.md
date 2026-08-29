@@ -15,6 +15,19 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
 
 ## Persistence
 
+- **`store.shutdown()` does not flush pending writes — settle first (2026-08-29).**
+  Committing a batch of events and then immediately `await`ing
+  `shutdownPromise()` silently drops whatever had not yet been written; the
+  events never reach the eventlog at all. Upstream: livestore#416, open, no fix
+  in 0.4.0. This is a *test-harness* trap above all, and it cost most of a day:
+  a sync repro that committed 400 events and shut down at once persisted only
+  ~101, which read exactly like the sync engine losing data on reconnect and
+  produced a confident, wrong bug report against LiveStore. Sleep a few seconds
+  after the last `commit` before shutting a store down, and prove any suspected
+  loss by reopening the store **with no sync backend** and counting there — a
+  count taken from a live, syncing store confuses "not yet materialised" with
+  "gone".
+
 - **Never hand a Svelte `$state` proxy to Dexie.** IndexedDB's structured clone
   throws `DataCloneError` on proxies. Every write goes through `toPlain()` in
   `$lib/db`, which strips them. Repositories are the only Dexie access.

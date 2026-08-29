@@ -190,6 +190,43 @@ with `'ignore'`, which would swallow exactly the failures being looked for.
   loudly — it would move every learner into a fresh empty room, which reads as
   lost data.
 
+## What the 2026-08-29 debugging session actually established
+
+A second device stopped syncing. The investigation produced one confident,
+**wrong** conclusion before it produced a correct one, and both are worth
+recording.
+
+**The wrong one.** A reproduction appeared to show LiveStore silently losing a
+diverged client's own writes on reconnect — 400 local events becoming 101. It
+was a test-harness artifact: the repro committed 400 events and immediately
+awaited `shutdownPromise()`, and `shutdown()` does not flush pending writes
+(livestore#416). Only ~101 ever reached the eventlog, so there was nothing to
+push and nothing to lose. Adding a five-second settle before shutdown makes the
+same scenario converge perfectly: `own=400 remote=400` on both sides, verified
+by reopening the client with **no sync backend** and re-materialising from its
+own log. See the `gotchas` skill.
+
+**So the following are verified working**, each against a real backend:
+
+- Two clients converge, in both directions, including through the deployed
+  Worker on its custom domain.
+- A client that accumulates 400 events entirely offline and then reconnects to
+  a server holding 400 different events converges to all 800 — the rebase path
+  works, and `ServerAheadError` is recovered from.
+- Large payloads: 300 `challengeAdded` events of ~12KB each (well past the
+  900KB frame cap) push and pull intact, so transport chunking is fine.
+- Room isolation: a different phrase sees nothing.
+- The offline backend keeps local writes across a restart.
+
+**What remains unexplained.** The original symptom — a browser whose desktop
+client sat at a stale view while the phone synced correctly, having logged one
+`ServerAheadError` with `providedNum: 712` against a server head of 2607 — was
+never reproduced. Every attempt converged once the harness bug was removed. The
+distinguishing features not yet tested are the *browser* adapter path
+(OPFS + SharedWorker leader, which no Node test exercises) and the much larger
+scale (~1900 events pending). Sync is **not** known to be broken; it is known
+to have failed once, on one device, for reasons still unestablished.
+
 ## Open items, roughly by value
 
 - **Nothing has been run against Cloudflare's actual edge.** Two stores
