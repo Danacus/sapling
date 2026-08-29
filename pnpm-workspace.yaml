@@ -6,5 +6,13 @@
 # esbuild is denied on purpose: its platform binary arrives via
 # optionalDependencies and the postinstall is only a sanity check — vite
 # builds fine without it, locally and on CF.
+#
+# The other two arrive under LiveStore and are denied for the same reason:
+# both are optional *native* accelerations with working pure-JS fallbacks,
+# and neither is reachable from the browser bundle CF actually builds.
+#   - @parcel/watcher — dev-time file watching (falls back to polling).
+#   - msgpackr-extract — native msgpack decode; msgpackr ships a JS path.
 allowBuilds:
+  '@parcel/watcher': false
   esbuild: false
+  msgpackr-extract: false
