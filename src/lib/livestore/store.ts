@@ -26,6 +26,13 @@ let pending: Promise<Store<typeof schema>> | undefined;
  *
  * Idempotent: concurrent callers share one in-flight promise, so the eight
  * repository calls a page makes on boot do not race to build eight stores.
+ *
+ * The legacy Dexie migration runs *inside* this promise, before it resolves.
+ * That placement is the whole guarantee: every repository function awaits
+ * `storeReady()`, so there is no read anywhere in the app that can observe the
+ * store before its migrated contents are in it. In particular the layout's own
+ * `getProfile()` cannot — and a learner with months of history is never shown
+ * the onboarding screen and invited to start again.
  */
 export function storeReady(): Promise<Store<typeof schema>> {
 	pending ??= (async () => {
@@ -33,7 +40,14 @@ export function storeReady(): Promise<Store<typeof schema>> {
 			import('./adapter'),
 			import('@livestore/livestore')
 		]);
-		return createStorePromise({ adapter: makeWebAdapter(), schema, storeId: STORE_ID });
+		const store = await createStorePromise({
+			adapter: makeWebAdapter(),
+			schema,
+			storeId: STORE_ID
+		});
+		const { runDexieMigration } = await import('./migrate-dexie');
+		await runDexieMigration(store);
+		return store;
 	})();
 	return pending;
 }
