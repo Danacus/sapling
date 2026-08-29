@@ -28,6 +28,20 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   count taken from a live, syncing store confuses "not yet materialised" with
   "gone".
 
+- **`SyncBackend.isConnected` is a gate, not a status readout (2026-08-29).**
+  The leader waits on it before processing a pulled batch and before every push,
+  so a device where it is stuck `false` does nothing, logs nothing, and looks
+  identical to one with nothing to sync. `makeHttpSync` starts it `false` and
+  sets it `true` in exactly one place — after a successful `Ping` — so
+  `ping: { enabled: false }` leaves the whole session riding on the single
+  `connect` at boot, which on a freshly paired device is the first cross-origin
+  POST against a cold Durable Object. Worse, a ping that merely *times out* is
+  **caught**: `isConnected` goes false and `ping` then **succeeds**, so nothing
+  anywhere reports a fault. This broke sync completely on two devices and read
+  as "sync is broken" rather than "one request was slow". Never disable that
+  ping without giving the flag another way to recover — `$lib/sync/liveness.ts`
+  retries `connect`, and the repeat is set to 60s rather than off.
+
 - **No client-side signal means "the server has my events" (2026-08-29).** Two
   look like they do and neither does. `store.syncStatus().pendingCount` is
   *session-to-leader* and hits 0 the instant the leader accepts a commit — it
