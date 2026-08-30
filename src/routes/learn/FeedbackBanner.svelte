@@ -472,7 +472,10 @@
 	.inner {
 		max-width: var(--measure);
 		margin: 0 auto;
-		padding: 1rem 1rem 1.25rem;
+		/* The side padding has to be the shell's own gutter, not a literal: the
+		   cap is on the border box, so a 2rem gutter narrows the column above by
+		   2rem and a 1rem padding here would leave the banner wider than it. */
+		padding: 1rem var(--gutter) 1.25rem;
 	}
 
 	.head {

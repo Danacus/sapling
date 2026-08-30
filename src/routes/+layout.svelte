@@ -127,4 +127,10 @@
 		padding: var(--gutter);
 		text-align: center;
 	}
+
+	/* A centred grid item is shrink-to-fit, so without a cap a long boot error
+	   sets itself as one line the width of the window. */
+	.boot p {
+		max-width: var(--measure);
+	}
 </style>

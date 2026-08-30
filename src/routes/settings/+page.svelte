@@ -1295,7 +1295,10 @@
 		line-height: 1.1;
 	}
 
-	.card {
+	/* Scoped to the flow — the column already bounds these, and below 48rem the
+	   shell can outgrow a card. The load-error card sits outside it and keeps
+	   the reading measure: one sentence has no use for 64rem. */
+	.spread-flow .card {
 		max-width: none;
 	}
 

@@ -19,6 +19,7 @@
 -->
 <script lang="ts">
 	import { browser } from '$app/environment';
+	import { untrack } from 'svelte';
 
 	import { deleteItem, getAllItems, getProfile } from '$lib/db';
 	import { hideReadingProbability } from '$lib/session/romanization';
@@ -98,8 +99,38 @@
 	let dir = $state<SortDir>('asc');
 	let filter = $state<StateFilter>('all');
 
-	/** Ids of the rows opened out. Several at once: comparing two words is the point. */
+	/**
+	 * Ids of the rows opened out. Several at once: comparing two words is the
+	 * point — but never two from the same visual row of the ledger, see
+	 * {@link onePerRow}.
+	 */
 	let opened = $state<string[]>([]);
+
+	/**
+	 * How many entries share a visual row of the ledger: 1 on a phone, 2 from
+	 * 48rem, 3 from 72rem — the same steps as the `.ledger` grid below. An
+	 * opened note is a band under its *whole* row, so two notes under one row
+	 * stack with nothing to say which word each belongs to. A row therefore
+	 * holds one open word at a time; on a phone every entry is its own row and
+	 * the rule never binds.
+	 */
+	let columns = $state(1);
+
+	$effect(() => {
+		if (!browser) return;
+		const wide = window.matchMedia('(min-width: 48rem)');
+		const broad = window.matchMedia('(min-width: 72rem)');
+		const update = () => {
+			columns = broad.matches ? 3 : wide.matches ? 2 : 1;
+		};
+		update();
+		wide.addEventListener('change', update);
+		broad.addEventListener('change', update);
+		return () => {
+			wide.removeEventListener('change', update);
+			broad.removeEventListener('change', update);
+		};
+	});
 
 	/**
 	 * The forget flow, armed per row: the first tap swaps the quiet button for
@@ -254,15 +285,60 @@
 		return opened.includes(id);
 	}
 
+	/**
+	 * Which visual row of the ledger a word sits in, or -1 when the current
+	 * filter hides it. The grid's dense backfill keeps every entry in the row
+	 * its index says, however many notes are open above it.
+	 */
+	function rowOf(id: string): number {
+		const index = rows.findIndex((row) => row.item.id === id);
+		return index < 0 ? -1 : Math.floor(index / columns);
+	}
+
+	/**
+	 * The open set with at most one word per visual row, earliest opened
+	 * winning. A hidden word (row -1) is left alone: it comes back with the
+	 * filter that hid it, as it always did.
+	 */
+	function onePerRow(ids: string[]): string[] {
+		const taken = new Set<number>();
+		return ids.filter((id) => {
+			const row = rowOf(id);
+			if (row < 0) return true;
+			if (taken.has(row)) return false;
+			taken.add(row);
+			return true;
+		});
+	}
+
+	function close(id: string): void {
+		opened = opened.filter((candidate) => candidate !== id);
+		if (confirming === id) confirming = null;
+		if (forgetError?.id === id) forgetError = null;
+	}
+
 	function toggle(id: string): void {
 		if (isOpen(id)) {
-			opened = opened.filter((candidate) => candidate !== id);
-			if (confirming === id) confirming = null;
-			if (forgetError?.id === id) forgetError = null;
-		} else {
-			opened = [...opened, id];
+			close(id);
+			return;
 		}
+		// The word just tapped wins its row: its neighbour folds away first.
+		const row = rowOf(id);
+		for (const other of opened) if (rowOf(other) === row) close(other);
+		opened = [...opened, id];
 	}
+
+	// A re-sort, a filter or a resize can land two open words on one row.
+	// `opened` is read untracked: the effect answers to the layout changing,
+	// not to `toggle`, which already keeps the rule on its own.
+	$effect(() => {
+		void rows;
+		void columns;
+		untrack(() => {
+			const kept = onePerRow(opened);
+			for (const id of opened) if (!kept.includes(id)) close(id);
+		});
+	});
 
 	/**
 	 * Forgets a word for good — its meaning, its history and its SRS card. The
@@ -500,7 +576,8 @@
 							{#if open}
 								<!--
 								  Pinned into the margin like a note added later: the dashed
-								  rule is the same one the cards use, turned on its side.
+								  rule is the same one the cards use, turned on its side —
+								  and closed into a full frame once the ledger is a grid.
 								-->
 								<div class="detail ll-rise" id={`detail-${row.item.id}`}>
 									<dl class="facts">
@@ -807,7 +884,11 @@
 		line-height: 1.1;
 	}
 
-	.card {
+	/* Only the two cards that hold many small things take the full shell. The
+	   load-error and empty-garden cards are one sentence each and keep the
+	   reading measure: a sentence has no use for 78rem. */
+	.ledger-card,
+	.glossary {
 		max-width: none;
 	}
 
@@ -1493,37 +1574,94 @@
 	  rather than `auto-fill`/minmax: the point is a steady count pegged to the
 	  two breakpoints, not however many ~18rem cells happen to fit at whatever
 	  width the window is in between — a table that quietly gains a column at
-	  900px and loses it again at 850px would read as a bug. Each row picks up
-	  a full border of its own here — the plain top hairline reads fine as a
-	  stacked list, but says nothing about entries sitting side by side — and
-	  an opened row spans every column, so its detail reads as a note pinned
-	  across the page rather than being squeezed into one narrow cell.
+	  900px and loses it again at 850px would read as a bug. The script's
+	  `columns` mirrors these same steps, so it knows which entries share a row.
+
+	  Opening a word must not move the words beside it. So the `<li>` stops
+	  generating a box (`display: contents`) and its two children become the
+	  grid items in its place: the entry keeps its own single cell, and the
+	  detail is a separate full-span item. `dense` does the rest — the detail
+	  cannot fit alongside its entry, so it falls to the next row, and the
+	  entries after it backfill the cells left empty in the row above. A B C
+	  stay where they were, the note opens underneath all three, D E F resume
+	  below it.
+
+	  With no box left on the `<li>`, the card frame and the opened tint move
+	  onto `.entry` — the plain top hairline of the stacked list says nothing
+	  about entries sitting side by side.
 	*/
 	@media (min-width: 48rem) {
 		.ledger {
 			display: grid;
 			grid-template-columns: repeat(2, minmax(0, 1fr));
+			grid-auto-flow: dense;
 			gap: var(--gap);
 		}
 
-		.row + .row {
-			border-top: 0;
+		.row {
+			display: contents;
 		}
 
-		.row {
+		.entry {
+			position: relative;
 			padding-inline: 0.4rem;
 			border: 1px solid var(--border);
 			border-radius: var(--radius);
 		}
 
-		.row.open {
-			grid-column: 1 / -1;
+		.row.open .entry {
+			border-color: var(--border-strong);
+			background: color-mix(in srgb, var(--surface-alt) 45%, transparent);
 		}
 
-		/* The detail is a facts sheet and a note, not a grid of small things —
-		   it keeps the same reading width it would have in a single column,
-		   whichever column count the row it belongs to is currently spanning. */
-		.row.open .detail {
+		/* Which note belongs to which entry: a hairline arrowhead in the gutter
+		   under the opened entry, pointing down at the band it just opened. */
+		.row.open .entry::after {
+			content: '';
+			position: absolute;
+			left: 50%;
+			bottom: calc(-0.5 * var(--gap) - 0.32rem);
+			width: 0.64rem;
+			height: 0.64rem;
+			transform: translateX(-50%) rotate(45deg);
+			border-right: 1px solid var(--border-strong);
+			border-bottom: 1px solid var(--border-strong);
+		}
+
+		/* No longer a rule down one margin but a note pinned across the page, so
+		   the dashed hairline closes into a frame and picks up the same wash as
+		   the entry it hangs from. */
+		.detail {
+			grid-column: 1 / -1;
+			margin: 0;
+			padding: 0.9rem 1.1rem 1rem;
+			border: 1px dashed var(--border-strong);
+			border-radius: var(--radius);
+			background: color-mix(in srgb, var(--surface-alt) 45%, transparent);
+			columns: 2;
+			column-gap: var(--gap);
+		}
+
+		/* Inside it: a run of independent blocks of very different heights, which
+		   is the `.spread-flow` case rather than the `.spread` one. Multi-column
+		   reads in source order and balances itself, where a grid would leave a
+		   hole under every short block while it waited for the facts sheet.
+		   Forgetting spans back across both columns so it stays at the foot. */
+		.facts,
+		.strength-block,
+		.notes,
+		.history {
+			break-inside: avoid;
+		}
+
+		.forget-block {
+			column-span: all;
+		}
+
+		/* The band is as wide as the ledger; the sentences inside it are not. */
+		.notes,
+		.sub.none,
+		.forget-warning {
 			max-width: var(--measure);
 		}
 
@@ -1532,6 +1670,27 @@
 		   whole width of a grid meant for something else. */
 		.search {
 			max-width: 24rem;
+		}
+
+		/* The glossary card is as wide as the ledger above it, but its
+		   definitions are paragraphs: six independent entries flow into two
+		   columns (source order, self-balancing), each still capped at the
+		   reading measure. */
+		.glossary-list {
+			columns: 2;
+			column-gap: var(--gap);
+		}
+
+		/* The gap between entries becomes a bottom margin: a top margin on the
+		   first entry of the second column would leave it hanging low. */
+		.entry-def {
+			break-inside: avoid;
+			max-width: var(--measure);
+			margin-bottom: 0.9rem;
+		}
+
+		.entry-def + .entry-def {
+			margin-top: 0;
 		}
 	}
 

@@ -16,8 +16,7 @@
 		children,
 		align = 'start',
 		role,
-		label = '',
-		twoUp = false
+		label = ''
 	}: {
 		children: Snippet;
 		align?: 'start' | 'end';
@@ -25,24 +24,10 @@
 		role?: 'radiogroup';
 		/** The row's accessible name — "Available words". */
 		label?: string;
-		/**
-		 * Opt in to a two-column grid once there is room for it (≥48rem)
-		 * instead of the default wrapping flow. For a short, fixed set of
-		 * full-width options — multiple choice's four cards — never for a bank
-		 * of variable-length word tiles, which still wants free flow so a short
-		 * word does not stretch to match its row's tallest neighbour.
-		 */
-		twoUp?: boolean;
 	} = $props();
 </script>
 
-<div
-	class="row"
-	class:end={align === 'end'}
-	class:two-up={twoUp}
-	{role}
-	aria-label={label || undefined}
->
+<div class="row" class:end={align === 'end'} {role} aria-label={label || undefined}>
 	{@render children()}
 </div>
 
@@ -59,17 +44,10 @@
 	}
 
 	/*
-	  Multiple choice's four full-width cards read as one long stacked column
-	  on a phone; once there is room for two side by side, a 2x2 grid scans
-	  faster than a taller single file. Grid rather than flex here because
-	  `twoUp`'s items are meant to share a width, which flex-wrap alone does
-	  not guarantee.
+	  No wide-screen rule, deliberately. The learn route keeps the reading
+	  measure, so at ≥48rem the row is *narrower* than on a phone, not wider —
+	  folding multiple choice's four cards into a 2x2 grid there gave each one
+	  about half a phone's width and stretched a one-line option to the height
+	  of its three-line neighbour. A single file at every width is the trade.
 	*/
-	@media (min-width: 48rem) {
-		.row.two-up {
-			display: grid;
-			grid-template-columns: repeat(2, minmax(0, 1fr));
-			gap: var(--gap);
-		}
-	}
 </style>

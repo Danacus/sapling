@@ -489,7 +489,10 @@
 		box-shadow: var(--ring);
 	}
 
-	.card {
+	/* Scoped to the spread — the column already bounds these, and below 48rem
+	   the shell can outgrow a card. The load-error card sits outside it and
+	   keeps the reading measure: one sentence has no use for 64rem. */
+	.spread .card {
 		max-width: none;
 	}
 

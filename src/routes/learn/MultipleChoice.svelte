@@ -200,7 +200,7 @@
 	{/if}
 
 	<div class="options">
-		<TapRow role="radiogroup" label="Answer options" twoUp>
+		<TapRow role="radiogroup" label="Answer options">
 			{#each challenge.options as option, index (index)}
 				<TapOption
 					text={option}
@@ -251,8 +251,7 @@
 		opacity: 0.5;
 	}
 
-	/* The grid itself now lives in `TapRow`'s `twoUp` mode, shared with any
-	   future type that offers a short, fixed set of full-width options; this
+	/* The options are a single file at every width (see `TapRow`); this
 	   wrapper only owns the gap before the check button. */
 	.options {
 		margin-bottom: 1.5rem;

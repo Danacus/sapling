@@ -321,21 +321,14 @@
 		gap: 0.7rem;
 	}
 
-	@media (min-width: 48rem) {
-		/*
-		  Each side of the seam is a single-file list of tiles; once there is
-		  room for two, wrapping a side into its own two-column grid roughly
-		  halves the round's height instead of leaving two equally tall single
-		  columns either side of the seam. The seam itself does not move — it
-		  is still the midpoint of `.columns`, never of either side's own grid.
-		*/
-		.column {
-			display: grid;
-			grid-template-columns: repeat(2, minmax(0, 1fr));
-			align-items: start;
-			gap: 0.7rem;
-		}
-	}
+	/*
+	  No wide-screen rule, deliberately. Each side of the seam stays a single
+	  file of tiles at every width: the game is "scan one column, then the
+	  other", and folding a side into its own two-column grid to save height
+	  made that scan a zigzag and put a second, meaningless gutter beside the
+	  real seam. The learn route declines width in general (see layout.md); a
+	  taller round on a laptop is the right trade.
+	*/
 
 	@media (max-width: 400px) {
 		.columns {
