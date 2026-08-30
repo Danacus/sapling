@@ -15,6 +15,9 @@
  *
  * `texts` keeps `sentences` and `glossary` as JSON: a text is immutable once
  * stored and always read whole, so there is nothing to query inside them.
+ * `media` is JSON for the same reason and is a *reference* — a YouTube id, or a
+ * local file's name — never the recording: the log syncs to every paired device
+ * and a video belongs in none of them.
  *
  * `conversations` keeps its scenario as JSON for the same reason, and
  * `conversationTurns` keeps a whole turn per row: the transcript is only ever
@@ -71,7 +74,8 @@ CREATE TABLE IF NOT EXISTS profile (
 
 CREATE TABLE IF NOT EXISTS texts (
   id TEXT PRIMARY KEY, title TEXT NOT NULL, source TEXT NOT NULL, topic TEXT,
-  sentences TEXT NOT NULL, glossary TEXT NOT NULL, createdAt INTEGER NOT NULL);
+  sentences TEXT NOT NULL, glossary TEXT NOT NULL, media TEXT,
+  createdAt INTEGER NOT NULL);
 
 CREATE TABLE IF NOT EXISTS textTombstones (textId TEXT PRIMARY KEY);
 
@@ -126,7 +130,7 @@ export function reviewKey(itemId: string, at: number, device: string): string {
  * when one of them changes shape and `openSchema` drops them all and replays
  * the log on the next boot. `events` and `meta` are never touched by it.
  */
-export const DERIVED_SCHEMA_VERSION = 1;
+export const DERIVED_SCHEMA_VERSION = 2;
 
 /** Every read table the materializer owns; `events` and `meta` survive a rebuild. */
 export const DERIVED_TABLES = [

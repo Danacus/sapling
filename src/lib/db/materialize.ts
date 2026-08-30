@@ -343,8 +343,8 @@ function profileUpdated(sql: Sql, at: number, p: PayloadFor<'profileUpdated'>): 
 function textAdded(sql: Sql, p: PayloadFor<'textAdded'>): void {
 	if (sql.query('SELECT 1 FROM textTombstones WHERE textId = ?', [p.id]).length > 0) return;
 	sql.exec(
-		`INSERT OR IGNORE INTO texts (id, title, source, topic, sentences, glossary, createdAt)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT OR IGNORE INTO texts (id, title, source, topic, sentences, glossary, media, createdAt)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		[
 			p.id,
 			p.title,
@@ -352,6 +352,7 @@ function textAdded(sql: Sql, p: PayloadFor<'textAdded'>): void {
 			p.topic ?? null,
 			JSON.stringify(p.sentences),
 			JSON.stringify(p.glossary),
+			p.media === undefined ? null : JSON.stringify(p.media),
 			p.createdAt
 		]
 	);

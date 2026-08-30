@@ -512,4 +512,47 @@ describe('unknown events', () => {
 		};
 		expect(parseEvent(raw)).toEqual(raw);
 	});
+
+	// Zod strips what it is not told about, and this is the gate every event off
+	// sync or out of a backup file goes through — so a field the schema forgets
+	// survives on the device that wrote it and vanishes on the one it lands on.
+	// The subtitle timings and the media reference are the whole of the follow
+	// view, so they are the ones worth pinning.
+	it('carries a subtitled text’s timings and media through, field for field', () => {
+		const raw: SyncEvent = {
+			id: 'x',
+			type: 'textAdded',
+			at: 1,
+			device: 'devA',
+			payload: {
+				id: 't1',
+				title: '一课',
+				source: 'imported',
+				sentences: [{ text: '我想买书。', translation: 'I want a book.', start: 1200, end: 3400 }],
+				glossary: [],
+				media: { kind: 'file', name: 'lesson.mp4', type: 'video/mp4' },
+				createdAt: 5000
+			}
+		};
+		expect(parseEvent(raw)).toEqual(raw);
+	});
+
+	it('carries a youtube media through, so the variant is portable before it plays', () => {
+		const raw: SyncEvent = {
+			id: 'x',
+			type: 'textAdded',
+			at: 1,
+			device: 'devA',
+			payload: {
+				id: 't1',
+				title: '一课',
+				source: 'imported',
+				sentences: [{ text: '好的。', start: 0, end: 900 }],
+				glossary: [],
+				media: { kind: 'youtube', videoId: 'abc123' },
+				createdAt: 5000
+			}
+		};
+		expect(parseEvent(raw)).toEqual(raw);
+	});
 });

@@ -176,6 +176,35 @@ describe('reading texts', () => {
 		expect(await getTexts()).toEqual([]);
 		expect(await getText('t1')).toBeUndefined();
 	});
+
+	// The follow view is built entirely out of these two, and both live in the
+	// payload rather than in a column of their own — so the thing that can quietly
+	// break them is the event schema, which strips whatever it is not told about.
+	it('keeps a subtitle import’s timings and its media reference', async () => {
+		const imported: ReadingText = {
+			id: 't3',
+			title: '一课',
+			source: 'imported',
+			sentences: [
+				{ text: '我想买书。', translation: 'I want a book.', start: 1200, end: 3400 },
+				{ text: '好的。', translation: 'All right.', start: 3400, end: 4000 }
+			],
+			glossary: [],
+			media: { kind: 'file', name: 'lesson.mp4', type: 'video/mp4' },
+			createdAt: 5000
+		};
+
+		await addText(imported);
+
+		expect(await getText('t3')).toEqual(imported);
+	});
+
+	it('leaves an unset media absent rather than null', async () => {
+		await addText(text('t1', '买书', 1000));
+
+		const loaded = await getText('t1');
+		expect(loaded && 'media' in loaded).toBe(false);
+	});
 });
 
 describe('word marks', () => {

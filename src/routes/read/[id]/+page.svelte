@@ -16,6 +16,21 @@
   reopened from the library starts at page 1, deliberately, because a stored
   bookmark is a fact to sync and a page is cheap to skip past.
 
+  A text imported from subtitles with a recording attached opens in the **follow
+  view** instead, and it is a view rather than a route because everything below
+  is the same: the same annotation of the same whole text, the same whole-text
+  `selected`, the same card. Only the page is different — in follow view *the
+  page is the current sentence*, `pageRange` cut from the clock rather than from
+  `paginate`, so the translation, the stored reading and Listen all follow the
+  line being spoken without a word of it knowing about a video. `?view=text` is
+  the way back to the paged reader.
+
+  **The clock turns no grades.** Page grading is the learner saying "I have read
+  this", and a video that keeps playing while they look out of the window says
+  nothing at all — so the finish row, the `Good`s and the receipt belong to the
+  paged view only. What a *tap* means is unchanged, because a tap is still real:
+  a lookup on a garden word is still `Again`, in either view.
+
   This page owns every write. `$lib/reading` never touches the database: it is
   handed the vocabulary and hands back words, and adding, marking and looking up
   all happen here through the repositories — which is what puts them in the sync
@@ -37,6 +52,7 @@
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import { untrack } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 
 	import { addWordsTool, defaultToolContext } from '$lib/assistant/tools';
@@ -51,6 +67,19 @@
 		recordLookup,
 		updateItemAfterReview
 	} from '$lib/db';
+	import {
+		crossedEnd,
+		firstTimed,
+		nextTimed,
+		objectUrl,
+		prevTimed,
+		rememberFile,
+		sentenceAt,
+		startOf,
+		takeFile,
+		videoPlayer
+	} from '$lib/media';
+	import type { Player } from '$lib/media';
 	import {
 		annotateSentence,
 		lookUpWord,
@@ -134,6 +163,57 @@
 	 */
 	let panel = $state<'finish' | 'delete' | null>(null);
 
+	/* The follow view ------------------------------------------------------- */
+
+	/**
+	 * The recording, once the learner has handed it over.
+	 *
+	 * A `File` and never anything more permanent: what the store holds is the
+	 * *name*, so the file is either still in `$lib/media`'s session cache from the
+	 * import a moment ago or it is picked again here. Held rather than re-read,
+	 * because a video is hundreds of megabytes and the app touches none of it.
+	 */
+	let mediaFile = $state<File | undefined>(undefined);
+	/** The object URL for {@link mediaFile}, revoked on every replacement and on destroy. */
+	let mediaSrc = $state('');
+	let videoEl = $state<HTMLVideoElement | null>(null);
+	let player: Player | undefined;
+	/** Where the recording is, in milliseconds — the only thing the clock feeds in. */
+	let currentMs = $state(0);
+	/** Mirrors the element's own paused flag, so the button can say which it is. */
+	let mediaPaused = $state(true);
+	/**
+	 * The previous sample, kept outside `$state` on purpose: it exists only to ask
+	 * `crossedEnd` whether a boundary fell between two ticks, and nothing renders
+	 * it.
+	 */
+	let lastMs = 0;
+	/**
+	 * Stop at the end of every line. Off by default and not remembered: it turns
+	 * a video into a drill, which is a mood rather than a setting.
+	 */
+	let autoPause = $state(false);
+	/** Whether the viewport is wide enough for the transcript to have a page of its own. */
+	let wide = $state(false);
+	/**
+	 * The rendered width of the picture, measured rather than computed.
+	 *
+	 * In the wide layout the video is sized from its *height* — it takes the room
+	 * left after the line and the controls, and its aspect ratio decides the rest
+	 * — so no stylesheet can know how wide it came out. `bind:clientWidth` is a
+	 * `ResizeObserver` underneath, and the number becomes `--film-width` on the
+	 * column so the caption under the picture can match it.
+	 *
+	 * Two of them because the picker stands in for the video before a file is
+	 * chosen and the caption should sit under it the same way; one binding shared
+	 * between the two branches would be zeroed by whichever of them unmounted
+	 * last.
+	 */
+	let filmWidth = $state(0);
+	let pickWidth = $state(0);
+	/** Whichever of the two is on screen. Rounded — a subpixel width is noise here. */
+	const captionWidth = $derived(Math.round(mediaSrc ? filmWidth : pickWidth));
+
 	/**
 	 * Words tapped on *this page*, by key — cleared whenever the page turns.
 	 *
@@ -171,19 +251,55 @@
 		rolls
 	});
 
+	/** The stored sentences: what the clock is indexed against, and what pages are cut from. */
+	const sentences = $derived(text?.sentences ?? []);
+
 	/** The whole text, annotated. Re-runs whenever the vocabulary or the marks move. */
 	const lines = $derived(
-		(text?.sentences ?? []).map((sentence) => ({
+		sentences.map((sentence) => ({
 			sentence,
 			words: annotateSentence(sentence.text, tokenize, ctx)
 		}))
 	);
 
 	/**
+	 * Whether this text has a recording the reader can follow.
+	 *
+	 * Two conditions, and both are about *this* build: a `file` media, because
+	 * that is the only kind anything here can play — a `youtube` text falls
+	 * through to the paged reader rather than erroring, which is what lets that
+	 * variant exist in the type before its slice does — and at least one timed
+	 * sentence, because a player with nothing to highlight is a video in the
+	 * wrong app.
+	 */
+	const followable = $derived(text?.media?.kind === 'file' && firstTimed(sentences) >= 0);
+
+	/**
+	 * Which view, from `?view=`. Follow is the default for a text that can follow:
+	 * a learner who attached a recording attached it to watch it, and the paged
+	 * reader is one press away.
+	 */
+	const following = $derived(followable && page.url.searchParams.get('view') !== 'text');
+
+	/**
+	 * The line being spoken, or `-1` before the first cue and in the paged view.
+	 *
+	 * Everything about *which* line is `$lib/media/follow`'s, which is pure: this
+	 * is only the clock reading it is asked about.
+	 */
+	const currentIndex = $derived(following ? sentenceAt(sentences, currentMs) : -1);
+	const prevIndex = $derived(prevTimed(sentences, currentIndex));
+	/** From `-1` this is the first timed line, which is what "next" means before the first cue. */
+	const nextIndex = $derived(nextTimed(sentences, currentIndex));
+
+	/** What to ask for by name when the file is not in hand. */
+	const mediaName = $derived(text?.media?.kind === 'file' ? text.media.name : '');
+
+	/**
 	 * Where the pages break. Derived from the stored sentences, never from the
 	 * annotation: a break must not move because the learner added a word.
 	 */
-	const pages = $derived(paginate(text?.sentences ?? []));
+	const pages = $derived(paginate(sentences));
 	/** One page even for a text with no sentences, so the reader always has a frame. */
 	const pageCount = $derived(Math.max(1, pages.length));
 
@@ -197,7 +313,23 @@
 		if (!Number.isFinite(asked)) return 0;
 		return Math.min(Math.max(Math.trunc(asked) - 1, 0), pageCount - 1);
 	});
-	const pageRange = $derived(pages[pageIndex] ?? { start: 0, end: 0 });
+	/**
+	 * What is on screen, as a range of sentences — and the whole of the difference
+	 * between the two views.
+	 *
+	 * Following, the page *is* the current line, so everything downstream that was
+	 * written for a page (the translation, the stored reading, Listen, and the
+	 * whole-text indices the word buttons carry) follows the clock with no idea
+	 * that it is doing so. Before the first cue the range is empty, which is the
+	 * honest answer: nothing is being spoken yet.
+	 */
+	const pageRange = $derived(
+		following
+			? currentIndex >= 0
+				? { start: currentIndex, end: currentIndex + 1 }
+				: { start: 0, end: 0 }
+			: (pages[pageIndex] ?? { start: 0, end: 0 })
+	);
 	const lastPage = $derived(pageIndex >= pageCount - 1);
 
 	/** The slice of the annotated text this page shows — the only part rendered. */
@@ -255,6 +387,13 @@
 
 	/** What "Add to my words" would file — the gloss, or what the learner typed. */
 	const draftMeaning = $derived((card?.gloss?.meaning ?? meaningDraft).trim());
+
+	/**
+	 * Whether the facing page shows the transcript: following, wide enough for a
+	 * facing page to exist, and nothing else claiming the slot. The card and the
+	 * confirmations *replace* it — one panel, whatever is in it.
+	 */
+	const showTranscript = $derived(following && wide && card === null && panel === null);
 
 	/**
 	 * The grade each garden word last got *today*, by item id — the whole of this
@@ -317,6 +456,11 @@
 					return;
 				}
 				text = loadedText;
+				// The file the composer was just given, if this is the open straight
+				// after an import. On every later open it is `undefined` and the video
+				// slot shows the picker instead — a recording is never stored, only
+				// its name.
+				mediaFile = takeFile(loadedText.id);
 
 				if (!hasLocalRomanizer(loadedProfile.targetLanguage)) return;
 				// A lazy chunk (pinyin's dictionary is not small), so the text renders
@@ -346,6 +490,158 @@
 		playing = false;
 		stopSpeaking();
 	});
+
+	/**
+	 * The object URL for whatever file is in hand.
+	 *
+	 * An object URL pins the file until it is revoked, so the revoke is the
+	 * cleanup of the same effect that made it: every replacement and every
+	 * teardown lets the previous one go, and a learner who tries three files does
+	 * not end up holding three videos.
+	 */
+	$effect(() => {
+		const file = mediaFile;
+		if (!file) {
+			mediaSrc = '';
+			return;
+		}
+		const { url, revoke } = objectUrl(file);
+		mediaSrc = url;
+		return () => {
+			mediaSrc = '';
+			revoke();
+		};
+	});
+
+	/**
+	 * The player, for as long as there is an element to build it on.
+	 *
+	 * Everything that could be wrong about following the clock is in
+	 * `$lib/media/follow`, which is pure; this is only the wiring. `lastMs` is
+	 * what makes auto-pause fire *once*: the end of a line falls between two
+	 * samples exactly one time, whereas "is the clock past the end" is true for
+	 * every sample until the next line starts and would pause again the instant
+	 * the learner pressed play.
+	 */
+	$effect(() => {
+		const el = videoEl;
+		if (!el) return;
+
+		const built = videoPlayer(el);
+		player = built;
+		lastMs = built.currentTime();
+
+		// `untrack`, because `onTime` calls back **synchronously** on subscribe and
+		// the reads inside would otherwise become dependencies of this effect —
+		// which would tear the player down and build a new one every time the
+		// auto-pause box was ticked. The element is the only thing this effect is
+		// about.
+		const stop = built.onTime((ms) =>
+			untrack(() => {
+				const before = lastMs;
+				lastMs = ms;
+				currentMs = ms;
+				mediaPaused = built.paused();
+
+				if (!autoPause || built.paused()) return;
+				// The line that was running at the previous sample: at the moment of a
+				// crossing the next one has not started, so this is still the line
+				// whose end was just passed.
+				const running = sentenceAt(sentences, before);
+				if (running >= 0 && crossedEnd(sentences, running, before, ms)) built.pause();
+			})
+		);
+
+		return () => {
+			stop();
+			built.destroy();
+			if (player === built) player = undefined;
+		};
+	});
+
+	/**
+	 * Whether the spread is open, asked of the viewport rather than of CSS.
+	 *
+	 * The transcript is a list of every sentence in the text, and hiding a
+	 * thousand buttons with `display: none` still builds a thousand buttons. So
+	 * the phone does not render it at all, and the same 48rem the stylesheet uses
+	 * is repeated here — as `layout.md` says it must be, since a custom property
+	 * cannot be read from a media query.
+	 */
+	$effect(() => {
+		if (!browser) return;
+		const query = window.matchMedia('(min-width: 48rem)');
+		const sync = () => (wide = query.matches);
+		sync();
+		query.addEventListener('change', sync);
+		return () => query.removeEventListener('change', sync);
+	});
+
+	/**
+	 * Keeps the transcript's current line in view.
+	 *
+	 * `block: 'nearest'` so a line already on screen is left where it is — the
+	 * transcript scrolls under the reader's eye rather than yanking the current
+	 * line to the middle every few seconds.
+	 */
+	const transcriptRows: (HTMLElement | null)[] = [];
+	$effect(() => {
+		transcriptRows[currentIndex]?.scrollIntoView({ block: 'nearest' });
+	});
+
+	/** The file, chosen again on an open that did not inherit it. */
+	function chooseMedia(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file || !text) return;
+		// The stored name is not checked against this one: a learner who renamed or
+		// re-encoded the file still means this recording, and refusing it would be
+		// the app being certain about the one thing it deliberately did not keep.
+		mediaFile = file;
+		// So a second open in this session does not ask again.
+		rememberFile(text.id, file);
+	}
+
+	/** Play, or pause — the one control the native bar also offers, kept for the keyboard. */
+	function toggleMedia() {
+		if (!player) return;
+		if (player.paused()) player.play();
+		else player.pause();
+		mediaPaused = player.paused();
+	}
+
+	/**
+	 * Puts the clock at the start of sentence `i`.
+	 *
+	 * `currentMs` is set here as well as awaited from the player, because a seek
+	 * on a paused element still takes a turn of the event loop to report back and
+	 * the highlight should move under the finger, not after it.
+	 */
+	function seekTo(i: number, andPlay = false) {
+		const at = startOf(sentences, i);
+		if (!player || at === undefined) return;
+		player.seek(at);
+		lastMs = at;
+		currentMs = at;
+		if (andPlay) player.play();
+		mediaPaused = player.paused();
+	}
+
+	/** Replay the line: back to its start, playing. From nowhere, the first line. */
+	function replayLine() {
+		seekTo(currentIndex >= 0 ? currentIndex : firstTimed(sentences), true);
+	}
+
+	/** Switches between the follow view and the paged reader, in the URL. */
+	async function setView(next: 'follow' | 'text') {
+		const url = new URL(page.url);
+		if (next === 'follow') url.searchParams.delete('view');
+		else url.searchParams.set('view', 'text');
+		// The page number belongs to the paged view; leaving it behind would put
+		// the learner on page 4 of a text they were watching from the top.
+		url.searchParams.delete('p');
+		await goto(url, { replaceState: true, noScroll: true });
+	}
 
 	/**
 	 * Turning a page resets everything scoped to one: what was tapped, the
@@ -427,6 +723,11 @@
 		panel = null;
 		meaningDraft = '';
 		cardError = '';
+
+		// A word tapped in a video that keeps running is a word the learner reads
+		// while missing the next line. Stopping is what they would do themselves,
+		// one beat later and having lost something.
+		if (following) player?.pause();
 
 		// A tap is a *lookup* — "I don't understand this, explain" — and it is the
 		// one thing about a reading session that cannot be recovered afterwards.
@@ -730,13 +1031,45 @@
 	<title>{text ? `Sapling · ${text.title}` : 'Sapling · Reading'}</title>
 </svelte:head>
 
+<!--
+  The line-level transport, for a learner whose hands are on the keyboard rather
+  than on the video. Only while nothing is focused that wants these keys itself:
+  Space is how a button is pressed and an arrow is how a caret moves, and
+  stealing either from a text field would be worse than not having the shortcut.
+-->
 <svelte:window
 	onkeydown={(event) => {
-		if (event.key === 'Escape') close();
+		if (event.key === 'Escape') {
+			close();
+			return;
+		}
+		if (!following || event.metaKey || event.ctrlKey || event.altKey) return;
+
+		const focused = document.activeElement;
+		const tag = focused instanceof HTMLElement ? focused.tagName : '';
+		if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON' || tag === 'VIDEO') return;
+		if (focused instanceof HTMLElement && focused.isContentEditable) return;
+
+		if (event.key === ' ') {
+			event.preventDefault();
+			toggleMedia();
+		} else if (event.key === 'ArrowLeft') {
+			event.preventDefault();
+			replayLine();
+		} else if (event.key === 'ArrowRight') {
+			event.preventDefault();
+			seekTo(nextIndex);
+		}
 	}}
 />
 
-<main class="shell shell-broad">
+<!--
+  `.shell-broad` is the reader's cap, and `.shell-follow` lifts it at ≥72rem for
+  the follow view only — a new class rather than a scoped `.shell` override,
+  which `layout.md` names as the trap: a scoped `max-width` or `padding`
+  shorthand opts the route out of the whole system without looking like it.
+-->
+<main class="shell shell-broad" class:shell-follow={following} class:is-following={following}>
 	{#if loading}
 		<div class="loading">
 			<Spinner />
@@ -752,7 +1085,17 @@
 			<a class="btn btn-ghost" href="/read">Back to your texts</a>
 		</div>
 	{:else}
-		<div class="spread reader-spread">
+		<!--
+		  `has-error` exists only so the viewport-fitting grid below can name its
+		  rows: the error banner is a `.spread-full` row that comes and goes, and
+		  a fixed `auto 1fr` template would put the columns in an implicit third
+		  row the moment it appeared.
+		-->
+		<div
+			class="spread reader-spread"
+			class:is-following={following}
+			class:has-error={pageError !== ''}
+		>
 			<header class="topbar spread-full ll-rise">
 				<a class="back" href="/read" aria-label="Back to your texts">
 					<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
@@ -768,16 +1111,23 @@
 					<h1>{text.title}</h1>
 				</div>
 				<div class="tools">
-					<button
-						type="button"
-						class="btn btn-ghost tool"
-						class:playing
-						disabled={!ttsAvailable(lang)}
-						title={ttsAvailable(lang) ? 'Read this page aloud' : 'Speech is off — see Settings'}
-						onclick={() => void listen()}
-					>
-						{playing ? 'Stop' : 'Listen'}
-					</button>
+					<!-- Not while following: the recording *is* the audio, and offering to
+					     synthesise a line that is being spoken on screen is offering the
+					     learner a worse version of what they already have. The slot simply
+					     goes empty — Delete keeps its place against the right edge and the
+					     header keeps its shape. -->
+					{#if !following}
+						<button
+							type="button"
+							class="btn btn-ghost tool"
+							class:playing
+							disabled={!ttsAvailable(lang)}
+							title={ttsAvailable(lang) ? 'Read this page aloud' : 'Speech is off — see Settings'}
+							onclick={() => void listen()}
+						>
+							{playing ? 'Stop' : 'Listen'}
+						</button>
+					{/if}
 					<!-- Confirmation lives in the panel, never here: the header's shape
 					     stays the same whatever the learner is deciding. -->
 					<button
@@ -797,7 +1147,50 @@
 
 			<!-- The text. Capped at the reading measure whatever the column allows:
 			     width buys the word card its own page, never a longer line. -->
-			<div class="text-col">
+			<!-- `--film-width` is the measured width of the picture, handed to the
+			     caption rows below so they can match it. Absent until something has
+			     been measured, which is what lets the CSS fall back to `--measure`. -->
+			<div class="text-col" style:--film-width={captionWidth > 0 ? `${captionWidth}px` : undefined}>
+				<!-- The recording, or the ask for it. Sticky, so the line under it stays
+				     under it however far the learner scrolls for the word card. -->
+				{#if following}
+					<div class="stage">
+						{#if mediaSrc}
+							<!-- svelte-ignore a11y_media_has_caption -->
+							<!-- The native controls stay on: scrubbing, volume and fullscreen
+							     are free and better than anything written here. Ours are the
+							     ones a video does not have — the ones that know where a line
+							     begins. The caption track a11y rule is answered by the text
+							     beside it, which is the subtitles, annotated. -->
+							<video
+								bind:this={videoEl}
+								bind:clientWidth={filmWidth}
+								class="film"
+								src={mediaSrc}
+								controls
+								playsinline
+							></video>
+						{:else}
+							<div class="pick" bind:clientWidth={pickWidth}>
+								<p class="pick-copy">
+									Choose <strong>{mediaName}</strong> to play it beside the text.
+								</p>
+								<input
+									class="input file-input"
+									type="file"
+									accept="video/*,audio/*"
+									aria-label="Choose the recording"
+									onchange={chooseMedia}
+								/>
+								<p class="hint">
+									Only the name was kept — the file itself never left this device, so it is asked
+									for once each time you open this.
+								</p>
+							</div>
+						{/if}
+					</div>
+				{/if}
+
 				<ul class="legend" aria-label="What the underlines mean">
 					<li><span class="swatch sw-new" aria-hidden="true"></span>new</li>
 					<li><span class="swatch sw-growing" aria-hidden="true"></span>growing</li>
@@ -812,7 +1205,16 @@
 				     and the sentences are joined by `gap`, the script's own rule.
 				     Only this page's slice is rendered, but the indices stay the whole
 				     text's, so `selected` still points into `lines` and a card survives
-				     a re-annotation. -->
+				     a re-annotation.
+				     Following, `pageRange` is one sentence wide and this same loop
+				     renders the line being spoken — which is the whole reason the follow
+				     view is a view and not a route. -->
+				{#if following && prevIndex >= 0}
+					<button type="button" class="neighbour" onclick={() => seekTo(prevIndex)}>
+						{sentences[prevIndex]?.text}
+					</button>
+				{/if}
+
 				<p class="prose">
 					{#each pageLines as line, l (pageRange.start + l)}{@const s =
 							pageRange.start + l}{#if l > 0}{gap}{/if}<span class="sentence"
@@ -826,6 +1228,22 @@
 									>{/if}{/each}</span
 						>{/each}
 				</p>
+
+				<!-- The neighbours are plain text, not annotated: they are context, and a
+				     tappable word in a line nobody is reading is a word tapped by
+				     accident. Each is a seek, which is what "I want to hear that again"
+				     and "get on with it" both mean here. -->
+				{#if following && currentIndex < 0}
+					<p class="hint waiting">
+						Nothing is being spoken yet — press play, or tap the line below.
+					</p>
+				{/if}
+
+				{#if following && nextIndex >= 0}
+					<button type="button" class="neighbour" onclick={() => seekTo(nextIndex)}>
+						{sentences[nextIndex]?.text}
+					</button>
+				{/if}
 
 				<!-- Reading the translation stays a decision, as in conversation mode;
 				     so does the stored reading, which only exists here when there is no
@@ -857,37 +1275,97 @@
 					<p class="translation">{translation}</p>
 				{/if}
 
+				<!--
+				  The line controls, and with them the way out of this view. They live
+				  here rather than in the header because the header keeps one shape and
+				  because they belong to the video, which is the thing directly above
+				  them. Everything is a *line* operation: scrubbing, volume and
+				  fullscreen are the native bar's, and better there.
+				-->
+				{#if following}
+					<div class="transport">
+						<div class="transport-keys">
+							<button
+								type="button"
+								class="btn btn-ghost tool"
+								disabled={!mediaSrc}
+								onclick={replayLine}
+							>
+								Replay line
+							</button>
+							<button
+								type="button"
+								class="btn btn-primary tool"
+								disabled={!mediaSrc}
+								onclick={toggleMedia}
+							>
+								{mediaPaused ? 'Play' : 'Pause'}
+							</button>
+							<button
+								type="button"
+								class="btn btn-ghost tool"
+								disabled={!mediaSrc || nextIndex < 0}
+								onclick={() => seekTo(nextIndex)}
+							>
+								Next line
+							</button>
+						</div>
+						<label class="transport-opt">
+							<input type="checkbox" bind:checked={autoPause} disabled={!mediaSrc} />
+							Stop at the end of each line
+						</label>
+						<!-- The paged reader is where a text is *finished* — the receipt and
+						     the page grading live there, and nothing here writes a grade. -->
+						<button type="button" class="reveal" onclick={() => void setView('text')}>
+							Read as text
+						</button>
+					</div>
+				{:else if followable}
+					<div class="transport">
+						<button type="button" class="reveal" onclick={() => void setView('follow')}>
+							Follow the video
+						</button>
+					</div>
+				{/if}
+
 				<!-- At the end of the page, because that is where the learner is when
 				     they have read it. The primary action carries the page forward and
 				     confirms in the panel first, because it writes; going *back* writes
 				     nothing, so it is a quiet link beside it. The receipt takes the
-				     button's place on the last page. -->
-				<div class="finish-row">
-					<p class="page-count">Page {pageIndex + 1} of {pageCount}</p>
-					<div class="finish-actions">
-						{#if finished}
-							<p class="summary" aria-live="polite">Finished · {summary}</p>
-						{:else}
-							<button
-								type="button"
-								class="btn btn-primary finish-btn"
-								class:is-active={panel === 'finish'}
-								onclick={() => confirm('finish')}
-							>
-								{lastPage ? 'Finished reading' : 'Next page'}
-							</button>
-						{/if}
-						{#if pageIndex > 0}
-							<button type="button" class="reveal" onclick={() => void turnTo(pageIndex)}>
-								Previous page
-							</button>
-						{/if}
+				     button's place on the last page.
+				     Paged view only: a video that keeps playing while the learner looks
+				     out of the window has said nothing about what they remember, so the
+				     clock turns no grades and there is nothing here to confirm. -->
+				{#if !following}
+					<div class="finish-row">
+						<p class="page-count">Page {pageIndex + 1} of {pageCount}</p>
+						<div class="finish-actions">
+							{#if finished}
+								<p class="summary" aria-live="polite">Finished · {summary}</p>
+							{:else}
+								<button
+									type="button"
+									class="btn btn-primary finish-btn"
+									class:is-active={panel === 'finish'}
+									onclick={() => confirm('finish')}
+								>
+									{lastPage ? 'Finished reading' : 'Next page'}
+								</button>
+							{/if}
+							{#if pageIndex > 0}
+								<button type="button" class="reveal" onclick={() => void turnTo(pageIndex)}>
+									Previous page
+								</button>
+							{/if}
+						</div>
 					</div>
-				</div>
+				{/if}
 			</div>
 
 			<!-- The panel: the word card, or a confirmation in its place. A facing
-			     page at 48rem, a sheet at the foot of the phone below it. -->
+			     page at 48rem, a sheet at the foot of the phone below it — and, in the
+			     follow view with nothing open, the transcript, which the card
+			     *replaces* rather than sits beside: one slot, whatever it holds. -->
 			<aside class="card-col" class:is-open={card !== null || panel !== null}>
 				{#if panel === 'finish'}
 					<div class="word-card">
@@ -1065,6 +1543,30 @@
 							<p class="error card-error" role="alert">{cardError}</p>
 						{/if}
 					</div>
+				{:else if showTranscript}
+					<!-- The whole text as a list, opposite the line being spoken: the
+					     spread's usual pairing, one thing on each page. Rendered only
+					     where there *is* a facing page — a phone would be building a
+					     button per sentence to hide every one of them. -->
+					<div class="transcript">
+						<p class="panel-title">Transcript</p>
+						<ol class="transcript-list">
+							{#each sentences as sentence, i (i)}
+								<li>
+									<button
+										type="button"
+										class="t-line"
+										class:is-now={i === currentIndex}
+										bind:this={transcriptRows[i]}
+										disabled={sentence.start === undefined}
+										onclick={() => seekTo(i, true)}
+									>
+										{sentence.text}
+									</button>
+								</li>
+							{/each}
+						</ol>
+					</div>
 				{/if}
 			</aside>
 		</div>
@@ -1212,6 +1714,133 @@
 	*/
 	.text-col {
 		padding-bottom: 45dvh;
+	}
+
+	/* The recording --------------------------------------------------------- */
+
+	/*
+	  Sticky at the top of the column, which on a phone is the top of the screen:
+	  the line being spoken sits directly under the picture, and it has to stay
+	  under it while the learner scrolls down for the word card. `--surface` behind
+	  it because a sticky element with a transparent ground shows the prose sliding
+	  through it.
+	*/
+	.stage {
+		position: sticky;
+		top: 0;
+		z-index: 5;
+		margin-bottom: 1rem;
+		padding-block: 0.5rem;
+		background: var(--surface);
+	}
+
+	/* 16:9 by declaration rather than by the file's own dimensions, so the layout
+	   does not jump when the metadata lands. An audio file gets the same box; the
+	   native bar sits in the middle of it. */
+	.film {
+		display: block;
+		width: 100%;
+		aspect-ratio: 16 / 9;
+		border-radius: var(--radius);
+		background: #000;
+	}
+
+	/* The file is not in hand: what to look for, and the picker. Same box as the
+	   video it stands in for, so nothing moves when it is chosen. */
+	.pick {
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+		gap: 0.6rem;
+		aspect-ratio: 16 / 9;
+		padding: 1rem;
+		border: 1px dashed var(--border-strong);
+		border-radius: var(--radius);
+		background: var(--surface-alt);
+	}
+
+	.pick-copy {
+		margin: 0;
+		font-size: 0.95rem;
+		line-height: 1.45;
+		overflow-wrap: anywhere;
+	}
+
+	.pick .file-input {
+		padding: 0.4rem 0.5rem;
+		font-size: 0.82rem;
+	}
+
+	.pick .hint {
+		margin: 0;
+		font-size: 0.78rem;
+	}
+
+	/*
+	  The lines either side of the one being spoken. Faint and plain — they are
+	  context and a seek, not reading, and their words are deliberately not
+	  tappable: a word tapped in a line nobody is on is a word tapped by accident.
+	*/
+	.neighbour {
+		display: block;
+		width: 100%;
+		margin: 0;
+		padding: 0.35rem 0;
+		border: 0;
+		background: none;
+		color: var(--text-muted);
+		font: inherit;
+		font-size: 1rem;
+		line-height: 1.5;
+		text-align: left;
+		opacity: 0.55;
+		cursor: pointer;
+		transition: opacity 0.15s ease;
+	}
+
+	.neighbour:hover {
+		opacity: 0.9;
+	}
+
+	.neighbour:focus-visible {
+		outline: none;
+		box-shadow: var(--ring);
+	}
+
+	.waiting {
+		margin: 0.5rem 0;
+	}
+
+	/* The line controls. One row that wraps, like every other control row here —
+	   no breakpoint, because the three buttons and the checkbox stack in source
+	   order on a narrow phone and that is the right order. */
+	.transport {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.6rem 1rem;
+		margin-top: 1.25rem;
+		padding-top: 1rem;
+		border-top: 1px dashed var(--border);
+	}
+
+	.transport-keys {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.4rem;
+	}
+
+	.transport-opt {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.85rem;
+		color: var(--text-muted);
+		cursor: pointer;
+	}
+
+	.transport-opt input {
+		accent-color: var(--primary);
 	}
 
 	.legend {
@@ -1626,6 +2255,232 @@
 		.text-col {
 			padding-bottom: 0;
 		}
+
+		/* The follow view fits the viewport --------------------------------- */
+
+		/*
+		  Following, the page does not scroll: the frame is the viewport and the
+		  transcript scrolls inside itself. The alternative — what this replaces —
+		  was a sticky panel under a header, which means the window scrolls first
+		  and the sticky only takes over once the header is gone. That reads as
+		  the page lurching before it settles.
+
+		  Only `padding-block` is touched, which is the route's to own; the sides
+		  stay the global rule's (`layout.md` names a scoped `padding` shorthand
+		  as the trap). The 4rem tail is scroll room, and a page that does not
+		  scroll has no use for it.
+		*/
+		.shell.is-following {
+			padding-block: 1.5rem;
+		}
+
+		/*
+		  Header row auto, content row whatever is left. `minmax(0, 1fr)` rather
+		  than `1fr`, because a grid track's default minimum is its content and a
+		  transcript of two hundred lines would push the row straight past the
+		  frame it is supposed to fit inside.
+		*/
+		.reader-spread.is-following {
+			height: calc(100dvh - 3rem);
+			grid-template-rows: auto minmax(0, 1fr);
+			/* `.spread` sets `align-items: start`, which is what makes two cards
+			   read as facing pages — and exactly wrong for two columns that have to
+			   fill a frame. */
+			align-items: stretch;
+		}
+
+		/* The error banner is a `.spread-full` row that comes and goes; naming it
+		   here is what stops the columns landing in an implicit third row. */
+		.reader-spread.is-following.has-error {
+			grid-template-rows: auto auto minmax(0, 1fr);
+		}
+
+		/* A grid item's `min-height: auto` refuses to shrink below its content,
+		   which would defeat the whole frame. Both columns opt out. */
+		.is-following .text-col,
+		.is-following .card-col {
+			min-height: 0;
+		}
+
+		/*
+		  The left page as a column: the picture takes whatever is left once the
+		  line and the controls have had theirs, and never more. `overflow-y` is
+		  the guard for a window too short to hold even that — the column scrolls
+		  itself rather than the window.
+		*/
+		.is-following .text-col {
+			display: flex;
+			flex-direction: column;
+			max-width: none;
+			padding-bottom: 0;
+			overflow-y: auto;
+		}
+
+		/* Nothing to stick to any more — the column is the frame. */
+		.is-following .stage {
+			position: static;
+			display: flex;
+			justify-content: center;
+			flex: 1 1 auto;
+			min-height: 8rem;
+			padding-block: 0;
+		}
+
+		/*
+		  Height first, width derived from it: the stage is a flex item with a
+		  definite height, so `height: 100%` resolves against it and the aspect
+		  ratio decides the rest. That is what keeps the picture as big as the room
+		  allows without the column ever growing past the frame.
+		*/
+		.is-following .film {
+			height: 100%;
+			width: auto;
+			max-width: 100%;
+			object-fit: contain;
+		}
+
+		.is-following .pick {
+			aspect-ratio: auto;
+			width: 100%;
+			height: 100%;
+		}
+
+		/*
+		  The caption block matches the picture it sits under, because that is what
+		  a caption does — it belongs to the video, not to the column.
+		  `--film-width` is measured (no stylesheet can derive it: the video is
+		  sized from its height), and the `max` keeps `--measure` as a floor so a
+		  portrait or a small video does not squeeze the line into a ribbon; the
+		  `min` keeps it inside the column whatever happens. With nothing measured
+		  yet the fallback collapses the whole expression to `--measure`, which is
+		  where this started.
+
+		  This is not a hole in the measure rule: a caption is one sentence at a
+		  time, not a paragraph, and `--measure` still governs every run of prose.
+
+		  `flex: 0 0 auto` so the stage stays the only thing that gives.
+		*/
+		.is-following .legend,
+		.is-following .neighbour,
+		.is-following .prose,
+		.is-following .waiting,
+		.is-following .text-tools,
+		.is-following .reading-block,
+		.is-following .translation,
+		.is-following .transport {
+			flex: 0 0 auto;
+			width: min(100%, max(var(--film-width, var(--measure)), var(--measure)));
+			max-width: none;
+			margin-inline: auto;
+		}
+
+		/*
+		  The panel column holds one thing at a time and that thing fills it. The
+		  word card scrolls itself instead of sticking, because there is no longer
+		  a scrolling window for it to stick within.
+		*/
+		.is-following .card-col {
+			display: flex;
+			flex-direction: column;
+		}
+
+		.is-following .card-col.is-open {
+			position: static;
+			top: auto;
+			overflow-y: auto;
+		}
+
+		/*
+		  The transcript is the one thing here that is taller than the frame on
+		  purpose, so it is the scroller — and it wears the word card's own skin,
+		  because it takes the word card's slot. Its heading is sticky against
+		  that surface, not against the page: `--surface` is what `.word-card`
+		  paints, and a heading in `--bg` reads as a bar laid over the panel
+		  rather than as the panel's own top edge. The negative margins let it
+		  cover the card's padding, so nothing scrolls through the gap beside it.
+		*/
+		/*
+		  **No top padding, and no side padding.** The scroller's own padding is
+		  what a sticky heading at `top: 0` sticks *below* — lines then scroll
+		  through the strip above it and the title sits visibly too low. So the
+		  padding moves inward: the title is the first child, flush at the top edge
+		  and full width of the scroller, carrying the card's top and side padding
+		  itself; the list carries the sides. Nothing can be seen above the title
+		  because there is nothing above it.
+		*/
+		.transcript {
+			flex: 1 1 auto;
+			min-height: 0;
+			overflow-y: auto;
+			padding: 0 0 1.2rem;
+			border: 1px solid var(--border);
+			border-radius: var(--radius-lg);
+			background: var(--surface);
+			box-shadow: var(--shadow);
+		}
+
+		.transcript .panel-title {
+			position: sticky;
+			top: 0;
+			z-index: 1;
+			margin: 0;
+			padding: 1rem 1.1rem 0.5rem;
+			border-bottom: 1px dashed var(--border);
+			background: var(--surface);
+		}
+
+		/* 0.6rem here plus `.t-line`'s own 0.5rem puts the transcript's text on the
+		   same 1.1rem line as the title above it. */
+		.transcript-list {
+			list-style: none;
+			margin: 0.5rem 0 0;
+			padding: 0 0.6rem;
+		}
+
+		/* A line of the transcript is a seek, so it is a button — but a transcript
+		   of buttons wearing button clothes is a wall of boxes. It reads as text
+		   and only the current line is marked. */
+		.t-line {
+			display: block;
+			width: 100%;
+			margin: 0;
+			padding: 0.3rem 0.5rem;
+			border: 0;
+			border-left: 2px solid transparent;
+			border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+			background: none;
+			color: var(--text-muted);
+			font: inherit;
+			font-size: 0.92rem;
+			line-height: 1.5;
+			text-align: left;
+			cursor: pointer;
+			overflow-wrap: anywhere;
+		}
+
+		.t-line:hover:not(:disabled) {
+			background: var(--surface-alt);
+			color: var(--text);
+		}
+
+		.t-line:focus-visible {
+			outline: none;
+			box-shadow: var(--ring);
+		}
+
+		/* An untimed sentence — prose spliced into a transcript — is still shown,
+		   because it is part of the text; it just has nowhere to seek to. */
+		.t-line:disabled {
+			cursor: default;
+			opacity: 0.6;
+		}
+
+		.t-line.is-now {
+			border-left-color: var(--primary);
+			background: var(--primary-soft);
+			color: var(--text);
+			font-weight: 500;
+		}
 	}
 
 	@media (min-width: 72rem) {
@@ -1633,6 +2488,34 @@
 		   extra width than the card opposite it. */
 		.reader-spread {
 			grid-template-columns: 3fr 2fr;
+		}
+
+		/*
+		  The documented exception to "width never makes content bigger" — see
+		  `layout.md`. A recording is the one thing in the app that is genuinely
+		  better large, so the follow view drops the 64rem cap and spends the whole
+		  viewport on it, gutters aside. This is a *new* class on `<main>` rather
+		  than a scoped `.shell` override, which would opt the route out of the
+		  global system without looking like it. The paged view (`?view=text`)
+		  never wears it and keeps `.shell-broad` exactly as it was.
+		*/
+		.shell-follow {
+			max-width: none;
+		}
+
+		/* The video column takes the room; the transcript stays a bounded facing
+		   column, because a transcript stretched across a desk is the
+		   over-widening `layout.md` warns about. The caption under the video
+		   matches the video, per the block above. */
+		.reader-spread.is-following {
+			grid-template-columns: minmax(0, 1fr) minmax(20rem, 28rem);
+		}
+
+		/* A notch up, because at this size the line is a caption under a large
+		   picture rather than a paragraph on a page, and at 1.15rem it reads as an
+		   afterthought under it. */
+		.is-following .prose {
+			font-size: 1.3rem;
 		}
 	}
 </style>

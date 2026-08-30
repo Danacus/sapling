@@ -14,6 +14,12 @@
   what was pasted. Both come back as a draft; this page mints the id and the
   timestamp and stores it, which is the whole reason `$lib/reading` can stay
   stateless.
+
+  A subtitle import may also name the recording it came from, and this is the
+  only moment it can: a text is immutable, so the media reference is attached
+  here or never. What is *stored* is the file's name and nothing else — the
+  handle goes into `$lib/media`'s session cache, so the reader opening a second
+  later already has it and every later open asks for it again.
 -->
 <script lang="ts">
 	import { browser } from '$app/environment';
@@ -22,6 +28,7 @@
 	import { addText, getAllItems, getKnownTerms, getProfile, getTexts } from '$lib/db';
 	import { newUuid } from '$lib/device';
 	import { isMockMode } from '$lib/llm';
+	import { rememberFile } from '$lib/media';
 	import {
 		MAX_FOCUS_WORDS,
 		MAX_IMPORT_TOTAL_CHARS,
@@ -36,7 +43,13 @@
 	} from '$lib/reading';
 	import type { SubtitleFormat } from '$lib/reading';
 	import { selectSessionItems } from '$lib/srs';
-	import type { KnowledgeItem, Profile, ReadingSentence, ReadingText } from '$lib/types';
+	import type {
+		KnowledgeItem,
+		Profile,
+		ReadingMedia,
+		ReadingSentence,
+		ReadingText
+	} from '$lib/types';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	/** Nudges, not choices — the same shape `/converse` offers over its topic box. */
@@ -56,6 +69,14 @@
 	let topic = $state('');
 	let title = $state('');
 	let pasted = $state('');
+	/**
+	 * The recording the subtitles were written for, if the learner has it.
+	 *
+	 * Optional in every sense: an import with no file is the ordinary text the
+	 * reader has always shown, and the only thing kept about a file that *is*
+	 * chosen is its name.
+	 */
+	let mediaFile = $state<File | undefined>(undefined);
 	/** One flag for both doors — a page that is mid-call has nothing else to do. */
 	let busy = $state(false);
 	let composeError = $state('');
@@ -164,10 +185,18 @@
 		return [...items.map((item) => item.term), ...known];
 	}
 
-	/** Mints the id and the timestamp, stores the text, and opens it. */
-	async function keep(draft: Omit<ReadingText, 'id' | 'createdAt'>) {
+	/**
+	 * Mints the id and the timestamp, stores the text, and opens it.
+	 *
+	 * `file` is the recording, and it is handed to the session cache rather than
+	 * to `addText`: the reader is one navigation away and would otherwise open a
+	 * picker for a file the learner chose seconds ago. The id only exists here,
+	 * which is why the remembering happens here too.
+	 */
+	async function keep(draft: Omit<ReadingText, 'id' | 'createdAt'>, file?: File) {
 		const text: ReadingText = { ...draft, id: newUuid(), createdAt: Date.now() };
 		await addText(text);
+		if (file) rememberFile(text.id, file);
 		await goto(`/read/${text.id}`);
 	}
 
@@ -232,6 +261,18 @@
 		}
 	}
 
+	/**
+	 * The recording, chosen beside the subtitles that describe it.
+	 *
+	 * Held only in memory until the import lands. Nothing is read from it here —
+	 * a video is hundreds of megabytes and the app wants none of it, only the
+	 * handle and, for the store, the name.
+	 */
+	function bringMedia(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		mediaFile = input.files?.[0];
+	}
+
 	/** Door two: a text the learner brought, cut here and annotated there. */
 	async function add() {
 		if (!profile || busy) return;
@@ -273,12 +314,29 @@
 					)
 				: draft.sentences;
 
-			await keep({
-				title: draft.title,
-				source: 'imported',
-				sentences: stored,
-				glossary: draft.glossary
-			});
+			// Only the name and the type: the file itself never leaves this tab.
+			// Guarded on `timings` as well as on the file, because a media reference
+			// on a text whose sentences have no offsets would point at a recording
+			// nothing could follow.
+			const media: ReadingMedia | undefined =
+				timings && mediaFile
+					? {
+							kind: 'file',
+							name: mediaFile.name,
+							...(mediaFile.type ? { type: mediaFile.type } : {})
+						}
+					: undefined;
+
+			await keep(
+				{
+					title: draft.title,
+					source: 'imported',
+					sentences: stored,
+					glossary: draft.glossary,
+					...(media ? { media } : {})
+				},
+				media ? mediaFile : undefined
+			);
 		} catch (cause) {
 			composeError = cause instanceof Error ? cause.message : 'Could not annotate that text.';
 		} finally {
@@ -452,6 +510,31 @@
 							{#if plan.format}Subtitles · {plan.cues} cue{plan.cues === 1 ? '' : 's'} ·
 							{/if}{plan.sentences.length} sentence{plan.sentences.length === 1 ? '' : 's'} · about {plan.calls}
 							call{plan.calls === 1 ? '' : 's'}
+						</p>
+					{/if}
+
+					<!-- Offered only once the paste has turned out to be subtitles, because
+					     only then are there timings for a recording to be timings *of*. It
+					     is attached now or never: a text is immutable. -->
+					{#if plan.format}
+						<label class="bring media-bring">
+							<span class="bring-label">Video or audio file — optional</span>
+							<input
+								class="input file-input"
+								type="file"
+								accept="video/*,audio/*"
+								disabled={busy}
+								onchange={bringMedia}
+							/>
+						</label>
+						<p class="hint media-hint">
+							{#if mediaFile}
+								<strong>{mediaFile.name}</strong> plays beside the text. Only its name is kept — the file
+								stays on your device, so you'll pick it again next time you open this.
+							{:else}
+								Add the recording and the text follows along with it. Only its name is kept; the
+								file never leaves this device.
+							{/if}
 						</p>
 					{/if}
 
@@ -694,6 +777,20 @@
 	.bring {
 		flex: 1 1 14rem;
 		min-width: 0;
+	}
+
+	/* Its own row rather than a third thing squeezed into `.paste-tools`: it only
+	   appears once the paste is subtitles, and a control that shifts the two
+	   above it when it arrives is worse than one that lands under them. */
+	.media-bring {
+		display: block;
+		margin-bottom: 0.5rem;
+	}
+
+	.media-hint {
+		margin: 0 0 0.9rem;
+		font-size: 0.8rem;
+		overflow-wrap: anywhere;
 	}
 
 	.bring-label {

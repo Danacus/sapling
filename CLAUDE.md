@@ -59,6 +59,7 @@ Every area is a registry with one module per member; forgetting a registration f
 | `src/lib/assistant/` | Every mutation goes through the injectable `ToolContext`, never the store directly — that's the seam the tests and the conversation layer both hang on. | `assistant.md` |
 | `src/lib/conversation/` | Role-play on the assistant's seam: **never imports `$lib/db`**, and exposes exactly one tool — `add_words`, reused verbatim. Corrections travel beside the spoken line, never inside it — and `heard` puts the target script under a learner bubble that needed no correction. | `assistant.md` |
 | `src/lib/reading/` | Stateless too — **never imports `$lib/db`**; a text is immutable and every colour, reading and status is derived at render time, so the adaptive roll is memoised in a `Map` the *page* owns. | `reading.md` |
+| `src/lib/media/` | The player is a **seam** — the text never knows what is playing it, and nothing but a file's *name* is ever stored. | `media.md` |
 | `src/lib/db/` | Repositories are the **only** store access. The `events` table is the facts log; everything else is an aggregate read model the materializer maintains, and UI reads never touch `events`. | `data.md` |
 | `src/lib/sync/`, `worker/` | The backend **orders and relays; it never merges**. A learner is a pairing phrase; the *Worker* hashes it to pick the room. | `data.md`, `deploy.md` |
 | `src/lib/srs/` | Pure and deterministic: every function takes `now` (epoch ms). | `data.md` |

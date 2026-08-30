@@ -157,6 +157,13 @@ export const payloadSchemas = {
 	 * A text is immutable once stored — there is no `textUpdated` — so the only
 	 * ordering question is against its own tombstone, which the materializer
 	 * answers the way `itemAdded` does.
+	 *
+	 * Every optional field of `ReadingText` has to be named here, including the
+	 * ones nothing but the reader reads: zod **strips** what it is not told
+	 * about, and this schema is what an event coming off sync or out of a backup
+	 * file passes through. A field left out survives on the device that wrote it
+	 * and vanishes on the one it arrives at, which is the worst shape a bug can
+	 * have.
 	 */
 	textAdded: z.object({
 		id: z.string(),
@@ -167,7 +174,10 @@ export const payloadSchemas = {
 			z.object({
 				text: z.string(),
 				reading: z.string().optional(),
-				translation: z.string().optional()
+				translation: z.string().optional(),
+				// Milliseconds into the recording, for a text imported from subtitles.
+				start: z.number().optional(),
+				end: z.number().optional()
 			})
 		),
 		glossary: z.array(
@@ -177,6 +187,19 @@ export const payloadSchemas = {
 				meaning: z.string()
 			})
 		),
+		// What the sentence timings are timings *into*. A reference and never the
+		// media: a `file` carries only the name, which is why this is small enough
+		// to sit in an append-only log at all.
+		media: z
+			.union([
+				z.object({ kind: z.literal('youtube'), videoId: z.string() }),
+				z.object({
+					kind: z.literal('file'),
+					name: z.string(),
+					type: z.string().optional()
+				})
+			])
+			.optional(),
 		createdAt: z.number()
 	}),
 

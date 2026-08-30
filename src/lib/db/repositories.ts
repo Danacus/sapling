@@ -32,6 +32,7 @@ import type {
 	GlossEntry,
 	KnowledgeItem,
 	Profile,
+	ReadingMedia,
 	ReadingSentence,
 	ReadingText,
 	Verdict
@@ -498,6 +499,7 @@ interface TextSqlRow {
 	topic: string | null;
 	sentences: string;
 	glossary: string;
+	media: string | null;
 	createdAt: number;
 }
 
@@ -510,6 +512,7 @@ function textFrom(row: TextSqlRow): ReadingText {
 		...(row.topic === null ? {} : { topic: row.topic }),
 		sentences: JSON.parse(row.sentences) as ReadingSentence[],
 		glossary: JSON.parse(row.glossary) as GlossEntry[],
+		...(row.media === null ? {} : { media: JSON.parse(row.media) as ReadingMedia }),
 		createdAt: row.createdAt
 	};
 }
@@ -530,6 +533,7 @@ export async function addText(text: ReadingText): Promise<void> {
 		...(plain.topic === undefined ? {} : { topic: plain.topic }),
 		sentences: plain.sentences,
 		glossary: plain.glossary,
+		...(plain.media === undefined ? {} : { media: plain.media }),
 		createdAt: plain.createdAt
 	});
 }

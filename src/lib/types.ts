@@ -350,6 +350,31 @@ export interface GlossEntry {
 }
 
 /**
+ * What a text's sentence timings are timings *into*: the recording the learner
+ * imported the subtitles from.
+ *
+ * A reference, never the media itself. A video is hundreds of megabytes and
+ * lives on the learner's disk or on somebody's servers; nothing about it is
+ * small enough or ours enough to put in an append-only log that syncs to every
+ * paired device. So a `file` keeps only the name, which is all that is needed to
+ * ask "is this the one?" the next time the text is opened, and a `youtube` keeps
+ * the id, which is the whole address.
+ *
+ * Both variants exist from the start so the shape is settled before the second
+ * one is played: this type is frozen like the rest of the file, and a reader
+ * that already handles the union cannot be broken by the slice that fills it in.
+ */
+export type ReadingMedia =
+	| { kind: 'youtube'; videoId: string }
+	| {
+			kind: 'file';
+			/** The file's name as the learner's disk spells it, for the "choose it again" prompt. */
+			name: string;
+			/** Its MIME type when the browser offered one — a hint for the picker, nothing more. */
+			type?: string;
+	  };
+
+/**
  * A text the learner reads (or listens to) for comprehension — written by the
  * model from their vocabulary, or pasted in from elsewhere and annotated.
  *
@@ -368,6 +393,15 @@ export interface ReadingText {
 	topic?: string;
 	sentences: ReadingSentence[];
 	glossary: GlossEntry[];
+	/**
+	 * What the sentence timings belong to, when the text was imported from
+	 * subtitles and the learner said which recording they came from.
+	 *
+	 * Attached at import and never afterwards, like everything else here: a text
+	 * is immutable, and a media reference bolted on later would be a second fact
+	 * about the same object with no rule for which one wins.
+	 */
+	media?: ReadingMedia;
 	/** Epoch milliseconds. */
 	createdAt: number;
 }

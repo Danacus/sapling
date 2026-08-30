@@ -1,7 +1,8 @@
 # Reading mode — design
 
-Status: **slice 1 implemented.** The vision is larger than the slice; §7 lists
-what is deliberately left out.
+Status: **slices 1–4 implemented** (the reader, reading as review, subtitle
+import, the follow view). The vision is larger than what is built; §7 lists what
+is deliberately left out.
 
 ## 1. Why
 
@@ -394,13 +395,119 @@ drill arrives in the text already counted as forgotten.
   keyed on challenge results, and whether reading should extend a streak is a
   separate decision.
 
+### The follow view (slice 4, built)
+
+A subtitled text that names the recording it came from opens **following the
+clock**: the video on top, the line being spoken under it, and the rest of the
+text one press away.
+
+It is a **view on the same page, not a route**, and that is the whole design.
+Everything under it is unchanged — the same `AnnotateContext`, the same `lines`
+over the whole text, the same whole-text `selected`, the same word card. Only
+the *page* is cut differently: following, `pageRange` is `{ start: i, end: i+1 }`
+for the sentence whose `start` most recently passed the clock, so the
+translation, the stored reading and the whole-text word indices follow the spoken
+line without one of them knowing a video exists. `?view=text` is the paged
+reader, and back. **Listen** is the one header control that goes: synthesising a
+line the recording is speaking is a worse version of what the learner already
+has, so it is not rendered while following and the slot simply goes empty.
+
+**`src/lib/media/`** is the new area, stateless on the same seam as
+`$lib/reading` (`media.md` is the contract). `Player` is five verbs and a clock;
+`videoPlayer` is that over a `<video>` element, and YouTube's iframe will be the
+second implementation of the same interface — which is why `ReadingMedia` defines
+both variants now and a `youtube` text falls back to the paged reader rather than
+erroring. Milliseconds everywhere except inside `video.ts`, where the DOM's
+seconds are converted once. `follow.ts` is pure and holds the four rules a real
+subtitle file forces: a gap stays on the last line that *started* (cues do not
+tile a recording, and a highlight blinking off in every silence would flicker
+through a conversation), `start` is inclusive, an untimed sentence is skipped and
+never landed on, and before the first cue there is no current line. Auto-pause
+asks `crossedEnd` whether the boundary fell **between two samples**, so it fires
+once per crossing rather than on every tick until the next line starts.
+
+**Nothing but the file's name is stored.** A 700 MB mp4 goes in neither the
+events log nor OPFS, so `ReadingMedia` is a reference and the `File` handle can
+only come from a picker the learner clicked. `files.ts`'s session cache closes
+the one gap that would make that feel broken — the open straight after an import
+— and dies with the tab; every later open shows "Choose `<name>`" in the video's
+place, with the line controls disabled and "Read as text" still working. A file
+whose name has changed is accepted anyway: the learner may have renamed it, and
+refusing would be the app being certain about the one thing it did not keep.
+Media attaches **at import and never afterwards**, because a text is immutable.
+
+**The clock turns no grades.** Page grading is the learner saying "I have read
+this"; a video that keeps playing while they look out of the window says nothing
+at all. So the finish row, the `Good`s, the mark-known checkbox and the receipt
+are the paged view's alone. A *tap* is unchanged in both, because a tap is real:
+`recordLookup` fires, a lookup on a garden word is still `Again` once per day —
+and it also pauses the recording, which is what the learner would do themselves
+one beat later, having lost a line.
+
+Layout is the usual ladder. The phone is the base case and is untouched by all of
+it: video sticky at the top, the current line under it in the same tappable
+`.prose` markup, the previous and next sentences faint either side as plain text
+— context and a seek, not reading, so their words are deliberately not tappable —
+then the line controls (replay, play/pause, next, auto-pause, "Read as text") and
+the word card as the sheet it always was.
+
+At ≥48rem the view becomes a **frame**: the spread is `100dvh` less the shell's
+`padding-block`, header row `auto` and content row `minmax(0, 1fr)`, and the
+window does not scroll at all. The facing page is a **transcript** — every
+sentence in a list, the current one highlighted and scrolled into view, each line
+a seek — which scrolls *inside itself* and wears the word card's own surface,
+because it takes the word card's slot and the card *replaces* it. (Its sticky
+heading is painted that same surface: in the page ground it read as a bar laid
+over the panel rather than as the panel's top edge.) The transcript is gated on
+`matchMedia`, not on CSS, because hiding a thousand buttons still builds a
+thousand buttons. Its heading is the scroller's first child, flush at the top
+edge and carrying the card's padding itself, because a scroller with top padding
+sticks its heading *below* that padding and lines scroll visibly through the
+strip above it. In the left column the picture is the only thing that gives: the
+caption rows are fixed and the video takes the room left over, sized from its
+height so the aspect ratio decides its width.
+
+The caption under the video **matches the video**. Once the picture is sized from
+its height no stylesheet can know how wide it came out, so it is measured —
+`bind:clientWidth` into a `--film-width` custom property on the column — and the
+rows take `min(100%, max(var(--film-width), var(--measure)))`: the video's width
+where there is one, `--measure` as a floor so a portrait or a small video does
+not squeeze the line into a ribbon, and never wider than the column. The picker
+that stands in before a file is chosen is measured the same way, so nothing jumps
+when the recording arrives. This is not a hole in the measure rule: a caption is
+one sentence at a time, not a paragraph.
+
+At ≥72rem the follow view **drops the 64rem cap** — `.shell-follow` on `<main>`,
+a new modifier rather than a scoped `.shell` override — and spends the viewport
+on the video column, with the transcript held to `minmax(20rem, 28rem)`. This is
+the app's one documented exception to "width never makes content bigger", and it
+is about a picture: a recording is genuinely better large, while the transcript
+opposite stays bounded and the caption underneath is a caption, not a paragraph.
+The line goes up a notch here, where it sits under a large picture rather than on
+a page. `layout.md` carries the
+exception. No third breakpoint; the paged view keeps `.shell-broad` and its
+`3fr 2fr` exactly as they were.
+
+Native `<video controls>` stays on — scrubbing, volume and fullscreen are free —
+and our buttons add only what a video does not have: the operations that know
+where a line begins. Auto-pause is off by default and never remembered, since it
+turns a video into a drill. The keyboard mirrors the controls (Space, ←, →) and
+stands down whenever focus is somewhere that wants those keys itself. Position is
+not stored: a text opens at 0, for the same reason it opens on page 1.
+
+One thing had to be repaired on the way: `textAdded`'s zod payload named neither
+`start`/`end` nor `media`, and zod strips what it is not told about. A local
+`commit` does not parse, so the timings worked perfectly on the device that wrote
+them and vanished on the device they synced to. Both are named now, `texts` has a
+`media` column and `DERIVED_SCHEMA_VERSION` is bumped so the read tables rebuild
+from the log.
+
 ## 7. Not in this slice
 
 - Questions about the text (LLM, chat-style).
 - Target-language explanations on tap (immersion glosses).
-- Audio-first (listen before reading) presentation; per-word timing.
-- **A player.** Subtitle imports store `start`/`end` per sentence, and nothing
-  reads them: no video element, no media reference on `ReadingText`, no
-  follow-the-clock highlighting. The timings are kept because the import is the
-  only moment they exist.
+- Per-word timing (karaoke); audio-first presentation.
+- **YouTube.** `ReadingMedia` has the variant and the reader falls back to the
+  paged view for it; what is missing is the iframe-API `Player` beside
+  `videoPlayer`, and the composer field that takes a URL and keeps the id.
 - Editing a text, re-annotating, imports longer than `MAX_IMPORT_TOTAL_CHARS`.
