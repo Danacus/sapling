@@ -9,17 +9,17 @@
 
   The two doors cost the same round trip and differ only in what the model is
   asked for: `generateReadingText` writes a text out of the garden, while
-  `annotateReadingText` takes a text the learner brought and only annotates it —
+  `annotateReadingText` takes a text the learner imported and only annotates it —
   the sentences are cut here, locally, so what lands on the reader is exactly
   what was pasted. Both come back as a draft; this page mints the id and the
   timestamp and stores it, which is the whole reason `$lib/reading` can stay
   stateless.
 
-  **The bring door has three parts, in the order the questions arise**: what the
+  **The import door has three parts, in the order the questions arise**: what the
   text is, what it will cost, and what it should play alongside.
 
   *What it is* has two shapes and shows one of them. A paste stays in the box —
-  prose, a copied transcript panel, anything typed. A **brought file is an
+  prose, a copied transcript panel, anything typed. An **uploaded file is an
   object, not a paste**: a subtitle file is a thousand lines of cue soup, and
   pouring it into the textarea buried the only thing worth seeing, which is what
   the app made of it. So it becomes a card stating its own facts (what format,
@@ -99,7 +99,7 @@
 	let title = $state('');
 	let pasted = $state('');
 	/**
-	 * A subtitle file the learner brought, held as an *object* rather than poured
+	 * A subtitle file the learner uploaded, held as an *object* rather than poured
 	 * into the box.
 	 *
 	 * A subtitle file is not a paste. It is a thousand lines of cue soup nobody
@@ -180,12 +180,12 @@
 	 * What the text on the way in actually is, worked out once and used by every
 	 * line that describes it and by the button that spends the money.
 	 *
-	 * There is one door, not two: the learner pastes or brings whatever they have
+	 * There is one door, not two: the learner pastes or uploads whatever they have
 	 * and the page recognises it. A subtitle file is un-cued back into sentences
 	 * (`cuesToSentences`) and keeps its timings; anything else is prose and is
 	 * simply split. **One `$derived` over one source**, which is what keeps the
 	 * card, the counter, the button's disabled state and the import from ever
-	 * disagreeing about what is being sent — the source is the brought file if
+	 * disagreeing about what is being sent — the source is the uploaded file if
 	 * there is one and the box otherwise, and nothing downstream asks which.
 	 */
 	interface ImportPlan {
@@ -319,7 +319,7 @@
 	}
 
 	/**
-	 * A file the learner brought, sorted into one of the two things a file can be.
+	 * A file the learner uploaded, sorted into one of the two things a file can be.
 	 *
 	 * **Its content decides, not its extension.** Anything the detector recognises
 	 * as cues becomes an object — a card that states what it holds, because
@@ -329,7 +329,7 @@
 	 * an `.srt` full of prose is still prose; the learner never has to know which
 	 * door they used.
 	 */
-	async function bringFile(event: Event) {
+	async function uploadFile(event: Event) {
 		const input = event.currentTarget as HTMLInputElement;
 		const file = input.files?.[0];
 		// Cleared straight away, so choosing the same file twice still fires.
@@ -380,7 +380,7 @@
 	 * a video is hundreds of megabytes and the app wants none of it, only the
 	 * handle and, for the store, the name.
 	 */
-	function bringMedia(event: Event) {
+	function chooseRecording(event: Event) {
 		const input = event.currentTarget as HTMLInputElement;
 		mediaFile = input.files?.[0];
 		// A text has one recording: the file the learner just chose is the answer,
@@ -397,7 +397,7 @@
 	 * assigning state (the browser owns its value), so the element is asked
 	 * directly, and doing that in the handler keeps the order of the two obvious.
 	 */
-	function bringLink(event: Event) {
+	function enterLink(event: Event) {
 		const input = event.currentTarget as HTMLInputElement;
 		mediaLink = input.value;
 		if (input.value.trim() === '') return;
@@ -405,7 +405,7 @@
 		if (mediaInput) mediaInput.value = '';
 	}
 
-	/** Door two: a text the learner brought, cut here and annotated there. */
+	/** Door two: a text the learner imported, cut here and annotated there. */
 	async function add() {
 		if (!profile || busy) return;
 
@@ -415,7 +415,7 @@
 			return;
 		}
 		if (overCap) {
-			composeError = 'That is more than one import can carry — bring a shorter piece.';
+			composeError = 'That is more than one import can carry — import a shorter piece.';
 			return;
 		}
 
@@ -484,7 +484,7 @@
 </script>
 
 <svelte:head>
-	<title>Sapling · Reading</title>
+	<title>Sapling · Media</title>
 </svelte:head>
 
 <main class="shell shell-broad">
@@ -506,7 +506,7 @@
 				</a>
 				<div class="identity">
 					<p class="eyebrow">Sapling</p>
-					<h1>Reading</h1>
+					<h1>Media</h1>
 				</div>
 			</header>
 
@@ -546,7 +546,7 @@
 						disabled={busy}
 						onclick={() => pickDoor('paste')}
 					>
-						Paste a text
+						Import your own
 					</button>
 				</div>
 
@@ -628,11 +628,11 @@
 								</svg>
 								<div class="source-id">
 									<p class="source-kind">
-										{plan.format ? FORMAT_NAMES[plan.format] : 'Brought file'}
+										{plan.format ? FORMAT_NAMES[plan.format] : 'Uploaded file'}
 									</p>
 									<p class="source-name">{sourceFile.name}</p>
 									<!-- Everything the file turned out to hold, in one line: the
-									     learner brought cues and gets back sentences, which is the
+									     learner handed over cues and gets back sentences, which is the
 									     whole transformation this page performs. -->
 									<p class="source-facts">
 										{plan.cues} cue{plan.cues === 1 ? '' : 's'} · {plan.sentences.length} sentence{plan
@@ -682,20 +682,20 @@
 								type="file"
 								accept=".srt,.vtt,.txt"
 								disabled={busy}
-								onchange={(event) => void bringFile(event)}
+								onchange={(event) => void uploadFile(event)}
 							/>
 							<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
 								<path d="M12 16.4V4.9" />
 								<path d="m7.6 9.3 4.4-4.4 4.4 4.4" />
 								<path d="M4.6 15.1v2.8a1.6 1.6 0 0 0 1.6 1.6h11.6a1.6 1.6 0 0 0 1.6-1.6v-2.8" />
 							</svg>
-							<span>Or bring a file — subtitles, or plain text</span>
+							<span>Or upload a file — subtitles, or plain text</span>
 						</label>
 					{/if}
 
 					<!-- Cost, before anything is spent on it: an import is the one action
 					     here whose price is invisible until it has been paid. The card
-					     above already states a brought file's counts, so this side only
+					     above already states an uploaded file's counts, so this side only
 					     speaks for what is in the box. -->
 					<div class="cost">
 						{#if !sourceFile && plan.sentences.length > 0}
@@ -722,7 +722,7 @@
 					     say why is the failure. -->
 					{#if overCap}
 						<p class="hint over-note">
-							That is more than one import can carry — bring a shorter piece.
+							That is more than one import can carry — import a shorter piece.
 						</p>
 					{:else if sourceFile && plan.sentences.length === 0}
 						<p class="hint over-note">There is nothing to read in that file.</p>
@@ -747,7 +747,7 @@
 								type="file"
 								accept="video/*,audio/*"
 								bind:this={mediaInput}
-								onchange={bringMedia}
+								onchange={chooseRecording}
 							/>
 							<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
 								<rect x="3.4" y="6.2" width="12.4" height="11.6" rx="2" />
@@ -762,20 +762,20 @@
 						<!-- Or the video where it lives. One recording per text, so the two
 						     clear each other rather than both being sent. -->
 						<label class="field link-field">
-							<span class="bring-label">or a YouTube link</span>
+							<span class="link-label">or a YouTube link</span>
 							<input
 								class="input"
 								type="url"
 								inputmode="url"
 								placeholder="https://youtu.be/…"
 								value={mediaLink}
-								oninput={bringLink}
+								oninput={enterLink}
 							/>
 						</label>
 
 						<p class="hint media-hint">
 							{#if !plan.format}
-								Bring subtitles and the text can follow its recording, line by line.
+								Import subtitles and the text can follow its recording, line by line.
 							{:else if linkId}
 								Video <strong>{linkId}</strong> plays beside the text, from YouTube.
 							{:else if mediaLink.trim()}
@@ -820,9 +820,11 @@
 
 			<!-- State: the shelf. -->
 			<section class="shelf ll-rise" style="animation-delay: 180ms">
-				<h2 class="shelf-head">Your texts</h2>
+				<h2 class="shelf-head">Your media</h2>
 				{#if texts.length === 0}
-					<p class="hint empty">Nothing on the shelf yet — the first text you make lands here.</p>
+					<p class="hint empty">
+						Nothing on the shelf yet — the first thing you write or import lands here.
+					</p>
 				{:else}
 					<ul class="texts">
 						{#each texts as text (text.id)}
@@ -831,7 +833,7 @@
 									<span class="text-title">{text.title}</span>
 									<span class="text-meta">
 										<span class="badge badge-{text.source}">
-											{text.source === 'generated' ? 'written' : 'brought'}
+											{text.source === 'generated' ? 'written' : 'imported'}
 										</span>
 										<span>{dates.format(text.createdAt)}</span>
 										<span
@@ -1017,7 +1019,7 @@
 		resize: vertical;
 	}
 
-	/* The brought file, as an object -------------------------------------- */
+	/* The uploaded file, as an object -------------------------------------- */
 
 	/*
 	  A card in the box's place, wearing the same clothes as a text on the shelf:
@@ -1053,7 +1055,7 @@
 		color: color-mix(in srgb, var(--accent) 65%, var(--text-muted));
 	}
 
-	/* The display face, because a file the learner brought is a title, not a
+	/* The display face, because a file the learner uploaded is a title, not a
 	   parameter — the shelf rows below name their texts the same way. */
 	.source-name {
 		margin: 0.1rem 0 0;
@@ -1109,12 +1111,12 @@
 		cursor: not-allowed;
 	}
 
-	/* Bringing a file ------------------------------------------------------ */
+	/* Uploading a file ----------------------------------------------------- */
 
 	/*
 	  The browser draws a file input as a small grey button and the words "No file
 	  chosen", which is the least inviting thing on the page and says nothing
-	  about what to bring. So the input is hidden *inside* its own label — still
+	  about what to upload. So the input is hidden *inside* its own label — still
 	  focusable, still the accessible name — and the label is the affordance: a
 	  dashed slot, which in this journal is where something is meant to be put.
 	*/
@@ -1237,7 +1239,7 @@
 		overflow-wrap: anywhere;
 	}
 
-	.bring-label {
+	.link-label {
 		display: block;
 		margin-bottom: 0.3rem;
 		font-size: 0.78rem;
@@ -1402,7 +1404,7 @@
 		color: var(--text-muted);
 	}
 
-	/* Where a text came from, in one word. The two are peers — a brought text is
+	/* Where a text came from, in one word. The two are peers — an imported text is
 	   not a lesser one — so they differ in hue, not in weight. */
 	.badge {
 		padding: 0.1rem 0.45rem;

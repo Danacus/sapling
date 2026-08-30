@@ -4,6 +4,12 @@ Status: **slices 1–5 implemented** (the reader, reading as review, subtitle
 import, the follow view, and YouTube beside a local file). The vision is larger
 than what is built; §7 lists what is deliberately left out.
 
+"Reading mode" is the **internal** name and stays: the route is `/read`, the
+module `$lib/reading`, the type `ReadingText`. To the learner the section is
+called **Media**, because a text here is read, listened to or watched — and
+nothing user-facing says "bring" or "brought": a text is *imported*, a file is
+*uploaded*.
+
 ## 1. Why
 
 Every challenge type drills words the learner already has. Reading mode is the
@@ -18,10 +24,10 @@ in the garden with an FSRS strength, marked as known, or not yet met.
 
 ## 2. Shape of the feature
 
-1. **Library** (`/read`). Every text the learner has kept, newest first, and a
-   composer with two doors: *Write one for me* (optional topic → one LLM call)
-   and *Paste a text* (a paste or a brought file, plus an optional recording →
-   one or more LLM calls that annotate it).
+1. **Library** (`/read`, "Media"). Every text the learner has kept, newest
+   first, and a composer with two doors: *Write one for me* (optional topic →
+   one LLM call) and *Import your own* (a paste or an uploaded file, plus an
+   optional recording → one or more LLM calls that annotate it).
 2. **Reader** (`/read/[id]`). The text a page at a time (`?p=`), each page one
    continuous body of tappable words with ruby readings, a translation toggle, a
    Listen button, and a word card for whatever was tapped.
@@ -300,11 +306,11 @@ under the same condition.
 
 ### As built, where it differs from the above
 
-- **The bring door is three parts, and a brought file is an object.** It grew by
-  accretion — a file input that poured raw VTT into the textarea, and a
+- **The import door is three parts, and an uploaded file is an object.** It grew
+  by accretion — a file input that poured raw VTT into the textarea, and a
   recording section that only existed once a paste happened to validate — and
   was restructured into *what the text is*, *what it will cost*, *what it plays
-  alongside*. A file the learner brings is recognised by its **content, not its
+  alongside*. A file the learner uploads is recognised by its **content, not its
   extension**: anything `detectSubtitleFormat` knows becomes a card in the
   textarea's place stating what it holds (`SRT subtitles · 214 cues · 89
   sentences · 12:34 · about 4 calls`) with a × that gives the box back, and

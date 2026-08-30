@@ -1087,7 +1087,7 @@
 </script>
 
 <svelte:head>
-	<title>{text ? `Sapling · ${text.title}` : 'Sapling · Reading'}</title>
+	<title>{text ? `Sapling · ${text.title}` : 'Sapling · Media'}</title>
 </svelte:head>
 
 <!--
@@ -1146,7 +1146,7 @@
 		<div class="card gone">
 			<h1>This text is gone</h1>
 			<p class="hint">It was deleted, here or on another device.</p>
-			<a class="btn btn-ghost" href="/read">Back to your texts</a>
+			<a class="btn btn-ghost" href="/read">Back to your media</a>
 		</div>
 	{:else}
 		<!--
@@ -1161,14 +1161,14 @@
 			class:has-error={pageError !== ''}
 		>
 			<header class="topbar spread-full ll-rise">
-				<a class="back" href="/read" aria-label="Back to your texts">
+				<a class="back" href="/read" aria-label="Back to your media">
 					<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
 						<path d="m14.2 5.4-6.4 6.6 6.4 6.6" />
 					</svg>
 				</a>
 				<div class="identity">
 					<p class="eyebrow">
-						{text.source === 'generated' ? 'Written for you' : 'You brought this'} · {dates.format(
+						{text.source === 'generated' ? 'Written for you' : 'You imported this'} · {dates.format(
 							text.createdAt
 						)}
 					</p>

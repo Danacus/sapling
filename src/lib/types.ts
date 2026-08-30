@@ -312,7 +312,7 @@ export interface ReadingSentence {
 	translation?: string;
 	/**
 	 * When this sentence is spoken, in milliseconds from the start of the media
-	 * it was imported from — present only for a text brought in as subtitles.
+	 * it was imported from — present only for a text imported as subtitles.
 	 *
 	 * Not a clock: these are offsets into a recording, so they mean nothing
 	 * without it and are deliberately not epoch times. Kept now because the

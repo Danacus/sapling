@@ -287,10 +287,10 @@
 								</svg>
 							</span>
 							<span class="door-body">
-								<span class="door-title">Read something</span>
+								<span class="door-title">Read or watch something</span>
 								<span class="door-copy">
-									A text written from your words — or one you bring — with every word one tap from
-									its meaning.
+									A text written from your words, or one you import — read it, listen to it, or
+									watch it, with every word one tap from its meaning.
 								</span>
 							</span>
 							<svg class="ico door-arrow" viewBox="0 0 24 24" aria-hidden="true">
