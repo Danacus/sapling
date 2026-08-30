@@ -86,7 +86,13 @@ export interface KnowledgeItem {
 	reviewCount?: number;
 	/** How many of the reviews were graded Good or better. */
 	correctCount?: number;
-	/** The most recent reviews, oldest first — what the ledger's tick strip shows. */
+	/**
+	 * The most recent reviews, oldest first — what the ledger's tick strip shows.
+	 *
+	 * Absent unless the caller asked for it: `getAllItems({ withRecentGrades: true })`
+	 * or `getItem()`. The plain `getAllItems()` bulk read leaves it out — it is up
+	 * to `RECENT_GRADES_CAP` entries (~1 KB) per item and nothing else reads it.
+	 */
 	recentGrades?: { at: number; grade: number }[];
 }
 

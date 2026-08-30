@@ -4,9 +4,9 @@
 	import {
 		getAllItems,
 		getDailyActivity,
-		getPool,
 		getProfile,
 		localDay,
+		poolSize,
 		previousDay,
 		streakFrom
 	} from '$lib/db';
@@ -37,14 +37,14 @@
 		loading = true;
 		loadError = '';
 
-		Promise.all([getProfile(), getAllItems(), getDailyActivity(), getPool()])
-			.then(([loadedProfile, loadedItems, days, pool]) => {
+		Promise.all([getProfile(), getAllItems(), getDailyActivity(), poolSize()])
+			.then(([loadedProfile, loadedItems, days, count]) => {
 				if (cancelled) return;
 				profile = loadedProfile;
 				items = loadedItems;
 				activity = days;
 				streakDays = streakFrom(activity.map((entry) => entry.day));
-				pooled = pool.length;
+				pooled = count;
 				now = Date.now();
 				loading = false;
 			})

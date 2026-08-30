@@ -49,8 +49,9 @@
 	const HISTORY_CAP = 40;
 
 	/**
-	 * The tick strip reads the stored aggregates, because `getAllItems` carries
-	 * no review entries. The `history` fallback covers items built in memory.
+	 * The tick strip reads the stored aggregates, so this page asks `getAllItems`
+	 * for `recentGrades` explicitly — the one caller that draws them. The
+	 * `history` fallback covers items built in memory.
 	 */
 	const reviewsOf = (item: KnowledgeItem) => item.reviewCount ?? item.history.length;
 	const ticksOf = (item: KnowledgeItem) => item.recentGrades ?? item.history;
@@ -117,7 +118,7 @@
 		loading = true;
 		loadError = '';
 
-		Promise.all([getProfile(), getAllItems()])
+		Promise.all([getProfile(), getAllItems({ withRecentGrades: true })])
 			.then(([loadedProfile, loadedItems]) => {
 				if (cancelled) return;
 				profile = loadedProfile;

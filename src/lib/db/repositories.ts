@@ -54,7 +54,8 @@ interface ItemRow {
 	fsrsCard: string;
 	reviewCount: number;
 	correctCount: number;
-	recentGrades: string;
+	/** Absent when the query left the column out — {@link getAllItems}'s lean default. */
+	recentGrades?: string;
 }
 
 interface ChallengeSqlRow {
@@ -95,7 +96,9 @@ function itemFrom(row: ItemRow, history: readonly ReviewRow[]): KnowledgeItem {
 		fsrsCard: JSON.parse(row.fsrsCard) as unknown,
 		reviewCount: row.reviewCount,
 		correctCount: row.correctCount,
-		recentGrades: JSON.parse(row.recentGrades) as { at: number; grade: number }[],
+		...(row.recentGrades === undefined
+			? {}
+			: { recentGrades: JSON.parse(row.recentGrades) as { at: number; grade: number }[] }),
 		history: history.map(({ at, grade, device }) => ({ at, grade, device }))
 	};
 }
@@ -171,17 +174,27 @@ export async function saveProfile(profile: Profile, _now: number = Date.now()): 
 /* Knowledge items                                                             */
 /* -------------------------------------------------------------------------- */
 
+/** Columns {@link getAllItems} reads by default — everything but `recentGrades`. */
+const ITEM_COLUMNS_LEAN =
+	'id, kind, term, meaning, romanization, notes, introducedAt, fsrsCard, reviewCount, correctCount';
+
 /**
  * Every knowledge item the learner has met so far, with an **empty** `history`.
  *
- * This is the hot read — 29 call sites, session start included — so it costs one
- * `SELECT` over `items` and never touches `reviews`. Everything a bulk reader
- * wants from the history is already a column: `reviewCount`, `correctCount` and
- * `recentGrades`. A caller that genuinely needs the entries reads {@link getItem}.
+ * This is the hot read — most call sites, session start included — so it costs
+ * one `SELECT` over `items` and never touches `reviews`. `recentGrades` is up to
+ * `RECENT_GRADES_CAP` entries (~1 KB) per item and only ever drawn by the words
+ * page's tick strip, so it is left out of the column list unless
+ * `withRecentGrades` asks for it. `reviewCount` and `correctCount` are single
+ * numbers and always come along. A caller that genuinely needs the entries reads
+ * {@link getItem}.
  */
-export async function getAllItems(): Promise<KnowledgeItem[]> {
+export async function getAllItems(
+	opts: { withRecentGrades?: boolean } = {}
+): Promise<KnowledgeItem[]> {
 	const store = await ready();
-	const rows = await store.query<ItemRow>('SELECT * FROM items');
+	const columns = opts.withRecentGrades ? '*' : ITEM_COLUMNS_LEAN;
+	const rows = await store.query<ItemRow>(`SELECT ${columns} FROM items`);
 	return rows.map((row) => itemFrom(row, []));
 }
 
@@ -215,8 +228,14 @@ export async function upsertItems(
 	if (items.length === 0) return;
 	const store = await ready();
 	const plain = toPlain(items);
+	const placeholders = plain.map(() => '?').join(', ');
 	const known = new Set(
-		(await store.query<{ id: string }>('SELECT id FROM items')).map((r) => r.id)
+		(
+			await store.query<{ id: string }>(
+				`SELECT id FROM items WHERE id IN (${placeholders})`,
+				plain.map((item) => item.id)
+			)
+		).map((r) => r.id)
 	);
 
 	await store.commitAll(
@@ -364,10 +383,15 @@ export async function getPool(): Promise<ChallengeRow[]> {
 	return rows.map(challengeRowFrom);
 }
 
-/** The whole pool, reported rows included — what sync merges over. */
-export async function getAllChallenges(): Promise<ChallengeRow[]> {
+/** How many challenges {@link getPool} would return — for callers that only want the count. */
+export async function poolSize(): Promise<number> {
 	const store = await ready();
-	return (await store.query<ChallengeSqlRow>('SELECT * FROM challenges')).map(challengeRowFrom);
+	const row = (
+		await store.query<{ count: number }>(
+			'SELECT count(*) AS count FROM challenges WHERE reported = 0'
+		)
+	)[0];
+	return row?.count ?? 0;
 }
 
 /**
@@ -425,12 +449,6 @@ export async function addResult(result: ChallengeResult): Promise<void> {
 		answerGiven: plain.answerGiven,
 		at: plain.at
 	});
-}
-
-/** The whole answer log, oldest first. Used by genesis; the UI wants {@link recentResults}. */
-export async function getAllResults(): Promise<ChallengeResult[]> {
-	const store = await ready();
-	return (await store.query<ResultSqlRow>('SELECT * FROM results ORDER BY at ASC')).map(resultFrom);
 }
 
 /** The most recent results, newest first. */

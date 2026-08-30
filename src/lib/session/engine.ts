@@ -863,8 +863,13 @@ export async function generateChallenges(
 	// The trouble list for the prompt: recent misses, resolved back to the words
 	// they exercised. Answered rows stay in the pool, so this is a plain lookup —
 	// bounded by RECENT_RESULTS_WINDOW so it stays one cheap read. It does not
-	// depend on the items, so the two reads go together.
-	const [items, results] = await Promise.all([getAllItems(), recentResults(RECENT_RESULTS_WINDOW)]);
+	// depend on the items, so the two reads go together. `withRecentGrades` is
+	// needed here (unlike `startSession`'s read) because `planRefill` below folds
+	// them into the prompt's accuracy dial via `accuracyFromHistory`.
+	const [items, results] = await Promise.all([
+		getAllItems({ withRecentGrades: true }),
+		recentResults(RECENT_RESULTS_WINDOW)
+	]);
 	const missed = results.filter((result) => result.verdict === 'wrong');
 	const recentChallenges = await getChallengesByIds([
 		...new Set(missed.map((result) => result.challengeId))
