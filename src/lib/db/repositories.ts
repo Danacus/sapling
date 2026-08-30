@@ -37,6 +37,7 @@ import { storeReady } from '$lib/livestore/store';
 import type { Challenge, ChallengeResult, KnowledgeItem, Profile, Verdict } from '$lib/types';
 import { challengeOf } from './database';
 import type { ChallengeRow } from './database';
+import type { SyncEvent } from './events';
 import { toPlain } from './plain';
 
 export { activityByDay, localDay, previousDay, streakFrom } from './day';
@@ -454,35 +455,199 @@ export async function recentResults(limit: number): Promise<ChallengeResult[]> {
 /* -------------------------------------------------------------------------- */
 
 /** Envelope version written by {@link exportData}. */
-export const EXPORT_VERSION = 2;
+export const EXPORT_VERSION = 3;
 
-/** Envelope versions {@link importData} still understands. */
-const SUPPORTED_EXPORT_VERSIONS = [1, EXPORT_VERSION];
+/** Envelope versions {@link importData} still restores from. */
+const SUPPORTED_IMPORT_VERSIONS = [1, 2];
 
 /** Shape of the JSON produced by {@link exportData}. */
 export interface ExportEnvelope {
 	version: number;
 	exportedAt: number;
-	profile: Profile | null;
-	items: KnowledgeItem[];
+	events: SyncEvent[];
+}
+
+/** Turns every LiveStore table row into the one event it would have produced. */
+function eventsFromTables(
+	items: readonly {
+		id: string;
+		kind: string;
+		term: string;
+		meaning: string;
+		romanization: string | null;
+		notes: string | null;
+		introducedAt: number;
+	}[],
+	reviews: readonly { id: string; itemId: string; at: number; grade: number; device: string }[],
+	tombstones: readonly { itemId: string }[],
+	challenges: readonly {
+		id: string;
+		content: unknown;
+		generatedAt: number;
+		topic: string | null;
+		reported: boolean;
+	}[],
+	serves: readonly { id: string; challengeId: string; at: number }[],
+	results: readonly {
+		id: string;
+		challengeId: string;
+		verdict: string;
+		answerGiven: string;
+		at: number;
+	}[],
+	profile: {
+		nativeLanguage: string;
+		targetLanguage: string;
+		level: string;
+		interests: string[];
+		about: string | null;
+		model: string;
+		createdAt: number;
+	} | null
+): SyncEvent[] {
+	const device = getDeviceId();
+	const out: SyncEvent[] = [];
+
+	for (const row of items) {
+		out.push({
+			id: `item:${row.id}`,
+			type: 'itemAdded',
+			at: row.introducedAt,
+			device,
+			payload: {
+				id: row.id,
+				kind: row.kind,
+				term: row.term,
+				meaning: row.meaning,
+				...(row.romanization === null ? {} : { romanization: row.romanization }),
+				...(row.notes === null ? {} : { notes: row.notes }),
+				introducedAt: row.introducedAt
+			}
+		});
+	}
+
+	for (const row of reviews) {
+		out.push({
+			id: `review:${row.id}`,
+			type: 'itemReviewed',
+			at: row.at,
+			device: row.device,
+			payload: { device: row.device, at: row.at, itemId: row.itemId, grade: row.grade }
+		});
+	}
+
+	for (const row of tombstones) {
+		out.push({
+			id: `tombstone:${row.itemId}`,
+			type: 'itemDeleted',
+			at: 0,
+			device,
+			payload: { itemId: row.itemId }
+		});
+	}
+
+	for (const row of challenges) {
+		out.push({
+			id: `challenge:${row.id}`,
+			type: 'challengeAdded',
+			at: row.generatedAt,
+			device,
+			payload: {
+				challenge: row.content,
+				generatedAt: row.generatedAt,
+				...(row.topic === null ? {} : { topic: row.topic })
+			}
+		});
+		if (row.reported) {
+			out.push({
+				id: `reported:${row.id}`,
+				type: 'challengeReported',
+				at: row.generatedAt,
+				device,
+				payload: { challengeId: row.id }
+			});
+		}
+	}
+
+	for (const row of serves) {
+		out.push({
+			id: row.id,
+			type: 'challengeServed',
+			at: row.at,
+			device,
+			payload: { challengeId: row.challengeId, at: row.at }
+		});
+	}
+
+	for (const row of results) {
+		out.push({
+			id: row.id,
+			type: 'resultLogged',
+			at: row.at,
+			device,
+			payload: {
+				challengeId: row.challengeId,
+				verdict: row.verdict,
+				answerGiven: row.answerGiven,
+				at: row.at
+			}
+		});
+	}
+
+	if (profile) {
+		out.push({
+			id: 'profile',
+			type: 'profileUpdated',
+			at: profile.createdAt,
+			device,
+			payload: {
+				nativeLanguage: profile.nativeLanguage,
+				targetLanguage: profile.targetLanguage,
+				level: profile.level,
+				interests: profile.interests,
+				...(profile.about === null ? {} : { about: profile.about }),
+				model: profile.model,
+				createdAt: profile.createdAt
+			}
+		});
+	}
+
+	return out;
 }
 
 /**
- * Serializes profile and items as JSON.
- *
- * Deliberately excludes the API key (it lives in `localStorage`) and the
- * challenge pool (regenerated content, not progress — and the pool's serve
- * bookkeeping means nothing on another device). Nothing in the envelope
- * mentions challenges, so the pool's row shape is free to change without
- * touching the export format.
+ * Serializes the whole eventlog as JSON — one event per table row, with a
+ * deterministic id so re-exporting an unchanged store reproduces it exactly.
+ * Excludes only the API key, which lives in `localStorage`.
  */
 export async function exportData(): Promise<string> {
-	const [profile, items] = await Promise.all([getProfile(), getAllItems()]);
+	const store = await storeReady();
+	const profileRow = store.query(
+		tables.profile.where({ id: PROFILE_ID }).first({ behaviour: 'fallback', fallback: () => null })
+	);
+	const syncEvents = eventsFromTables(
+		store.query(tables.items),
+		store.query(tables.reviews),
+		store.query(tables.tombstones),
+		store.query(tables.challenges),
+		store.query(tables.serves),
+		store.query(tables.results),
+		profileRow
+			? {
+					nativeLanguage: profileRow.nativeLanguage,
+					targetLanguage: profileRow.targetLanguage,
+					level: profileRow.level,
+					interests: [...profileRow.interests],
+					about: profileRow.about,
+					model: profileRow.model,
+					createdAt: profileRow.createdAt
+				}
+			: null
+	);
 	const envelope: ExportEnvelope = {
 		version: EXPORT_VERSION,
 		exportedAt: Date.now(),
-		profile: profile ?? null,
-		items
+		events: syncEvents
 	};
 	return JSON.stringify(envelope, null, 2);
 }
@@ -491,11 +656,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null;
 }
 
+/** Shape of the v1/v2 envelopes {@link importData} still restores from. */
+interface LegacyExportEnvelope {
+	version: number;
+	exportedAt: number;
+	profile: Profile | null;
+	items: KnowledgeItem[];
+}
+
 /**
- * Restores a dump produced by {@link exportData}, replacing existing items.
- *
- * Throws on malformed input or an unsupported envelope version; the API key and
- * the challenge pool are untouched.
+ * Restores a v1 or v2 dump, replacing existing items. A v3 export is rejected
+ * — this LiveStore build only produces v3, the next one reads it back.
  *
  * "Replacing" is the awkward part in an append-only model, and it is done
  * honestly rather than by reaching under the log: every existing item is
@@ -514,9 +685,12 @@ export async function importData(json: string): Promise<void> {
 	}
 
 	if (!isRecord(parsed)) throw new Error('Import failed: unexpected file contents.');
+	if (parsed.version === 3) {
+		throw new Error('Import failed: v3 exports are read by the next version of Sapling.');
+	}
 	// A v1 envelope still restores: it carries a `stats` field that no longer
 	// means anything, and everything else is unchanged, so it is simply ignored.
-	if (typeof parsed.version !== 'number' || !SUPPORTED_EXPORT_VERSIONS.includes(parsed.version)) {
+	if (typeof parsed.version !== 'number' || !SUPPORTED_IMPORT_VERSIONS.includes(parsed.version)) {
 		throw new Error(`Import failed: unsupported export version ${String(parsed.version)}.`);
 	}
 	if (!Array.isArray(parsed.items)) throw new Error('Import failed: missing item list.');
@@ -524,7 +698,7 @@ export async function importData(json: string): Promise<void> {
 		throw new Error('Import failed: malformed profile.');
 	}
 
-	const envelope = toPlain(parsed as unknown as ExportEnvelope);
+	const envelope = toPlain(parsed as unknown as LegacyExportEnvelope);
 	const store = await storeReady();
 
 	for (const row of store.query(tables.items)) {
