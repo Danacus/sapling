@@ -117,18 +117,16 @@ export class SyncRoom implements DurableObject {
 			);
 		}
 
-		// Read back rather than tracking inserts: an id that was already here has
-		// a seq the pusher still needs, and it is the same answer either way.
-		const placeholders = events.map(() => '?').join(',');
-		const rows = this.sql
-			.exec<{ id: string; seq: number }>(
-				`SELECT id, seq FROM events WHERE id IN (${placeholders})`,
-				...events.map((event) => event.id)
-			)
-			.toArray();
-
+		// Read back one by one: an id that was already here has a seq the pusher
+		// still needs, and DO SQLite allows at most 100 bound variables per
+		// statement, so one `IN (...)` over a page of 500 fails.
 		const seqs: Record<string, number> = {};
-		for (const row of rows) seqs[row.id] = row.seq;
+		for (const event of events) {
+			const row = this.sql
+				.exec<{ seq: number }>('SELECT seq FROM events WHERE id = ?', event.id)
+				.toArray()[0];
+			if (row) seqs[event.id] = row.seq;
+		}
 		return json({ seqs });
 	}
 
@@ -180,6 +178,12 @@ export default {
 			return text('Unauthorized\n', 401);
 		}
 
-		return env.SYNC_ROOM.get(env.SYNC_ROOM.idFromName(roomId)).fetch(request);
+		// Cloudflare's own 500 page carries no CORS headers, so a browser would
+		// report an uncaught error here as a CORS failure and hide the message.
+		try {
+			return await env.SYNC_ROOM.get(env.SYNC_ROOM.idFromName(roomId)).fetch(request);
+		} catch (error) {
+			return text(`${String(error)}\n`, 500);
+		}
 	}
 };
