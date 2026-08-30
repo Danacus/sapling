@@ -5,8 +5,8 @@
  * words rather than sentences because the two kinds of text this feature
  * carries have nothing in common in that dimension: a generated piece is six to
  * twelve sentences that may each be five words long, while an import is up to
- * `MAX_IMPORT_CHARS` of somebody else's prose, where one sentence can run three
- * lines. Counting sentences would give the first a page a swipe long and the
+ * `MAX_IMPORT_TOTAL_CHARS` of somebody else's prose, where one sentence can run
+ * three lines. Counting sentences would give the first a page a swipe long and the
  * second a wall; counting words gives both about the same amount of reading,
  * which is what a page is for.
  *

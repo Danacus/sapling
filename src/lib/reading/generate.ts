@@ -60,6 +60,15 @@ export interface ReadingOptions {
 	fetchFn?: FetchLike;
 	apiKey?: string;
 	model?: string;
+	/**
+	 * How far a chunked import has got, called once per chunk as it lands.
+	 *
+	 * Only `annotateReadingText` ever calls it — it is the one entry point that
+	 * may make more than one round trip, and a learner who pasted an article is
+	 * owed a number rather than a spinner that sits still for a minute. The
+	 * single-call paths ignore it, so passing it is always harmless.
+	 */
+	onProgress?: (done: number, total: number) => void;
 }
 
 /**

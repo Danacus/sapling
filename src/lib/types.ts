@@ -310,6 +310,22 @@ export interface ReadingSentence {
 	reading?: string;
 	/** The sentence in the learner's native language. */
 	translation?: string;
+	/**
+	 * When this sentence is spoken, in milliseconds from the start of the media
+	 * it was imported from — present only for a text brought in as subtitles.
+	 *
+	 * Not a clock: these are offsets into a recording, so they mean nothing
+	 * without it and are deliberately not epoch times. Kept now because the
+	 * subtitle file is the only place they exist and re-deriving them later would
+	 * mean asking the learner for the file again; the player that follows them is
+	 * a later slice, and until it lands nothing reads these.
+	 *
+	 * Both or neither: a sentence with a start and no end is not a fact anything
+	 * downstream can use.
+	 */
+	start?: number;
+	/** End of {@link start}'s span, same units and the same all-or-nothing rule. */
+	end?: number;
 }
 
 /**

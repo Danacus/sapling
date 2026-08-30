@@ -45,15 +45,29 @@ export interface AnnotateTextArgs {
 }
 
 /**
- * How much text one import may carry, in characters.
+ * How much text **one call** may carry, in characters.
  *
  * Not a technical limit — it is what one call can annotate well. Past a few
  * thousand characters the model starts thinning out the later translations and
  * the glossary stops covering the tail, and the failure is invisible: a text
- * that looks annotated but goes bare halfway down. A longer import wants
- * chunking, which is explicitly out of this slice.
+ * that looks annotated but goes bare halfway down. A longer import is cut into
+ * chunks of this size by `./chunks` and annotated a chunk at a time, which is
+ * what makes an article or a subtitle file importable at all — see
+ * {@link MAX_IMPORT_TOTAL_CHARS} for the ceiling on the whole import.
  */
 export const MAX_IMPORT_CHARS = 4000;
+
+/**
+ * How much text one import may carry in total, in characters.
+ *
+ * The chunking removed the quality ceiling, so what is left is a cost and
+ * patience ceiling: 40 000 characters is ten sequential calls, a minute or two
+ * of waiting, and about a long magazine article or an hour of subtitles — past
+ * that a learner is importing a book, and a book is a different feature. The
+ * page enforces it, because it is the page that can say so before the money is
+ * spent.
+ */
+export const MAX_IMPORT_TOTAL_CHARS = 40000;
 
 /** When neither the learner nor the model named the text, its first words do. */
 const FALLBACK_TITLE_CHARS = 40;

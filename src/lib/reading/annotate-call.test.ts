@@ -10,6 +10,7 @@ import { LlmError } from '$lib/llm';
 import type { BatchProfile, FetchLike } from '$lib/llm';
 import {
 	MAX_IMPORT_CHARS,
+	MAX_IMPORT_TOTAL_CHARS,
 	annotatedSentences,
 	buildAnnotatePrompt,
 	parseAnnotatedText,
@@ -63,9 +64,11 @@ function annotationJson(overrides: Record<string, unknown> = {}): string {
 	});
 }
 
-describe('MAX_IMPORT_CHARS', () => {
-	it("is this slice's import cap", () => {
+describe('the import limits', () => {
+	it('budgets one call, and caps the import at several of them', () => {
 		expect(MAX_IMPORT_CHARS).toBe(4000);
+		expect(MAX_IMPORT_TOTAL_CHARS).toBe(40000);
+		expect(MAX_IMPORT_TOTAL_CHARS % MAX_IMPORT_CHARS).toBe(0);
 	});
 });
 

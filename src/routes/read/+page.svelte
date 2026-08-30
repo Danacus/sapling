@@ -24,14 +24,19 @@
 	import { isMockMode } from '$lib/llm';
 	import {
 		MAX_FOCUS_WORDS,
-		MAX_IMPORT_CHARS,
+		MAX_IMPORT_TOTAL_CHARS,
 		MAX_TOPIC_CHARS,
 		annotateReadingText,
+		cuesToSentences,
+		detectSubtitleFormat,
 		generateReadingText,
+		importCallCount,
+		parseSubtitles,
 		splitSentences
 	} from '$lib/reading';
+	import type { SubtitleFormat } from '$lib/reading';
 	import { selectSessionItems } from '$lib/srs';
-	import type { KnowledgeItem, Profile, ReadingText } from '$lib/types';
+	import type { KnowledgeItem, Profile, ReadingSentence, ReadingText } from '$lib/types';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	/** Nudges, not choices — the same shape `/converse` offers over its topic box. */
@@ -54,6 +59,9 @@
 	/** One flag for both doors — a page that is mid-call has nothing else to do. */
 	let busy = $state(false);
 	let composeError = $state('');
+	/** How many annotate calls have landed, of how many. Zero when not chunked. */
+	let annotateDone = $state(0);
+	let annotateTotal = $state(0);
 
 	const dates = new Intl.DateTimeFormat(undefined, {
 		day: 'numeric',
@@ -91,7 +99,50 @@
 		};
 	});
 
-	const pastedLength = $derived(pasted.length);
+	/**
+	 * What the paste actually is, worked out once and used by both the line under
+	 * the box and the button that spends the money.
+	 *
+	 * There is one door, not two: the learner pastes or uploads whatever they
+	 * have and the page recognises it. A subtitle file is un-cued back into
+	 * sentences (`cuesToSentences`) and keeps its timings; anything else is prose
+	 * and is simply split. Deriving both from `pasted` is what keeps the hint and
+	 * the import from ever disagreeing about what is being sent.
+	 */
+	interface ImportPlan {
+		/** Absent for ordinary prose — the existing path. */
+		format?: SubtitleFormat;
+		cues: number;
+		sentences: string[];
+		/** Index-aligned with `sentences`; absent unless this came from subtitles. */
+		timings?: { start: number; end: number }[];
+		/** What counts against the ceiling: the text that will be sent. */
+		chars: number;
+		calls: number;
+	}
+
+	const plan = $derived.by((): ImportPlan => {
+		const format = detectSubtitleFormat(pasted);
+
+		if (format) {
+			const cues = parseSubtitles(pasted);
+			const timed = cuesToSentences(cues);
+			const sentences = timed.map((sentence) => sentence.text);
+			return {
+				format,
+				cues: cues.length,
+				sentences,
+				timings: timed.map(({ start, end }) => ({ start, end })),
+				chars: sentences.reduce((total, sentence) => total + sentence.length, 0),
+				calls: importCallCount(sentences)
+			};
+		}
+
+		const sentences = splitSentences(pasted);
+		return { cues: 0, sentences, chars: pasted.length, calls: importCallCount(sentences) };
+	});
+
+	const overCap = $derived(plan.chars > MAX_IMPORT_TOTAL_CHARS);
 
 	function pickDoor(next: Door) {
 		door = next;
@@ -158,39 +209,81 @@
 		}
 	}
 
+	/**
+	 * A file dropped into the same box the paste goes in.
+	 *
+	 * One line of work, so no helper: reading a `File` as text is `file.text()`,
+	 * and `/settings` does the same thing for a backup. What the file *is* stays
+	 * the detector's business, exactly as if it had been pasted — which is the
+	 * point of routing it through `pasted` rather than a second state.
+	 */
+	async function bringFile(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		// Cleared straight away, so choosing the same file twice still fires.
+		input.value = '';
+		if (!file) return;
+
+		composeError = '';
+		try {
+			pasted = await file.text();
+		} catch {
+			composeError = 'Could not read that file.';
+		}
+	}
+
 	/** Door two: a text the learner brought, cut here and annotated there. */
 	async function add() {
 		if (!profile || busy) return;
 
-		const sentences = splitSentences(pasted);
+		const { sentences, timings } = plan;
 		if (sentences.length === 0) {
 			composeError = 'There is nothing to read in that yet.';
+			return;
+		}
+		if (overCap) {
+			composeError = 'That is more than one import can carry — bring a shorter piece.';
 			return;
 		}
 
 		busy = true;
 		composeError = '';
+		annotateDone = 0;
+		annotateTotal = plan.calls;
 		const own = title.trim();
 
 		try {
 			const vocabulary = await vocabularyNow();
-			const draft = await annotateReadingText({
-				profile,
-				vocabulary,
-				sentences,
-				...(own ? { title: own } : {})
-			});
+			const draft = await annotateReadingText(
+				{
+					profile,
+					vocabulary,
+					sentences,
+					...(own ? { title: own } : {})
+				},
+				{ onProgress: (done) => (annotateDone = done) }
+			);
+
+			// The timings never reach `$lib/reading`: it is handed strings and gives
+			// back one annotation per string, so zipping them on here by index is
+			// exact and keeps the module ignorant of where the text came from.
+			const stored: ReadingSentence[] = timings
+				? draft.sentences.map((sentence, i) =>
+						timings[i] ? { ...sentence, ...timings[i] } : sentence
+					)
+				: draft.sentences;
 
 			await keep({
 				title: draft.title,
 				source: 'imported',
-				sentences: draft.sentences,
+				sentences: stored,
 				glossary: draft.glossary
 			});
 		} catch (cause) {
 			composeError = cause instanceof Error ? cause.message : 'Could not annotate that text.';
 		} finally {
 			busy = false;
+			annotateTotal = 0;
 		}
 	}
 </script>
@@ -330,27 +423,58 @@
 						<textarea
 							class="input paste-input"
 							rows="8"
-							placeholder="An article, a song, a transcript…"
-							maxlength={MAX_IMPORT_CHARS}
+							placeholder="An article, a song, a subtitle file…"
 							disabled={busy}
 							bind:value={pasted}></textarea>
 					</label>
 
-					<p class="counter" class:near={pastedLength > MAX_IMPORT_CHARS * 0.9}>
-						{pastedLength} / {MAX_IMPORT_CHARS}
-					</p>
+					<div class="paste-tools">
+						<label class="bring">
+							<span class="bring-label">Or bring a file</span>
+							<input
+								class="input file-input"
+								type="file"
+								accept=".srt,.vtt,.txt"
+								disabled={busy}
+								onchange={(event) => void bringFile(event)}
+							/>
+						</label>
+
+						<p class="counter" class:near={plan.chars > MAX_IMPORT_TOTAL_CHARS * 0.9}>
+							{plan.chars} / {MAX_IMPORT_TOTAL_CHARS}
+						</p>
+					</div>
+
+					<!-- What the paste turned out to be, said before anything is spent on
+					     it: an import is the one action here whose cost is invisible. -->
+					{#if plan.sentences.length > 0 && (plan.format || plan.calls > 1)}
+						<p class="plan">
+							{#if plan.format}Subtitles · {plan.cues} cue{plan.cues === 1 ? '' : 's'} ·
+							{/if}{plan.sentences.length} sentence{plan.sentences.length === 1 ? '' : 's'} · about {plan.calls}
+							call{plan.calls === 1 ? '' : 's'}
+						</p>
+					{/if}
 
 					<button
 						type="button"
 						class="btn btn-primary btn-block go"
-						disabled={busy || pasted.trim() === ''}
+						disabled={busy || overCap || plan.sentences.length === 0}
 						onclick={() => void add()}
 					>
-						{busy ? 'Annotating…' : composeError ? 'Try again' : 'Add'}
+						{#if busy}
+							{annotateTotal > 1
+								? `Annotating ${Math.min(annotateDone + 1, annotateTotal)} / ${annotateTotal}…`
+								: 'Annotating…'}
+						{:else if composeError}
+							Try again
+						{:else}
+							Add
+						{/if}
 					</button>
 
 					<p class="hint">
-						Kept word for word. Only the readings, the translations and the glossary are added.
+						Kept word for word. Only the readings, the translations and the glossary are added — and
+						a subtitle file keeps the time each line is spoken.
 					</p>
 				{/if}
 
@@ -555,9 +679,41 @@
 		resize: vertical;
 	}
 
+	/* The two things that belong under the box: where else a text can come from,
+	   and how much of it there is. One row that wraps — on a phone they stack in
+	   source order, and no breakpoint has to be spent saying so. */
+	.paste-tools {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-end;
+		justify-content: space-between;
+		gap: 0.5rem 1rem;
+		margin: -0.35rem 0 0.9rem;
+	}
+
+	.bring {
+		flex: 1 1 14rem;
+		min-width: 0;
+	}
+
+	.bring-label {
+		display: block;
+		margin-bottom: 0.3rem;
+		font-size: 0.78rem;
+		font-weight: 700;
+		color: var(--text-muted);
+	}
+
+	/* A file picker is a control the browser draws; the shared `.input` box is
+	   all it needs, minus the height a text field wants. */
+	.file-input {
+		padding: 0.4rem 0.5rem;
+		font-size: 0.82rem;
+	}
+
 	/* Tucked under the box's right edge, where a word count belongs. */
 	.counter {
-		margin: -0.35rem 0 0.9rem;
+		margin: 0;
 		text-align: right;
 		font-size: 0.78rem;
 		font-variant-numeric: tabular-nums;
@@ -567,6 +723,16 @@
 	.counter.near {
 		color: var(--accent);
 		font-weight: 700;
+	}
+
+	/* What the paste was recognised as. A note, not a warning: it is the same
+	   door either way, and the learner only needs to see that the app read the
+	   file rather than the timestamps. */
+	.plan {
+		margin: 0 0 0.9rem;
+		font-size: 0.8rem;
+		font-variant-numeric: tabular-nums;
+		color: var(--text-muted);
 	}
 
 	.examples {

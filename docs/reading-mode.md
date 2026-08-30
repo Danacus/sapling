@@ -134,7 +134,46 @@ model receives the numbered sentences and returns, index-aligned:
 
 A `sentences` array of the wrong length drops the translations/readings
 (all-or-nothing, the house rule for aligned lists) and keeps the glossary.
-Import is capped at `MAX_IMPORT_CHARS` (4000) for this slice.
+
+**Chunking.** `MAX_IMPORT_CHARS` (4000) is the budget for **one call**, not for
+the import: past a few thousand characters a model thins out the later
+translations and the glossary stops covering the tail, invisibly.
+`chunkSentences` (`chunks.ts`, pure, tested) packs the sentences greedily into
+chunks of that size and never splits one; `annotateReadingText` in `index.ts`
+runs them **sequentially** — a rate limit is the ordinary failure, and a
+failure should stop at the first chunk rather than after all of them — through
+the unchanged single-call path, and merges: sentences concatenated in order,
+glossaries concatenated and deduped by `wordKey` (first wins), `usage` summed,
+title from the first chunk. The alignment rule is therefore now
+**per chunk**, which is strictly kinder: a model that miscounts one chunk costs
+that chunk's annotations, not the whole text's. The learner's title goes only to
+the first call, so the text is not named after its middle.
+`MAX_IMPORT_TOTAL_CHARS` (40 000) caps one whole import — a cost and patience
+ceiling, about ten calls — and is enforced by the page;
+`importCallCount(sentences)` is what it shows ("about N calls") before spending
+anything. `ReadingOptions.onProgress(done, total)` fires once per chunk.
+
+**Subtitles** (`subtitles.ts`, pure, dependency-free, tested). The learner's
+route to a text is usually a video, and the subtitle file is the one artefact of
+it they can get: `yt-dlp --write-subs --write-auto-subs --sub-format vtt`, or
+the "Show transcript" panel copied. `detectSubtitleFormat` recognises SRT, VTT
+and the panel and returns `undefined` for prose, so the composer keeps **one
+door**. `parseSubtitles` cleans a file to `Cue { start, end, text }` — BOM,
+CRLF, `NOTE`/`STYLE`/`REGION`, cue identifiers and settings, every `<...>` tag
+(including the per-word `<00:00:01.240>` timestamps), the named entities — and
+de-duplicates YouTube's *rolling* auto-captions, where each cue repeats the line
+above it with a ten-millisecond transition cue between every pair: a line is
+emitted the first time it is seen and keeps that cue's timing, and a cue left
+empty is dropped. `cuesToSentences` then undoes the cueing — cue texts joined
+with a space, or with nothing between two CJK characters, `splitSentences` over
+the join, and each sentence's offsets recovered with a cursor and `indexOf` and
+mapped back to the cues holding its first and last character. The separator is
+deliberately not a newline, which `splitSentences` splits on. A transcript with
+no sentence-final mark anywhere — the common auto-caption case — degrades to one
+sentence per cue rather than one sentence per video. The timings land on
+`ReadingSentence.start`/`end` (milliseconds into the media, both or neither),
+zipped on by the page so the module never learns where the text came from.
+Nothing reads them yet (§7).
 
 Both return `{ title, sentences, glossary, usage }`; the page mints `id`
 (`newUuid`) and `createdAt` and calls `addText`.
@@ -287,7 +326,7 @@ under the same condition.
   `src/lib/reading/pages.ts`, pure and tested — and a break falls only between
   sentences, so the last sentence of a page is always finished. Words rather
   than a sentence count, because a generated text is 6–12 short sentences and
-  an import is up to `MAX_IMPORT_CHARS` of somebody else's prose; words rather
+  an import is up to `MAX_IMPORT_TOTAL_CHARS` of somebody else's prose; words rather
   than characters, because 700 characters is 120 words of Spanish and 700 of
   Chinese. The count is ICU's base segmentation (`countWords` over
   `segmentWords`), never the annotated tokens: vocabulary overrides the
@@ -360,4 +399,8 @@ drill arrives in the text already counted as forgotten.
 - Questions about the text (LLM, chat-style).
 - Target-language explanations on tap (immersion glosses).
 - Audio-first (listen before reading) presentation; per-word timing.
-- Editing a text, re-annotating, longer imports than `MAX_IMPORT_CHARS`.
+- **A player.** Subtitle imports store `start`/`end` per sentence, and nothing
+  reads them: no video element, no media reference on `ReadingText`, no
+  follow-the-clock highlighting. The timings are kept because the import is the
+  only moment they exist.
+- Editing a text, re-annotating, imports longer than `MAX_IMPORT_TOTAL_CHARS`.

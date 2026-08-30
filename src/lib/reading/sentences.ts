@@ -51,6 +51,20 @@ const CLOSERS = new Set([
 	'》'
 ]);
 
+/**
+ * Whether `text` closes a sentence anywhere — the question a subtitle import
+ * has to ask before it joins its cues.
+ *
+ * `./subtitles` needs it because an auto-generated transcript often carries no
+ * punctuation at all, and running its cues together would then produce one
+ * sentence the length of the whole video. Exported from here rather than
+ * duplicated there so the two modules cannot drift over what an ending is.
+ */
+export function hasSentenceEnd(text: string): boolean {
+	for (const char of text) if (SENTENCE_ENDERS.has(char)) return true;
+	return false;
+}
+
 /** Splits one line, keeping every mark with the sentence it closes. */
 function splitLine(line: string): string[] {
 	const out: string[] = [];
