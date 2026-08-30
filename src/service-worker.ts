@@ -7,7 +7,7 @@
  * Offline shell for the installed PWA.
  *
  * The app is local-first: the whole session loop (planning, playing, grading,
- * FSRS scheduling) reads and writes IndexedDB and never touches the
+ * FSRS scheduling) reads and writes its local database and never touches the
  * network. So caching the static shell is genuinely all that's needed to make
  * an offline launch a *fully working* app, not a degraded one.
  *
@@ -140,8 +140,8 @@ sw.addEventListener('fetch', (event) => {
 
 			// Navigations: network-first so a reachable deploy is always the fresh
 			// one, falling back to the cached shell. That fallback is the entire
-			// offline story — index.html boots the SPA, which then runs from
-			// IndexedDB.
+			// offline story — index.html boots the SPA, which then runs from its
+			// local database.
 			try {
 				const response = await fetch(request);
 				if (request.mode === 'navigate' && !response.ok) throw new Error('bad response');

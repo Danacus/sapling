@@ -12,13 +12,11 @@
  * is an online guess against Cloudflare at 100 bits; there is nothing to attack
  * offline.
  *
- * What it does not buy: the phrase travels in the connection's query string
- * (`@livestore/sync-cf` puts the sync payload there, and a browser cannot set
- * headers on a WebSocket). TLS covers it in transit, but it may appear in
- * request logs. That is the reason the room name is a hash rather than the
- * phrase itself, and the reason `docs/sync.md` §10's end-to-end encryption
- * would still be a real improvement if this were ever more than one learner's
- * own devices.
+ * What it does not buy: the phrase travels as a bearer token, and TLS covers
+ * it in transit, but it may still appear in request logs. That is the reason
+ * the room name is a hash rather than the phrase itself, and the reason
+ * end-to-end encryption would still be a real improvement if this were ever
+ * more than one learner's own devices.
  *
  * {@link normalizePhrase} is imported from the client rather than reimplemented
  * here. Two copies that disagreed by one character would be two different

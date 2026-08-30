@@ -3,8 +3,8 @@ name: gotchas
 description: >
   Sapling's log of pitfalls that already cost real debugging time. Load before
   touching TTS/sherpa/Kokoro, Cloudflare headers or redirects, the service
-  worker, Dexie persistence, the nix flake or pnpm-workspace.yaml — and whenever
-  a command or a "fix" fails in a way that doesn't make sense.
+  worker, SQLite/OPFS persistence, the nix flake or pnpm-workspace.yaml — and
+  whenever a command or a "fix" fails in a way that doesn't make sense.
 user-invocable: false
 ---
 
@@ -15,58 +15,17 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
 
 ## Persistence
 
-- **`store.shutdown()` does not flush pending writes — settle first (2026-08-29).**
-  Committing a batch of events and then immediately `await`ing
-  `shutdownPromise()` silently drops whatever had not yet been written; the
-  events never reach the eventlog at all. Upstream: livestore#416, open, no fix
-  in 0.4.0. This is a *test-harness* trap above all, and it cost most of a day:
-  a sync repro that committed 400 events and shut down at once persisted only
-  ~101, which read exactly like the sync engine losing data on reconnect and
-  produced a confident, wrong bug report against LiveStore. Sleep a few seconds
-  after the last `commit` before shutting a store down, and prove any suspected
-  loss by reopening the store **with no sync backend** and counting there — a
-  count taken from a live, syncing store confuses "not yet materialised" with
-  "gone".
-
-- **`SyncBackend.isConnected` is a gate, not a status readout (2026-08-29).**
-  The leader waits on it before processing a pulled batch and before every push,
-  so a device where it is stuck `false` does nothing, logs nothing, and looks
-  identical to one with nothing to sync. `makeHttpSync` starts it `false` and
-  sets it `true` in exactly one place — after a successful `Ping` — so
-  `ping: { enabled: false }` leaves the whole session riding on the single
-  `connect` at boot, which on a freshly paired device is the first cross-origin
-  POST against a cold Durable Object. Worse, a ping that merely *times out* is
-  **caught**: `isConnected` goes false and `ping` then **succeeds**, so nothing
-  anywhere reports a fault. This broke sync completely on two devices and read
-  as "sync is broken" rather than "one request was slow". Never disable that
-  ping without giving the flag another way to recover — `$lib/sync/liveness.ts`
-  retries `connect`, and the repeat is set to 60s rather than off.
-
-- **No client-side signal means "the server has my events" (2026-08-29).** Two
-  look like they do and neither does. `store.syncStatus().pendingCount` is
-  *session-to-leader* and hits 0 the instant the leader accepts a commit — it
-  says nothing about the network, which is exactly why the original sync stall
-  showed `isSynced: true` throughout. The leader's own `pending.length` (via
-  `_dev.syncStates()`) is 0 *before* the commits have crossed into it as well as
-  after they have been pushed, so polling it passes instantly. `upstreamHead`
-  is the honest one — it only advances on a confirmed push — but the truly safe
-  probe is to boot a second store and see what it pulls. Related: with
-  `livePull: false`, `createStorePromise` resolves *before* the boot pull
-  finishes (`initialSyncOptions` defaults to `Skip`), so a reader counted right
-  after `open()` reads zero. Both cost an hour of chasing a "broken" transport
-  that was working the whole time.
-
-- **Never hand a Svelte `$state` proxy to Dexie.** IndexedDB's structured clone
-  throws `DataCloneError` on proxies. Every write goes through `toPlain()` in
-  `$lib/db`, which strips them. Repositories are the only Dexie access.
+- **Never hand a Svelte `$state` proxy to an event payload.** IndexedDB and
+  Dexie are gone, but the reason for `toPlain()` survived them: the payload
+  crosses `postMessage` to the SQLite Worker, which uses structured clone and
+  throws `DataCloneError` on a bare Proxy just the same. Every write goes
+  through `toPlain()` in `$lib/db`, which strips them. Repositories are the
+  only store access.
 - API key and prefs live in **localStorage** (`ll.*` keys, via `db/settings.ts`
-  and `ui/prefs.ts`) — never in IndexedDB, and never in the JSON export.
-- **A LiveStore materializer that throws kills the store permanently.** It does
-  not skip the event: the exception propagates and every later `query` fails
-  with "Store has been shut down". A bare `insert` of a duplicate primary key is
-  enough. Materializers must be total — `.onConflict('id', 'ignore')` is what
-  makes them so. Committing an event type the schema does not define does the
-  same thing, from the client API side.
+  and `ui/prefs.ts`) — never in the store, and never in the JSON export.
+- **The SQLite SAH-pool VFS is exclusive.** Only one tab can hold `/sapling.db`
+  at a time; a second tab's boot fails with "Sapling is already open in another
+  tab." — close the other tab and reload. There is no leader election.
 
 ## TTS
 
@@ -106,9 +65,13 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
 - **A `?worker` graph emits its own copy of every shared asset.** SvelteKit gives
   it a separate asset directory *and* naming pattern (`workers/assets/[name]-[hash]`
   vs `assets/[name].[hash]`), so an asset both graphs need is downloaded and
-  compiled twice. `vite.config.ts` realigns the patterns from a plugin ordered
-  **after** `sveltekit()` — setting `worker.rollupOptions` at the top level is
-  silently overridden by SvelteKit's own `config` hook.
+  compiled twice. This only bites when the *same* asset is needed on both sides
+  of a `?worker` boundary — the sqlite-wasm binary today is loaded only inside
+  `sqlite.worker.ts`, not on the window thread, so there is nothing to dedupe
+  and `vite.config.ts` carries no plugin for it. If a future asset needs both
+  sides again, realign the patterns from a plugin ordered **after** `sveltekit()`
+  — setting `worker.rollupOptions` at the top level is silently overridden by
+  SvelteKit's own `config` hook.
 - `pnpm-workspace.yaml` records pnpm's dependency build-script decisions
   (`allowBuilds`). An **undecided** script hard-fails Cloudflare Pages' CI
   install. Keep decisions explicit there.

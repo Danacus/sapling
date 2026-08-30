@@ -1,8 +1,8 @@
 /**
  * Browser-local settings.
  *
- * Secrets and device preferences that must never end up in IndexedDB (and so
- * never in an export) live here, in `localStorage`. Every accessor is guarded
+ * Secrets and device preferences that must never end up in the events log (and
+ * so never in an export) live here, in `localStorage`. Every accessor is guarded
  * so the module can be imported from a non-browser context without throwing.
  */
 

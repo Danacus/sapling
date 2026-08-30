@@ -2,8 +2,9 @@
  * Unit tests for the pure half of the session engine.
  *
  * The database-touching half (`applyResult`, `generateChallenges`,
- * `startSession`) needs IndexedDB, which node does not have, so it is covered
- * by the same "thin wrapper, no logic" rule as `src/lib/db/repositories.ts`:
+ * `startSession`) needs a live store, which this file does not set up, so it
+ * is covered by the same "thin wrapper, no logic" rule as
+ * `src/lib/db/repositories.ts`:
  * everything worth asserting was pushed down into `planSession` /
  * `planRefill` / `sessionSummary`, which are exercised here.
  *

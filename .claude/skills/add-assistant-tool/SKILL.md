@@ -26,7 +26,7 @@ are kebab-case (`add-words.ts`). Follow the existing four.
 - **Never touch the DB directly.** Tools run against an injectable
   `ToolContext`, whose default is wired to `$lib/db` + `$lib/srs` in
   `tools/context.ts` — the only module here that may import the DB. Going
-  through the repositories is what captures sync events for free; a direct Dexie
+  through the repositories is what captures sync events for free; a direct store
   call silently breaks multi-device sync.
 - Anything creating vocabulary must initialise FSRS cards via `$lib/srs` and
   dedupe by term key, exactly as `add_words` does. **`add_words` is the only
@@ -50,6 +50,6 @@ simply unavailable offline, which is usually fine.
 ## Completion criteria
 
 - [ ] Def module written and registered in `tools/index.ts`
-- [ ] Every mutation goes through `ToolContext`, not Dexie
+- [ ] Every mutation goes through `ToolContext`, not the store directly
 - [ ] `pnpm check` and `pnpm test` pass
 - [ ] Exercised once in mock mode, or explicitly noted as online-only

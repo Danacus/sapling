@@ -5,10 +5,10 @@
  * keyboard, banners); this module owns the *rules* (what to play, what an
  * answer is worth, what gets written to the database). Anything worth a unit
  * test lives here, and the pure half — {@link planRefill}, {@link planSession},
- * {@link sessionSummary} — is testable without IndexedDB.
+ * {@link sessionSummary} — is testable without the database.
  *
  * **Generation and play are decoupled.** Every challenge ever generated lives
- * in a persistent pool (`challenges` in IndexedDB); answering one stamps it
+ * in a persistent pool (the `challenges` table); answering one stamps it
  * rather than consuming it. {@link generateChallenges} is an explicit,
  * backgroundable user action that adds to the pool, and {@link planSession}
  * assembles a session out of whatever is already there — so starting is

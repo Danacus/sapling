@@ -9,7 +9,7 @@
  *
  * The device id is a device-local fact in `localStorage`, under the same `ll.*`
  * convention as `db/settings.ts` and `ui/prefs.ts`, and for the same reason:
- * it must never reach IndexedDB, and so never the JSON export. Every access is
+ * it must never reach the events log, and so never the JSON export. Every access is
  * wrapped — private-mode and storage-disabled browsers throw on `localStorage`
  * — because failing here would take the app down over a preference.
  */

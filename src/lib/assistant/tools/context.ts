@@ -3,7 +3,7 @@
  * clock.
  *
  * The one module in `$lib/assistant` that imports `$lib/db`, so everything else
- * — tools, chat loop, mock — stays testable without IndexedDB, and so the
+ * — tools, chat loop, mock — stays testable without the database, and so the
  * assistant's whole write surface is three functions listed in one place.
  */
 

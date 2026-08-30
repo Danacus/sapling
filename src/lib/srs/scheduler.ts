@@ -36,11 +36,11 @@ export const CardState = {
 export type CardState = (typeof CardState)[keyof typeof CardState];
 
 /**
- * A JSON/IndexedDB-serializable representation of a ts-fsrs `Card`.
+ * A JSON-serializable representation of a ts-fsrs `Card`.
  *
  * ts-fsrs' own `Card` type stores dates as `Date` objects, which don't
- * round-trip through `structuredClone`/IndexedDB or `JSON.stringify` cleanly
- * across all storage backends. This type stores the same fields with dates
+ * round-trip through `structuredClone` or `JSON.stringify` cleanly across all
+ * storage backends. This type stores the same fields with dates
  * as epoch-ms numbers (`null` in place of `undefined` for `last_review`, so
  * the shape stays plain-JSON-safe).
  */

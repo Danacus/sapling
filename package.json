@@ -20,7 +20,6 @@
 	"packageManager": "pnpm@11.21.0",
 	"devDependencies": {
 		"@cloudflare/workers-types": "^4.20251118.0",
-		"@livestore/adapter-node": "0.4.0",
 		"@sveltejs/adapter-static": "^3.0.10",
 		"@sveltejs/kit": "^2.63.0",
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",
@@ -34,14 +33,7 @@
 		"wrangler": "^4.127.0"
 	},
 	"dependencies": {
-		"@livestore/adapter-web": "0.4.0",
-		"@livestore/common": "0.4.0",
-		"@livestore/livestore": "0.4.0",
-		"@livestore/svelte": "0.4.0",
-		"@livestore/sync-cf": "0.4.0",
-		"@livestore/utils": "0.4.0",
 		"@sqlite.org/sqlite-wasm": "3.53.0-build1",
-		"dexie": "^4.4.5",
 		"pinyin-pro": "^3.29.3",
 		"ts-fsrs": "^5.4.1",
 		"zod": "^4.4.3"

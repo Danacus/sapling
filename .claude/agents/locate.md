@@ -47,8 +47,7 @@ Where the rest lives:
 - `src/lib/llm/` — generation (`generate.ts`, `SYSTEM_PROMPT`), `escalation.ts`, `mock.ts`, `schemas.ts` (a re-exporting façade)
 - `src/lib/session/` — `engine.ts` (orchestrator, all play-time DB writes), `progression.ts`, `romanization.ts`
 - `src/lib/srs/` — FSRS, pure, every function takes `now`
-- `src/lib/db/` — repositories, the only store access; `database.ts` + `legacy-snapshot.ts` are the read-only Dexie remnant kept for migration
-- `src/lib/livestore/` — the data layer: `events.ts` / `tables.ts` / `materializers.ts` / `derive.ts` / `store.ts`, and `migrate-dexie.ts`
+- `src/lib/db/` — repositories, the only store access; `events.ts` / `schema.ts` / `materialize.ts` / `store.ts` are the events log and its materializer, over SQLite-WASM in OPFS (`sqlite.worker.ts` + `client.ts`); `database.ts` keeps only `ChallengeRow`/`challengeOf`
 - `src/lib/romanize/`, `src/lib/tts/`, `src/lib/validate/`
 - `src/routes/learn/` — the six challenge components + `ChallengeHost.svelte` (an `{#if}` dispatch chain); shared UI in `blocks/`
 - `src/routes/` — `chat/`, `words/`, `settings/`, and the dashboard

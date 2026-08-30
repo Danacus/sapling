@@ -11,7 +11,7 @@ sessions then review what you already have. Lessons never introduce a word.
 
 It is a single-page app that works with no server at all. Your profile, your
 vocabulary and your progress live in your own browser, in a SQLite database
-(LiveStore, compiled to WebAssembly). What leaves the device is one compact
+(compiled to WebAssembly, stored in OPFS). What leaves the device is one compact
 prompt per lesson batch (and one per conversation turn), sent straight from your
 browser to [OpenRouter](https://openrouter.ai) with your own API key.
 
@@ -149,9 +149,10 @@ schema will work.
 ```
 src/lib/types.ts      Domain types. Dependency-free; everything imports it.
 src/lib/db/           Repositories: the only sanctioned way to touch storage,
-                      and every write is an event. Also the read-only Dexie
-                      remnant, kept solely so an old database can still be
-                      migrated. Device secrets live in localStorage
+                      and every write is an event. An append-only events log
+                      (SQLite-WASM in OPFS) is the source of truth; the rest
+                      of the tables are a projection of it, produced by a
+                      materializer. Device secrets live in localStorage
                       (settings.ts), never in the database.
 src/lib/srs/          Spaced repetition (ts-fsrs). Pure and deterministic:
                       `now` is always a parameter, never `Date.now()`.
@@ -172,10 +173,6 @@ src/lib/assistant/    The chat assistant: an LLM managing learner state through
 src/lib/conversation/ Conversation mode on the same seam — scenario call,
                       teacher turn loop, and the typed-vs-corrected diff that
                       produces the inline markup. Imports no database.
-src/lib/livestore/    The data layer. An append-only eventlog is the source of
-                      truth; the SQLite tables are a projection of it, produced
-                      by materializers. Also the one-time migration that turns
-                      an old Dexie database into that log.
 src/lib/romanize/     Local pinyin/romaji readings. Never romanizes a term in
                       isolation — context resolves polyphones.
 src/lib/asr/          Speech recognition for the conversation composer. An
@@ -332,20 +329,13 @@ device joins it to the same library. There are no accounts and no sign-up: the
 phrase *is* the credential, and the Worker names your private room by hashing
 it. Treat it like a password.
 
-The hard part — making two devices converge without asking you to resolve
-conflicts — is settled by construction rather than by the server. Every change
-is an event appended to a log, and the SQLite tables you read are a projection
-of it, so the backend only has to put events in an order and hand them back; it
-never merges and never looks inside one. Reviews of the same word on two devices
-are both kept and the FSRS card recomputed from the merged history; results are
-a set-union; the day streak is derived from those results and needs no merge
-rule at all. Sync failures degrade silently, so the app stays fully usable
-offline, with the server down, or with sync switched off mid-life.
-
-[`docs/livestore-sync.md`](docs/livestore-sync.md) is the architecture and the
-setup runbook; [`docs/sync.md`](docs/sync.md) keeps the original design
-reasoning, and the merge rules it argued out are still the ones enforced in
-`src/lib/livestore/`.
+Every change is an event appended to a log, and the tables you read are a
+projection of it, so convergence is settled by construction rather than by the
+server. The backend only assigns events an order and hands them back; it never
+merges and never looks inside one, and sync failures degrade silently, so the
+app stays fully usable offline, with the server down, or with sync switched off
+mid-life. [`docs/sync.md`](docs/sync.md) has the full contract and the deploy
+runbook.
 
 ## Deploying
 

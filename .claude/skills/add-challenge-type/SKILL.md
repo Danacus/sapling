@@ -55,7 +55,7 @@ rather than checking by eye.
 3. **Component** in `src/routes/learn/`, composed from `blocks/`, plus a branch
    in `ChallengeHost.svelte`'s `{#if}` chain.
    *Forget it:* the `{:else}` `unhandledChallenge(challenge: never)` fails `pnpm check`.
-4. **`CHALLENGE_TYPE_TABLE` in `src/lib/livestore/materializers.ts`** — the
+4. **`CHALLENGE_TYPE_TABLE` in `src/lib/db/materialize.ts`** — the
    allow-list the pool materializer checks before storing a challenge.
    *Forget it:* `pnpm check` fails at the `Record<ChallengeType, true>` literal.
    Without that typing it would instead be silent — challenges of the new type

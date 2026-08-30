@@ -38,9 +38,11 @@ Nix flakes only see files that are `git add`ed — a brand-new file the flake ne
 
 When writing a new agent: an explicit `tools:` allowlist **silently drops the `Skill` tool**, so an agent that should use a skill needs `Skill` listed, or the skill preloaded via `skills:`.
 
+**Investigation notes go in the commit message, never in `docs/`.** `docs/` holds contracts and runbooks only.
+
 ## Architecture
 
-Local-first static SPA (SvelteKit 2 + Svelte 5, `adapter-static`, `ssr=false`). All user state lives in the browser — in **LiveStore** (WASM SQLite in OPFS, an append-only eventlog with the tables derived from it). The only server anywhere is `worker/`, a Cloudflare Worker that **sequences and relays the eventlog and nothing else** — it never merges, never reads a payload, and the app is fully usable with it unreachable or switched off. Sync is opt-in per device and off unless the build sets `VITE_SYNC_URL`. The one other external call is a batched LLM request from the browser to OpenRouter with the user's own key.
+Local-first static SPA (SvelteKit 2 + Svelte 5, `adapter-static`, `ssr=false`). All user state lives in the browser — **SQLite-WASM in OPFS**, an append-only events log with aggregate tables the materializer derives from it. The only server anywhere is `worker/`, a Cloudflare Worker that **sequences and relays the events log and nothing else** — it never merges, never reads a payload, and the app is fully usable with it unreachable or switched off. Sync is opt-in per device and off unless the build sets `VITE_SYNC_URL`. The one other external call is a batched LLM request from the browser to OpenRouter with the user's own key.
 
 **There is no `svelte.config.js`** — SvelteKit *and* vitest config live inline in `vite.config.ts`. **Runes mode is forced** project-wide: `$state`/`$derived`/`$effect`, `onclick` (not `on:click`).
 
@@ -55,9 +57,8 @@ Every area is a registry with one module per member; forgetting a registration f
 | `src/lib/session/` | The orchestrator owns **all DB writes during play**. Components emit answer events; they don't write. | `session.md` |
 | `src/lib/assistant/` | Every mutation goes through the injectable `ToolContext`, never the store directly — that's the seam the tests and the conversation layer both hang on. | `assistant.md` |
 | `src/lib/conversation/` | Role-play on the assistant's seam: **never imports `$lib/db`**, and exposes exactly one tool — `add_words`, reused verbatim. Corrections travel beside the spoken line, never inside it — and `heard` puts the target script under a learner bubble that needed no correction. | `assistant.md` |
-| `src/lib/db/` | Repositories are the **only** store access, and every write is an event. The Dexie tables survive read-only, purely to be migrated — never edit a `version(n).stores(...)` declaration. | `data.md` |
-| `src/lib/livestore/` | The **eventlog is the source of truth**; the tables are a projection. A materializer that throws kills the store permanently. Order is the log's, never a timestamp. | `livestore.md` |
-| `src/lib/sync/`, `worker/` | The backend **orders and relays; it never merges**. A learner is a pairing phrase; the *Worker* hashes it to pick the room, so the client's `storeId` stays the constant `'sapling'` and no OPFS database is ever renamed. | `livestore.md`, `deploy.md` |
+| `src/lib/db/` | Repositories are the **only** store access. The `events` table is the facts log; everything else is an aggregate read model the materializer maintains, and UI reads never touch `events`. | `data.md` |
+| `src/lib/sync/`, `worker/` | The backend **orders and relays; it never merges**. A learner is a pairing phrase; the *Worker* hashes it to pick the room. | `data.md`, `deploy.md` |
 | `src/lib/srs/` | Pure and deterministic: every function takes `now` (epoch ms). | `data.md` |
 | `src/lib/types.ts` | Treat as frozen; extend with **additive optional fields only**. | `data.md` |
 | `src/lib/romanize/` | Never romanize a term in isolation — context resolves polyphones. | `content.md` |
@@ -68,4 +69,4 @@ Every area is a registry with one module per member; forgetting a registration f
 
 ### Testing
 
-Vitest, **node environment**, `src/**/*.test.ts`. No network, and no browser APIs — but **WASM SQLite runs here**, so the data layer is tested against a real store (`livestore/store.testing.ts`) rather than mocked. That is the payoff of the LiveStore migration for testing: there is one implementation of the merge rules, not a write path and a replay path that have to be kept agreeing. What still gets mocked is the IndexedDB read the Dexie migration does, which is why `migrationEvents` is pure and its wrapper is thin.
+Vitest, **node environment**, `src/**/*.test.ts`. No network, and no browser APIs — but the same SQLite-WASM package runs in-memory here, so the data layer is tested against a real store (`db/store.testing.ts`) rather than mocked: there is one implementation of the merge rules, not a write path and a replay path that have to be kept agreeing.

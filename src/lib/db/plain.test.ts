@@ -10,8 +10,8 @@ describe('toPlain', () => {
 	it('strips Proxy-ness from a proxied object so structuredClone accepts it', () => {
 		const proxied = new Proxy({ a: 1, b: 'two' }, {});
 
-		// The whole point of the bug: structuredClone (what Dexie uses under the
-		// hood) throws DataCloneError on a bare Proxy.
+		// The whole point of the bug: structuredClone (what postMessage uses
+		// under the hood) throws DataCloneError on a bare Proxy.
 		expect(() => structuredClone(proxied)).toThrow();
 
 		const plain = toPlain(proxied);

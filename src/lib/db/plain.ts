@@ -1,6 +1,6 @@
 /**
  * Strips Svelte 5 `$state` reactivity (and anything else structured-clone
- * can't handle) from a value before it reaches Dexie.
+ * can't handle) from a value before it crosses into an event payload.
  *
  * Every type this app persists (`Profile`, `KnowledgeItem`, `Challenge`,
  * `ChallengeResult`) is plain JSON-shaped data by design — no
@@ -10,10 +10,11 @@
  *
  * `$state(...)` wraps objects and arrays (deeply, including nested arrays
  * like `Profile.interests` or `KnowledgeItem.history`) in native `Proxy`
- * instances. Dexie persists via the structured-clone algorithm, which throws
- * `DataCloneError` on a `Proxy` — so any `$state`-derived value (or a plain
- * object that merely *contains* a `$state` array by reference, e.g. after a
- * shallow `{ ...profile }` spread) must be converted before it is written.
+ * instances. The payload crosses `postMessage` to the SQLite Worker, which
+ * uses the structured-clone algorithm and throws `DataCloneError` on a
+ * `Proxy` — so any `$state`-derived value (or a plain object that merely
+ * *contains* a `$state` array by reference, e.g. after a shallow
+ * `{ ...profile }` spread) must be converted before it is sent.
  *
  * Note on optional properties (`notes?`, `explanation?`, `wordBank?`, …):
  * `JSON.stringify` omits object keys whose value is `undefined` rather than

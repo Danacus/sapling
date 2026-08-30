@@ -1,7 +1,7 @@
 /**
  * Calendar-day arithmetic over the answer log.
  *
- * Pure: no Dexie, no clock, nothing but the timestamps it is handed. The streak
+ * Pure: no database access, no clock, nothing but the timestamps it is handed. The streak
  * is *derived* rather than bookkept — every answered challenge is already
  * persisted as a `ChallengeResult` with an `at`, and results sync between
  * devices as a set-union, so a streak folded out of them is automatically

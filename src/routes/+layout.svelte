@@ -24,7 +24,7 @@
 	 * SPA fallback rewrites the missing path to `index.html` instead of a 404,
 	 * and Vite's loader rejects with `vite:preloadError` — this is the "error
 	 * loading dynamically imported module" report. Reloading picks up the fresh
-	 * shell and heals it, since nothing in this app's state lives past IndexedDB.
+	 * shell and heals it, since nothing in this app's state lives past the local database.
 	 *
 	 * Guarded against looping if the reload lands on a genuinely broken deploy:
 	 * this line only runs once a page load has gotten this far successfully, so
