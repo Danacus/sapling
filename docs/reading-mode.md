@@ -234,8 +234,13 @@ under the same condition.
   reading, or the gloss's, whatever the `RomanizationMode`. Opening a card is the
   learner asking to have the word explained, and the mode governs the prose,
   which is where a crutch is a crutch.
-- **Delete confirms inline** (a second button in the header row), never
-  `window.confirm`. A **legend row** above the text names the three underlines.
+- **Every confirmation lives in the panel** — the same slot as the word card
+  (facing page on a desk, sheet at the foot of a phone), never `window.confirm`,
+  never extra buttons in the header and never a line above the text. Delete
+  (header) and Finished (a primary button at the *end* of the text, where the
+  learner is when they have finished it) both open there; the header keeps one
+  shape whatever is being decided, and the receipt takes the Finished button's
+  place. A **legend row** above the text names the three underlines.
 - Home's shared card skin was renamed `.talk-*` → **`.door-*`**: two cards wear
   it now, and only one of them is a conversation.
 
@@ -253,7 +258,7 @@ A reading session grades the garden words in it, through the same
   bed colour — a change of texture, not of hue, because the page already
   carries three colours and a fourth would read as an alarm.
 - **Not looking up is `Good`, at one explicit moment: the Finished button.**
-  Two-step, like Delete, and the confirm line says what it will do. Every
+  It confirms in the panel, and the confirm card says what it will do. Every
   tracked word read without a lookup gets one `Good` (same-day repeats of a word
   reviewed yesterday add almost nothing to stability, so the count needs no
   cap). The `new` words read *without a tap* **can** be marked known too —

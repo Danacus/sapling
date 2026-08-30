@@ -83,7 +83,14 @@
 	let cardError = $state('');
 	let pageError = $state('');
 	let playing = $state(false);
-	let confirming = $state(false);
+	/**
+	 * What the side panel shows when no word is open: a confirmation. One slot
+	 * for every card the page has — the word, "finished?", "delete?" — so a
+	 * confirmation never reshapes the header or lands above the text, and it
+	 * arrives where the eye already looks for a card (facing page on a desk,
+	 * sheet at the foot of a phone).
+	 */
+	let panel = $state<'finish' | 'delete' | null>(null);
 
 	/**
 	 * Garden words looked up while this text was open, by key — each has been
@@ -94,8 +101,7 @@
 	const lapsed = new SvelteSet<string>();
 	/** Every word tapped while this text was open, by key — a tapped word was not known. */
 	const lookedUp = new SvelteSet<string>();
-	/** The Finished button's two steps, then its receipt. */
-	let finishing = $state(false);
+	/** Set once Finished has written; the panel then shows the receipt. */
 	let finished = $state(false);
 	let summary = $state('');
 	/**
@@ -252,7 +258,13 @@
 
 	function close() {
 		selected = null;
-		confirming = false;
+		panel = null;
+	}
+
+	/** Opens a confirmation in the panel, in place of whatever word was open. */
+	function confirm(kind: 'finish' | 'delete') {
+		selected = null;
+		panel = kind;
 	}
 
 	function open(line: number, index: number) {
@@ -260,6 +272,7 @@
 		if (!target?.key || !text) return;
 
 		selected = { line, word: index };
+		panel = null;
 		meaningDraft = '';
 		cardError = '';
 
@@ -331,7 +344,6 @@
 			for (const term of fresh) await markWord(term, true);
 			await refresh();
 			finished = true;
-			finishing = false;
 			const parts = [
 				`${read.length} garden word${read.length === 1 ? '' : 's'} read fine`,
 				...(lapsed.size > 0 ? [`${lapsed.size} forgotten`] : []),
@@ -456,7 +468,7 @@
 		} catch (cause) {
 			pageError = cause instanceof Error ? cause.message : 'Could not delete that text.';
 			writing = false;
-			confirming = false;
+			panel = null;
 		}
 	}
 
@@ -531,74 +543,21 @@
 					>
 						{playing ? 'Stop' : 'Listen'}
 					</button>
-					{#if finished}
-						<span class="tool done" aria-live="polite">Finished</span>
-					{:else if finishing}
-						<button
-							type="button"
-							class="btn btn-ghost tool"
-							disabled={writing}
-							onclick={() => void finish()}
-						>
-							{writing ? 'Saving…' : 'Yes, done'}
-						</button>
-						<button type="button" class="btn btn-ghost tool" onclick={() => (finishing = false)}>
-							Not yet
-						</button>
-					{:else}
-						<button
-							type="button"
-							class="btn btn-ghost tool"
-							title="Count this reading: garden words you did not look up are reviewed, new words become known"
-							onclick={() => (finishing = true)}
-						>
-							Finished
-						</button>
-					{/if}
-					{#if confirming}
-						<button
-							type="button"
-							class="btn btn-ghost tool danger"
-							disabled={writing}
-							onclick={() => void remove()}
-						>
-							Delete for good
-						</button>
-						<button type="button" class="btn btn-ghost tool" onclick={() => (confirming = false)}>
-							Keep
-						</button>
-					{:else}
-						<button type="button" class="btn btn-ghost tool" onclick={() => (confirming = true)}>
-							Delete
-						</button>
-					{/if}
+					<!-- Confirmation lives in the panel, never here: the header's shape
+					     stays the same whatever the learner is deciding. -->
+					<button
+						type="button"
+						class="btn btn-ghost tool"
+						class:is-active={panel === 'delete'}
+						onclick={() => confirm('delete')}
+					>
+						Delete
+					</button>
 				</div>
 			</header>
 
 			{#if pageError}
 				<p class="error spread-full" role="alert">{pageError}</p>
-			{/if}
-
-			{#if finishing && !finished}
-				<div class="hint finish-plan spread-full">
-					<p>
-						Count this reading? {finishPlan.read.length} garden word{finishPlan.read.length === 1
-							? ''
-							: 's'} you read without looking up will be reviewed as remembered.
-					</p>
-					{#if finishPlan.fresh.length > 0}
-						<label class="finish-opt">
-							<input type="checkbox" bind:checked={markFresh} />
-							Also mark the {finishPlan.fresh.length} new word{finishPlan.fresh.length === 1
-								? ''
-								: 's'} I didn't tap as known
-						</label>
-					{/if}
-				</div>
-			{/if}
-
-			{#if summary}
-				<p class="hint summary spread-full">{summary}</p>
 			{/if}
 
 			<!-- The text. Capped at the reading measure whatever the column allows:
@@ -658,12 +617,108 @@
 				{#if showTranslation && translation}
 					<p class="translation">{translation}</p>
 				{/if}
+
+				<!-- At the end of the text, because that is where the learner is when
+				     they have finished it. The receipt takes the button's place. -->
+				<div class="finish-row">
+					{#if finished}
+						<p class="summary" aria-live="polite">Finished · {summary}</p>
+					{:else}
+						<button
+							type="button"
+							class="btn btn-primary finish-btn"
+							class:is-active={panel === 'finish'}
+							onclick={() => confirm('finish')}
+						>
+							Finished reading
+						</button>
+					{/if}
+				</div>
 			</div>
 
-			<!-- The word card. A facing page at 48rem, a sheet at the foot of the
-			     phone below it. -->
-			<aside class="card-col" class:is-open={card !== null}>
-				{#if card}
+			<!-- The panel: the word card, or a confirmation in its place. A facing
+			     page at 48rem, a sheet at the foot of the phone below it. -->
+			<aside class="card-col" class:is-open={card !== null || panel !== null}>
+				{#if panel === 'finish'}
+					<div class="word-card">
+						<div class="word-head">
+							<div class="word-id">
+								<p class="panel-title">{finished ? 'Counted' : 'Finished reading?'}</p>
+							</div>
+							<button type="button" class="close" aria-label="Close" onclick={close}>
+								<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+									<path d="m7 7 10 10M17 7 7 17" />
+								</svg>
+							</button>
+						</div>
+
+						{#if finished}
+							<p class="panel-copy">{summary}</p>
+							<hr class="stitch" />
+							<button type="button" class="btn btn-ghost btn-block" onclick={close}>Close</button>
+						{:else}
+							<p class="panel-copy">
+								{finishPlan.read.length} garden word{finishPlan.read.length === 1 ? '' : 's'} you read
+								without looking up will be reviewed as remembered{lapsed.size > 0
+									? `; ${lapsed.size} you looked up ${lapsed.size === 1 ? 'is' : 'are'} already counted as forgotten`
+									: ''}.
+							</p>
+							{#if finishPlan.fresh.length > 0}
+								<label class="finish-opt">
+									<input type="checkbox" bind:checked={markFresh} />
+									Also mark the {finishPlan.fresh.length} new word{finishPlan.fresh.length === 1
+										? ''
+										: 's'} I didn't tap as known
+								</label>
+							{/if}
+							<hr class="stitch" />
+							<div class="word-actions">
+								<button
+									type="button"
+									class="btn btn-primary"
+									disabled={writing}
+									onclick={() => void finish()}
+								>
+									{writing ? 'Saving…' : 'Yes, done'}
+								</button>
+								<button type="button" class="btn btn-ghost" disabled={writing} onclick={close}>
+									Not yet
+								</button>
+							</div>
+						{/if}
+					</div>
+				{:else if panel === 'delete'}
+					<div class="word-card">
+						<div class="word-head">
+							<div class="word-id">
+								<p class="panel-title">Delete this text?</p>
+							</div>
+							<button type="button" class="close" aria-label="Close" onclick={close}>
+								<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+									<path d="m7 7 10 10M17 7 7 17" />
+								</svg>
+							</button>
+						</div>
+						<p class="panel-copy">
+							It goes for good, here and on every paired device. Words you added or marked from it
+							stay.
+						</p>
+						<hr class="stitch" />
+						<div class="word-actions">
+							<button
+								type="button"
+								class="btn btn-ghost danger"
+								disabled={writing}
+								onclick={() => void remove()}
+							>
+								Delete for good
+							</button>
+							<button type="button" class="btn btn-ghost" disabled={writing} onclick={close}>
+								Keep
+							</button>
+						</div>
+					</div>
+				{:else if card}
 					<div class="word-card">
 						<div class="word-head">
 							<div class="word-id">
@@ -854,12 +909,17 @@
 		color: var(--primary-strong);
 	}
 
-	.tool.danger {
+	.tool.is-active {
+		border-color: var(--border-strong);
+		background: var(--surface-alt);
+	}
+
+	.btn.danger {
 		border-color: color-mix(in srgb, var(--danger) 45%, transparent);
 		color: var(--danger);
 	}
 
-	.tool.danger:hover:not(:disabled) {
+	.btn.danger:hover:not(:disabled) {
 		background: color-mix(in srgb, var(--danger) 12%, transparent);
 		color: var(--danger);
 	}
@@ -1003,15 +1063,6 @@
 	.w-tracked.w-lapsed {
 		text-decoration-style: dotted;
 		text-decoration-thickness: 2px;
-	}
-
-	.tool.done {
-		display: inline-flex;
-		align-items: center;
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		color: var(--primary-strong);
-		font-weight: 700;
 	}
 
 	.w-tracked.w-new {
@@ -1183,20 +1234,47 @@
 		font-size: 0.88rem;
 	}
 
+	/* The end of the text: one primary action, then its receipt in its place.
+	   Separated from the prose by the same stitch the cards use. */
+	.finish-row {
+		margin-top: 2rem;
+		padding-top: 1.25rem;
+		border-top: 1px dashed var(--border);
+	}
+
+	.finish-btn.is-active {
+		box-shadow: var(--ring);
+	}
+
 	.summary {
+		margin: 0;
 		color: var(--primary-strong);
 		font-weight: 700;
 	}
 
-	.finish-plan p {
+	.panel-title {
 		margin: 0;
+		font-family: var(--font-display);
+		font-size: 1.15rem;
+		font-weight: 700;
+		line-height: 1.25;
+		letter-spacing: -0.01em;
+	}
+
+	.panel-copy {
+		margin: 0.6rem 0 0;
+		font-size: 0.95rem;
+		line-height: 1.5;
+		color: var(--text-muted);
 	}
 
 	.finish-opt {
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		gap: 0.5rem;
-		margin-top: 0.5rem;
+		margin-top: 0.75rem;
+		font-size: 0.92rem;
+		line-height: 1.4;
 		cursor: pointer;
 	}
 
