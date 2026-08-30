@@ -77,7 +77,8 @@
 		sentenceAt,
 		startOf,
 		takeFile,
-		videoPlayer
+		videoPlayer,
+		youtubePlayer
 	} from '$lib/media';
 	import type { Player } from '$lib/media';
 	import {
@@ -177,6 +178,19 @@
 	/** The object URL for {@link mediaFile}, revoked on every replacement and on destroy. */
 	let mediaSrc = $state('');
 	let videoEl = $state<HTMLVideoElement | null>(null);
+	/**
+	 * The box YouTube's iframe is built inside — a plain `<div>`, because the API
+	 * replaces whatever element it is handed and a Svelte-owned node swapped out
+	 * from underneath Svelte is a bug waiting for the next re-render.
+	 * `$lib/media`'s `youtubePlayer` puts its own child in here and owns it.
+	 */
+	let frameEl = $state<HTMLDivElement | null>(null);
+	/**
+	 * The player could not be loaded — offline, or blocked. One line in the
+	 * video's place and the text is still there: "Read as text" is the answer, and
+	 * it is already in the transport under it.
+	 */
+	let mediaError = $state('');
 	let player: Player | undefined;
 	/** Where the recording is, in milliseconds — the only thing the clock feeds in. */
 	let currentMs = $state(0);
@@ -204,15 +218,14 @@
 	 * `ResizeObserver` underneath, and the number becomes `--film-width` on the
 	 * column so the caption under the picture can match it.
 	 *
-	 * Two of them because the picker stands in for the video before a file is
-	 * chosen and the caption should sit under it the same way; one binding shared
-	 * between the two branches would be zeroed by whichever of them unmounted
-	 * last.
+	 * One per thing that can stand in the stage — the video, the picker that waits
+	 * for a file, YouTube's iframe — because a binding shared between two branches
+	 * is zeroed by whichever of them unmounts last, and the caption should sit
+	 * under all three the same way.
 	 */
 	let filmWidth = $state(0);
 	let pickWidth = $state(0);
-	/** Whichever of the two is on screen. Rounded — a subpixel width is noise here. */
-	const captionWidth = $derived(Math.round(mediaSrc ? filmWidth : pickWidth));
+	let frameWidth = $state(0);
 
 	/**
 	 * Words tapped on *this page*, by key — cleared whenever the page turns.
@@ -265,14 +278,16 @@
 	/**
 	 * Whether this text has a recording the reader can follow.
 	 *
-	 * Two conditions, and both are about *this* build: a `file` media, because
-	 * that is the only kind anything here can play — a `youtube` text falls
-	 * through to the paged reader rather than erroring, which is what lets that
-	 * variant exist in the type before its slice does — and at least one timed
-	 * sentence, because a player with nothing to highlight is a video in the
-	 * wrong app.
+	 * A media of either kind — both are playable now, and which one it is decides
+	 * nothing beyond what gets mounted in the stage — and at least one timed
+	 * sentence, because a player with nothing to highlight is a video in the wrong
+	 * app.
 	 */
-	const followable = $derived(text?.media?.kind === 'file' && firstTimed(sentences) >= 0);
+	const followable = $derived(text?.media !== undefined && firstTimed(sentences) >= 0);
+
+	/** Which player the stage builds. The only place in the page that asks. */
+	const isYouTube = $derived(text?.media?.kind === 'youtube');
+	const videoId = $derived(text?.media?.kind === 'youtube' ? text.media.videoId : '');
 
 	/**
 	 * Which view, from `?view=`. Follow is the default for a text that can follow:
@@ -294,6 +309,20 @@
 
 	/** What to ask for by name when the file is not in hand. */
 	const mediaName = $derived(text?.media?.kind === 'file' ? text.media.name : '');
+
+	/**
+	 * Whether there is something to press the line controls against.
+	 *
+	 * For a file that means the learner has handed one over; for YouTube it means
+	 * the API turned up. Both fail into the same shape — the transport greys out,
+	 * the text stays readable, "Read as text" still works.
+	 */
+	const playable = $derived(isYouTube ? mediaError === '' : mediaSrc !== '');
+
+	/** Whichever of the three is in the stage. Rounded — a subpixel width is noise here. */
+	const captionWidth = $derived(
+		Math.round(isYouTube ? frameWidth : mediaSrc ? filmWidth : pickWidth)
+	);
 
 	/**
 	 * Where the pages break. Derived from the stored sentences, never from the
@@ -516,6 +545,11 @@
 	/**
 	 * The player, for as long as there is an element to build it on.
 	 *
+	 * Two implementations and one piece of wiring: whichever element is in the
+	 * stage decides which is built, and nothing below this line knows which it
+	 * got — that is what `Player` is for, and it is why the second kind of
+	 * recording was a new file rather than a rewrite of this page.
+	 *
 	 * Everything that could be wrong about following the clock is in
 	 * `$lib/media/follow`, which is pure; this is only the wiring. `lastMs` is
 	 * what makes auto-pause fire *once*: the end of a line falls between two
@@ -525,9 +559,20 @@
 	 */
 	$effect(() => {
 		const el = videoEl;
-		if (!el) return;
+		const frame = frameEl;
+		const id = videoId;
 
-		const built = videoPlayer(el);
+		const built = el
+			? videoPlayer(el)
+			: frame && id
+				? // The failure is asynchronous (a script that never lands) and lands
+					// in `mediaError`, which unmounts this very element — so the effect
+					// re-runs, finds nothing to build on, and stops. No loop, because
+					// the error branch has no element in it.
+					youtubePlayer(frame, id, { onFail: (message) => (mediaError = message) })
+				: undefined;
+		if (!built) return;
+
 		player = built;
 		lastMs = built.currentTime();
 
@@ -635,8 +680,13 @@
 	/** Switches between the follow view and the paged reader, in the URL. */
 	async function setView(next: 'follow' | 'text') {
 		const url = new URL(page.url);
-		if (next === 'follow') url.searchParams.delete('view');
-		else url.searchParams.set('view', 'text');
+		// Coming back to the video is also the retry: the failure was a script that
+		// did not arrive, `$lib/media` forgets a failed load, and asking again is
+		// what a learner who has just reconnected would expect this button to do.
+		if (next === 'follow') {
+			mediaError = '';
+			url.searchParams.delete('view');
+		} else url.searchParams.set('view', 'text');
 		// The page number belongs to the paged view; leaving it behind would put
 		// the learner on page 4 of a text they were watching from the top.
 		url.searchParams.delete('p');
@@ -1047,7 +1097,12 @@
 
 		const focused = document.activeElement;
 		const tag = focused instanceof HTMLElement ? focused.tagName : '';
+		// `IFRAME` is the YouTube case and is belt and braces: once the player has
+		// focus its own document gets the keystrokes and this handler is not called
+		// at all. Standing down while it is merely the active element costs nothing
+		// and is the honest description of who owns the keyboard.
 		if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON' || tag === 'VIDEO') return;
+		if (tag === 'IFRAME') return;
 		if (focused instanceof HTMLElement && focused.isContentEditable) return;
 
 		if (event.key === ' ') {
@@ -1155,7 +1210,17 @@
 				     under it however far the learner scrolls for the word card. -->
 				{#if following}
 					<div class="stage">
-						{#if mediaSrc}
+						{#if isYouTube}
+							{#if mediaError}
+								<!-- The one honest thing to say, and the text underneath is
+								     untouched: "Read as text" is two rows down and works. -->
+								<p class="stage-fail">{mediaError}</p>
+							{:else}
+								<!-- Empty on purpose: `$lib/media` puts the iframe in here and
+								     owns everything inside it. -->
+								<div class="yt-frame" bind:this={frameEl} bind:clientWidth={frameWidth}></div>
+							{/if}
+						{:else if mediaSrc}
 							<!-- svelte-ignore a11y_media_has_caption -->
 							<!-- The native controls stay on: scrubbing, volume and fullscreen
 							     are free and better than anything written here. Ours are the
@@ -1288,7 +1353,7 @@
 							<button
 								type="button"
 								class="btn btn-ghost tool"
-								disabled={!mediaSrc}
+								disabled={!playable}
 								onclick={replayLine}
 							>
 								Replay line
@@ -1296,7 +1361,7 @@
 							<button
 								type="button"
 								class="btn btn-primary tool"
-								disabled={!mediaSrc}
+								disabled={!playable}
 								onclick={toggleMedia}
 							>
 								{mediaPaused ? 'Play' : 'Pause'}
@@ -1304,16 +1369,27 @@
 							<button
 								type="button"
 								class="btn btn-ghost tool"
-								disabled={!mediaSrc || nextIndex < 0}
+								disabled={!playable || nextIndex < 0}
 								onclick={() => seekTo(nextIndex)}
 							>
 								Next line
 							</button>
 						</div>
 						<label class="transport-opt">
-							<input type="checkbox" bind:checked={autoPause} disabled={!mediaSrc} />
+							<input type="checkbox" bind:checked={autoPause} disabled={!playable} />
 							Stop at the end of each line
 						</label>
+						<!-- Said rather than fought: once the learner clicks inside YouTube's
+						     iframe it owns the keyboard, and Space and the arrows go to its
+						     shortcuts instead of ours. Stealing focus back from a player
+						     somebody just clicked on would be worse than the buttons above,
+						     which always work. -->
+						{#if isYouTube}
+							<p class="hint transport-hint">
+								Space and ← → work these — until you click inside the video, after which the
+								keyboard is YouTube's. Click the text to take it back.
+							</p>
+						{/if}
 						<!-- The paged reader is where a text is *finished* — the receipt and
 						     the page grading live there, and nothing here writes a grade. -->
 						<button type="button" class="reveal" onclick={() => void setView('text')}>
@@ -1745,6 +1821,48 @@
 		background: #000;
 	}
 
+	/*
+	  YouTube's box. A `<div>` has no intrinsic aspect ratio the way a `<video>`
+	  does, so 16:9 is declared here and the iframe fills it — and `overflow`
+	  clips the player's own square corners into the app's radius.
+
+	  `:global(iframe)`, because the iframe is not in this template: the API
+	  creates it, so Svelte's scoping class is never on it and a plain descendant
+	  selector would match nothing.
+	*/
+	.yt-frame {
+		display: block;
+		width: 100%;
+		aspect-ratio: 16 / 9;
+		overflow: hidden;
+		border-radius: var(--radius);
+		background: #000;
+	}
+
+	.yt-frame :global(iframe) {
+		display: block;
+		width: 100%;
+		height: 100%;
+		border: 0;
+	}
+
+	/* The API never turned up. One line, in the picture's place, in the picture's
+	   box — the text below it is untouched and "Read as text" is two rows down. */
+	.stage-fail {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		margin: 0;
+		aspect-ratio: 16 / 9;
+		padding: 1rem;
+		border: 1px dashed var(--border-strong);
+		border-radius: var(--radius);
+		background: var(--surface-alt);
+		color: var(--text-muted);
+		font-size: 0.95rem;
+		text-align: center;
+	}
+
 	/* The file is not in hand: what to look for, and the picker. Same box as the
 	   video it stands in for, so nothing moves when it is chosen. */
 	.pick {
@@ -1841,6 +1959,15 @@
 
 	.transport-opt input {
 		accent-color: var(--primary);
+	}
+
+	/* A whole row of its own inside the wrapping transport: it is a caveat about
+	   the keyboard, not a control, and a sentence squeezed between two buttons
+	   reads as one. */
+	.transport-hint {
+		flex: 1 0 100%;
+		margin: 0;
+		font-size: 0.78rem;
 	}
 
 	.legend {
@@ -2339,7 +2466,23 @@
 			object-fit: contain;
 		}
 
-		.is-following .pick {
+		/*
+		  The same trade for YouTube, with the ratio doing the work the video's own
+		  dimensions do above: a definite height from the stage, `width: auto`, and
+		  `aspect-ratio` derives the width — which is what `bind:clientWidth` then
+		  measures for the caption. `max-width` is what keeps a short, wide window
+		  from pushing the picture out of the column; the ratio holds and the height
+		  gives instead.
+		*/
+		.is-following .yt-frame {
+			height: 100%;
+			width: auto;
+			max-width: 100%;
+			aspect-ratio: 16 / 9;
+		}
+
+		.is-following .pick,
+		.is-following .stage-fail {
 			aspect-ratio: auto;
 			width: 100%;
 			height: 100%;

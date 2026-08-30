@@ -17,9 +17,12 @@
 
   A subtitle import may also name the recording it came from, and this is the
   only moment it can: a text is immutable, so the media reference is attached
-  here or never. What is *stored* is the file's name and nothing else — the
-  handle goes into `$lib/media`'s session cache, so the reader opening a second
-  later already has it and every later open asks for it again.
+  here or never. One recording, chosen two ways — a file on this device, or a
+  YouTube link — and the fields clear each other, because "which of these two is
+  it" is not a question the reader should have to answer later. What is *stored*
+  is a reference either way: a video id, or a file's name and nothing else. The
+  file handle itself goes into `$lib/media`'s session cache, so the reader
+  opening a second later already has it and every later open asks for it again.
 -->
 <script lang="ts">
 	import { browser } from '$app/environment';
@@ -28,7 +31,7 @@
 	import { addText, getAllItems, getKnownTerms, getProfile, getTexts } from '$lib/db';
 	import { newUuid } from '$lib/device';
 	import { isMockMode } from '$lib/llm';
-	import { rememberFile } from '$lib/media';
+	import { rememberFile, videoIdFrom } from '$lib/media';
 	import {
 		MAX_FOCUS_WORDS,
 		MAX_IMPORT_TOTAL_CHARS,
@@ -77,6 +80,17 @@
 	 * chosen is its name.
 	 */
 	let mediaFile = $state<File | undefined>(undefined);
+	/**
+	 * The other kind of recording: a link to the video the subtitles came from.
+	 *
+	 * The two are **exclusive** — a text has one recording, and offering a file
+	 * *and* a link would be asking which of two answers to the same question
+	 * counts. Choosing either clears the other, so what is on screen is always
+	 * what would be stored.
+	 */
+	let mediaLink = $state('');
+	/** The file input, so choosing a link can visibly empty it. */
+	let mediaInput = $state<HTMLInputElement | null>(null);
 	/** One flag for both doors — a page that is mid-call has nothing else to do. */
 	let busy = $state(false);
 	let composeError = $state('');
@@ -164,6 +178,15 @@
 	});
 
 	const overCap = $derived(plan.chars > MAX_IMPORT_TOTAL_CHARS);
+
+	/**
+	 * The video the link names, if it names one.
+	 *
+	 * Derived rather than parsed on submit, because the learner should see what
+	 * was understood while there is still a box to correct — a link that turns out
+	 * to be a playlist is worth knowing before the import is paid for.
+	 */
+	const linkId = $derived(videoIdFrom(mediaLink));
 
 	function pickDoor(next: Door) {
 		door = next;
@@ -271,6 +294,26 @@
 	function bringMedia(event: Event) {
 		const input = event.currentTarget as HTMLInputElement;
 		mediaFile = input.files?.[0];
+		// A text has one recording: the file the learner just chose is the answer,
+		// so the link stops being one.
+		if (mediaFile) mediaLink = '';
+	}
+
+	/**
+	 * The other half of the same choice — a link to the video instead of a copy of
+	 * it.
+	 *
+	 * Written out rather than `bind:value`, because clearing the file input is
+	 * part of the same keystroke: an `<input type="file">` cannot be emptied by
+	 * assigning state (the browser owns its value), so the element is asked
+	 * directly, and doing that in the handler keeps the order of the two obvious.
+	 */
+	function bringLink(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		mediaLink = input.value;
+		if (input.value.trim() === '') return;
+		mediaFile = undefined;
+		if (mediaInput) mediaInput.value = '';
 	}
 
 	/** Door two: a text the learner brought, cut here and annotated there. */
@@ -314,18 +357,23 @@
 					)
 				: draft.sentences;
 
-			// Only the name and the type: the file itself never leaves this tab.
-			// Guarded on `timings` as well as on the file, because a media reference
-			// on a text whose sentences have no offsets would point at a recording
-			// nothing could follow.
-			const media: ReadingMedia | undefined =
-				timings && mediaFile
-					? {
-							kind: 'file',
-							name: mediaFile.name,
-							...(mediaFile.type ? { type: mediaFile.type } : {})
-						}
-					: undefined;
+			// A reference and never the thing itself: an id for YouTube, and for a
+			// file only its name and type — the file never leaves this tab. Guarded
+			// on `timings` as well, because a media reference on a text whose
+			// sentences have no offsets would point at a recording nothing could
+			// follow. The link wins where both are somehow set; the two inputs clear
+			// each other, so that is a tie that should not arise.
+			const media: ReadingMedia | undefined = !timings
+				? undefined
+				: linkId
+					? { kind: 'youtube', videoId: linkId }
+					: mediaFile
+						? {
+								kind: 'file',
+								name: mediaFile.name,
+								...(mediaFile.type ? { type: mediaFile.type } : {})
+							}
+						: undefined;
 
 			await keep(
 				{
@@ -335,7 +383,7 @@
 					glossary: draft.glossary,
 					...(media ? { media } : {})
 				},
-				media ? mediaFile : undefined
+				media?.kind === 'file' ? mediaFile : undefined
 			);
 		} catch (cause) {
 			composeError = cause instanceof Error ? cause.message : 'Could not annotate that text.';
@@ -524,16 +572,35 @@
 								type="file"
 								accept="video/*,audio/*"
 								disabled={busy}
+								bind:this={mediaInput}
 								onchange={bringMedia}
 							/>
 						</label>
+						<!-- Or the video itself, where it lives. One recording per text, so
+						     the two fields clear each other rather than both being sent. -->
+						<label class="bring media-bring">
+							<span class="bring-label">Or a YouTube link</span>
+							<input
+								class="input"
+								type="url"
+								inputmode="url"
+								placeholder="https://youtu.be/…"
+								disabled={busy}
+								value={mediaLink}
+								oninput={bringLink}
+							/>
+						</label>
 						<p class="hint media-hint">
-							{#if mediaFile}
+							{#if linkId}
+								Video <strong>{linkId}</strong> plays beside the text, from YouTube.
+							{:else if mediaLink.trim()}
+								That is not a YouTube link — paste the address of a video, or its id.
+							{:else if mediaFile}
 								<strong>{mediaFile.name}</strong> plays beside the text. Only its name is kept — the file
 								stays on your device, so you'll pick it again next time you open this.
 							{:else}
-								Add the recording and the text follows along with it. Only its name is kept; the
-								file never leaves this device.
+								Add the recording and the text follows along with it. A file never leaves this
+								device — only its name is kept.
 							{/if}
 						</p>
 					{/if}

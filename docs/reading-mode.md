@@ -1,8 +1,8 @@
 # Reading mode — design
 
-Status: **slices 1–4 implemented** (the reader, reading as review, subtitle
-import, the follow view). The vision is larger than what is built; §7 lists what
-is deliberately left out.
+Status: **slices 1–5 implemented** (the reader, reading as review, subtitle
+import, the follow view, and YouTube beside a local file). The vision is larger
+than what is built; §7 lists what is deliberately left out.
 
 ## 1. Why
 
@@ -173,8 +173,8 @@ deliberately not a newline, which `splitSentences` splits on. A transcript with
 no sentence-final mark anywhere — the common auto-caption case — degrades to one
 sentence per cue rather than one sentence per video. The timings land on
 `ReadingSentence.start`/`end` (milliseconds into the media, both or neither),
-zipped on by the page so the module never learns where the text came from.
-Nothing reads them yet (§7).
+zipped on by the page so the module never learns where the text came from. What
+reads them is the reader's follow view, through `$lib/media`.
 
 Both return `{ title, sentences, glossary, usage }`; the page mints `id`
 (`newUuid`) and `createdAt` and calls `addText`.
@@ -414,11 +414,11 @@ has, so it is not rendered while following and the slot simply goes empty.
 
 **`src/lib/media/`** is the new area, stateless on the same seam as
 `$lib/reading` (`media.md` is the contract). `Player` is five verbs and a clock;
-`videoPlayer` is that over a `<video>` element, and YouTube's iframe will be the
-second implementation of the same interface — which is why `ReadingMedia` defines
-both variants now and a `youtube` text falls back to the paged reader rather than
-erroring. Milliseconds everywhere except inside `video.ts`, where the DOM's
-seconds are converted once. `follow.ts` is pure and holds the four rules a real
+`videoPlayer` is that over a `<video>` element and `youtubePlayer` is the same
+five verbs over YouTube's iframe (the slice below), which is why `ReadingMedia`
+has both variants and why the second one was a new file rather than a rewrite of
+the reader. Milliseconds everywhere except inside the two implementations, where
+the seconds a media clock reports are converted once. `follow.ts` is pure and holds the four rules a real
 subtitle file forces: a gap stays on the last line that *started* (cues do not
 tile a recording, and a highlight blinking off in every silence would flicker
 through a conversation), `start` is inclusive, an untimed sentence is skipped and
@@ -502,12 +502,62 @@ them and vanished on the device they synced to. Both are named now, `texts` has 
 `media` column and `DERIVED_SCHEMA_VERSION` is bumped so the read tables rebuild
 from the log.
 
+### YouTube (slice 5, built)
+
+The recording is usually not a file at all. The learner watched something,
+pulled the subtitles out of it, and still has the video open in a tab — so the
+composer takes **either** a file **or** a YouTube link, exclusively, and the
+reader plays whichever the text names.
+
+**The seam paid for itself.** `youtubePlayer` (`youtube.ts`) is the same five
+verbs and a clock over YouTube's IFrame API, and the reader's player effect
+learned one line: which element is in the stage decides which factory is called.
+Nothing downstream — the transport, auto-pause, the tap that pauses, the
+transcript, the caption width — knows there are two kinds of recording. What
+changed in the reader beyond that is `followable` (a media of *either* kind),
+`playable` (a file in hand, or an API that turned up) in place of the bare
+`mediaSrc` test on the controls, and a third `bind:clientWidth`.
+
+The API is unlike a media element in three ways and each of them is a line of
+`youtube.ts`. It **arrives late** — a script that loads a script and then calls a
+global — so it is injected once per page, lazily, and the factory stays
+synchronous and *queues* a play or a seek asked of it during the load rather than
+handing the reader a promise to await inside an effect. It has **no
+`timeupdate`**, so the clock is polled at 250 ms *while playing only* and every
+state change announces once, which is what keeps a seek or a pause immediate and
+a paused video timer-free. And it **replaces the element it is given**, so it is
+handed a child created in `youtube.ts`, never the Svelte-bound node. The host is
+`youtube-nocookie.com`, the controls are native for the same reason `<video>`'s
+are, and the six type signatures used are written at the top of the file instead
+of adding `@types/youtube` to the manifest.
+
+**One thing is genuinely lost, and it is stated rather than fixed.** Once the
+learner clicks inside the player, the iframe owns the keyboard: Space and the
+arrows work YouTube's shortcuts and this app never sees the events. Stealing
+focus back from a player somebody just clicked on would be a worse app than one
+whose on-screen transport always works, so the caveat sits under the controls in
+a line of its own.
+
+Failure is a line where the picture would be — "the YouTube player did not
+load", after `onerror` or a ten-second wait for a blocker that fires no error —
+with the text underneath untouched and "Read as text" one press away. The failed
+load is forgotten, so returning to the follow view tries again. No CSP or frame
+policy stands in the way (`static/_headers` sets neither), and the service worker
+passes every cross-origin request straight through; the one thing that *would*
+break the embed is turning on COEP, which `_headers` now says.
+
 ## 7. Not in this slice
 
 - Questions about the text (LLM, chat-style).
 - Target-language explanations on tap (immersion glosses).
 - Per-word timing (karaoke); audio-first presentation.
-- **YouTube.** `ReadingMedia` has the variant and the reader falls back to the
-  paged view for it; what is missing is the iframe-API `Player` beside
-  `videoPlayer`, and the composer field that takes a URL and keeps the id.
+- **Fetching a video's captions.** A YouTube text still starts with a subtitle
+  file the learner obtained themselves (`yt-dlp`, or the "Show transcript"
+  panel copied): the caption tracks are not readable from a browser page —
+  no CORS on the timedtext endpoints, and the player API exposes none of it —
+  so pasting a link alone can never produce the text. Closing that would take a
+  server or a browser extension, and this app has neither by design; the sync
+  Worker sequences events and reads no payload.
+- **Anything else about the embedded player**: the keyboard once the iframe has
+  focus, a playlist rather than a video, a start offset from a `t=` parameter.
 - Editing a text, re-annotating, imports longer than `MAX_IMPORT_TOTAL_CHARS`.
