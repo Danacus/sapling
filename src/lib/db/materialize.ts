@@ -296,6 +296,74 @@ function profileUpdated(sql: Sql, at: number, p: PayloadFor<'profileUpdated'>): 
 	);
 }
 
+/**
+ * A whole reading text, insert-or-ignore. Same shape as {@link itemAdded}: a
+ * tombstone outranks it whenever it arrives, and a second copy of a text this
+ * device already has changes nothing, because a text is immutable once stored.
+ */
+function textAdded(sql: Sql, p: PayloadFor<'textAdded'>): void {
+	if (sql.query('SELECT 1 FROM textTombstones WHERE textId = ?', [p.id]).length > 0) return;
+	sql.exec(
+		`INSERT OR IGNORE INTO texts (id, title, source, topic, sentences, glossary, createdAt)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		[
+			p.id,
+			p.title,
+			p.source,
+			p.topic ?? null,
+			JSON.stringify(p.sentences),
+			JSON.stringify(p.glossary),
+			p.createdAt
+		]
+	);
+}
+
+function textDeleted(sql: Sql, p: PayloadFor<'textDeleted'>): void {
+	sql.exec('INSERT OR IGNORE INTO textTombstones (textId) VALUES (?)', [p.textId]);
+	sql.exec('DELETE FROM texts WHERE id = ?', [p.textId]);
+}
+
+/**
+ * The known/not-known toggle, last write by `at` wins — the third overwrite,
+ * resolved exactly like `itemUpdated` and `profileUpdated`.
+ *
+ * The term is the key, stored trimmed and otherwise verbatim; normalising for
+ * lookup is the reader's job, not the log's.
+ */
+function wordMarked(sql: Sql, at: number, p: PayloadFor<'wordMarked'>): void {
+	const term = p.term.trim();
+	if (term === '') return;
+	const row = sql.query<{ updatedAt: number }>('SELECT updatedAt FROM wordMarks WHERE term = ?', [
+		term
+	])[0];
+	if (row && at < row.updatedAt) return;
+	sql.exec('INSERT OR REPLACE INTO wordMarks (term, known, updatedAt) VALUES (?, ?, ?)', [
+		term,
+		p.known ? 1 : 0,
+		at
+	]);
+}
+
+/**
+ * One "explain this word" tap, set-unioned by the envelope id like
+ * {@link resultLogged}.
+ *
+ * Two lookups of the same word are two rows on purpose — the count is the
+ * signal — so nothing here collapses by content; only a re-delivery of one
+ * event collapses, which is what the id buys.
+ */
+function wordLookedUp(sql: Sql, id: string, at: number, p: PayloadFor<'wordLookedUp'>): void {
+	const term = p.term.trim();
+	if (term === '') return;
+	sql.exec('INSERT OR IGNORE INTO lookups (id, term, itemId, textId, at) VALUES (?, ?, ?, ?, ?)', [
+		id,
+		term,
+		p.itemId ?? null,
+		p.textId,
+		at
+	]);
+}
+
 /** Applies one event's merge rule. Assumes the caller has already deduped by id. */
 export function applyEvent(sql: Sql, event: SyncEvent): void {
 	const type: EventType = event.type;
@@ -329,6 +397,14 @@ export function applyEvent(sql: Sql, event: SyncEvent): void {
 			return resultLogged(sql, event.id, event.payload as PayloadFor<'resultLogged'>);
 		case 'profileUpdated':
 			return profileUpdated(sql, event.at, event.payload as PayloadFor<'profileUpdated'>);
+		case 'textAdded':
+			return textAdded(sql, event.payload as PayloadFor<'textAdded'>);
+		case 'textDeleted':
+			return textDeleted(sql, event.payload as PayloadFor<'textDeleted'>);
+		case 'wordMarked':
+			return wordMarked(sql, event.at, event.payload as PayloadFor<'wordMarked'>);
+		case 'wordLookedUp':
+			return wordLookedUp(sql, event.id, event.at, event.payload as PayloadFor<'wordLookedUp'>);
 	}
 }
 

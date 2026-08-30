@@ -35,6 +35,7 @@
 
 import { pinyin } from 'pinyin-pro';
 
+import { segmentWords } from '$lib/text';
 import type { RomanizedToken, Romanizer } from './types';
 
 /**
@@ -122,14 +123,61 @@ function readingOf(entries: readonly PinyinEntry[], start: number, end: number):
 }
 
 /**
+ * Where each entry starts in the text, counted in code points, plus a sentinel
+ * end.
+ *
+ * Needed because entry indices and character positions are not the same thing:
+ * `nonZh: 'consecutive'` merges a whole Latin run into one entry, so the fifth
+ * entry is rarely the fifth character. The segment boundaries below are measured
+ * in characters, and this is what maps between the two.
+ */
+function entryOffsets(entries: readonly PinyinEntry[]): number[] {
+	const offsets: number[] = [];
+	let pos = 0;
+	for (const entry of entries) {
+		offsets.push(pos);
+		pos += [...entry.origin].length;
+	}
+	offsets.push(pos);
+	return offsets;
+}
+
+/**
+ * Word boundaries for the spans no vocabulary term claims, from ICU
+ * (`segmentWords` in `$lib/text`), as `ends[k]` = where the segment covering
+ * character `k` finishes.
+ *
+ * Without this the fallback is one token per character, which reads as a
+ * sentence chopped into syllables: 我们 becomes two cells with two readings and
+ * two tap targets for one word. ICU is not always right — it prefers 自行 + 车
+ * to 自行车 — but the learner's own terms are matched first and override it
+ * wherever they have an opinion, so the dictionary only decides what nobody
+ * claimed.
+ *
+ * The readings are untouched by any of this: they still come from the single
+ * whole-text `pinyin()` call and are sliced per span, so context still resolves
+ * every polyphone.
+ */
+function segmentEnds(text: string): number[] {
+	const ends: number[] = [];
+	let pos = 0;
+	for (const segment of segmentWords(text, 'zh')) {
+		const length = [...segment.text].length;
+		pos += length;
+		for (let k = 0; k < length; k++) ends.push(pos);
+	}
+	return ends;
+}
+
+/**
  * Split `text` into display tokens carrying their pinyin.
  *
  * One `pinyin()` call over the whole string (see the module note), then a single
  * left-to-right walk of the resulting per-character entries: at each Chinese
  * character the longest matching vocabulary term claims its span as one token,
- * anything else becomes a one-character token, and each merged run of
- * non-Chinese text — Latin words, digits, punctuation, whitespace, the cloze gap
- * `___` — becomes one token with `reading: null`.
+ * anything else is grouped by the ICU word boundary it falls in, and each merged
+ * run of non-Chinese text — Latin words, digits, punctuation, whitespace, the
+ * cloze gap `___` — becomes one token with `reading: null`.
  *
  * The empty string yields an empty array; whitespace-only input yields one
  * null-reading token holding that whitespace. In every case concatenating the
@@ -140,6 +188,8 @@ export function tokenizeMandarin(text: string, terms: readonly string[] = []): R
 
 	const entries: readonly PinyinEntry[] = pinyin(text, { type: 'all', nonZh: 'consecutive' });
 	const prepared = prepareTerms(terms);
+	const offsets = entryOffsets(entries);
+	const ends = segmentEnds(text);
 
 	const tokens: RomanizedToken[] = [];
 	let i = 0;
@@ -150,8 +200,18 @@ export function tokenizeMandarin(text: string, terms: readonly string[] = []): R
 			i++;
 			continue;
 		}
-		const span = Math.max(termSpanAt(entries, i, prepared), 1);
-		const end = i + span;
+
+		const span = termSpanAt(entries, i, prepared);
+		let end: number;
+		if (span > 0) {
+			end = i + span;
+		} else {
+			// No term here: run to the end of the ICU word this character sits in.
+			const limit = ends[offsets[i]] ?? offsets[i] + 1;
+			end = i + 1;
+			while (end < entries.length && entries[end].isZh && offsets[end] < limit) end++;
+		}
+
 		let word = '';
 		for (let j = i; j < end; j++) word += entries[j].origin;
 		tokens.push({ text: word, reading: readingOf(entries, i, end) });

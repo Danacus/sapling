@@ -11,15 +11,20 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
 	addResult,
+	addText,
 	addToPool,
 	deleteItem,
 	exportData,
 	getAllItems,
 	getDailyActivity,
 	getItem,
+	getKnownTerms,
 	getPool,
 	getProfile,
+	getTexts,
 	importData,
+	markWord,
+	recordLookup,
 	recordServe,
 	saveProfile,
 	updateItemAfterReview,
@@ -27,7 +32,7 @@ import {
 	type ExportEnvelope
 } from '$lib/db';
 import { newCardState, reviewCard } from '$lib/srs';
-import type { Challenge, KnowledgeItem, Profile } from '$lib/types';
+import type { Challenge, KnowledgeItem, Profile, ReadingText } from '$lib/types';
 import { setStoreForTesting, type Store } from './store';
 import { makeTestStore } from './store.testing';
 
@@ -69,6 +74,16 @@ function item(id: string, term: string, introducedAt: number): KnowledgeItem {
 	};
 }
 
+const text: ReadingText = {
+	id: 't1',
+	title: '买书',
+	source: 'generated',
+	topic: 'shopping',
+	sentences: [{ text: '我想买书。', reading: 'wǒ xiǎng mǎi shū.', translation: 'I want a book.' }],
+	glossary: [{ term: '书', reading: 'shū', meaning: 'book' }],
+	createdAt: 6000
+};
+
 /** Seeds one write of every kind, through the repositories that produce them. */
 async function seedOneOfEach(): Promise<void> {
 	await saveProfile(profile);
@@ -78,6 +93,16 @@ async function seedOneOfEach(): Promise<void> {
 	await addToPool([challenge], 3000);
 	await recordServe('c1', 4000);
 	await addResult({ challengeId: 'c1', verdict: 'correct', answerGiven: '书', at: 5000 });
+	await addText(text);
+	await markWord('水', true);
+	await recordLookup('书', 't1', 'i1');
+}
+
+/** `lookups` has no repository read yet, so the round trip checks the rows. */
+function lookupRows(from: Store) {
+	return from.query<{ term: string; itemId: string | null; textId: string; at: number }>(
+		'SELECT term, itemId, textId, at FROM lookups ORDER BY rowid'
+	);
 }
 
 describe('export', () => {
@@ -94,7 +119,10 @@ describe('export', () => {
 			'itemDeleted',
 			'itemReviewed',
 			'profileUpdated',
-			'resultLogged'
+			'resultLogged',
+			'textAdded',
+			'wordLookedUp',
+			'wordMarked'
 		]);
 	});
 
@@ -117,16 +145,23 @@ describe('export', () => {
 			items: await getAllItems(),
 			pool: await getPool(),
 			profile: await getProfile(),
-			activity: await getDailyActivity()
+			activity: await getDailyActivity(),
+			texts: await getTexts(),
+			known: await getKnownTerms(),
+			lookups: await lookupRows(store)
 		};
 
-		setStoreForTesting(await makeTestStore());
+		store = await makeTestStore();
+		setStoreForTesting(store);
 		await importData(dump);
 
 		expect(await getAllItems()).toEqual(before.items);
 		expect(await getPool()).toEqual(before.pool);
 		expect(await getProfile()).toEqual(before.profile);
 		expect(await getDailyActivity()).toEqual(before.activity);
+		expect(await getTexts()).toEqual(before.texts);
+		expect(await getKnownTerms()).toEqual(before.known);
+		expect(await lookupRows(store)).toEqual(before.lookups);
 	});
 
 	it('skips an event it cannot parse and keeps the rest', async () => {

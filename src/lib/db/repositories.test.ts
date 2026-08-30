@@ -8,11 +8,23 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { getAllItems, getItem, poolSize, upsertItems } from '$lib/db';
+import {
+	addText,
+	deleteText,
+	getAllItems,
+	getItem,
+	getKnownTerms,
+	getText,
+	getTexts,
+	markWord,
+	poolSize,
+	recordLookup,
+	upsertItems
+} from '$lib/db';
 import { setStoreForTesting, type Store } from './store';
 import { makeTestStore } from './store.testing';
 import { newCardState } from '$lib/srs';
-import type { Challenge, KnowledgeItem } from '$lib/types';
+import type { Challenge, KnowledgeItem, ReadingText } from '$lib/types';
 
 let store: Store;
 
@@ -112,5 +124,86 @@ describe('upsertItems', () => {
 		expect((await getItem('i2'))?.term).toBe('b2');
 		expect((await getItem('i2'))?.introducedAt).toBe(2);
 		expect((await getItem('i4'))?.introducedAt).toBe(4);
+	});
+});
+
+function text(id: string, title: string, createdAt: number, topic?: string): ReadingText {
+	return {
+		id,
+		title,
+		source: 'generated',
+		...(topic === undefined ? {} : { topic }),
+		sentences: [
+			{ text: '我想买书。', reading: 'wǒ xiǎng mǎi shū.', translation: 'I want a book.' }
+		],
+		glossary: [{ term: '书', reading: 'shū', meaning: 'book' }],
+		createdAt
+	};
+}
+
+describe('reading texts', () => {
+	it('round-trips a text whole, and lists newest first', async () => {
+		await addText(text('t1', '买书', 1000));
+		await addText(text('t2', '喝水', 2000, 'drinks'));
+
+		expect((await getTexts()).map((row) => row.id)).toEqual(['t2', 't1']);
+		// JSON columns come back as the objects that went in, topic included.
+		expect(await getText('t2')).toEqual(text('t2', '喝水', 2000, 'drinks'));
+	});
+
+	it('leaves an unset topic absent rather than null', async () => {
+		await addText(text('t1', '买书', 1000));
+
+		const loaded = await getText('t1');
+		expect(loaded && 'topic' in loaded).toBe(false);
+	});
+
+	it('deletes a text, and getText stops finding it', async () => {
+		await addText(text('t1', '买书', 1000));
+		await deleteText('t1');
+
+		expect(await getTexts()).toEqual([]);
+		expect(await getText('t1')).toBeUndefined();
+	});
+});
+
+describe('word marks', () => {
+	it('lists the terms still marked known', async () => {
+		await markWord('水', true);
+		await markWord('书', true);
+		await markWord('水', false);
+
+		expect((await getKnownTerms()).sort()).toEqual(['书']);
+	});
+
+	it('stores the term trimmed, so re-marking finds the same row', async () => {
+		await markWord('  水  ', true);
+		expect(await getKnownTerms()).toEqual(['水']);
+
+		await markWord('水', false);
+		expect(await getKnownTerms()).toEqual([]);
+	});
+});
+
+describe('recordLookup', () => {
+	it('keeps every tap, and leaves itemId null when the word is untracked', async () => {
+		// Nothing reads `lookups` yet, so the query is the assertion: two taps on
+		// the same word must be two rows, because the count is the signal a later
+		// slice reads.
+		await recordLookup('  书  ', 't1', 'i1');
+		await recordLookup('书', 't1');
+
+		const rows = await store.query<{ term: string; itemId: string | null; textId: string }>(
+			'SELECT term, itemId, textId FROM lookups ORDER BY rowid'
+		);
+		expect(rows).toEqual([
+			{ term: '书', itemId: 'i1', textId: 't1' },
+			{ term: '书', itemId: null, textId: 't1' }
+		]);
+	});
+
+	it('ignores a blank term', async () => {
+		await recordLookup('   ', 't1');
+		expect(await store.query('SELECT * FROM lookups')).toEqual([]);
 	});
 });

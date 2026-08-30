@@ -293,3 +293,62 @@ export interface ChallengeResult {
 	/** Epoch milliseconds. */
 	at: number;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Reading (comprehension) mode                                                */
+/* -------------------------------------------------------------------------- */
+
+/** One sentence of a {@link ReadingText}. */
+export interface ReadingSentence {
+	/** The sentence in the target language, verbatim. */
+	text: string;
+	/**
+	 * Latin-script reading of `text`, for targets not written in the Latin
+	 * script. The sentence-wide fallback for languages with no local romanizer
+	 * (`$lib/romanize`); absent for Latin-script targets.
+	 */
+	reading?: string;
+	/** The sentence in the learner's native language. */
+	translation?: string;
+}
+
+/**
+ * One glossed word: a word the text uses that is *not* in the learner's
+ * vocabulary, with what it means. Never a knowledge item by itself — a word
+ * enters the collection only when the learner adds it from the reader.
+ *
+ * For scripts written without spaces the glossary doubles as the segmentation
+ * dictionary: the tokenizer groups characters around these terms, so a glossed
+ * word renders as one cell rather than one per character.
+ */
+export interface GlossEntry {
+	/** As it appears in the text (base form is fine for inflecting languages). */
+	term: string;
+	/** Latin reading of `term`; absent for Latin-script targets. */
+	reading?: string;
+	/** Meaning in the learner's native language. */
+	meaning: string;
+}
+
+/**
+ * A text the learner reads (or listens to) for comprehension — written by the
+ * model from their vocabulary, or pasted in from elsewhere and annotated.
+ *
+ * Immutable once stored, like a challenge: the annotations are what the model
+ * produced at creation time, and everything adaptive (which readings show, which
+ * words are highlighted) is derived at render time from the vocabulary and the
+ * learner's marks — so old texts pick up new knowledge for free.
+ */
+export interface ReadingText {
+	id: string;
+	/** Short, in the target language. */
+	title: string;
+	/** `'generated'` by the model from the vocabulary, or `'imported'` by the learner. */
+	source: 'generated' | 'imported';
+	/** The learner's topic, when a generated text was asked for one. */
+	topic?: string;
+	sentences: ReadingSentence[];
+	glossary: GlossEntry[];
+	/** Epoch milliseconds. */
+	createdAt: number;
+}

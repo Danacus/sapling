@@ -21,7 +21,16 @@
  */
 
 import { getDeviceId } from '$lib/device';
-import type { Challenge, ChallengeResult, KnowledgeItem, Profile, Verdict } from '$lib/types';
+import type {
+	Challenge,
+	ChallengeResult,
+	GlossEntry,
+	KnowledgeItem,
+	Profile,
+	ReadingSentence,
+	ReadingText,
+	Verdict
+} from '$lib/types';
 import { challengeOf } from './database';
 import type { ChallengeRow } from './database';
 import { parseEvent, type SyncEvent } from './events';
@@ -471,6 +480,118 @@ export async function getDailyActivity(): Promise<{ day: string; count: number }
 	return store.query<{ day: string; count: number }>(
 		'SELECT day, count FROM daily ORDER BY day ASC'
 	);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Reading texts, word marks and lookups                                       */
+/* -------------------------------------------------------------------------- */
+
+interface TextSqlRow {
+	id: string;
+	title: string;
+	source: string;
+	topic: string | null;
+	sentences: string;
+	glossary: string;
+	createdAt: number;
+}
+
+/** Same nullable-column-to-absent-field conversion as {@link itemFrom}. */
+function textFrom(row: TextSqlRow): ReadingText {
+	return {
+		id: row.id,
+		title: row.title,
+		source: row.source as ReadingText['source'],
+		...(row.topic === null ? {} : { topic: row.topic }),
+		sentences: JSON.parse(row.sentences) as ReadingSentence[],
+		glossary: JSON.parse(row.glossary) as GlossEntry[],
+		createdAt: row.createdAt
+	};
+}
+
+/**
+ * Stores one reading text, whole.
+ *
+ * A text is immutable once written, so there is no upsert to think about: an id
+ * the log has already seen is ignored, and a deleted one never comes back.
+ */
+export async function addText(text: ReadingText): Promise<void> {
+	const store = await ready();
+	const plain = toPlain(text);
+	await store.commit('textAdded', {
+		id: plain.id,
+		title: plain.title,
+		source: plain.source,
+		...(plain.topic === undefined ? {} : { topic: plain.topic }),
+		sentences: plain.sentences,
+		glossary: plain.glossary,
+		createdAt: plain.createdAt
+	});
+}
+
+/**
+ * Every stored text, newest first.
+ *
+ * Read whole: a learner keeps a few dozen texts of a few thousand characters,
+ * which is smaller than one session's challenge pool.
+ */
+export async function getTexts(): Promise<ReadingText[]> {
+	const store = await ready();
+	const rows = await store.query<TextSqlRow>('SELECT * FROM texts ORDER BY createdAt DESC');
+	return rows.map(textFrom);
+}
+
+/** One text by id, or `undefined` when it was deleted (here or on another device). */
+export async function getText(id: string): Promise<ReadingText | undefined> {
+	const store = await ready();
+	const row = (await store.query<TextSqlRow>('SELECT * FROM texts WHERE id = ?', [id]))[0];
+	return row === undefined ? undefined : textFrom(row);
+}
+
+/** Forgets one text. Tombstoned, so a late copy from another device stays gone. */
+export async function deleteText(id: string): Promise<void> {
+	const store = await ready();
+	await store.commit('textDeleted', { textId: id });
+}
+
+/**
+ * Marks a word known, or takes the mark back.
+ *
+ * Not a knowledge item: a marked word is one the learner does not need help
+ * with, which is the opposite of one they are practising. Terms are stored
+ * trimmed and otherwise verbatim.
+ */
+export async function markWord(term: string, known: boolean): Promise<void> {
+	const trimmed = term.trim();
+	if (trimmed === '') return;
+	const store = await ready();
+	await store.commit('wordMarked', { term: trimmed, known });
+}
+
+/** The terms currently marked known — unmarking removes a term from this list. */
+export async function getKnownTerms(): Promise<string[]> {
+	const store = await ready();
+	const rows = await store.query<{ term: string }>('SELECT term FROM wordMarks WHERE known = 1');
+	return rows.map((row) => row.term);
+}
+
+/**
+ * Records that the learner opened a word's card — "I don't understand this".
+ *
+ * Write-only for now: nothing reads `lookups` yet. It is recorded anyway because
+ * a lookup on a word already in the garden is FSRS evidence, and it is the one
+ * thing about a reading session that cannot be recovered afterwards. Pass
+ * `itemId` when the word is tracked; that is the case a later slice grades.
+ */
+export async function recordLookup(term: string, textId: string, itemId?: string): Promise<void> {
+	const trimmed = term.trim();
+	if (trimmed === '') return;
+	const store = await ready();
+	await store.commit('wordLookedUp', {
+		term: trimmed,
+		...(itemId === undefined ? {} : { itemId }),
+		textId
+	});
 }
 
 /* -------------------------------------------------------------------------- */

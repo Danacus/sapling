@@ -245,30 +245,55 @@
 					{/if}
 				</section>
 
-				<!-- Conversation sits directly under the drill because the two are peers
-				     with different jobs: a session revisits what is already growing, this
-				     is where new words enter at all. Quieter than the start card by a
-				     whole background, but a card rather than a topbar icon — one of the
-				     two ways vocabulary arrives cannot live in a corner.
+				<!-- The two other doors, directly under the drill because all three are
+				     peers with different jobs: a session revisits what is already
+				     growing, a conversation is where new words enter at all, and a text
+				     is what having words is *for*. Quieter than the start card by a whole
+				     background, but cards rather than topbar icons — the way vocabulary
+				     arrives cannot live in a corner.
 
-				     Skipped on an empty garden, where the start card above is already
-				     this same door and one screen does not need it twice. -->
+				     Both skipped on an empty garden: there the start card above is
+				     already the conversation door, and a text written from no words is
+				     not yet worth offering. -->
 				{#if items.length > 0}
-					<section class="card talk-card ll-rise" style="animation-delay: 180ms">
-						<a class="talk-link" href="/converse">
-							<span class="talk-mark" aria-hidden="true">
+					<section class="card door-card ll-rise" style="animation-delay: 180ms">
+						<a class="door-link" href="/converse">
+							<span class="door-mark" aria-hidden="true">
 								<svg class="ico" viewBox="0 0 24 24">
 									<path d="M4.6 6.4h9.6v7.2H8.2l-3.6 3v-3H4.6Z" />
 									<path d="M10.6 9.4h8.8v6.2h-2.4v2.6l-3-2.6h-3.4Z" />
 								</svg>
 							</span>
-							<span class="talk-body">
-								<span class="talk-title">Have a conversation</span>
-								<span class="talk-copy">
+							<span class="door-body">
+								<span class="door-title">Have a conversation</span>
+								<span class="door-copy">
 									A scene you talk your way through — new words get planted as you reach for them.
 								</span>
 							</span>
-							<svg class="ico talk-arrow" viewBox="0 0 24 24" aria-hidden="true">
+							<svg class="ico door-arrow" viewBox="0 0 24 24" aria-hidden="true">
+								<path d="M4.8 12h14" />
+								<path d="m13.4 6.6 5.4 5.4-5.4 5.4" />
+							</svg>
+						</a>
+					</section>
+
+					<section class="card door-card ll-rise" style="animation-delay: 210ms">
+						<a class="door-link" href="/read">
+							<span class="door-mark" aria-hidden="true">
+								<svg class="ico" viewBox="0 0 24 24">
+									<path d="M12 7.4C9.9 6 7 5.4 3.8 5.6v11.6c3.2-.2 6.1.4 8.2 1.8" />
+									<path d="M12 7.4c2.1-1.4 5-2 8.2-1.8v11.6c-3.2-.2-6.1.4-8.2 1.8" />
+									<path d="M12 7.4v11.6" />
+								</svg>
+							</span>
+							<span class="door-body">
+								<span class="door-title">Read something</span>
+								<span class="door-copy">
+									A text written from your words — or one you bring — with every word one tap from
+									its meaning.
+								</span>
+							</span>
+							<svg class="ico door-arrow" viewBox="0 0 24 24" aria-hidden="true">
 								<path d="M4.8 12h14" />
 								<path d="m13.4 6.6 5.4 5.4-5.4 5.4" />
 							</svg>
@@ -603,18 +628,19 @@
 		text-decoration: none;
 	}
 
-	/* Conversation -------------------------------------------------------- */
+	/* The other doors ------------------------------------------------------ */
 
-	/* The whole card is the target — on a phone this should not require finding
+	/* One skin, worn by every card that is just a way through to somewhere else.
+	   The whole card is the target — on a phone this should not require finding
 	   a button inside it — so the padding moves off the card and onto the link.
-	   It keeps the plain surface while the start card above keeps the wash:
+	   They keep the plain surface while the start card above keeps the wash:
 	   same footprint, one step quieter. */
-	.talk-card {
+	.door-card {
 		padding: 0;
 		overflow: hidden;
 	}
 
-	.talk-link {
+	.door-link {
 		display: flex;
 		align-items: center;
 		gap: 0.9rem;
@@ -624,16 +650,16 @@
 		transition: background 0.15s ease;
 	}
 
-	.talk-link:hover {
+	.door-link:hover {
 		background: var(--surface-alt);
 	}
 
-	.talk-link:focus-visible {
+	.door-link:focus-visible {
 		outline: none;
 		box-shadow: var(--ring);
 	}
 
-	.talk-mark {
+	.door-mark {
 		display: grid;
 		place-items: center;
 		flex: 0 0 auto;
@@ -644,16 +670,16 @@
 		color: var(--primary);
 	}
 
-	.talk-mark .ico {
+	.door-mark .ico {
 		width: 1.35rem;
 		height: 1.35rem;
 	}
 
-	.talk-body {
+	.door-body {
 		min-width: 0;
 	}
 
-	.talk-title {
+	.door-title {
 		display: block;
 		font-family: var(--font-display);
 		font-size: 1.05rem;
@@ -661,7 +687,7 @@
 		letter-spacing: -0.01em;
 	}
 
-	.talk-copy {
+	.door-copy {
 		display: block;
 		margin-top: 0.15rem;
 		font-size: 0.85rem;
@@ -670,7 +696,7 @@
 		text-wrap: balance;
 	}
 
-	.talk-arrow {
+	.door-arrow {
 		margin-left: auto;
 		color: var(--text-muted);
 	}
@@ -863,12 +889,12 @@
 
 		/* The copy is what has to survive here, so the row gives back its own
 		   padding and gaps rather than squeezing the line to three words. */
-		.talk-link {
+		.door-link {
 			gap: 0.7rem;
 			padding: 1rem;
 		}
 
-		.talk-mark {
+		.door-mark {
 			width: 2.2rem;
 			height: 2.2rem;
 		}

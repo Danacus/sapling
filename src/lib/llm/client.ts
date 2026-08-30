@@ -240,7 +240,7 @@ function errorDetail(body: string): string | undefined {
 
 interface CompletionPayload {
 	model?: string;
-	choices?: { message?: { content?: unknown; tool_calls?: unknown } }[];
+	choices?: { message?: { content?: unknown; tool_calls?: unknown }; finish_reason?: unknown }[];
 	usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
 	error?: { message?: unknown };
 }
@@ -360,12 +360,23 @@ export async function chatCompletion(opts: ChatCompletionOptions): Promise<ChatC
 		throw llmError('bad-response', payload.error.message.slice(0, 200), response.status);
 	}
 
-	const message = payload.choices?.[0]?.message;
+	const choice = payload.choices?.[0];
+	const message = choice?.message;
 	const toolCalls = parseToolCalls(message?.tool_calls);
 	const content = typeof message?.content === 'string' ? message.content : '';
-	// A tool-calling turn legitimately has no prose; anything else must.
+	// A tool-calling turn legitimately has no prose; anything else must. Empty
+	// content under `finish_reason: "length"` is a thinking model that spent the
+	// whole `max_tokens` on reasoning — name it, so the fix (raise or drop the
+	// caller's cap) is visible in the message rather than a guess.
 	if (!content.trim() && toolCalls.length === 0) {
-		throw llmError('bad-response', 'no message content', response.status);
+		const cutOff = choice?.finish_reason === 'length';
+		throw llmError(
+			'bad-response',
+			cutOff
+				? 'cut off at max_tokens before any content — a thinking model needs a higher cap'
+				: 'no message content',
+			response.status
+		);
 	}
 
 	const usage: TokenUsage = {

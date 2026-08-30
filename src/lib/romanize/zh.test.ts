@@ -11,19 +11,12 @@ describe('tokenizeMandarin', () => {
 	describe('polyphone readings come from the sentence, not the character', () => {
 		it('reads 行 as háng in 银行', () => {
 			const tokens = tokenizeMandarin('我们去银行');
-			expect(tokens.map((token) => token.reading)).toEqual(['wǒ', 'men', 'qù', 'yín', 'háng']);
+			expect(tokens.map((token) => token.reading)).toEqual(['wǒ men', 'qù', 'yín háng']);
 		});
 
 		it('reads 行 as xíng in 自行车', () => {
 			const tokens = tokenizeMandarin('他会骑自行车');
-			expect(tokens.map((token) => token.reading)).toEqual([
-				'tā',
-				'huì',
-				'qí',
-				'zì',
-				'xíng',
-				'chē'
-			]);
+			expect(tokens.map((token) => token.reading)).toEqual(['tā', 'huì', 'qí', 'zì xíng', 'chē']);
 		});
 
 		it('keeps the context reading when the term is grouped', () => {
@@ -32,16 +25,15 @@ describe('tokenizeMandarin', () => {
 		});
 
 		it('applies 一 tone sandhi', () => {
-			expect(tokenizeMandarin('一下').map((token) => token.reading)).toEqual(['yí', 'xià']);
+			expect(tokenizeMandarin('一下').map((token) => token.reading)).toEqual(['yí xià']);
 		});
 	});
 
 	describe('grouping by the learner vocabulary', () => {
-		it('makes each matched term one token and leaves the rest per character', () => {
+		it('makes each matched term one token and cuts the rest on word boundaries', () => {
 			const tokens = tokenizeMandarin('我们去银行取钱', ['银行', '取钱']);
 			expect(tokens).toEqual([
-				{ text: '我', reading: 'wǒ' },
-				{ text: '们', reading: 'men' },
+				{ text: '我们', reading: 'wǒ men' },
 				{ text: '去', reading: 'qù' },
 				{ text: '银行', reading: 'yín háng' },
 				{ text: '取钱', reading: 'qǔ qián' }
@@ -54,20 +46,26 @@ describe('tokenizeMandarin', () => {
 			]);
 		});
 
-		it('splits per character when no term matches', () => {
+		it('beats the segmenter where the learner has an opinion', () => {
+			// ICU cuts 自行车 into 自行 + 车; a learner studying the whole word gets
+			// one token, one reading and one card.
+			expect(tokenizeMandarin('自行车').map((token) => token.text)).toEqual(['自行', '车']);
+			expect(tokenizeMandarin('自行车', ['自行车'])).toEqual([
+				{ text: '自行车', reading: 'zì xíng chē' }
+			]);
+		});
+
+		it('falls back to the segmenter when no term matches', () => {
 			expect(tokenizeMandarin('中国人', ['银行'])).toEqual([
-				{ text: '中', reading: 'zhōng' },
-				{ text: '国', reading: 'guó' },
-				{ text: '人', reading: 'rén' }
+				{ text: '中国人', reading: 'zhōng guó rén' }
 			]);
 		});
 
 		it('ignores terms that are not pure Han script', () => {
 			// A mixed or Latin term can never align with Hanzi entries; it must not
-			// throw, and it must not disturb the per-character fallback.
+			// throw, and it must not disturb the segmenter's own split.
 			expect(tokenizeMandarin('中国', ['bank', '中 国', ''])).toEqual([
-				{ text: '中', reading: 'zhōng' },
-				{ text: '国', reading: 'guó' }
+				{ text: '中国', reading: 'zhōng guó' }
 			]);
 		});
 
@@ -85,11 +83,21 @@ describe('tokenizeMandarin', () => {
 			expect(rebuild(tokens)).toBe(input);
 			expect(tokens).toEqual([
 				{ text: 'A: ', reading: null },
-				{ text: '我', reading: 'wǒ' },
-				{ text: '去', reading: 'qù' },
+				{ text: '我去', reading: 'wǒ qù' },
 				{ text: '银行', reading: 'yín háng' },
 				{ text: ', ok? ___ ', reading: null },
 				{ text: '了', reading: expect.any(String) }
+			]);
+		});
+
+		it('never lets a word boundary cross a non-Chinese run', () => {
+			// The merged Latin/punctuation entry is its own token whatever ICU
+			// thinks, so a segment spanning 说 and "OK" cannot glue them together.
+			expect(tokenizeMandarin('我说OK了').map((token) => token.text)).toEqual([
+				'我',
+				'说',
+				'OK',
+				'了'
 			]);
 		});
 

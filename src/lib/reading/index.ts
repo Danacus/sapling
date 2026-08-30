@@ -1,0 +1,94 @@
+/**
+ * Public surface of reading mode.
+ *
+ * Two doors in — {@link generateReadingText} for a text written from the
+ * learner's vocabulary, {@link annotateReadingText} for one they pasted — and
+ * both come out as a {@link ReadingTextDraft} the page mints an id for and
+ * stores. Everything after that is local: `splitSentences` cuts an import before
+ * it is ever sent, `tokenizeByTerms` and `annotateSentence` decide what the
+ * reader sees, and neither costs a token or a round trip.
+ *
+ * Stateless, like `$lib/conversation`: **nothing here imports `$lib/db`.** The
+ * caller passes the vocabulary in and persists what comes out, which is what
+ * keeps the whole module testable in node and what keeps every write to the
+ * learner's collection going through the repositories that capture sync events.
+ */
+
+import { isMockMode } from '$lib/llm';
+import { mockAnnotatedText, mockGeneratedText } from './mock';
+import { requestAnnotatedText } from './annotate-call';
+import type { AnnotateTextArgs } from './annotate-call';
+import { requestGeneratedText } from './generate';
+import type { GenerateTextArgs, ReadingOptions } from './generate';
+import type { ReadingTextDraft } from './schemas';
+
+/**
+ * One text written from the learner's own words: the real call when a key is
+ * configured, the deterministic mock otherwise — the same dispatch `getBatch`
+ * and `startConversation` make.
+ */
+export async function generateReadingText(
+	args: GenerateTextArgs,
+	opts: ReadingOptions = {}
+): Promise<ReadingTextDraft> {
+	if (isMockMode()) return mockGeneratedText(args);
+	return requestGeneratedText(args, opts);
+}
+
+/** One pasted text annotated, mock-aware in the same way. */
+export async function annotateReadingText(
+	args: AnnotateTextArgs,
+	opts: ReadingOptions = {}
+): Promise<ReadingTextDraft> {
+	if (isMockMode()) return mockAnnotatedText(args);
+	return requestAnnotatedText(args, opts);
+}
+
+export {
+	MAX_IMPORT_CHARS,
+	annotatedSentences,
+	buildAnnotatePrompt,
+	parseAnnotatedText,
+	requestAnnotatedText,
+	resolveTitle
+} from './annotate-call';
+export type { AnnotateTextArgs, AnnotatedText, SentenceAnnotation } from './annotate-call';
+
+export { annotateSentence, showSentenceReading, termsFor } from './annotate';
+export type { AnnotateContext, ReadingWord, TokenizeFn, WordStatus } from './annotate';
+
+export {
+	MAX_ABOUT_CHARS,
+	MAX_FOCUS_WORDS,
+	MAX_TOPIC_CHARS,
+	MAX_VOCABULARY_TERMS,
+	SENTENCES_BY_LEVEL,
+	buildGeneratePrompt,
+	parseGeneratedText,
+	requestGeneratedText,
+	sentenceCountFor,
+	toGlossEntry,
+	toGlossary
+} from './generate';
+export type { FocusWord, GenerateTextArgs, ReadingOptions } from './generate';
+
+export { MOCK_GLOSSARY_WORDS, mockAnnotatedText, mockGeneratedText } from './mock';
+
+export {
+	ANNOTATED_TEXT_SCHEMA_NAME,
+	GENERATED_TEXT_SCHEMA_NAME,
+	annotatedSentenceSchema,
+	annotatedTextJsonSchema,
+	annotatedTextSchema,
+	generatedSentenceSchema,
+	generatedTextJsonSchema,
+	generatedTextSchema,
+	glossEntrySchema
+} from './schemas';
+export type { ReadingTextDraft } from './schemas';
+
+export { splitSentences } from './sentences';
+
+export { tokenizeByTerms, wordKey } from './tokenize';
+
+export type { GlossEntry, ReadingSentence, ReadingText } from '$lib/types';

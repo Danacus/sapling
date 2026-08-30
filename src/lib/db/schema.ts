@@ -12,6 +12,18 @@
  * never touches `reviews`. `reviews` stays because an out-of-order review has to
  * be able to refold one item exactly, and because one item's full history is
  * still shown on demand.
+ *
+ * `texts` keeps `sentences` and `glossary` as JSON: a text is immutable once
+ * stored and always read whole, so there is nothing to query inside them.
+ *
+ * `lookups` is a log nothing reads yet — every "explain this word" tap, kept
+ * because it is FSRS evidence a later slice will grade and cannot be
+ * reconstructed after the fact. The index is the read it is waiting for: one
+ * term's lookups, in time order.
+ *
+ * `CREATE TABLE IF NOT EXISTS` throughout, and the DDL runs on every open, so a
+ * database written by an older build picks up a new table the next time it is
+ * opened.
  */
 export const DDL = `
 CREATE TABLE IF NOT EXISTS events (
@@ -49,6 +61,20 @@ CREATE TABLE IF NOT EXISTS profile (
   id TEXT PRIMARY KEY, nativeLanguage TEXT, targetLanguage TEXT, level TEXT, interests TEXT,
   about TEXT, model TEXT, createdAt INTEGER, updatedAt INTEGER NOT NULL DEFAULT 0);
 
+CREATE TABLE IF NOT EXISTS texts (
+  id TEXT PRIMARY KEY, title TEXT NOT NULL, source TEXT NOT NULL, topic TEXT,
+  sentences TEXT NOT NULL, glossary TEXT NOT NULL, createdAt INTEGER NOT NULL);
+
+CREATE TABLE IF NOT EXISTS textTombstones (textId TEXT PRIMARY KEY);
+
+CREATE TABLE IF NOT EXISTS wordMarks (
+  term TEXT PRIMARY KEY, known INTEGER NOT NULL, updatedAt INTEGER NOT NULL DEFAULT 0);
+
+CREATE TABLE IF NOT EXISTS lookups (
+  id TEXT PRIMARY KEY, term TEXT NOT NULL, itemId TEXT, textId TEXT NOT NULL,
+  at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS lookups_term ON lookups(term, at);
+
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 `;
 
@@ -81,5 +107,9 @@ export const DERIVED_TABLES = [
 	'results',
 	'daily',
 	'tombstones',
-	'profile'
+	'profile',
+	'texts',
+	'textTombstones',
+	'wordMarks',
+	'lookups'
 ] as const;

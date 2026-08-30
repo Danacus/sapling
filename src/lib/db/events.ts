@@ -1,11 +1,11 @@
 /**
- * The event model: ten immutable facts, and the only thing sync ever moves.
+ * The event model: fourteen immutable facts, and the only thing sync ever moves.
  *
  * The envelope `id` is the set-union key — an id already in `events` is never
  * materialised twice — so no payload carries an id of its own. `at` is when the
- * learner did the thing, and doubles as the last-write-wins input for the two
- * overwrites (`itemUpdated`, `profileUpdated`); every other rule is
- * order-independent by construction.
+ * learner did the thing, and doubles as the last-write-wins input for the three
+ * overwrites (`itemUpdated`, `profileUpdated`, `wordMarked`); every other rule
+ * is order-independent by construction.
  *
  * Payload shapes are frozen: they are what v3 export files on disk contain.
  */
@@ -21,7 +21,11 @@ export type EventType =
 	| 'challengeServed'
 	| 'challengeReported'
 	| 'resultLogged'
-	| 'profileUpdated';
+	| 'profileUpdated'
+	| 'textAdded'
+	| 'textDeleted'
+	| 'wordMarked'
+	| 'wordLookedUp';
 
 export interface SyncEvent {
 	id: string;
@@ -117,6 +121,58 @@ export const payloadSchemas = {
 		about: z.string().optional(),
 		model: z.string(),
 		createdAt: z.number()
+	}),
+
+	/**
+	 * One whole reading text, annotations and all.
+	 *
+	 * A text is immutable once stored — there is no `textUpdated` — so the only
+	 * ordering question is against its own tombstone, which the materializer
+	 * answers the way `itemAdded` does.
+	 */
+	textAdded: z.object({
+		id: z.string(),
+		title: z.string(),
+		source: z.enum(['generated', 'imported']),
+		topic: z.string().optional(),
+		sentences: z.array(
+			z.object({
+				text: z.string(),
+				reading: z.string().optional(),
+				translation: z.string().optional()
+			})
+		),
+		glossary: z.array(
+			z.object({
+				term: z.string(),
+				reading: z.string().optional(),
+				meaning: z.string()
+			})
+		),
+		createdAt: z.number()
+	}),
+
+	/** Tombstone. The text goes, and the id can never come back. */
+	textDeleted: z.object({ textId: z.string() }),
+
+	/**
+	 * "I know this word" / "I don't", off a word card. A toggle, so it needs the
+	 * envelope `at` to resolve: last write by `at` wins, per term.
+	 */
+	wordMarked: z.object({ term: z.string(), known: z.boolean() }),
+
+	/**
+	 * The learner opened a word's card in a text — "I don't understand this".
+	 *
+	 * Recorded although nothing reads it yet: a lookup on a *tracked* word is
+	 * FSRS evidence, and it is the one thing about a reading session that cannot
+	 * be reconstructed afterwards. `itemId` is present when the word was already
+	 * in the garden, which is exactly the case a later slice will grade.
+	 */
+	wordLookedUp: z.object({
+		term: z.string(),
+		itemId: z.string().optional(),
+		textId: z.string()
 	})
 } satisfies Record<EventType, z.ZodType>;
 

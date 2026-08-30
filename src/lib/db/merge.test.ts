@@ -61,6 +61,16 @@ async function snapshot(store: Store) {
 		tombstones: await store.query('SELECT * FROM tombstones ORDER BY itemId'),
 		profile: await store.query<{ model: string; about: string | null; interests: string }>(
 			'SELECT * FROM profile'
+		),
+		texts: await store.query<{ title: string; topic: string | null; sentences: string }>(
+			'SELECT * FROM texts ORDER BY id'
+		),
+		textTombstones: await store.query('SELECT * FROM textTombstones ORDER BY textId'),
+		wordMarks: await store.query<{ term: string; known: number; updatedAt: number }>(
+			'SELECT * FROM wordMarks ORDER BY term'
+		),
+		lookups: await store.query<{ term: string; itemId: string | null; textId: string }>(
+			'SELECT * FROM lookups ORDER BY id'
 		)
 	};
 }
@@ -384,6 +394,96 @@ describe('challenges and results', () => {
 
 		const state = await converges([addChallenge('c1')], [report('c1'), report('never-seen')]);
 		expect(state.challenges[0].reported).toBe(1);
+	});
+});
+
+describe('reading texts and word marks', () => {
+	const addText = (id: string, eventId = `text:${id}`): Draft => ({
+		id: eventId,
+		type: 'textAdded',
+		at: 6000,
+		payload: {
+			id,
+			title: '买书',
+			source: 'generated',
+			sentences: [
+				{ text: '我想买书。', reading: 'wǒ xiǎng mǎi shū.', translation: 'I want a book.' }
+			],
+			glossary: [{ term: '书', reading: 'shū', meaning: 'book' }],
+			createdAt: 6000
+		}
+	});
+
+	const deleteText = (textId: string): Draft => ({
+		id: `del:${textId}`,
+		type: 'textDeleted',
+		payload: { textId }
+	});
+
+	const mark = (known: boolean, at: number, term = '水'): Draft => ({
+		id: `mark:${term}:${at}`,
+		type: 'wordMarked',
+		at,
+		payload: { term, known }
+	});
+
+	it('treats a re-delivered text as a no-op', async () => {
+		// A text is immutable once stored, so the second copy has nothing to add.
+		const state = await apply([addText('t1'), addText('t1', 'text:again')]);
+		expect(state.texts).toHaveLength(1);
+	});
+
+	it('keeps sentences and glossary verbatim', async () => {
+		const state = await apply([addText('t1')]);
+		expect(JSON.parse(state.texts[0].sentences)).toEqual([
+			{ text: '我想买书。', reading: 'wǒ xiǎng mǎi shū.', translation: 'I want a book.' }
+		]);
+		// An absent topic is a NULL column, not the string "undefined".
+		expect(state.texts[0].topic).toBeNull();
+	});
+
+	it('refuses a text deleted anywhere, whenever it arrives', async () => {
+		const state = await converges([], [addText('t1'), deleteText('t1')]);
+		expect(state.texts).toHaveLength(0);
+		expect(state.textTombstones).toHaveLength(1);
+	});
+
+	it('lets the later mark win whichever copy arrives first', async () => {
+		const state = await converges([], [mark(true, 1000), mark(false, 2000)]);
+		expect(state.wordMarks).toEqual([{ term: '水', known: 0, updatedAt: 2000 }]);
+	});
+
+	it('does not let an older mark arriving late overwrite a newer one', async () => {
+		const state = await apply([mark(false, 2000), mark(true, 1000)]);
+		expect(state.wordMarks[0]).toMatchObject({ known: 0, updatedAt: 2000 });
+	});
+
+	it('keeps one row per term, and stores the term trimmed', async () => {
+		const state = await apply([
+			{ id: 'm1', type: 'wordMarked', at: 1000, payload: { term: '  水  ', known: true } },
+			mark(false, 3000)
+		]);
+		expect(state.wordMarks).toEqual([{ term: '水', known: 0, updatedAt: 3000 }]);
+	});
+
+	it('counts every lookup of a word, and collapses only a re-delivered one', async () => {
+		const lookup = (id: string, at: number, itemId?: string): Draft => ({
+			id,
+			type: 'wordLookedUp',
+			at,
+			payload: { term: '书', textId: 't1', itemId }
+		});
+
+		// Two taps on the same word are two rows — the count is the whole signal —
+		// while one event delivered twice stays one, which is what the id buys.
+		const state = await converges(
+			[],
+			[lookup('l1', 7000, 'i1'), lookup('l1', 7000, 'i1'), lookup('l2', 8000)]
+		);
+		expect(state.lookups).toEqual([
+			{ id: 'l1', term: '书', itemId: 'i1', textId: 't1', at: 7000 },
+			{ id: 'l2', term: '书', itemId: null, textId: 't1', at: 8000 }
+		]);
 	});
 });
 

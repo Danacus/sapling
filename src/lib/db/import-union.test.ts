@@ -10,20 +10,29 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
 	deleteItem,
+	deleteText,
 	getAllItems,
 	getDailyActivity,
+	getKnownTerms,
 	getPool,
 	getProfile,
+	getTexts,
 	importData,
 	saveProfile
 } from '$lib/db';
 import type { SyncEvent } from './events';
-import { setStoreForTesting } from './store';
+import { setStoreForTesting, type Store } from './store';
 import { makeTestStore } from './store.testing';
 
-beforeEach(async () => {
-	setStoreForTesting(await makeTestStore());
-});
+let store: Store;
+
+/** A fresh store, installed and kept — `lookups` has no repository read yet. */
+async function freshStore(): Promise<void> {
+	store = await makeTestStore();
+	setStoreForTesting(store);
+}
+
+beforeEach(freshStore);
 
 const events: SyncEvent[] = [
 	{
@@ -70,6 +79,34 @@ const events: SyncEvent[] = [
 		at: 5000,
 		device: 'devA',
 		payload: { challengeId: 'c1', verdict: 'correct', answerGiven: '书', at: 5000 }
+	},
+	{
+		id: 'e-text',
+		type: 'textAdded',
+		at: 6000,
+		device: 'devA',
+		payload: {
+			id: 't1',
+			title: '买书',
+			source: 'generated',
+			sentences: [{ text: '我想买书。', translation: 'I want a book.' }],
+			glossary: [{ term: '书', meaning: 'book' }],
+			createdAt: 6000
+		}
+	},
+	{
+		id: 'e-mark',
+		type: 'wordMarked',
+		at: 6000,
+		device: 'devA',
+		payload: { term: '水', known: true }
+	},
+	{
+		id: 'e-lookup',
+		type: 'wordLookedUp',
+		at: 6000,
+		device: 'devA',
+		payload: { term: '书', itemId: 'i1', textId: 't1' }
 	}
 ];
 
@@ -87,7 +124,12 @@ async function readModel() {
 		items: await getAllItems(),
 		pool: await getPool(),
 		profile: await getProfile(),
-		activity: await getDailyActivity()
+		activity: await getDailyActivity(),
+		texts: await getTexts(),
+		known: await getKnownTerms(),
+		lookups: await store.query<{ term: string; itemId: string | null; textId: string }>(
+			'SELECT term, itemId, textId, at FROM lookups ORDER BY rowid'
+		)
 	};
 }
 
@@ -96,7 +138,7 @@ describe('v3 import', () => {
 		await importData(file(events));
 		const first = await readModel();
 
-		setStoreForTesting(await makeTestStore());
+		await freshStore();
 		await importData(file(events));
 
 		expect(await readModel()).toEqual(first);
@@ -118,6 +160,15 @@ describe('v3 import', () => {
 		await importData(file(foreign(events)));
 
 		expect(await getAllItems()).toEqual([]);
+	});
+
+	it('keeps a text deleted after the export deleted', async () => {
+		await importData(file(events));
+		await deleteText('t1');
+
+		await importData(file(foreign(events)));
+
+		expect(await getTexts()).toEqual([]);
 	});
 
 	it('does not let an older imported profile revert a newer edit', async () => {

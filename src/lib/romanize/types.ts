@@ -46,8 +46,9 @@ export interface Romanizer {
 	 * `terms` is the learner's vocabulary (knowledge-item terms); tokens are
 	 * grouped to match those terms where they occur, so callers can key per-word
 	 * decisions — hide this reading, link to this word's ledger entry — by term.
-	 * Characters not covered by any term become single-character tokens; passing
-	 * no terms at all is valid and yields the fully split reading.
+	 * Spans no term claims are cut on word boundaries (`segmentWords` in
+	 * `$lib/text`); passing no terms at all is valid and yields the dictionary's
+	 * own split.
 	 *
 	 * Implementations must romanize the *whole* `text` in one pass. Readings are
 	 * context-dependent in every language worth romanizing, so a per-token call
