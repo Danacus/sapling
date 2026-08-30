@@ -156,7 +156,7 @@
 	 * Where the pages break. Derived from the stored sentences, never from the
 	 * annotation: a break must not move because the learner added a word.
 	 */
-	const pages = $derived(paginate(text?.sentences ?? [], undefined, lang || undefined));
+	const pages = $derived(paginate(text?.sentences ?? []));
 	/** One page even for a text with no sentences, so the reader always has a frame. */
 	const pageCount = $derived(Math.max(1, pages.length));
 

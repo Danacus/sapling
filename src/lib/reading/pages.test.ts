@@ -23,7 +23,7 @@ describe('countWords', () => {
 
 	it('counts a script written without spaces by its words, not its characters', () => {
 		// 我 / 每天 / 骑 / 自行车 / 去 / 学校 — six words, twelve characters.
-		const n = countWords('我每天骑自行车去学校。', 'zh');
+		const n = countWords('我每天骑自行车去学校。');
 		expect(n).toBeGreaterThanOrEqual(5);
 		expect(n).toBeLessThanOrEqual(7);
 	});
@@ -97,13 +97,13 @@ describe('paginate', () => {
 		// sentences (60 characters), where a character budget would have packed
 		// ten times as many.
 		const text = Array.from({ length: 20 }, () => ({ text: '我每天骑自行车去学校。' }));
-		const pages = paginate(text, PAGE_WORDS, 'zh');
+		const pages = paginate(text);
 
 		expect(pages.length).toBeGreaterThanOrEqual(3);
 		for (const range of pages) {
 			const words = text
 				.slice(range.start, range.end)
-				.reduce((sum, s) => sum + countWords(s.text, 'zh'), 0);
+				.reduce((sum, s) => sum + countWords(s.text), 0);
 			expect(words).toBeLessThanOrEqual(PAGE_WORDS);
 		}
 	});

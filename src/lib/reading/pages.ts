@@ -41,10 +41,16 @@ export interface PageRange {
 	end: number;
 }
 
-/** How many words ICU finds in `text` — punctuation and spaces do not count. */
-export function countWords(text: string, locale?: string): number {
+/**
+ * How many words ICU finds in `text` — punctuation and spaces do not count.
+ *
+ * No locale, exactly as `tokenize.ts` calls it: ICU cuts CJK from the
+ * characters themselves, and the profile's language is a display name
+ * ("Mandarin Chinese"), not a BCP-47 tag `Intl.Segmenter` would accept.
+ */
+export function countWords(text: string): number {
 	let n = 0;
-	for (const segment of segmentWords(text, locale)) if (segment.isWord) n += 1;
+	for (const segment of segmentWords(text)) if (segment.isWord) n += 1;
 	return n;
 }
 
@@ -66,15 +72,14 @@ export function countWords(text: string, locale?: string): number {
  */
 export function paginate(
 	sentences: readonly { text: string }[],
-	budget: number = PAGE_WORDS,
-	locale?: string
+	budget: number = PAGE_WORDS
 ): PageRange[] {
 	const out: PageRange[] = [];
 	let start = 0;
 	let words = 0;
 
 	for (let i = 0; i < sentences.length; i++) {
-		const length = countWords(sentences[i].text, locale);
+		const length = countWords(sentences[i].text);
 		if (i > start && words + length > budget) {
 			out.push({ start, end: i });
 			start = i;
