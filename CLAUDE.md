@@ -28,6 +28,7 @@ Nix flakes only see files that are `git add`ed — a brand-new file the flake ne
 
 - **`locate` agent** (Haiku, read-only) — "where does X live, what touches it". Delegate sweeps to it rather than grepping in the main context.
 - **`verify` agent** (Haiku, read-only) — runs `pnpm check`, `pnpm test` and `pnpm format:check`, and reports a table.
+- **`build` agent** (Opus, full tools) — implements one already-scoped slice end to end: code, tests, the rule and doc it changes, all three gates green, then a files/decisions/tests/gates/left-out report. Give it the scope and the choices you have made; it makes the rest and says which. It never commits.
 - **Skills** — `add-challenge-type`, `add-assistant-tool` (procedures + the gate that catches each omission), `prompt-tuning` (content-quality bugs), and `gotchas` (auto-loaded reference).
 - **`.claude/rules/*.md`** — the per-area module contracts. Each is `paths:`-scoped and loads only when a matching file is read, so the detail arrives when it applies. **The table below is the summary; the rule is the contract.**
 - **Hooks** — format-on-save, the package-manager guard, and Bash-side equivalents of both.
