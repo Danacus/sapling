@@ -98,6 +98,31 @@ export const SENTENCES_BY_LEVEL = {
 } as const satisfies Record<Level, number>;
 
 /**
+ * The glossary rules, shared verbatim with `./annotate-call`.
+ *
+ * Both calls fill the same field for the same consumer, so the two prompts say
+ * the same thing by construction rather than by whoever edits one remembering
+ * the other. Still a static string on both sides, so nothing about prompt
+ * caching changes.
+ *
+ * The two rules after the first are what make the glossary *land*. Matching is
+ * `wordKey` — trimmed, NFC, lower-cased — and nothing else: no stemmer, no
+ * dictionary, no base-form lookup. So a gloss for the base form of a word the
+ * text uses inflected matches nothing, and the learner taps a word the app has
+ * no answer for. And a model told "never gloss what is already in vocabulary"
+ * will happily read 朋友 in the list as covering 小朋友, or 学 as covering 学习,
+ * because to a reader it does — but not to a character-for-character match.
+ * Both defects arrive as the same symptom (a `plain` word with nothing behind
+ * it), and both are prompt bugs, so they are fixed here.
+ */
+export const GLOSSARY_RULES = [
+	'- glossary: every word the text uses that is NOT in "vocabulary" gets an entry, with its "reading" under the rule above and its "meaning" in the NATIVE language.',
+	'- "term" is the form the text actually uses, character for character — never a base or dictionary form. The app matches it against the text literally, so an inflected or conjugated word is glossed as it stands; name the base form in "meaning" if that helps.',
+	'- A word is in "vocabulary" only when the identical term is listed there. A longer word that merely contains one, or a derived or inflected form of one, is a different word and gets its own entry (学 does not cover 学习; "walk" does not cover "walked").',
+	'- For a language written WITHOUT spaces between words (Chinese, Japanese, Thai, Lao, Khmer) the glossary is also how the app splits the text into words, so a multi-character word left out of it is a word the learner cannot tap. Be complete.'
+];
+
+/**
  * The system prompt: static, terse, and carrying the four rules that decide
  * whether the result is readable.
  *
@@ -130,8 +155,7 @@ const SYSTEM_PROMPT = [
 	'- "vocabulary" is everything the learner can already read, and it is what you build with: most of the text is made of those words.',
 	'- Every word in "focus" appears at least once, used naturally. They are what this text is for.',
 	'- A few words outside "vocabulary" are welcome and wanted — this is comprehension practice, not a drill — but a sentence should never have more than one of them.',
-	'- glossary: every word the text uses that is NOT in "vocabulary" gets an entry, with "term" as the text uses it (a base form is fine for an inflected language), its "reading" under the rule above, and its "meaning" in the NATIVE language. Never gloss a word that is already in "vocabulary".',
-	'- For a language written WITHOUT spaces between words (Chinese, Japanese, Thai, Lao, Khmer) the glossary is also how the app splits the text into words, so a multi-character word left out of it is a word the learner cannot tap. Be complete.',
+	...GLOSSARY_RULES,
 	'- Write at the learner\'s "level": sentence length, tense range and register all follow it.',
 	'- With a "topic", the whole piece is about it, and "interests" then only colour the details. With no topic, take the subject from "interests".',
 	'- "about" is the learner in their own words. Set the piece in their life where it fits; never recite it back to them and never contradict it.',

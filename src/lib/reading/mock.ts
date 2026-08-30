@@ -22,15 +22,19 @@
  * the learner pasted their own. It annotates whatever it is given — a placeholder
  * translation per line, no readings, and a glossary built from the first few
  * distinct words of the text — which is enough to exercise the reader's
- * alignment, its word cards and its segmentation.
+ * alignment, its word cards and its segmentation. The lookup mock works the same
+ * way, on the one word it is handed.
  */
 
 import { usesMandarinFixtures } from '$lib/llm';
 import { isPunctuationOnly } from '$lib/text';
+import type { GlossEntry } from '$lib/types';
 import { annotatedSentences, parseAnnotatedText, resolveTitle } from './annotate-call';
 import type { AnnotateTextArgs } from './annotate-call';
 import { parseGeneratedText } from './generate';
 import type { GenerateTextArgs } from './generate';
+import { parseLookedUpWord } from './lookup-call';
+import type { LookupWordArgs } from './lookup-call';
 import type { ReadingTextDraft } from './schemas';
 import { tokenizeByTerms, wordKey } from './tokenize';
 
@@ -198,4 +202,21 @@ export async function mockAnnotatedText(args: AnnotateTextArgs): Promise<Reading
 		sentences: annotatedSentences(args.sentences, parsed),
 		glossary: parsed.glossary
 	};
+}
+
+/**
+ * One word explained, offline.
+ *
+ * Worded exactly like {@link mockGlossary}'s rows, because it becomes one: the
+ * reader merges it into the text's glossary and the word turns `new`, so an
+ * offline lookup should be indistinguishable from a word the offline annotator
+ * happened to reach. Through the real parser, so the echoed term and the
+ * `null`-to-absent reading are the production ones.
+ */
+export async function mockLookedUpWord(args: LookupWordArgs): Promise<GlossEntry> {
+	const term = args.term.trim();
+	return parseLookedUpWord(
+		fenced({ term, reading: null, meaning: `(meaning of "${term}")` }),
+		term
+	);
 }

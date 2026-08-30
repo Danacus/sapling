@@ -7,7 +7,9 @@ import { describe, expect, it } from 'vitest';
 
 import { LlmError } from '$lib/llm';
 import type { BatchProfile, FetchLike } from '$lib/llm';
+import { buildAnnotatePrompt } from './annotate-call';
 import {
+	GLOSSARY_RULES,
 	MAX_FOCUS_WORDS,
 	MAX_VOCABULARY_TERMS,
 	SENTENCES_BY_LEVEL,
@@ -123,6 +125,28 @@ describe('buildGeneratePrompt', () => {
 			focus: []
 		});
 		expect((payload.about as string).length).toBe(500);
+	});
+});
+
+describe('the glossary rules', () => {
+	it('are word for word the same in both prompts, so one edit cannot drift', () => {
+		const write = buildGeneratePrompt({ profile, vocabulary: [], focus: [] })[0].content;
+		const annotate = buildAnnotatePrompt({ profile, vocabulary: [], sentences: ['Hola.'] })[0]
+			.content;
+
+		for (const rule of GLOSSARY_RULES) {
+			expect(write).toContain(rule);
+			expect(annotate).toContain(rule);
+		}
+	});
+
+	it('pin the term to the form the text uses and "in vocabulary" to an identical term', () => {
+		// The two defects that leave a genuinely new word `plain`: a gloss written
+		// for the base form matches no token, and a model that reads 学 in the
+		// vocabulary as covering 学习 never writes the entry at all.
+		const rules = GLOSSARY_RULES.join('\n');
+		expect(rules).toContain('never a base or dictionary form');
+		expect(rules).toContain('only when the identical term is listed');
 	});
 });
 

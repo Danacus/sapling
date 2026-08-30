@@ -25,7 +25,7 @@
 import { LlmError, chatCompletion, stripFences } from '$lib/llm';
 import type { BatchProfile, ChatMessage } from '$lib/llm';
 import type { GlossEntry, ReadingSentence } from '$lib/types';
-import { MAX_VOCABULARY_TERMS, toGlossary } from './generate';
+import { GLOSSARY_RULES, MAX_VOCABULARY_TERMS, toGlossary } from './generate';
 import type { ReadingOptions } from './generate';
 import {
 	ANNOTATED_TEXT_SCHEMA_NAME,
@@ -63,6 +63,11 @@ const FALLBACK_TITLE_CHARS = 40;
  * need: **one entry per numbered sentence, in order**. Everything downstream of
  * this call is index alignment, and the model is told so plainly rather than
  * left to infer it from the shape.
+ *
+ * The glossary rules come from `./generate` verbatim: both calls fill the same
+ * field for the same reader, and the exact-form rule matters more here than
+ * anywhere — this text is somebody else's prose, so the inflected forms are
+ * whatever they happen to be.
  */
 const SYSTEM_PROMPT = [
 	'You annotate a text a language learner has pasted in, so they can read it. Output one JSON object and nothing else: no prose, no markdown fences.',
@@ -73,8 +78,7 @@ const SYSTEM_PROMPT = [
 	'"translation" is that sentence in the NATIVE language — a natural translation, not a word-for-word gloss.',
 	'"title" is short — a few words — and in the TARGET language. When the user message already carries a "title", repeat it unchanged.',
 	'Rules:',
-	'- glossary: every word the text uses that is NOT in "vocabulary" gets an entry, with "term" as the text uses it (a base form is fine for an inflected language), its "reading" under the rule above, and its "meaning" in the NATIVE language. Never gloss a word that is already in "vocabulary".',
-	'- For a language written WITHOUT spaces between words (Chinese, Japanese, Thai, Lao, Khmer) the glossary is also how the app splits the text into words, so a multi-character word left out of it is a word the learner cannot tap. Be complete.',
+	...GLOSSARY_RULES,
 	'- Annotate what is there. A sentence fragment, a heading or a stray line still gets its entry; translate it as it stands rather than repairing it.'
 ].join('\n');
 

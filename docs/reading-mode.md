@@ -81,10 +81,10 @@ whole. Repositories: `addText(text)`, `getTexts()`, `getText(id)`,
 `known = 1`), `recordLookup(term, textId, itemId?)`. Terms are stored trimmed,
 verbatim; matching is the reading module's job (§5).
 
-## 4. The two LLM calls (`src/lib/reading/`)
+## 4. The three LLM calls (`src/lib/reading/`)
 
 Stateless, like `$lib/conversation`: never imports `$lib/db`. Mock/real dispatch
-in `index.ts` on `isMockMode()`; both envelopes pinned with `responseFormat`,
+in `index.ts` on `isMockMode()`; every envelope pinned with `responseFormat`,
 re-parsed with zod, `.nullish()` normalised to absent (`schemas.ts`, mirroring
 `$lib/conversation/schemas.ts`, including its `strictJsonSchema` pass).
 
@@ -107,6 +107,22 @@ reading of the sentence, `null` for Latin scripts (the `TargetText` rule).
 without spaces the glossary must list every word, because it is also how the
 app segments the text (§5).
 
+**The glossary rules are shared verbatim** between this call and Annotate
+(`GLOSSARY_RULES` in `generate.ts`, spread into both system prompts): both fill
+the same field for the same reader, so they say the same thing by construction.
+Two of the rules exist because matching is `wordKey` and nothing else — no
+stemmer, no dictionary:
+
+- **`term` is the form the text actually uses, character for character, never a
+  base or dictionary form.** A gloss written for the base form of an inflected
+  word matches no token, and the word arrives as `plain` with nothing behind it.
+  The base form belongs in `meaning` if it helps.
+- **A word is "in vocabulary" only when the identical term is listed there.** A
+  longer word that merely contains one, or a derived or inflected form of one,
+  is a different word and gets its own entry (学 does not cover 学习; "walk"
+  does not cover "walked"). Left unsaid, a model reads the containment as
+  "already known" and skips the entry.
+
 **Annotate** (`annotate.ts`). For a pasted text. Sentences are split
 **locally** (`sentences.ts`: sentence-final punctuation `.!?。！？` and hard
 newlines; pure, tested) so the text on screen is exactly what was pasted; the
@@ -122,6 +138,20 @@ Import is capped at `MAX_IMPORT_CHARS` (4000) for this slice.
 
 Both return `{ title, sentences, glossary, usage }`; the page mints `id`
 (`newUuid`) and `createdAt` and calls `addText`.
+
+**Look up** (`lookup-call.ts`). The third call and the only one that runs *while*
+reading: one word the glossary missed, for the card the reader opens on a
+`plain` word. Input `{ profile, term, sentence, title? }` — the tapped word
+exactly as the text spells it, and the whole sentence around it, so a word with
+several senses comes back in the one it is actually being used in. Output is one
+glossary row, `{ term, reading, meaning }` — `glossEntrySchema` itself, because
+that is what it becomes — with the same reading rule as above and a `meaning`
+that is this sentence's, in the native language, in one line. All-or-nothing: an
+unusable reply throws and the card shows the error, because a gloss without a
+meaning is nothing to render. **`term` is taken from the request, not the
+reply**: the entry is about to be matched against a token character for
+character, and a model that helpfully returned the dictionary form would leave
+the word `plain` with no sign anything had happened.
 
 ## 5. Annotation at render time (`src/lib/reading/annotate.ts`, pure, tested)
 
@@ -198,10 +228,21 @@ Word card: term (display face), reading, meaning; `SpeakButton`; for `tracked`
 the maturity label ("in your garden · growing"); for `new` **Add to my words**
 (→ `addWordsTool.run({ words: [{ term, meaning, romanization }] }, defaultToolContext())`
 from `$lib/assistant`) and **I know this** (→ `markWord(term, true)`); for
-`plain` the same two, with a meaning input in front of *Add*; for `known`
-**Unmark** (→ `markWord(term, false)`). Opening a card records
-`recordLookup(term, textId, itemId?)`, fire-and-forget. After a write the page
-reloads its items/known terms so the text recolours in place.
+`plain` the same two, with a meaning input in front of *Add* and a **Look it
+up** button beside them; for `known` **Unmark** (→ `markWord(term, false)`).
+Opening a card records `recordLookup(term, textId, itemId?)`, fire-and-forget.
+After a write the page reloads its items/known terms so the text recolours in
+place.
+
+**Look it up** is the one paid call the reader makes, and it fires only on that
+press — a tap is free and stays free. The `GlossEntry` it returns goes into a
+page-owned `extraGlossary` (a `$state` array, deduped by `wordKey`) which is
+merged into the `AnnotateContext`'s glossary, so the word turns `new` — orange
+underline, gloss on its card, *Add to my words* pre-filled with the meaning —
+everywhere it appears, for the rest of that open. It is deliberately **not
+persisted**: a text is immutable, and if the word mattered the learner adds it,
+which puts the meaning on the item where it *is* kept. Nothing extra is
+recorded: the tap that opened the card already wrote `wordLookedUp`.
 
 **The text is one body, not a list.** The model returns sentences because the
 annotation is keyed on them, but the learner reads a text: the sentences flow
@@ -313,7 +354,6 @@ drill arrives in the text already counted as forgotten.
 ## 7. Not in this slice
 
 - Questions about the text (LLM, chat-style).
-- Target-language explanations on tap (immersion glosses); on-demand lookups
-  for unglossed words.
+- Target-language explanations on tap (immersion glosses).
 - Audio-first (listen before reading) presentation; per-word timing.
 - Editing a text, re-annotating, longer imports than `MAX_IMPORT_CHARS`.

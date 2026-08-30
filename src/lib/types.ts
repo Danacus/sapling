@@ -322,7 +322,10 @@ export interface ReadingSentence {
  * word renders as one cell rather than one per character.
  */
 export interface GlossEntry {
-	/** As it appears in the text (base form is fine for inflecting languages). */
+	/**
+	 * Exactly as it appears in the text, inflection and all: matching is
+	 * `wordKey` and nothing else, so a base form matches nothing.
+	 */
 	term: string;
 	/** Latin reading of `term`; absent for Latin-script targets. */
 	reading?: string;

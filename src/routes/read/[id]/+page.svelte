@@ -24,6 +24,14 @@
   words — both governed by the grade the word last got *today*, read back out of
   the item's own `recentGrades` rather than held in a set here, so the state
   survives a reload and agrees with the drill.
+
+  The card offers what the word's status leaves open: a tracked word only its
+  bed, a known one Unmark, and everything else "Add to my words" and "I know
+  this" — plus, on a word nobody has glossed, a typed meaning or **Look it up**,
+  the one paid call the reader makes. Its answer lands in `extraGlossary`, which
+  is merged into the annotate context, so the word turns `new` for the rest of
+  this open; it is not stored, because the text is immutable and what is worth
+  keeping is the word the learner then adds.
 -->
 <script lang="ts">
 	import { browser } from '$app/environment';
@@ -45,6 +53,7 @@
 	} from '$lib/db';
 	import {
 		annotateSentence,
+		lookUpWord,
 		paginate,
 		showSentenceReading,
 		tokenizeByTerms,
@@ -56,7 +65,7 @@
 	import { Grade, newCardState, reviewCard, type FsrsCardState } from '$lib/srs';
 	import { joinTokens, usesInterWordSpaces } from '$lib/text';
 	import { speak, stopSpeaking, ttsAvailable, warmSpeech } from '$lib/tts';
-	import type { KnowledgeItem, Profile, ReadingText } from '$lib/types';
+	import type { GlossEntry, KnowledgeItem, Profile, ReadingText } from '$lib/types';
 	import { getRomanizationMode } from '$lib/ui/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
@@ -86,6 +95,19 @@
 	 * `$derived` is computing, and a reactive cache would turn that into a loop.
 	 */
 	const rolls = new Map<string, boolean>();
+	/**
+	 * Words looked up from the card, on top of the text's own glossary — for this
+	 * open only.
+	 *
+	 * A text is immutable, so a lookup cannot be written into its glossary; but a
+	 * word the model missed is `plain` everywhere it appears, and answering it
+	 * once should answer it everywhere. So the answers live here and are merged
+	 * into the annotate context, which turns the word `new` — underline, gloss,
+	 * and "Add to my words" filled in from the meaning — for the rest of the
+	 * session. Nothing is lost by not persisting it: if the word mattered, the
+	 * learner adds it, and *that* is a fact worth syncing.
+	 */
+	let extraGlossary = $state<GlossEntry[]>([]);
 	/** Read once — the setting lives in Settings, not mid-text. */
 	const mode = getRomanizationMode();
 	let now = $state(Date.now());
@@ -98,6 +120,8 @@
 	/** The meaning typed for a word nobody has glossed. */
 	let meaningDraft = $state('');
 	let writing = $state(false);
+	/** A lookup in flight. Its own flag, because it is the card's only paid wait. */
+	let lookingUp = $state(false);
 	let cardError = $state('');
 	let pageError = $state('');
 	let playing = $state(false);
@@ -138,7 +162,10 @@
 	const ctx: AnnotateContext = $derived({
 		items,
 		knownTerms,
-		glossary: text?.glossary ?? [],
+		// The text's own glossary plus whatever was looked up since it opened. The
+		// annotator cannot tell the two apart, which is the point: a looked-up word
+		// is `new` exactly like a glossed one, everywhere it appears.
+		glossary: [...(text?.glossary ?? []), ...extraGlossary],
 		mode,
 		now,
 		rolls
@@ -504,6 +531,42 @@
 			pageError = cause instanceof Error ? cause.message : 'Could not save this page.';
 		} finally {
 			writing = false;
+		}
+	}
+
+	/**
+	 * "Look it up": one paid call for a word the glossary missed.
+	 *
+	 * Fired by the button and by nothing else — a tap is free and has to stay
+	 * free, and this is the only thing in the reader that spends. The whole
+	 * sentence travels with the word, so a word with several senses comes back in
+	 * the one it is being used in; the answer joins `extraGlossary` and the word
+	 * turns `new` wherever it appears, which also fills "Add to my words" in with
+	 * the meaning, exactly as it is filled for a word the model glossed.
+	 */
+	async function lookUp() {
+		const at = selected;
+		const target = card;
+		if (!at || !target?.key || !text || !profile || writing || lookingUp) return;
+
+		lookingUp = true;
+		cardError = '';
+		try {
+			const entry = await lookUpWord({
+				profile,
+				term: target.text,
+				sentence: lines[at.line]?.sentence.text ?? target.text,
+				title: text.title
+			});
+			// There is nothing to look up twice — the button is gone the moment the
+			// word stops being `plain` — so this only catches an answer that arrives
+			// under a spelling something already covers.
+			const key = wordKey(entry.term);
+			if (!extraGlossary.some((known) => wordKey(known.term) === key)) extraGlossary.push(entry);
+		} catch (cause) {
+			cardError = cause instanceof Error ? cause.message : 'Could not look that word up.';
+		} finally {
+			lookingUp = false;
 		}
 	}
 
@@ -928,7 +991,7 @@
 										class="input"
 										type="text"
 										placeholder="In {profile?.nativeLanguage ?? 'your language'}"
-										disabled={writing}
+										disabled={writing || lookingUp}
 										bind:value={meaningDraft}
 										onkeydown={(event) => {
 											if (event.key === 'Enter') void addWord();
@@ -940,15 +1003,28 @@
 								<button
 									type="button"
 									class="btn btn-primary"
-									disabled={writing || draftMeaning === ''}
+									disabled={writing || lookingUp || draftMeaning === ''}
 									onclick={() => void addWord()}
 								>
 									Add to my words
 								</button>
+								<!-- Only where nobody has said anything about the word — and only
+								     on a press, because it is the one thing in the reader that
+								     costs. A word with a gloss already has its answer. -->
+								{#if !card.gloss}
+									<button
+										type="button"
+										class="btn btn-ghost"
+										disabled={writing || lookingUp}
+										onclick={() => void lookUp()}
+									>
+										{lookingUp ? 'Looking up…' : 'Look it up'}
+									</button>
+								{/if}
 								<button
 									type="button"
 									class="btn btn-ghost"
-									disabled={writing}
+									disabled={writing || lookingUp}
 									onclick={() => void mark(true)}
 								>
 									I know this

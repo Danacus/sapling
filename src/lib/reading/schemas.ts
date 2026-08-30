@@ -1,5 +1,5 @@
 /**
- * The two wire envelopes reading mode pins with `responseFormat`.
+ * The wire envelopes reading mode pins with `responseFormat`.
  *
  * A text is paid for once and then read many times, so unlike a conversation
  * turn these envelopes can afford to be generous — but they still carry only
@@ -15,11 +15,13 @@
  * parsers in `./generate` and `./annotate-call` normalize `null` back to absent
  * so nothing downstream has to hold three states for one field.
  *
- * The two envelopes are deliberately *not* one schema with optional halves.
- * Generation writes the sentences; annotation is handed sentences the learner
- * pasted and must never send them back — the text on screen has to be exactly
- * what was pasted, and a model that can re-emit the text is a model that can
- * quietly rewrite it.
+ * The two text envelopes are deliberately *not* one schema with optional
+ * halves. Generation writes the sentences; annotation is handed sentences the
+ * learner pasted and must never send them back — the text on screen has to be
+ * exactly what was pasted, and a model that can re-emit the text is a model that
+ * can quietly rewrite it. The third envelope is one word: a lookup the learner
+ * asked for on a word nobody glossed, which is a {@link glossEntrySchema} row
+ * and nothing more.
  */
 
 import { z } from 'zod';
@@ -80,9 +82,10 @@ export const annotatedTextSchema = z.object({
 	glossary: z.array(glossEntrySchema)
 });
 
-/** Names for the two structured-output schemas. */
+/** Names for the three structured-output schemas. */
 export const GENERATED_TEXT_SCHEMA_NAME = 'reading_text';
 export const ANNOTATED_TEXT_SCHEMA_NAME = 'reading_annotation';
+export const LOOKED_UP_WORD_SCHEMA_NAME = 'reading_lookup';
 
 /**
  * A text as the app holds it, before an id and a timestamp make it a
@@ -143,4 +146,16 @@ export function generatedTextJsonSchema(): Record<string, unknown> {
 /** The same, for the annotate call. */
 export function annotatedTextJsonSchema(): Record<string, unknown> {
 	return strictJsonSchema(annotatedTextSchema);
+}
+
+/**
+ * And for the lookup call, whose whole envelope is one glossary row.
+ *
+ * Deliberately {@link glossEntrySchema} itself rather than a near-copy: a
+ * looked-up word is a glossary entry the learner asked for one at a time, and it
+ * is merged into the text's glossary at render time, so anything the two shapes
+ * could differ by would be a bug on arrival.
+ */
+export function lookedUpWordJsonSchema(): Record<string, unknown> {
+	return strictJsonSchema(glossEntrySchema);
 }

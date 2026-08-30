@@ -7,7 +7,12 @@
 import { describe, expect, it } from 'vitest';
 
 import type { BatchProfile } from '$lib/llm';
-import { MOCK_GLOSSARY_WORDS, mockAnnotatedText, mockGeneratedText } from './mock';
+import {
+	MOCK_GLOSSARY_WORDS,
+	mockAnnotatedText,
+	mockGeneratedText,
+	mockLookedUpWord
+} from './mock';
 
 const spanish: BatchProfile = {
 	nativeLanguage: 'English',
@@ -101,5 +106,32 @@ describe('mockAnnotatedText', () => {
 
 		const unnamed = await mockAnnotatedText({ profile: spanish, vocabulary: [], sentences });
 		expect(unnamed.title).toBe('Fuimos al restaurante.');
+	});
+});
+
+describe('mockLookedUpWord', () => {
+	it('looks one word up, deterministically, through the real parser', async () => {
+		const args = { profile: spanish, term: ' cuenta ', sentence: 'La cuenta no era cara.' };
+		const once = await mockLookedUpWord(args);
+		const twice = await mockLookedUpWord(args);
+
+		// Trimmed, and the `null` reading normalized to absent — the two things a
+		// paid reply goes through on its way into the glossary.
+		expect(once).toEqual({ term: 'cuenta', meaning: '(meaning of "cuenta")' });
+		expect(once).toEqual(twice);
+	});
+
+	it('is worded as one of the offline annotator rows, because it becomes one', async () => {
+		const text = await mockAnnotatedText({
+			profile: spanish,
+			vocabulary: [],
+			sentences: ['Pedí sopa.']
+		});
+		const looked = await mockLookedUpWord({
+			profile: spanish,
+			term: 'sopa',
+			sentence: 'Pedí sopa.'
+		});
+		expect(text.glossary).toContainEqual(looked);
 	});
 });

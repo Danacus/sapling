@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest';
 
 import { isMockMode } from '$lib/llm';
 import type { BatchProfile } from '$lib/llm';
-import { annotateReadingText, generateReadingText, splitSentences } from './index';
+import { annotateReadingText, generateReadingText, lookUpWord, splitSentences } from './index';
 
 const profile: BatchProfile = {
 	nativeLanguage: 'English',
@@ -41,5 +41,19 @@ describe('the reading entry points', () => {
 
 		expect(text.sentences.map((sentence) => sentence.text)).toEqual(sentences);
 		expect(text.sentences.every((sentence) => sentence.translation)).toBe(true);
+	});
+
+	it('lookUpWord returns one gloss for the word it was given', async () => {
+		const entry = await lookUpWord({
+			profile,
+			term: 'cuenta',
+			sentence: 'La cuenta no era cara.',
+			title: 'En el restaurante'
+		});
+
+		// The term echoes the tap exactly: the page merges this into the glossary
+		// and the annotator matches it against the token character for character.
+		expect(entry.term).toBe('cuenta');
+		expect(entry.meaning).toBeTruthy();
 	});
 });
