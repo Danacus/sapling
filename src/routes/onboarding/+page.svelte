@@ -2,7 +2,9 @@
 	import { goto } from '$app/navigation';
 
 	import { DEFAULT_MODEL, saveProfile, setApiKey, setModel } from '$lib/db';
+	import { isSyncAvailable, isValidPhrase, normalizePhrase, pairDevice } from '$lib/sync';
 	import type { Level, Profile } from '$lib/types';
+	import InlineStatus from '$lib/ui/InlineStatus.svelte';
 	import InterestPicker from '$lib/ui/InterestPicker.svelte';
 	import LevelPicker from '$lib/ui/LevelPicker.svelte';
 
@@ -101,6 +103,40 @@
 			error = cause instanceof Error ? cause.message : 'Could not save your profile.';
 			saving = false;
 		}
+	}
+
+	/* Pairing ---------------------------------------------------------------
+	   The second path off this screen, and the one that must not write: a
+	   device joining an existing library gets its profile over sync, and a
+	   fresh one saved here would win last-write-wins on every device. */
+
+	const syncAvailable = isSyncAvailable();
+
+	let pairInput = $state('');
+	let pairing = $state(false);
+	let pairStatus = $state<'idle' | 'saved' | 'error'>('idle');
+	let pairMessage = $state('');
+
+	const canPair = $derived(isValidPhrase(normalizePhrase(pairInput)));
+
+	async function pair() {
+		if (pairing || !canPair) return;
+		pairStatus = 'idle';
+		pairing = true;
+
+		const outcome = await pairDevice(pairInput);
+		if (outcome.paired) {
+			await goto('/');
+			return;
+		}
+
+		// The phrase stays in the box either way: a server that was unreachable
+		// or a device that has not synced yet are both worth retrying as-is.
+		pairStatus = 'error';
+		pairMessage = outcome.ok
+			? 'Nothing there yet — turn sync on for your other device, then try again.'
+			: (outcome.message ?? 'Could not pair this device.');
+		pairing = false;
 	}
 </script>
 
@@ -271,6 +307,43 @@
 			<button type="button" class="skip" onclick={finish} disabled={saving}>Skip for now</button>
 		{/if}
 	</section>
+
+	<!-- Offered on the first step only: past it the learner has committed to
+	     setting up a new library, and a second door there is just noise. -->
+	{#if syncAvailable && step === 1}
+		<section class="card pair ll-rise" style="animation-delay: 90ms">
+			<h2>Already using Sapling on another device?</h2>
+			<p class="sub">
+				Enter its pairing phrase and this device joins that library instead — your words, reviews
+				and settings come across. Find the phrase under Settings → Sync there.
+			</p>
+
+			<label class="field">
+				<span class="label">Pairing phrase</span>
+				<input
+					class="input"
+					bind:value={pairInput}
+					placeholder="ABCDE-FGHJK-MNPQR-STVWX"
+					autocomplete="off"
+					spellcheck="false"
+					disabled={pairing}
+				/>
+				<p class="hint">Capitals, dashes and spaces don't matter.</p>
+			</label>
+
+			<div class="pair-actions">
+				<button
+					type="button"
+					class="btn btn-primary"
+					onclick={() => void pair()}
+					disabled={!canPair || pairing}
+				>
+					{pairing ? 'Pairing…' : 'Pair this device'}
+				</button>
+				<InlineStatus status={pairStatus} message={pairMessage} />
+			</div>
+		</section>
+	{/if}
 </main>
 
 <style>
@@ -282,8 +355,23 @@
 	.shell {
 		display: grid;
 		place-items: center;
+		align-content: center;
+		gap: var(--gap);
 		min-height: 100dvh;
 		padding-block: 2rem;
+	}
+
+	/* The secondary door, set quieter than the card above it: no mark, no
+	   dashed head, and a heading at body scale. */
+	.pair h2 {
+		font-size: 1.1rem;
+	}
+
+	.pair-actions {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.75rem;
 	}
 
 	/* One hand for every icon on this screen, matching the dashboard: 24-unit

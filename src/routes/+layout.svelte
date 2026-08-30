@@ -5,7 +5,7 @@
 
 	import favicon from '$lib/assets/favicon.svg';
 	import { getProfile } from '$lib/db';
-	import { runSync } from '$lib/sync';
+	import { isSyncEnabled, runSync } from '$lib/sync';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	import '../app.css';
@@ -49,6 +49,23 @@
 	/** Boot sync fires once, not on every navigation the effect below re-runs on. */
 	let syncKicked = false;
 
+	/**
+	 * The profile, pulling the log down first if this device has none and is
+	 * paired to a library.
+	 *
+	 * A device that joined an existing library has its profile in the log, not
+	 * yet on disk. Sending it to onboarding would have it write a fresh one, and
+	 * last-write-wins would then overwrite the real profile on every device.
+	 * `runSync` returns its failures, so this costs at most one round trip.
+	 */
+	async function resolveProfile() {
+		const profile = await getProfile();
+		if (profile || syncKicked || !isSyncEnabled()) return profile;
+		syncKicked = true;
+		await runSync();
+		return getProfile();
+	}
+
 	$effect(() => {
 		// Re-runs on every navigation: `page.url.pathname` is the tracked read.
 		const path = page.url.pathname;
@@ -57,7 +74,7 @@
 		let cancelled = false;
 		checking = true;
 
-		getProfile()
+		resolveProfile()
 			.then((profile) => {
 				if (cancelled) return;
 				if (!profile && !path.startsWith('/onboarding')) {

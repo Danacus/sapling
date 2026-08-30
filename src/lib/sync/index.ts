@@ -14,6 +14,7 @@ export {
 	setSyncEnabled,
 	setSyncPhrase
 } from './config';
+export { pairDevice, type PairOutcome } from './pair';
 export { formatPhrase, isValidPhrase, mintPhrase, normalizePhrase, PHRASE_LENGTH } from './phrase';
 export { probeSync, type SyncProbeResult } from './probe';
 export { lastSyncOutcome, runSync, type SyncOutcome, type SyncRecord } from './run';

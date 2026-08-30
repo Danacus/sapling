@@ -68,7 +68,8 @@ Node tests run the same DDL and materializer against an in-memory database
 - Point a build at it: set `VITE_SYNC_URL` in the Pages project's environment
   variables (build-time; unset means no sync in that build).
 - Pair a device: Settings → Sync mints a pairing phrase; enter that phrase on
-  another device to join the same room.
+  another device to join the same room. A new device pairs from the onboarding
+  screen, before any profile is written.
 - Sync runs at boot, on tab visibility, after a learn session, and on demand
   via Settings' Sync now.
 
