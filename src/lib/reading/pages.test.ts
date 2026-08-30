@@ -6,30 +6,56 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { PAGE_CHARS, paginate } from './pages';
+import { PAGE_WORDS, countWords, paginate } from './pages';
 
-/** `n` sentences of `length` characters each. */
-function sentences(n: number, length: number): { text: string }[] {
-	return Array.from({ length: n }, (_, i) => ({ text: `${i}`.padEnd(length, 'x') }));
+/** `n` sentences of `words` words each. */
+function sentences(n: number, words: number): { text: string }[] {
+	return Array.from({ length: n }, (_, i) => ({
+		text: Array.from({ length: words }, (_, w) => `w${i}x${w}`).join(' ') + '.'
+	}));
 }
+
+describe('countWords', () => {
+	it('counts words, not punctuation or spaces', () => {
+		expect(countWords('Hello, world! How are you?')).toBe(5);
+		expect(countWords('')).toBe(0);
+	});
+
+	it('counts a script written without spaces by its words, not its characters', () => {
+		// 我 / 每天 / 骑 / 自行车 / 去 / 学校 — six words, twelve characters.
+		const n = countWords('我每天骑自行车去学校。', 'zh');
+		expect(n).toBeGreaterThanOrEqual(5);
+		expect(n).toBeLessThanOrEqual(7);
+	});
+});
 
 describe('paginate', () => {
 	it('keeps a short text on one page', () => {
-		expect(paginate(sentences(8, 40))).toEqual([{ start: 0, end: 8 }]);
+		expect(paginate(sentences(4, 6))).toEqual([{ start: 0, end: 4 }]);
 	});
 
 	it('packs greedily up to the budget', () => {
-		// 100 chars each: five fit in 500, the sixth would be 600.
-		expect(paginate(sentences(13, 100), 500)).toEqual([
+		// 10 words each: five fit in 50, the sixth would be 60.
+		expect(paginate(sentences(13, 10), 50)).toEqual([
 			{ start: 0, end: 5 },
 			{ start: 5, end: 10 },
 			{ start: 10, end: 13 }
 		]);
 	});
 
+	it('finishes the sentence: a break never falls inside one', () => {
+		// 8 words each against a budget of 30: three sentences (24) fit, the
+		// fourth would be 32 — so it starts the next page whole.
+		expect(paginate(sentences(8, 8), 30)).toEqual([
+			{ start: 0, end: 3 },
+			{ start: 3, end: 6 },
+			{ start: 6, end: 8 }
+		]);
+	});
+
 	it('gives an over-long sentence a page of its own', () => {
-		const long = [{ text: 'a'.repeat(900) }, { text: 'short.' }, { text: 'b'.repeat(900) }];
-		expect(paginate(long, 500)).toEqual([
+		const long = [...sentences(1, 90), { text: 'short.' }, ...sentences(1, 90)];
+		expect(paginate(long, 50)).toEqual([
 			{ start: 0, end: 1 },
 			{ start: 1, end: 2 },
 			{ start: 2, end: 3 }
@@ -37,16 +63,16 @@ describe('paginate', () => {
 	});
 
 	it('never returns an empty page', () => {
-		for (const budget of [1, 10, 700]) {
-			for (const range of paginate(sentences(20, 90), budget)) {
+		for (const budget of [1, 10, PAGE_WORDS]) {
+			for (const range of paginate(sentences(20, 9), budget)) {
 				expect(range.end).toBeGreaterThan(range.start);
 			}
 		}
 	});
 
 	it('tiles the text exactly, in order', () => {
-		const text = sentences(37, 63);
-		const pages = paginate(text, 200);
+		const text = sentences(37, 7);
+		const pages = paginate(text, 20);
 
 		expect(pages[0].start).toBe(0);
 		expect(pages.at(-1)?.end).toBe(text.length);
@@ -57,25 +83,28 @@ describe('paginate', () => {
 	});
 
 	it('cuts page 1 the same way however the text ends', () => {
-		const short = sentences(6, 200);
-		const long = [...short, ...sentences(40, 200)];
-		expect(paginate(long, 700)[0]).toEqual(paginate(short, 700)[0]);
+		const short = sentences(6, 12);
+		const long = [...short, ...sentences(40, 12)];
+		expect(paginate(long)[0]).toEqual(paginate(short)[0]);
 	});
 
 	it('has no pages for an empty text', () => {
 		expect(paginate([])).toEqual([]);
 	});
 
-	it('cuts a full-length import into a handful of pages at the default budget', () => {
-		// `MAX_IMPORT_CHARS` (4000) of prose in 80-character sentences: eight to a
-		// page, so seven pages — a handful, not a scroll and not a flipbook.
-		const text = sentences(50, 80);
-		const pages = paginate(text);
+	it('pages Chinese by words, so a page is a paragraph and not a wall', () => {
+		// Twelve characters, about six words, per sentence: 30 words is five
+		// sentences (60 characters), where a character budget would have packed
+		// ten times as many.
+		const text = Array.from({ length: 20 }, () => ({ text: '我每天骑自行车去学校。' }));
+		const pages = paginate(text, PAGE_WORDS, 'zh');
 
-		expect(pages.length).toBe(7);
+		expect(pages.length).toBeGreaterThanOrEqual(3);
 		for (const range of pages) {
-			const chars = text.slice(range.start, range.end).reduce((sum, s) => sum + s.text.length, 0);
-			expect(chars).toBeLessThanOrEqual(PAGE_CHARS);
+			const words = text
+				.slice(range.start, range.end)
+				.reduce((sum, s) => sum + countWords(s.text, 'zh'), 0);
+			expect(words).toBeLessThanOrEqual(PAGE_WORDS);
 		}
 	});
 });

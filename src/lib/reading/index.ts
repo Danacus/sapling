@@ -75,7 +75,7 @@ export type { FocusWord, GenerateTextArgs, ReadingOptions } from './generate';
 
 export { MOCK_GLOSSARY_WORDS, mockAnnotatedText, mockGeneratedText } from './mock';
 
-export { PAGE_CHARS, paginate } from './pages';
+export { PAGE_WORDS, countWords, paginate } from './pages';
 export type { PageRange } from './pages';
 
 export {

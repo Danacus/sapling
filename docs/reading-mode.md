@@ -242,13 +242,16 @@ under the same condition.
   shape whatever is being decided, and the receipt takes that button's
   place. A **legend row** above the text names the three underlines.
 - **The text is read a page at a time.** A page is a window of consecutive
-  sentences packed greedily to at most `PAGE_CHARS` (700) — `paginate` in
-  `src/lib/reading/pages.ts`, pure and tested. Characters rather than a sentence
-  count, because a generated text is 6–12 short sentences (usually one page)
-  and an import is up to `MAX_IMPORT_CHARS` of somebody else's prose (six or so);
-  one budget for every script, because the reader sets the target script larger
-  and at a 1.9 line height, so a Han page and a Latin page of the same character
-  count take about the same screen. The page number is `?p=` (1-based, clamped
+  sentences packed greedily to at most `PAGE_WORDS` (30) — `paginate` in
+  `src/lib/reading/pages.ts`, pure and tested — and a break falls only between
+  sentences, so the last sentence of a page is always finished. Words rather
+  than a sentence count, because a generated text is 6–12 short sentences and
+  an import is up to `MAX_IMPORT_CHARS` of somebody else's prose; words rather
+  than characters, because 700 characters is 120 words of Spanish and 700 of
+  Chinese. The count is ICU's base segmentation (`countWords` over
+  `segmentWords`), never the annotated tokens: vocabulary overrides the
+  segmentation by longest match, so the annotated count can change by one when
+  the learner adds a word, and a break that moves mid-read is a bug. The page number is `?p=` (1-based, clamped
   to the last page), read from `$app/state` and written with
   `goto(url, { replaceState: true, noScroll: true })` — replace, because Back
   belongs to the library and a ten-page text should not take ten presses to
