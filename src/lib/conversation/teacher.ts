@@ -59,7 +59,11 @@ export interface TeacherTurn {
 	actions: ActionNote[];
 }
 
-/** The transcript, ephemeral by design — nothing here is persisted. */
+/**
+ * The transcript. Structurally identical to `StoredConversationTurn` in
+ * `$lib/types`, which is what lets the page hand a stored transcript straight
+ * back to {@link runTurn} with no conversion.
+ */
 export type ConversationTurn = LearnerTurn | TeacherTurn;
 
 /**

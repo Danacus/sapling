@@ -26,8 +26,9 @@ all reused; nothing about them changes.
    …", "I am …". In the learner's native language, so the setup is understood
    before the target language starts.
 4. **Turn loop.** Learner writes in the target language → one teacher turn comes
-   back → repeat. Ephemeral: no transcript is persisted, a reload starts fresh.
-   The only thing that survives a session is vocabulary the teacher added.
+   back → repeat. Persisted: the scene and every completed exchange are rows
+   derived from the events log, so a reload resumes the conversation and the
+   library lists the ones already played (§6a).
 
 ## 3. The teacher's two jobs
 
@@ -206,7 +207,8 @@ src/lib/conversation/
   diff.ts         diff of typed vs. corrected (word- or character-wise,
                   per script), for the markup
   mock.ts         the offline path
-src/routes/converse/+page.svelte
+src/routes/converse/+page.svelte       library + start screen
+src/routes/converse/[id]/+page.svelte  one transcript, resumable
 ```
 
 `teacher.ts` mirrors `chat.ts`: it owns the loop, tool failures come back to the
@@ -226,14 +228,67 @@ deliberate differences from `chat.ts`:
   envelope never has to travel in the history.
 
 Nothing in the module imports `$lib/db`; every side effect goes through the
-injected `ToolContext`, same seam as the assistant.
+injected `ToolContext`, same seam as the assistant. Persistence is the pages'
+job, not this module's — see §6a.
+
+## 6a. Persistence
+
+**The events log is append-only, and so is a conversation.** Nothing is ever
+edited: there is no regenerate, no retry of a stored turn, no scenario switch.
+So persisting a transcript needs no merge rules beyond insert-or-ignore, and it
+follows reading mode's shape exactly — a UUID in the URL, rows derived from the
+log, a library page and a resumable detail page.
+
+**The unit is the exchange**, not the turn: one learner message and the teacher
+turn that answered it, written together after the reply lands. A message whose
+reply failed stays in the page's `$state` and is never written, so stored
+history always ends on a teacher line — which is what `runTurn`'s dialogue
+replay expects to resume from. `heard` and `correction` are stored on the
+learner half, because that is the bubble they belong to and the pairing the
+replay demonstrates. `learner` is absent only at index 0, where the scenario's
+opener seeds the transcript with a line nobody prompted.
+
+Three events, in the house pattern (`events.ts` zod payload, `materialize.ts`
+rule, `schema.ts` table, `DERIVED_TABLES`, repositories, tests against the real
+in-memory store):
+
+| Event | Payload | Rule |
+|---|---|---|
+| `conversationStarted` | `{ id, scenario, topic?, createdAt }` | insert-or-ignore into `conversations`, unless tombstoned |
+| `turnAdded` | `{ conversationId, index, learner?, teacher }` | insert-or-ignore into `conversationTurns(conversationId, idx, learner, teacher, at)`, unless tombstoned |
+| `conversationDeleted` | `{ conversationId }` | tombstone in `conversationTombstones`, delete the conversation and its turns |
+
+Identity is `(conversationId, index)` — derived from the content, nothing
+device-local — so the same exchange arriving twice is one row. A `turnAdded`
+whose `conversationStarted` has not arrived yet is still inserted: sync carries
+no causal order across devices, and a turn dropped for being early would never
+come back. Continuing one conversation on two devices at once is an accepted
+edge; insert-or-ignore keeps one.
+
+Repositories: `addConversation(c)`, `addExchange(x)`, `getConversations()` (an
+aggregate join, so a shelf row costs no transcripts), `getConversation(id)`,
+`deleteConversation(id)`.
+
+The stored shapes live in `$lib/types` as structural mirrors of this module's
+`Scenario`, `TargetLine`, `Correction`, `LearnerTurn` and `TeacherTurn` rather
+than imports: `types.ts` is deliberately dependency-free and this module imports
+it for `Profile`, so importing back would close a cycle. Structural identity is
+what keeps the duplication harmless — the pages assign one to the other with no
+conversion, and a drift fails `pnpm check` where the two meet.
+
+Sync comes for free: the three events travel the log like every other fact, and
+the backend never reads a payload.
 
 ## 7. UI
 
-`src/routes/converse/+page.svelte`, modeled on `src/routes/chat/+page.svelte` —
-same bubble/composer/error/retry structure, same ephemeral turn array in
-`$state`. Copy the patterns; only extract a shared component if a piece comes
-across unchanged, and do not refactor the chat page as part of this work.
+`src/routes/converse/[id]/+page.svelte`, modeled on
+`src/routes/chat/+page.svelte` — same bubble/composer/error/retry structure, the
+same turn array in `$state`, loaded from and appended to the store per §6a.
+Copy the patterns; only extract a shared component if a piece comes across
+unchanged, and do not refactor the chat page as part of this work.
+`src/routes/converse/+page.svelte` is the library and the start screen, laid out
+as `/read`'s is: the start card opposite the shelf, composer first in source
+order so a phone meets it before an empty shelf.
 
 - Scenario card pinned above the transcript.
 - Teacher bubbles: target text, a `SpeakButton` (`$lib/ui/SpeakButton.svelte`,
@@ -279,9 +334,12 @@ Green light is `pnpm check`, `pnpm test`, `pnpm format:check`.
 
 ## 10. Scope
 
-Out: persisted transcripts, sync of conversations, voice input, auto-play TTS,
-mid-conversation scenario switching, difficulty adaptation from conversation
-performance. Each is additive later; none of them changes the shapes above.
+In, since the first slice landed: persisted transcripts and — with them, for
+free — sync of conversations, both per §6a.
+
+Out: auto-play TTS, mid-conversation scenario switching, difficulty adaptation
+from conversation performance. Each is additive later; none of them changes the
+shapes above.
 
 Documentation to update on landing: `.claude/rules/assistant.md` (add
 `src/lib/conversation/**` and `src/routes/converse/**` to `paths:`, plus one

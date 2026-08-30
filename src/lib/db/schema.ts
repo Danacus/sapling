@@ -16,6 +16,14 @@
  * `texts` keeps `sentences` and `glossary` as JSON: a text is immutable once
  * stored and always read whole, so there is nothing to query inside them.
  *
+ * `conversations` keeps its scenario as JSON for the same reason, and
+ * `conversationTurns` keeps a whole turn per row: the transcript is only ever
+ * read in one piece, in `idx` order, and `(conversationId, idx)` is the primary
+ * key because that pair — not an event id — is what makes the same exchange
+ * arriving twice one row. `at` is the envelope's, carried onto the row so the
+ * library can say when a conversation was last spoken in without reading a
+ * single transcript.
+ *
  * `lookups` is a log nothing reads yet — every "explain this word" tap, kept
  * because it is FSRS evidence a later slice will grade and cannot be
  * reconstructed after the fact. The index is the read it is waiting for: one
@@ -75,6 +83,15 @@ CREATE TABLE IF NOT EXISTS lookups (
   at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS lookups_term ON lookups(term, at);
 
+CREATE TABLE IF NOT EXISTS conversations (
+  id TEXT PRIMARY KEY, scenario TEXT NOT NULL, topic TEXT, createdAt INTEGER NOT NULL);
+
+CREATE TABLE IF NOT EXISTS conversationTurns (
+  conversationId TEXT NOT NULL, idx INTEGER NOT NULL, learner TEXT, teacher TEXT NOT NULL,
+  at INTEGER NOT NULL, PRIMARY KEY (conversationId, idx));
+
+CREATE TABLE IF NOT EXISTS conversationTombstones (conversationId TEXT PRIMARY KEY);
+
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 `;
 
@@ -111,5 +128,8 @@ export const DERIVED_TABLES = [
 	'texts',
 	'textTombstones',
 	'wordMarks',
-	'lookups'
+	'lookups',
+	'conversations',
+	'conversationTurns',
+	'conversationTombstones'
 ] as const;

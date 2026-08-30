@@ -24,6 +24,11 @@ import { getDeviceId } from '$lib/device';
 import type {
 	Challenge,
 	ChallengeResult,
+	Conversation,
+	ConversationExchange,
+	ConversationLearnerTurn,
+	ConversationScenario,
+	ConversationTeacherTurn,
 	GlossEntry,
 	KnowledgeItem,
 	Profile,
@@ -592,6 +597,145 @@ export async function recordLookup(term: string, textId: string, itemId?: string
 		...(itemId === undefined ? {} : { itemId }),
 		textId
 	});
+}
+
+/* -------------------------------------------------------------------------- */
+/* Conversations                                                               */
+/* -------------------------------------------------------------------------- */
+
+interface ConversationSqlRow {
+	id: string;
+	scenario: string;
+	topic: string | null;
+	createdAt: number;
+}
+
+interface ConversationTurnSqlRow {
+	idx: number;
+	learner: string | null;
+	teacher: string;
+}
+
+/**
+ * One library row: the conversation, plus the two facts a shelf entry needs
+ * that are not on the conversation itself.
+ *
+ * Both are aggregates of `conversationTurns`, so they are counted in SQL rather
+ * than by loading every transcript to measure it — the shelf reads one row per
+ * conversation whatever the transcripts weigh.
+ */
+export interface ConversationSummary extends Conversation {
+	/** How many exchanges are stored, opener included. */
+	turnCount: number;
+	/** When the last one landed; absent while the transcript is still empty. */
+	lastTurnAt?: number;
+}
+
+/** Same nullable-column-to-absent-field conversion as {@link itemFrom}. */
+function conversationFrom(row: ConversationSqlRow): Conversation {
+	return {
+		id: row.id,
+		scenario: JSON.parse(row.scenario) as ConversationScenario,
+		...(row.topic === null ? {} : { topic: row.topic }),
+		createdAt: row.createdAt
+	};
+}
+
+/**
+ * Opens a conversation: the scene, and nothing else.
+ *
+ * The transcript arrives one {@link addExchange} at a time. Immutable once
+ * written, like a text — the id is ignored if the log has seen it, and a deleted
+ * one never comes back.
+ */
+export async function addConversation(conversation: Conversation): Promise<void> {
+	const store = await ready();
+	const plain = toPlain(conversation);
+	await store.commit('conversationStarted', {
+		id: plain.id,
+		scenario: plain.scenario,
+		...(plain.topic === undefined ? {} : { topic: plain.topic }),
+		createdAt: plain.createdAt
+	});
+}
+
+/**
+ * Appends one exchange — a learner message and the teacher turn that answered
+ * it, or at index 0 the scenario's opener alone.
+ *
+ * The pair is the unit because it is the only state the turn loop can resume
+ * from: a learner message whose reply failed is not history, so it is never
+ * written and a stored transcript always ends on a teacher line.
+ */
+export async function addExchange(exchange: ConversationExchange): Promise<void> {
+	const store = await ready();
+	const plain = toPlain(exchange);
+	await store.commit('turnAdded', {
+		conversationId: plain.conversationId,
+		index: plain.index,
+		...(plain.learner === undefined ? {} : { learner: plain.learner }),
+		teacher: plain.teacher
+	});
+}
+
+/** Every conversation, newest first, each with its turn count and last activity. */
+export async function getConversations(): Promise<ConversationSummary[]> {
+	const store = await ready();
+	const rows = await store.query<
+		ConversationSqlRow & { turnCount: number; lastTurnAt: number | null }
+	>(
+		`SELECT c.id, c.scenario, c.topic, c.createdAt,
+		        count(t.idx) AS turnCount, max(t.at) AS lastTurnAt
+		 FROM conversations c
+		 LEFT JOIN conversationTurns t ON t.conversationId = c.id
+		 GROUP BY c.id
+		 ORDER BY c.createdAt DESC`
+	);
+	return rows.map((row) => ({
+		...conversationFrom(row),
+		turnCount: row.turnCount,
+		...(row.lastTurnAt === null ? {} : { lastTurnAt: row.lastTurnAt })
+	}));
+}
+
+/**
+ * One conversation and its whole transcript in `idx` order, or `undefined` when
+ * it was deleted (here or on another device).
+ *
+ * The turns are read by the conversation's id rather than joined to it, so a
+ * turn that outran its `conversationStarted` across a sync is still picked up
+ * once the scene lands.
+ */
+export async function getConversation(
+	id: string
+): Promise<{ conversation: Conversation; exchanges: ConversationExchange[] } | undefined> {
+	const store = await ready();
+	const row = (
+		await store.query<ConversationSqlRow>('SELECT * FROM conversations WHERE id = ?', [id])
+	)[0];
+	if (row === undefined) return undefined;
+
+	const turns = await store.query<ConversationTurnSqlRow>(
+		'SELECT idx, learner, teacher FROM conversationTurns WHERE conversationId = ? ORDER BY idx',
+		[id]
+	);
+	return {
+		conversation: conversationFrom(row),
+		exchanges: turns.map((turn) => ({
+			conversationId: id,
+			index: turn.idx,
+			...(turn.learner === null
+				? {}
+				: { learner: JSON.parse(turn.learner) as ConversationLearnerTurn }),
+			teacher: JSON.parse(turn.teacher) as ConversationTeacherTurn
+		}))
+	};
+}
+
+/** Forgets one conversation. Tombstoned, so a late copy from another device stays gone. */
+export async function deleteConversation(id: string): Promise<void> {
+	const store = await ready();
+	await store.commit('conversationDeleted', { conversationId: id });
 }
 
 /* -------------------------------------------------------------------------- */

@@ -13,8 +13,10 @@
  * what makes every word the teacher files a real repository write with a sync
  * event behind it.
  *
- * Nothing else survives a session: the transcript lives in the page's `$state`
- * and a reload starts a new scene.
+ * Persisting the transcript is the page's job, not this module's: the scene and
+ * every completed exchange are rows in the events log, written from
+ * `src/routes/converse/` through the repositories. That split is why a
+ * conversation resumes after a reload without a line of storage code in here.
  */
 
 import { isMockMode } from '$lib/llm';

@@ -9,9 +9,14 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
+	addConversation,
+	addExchange,
 	addText,
+	deleteConversation,
 	deleteText,
 	getAllItems,
+	getConversation,
+	getConversations,
 	getItem,
 	getKnownTerms,
 	getText,
@@ -24,7 +29,13 @@ import {
 import { setStoreForTesting, type Store } from './store';
 import { makeTestStore } from './store.testing';
 import { newCardState } from '$lib/srs';
-import type { Challenge, KnowledgeItem, ReadingText } from '$lib/types';
+import type {
+	Challenge,
+	Conversation,
+	ConversationExchange,
+	KnowledgeItem,
+	ReadingText
+} from '$lib/types';
 
 let store: Store;
 
@@ -205,5 +216,126 @@ describe('recordLookup', () => {
 	it('ignores a blank term', async () => {
 		await recordLookup('   ', 't1');
 		expect(await store.query('SELECT * FROM lookups')).toEqual([]);
+	});
+});
+
+function conversation(id: string, createdAt: number, topic?: string): Conversation {
+	return {
+		id,
+		scenario: {
+			setting: 'An ice cream shop on a hot afternoon.',
+			teacherRole: 'the person behind the counter',
+			learnerRole: 'a customer',
+			firstSpeaker: 'teacher',
+			opener: { text: '¡Hola!' },
+			openerTranslation: 'Hello!'
+		},
+		...(topic === undefined ? {} : { topic }),
+		createdAt
+	};
+}
+
+function exchange(id: string, index: number, said: string): ConversationExchange {
+	return {
+		conversationId: id,
+		index,
+		learner: { role: 'learner', text: said },
+		teacher: {
+			role: 'teacher',
+			reply: { text: 'Muy bien.' },
+			translation: 'Very good.',
+			actions: []
+		}
+	};
+}
+
+describe('conversations', () => {
+	it('round-trips a scene and its transcript, in order, newest conversation first', async () => {
+		await addConversation(conversation('c1', 1000));
+		await addConversation(conversation('c2', 2000, 'coffee'));
+
+		// Out of order on purpose: the read orders by idx, not by arrival.
+		await addExchange(exchange('c1', 1, 'un helado'));
+		await addExchange({
+			conversationId: 'c1',
+			index: 0,
+			teacher: { role: 'teacher', reply: { text: '¡Hola!' }, actions: [] }
+		});
+
+		const summaries = await getConversations();
+		expect(summaries.map((row) => row.id)).toEqual(['c2', 'c1']);
+		expect(summaries.map((row) => row.turnCount)).toEqual([0, 2]);
+		expect(summaries[0].topic).toBe('coffee');
+
+		const loaded = await getConversation('c1');
+		expect(loaded?.conversation).toEqual(conversation('c1', 1000));
+		expect(loaded?.exchanges.map((row) => row.index)).toEqual([0, 1]);
+		// The opener has no learner half; the exchange after it does, whole.
+		expect(loaded?.exchanges[0].learner).toBeUndefined();
+		expect(loaded?.exchanges[1]).toEqual(exchange('c1', 1, 'un helado'));
+	});
+
+	it('leaves an unset topic absent rather than null', async () => {
+		await addConversation(conversation('c1', 1000));
+
+		const loaded = await getConversation('c1');
+		expect(loaded && 'topic' in loaded.conversation).toBe(false);
+	});
+
+	it('keeps heard and correction on the learner turn they were about', async () => {
+		await addConversation(conversation('c1', 1000));
+		await addExchange({
+			conversationId: 'c1',
+			index: 0,
+			learner: {
+				role: 'learner',
+				text: 'quiero un helado',
+				heard: { text: 'Quiero un helado.' },
+				correction: { corrected: { text: 'Quiero un helado.' }, note: 'Capital and full stop.' }
+			},
+			teacher: { role: 'teacher', reply: { text: 'Claro.' }, actions: [] }
+		});
+
+		const loaded = await getConversation('c1');
+		expect(loaded?.exchanges[0].learner?.correction?.note).toBe('Capital and full stop.');
+		expect(loaded?.exchanges[0].learner?.heard).toEqual({ text: 'Quiero un helado.' });
+	});
+
+	it('ignores a second exchange at an index it already has', async () => {
+		// Two devices continuing the same conversation is the accepted edge: the
+		// pair (conversationId, idx) is the identity, so one of them wins whole.
+		await addConversation(conversation('c1', 1000));
+		await addExchange(exchange('c1', 0, 'first'));
+		await addExchange(exchange('c1', 0, 'second'));
+
+		const loaded = await getConversation('c1');
+		expect(loaded?.exchanges).toHaveLength(1);
+		expect(loaded?.exchanges[0].learner?.text).toBe('first');
+	});
+
+	it('keeps a turn that arrived before the conversation it belongs to', async () => {
+		// Sync has no causal order across devices; a turn dropped for arriving
+		// early would never come back.
+		await addExchange(exchange('c1', 0, 'un helado'));
+		expect(await getConversation('c1')).toBeUndefined();
+
+		await addConversation(conversation('c1', 1000));
+		expect((await getConversation('c1'))?.exchanges).toHaveLength(1);
+	});
+
+	it('tombstones a deletion, so a replayed start or turn stays gone', async () => {
+		await addConversation(conversation('c1', 1000));
+		await addExchange(exchange('c1', 0, 'un helado'));
+		await deleteConversation('c1');
+
+		expect(await getConversations()).toEqual([]);
+		expect(await getConversation('c1')).toBeUndefined();
+
+		// Another device's copy of the same conversation, arriving late.
+		await addConversation(conversation('c1', 1000));
+		await addExchange(exchange('c1', 1, 'y un café'));
+
+		expect(await getConversations()).toEqual([]);
+		expect(await store.query('SELECT * FROM conversationTurns')).toEqual([]);
 	});
 });

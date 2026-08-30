@@ -364,6 +364,60 @@ function wordLookedUp(sql: Sql, id: string, at: number, p: PayloadFor<'wordLooke
 	]);
 }
 
+/**
+ * The scene of one conversation, insert-or-ignore — {@link textAdded}'s shape
+ * exactly, and for the same reason: a scenario is decided once and never
+ * revised, so a second copy of it changes nothing and a tombstone outranks it
+ * whenever it arrives.
+ */
+function conversationStarted(sql: Sql, p: PayloadFor<'conversationStarted'>): void {
+	if (sql.query('SELECT 1 FROM conversationTombstones WHERE conversationId = ?', [p.id]).length > 0)
+		return;
+	sql.exec(
+		`INSERT OR IGNORE INTO conversations (id, scenario, topic, createdAt) VALUES (?, ?, ?, ?)`,
+		[p.id, JSON.stringify(p.scenario), p.topic ?? null, p.createdAt]
+	);
+}
+
+/**
+ * One exchange of a transcript, keyed by `(conversationId, idx)`.
+ *
+ * Deliberately not conditional on the conversation row existing: across a sync
+ * the turns of a conversation can land before the `conversationStarted` that
+ * opened it, and a turn dropped for arriving early would never come back. The
+ * row follows, `getConversation` joins the two on id, and until then the turn
+ * sits inert exactly as a review that outran its item does.
+ *
+ * The tombstone is still checked, because that one *is* a decision the learner
+ * made about this id and it outranks anything still in flight.
+ */
+function turnAdded(sql: Sql, at: number, p: PayloadFor<'turnAdded'>): void {
+	if (
+		sql.query('SELECT 1 FROM conversationTombstones WHERE conversationId = ?', [p.conversationId])
+			.length > 0
+	)
+		return;
+	sql.exec(
+		`INSERT OR IGNORE INTO conversationTurns (conversationId, idx, learner, teacher, at)
+		 VALUES (?, ?, ?, ?, ?)`,
+		[
+			p.conversationId,
+			p.index,
+			p.learner === undefined ? null : JSON.stringify(p.learner),
+			JSON.stringify(p.teacher),
+			at
+		]
+	);
+}
+
+function conversationDeleted(sql: Sql, p: PayloadFor<'conversationDeleted'>): void {
+	sql.exec('INSERT OR IGNORE INTO conversationTombstones (conversationId) VALUES (?)', [
+		p.conversationId
+	]);
+	sql.exec('DELETE FROM conversationTurns WHERE conversationId = ?', [p.conversationId]);
+	sql.exec('DELETE FROM conversations WHERE id = ?', [p.conversationId]);
+}
+
 /** Applies one event's merge rule. Assumes the caller has already deduped by id. */
 export function applyEvent(sql: Sql, event: SyncEvent): void {
 	const type: EventType = event.type;
@@ -405,6 +459,12 @@ export function applyEvent(sql: Sql, event: SyncEvent): void {
 			return wordMarked(sql, event.at, event.payload as PayloadFor<'wordMarked'>);
 		case 'wordLookedUp':
 			return wordLookedUp(sql, event.id, event.at, event.payload as PayloadFor<'wordLookedUp'>);
+		case 'conversationStarted':
+			return conversationStarted(sql, event.payload as PayloadFor<'conversationStarted'>);
+		case 'turnAdded':
+			return turnAdded(sql, event.at, event.payload as PayloadFor<'turnAdded'>);
+		case 'conversationDeleted':
+			return conversationDeleted(sql, event.payload as PayloadFor<'conversationDeleted'>);
 	}
 }
 

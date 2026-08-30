@@ -352,3 +352,116 @@ export interface ReadingText {
 	/** Epoch milliseconds. */
 	createdAt: number;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Conversations                                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The stored side of conversation mode, mirroring `$lib/conversation`'s
+ * `Scenario`, `TargetLine`, `Correction`, `LearnerTurn` and `TeacherTurn`
+ * **structurally** rather than importing them.
+ *
+ * This module is deliberately dependency-free (see the file header) and
+ * `$lib/conversation` imports it for `Profile`, so importing back would close a
+ * cycle. Structural identity is what keeps the duplication harmless: TypeScript
+ * assigns these to the conversation module's types and back with no conversion
+ * anywhere, so the page hands `sendTurn`'s output straight to `addExchange` and
+ * a stored transcript straight to the turn renderer. The two definitions have to
+ * stay in step; a drift fails `pnpm check` at the page, which is where both
+ * sides meet.
+ */
+
+/** One line of the target language with its Latin reading. Mirrors `TargetLine`. */
+export interface ConversationLine {
+	text: string;
+	/** Absent for targets already written in the Latin script. */
+	reading?: string;
+}
+
+/** The scene both sides play, fixed for a conversation's whole life. */
+export interface ConversationScenario {
+	/** Native language: the setup has to be understood before the target language starts. */
+	setting: string;
+	teacherRole: string;
+	learnerRole: string;
+	firstSpeaker: 'teacher' | 'learner';
+	/** The teacher's opening line — present exactly when it speaks first. */
+	opener?: ConversationLine;
+	openerTranslation?: string;
+}
+
+/** The learner's whole message rewritten, with an optional note. Mirrors `Correction`. */
+export interface ConversationCorrection {
+	corrected: ConversationLine;
+	note?: string;
+}
+
+/** One tool the teacher ran on a turn — `add_words`, in practice. Mirrors `ActionNote`. */
+export interface ConversationAction {
+	tool: string;
+	summary: string;
+	ok: boolean;
+}
+
+/**
+ * What the learner wrote, with what came back *about* it.
+ *
+ * `heard` and `correction` arrive with the *next* teacher turn and belong to
+ * this bubble, so they are stored on it — which is also the pairing the turn
+ * model is shown when the dialogue is replayed.
+ */
+export interface ConversationLearnerTurn {
+	role: 'learner';
+	/** Exactly what they typed, never the corrected version. */
+	text: string;
+	heard?: ConversationLine;
+	correction?: ConversationCorrection;
+}
+
+/** One teacher line, with whatever it filed away while writing it. */
+export interface ConversationTeacherTurn {
+	role: 'teacher';
+	reply: ConversationLine;
+	translation?: string;
+	actions: ConversationAction[];
+}
+
+/** One row of a stored transcript. */
+export type StoredConversationTurn = ConversationLearnerTurn | ConversationTeacherTurn;
+
+/**
+ * A role-played conversation, as the library lists it.
+ *
+ * The scene is immutable — it is decided once, before the first line — so the
+ * only thing that ever grows is the transcript, one {@link ConversationExchange}
+ * at a time.
+ */
+export interface Conversation {
+	id: string;
+	scenario: ConversationScenario;
+	/** What the learner asked to talk about, when they asked for anything. */
+	topic?: string;
+	/** Epoch milliseconds. */
+	createdAt: number;
+}
+
+/**
+ * The unit of persistence: one learner message and the teacher turn that
+ * answered it.
+ *
+ * The pair is stored together because that is the only state the turn loop can
+ * resume from — a learner message whose reply never came back is not history,
+ * it is a failed send. `learner` is absent only at index 0, where the scenario's
+ * opener seeds the transcript with a teacher line nobody prompted.
+ *
+ * Identity is `(conversationId, index)`, which is derived from the content and
+ * so is the same on every device.
+ */
+export interface ConversationExchange {
+	conversationId: string;
+	/** Position in the transcript, from 0. */
+	index: number;
+	learner?: ConversationLearnerTurn;
+	teacher: ConversationTeacherTurn;
+}

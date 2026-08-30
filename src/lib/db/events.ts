@@ -1,5 +1,5 @@
 /**
- * The event model: fourteen immutable facts, and the only thing sync ever moves.
+ * The event model: seventeen immutable facts, and the only thing sync ever moves.
  *
  * The envelope `id` is the set-union key — an id already in `events` is never
  * materialised twice — so no payload carries an id of its own. `at` is when the
@@ -25,7 +25,10 @@ export type EventType =
 	| 'textAdded'
 	| 'textDeleted'
 	| 'wordMarked'
-	| 'wordLookedUp';
+	| 'wordLookedUp'
+	| 'conversationStarted'
+	| 'turnAdded'
+	| 'conversationDeleted';
 
 export interface SyncEvent {
 	id: string;
@@ -39,6 +42,31 @@ export interface SyncEvent {
 export type SequencedEvent = SyncEvent & { seq: number };
 
 const level = z.enum(['beginner', 'elementary', 'intermediate', 'advanced']);
+
+/**
+ * The conversation shapes, as `$lib/conversation` hands them to the page.
+ *
+ * `.optional()` throughout, not `.nullish()` like the generation-side mirrors:
+ * these never come off the wire. `parseScenario` and `parseTeacherReply` have
+ * already normalized every model-emitted `null` to absent by the time a turn
+ * reaches the page, so a `null` here would be a bug and not a dialect —
+ * the same reason `textAdded` writes its sentences and glossary `.optional()`.
+ */
+const line = z.object({ text: z.string(), reading: z.string().optional() });
+
+const learnerTurn = z.object({
+	role: z.literal('learner'),
+	text: z.string(),
+	heard: line.optional(),
+	correction: z.object({ corrected: line, note: z.string().optional() }).optional()
+});
+
+const teacherTurn = z.object({
+	role: z.literal('teacher'),
+	reply: line,
+	translation: z.string().optional(),
+	actions: z.array(z.object({ tool: z.string(), summary: z.string(), ok: z.boolean() }))
+});
 
 export const payloadSchemas = {
 	/** Item content only. The card is computed from the reviews that follow. */
@@ -173,7 +201,50 @@ export const payloadSchemas = {
 		term: z.string(),
 		itemId: z.string().optional(),
 		textId: z.string()
-	})
+	}),
+
+	/**
+	 * The scene, decided once and never revised — there is no
+	 * `conversationUpdated`, for the same reason there is no `textUpdated`.
+	 *
+	 * A conversation grows only by {@link turnAdded}, which is what makes an
+	 * append-only log the natural home for one: the transcript *is* a sequence of
+	 * facts, so persisting it costs no merge rules beyond insert-or-ignore.
+	 */
+	conversationStarted: z.object({
+		id: z.string(),
+		scenario: z.object({
+			setting: z.string(),
+			teacherRole: z.string(),
+			learnerRole: z.string(),
+			firstSpeaker: z.enum(['teacher', 'learner']),
+			opener: line.optional(),
+			openerTranslation: z.string().optional()
+		}),
+		topic: z.string().optional(),
+		createdAt: z.number()
+	}),
+
+	/**
+	 * One completed exchange: what the learner said, and the reply that came
+	 * back. Identity is `(conversationId, index)` — content, not anything
+	 * device-local — so two devices that continued the same conversation collapse
+	 * to one turn rather than interleaving two.
+	 *
+	 * `learner` is absent only at index 0, where the scenario's opener seeds the
+	 * transcript with a line nobody prompted. A learner message whose reply failed
+	 * is never written: stored history always ends on a teacher turn, which is
+	 * what the dialogue replay in `$lib/conversation` expects to resume from.
+	 */
+	turnAdded: z.object({
+		conversationId: z.string(),
+		index: z.number(),
+		learner: learnerTurn.optional(),
+		teacher: teacherTurn
+	}),
+
+	/** Tombstone. The conversation and its turns go, and the id can never come back. */
+	conversationDeleted: z.object({ conversationId: z.string() })
 } satisfies Record<EventType, z.ZodType>;
 
 export type PayloadFor<T extends EventType> = z.infer<(typeof payloadSchemas)[T]>;
