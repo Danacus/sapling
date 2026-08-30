@@ -562,7 +562,7 @@
 
 			<!-- The text. Capped at the reading measure whatever the column allows:
 			     width buys the word card its own page, never a longer line. -->
-			<div class="text-col" class:has-card={card !== null}>
+			<div class="text-col">
 				<ul class="legend" aria-label="What the underlines mean">
 					<li><span class="swatch sw-new" aria-hidden="true"></span>new</li>
 					<li><span class="swatch sw-growing" aria-hidden="true"></span>growing</li>
@@ -931,8 +931,16 @@
 	}
 
 	/* Room under the last line for the sheet that covers the foot of the phone. */
-	.text-col.has-card {
-		padding-bottom: 60dvh;
+	/*
+	  Scroll room under the text, always, on a phone: the sheet is pinned to
+	  the foot of the viewport and this is what keeps the last lines reachable
+	  above it. Reserved permanently rather than added when a card opens —
+	  padding that appears on tap makes the page scrollable in the same instant,
+	  and the scrollbar popping in reads as the layout jumping. The wide layout
+	  below gives the card its own column and takes the room back.
+	*/
+	.text-col {
+		padding-bottom: 45dvh;
 	}
 
 	.legend {
@@ -1142,7 +1150,9 @@
 		left: 0;
 		right: 0;
 		bottom: 0;
-		max-height: 58dvh;
+		/* Within the tail `.text-col` reserves, so the sheet never covers a
+		   line the page cannot scroll clear of. */
+		max-height: 45dvh;
 		overflow-y: auto;
 		padding-inline: var(--gutter);
 		padding-bottom: env(safe-area-inset-bottom);
@@ -1321,7 +1331,7 @@
 			border-radius: var(--radius-lg);
 		}
 
-		.text-col.has-card {
+		.text-col {
 			padding-bottom: 0;
 		}
 	}
