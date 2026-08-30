@@ -329,6 +329,104 @@ the untested difference, and it is where every real bug in this feature has
 lived. A browser harness remains the missing piece; the LiveStore migration
 brief called for one and it still does not exist.
 
+## New-client boot is O(events), and why that stays true
+
+A fresh device — a newly paired phone, a cleared browser — has no local state and
+must **replay the entire eventlog through the materializers before the app is
+usable**. That is linear in the number of events, and the number is large: the
+deployed library measured **13,315 events / 2.6 MB** on 2026-08-30 (read-only,
+through the sync backend's own `pull`, tallied by type). At that size the replay
+takes minutes rather than seconds. Whether that was fixable was chased to the
+ground; it is not, cheaply, and this records why so it is not re-investigated.
+
+**Where the time goes — operations, not bytes.** Per event the leader
+(`@livestore/common/dist/leader-thread/materialize-event.js`) opens a SQLite
+*session*, runs the materializer's statements against the state DB, serialises the
+session's *changeset*, writes that changeset to a system table, and appends the
+event to the eventlog — across **two OPFS databases**. On OPFS each of those
+statements is a sync-access-handle round trip, and that fixed per-event cost times
+13,315 is the minutes. The changeset exists for exactly one thing: **rebase
+rollback** — it is what lets a device keep writing while it is still catching up
+and still converge.
+
+**What was ruled out, with evidence:**
+
+- *Blob size.* The intuition that a challenge is a "massive JSON blob" is wrong.
+  Measured through the real resolve path and again on the live log, a stored
+  challenge is **~300 B, at most 865 B** — it fits in a single SQLite page, no
+  overflow. The whole log's payload is 2.6 MB, which OPFS writes in about a
+  second; if boot takes minutes the bottleneck is *operations*, not *bytes*. (The
+  "~12 KB per `challengeAdded`" figures in `coalesce-pull.ts` and in the transport
+  note above are off by ~40× — they measured a whole batch, or a synthetic padded
+  event, not one real event.)
+- *Coalescing degrading to 100-event pages.* It does not. A fresh pull reaches the
+  leader in `ceil(N/1000)` batches (`coalesce-pull.ts`), one transaction each — so
+  ~14 flushes, not ~130. But a new client has **zero pending events**, so the
+  rebase amplification coalescing exists to fix does not apply to it: its cost is
+  already ~`N` materialisations, and coalescing cannot make that fewer.
+- *Skipping the changeset.* No public knob exists. `materialize-event.js` threads
+  only `skipEventlog`; the `session()`/`changeset()`/`finish()` and the
+  changeset-table insert are unconditional. It would be unsafe anyway: a review
+  done *during* bootstrap is a pending event the next pulled page rebases, and the
+  rebase rolls it back through exactly that changeset — `rollback` guards with
+  `if (changeset !== null)`, so a skipped one silently no-ops the rollback while
+  the event still replays, and the two devices diverge.
+- *Pruning the log.* Dropping the interaction telemetry (`challengeServed` +
+  `resultLogged`) is the largest single lever — 46.5% of the log — but it is at
+  most a 2× and deletes data with value: `timesServed`/`lastServedAt` pool
+  rotation and `recentAccuracy` difficulty calibration read it. A 2× on a cost
+  that grows linearly forever, paid for with a live feature, is a bad trade.
+- *Upstream snapshots.* Not planned. The nearest roadmap item is eventlog
+  **compaction** (livestorejs/livestore#136), blocked on a "facts system" (#254);
+  both are open with no milestone or assignee. Compaction would not help this log
+  even if it shipped: it collapses *superseded* keys (last-write-wins), and this
+  log is **append-only immutable facts** — reviews, serves, results and adds are
+  each distinct and non-superseding, essentially the whole log. The only events it
+  could touch are the ~10 last-write-wins ones (`profile`, `itemUpdated`).
+
+Composition of the 13,315-event log, most-frequent first: `itemReviewed` 34.8%,
+`resultLogged` 25.3%, `challengeServed` 21.1%, `challengeAdded` 14.6%, `itemAdded`
+4.1%, `profile*` 0.1%. The challenge pool (`challengeAdded` + `challengeServed` +
+`resultLogged`) is **61%**; the irreplaceable SRS core (items + reviews + profile)
+is **39%**.
+
+**Why the design is not the thing to change.** The commutative, derive-everything
+shape — reviews as immutable rows, the FSRS card *derived* by folding
+(`derive.ts`), `timesServed` as a COUNT — was forced by the *old* `sync/apply.ts`
+backend, which could only merge order-independent state, and was retrofitted onto
+LiveStore, which supplies a total order and rebase and *would* let materializers
+be mutable and order-dependent. The reflex is therefore that we under-use LiveStore
+and should lean in: keep a real `fsrsCard` column, a real counter, delete
+`derive.ts`.
+
+That reflex is a **read-model** change and it is **orthogonal to boot cost, if not
+adverse to it.** The event count is set by what the learner did, not by how it is
+materialised; a mutable in-place card emits no fewer events, and a read-modify-write
+materializer is *heavier* on replay than the current blind idempotent insert. Boot
+cost is intrinsic to event replay, not a symptom of under-using LiveStore, so
+using LiveStore more fully does not touch it.
+
+And the derive-everything design earns its keep on a merit unrelated to the old
+backend: **nothing stored can drift.** The card is always recomputable from the
+facts; there is no stored aggregate to hold in agreement, nothing a rebase or a
+materializer bug can corrupt into a wrong-but-plausible value. Moving to mutable
+state would trade that away for fewer rows and no faster boot. Forced-by-necessity
+and still-correct coincide here; the shape is kept because it is good, not merely
+because it is there.
+
+**The escape hatch, if the cost ever becomes real.** This is a *cold-boot* cost,
+paid once per new device — pairing, a rare event; warm devices never replay. So it
+is accepted, not fixed. The trigger that would change that is cold boots becoming
+*frequent* (kiosk / web / throwaway sessions), or the SRS core alone (5,180 events
+and growing) becoming slow on its own. The proportionate response then is **not**
+switching engines or pruning history, but **scoping the pool client-only**: stop
+syncing `challengeAdded`/`challengeServed`/`resultLogged`, so a new device replays
+only the ~39% SRS core and regenerates its pool locally. That destroys no data —
+existing devices keep their full history — and shrinks new-device boot directly;
+its only cost is that pool rotation and difficulty calibration become per-device,
+which for a solo learner is a modest, defensible loss. It is the intended lever,
+recorded here rather than pulled now.
+
 ## Open items, roughly by value
 
 - **Nothing has been run against Cloudflare's actual edge.** Two stores
