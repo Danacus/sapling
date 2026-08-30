@@ -5,8 +5,9 @@
  * learner's vocabulary, {@link annotateReadingText} for one they pasted — and
  * both come out as a {@link ReadingTextDraft} the page mints an id for and
  * stores. Everything after that is local: `splitSentences` cuts an import before
- * it is ever sent, `tokenizeByTerms` and `annotateSentence` decide what the
- * reader sees, and neither costs a token or a round trip.
+ * it is ever sent, `paginate` decides where the pages break, and
+ * `tokenizeByTerms` and `annotateSentence` decide what the reader sees — none of
+ * which costs a token or a round trip.
  *
  * Stateless, like `$lib/conversation`: **nothing here imports `$lib/db`.** The
  * caller passes the vocabulary in and persists what comes out, which is what
@@ -73,6 +74,9 @@ export {
 export type { FocusWord, GenerateTextArgs, ReadingOptions } from './generate';
 
 export { MOCK_GLOSSARY_WORDS, mockAnnotatedText, mockGeneratedText } from './mock';
+
+export { PAGE_CHARS, paginate } from './pages';
+export type { PageRange } from './pages';
 
 export {
 	ANNOTATED_TEXT_SCHEMA_NAME,

@@ -1,5 +1,6 @@
 <!--
-  The reader: one stored text, with every word one tap from its meaning.
+  The reader: one stored text, a page at a time, with every word one tap from its
+  meaning.
 
   The text itself is immutable — the sentences, the readings and the glossary are
   what the model wrote the day it was made. Everything the learner *sees* is
@@ -7,12 +8,22 @@
   marks as they stand today, which is why a text written last month shows this
   month's knowledge. The roll map that decides which tracked readings fade is
   created once per component instance and kept across re-annotations, so a word
-  reads the same in sentence two and sentence nine.
+  reads the same in sentence two and sentence nine — which is also why `lines`
+  stays the annotation of the *whole* text and only the rendering is paged.
+
+  Pages are `paginate`'s ranges over those sentences and the current one is
+  `?p=` in the URL, clamped. Nothing about the position is stored: a text
+  reopened from the library starts at page 1, deliberately, because a stored
+  bookmark is a fact to sync and a page is cheap to skip past.
 
   This page owns every write. `$lib/reading` never touches the database: it is
   handed the vocabulary and hands back words, and adding, marking and looking up
   all happen here through the repositories — which is what puts them in the sync
-  log for free.
+  log for free. Reading is also review, scoped to the page: a lookup on a garden
+  word is `Again` and confirming the page is `Good` for the rest of its garden
+  words — both governed by the grade the word last got *today*, read back out of
+  the item's own `recentGrades` rather than held in a set here, so the state
+  survives a reload and agrees with the drill.
 -->
 <script lang="ts">
 	import { browser } from '$app/environment';
@@ -27,11 +38,18 @@
 		getKnownTerms,
 		getProfile,
 		getText,
+		localDay,
 		markWord,
 		recordLookup,
 		updateItemAfterReview
 	} from '$lib/db';
-	import { annotateSentence, showSentenceReading, tokenizeByTerms, wordKey } from '$lib/reading';
+	import {
+		annotateSentence,
+		paginate,
+		showSentenceReading,
+		tokenizeByTerms,
+		wordKey
+	} from '$lib/reading';
 	import type { AnnotateContext, ReadingWord, TokenizeFn } from '$lib/reading';
 	import { hasLocalRomanizer, loadRomanizer } from '$lib/romanize';
 	import type { Maturity } from '$lib/session/progression';
@@ -93,12 +111,15 @@
 	let panel = $state<'finish' | 'delete' | null>(null);
 
 	/**
-	 * Garden words looked up while this text was open, by key — each has been
-	 * graded `Again` once. Session-scoped on purpose: re-tapping a word you have
-	 * already lost is not a second failure, but reopening the text tomorrow and
-	 * needing it again is.
+	 * Words tapped on *this page*, by key — cleared whenever the page turns.
+	 *
+	 * Page-scoped on purpose: a word looked up on page one and then read fine on
+	 * page three is exactly the re-encounter reading mode is for, and the `Again`
+	 * put its card into relearning, so the later `Good` is what graduates it. What
+	 * stops the same word collecting a `Good` on every page is not this set but
+	 * the grade it already carries today.
 	 */
-	const lapsed = new SvelteSet<string>();
+	const tapped = new SvelteSet<string>();
 	/** Every word tapped while this text was open, by key — a tapped word was not known. */
 	const lookedUp = new SvelteSet<string>();
 	/** Set once Finished has written; the panel then shows the receipt. */
@@ -132,8 +153,34 @@
 	);
 
 	/**
+	 * Where the pages break. Derived from the stored sentences, never from the
+	 * annotation: a break must not move because the learner added a word.
+	 */
+	const pages = $derived(paginate(text?.sentences ?? []));
+	/** One page even for a text with no sentences, so the reader always has a frame. */
+	const pageCount = $derived(Math.max(1, pages.length));
+
+	/**
+	 * Which page, from `?p=` — 1-based in the URL because that is what the label
+	 * says, and clamped rather than 404'd: a stale link to page 9 of a text that
+	 * now has 3 lands on the last page, which is where "read to the end" means.
+	 */
+	const pageIndex = $derived.by(() => {
+		const asked = Number(page.url.searchParams.get('p') ?? '1');
+		if (!Number.isFinite(asked)) return 0;
+		return Math.min(Math.max(Math.trunc(asked) - 1, 0), pageCount - 1);
+	});
+	const pageRange = $derived(pages[pageIndex] ?? { start: 0, end: 0 });
+	const lastPage = $derived(pageIndex >= pageCount - 1);
+
+	/** The slice of the annotated text this page shows — the only part rendered. */
+	const pageLines = $derived(lines.slice(pageRange.start, pageRange.end));
+
+	/**
 	 * What sits between two sentences on the page: the script's own rule, decided
-	 * from the text itself — a space for Spanish, nothing for Chinese.
+	 * from the whole text — a space for Spanish, nothing for Chinese. Whole text
+	 * rather than page, so a page of dialogue does not space differently from the
+	 * one before it.
 	 */
 	const gap = $derived(
 		usesInterWordSpaces(lines.map((line) => line.sentence.text).join('')) ? ' ' : ''
@@ -142,8 +189,9 @@
 	/** True once the romanizer's tokenizer is in — every reading is then ruby. */
 	const localReadings = $derived(tokenize !== tokenizeByTerms);
 
+	/** The page's translation, not the text's: it sits under the page it explains. */
 	const translation = $derived(
-		joinTokens(lines.map((line) => line.sentence.translation ?? '').filter(Boolean))
+		joinTokens(pageLines.map((line) => line.sentence.translation ?? '').filter(Boolean))
 	);
 
 	/**
@@ -155,7 +203,7 @@
 		localReadings || mode === 'off'
 			? ''
 			: joinTokens(
-					lines
+					pageLines
 						.filter((line) => line.sentence.reading && showSentenceReading(line.words, mode))
 						.map((line) => line.sentence.reading ?? '')
 				)
@@ -181,6 +229,33 @@
 	/** What "Add to my words" would file — the gloss, or what the learner typed. */
 	const draftMeaning = $derived((card?.gloss?.meaning ?? meaningDraft).trim());
 
+	/**
+	 * The grade each garden word last got *today*, by item id — the whole of this
+	 * page's review state, derived rather than kept.
+	 *
+	 * `recentGrades` is oldest-first and the ledger is what everything else reads,
+	 * so taking the last entry of the day here means a lapse in this morning's
+	 * drill and a lookup in this text are the same fact: reading a word you
+	 * already failed today is not a second failure, and a word that appears on
+	 * five pages cannot collect five `Good`s. It also survives a reload, which the
+	 * set it replaces did not. `now` moves on every `refresh()`, so a session held
+	 * open across midnight rolls over on the next write.
+	 */
+	const gradedToday = $derived.by(() => {
+		const today = localDay(now);
+		const out = new Map<string, number>();
+		for (const item of items) {
+			const last = item.recentGrades?.at(-1);
+			if (last && localDay(last.at) === today) out.set(item.id, last.grade);
+		}
+		return out;
+	});
+
+	/** True for a garden word already counted as forgotten today, wherever that happened. */
+	function isLapsed(word: ReadingWord): boolean {
+		return word.itemId !== undefined && gradedToday.get(word.itemId) === Grade.Again;
+	}
+
 	$effect(() => {
 		if (!browser) return;
 
@@ -190,7 +265,14 @@
 		loadError = '';
 		missing = false;
 
-		Promise.all([getProfile(), getText(id), getAllItems(), getKnownTerms()])
+		// `withRecentGrades`: the page's whole review state is folded out of the
+		// last grade each word got today, so the entries have to come along.
+		Promise.all([
+			getProfile(),
+			getText(id),
+			getAllItems({ withRecentGrades: true }),
+			getKnownTerms()
+		])
 			.then(([loadedProfile, loadedText, loadedItems, known]) => {
 				if (cancelled) return;
 				// `undefined` here means the root layout is about to redirect to
@@ -238,16 +320,42 @@
 		stopSpeaking();
 	});
 
-	/** Re-reads what a write changed; the roll map survives, so nothing re-rolls. */
+	/**
+	 * Turning a page resets everything scoped to one: what was tapped, the
+	 * checkbox, the receipt, whatever the panel held. Keyed on `pageIndex` alone,
+	 * so a typed or restored `?p=` resets exactly as the buttons do — the page is
+	 * the state, and the URL is where it lives.
+	 */
+	$effect(() => {
+		void pageIndex;
+		tapped.clear();
+		markFresh = false;
+		finished = false;
+		summary = '';
+		selected = null;
+		panel = null;
+		playing = false;
+		stopSpeaking();
+	});
+
+	/**
+	 * Re-reads what a write changed; the roll map survives, so nothing re-rolls.
+	 *
+	 * This is also how a grade becomes visible: the underlines and the status line
+	 * read `recentGrades`, so every `review()` is followed by one of these.
+	 */
 	async function refresh() {
-		const [loadedItems, known] = await Promise.all([getAllItems(), getKnownTerms()]);
+		const [loadedItems, known] = await Promise.all([
+			getAllItems({ withRecentGrades: true }),
+			getKnownTerms()
+		]);
 		items = loadedItems;
 		knownTerms = known;
 		now = Date.now();
 	}
 
 	function statusLine(word: ReadingWord): string {
-		if (word.status === 'tracked' && word.key && lapsed.has(word.key)) {
+		if (word.status === 'tracked' && isLapsed(word)) {
 			return `Counted as forgotten · ${BEDS[word.maturity ?? 'new']}, back sooner`;
 		}
 		if (word.status === 'tracked') return `In your garden · ${BEDS[word.maturity ?? 'new']}`;
@@ -267,6 +375,23 @@
 		panel = kind;
 	}
 
+	/**
+	 * Turns to a page, 1-based, by rewriting `?p=`.
+	 *
+	 * `replaceState` because paging is not somewhere to go *back* to — Back
+	 * belongs to the library, and a ten-page text should not need ten presses to
+	 * leave. `noScroll` because SvelteKit's restoration would land wherever this
+	 * page was left; the new page starts at its own first line instead.
+	 */
+	async function turnTo(number: number) {
+		const url = new URL(page.url);
+		if (number <= 1) url.searchParams.delete('p');
+		else url.searchParams.set('p', String(number));
+
+		await goto(url, { replaceState: true, noScroll: true });
+		window.scrollTo({ top: 0 });
+	}
+
 	function open(line: number, index: number) {
 		const target = lines[line]?.words[index];
 		if (!target?.key || !text) return;
@@ -281,14 +406,18 @@
 		// Once per open, never awaited: a card must not wait on a write.
 		void recordLookup(target.text, text.id, target.itemId);
 		lookedUp.add(target.key);
+		// Before the add, so a second tap on the same page is not a second grade:
+		// `gradedToday` only catches up once the write has been read back.
+		const again = target.status === 'tracked' && target.itemId && !tapped.has(target.key);
+		tapped.add(target.key);
 
 		// On a garden word the lookup is also a lapse: recall failed in context,
 		// with the reading often showing — the easiest conditions there are — so
-		// it is graded `Again`, once per word per text. `add_words` and the drill
-		// grade through the same repository call, so this lands in the ledger as
-		// an ordinary review, amendable like any other.
-		if (target.status === 'tracked' && target.itemId && !lapsed.has(target.key)) {
-			lapsed.add(target.key);
+		// it is graded `Again`, once per *day* rather than once per text open: a
+		// word already lost in this morning's drill is not lost twice. `add_words`
+		// and the drill grade through the same repository call, so this lands in
+		// the ledger as an ordinary review, amendable like any other.
+		if (again && target.itemId && !isLapsed(target)) {
 			void review(target.itemId, Grade.Again).then(refresh);
 		}
 	}
@@ -304,38 +433,58 @@
 		);
 	}
 
-	/** What Finished would do — counted live, so the confirm step can say it. */
+	/**
+	 * What confirming this page would do — counted live, so the confirm step can
+	 * say it. Over `pageLines` only: a page is the unit of reading and therefore
+	 * the unit of grading, and the receipt is never totalled across pages.
+	 */
 	const finishPlan = $derived.by(() => {
 		const read = new Map<string, string>();
+		const looked = new Set<string>();
 		const fresh = new Map<string, string>();
-		for (const line of lines) {
+		for (const line of pageLines) {
 			for (const word of line.words) {
 				if (!word.key) continue;
-				if (word.status === 'tracked' && word.itemId && !lapsed.has(word.key)) {
-					read.set(word.itemId, word.text);
+				if (word.status === 'tracked' && word.itemId) {
+					// Two separate reasons not to grade a word `Good` here: the learner
+					// looked it up on this page, or it already has a `Good` today from
+					// an earlier page or from the drill. `looked` is only the receipt's
+					// count, so it names the words this page actually lost — a word
+					// tapped and *added* here was never graded and is nobody's failure.
+					if (tapped.has(word.key)) {
+						if (gradedToday.get(word.itemId) === Grade.Again) looked.add(word.itemId);
+					} else if (gradedToday.get(word.itemId) !== Grade.Good) {
+						read.set(word.itemId, word.text);
+					}
 				} else if (word.status === 'new' && !lookedUp.has(word.key)) {
 					// A tapped new word is one the learner needed explained — the last
-					// thing to call known.
+					// thing to call known — and that stays true across the whole text,
+					// not just this page.
 					fresh.set(word.key, word.gloss?.term ?? word.text);
 				}
 			}
 		}
-		return { read: [...read.keys()], fresh: [...fresh.values()] };
+		return { read: [...read.keys()], looked: looked.size, fresh: [...fresh.values()] };
 	});
 
 	/**
-	 * "Finished": the reading counted.
+	 * Confirming a page: the reading counted, then on to the next one.
 	 *
 	 * Not looking a garden word up is the implicit `Good` — recall in context —
 	 * but only at this explicit moment, never by scrolling past. The `new` words
 	 * read without a tap can be marked known too — LingQ's paging — but only
 	 * with `markFresh` ticked for this press. `plain` words are left alone —
 	 * unglossed, they are as likely to be a segmenter's slip as a word.
+	 *
+	 * On the last page this is "Finished reading" and the receipt takes the
+	 * button's place; on any other it is "Next page" and the writing happens
+	 * before the turn, so a page is graded exactly once, when it is left.
 	 */
-	async function finish() {
+	async function finishPage() {
 		if (!text || writing || finished) return;
-		const { read } = finishPlan;
+		const { read, looked } = finishPlan;
 		const fresh = markFresh ? finishPlan.fresh : [];
+		const last = lastPage;
 
 		writing = true;
 		pageError = '';
@@ -343,15 +492,16 @@
 			for (const itemId of read) await review(itemId, Grade.Good);
 			for (const term of fresh) await markWord(term, true);
 			await refresh();
-			finished = true;
 			const parts = [
 				`${read.length} garden word${read.length === 1 ? '' : 's'} read fine`,
-				...(lapsed.size > 0 ? [`${lapsed.size} forgotten`] : []),
+				...(looked > 0 ? [`${looked} forgotten`] : []),
 				...(fresh.length > 0 ? [`${fresh.length} new marked known`] : [])
 			];
 			summary = parts.join(' · ');
+			if (last) finished = true;
+			else await turnTo(pageIndex + 2);
 		} catch (cause) {
-			pageError = cause instanceof Error ? cause.message : 'Could not finish the text.';
+			pageError = cause instanceof Error ? cause.message : 'Could not save this page.';
 		} finally {
 			writing = false;
 		}
@@ -413,7 +563,7 @@
 	}
 
 	/**
-	 * Reads the text aloud, sentence by sentence.
+	 * Reads the current page aloud, sentence by sentence.
 	 *
 	 * Sequential on purpose — `speak` resolves when playback finishes, so awaiting
 	 * it *is* the pacing. Pressing again cuts the current clip off; the loop then
@@ -438,7 +588,7 @@
 		}
 
 		playing = true;
-		const sentences = text.sentences.map((sentence) => sentence.text);
+		const sentences = pageLines.map((line) => line.sentence.text);
 		void (async () => {
 			for (const sentence of sentences) {
 				if (!playing) break;
@@ -478,7 +628,7 @@
 	 * them apart by whether `w-tracked` is there too.
 	 */
 	function wordClass(word: ReadingWord): string {
-		const lapse = word.key && lapsed.has(word.key) ? ' w-lapsed' : '';
+		const lapse = isLapsed(word) ? ' w-lapsed' : '';
 		return `w w-${word.status}${word.maturity ? ` w-${word.maturity}` : ''}${lapse}`;
 	}
 
@@ -536,9 +686,7 @@
 						class="btn btn-ghost tool"
 						class:playing
 						disabled={!ttsAvailable(lang)}
-						title={ttsAvailable(lang)
-							? 'Read the whole text aloud'
-							: 'Speech is off — see Settings'}
+						title={ttsAvailable(lang) ? 'Read this page aloud' : 'Speech is off — see Settings'}
 						onclick={() => void listen()}
 					>
 						{playing ? 'Stop' : 'Listen'}
@@ -574,14 +722,18 @@
 				     reads a text. Written without whitespace between the tokens — they
 				     reproduce the sentence character for character, so a newline in the
 				     template would land as a rendered space between every pair of them —
-				     and the sentences are joined by `gap`, the script's own rule. -->
+				     and the sentences are joined by `gap`, the script's own rule.
+				     Only this page's slice is rendered, but the indices stay the whole
+				     text's, so `selected` still points into `lines` and a card survives
+				     a re-annotation. -->
 				<p class="prose">
-					{#each lines as line, l (l)}{#if l > 0}{gap}{/if}<span class="sentence"
+					{#each pageLines as line, l (pageRange.start + l)}{@const s =
+							pageRange.start + l}{#if l > 0}{gap}{/if}<span class="sentence"
 							>{#each line.words as word, w (w)}{#if word.key === undefined}{word.text}{:else}<button
 										type="button"
 										class={wordClass(word)}
-										class:is-open={selected?.line === l && selected?.word === w}
-										onclick={() => open(l, w)}
+										class:is-open={selected?.line === s && selected?.word === w}
+										onclick={() => open(s, w)}
 										>{#if word.reading}<ruby>{word.text}<rt>{word.reading}</rt></ruby
 											>{:else}{word.text}{/if}</button
 									>{/if}{/each}</span
@@ -618,21 +770,32 @@
 					<p class="translation">{translation}</p>
 				{/if}
 
-				<!-- At the end of the text, because that is where the learner is when
-				     they have finished it. The receipt takes the button's place. -->
+				<!-- At the end of the page, because that is where the learner is when
+				     they have read it. The primary action carries the page forward and
+				     confirms in the panel first, because it writes; going *back* writes
+				     nothing, so it is a quiet link beside it. The receipt takes the
+				     button's place on the last page. -->
 				<div class="finish-row">
-					{#if finished}
-						<p class="summary" aria-live="polite">Finished · {summary}</p>
-					{:else}
-						<button
-							type="button"
-							class="btn btn-primary finish-btn"
-							class:is-active={panel === 'finish'}
-							onclick={() => confirm('finish')}
-						>
-							Finished reading
-						</button>
-					{/if}
+					<p class="page-count">Page {pageIndex + 1} of {pageCount}</p>
+					<div class="finish-actions">
+						{#if finished}
+							<p class="summary" aria-live="polite">Finished · {summary}</p>
+						{:else}
+							<button
+								type="button"
+								class="btn btn-primary finish-btn"
+								class:is-active={panel === 'finish'}
+								onclick={() => confirm('finish')}
+							>
+								{lastPage ? 'Finished reading' : 'Next page'}
+							</button>
+						{/if}
+						{#if pageIndex > 0}
+							<button type="button" class="reveal" onclick={() => void turnTo(pageIndex)}>
+								Previous page
+							</button>
+						{/if}
+					</div>
 				</div>
 			</div>
 
@@ -643,7 +806,9 @@
 					<div class="word-card">
 						<div class="word-head">
 							<div class="word-id">
-								<p class="panel-title">{finished ? 'Counted' : 'Finished reading?'}</p>
+								<p class="panel-title">
+									{finished ? 'Counted' : lastPage ? 'Finished reading?' : 'Done with this page?'}
+								</p>
 							</div>
 							<button type="button" class="close" aria-label="Close" onclick={close}>
 								<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
@@ -658,9 +823,10 @@
 							<button type="button" class="btn btn-ghost btn-block" onclick={close}>Close</button>
 						{:else}
 							<p class="panel-copy">
-								{finishPlan.read.length} garden word{finishPlan.read.length === 1 ? '' : 's'} you read
-								without looking up will be reviewed as remembered{lapsed.size > 0
-									? `; ${lapsed.size} you looked up ${lapsed.size === 1 ? 'is' : 'are'} already counted as forgotten`
+								{finishPlan.read.length} garden word{finishPlan.read.length === 1 ? '' : 's'} on this
+								page that you read without looking up will be reviewed as remembered{finishPlan.looked >
+								0
+									? `; ${finishPlan.looked} you looked up ${finishPlan.looked === 1 ? 'is' : 'are'} already counted as forgotten`
 									: ''}.
 							</p>
 							{#if finishPlan.fresh.length > 0}
@@ -677,9 +843,9 @@
 									type="button"
 									class="btn btn-primary"
 									disabled={writing}
-									onclick={() => void finish()}
+									onclick={() => void finishPage()}
 								>
-									{writing ? 'Saving…' : 'Yes, done'}
+									{writing ? 'Saving…' : lastPage ? 'Yes, done' : 'Yes, next page'}
 								</button>
 								<button type="button" class="btn btn-ghost" disabled={writing} onclick={close}>
 									Not yet
@@ -1244,12 +1410,33 @@
 		font-size: 0.88rem;
 	}
 
-	/* The end of the text: one primary action, then its receipt in its place.
-	   Separated from the prose by the same stitch the cards use. */
+	/* The end of the page: where it sits in the text, one primary action, then
+	   its receipt in its place. Separated from the prose by the same stitch the
+	   cards use. */
 	.finish-row {
 		margin-top: 2rem;
 		padding-top: 1.25rem;
 		border-top: 1px dashed var(--border);
+	}
+
+	/* Wears the word card's status voice, because it says the same kind of thing:
+	   where you are, not what to do. */
+	.page-count {
+		margin: 0 0 0.75rem;
+		font-size: 0.78rem;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--text-muted);
+	}
+
+	/* Forward and back on one line, wrapping on a narrow phone. No breakpoint:
+	   the row holds one button and a link at every width. */
+	.finish-actions {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.75rem 1.1rem;
 	}
 
 	.finish-btn.is-active {

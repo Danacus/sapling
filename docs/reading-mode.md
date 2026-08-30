@@ -20,9 +20,9 @@ in the garden with an FSRS strength, marked as known, or not yet met.
 1. **Library** (`/read`). Every text the learner has kept, newest first, and a
    composer with two doors: *Write one for me* (optional topic → one LLM call)
    and *Paste a text* (textarea + title → one LLM call that annotates it).
-2. **Reader** (`/read/[id]`). The text as one continuous body of tappable words
-   with ruby readings, a whole-text translation toggle, a Listen button, and a
-   word card for whatever was tapped.
+2. **Reader** (`/read/[id]`). The text a page at a time (`?p=`), each page one
+   continuous body of tappable words with ruby readings, a translation toggle, a
+   Listen button, and a word card for whatever was tapped.
 3. **Marks.** From the word card the learner can *add* a new word to the garden
    (through `add_words`, verbatim) or mark it *known*. Both are events and sync.
 
@@ -237,10 +237,29 @@ under the same condition.
 - **Every confirmation lives in the panel** — the same slot as the word card
   (facing page on a desk, sheet at the foot of a phone), never `window.confirm`,
   never extra buttons in the header and never a line above the text. Delete
-  (header) and Finished (a primary button at the *end* of the text, where the
-  learner is when they have finished it) both open there; the header keeps one
-  shape whatever is being decided, and the receipt takes the Finished button's
+  (header) and the page's primary button (at the *end* of the page, where the
+  learner is when they have read it) both open there; the header keeps one
+  shape whatever is being decided, and the receipt takes that button's
   place. A **legend row** above the text names the three underlines.
+- **The text is read a page at a time.** A page is a window of consecutive
+  sentences packed greedily to at most `PAGE_CHARS` (700) — `paginate` in
+  `src/lib/reading/pages.ts`, pure and tested. Characters rather than a sentence
+  count, because a generated text is 6–12 short sentences (usually one page)
+  and an import is up to `MAX_IMPORT_CHARS` of somebody else's prose (six or so);
+  one budget for every script, because the reader sets the target script larger
+  and at a 1.9 line height, so a Han page and a Latin page of the same character
+  count take about the same screen. The page number is `?p=` (1-based, clamped
+  to the last page), read from `$app/state` and written with
+  `goto(url, { replaceState: true, noScroll: true })` — replace, because Back
+  belongs to the library and a ten-page text should not take ten presses to
+  leave. **Nothing about the position is stored**: opening from the library
+  lands on page 1, deliberately, since a bookmark would be a fact to sync and a
+  page is cheap to skip. `lines` stays the annotation of the *whole* text (the
+  roll map is text-wide) and only `pageLines` is rendered; Listen, the
+  translation and the stored-reading block all follow the page. The finish row
+  carries "Page N of M", the primary button (**Next page**, or **Finished
+  reading** on the last), and a quiet **Previous page** link — back writes
+  nothing, so it needs no confirmation.
 - Home's shared card skin was renamed `.talk-*` → **`.door-*`**: two cards wear
   it now, and only one of them is a conversation.
 
@@ -248,27 +267,42 @@ under the same condition.
 
 A reading session grades the garden words in it, through the same
 `updateItemAfterReview` the drill uses, so every grade is an ordinary
-`itemReviewed` in the ledger:
+`itemReviewed` in the ledger. **The unit is the page**, and the guard against
+grading the same word twice is not a set the reader keeps but the grade the word
+**last got today**, folded out of the item's own `recentGrades`
+(`getAllItems({ withRecentGrades: true })`, last entry, `localDay(entry.at) ===
+localDay(now)`). Deriving it rather than holding it is what makes reading and
+drilling one ledger: it survives a reload, and a word lost in this morning's
+drill arrives in the text already counted as forgotten.
 
 - **A lookup on a tracked word is `Again`** — recall failed in context, with the
   reading often showing, the easiest conditions there are. Once per word per
-  text open (re-tapping a word already lost is not a second failure; needing it
-  again tomorrow is). The page keeps the set (`lapsed`), so the card's status
-  line says "Counted as forgotten" and the word's underline goes *dotted* in its
-  bed colour — a change of texture, not of hue, because the page already
-  carries three colours and a fourth would read as an alarm.
-- **Not looking up is `Good`, at one explicit moment: the Finished button.**
+  *day*, not per text open: re-tapping a word already lost this morning is not a
+  second failure; needing it again tomorrow is. The card's status line then says
+  "Counted as forgotten" and the word's underline goes *dotted* in its bed
+  colour — a change of texture, not of hue, because the page already carries
+  three colours and a fourth would read as an alarm. Both are keyed on the
+  derived grade, so they are still there after a reload.
+- **Not looking up is `Good`, at one explicit moment per page:** the primary
+  button at the end of it (**Next page**, or **Finished reading** on the last).
   It confirms in the panel, and the confirm card says what it will do. Every
-  tracked word read without a lookup gets one `Good` (same-day repeats of a word
-  reviewed yesterday add almost nothing to stability, so the count needs no
-  cap). The `new` words read *without a tap* **can** be marked known too —
+  tracked word *on that page* gets one `Good` unless the learner tapped it **on
+  that page**, or it already has a `Good` today. Those are two different guards
+  doing two different jobs: the per-page tapped set is what lets a word looked up
+  on page one and read fine on page three count as remembered — the `Again` put
+  its card into relearning and the later `Good` is what graduates it, which is
+  the whole value of a re-encounter — while "not already `Good` today" is what
+  stops a word that appears on every page collecting a `Good` per page.
+  The `new` words read *without a tap* **can** be marked known too —
   LingQ's paging — but only through a checkbox in the confirm step that is
   **off by default and never remembered**: a word becoming known because the
   learner did not happen to tap it is LingQ's most-resented mechanic, so here
-  it is ticked on purpose, every time. A tapped `new` word is never eligible —
-  the learner needed it explained. `plain` words are left alone: unglossed,
-  they are as likely to be a segmenter's slip as a word. A one-line receipt
-  follows ("12 garden words read fine · 1 forgotten · 4 new marked known").
+  it is ticked on purpose, every time. Eligibility for *that* is text-open-wide,
+  not per page — a `new` word tapped on page one is never marked known on page
+  four. `plain` words are left alone: unglossed, they are as likely to be a
+  segmenter's slip as a word. A one-line receipt follows, per page ("12 garden
+  words read fine · 1 forgotten · 4 new marked known"); nothing is totalled
+  across pages.
 - `known` words, the streak and the daily count are untouched: the count is
   keyed on challenge results, and whether reading should extend a streak is a
   separate decision.
