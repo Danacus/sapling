@@ -491,8 +491,19 @@
 				}
 			}
 		}
-		return { read: [...read.keys()], looked: looked.size, fresh: [...fresh.values()] };
+		return { read: [...read.keys()], looked: [...looked], fresh: [...fresh.values()] };
 	});
+
+	/**
+	 * What the whole read has counted so far, every page confirmed in this open
+	 * added up — because the receipt appears once, on the last page, and
+	 * "Finished · 0 garden words read fine" for a last page whose words were all
+	 * graded on page one reads as failure when it is the opposite. Sets, so a
+	 * word tapped on two pages is one lapse. Deliberately *not* reset by the
+	 * page-turn effect: it is text-wide, and a plain object because nothing
+	 * renders it until it is folded into `summary`.
+	 */
+	const counted = { read: new Set<string>(), looked: new Set<string>(), fresh: new Set<string>() };
 
 	/**
 	 * Confirming a page: the reading counted, then on to the next one.
@@ -519,14 +530,27 @@
 			for (const itemId of read) await review(itemId, Grade.Good);
 			for (const term of fresh) await markWord(term, true);
 			await refresh();
-			const parts = [
-				`${read.length} garden word${read.length === 1 ? '' : 's'} read fine`,
-				...(looked > 0 ? [`${looked} forgotten`] : []),
-				...(fresh.length > 0 ? [`${fresh.length} new marked known`] : [])
-			];
-			summary = parts.join(' · ');
-			if (last) finished = true;
-			else await turnTo(pageIndex + 2);
+			for (const itemId of read) counted.read.add(itemId);
+			for (const itemId of looked) counted.looked.add(itemId);
+			for (const term of fresh) counted.fresh.add(term);
+			if (last) {
+				// The receipt is for the whole read, not the page it happens to sit on.
+				const fine = counted.read.size;
+				const lost = counted.looked.size;
+				const marked = counted.fresh.size;
+				const parts =
+					fine === 0 && lost === 0
+						? ['every garden word here was already reviewed today']
+						: [
+								`${fine} garden word${fine === 1 ? '' : 's'} read fine`,
+								...(lost > 0 ? [`${lost} forgotten`] : [])
+							];
+				if (marked > 0) parts.push(`${marked} new marked known`);
+				summary = parts.join(' · ');
+				finished = true;
+			} else {
+				await turnTo(pageIndex + 2);
+			}
 		} catch (cause) {
 			pageError = cause instanceof Error ? cause.message : 'Could not save this page.';
 		} finally {
@@ -886,11 +910,16 @@
 							<button type="button" class="btn btn-ghost btn-block" onclick={close}>Close</button>
 						{:else}
 							<p class="panel-copy">
-								{finishPlan.read.length} garden word{finishPlan.read.length === 1 ? '' : 's'} on this
-								page that you read without looking up will be reviewed as remembered{finishPlan.looked >
-								0
-									? `; ${finishPlan.looked} you looked up ${finishPlan.looked === 1 ? 'is' : 'are'} already counted as forgotten`
-									: ''}.
+								{#if finishPlan.read.length === 0 && finishPlan.looked.length === 0}
+									Every garden word on this page was already reviewed today, so there is nothing new
+									to count.
+								{:else}
+									{finishPlan.read.length} garden word{finishPlan.read.length === 1 ? '' : 's'} on this
+									page that you read without looking up will be reviewed as remembered{finishPlan
+										.looked.length > 0
+										? `; ${finishPlan.looked.length} you looked up ${finishPlan.looked.length === 1 ? 'is' : 'are'} already counted as forgotten`
+										: ''}.
+								{/if}
 							</p>
 							{#if finishPlan.fresh.length > 0}
 								<label class="finish-opt">
