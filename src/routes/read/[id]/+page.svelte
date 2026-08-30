@@ -405,6 +405,15 @@
 	const card = $derived(selected ? (lines[selected.line]?.words[selected.word] ?? null) : null);
 
 	/**
+	 * Whether the panel is holding anything — a word card, or a confirmation.
+	 *
+	 * One predicate because three things turn on it and they must agree: the panel
+	 * itself, the transcript it displaces at ≥48rem, and the scroll room the
+	 * column reserves under the sheet on a phone.
+	 */
+	const panelOpen = $derived(card !== null || panel !== null);
+
+	/**
 	 * The reading shown on the card.
 	 *
 	 * The token's first — a local romanizer knows this occurrence's reading, and
@@ -422,7 +431,7 @@
 	 * facing page to exist, and nothing else claiming the slot. The card and the
 	 * confirmations *replace* it — one panel, whatever is in it.
 	 */
-	const showTranscript = $derived(following && wide && card === null && panel === null);
+	const showTranscript = $derived(following && wide && !panelOpen);
 
 	/**
 	 * The grade each garden word last got *today*, by item id — the whole of this
@@ -1205,7 +1214,13 @@
 			<!-- `--film-width` is the measured width of the picture, handed to the
 			     caption rows below so they can match it. Absent until something has
 			     been measured, which is what lets the CSS fall back to `--measure`. -->
-			<div class="text-col" style:--film-width={captionWidth > 0 ? `${captionWidth}px` : undefined}>
+			<!-- `has-sheet` buys the scroll room the phone's sheet needs, and only
+			     while there is a sheet — see `--tail` below. -->
+			<div
+				class="text-col"
+				class:has-sheet={panelOpen}
+				style:--film-width={captionWidth > 0 ? `${captionWidth}px` : undefined}
+			>
 				<!-- The recording, or the ask for it. Sticky, so the line under it stays
 				     under it however far the learner scrolls for the word card. -->
 				{#if following}
@@ -1442,7 +1457,7 @@
 			     page at 48rem, a sheet at the foot of the phone below it — and, in the
 			     follow view with nothing open, the transcript, which the card
 			     *replaces* rather than sits beside: one slot, whatever it holds. -->
-			<aside class="card-col" class:is-open={card !== null || panel !== null}>
+			<aside class="card-col" class:is-open={panelOpen}>
 				{#if panel === 'finish'}
 					<div class="word-card">
 						<div class="word-head">
@@ -1779,17 +1794,43 @@
 		max-width: var(--measure);
 	}
 
-	/* Room under the last line for the sheet that covers the foot of the phone. */
 	/*
-	  Scroll room under the text, always, on a phone: the sheet is pinned to
-	  the foot of the viewport and this is what keeps the last lines reachable
-	  above it. Reserved permanently rather than added when a card opens —
-	  padding that appears on tap makes the page scrollable in the same instant,
-	  and the scrollbar popping in reads as the layout jumping. The wide layout
-	  below gives the card its own column and takes the room back.
+	  Room under the last line for the sheet that covers the foot of the phone —
+	  the sheet is pinned to the viewport and this is what keeps the lines under
+	  it reachable.
+
+	  **Paged, it is always there.** Adding padding on tap would make the page
+	  scrollable in the same instant, and the scrollbar popping in reads as the
+	  layout jumping; a page of prose is taller than the viewport anyway, so a
+	  tail at the end of it costs nothing that can be seen.
+
+	  **Following, it is there only while a sheet is.** That column is a picture
+	  and a handful of rows — shorter than the phone it is on — so a permanent
+	  tail is the *only* thing making the page scroll, and what it scrolls into is
+	  half a screen of nothing under the controls. Reserving it when the panel
+	  opens moves nothing above it (padding grows downwards, and the sheet is
+	  what the eye is on), and it is the one moment anything needs to be scrolled
+	  clear: the stage is sticky, so the learner can push the spoken line up under
+	  the video and out from under the card. The alternative — no tail ever, and
+	  the sheet simply covering the transport — loses the *line* as well on a
+	  short viewport, which is the one thing the card is about.
+
+	  Carried as a custom property rather than a `padding-bottom` of its own so
+	  that the ≥48rem frame can go on setting the padding to zero: a rule naming
+	  the open-sheet class would otherwise outrank it and put half a screen of air
+	  back inside the frame.
 	*/
 	.text-col {
-		padding-bottom: 45dvh;
+		--tail: 45dvh;
+		padding-bottom: var(--tail);
+	}
+
+	.is-following .text-col {
+		--tail: 0;
+	}
+
+	.is-following .text-col.has-sheet {
+		--tail: 45dvh;
 	}
 
 	/* The recording --------------------------------------------------------- */
@@ -2019,6 +2060,30 @@
 		font-size: 1.15rem;
 		line-height: 1.9;
 		overflow-wrap: anywhere;
+	}
+
+	/*
+	  Following, the prose is one caption that changes with every cue, and a line
+	  that wraps to two is the common case rather than the rare one. Left in flow
+	  it takes a line's height away from whatever is under it on the phone — the
+	  neighbour, the controls — and from the picture itself inside the ≥48rem
+	  frame, where the stage is what gives. Either way the whole view twitches on
+	  a cue change.
+
+	  So two lines of room are always there. Two rather than three because three
+	  is rare and a caption that occasionally grows is much cheaper than a
+	  permanent band of air under every short line. In `lh`, so the ≥72rem font
+	  bump carries it up with the text; `em` first for anything that has not
+	  learned the unit, at this element's own 1.9 line-height.
+
+	  It also steadies the frame's feedback loop rather than feeding it: with the
+	  height of a one- or two-line caption fixed, the room left for the video no
+	  longer changes on those cues, so `--film-width` stops moving and the caption
+	  stops being re-wrapped by its own height.
+	*/
+	.is-following .prose {
+		min-height: 3.8em;
+		min-height: 2lh;
 	}
 
 	/* A sentence is a run inside the paragraph, not a block of its own — the

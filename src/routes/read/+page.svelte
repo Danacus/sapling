@@ -15,14 +15,33 @@
   timestamp and stores it, which is the whole reason `$lib/reading` can stay
   stateless.
 
-  A subtitle import may also name the recording it came from, and this is the
-  only moment it can: a text is immutable, so the media reference is attached
-  here or never. One recording, chosen two ways — a file on this device, or a
-  YouTube link — and the fields clear each other, because "which of these two is
-  it" is not a question the reader should have to answer later. What is *stored*
-  is a reference either way: a video id, or a file's name and nothing else. The
-  file handle itself goes into `$lib/media`'s session cache, so the reader
-  opening a second later already has it and every later open asks for it again.
+  **The bring door has three parts, in the order the questions arise**: what the
+  text is, what it will cost, and what it should play alongside.
+
+  *What it is* has two shapes and shows one of them. A paste stays in the box —
+  prose, a copied transcript panel, anything typed. A **brought file is an
+  object, not a paste**: a subtitle file is a thousand lines of cue soup, and
+  pouring it into the textarea buried the only thing worth seeing, which is what
+  the app made of it. So it becomes a card stating its own facts (what format,
+  how many cues, how many sentences, how long, how many calls) with a × that
+  gives the box back. The file's *content* decides which shape it takes, not its
+  extension: anything the detector recognises becomes the card, anything else is
+  a paste and lands in the box, where it can still be read and edited.
+
+  *What it costs* is a row that never moves: the sentence and call count for
+  what is in the box, and the character counter, both before the button and
+  whichever source they describe.
+
+  *What it plays alongside* is a group that is **always there**, disabled rather
+  than absent while the text has no timings — a control that materialises only
+  when a paste happens to parse is a feature nobody knows exists. One recording,
+  chosen two ways — a file on this device, or a YouTube link — and the fields
+  clear each other, because "which of these two is it" is not a question the
+  reader should have to answer later. Attached now or never: a text is
+  immutable. What is *stored* is a reference either way: a video id, or a file's
+  name and nothing else. The file handle itself goes into `$lib/media`'s session
+  cache, so the reader opening a second later already has it and every later
+  open asks for it again.
 -->
 <script lang="ts">
 	import { browser } from '$app/environment';
@@ -68,10 +87,33 @@
 	let texts = $state<ReadingText[]>([]);
 	let mockMode = $state(false);
 
+	/** What a recognised file is called on screen, in the learner's terms. */
+	const FORMAT_NAMES: Record<SubtitleFormat, string> = {
+		srt: 'SRT subtitles',
+		vtt: 'WebVTT subtitles',
+		'youtube-transcript': 'YouTube transcript'
+	};
+
 	let door = $state<Door>('write');
 	let topic = $state('');
 	let title = $state('');
 	let pasted = $state('');
+	/**
+	 * A subtitle file the learner brought, held as an *object* rather than poured
+	 * into the box.
+	 *
+	 * A subtitle file is not a paste. It is a thousand lines of cue soup nobody
+	 * wants to read, let alone edit, and dropping it into the textarea buried the
+	 * one thing the learner does want to see — what the app made of it. So the
+	 * file becomes a card that states its own facts, and the box stays what it is
+	 * for: text somebody typed or copied. The two are alternatives, and the card
+	 * standing in the box's place is how that is said.
+	 *
+	 * Its `text` is the source of truth for {@link plan} whenever it is set;
+	 * `pasted` is kept untouched underneath, so removing the file gives back
+	 * whatever was in the box before.
+	 */
+	let sourceFile = $state<{ name: string; text: string } | undefined>(undefined);
 	/**
 	 * The recording the subtitles were written for, if the learner has it.
 	 *
@@ -135,19 +177,23 @@
 	});
 
 	/**
-	 * What the paste actually is, worked out once and used by both the line under
-	 * the box and the button that spends the money.
+	 * What the text on the way in actually is, worked out once and used by every
+	 * line that describes it and by the button that spends the money.
 	 *
-	 * There is one door, not two: the learner pastes or uploads whatever they
-	 * have and the page recognises it. A subtitle file is un-cued back into
-	 * sentences (`cuesToSentences`) and keeps its timings; anything else is prose
-	 * and is simply split. Deriving both from `pasted` is what keeps the hint and
-	 * the import from ever disagreeing about what is being sent.
+	 * There is one door, not two: the learner pastes or brings whatever they have
+	 * and the page recognises it. A subtitle file is un-cued back into sentences
+	 * (`cuesToSentences`) and keeps its timings; anything else is prose and is
+	 * simply split. **One `$derived` over one source**, which is what keeps the
+	 * card, the counter, the button's disabled state and the import from ever
+	 * disagreeing about what is being sent — the source is the brought file if
+	 * there is one and the box otherwise, and nothing downstream asks which.
 	 */
 	interface ImportPlan {
 		/** Absent for ordinary prose — the existing path. */
 		format?: SubtitleFormat;
 		cues: number;
+		/** How much media the cues span, in milliseconds. Zero without cues. */
+		durationMs: number;
 		sentences: string[];
 		/** Index-aligned with `sentences`; absent unless this came from subtitles. */
 		timings?: { start: number; end: number }[];
@@ -157,15 +203,20 @@
 	}
 
 	const plan = $derived.by((): ImportPlan => {
-		const format = detectSubtitleFormat(pasted);
+		const source = sourceFile?.text ?? pasted;
+		const format = detectSubtitleFormat(source);
 
 		if (format) {
-			const cues = parseSubtitles(pasted);
+			const cues = parseSubtitles(source);
 			const timed = cuesToSentences(cues);
 			const sentences = timed.map((sentence) => sentence.text);
 			return {
 				format,
 				cues: cues.length,
+				// The furthest point any cue reaches rather than the last cue's end:
+				// the two are the same in every well-formed file, and a `reduce` says
+				// so without trusting the order.
+				durationMs: cues.reduce((furthest, cue) => Math.max(furthest, cue.end), 0),
 				sentences,
 				timings: timed.map(({ start, end }) => ({ start, end })),
 				chars: sentences.reduce((total, sentence) => total + sentence.length, 0),
@@ -173,8 +224,14 @@
 			};
 		}
 
-		const sentences = splitSentences(pasted);
-		return { cues: 0, sentences, chars: pasted.length, calls: importCallCount(sentences) };
+		const sentences = splitSentences(source);
+		return {
+			cues: 0,
+			durationMs: 0,
+			sentences,
+			chars: source.length,
+			calls: importCallCount(sentences)
+		};
 	});
 
 	const overCap = $derived(plan.chars > MAX_IMPORT_TOTAL_CHARS);
@@ -262,12 +319,15 @@
 	}
 
 	/**
-	 * A file dropped into the same box the paste goes in.
+	 * A file the learner brought, sorted into one of the two things a file can be.
 	 *
-	 * One line of work, so no helper: reading a `File` as text is `file.text()`,
-	 * and `/settings` does the same thing for a backup. What the file *is* stays
-	 * the detector's business, exactly as if it had been pasted — which is the
-	 * point of routing it through `pasted` rather than a second state.
+	 * **Its content decides, not its extension.** Anything the detector recognises
+	 * as cues becomes an object — a card that states what it holds, because
+	 * nobody wants a thousand timestamps in a textarea — and anything else *is* a
+	 * paste and goes into the box, where it can be read and edited like the text
+	 * it is. So a `.txt` that turns out to be an SRT is still a subtitle file, and
+	 * an `.srt` full of prose is still prose; the learner never has to know which
+	 * door they used.
 	 */
 	async function bringFile(event: Event) {
 		const input = event.currentTarget as HTMLInputElement;
@@ -278,10 +338,39 @@
 
 		composeError = '';
 		try {
-			pasted = await file.text();
+			const text = await file.text();
+			if (detectSubtitleFormat(text)) sourceFile = { name: file.name, text };
+			else {
+				// Prose: the box is where it belongs, and it replaces whatever object
+				// was standing in for it.
+				sourceFile = undefined;
+				pasted = text;
+			}
 		} catch {
 			composeError = 'Could not read that file.';
 		}
+	}
+
+	/** Puts the box back, with whatever was in it before the file arrived. */
+	function dropSource() {
+		sourceFile = undefined;
+		composeError = '';
+	}
+
+	/**
+	 * `mm:ss`, or `h:mm:ss` for anything long enough to need it.
+	 *
+	 * Local to the page because it is presentation, like the date formatter above:
+	 * how long a recording runs is not a fact `$lib/reading` has an opinion about.
+	 */
+	function clock(ms: number): string {
+		const total = Math.round(ms / 1000);
+		const seconds = `${total % 60}`.padStart(2, '0');
+		const minutes = Math.floor(total / 60) % 60;
+		const hours = Math.floor(total / 3600);
+		return hours > 0
+			? `${hours}:${`${minutes}`.padStart(2, '0')}:${seconds}`
+			: `${minutes}:${seconds}`;
 	}
 
 	/**
@@ -462,7 +551,7 @@
 				</div>
 
 				{#if door === 'write'}
-					<label class="field">
+					<label class="field tight">
 						<span class="label">What about?</span>
 						<input
 							class="input"
@@ -524,74 +613,170 @@
 						/>
 					</label>
 
-					<label class="field paste-field">
-						<span class="label">The text</span>
-						<textarea
-							class="input paste-input"
-							rows="8"
-							placeholder="An article, a song, a subtitle file…"
-							disabled={busy}
-							bind:value={pasted}></textarea>
-					</label>
+					<!-- The text source: the box, or the file standing in its place. Never
+					     both — a file that poured itself into the textarea is what this
+					     replaces, and one of the two being *gone* is how the page says
+					     which one is the source. -->
+					{#if sourceFile}
+						<div class="field tight">
+							<p class="label">The text</p>
+							<div class="source-card ll-rise">
+								<svg class="ico source-mark" viewBox="0 0 24 24" aria-hidden="true">
+									<rect x="3.6" y="4.8" width="16.8" height="14.4" rx="2.2" />
+									<path d="M3.6 9.3h16.8M8.1 4.8v4.5M15.9 4.8v4.5" />
+									<path d="M8.4 13.4h7.2M8.4 16.1h4.4" />
+								</svg>
+								<div class="source-id">
+									<p class="source-kind">
+										{plan.format ? FORMAT_NAMES[plan.format] : 'Brought file'}
+									</p>
+									<p class="source-name">{sourceFile.name}</p>
+									<!-- Everything the file turned out to hold, in one line: the
+									     learner brought cues and gets back sentences, which is the
+									     whole transformation this page performs. -->
+									<p class="source-facts">
+										{plan.cues} cue{plan.cues === 1 ? '' : 's'} · {plan.sentences.length} sentence{plan
+											.sentences.length === 1
+											? ''
+											: 's'}{plan.durationMs > 0 ? ` · ${clock(plan.durationMs)}` : ''} · about {plan.calls}
+										call{plan.calls === 1 ? '' : 's'}
+									</p>
+								</div>
+								<button
+									type="button"
+									class="source-drop"
+									aria-label="Remove {sourceFile.name}"
+									disabled={busy}
+									onclick={dropSource}
+								>
+									<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+										<path d="m7 7 10 10M17 7 7 17" />
+									</svg>
+								</button>
+							</div>
+							{#if pasted.trim()}
+								<p class="hint">
+									What you typed is still here — remove the file and it comes back.
+								</p>
+							{/if}
+						</div>
+					{:else}
+						<label class="field tight paste-field">
+							<span class="label">The text</span>
+							<textarea
+								class="input paste-input"
+								rows="8"
+								placeholder="An article, a song, a transcript you copied…"
+								disabled={busy}
+								bind:value={pasted}></textarea>
+						</label>
 
-					<div class="paste-tools">
-						<label class="bring">
-							<span class="bring-label">Or bring a file</span>
+						<!-- The browser's own file control is the ugliest thing on the page
+						     and says "No file chosen" where a verb belongs, so the input is
+						     hidden inside its label and the label is the affordance. Dashed,
+						     because in this journal a dashed edge is where something is meant
+						     to be put. -->
+						<label class="file-btn">
 							<input
-								class="input file-input"
+								class="file-real"
 								type="file"
 								accept=".srt,.vtt,.txt"
 								disabled={busy}
 								onchange={(event) => void bringFile(event)}
 							/>
+							<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+								<path d="M12 16.4V4.9" />
+								<path d="m7.6 9.3 4.4-4.4 4.4 4.4" />
+								<path d="M4.6 15.1v2.8a1.6 1.6 0 0 0 1.6 1.6h11.6a1.6 1.6 0 0 0 1.6-1.6v-2.8" />
+							</svg>
+							<span>Or bring a file — subtitles, or plain text</span>
 						</label>
+					{/if}
 
-						<p class="counter" class:near={plan.chars > MAX_IMPORT_TOTAL_CHARS * 0.9}>
+					<!-- Cost, before anything is spent on it: an import is the one action
+					     here whose price is invisible until it has been paid. The card
+					     above already states a brought file's counts, so this side only
+					     speaks for what is in the box. -->
+					<div class="cost">
+						{#if !sourceFile && plan.sentences.length > 0}
+							<p class="plan">
+								{#if plan.format}{FORMAT_NAMES[plan.format]} · {plan.cues} cue{plan.cues === 1
+										? ''
+										: 's'} ·
+								{/if}{plan.sentences.length} sentence{plan.sentences.length === 1 ? '' : 's'} · about
+								{plan.calls}
+								call{plan.calls === 1 ? '' : 's'}
+							</p>
+						{/if}
+						<p
+							class="counter"
+							class:near={plan.chars > MAX_IMPORT_TOTAL_CHARS * 0.9}
+							class:over={overCap}
+						>
 							{plan.chars} / {MAX_IMPORT_TOTAL_CHARS}
 						</p>
 					</div>
 
-					<!-- What the paste turned out to be, said before anything is spent on
-					     it: an import is the one action here whose cost is invisible. -->
-					{#if plan.sentences.length > 0 && (plan.format || plan.calls > 1)}
-						<p class="plan">
-							{#if plan.format}Subtitles · {plan.cues} cue{plan.cues === 1 ? '' : 's'} ·
-							{/if}{plan.sentences.length} sentence{plan.sentences.length === 1 ? '' : 's'} · about {plan.calls}
-							call{plan.calls === 1 ? '' : 's'}
+					<!-- The button below is disabled in both these cases, so this is the
+					     only place the reason can be given: a dead control that does not
+					     say why is the failure. -->
+					{#if overCap}
+						<p class="hint over-note">
+							That is more than one import can carry — bring a shorter piece.
 						</p>
+					{:else if sourceFile && plan.sentences.length === 0}
+						<p class="hint over-note">There is nothing to read in that file.</p>
 					{/if}
 
-					<!-- Offered only once the paste has turned out to be subtitles, because
-					     only then are there timings for a recording to be timings *of*. It
-					     is attached now or never: a text is immutable. -->
-					{#if plan.format}
-						<label class="bring media-bring">
-							<span class="bring-label">Video or audio file — optional</span>
+					<!--
+					  The recording. Always here, never conjured: a control that appears
+					  only once a paste happens to validate is a feature nobody knows the
+					  app has. Without timings there is nothing for a recording to be in
+					  step with, so the group is disabled and says so — a `<fieldset>`,
+					  which makes every control inside it inert in one attribute and needs
+					  no per-input bookkeeping.
+					-->
+					<fieldset class="group" disabled={busy || !plan.format}>
+						<legend class="group-legend">
+							Recording <span class="group-note">optional</span>
+						</legend>
+
+						<label class="file-btn">
 							<input
-								class="input file-input"
+								class="file-real"
 								type="file"
 								accept="video/*,audio/*"
-								disabled={busy}
 								bind:this={mediaInput}
 								onchange={bringMedia}
 							/>
+							<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+								<rect x="3.4" y="6.2" width="12.4" height="11.6" rx="2" />
+								<path d="m15.8 12 4.8-3.2v6.4L15.8 12z" />
+							</svg>
+							<!-- The control stays a verb and the line below says what is
+							     attached: a button that renames itself to a filename is a
+							     button that has stopped saying what pressing it does. -->
+							<span>Choose a video or audio file</span>
 						</label>
-						<!-- Or the video itself, where it lives. One recording per text, so
-						     the two fields clear each other rather than both being sent. -->
-						<label class="bring media-bring">
-							<span class="bring-label">Or a YouTube link</span>
+
+						<!-- Or the video where it lives. One recording per text, so the two
+						     clear each other rather than both being sent. -->
+						<label class="field link-field">
+							<span class="bring-label">or a YouTube link</span>
 							<input
 								class="input"
 								type="url"
 								inputmode="url"
 								placeholder="https://youtu.be/…"
-								disabled={busy}
 								value={mediaLink}
 								oninput={bringLink}
 							/>
 						</label>
+
 						<p class="hint media-hint">
-							{#if linkId}
+							{#if !plan.format}
+								Bring subtitles and the text can follow its recording, line by line.
+							{:else if linkId}
 								Video <strong>{linkId}</strong> plays beside the text, from YouTube.
 							{:else if mediaLink.trim()}
 								That is not a YouTube link — paste the address of a video, or its id.
@@ -603,7 +788,7 @@
 								device — only its name is kept.
 							{/if}
 						</p>
-					{/if}
+					</fieldset>
 
 					<button
 						type="button"
@@ -819,7 +1004,10 @@
 		opacity: 0.6;
 	}
 
-	.field:last-of-type {
+	/* The field a control follows immediately — the topic above its examples, the
+	   text above where it came from. Named rather than `:last-of-type`, which
+	   picked a different element depending on which branch was rendering. */
+	.field.tight {
 		margin-bottom: 0.75rem;
 	}
 
@@ -829,33 +1017,222 @@
 		resize: vertical;
 	}
 
-	/* The two things that belong under the box: where else a text can come from,
-	   and how much of it there is. One row that wraps — on a phone they stack in
-	   source order, and no breakpoint has to be spent saying so. */
-	.paste-tools {
+	/* The brought file, as an object -------------------------------------- */
+
+	/*
+	  A card in the box's place, wearing the same clothes as a text on the shelf:
+	  this *is* one, a few seconds early. `--surface-alt` rather than `--surface`
+	  so it reads as something laid on the page rather than another sheet of it.
+	*/
+	.source-card {
 		display: flex;
-		flex-wrap: wrap;
-		align-items: flex-end;
-		justify-content: space-between;
-		gap: 0.5rem 1rem;
-		margin: -0.35rem 0 0.9rem;
+		align-items: flex-start;
+		gap: 0.7rem;
+		padding: 0.85rem 0.9rem;
+		border: 1px solid var(--border-strong);
+		border-radius: var(--radius);
+		background: var(--surface-alt);
 	}
 
-	.bring {
-		flex: 1 1 14rem;
+	.source-mark {
+		margin-top: 0.15rem;
+		color: color-mix(in srgb, var(--primary) 70%, var(--text-muted));
+	}
+
+	.source-id {
+		flex: 1 1 auto;
 		min-width: 0;
 	}
 
-	/* Its own row rather than a third thing squeezed into `.paste-tools`: it only
-	   appears once the paste is subtitles, and a control that shifts the two
-	   above it when it arrives is worse than one that lands under them. */
-	.media-bring {
+	.source-kind {
+		margin: 0;
+		font-size: 0.68rem;
+		font-weight: 700;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: color-mix(in srgb, var(--accent) 65%, var(--text-muted));
+	}
+
+	/* The display face, because a file the learner brought is a title, not a
+	   parameter — the shelf rows below name their texts the same way. */
+	.source-name {
+		margin: 0.1rem 0 0;
+		font-family: var(--font-display);
+		font-size: 1rem;
+		font-weight: 700;
+		letter-spacing: -0.01em;
+		line-height: 1.25;
+		overflow-wrap: anywhere;
+	}
+
+	/* What the file turned out to hold. Tabular figures so the numbers sit still
+	   while the learner swaps one file for another. */
+	.source-facts {
+		margin: 0.3rem 0 0;
+		font-size: 0.78rem;
+		font-variant-numeric: tabular-nums;
+		color: var(--text-muted);
+	}
+
+	.source-drop {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		flex: 0 0 auto;
+		width: 1.9rem;
+		height: 1.9rem;
+		padding: 0;
+		border: 1px solid transparent;
+		border-radius: var(--radius-sm);
+		background: none;
+		color: var(--text-muted);
+		cursor: pointer;
+		transition:
+			border-color 0.15s ease,
+			background 0.15s ease,
+			color 0.15s ease;
+	}
+
+	.source-drop:hover:not(:disabled) {
+		border-color: var(--border-strong);
+		background: var(--surface);
+		color: var(--text);
+	}
+
+	.source-drop:focus-visible {
+		outline: none;
+		box-shadow: var(--ring);
+	}
+
+	.source-drop:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	/* Bringing a file ------------------------------------------------------ */
+
+	/*
+	  The browser draws a file input as a small grey button and the words "No file
+	  chosen", which is the least inviting thing on the page and says nothing
+	  about what to bring. So the input is hidden *inside* its own label — still
+	  focusable, still the accessible name — and the label is the affordance: a
+	  dashed slot, which in this journal is where something is meant to be put.
+	*/
+	.file-btn {
+		display: flex;
+		align-items: center;
+		gap: 0.55rem;
+		width: 100%;
+		margin-bottom: 0.9rem;
+		padding: 0.7rem 0.85rem;
+		border: 1px dashed var(--border-strong);
+		border-radius: var(--radius-sm);
+		background: color-mix(in srgb, var(--surface-alt) 55%, transparent);
+		color: var(--text-muted);
+		font-size: 0.85rem;
+		font-weight: 700;
+		text-align: left;
+		cursor: pointer;
+		transition:
+			border-color 0.15s ease,
+			background 0.15s ease,
+			color 0.15s ease;
+	}
+
+	.file-btn span {
+		min-width: 0;
+		overflow-wrap: anywhere;
+	}
+
+	/* A `<label>` is never `:disabled` itself, but it can be the label *of*
+	   something that is — which covers both pickers, the one the fieldset turns
+	   off and the one `busy` does. Without this the slot still lights up under a
+	   cursor that cannot do anything with it. */
+	.file-btn:not(:has(:disabled)):hover {
+		border-color: var(--text-muted);
+		background: var(--surface-alt);
+		color: var(--text);
+	}
+
+	.file-btn:has(:disabled) {
+		cursor: not-allowed;
+	}
+
+	/* The ring belongs to the label, since that is what the eye sees; the input
+	   inside it is what actually holds focus. */
+	.file-btn:focus-within {
+		border-color: var(--accent);
+		box-shadow: var(--ring);
+	}
+
+	/* Hidden from the eye, not from the keyboard or the accessibility tree —
+	   `display: none` would take it out of the tab order and break the label. */
+	.file-real {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		margin: -1px;
+		padding: 0;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+	}
+
+	/* The recording group ---------------------------------------------------- */
+
+	/*
+	  A real `<fieldset>`, for the one thing it does that nothing else does:
+	  `disabled` on it makes every control inside inert at once. That is what
+	  lets the group be *present but off* while the text has no timings, instead
+	  of appearing out of nowhere the moment a paste happens to parse.
+	*/
+	.group {
+		/* A fieldset's default `min-inline-size: min-content` is the one piece of
+		   its old browser behaviour that still bites: it refuses to be narrower
+		   than its widest child and would push the card past the phone. */
+		min-inline-size: 0;
+		margin: 0 0 0.9rem;
+		padding: 0.9rem 0.9rem 0.2rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: color-mix(in srgb, var(--surface-alt) 35%, transparent);
+		transition: opacity 0.2s ease;
+	}
+
+	.group:disabled {
+		opacity: 0.62;
+	}
+
+	/* A `<legend>` renders inside the top border unless it is told to be a block;
+	   here the border is the group's own edge and the label belongs above the
+	   controls, inside it. A browser that ignores this puts the label on the
+	   edge instead, which is the ordinary fieldset look and no worse. */
+	.group-legend {
 		display: block;
-		margin-bottom: 0.5rem;
+		width: 100%;
+		margin-bottom: 0.6rem;
+		padding: 0;
+		font-size: 0.74rem;
+		font-weight: 700;
+		letter-spacing: 0.09em;
+		text-transform: uppercase;
+		color: var(--text-muted);
+	}
+
+	.group-note {
+		margin-left: 0.35rem;
+		font-weight: 400;
+		letter-spacing: 0.04em;
+		text-transform: none;
+		opacity: 0.8;
+	}
+
+	.link-field {
+		margin-bottom: 0.7rem;
 	}
 
 	.media-hint {
-		margin: 0 0 0.9rem;
+		margin: 0 0 0.75rem;
 		font-size: 0.8rem;
 		overflow-wrap: anywhere;
 	}
@@ -868,16 +1245,23 @@
 		color: var(--text-muted);
 	}
 
-	/* A file picker is a control the browser draws; the shared `.input` box is
-	   all it needs, minus the height a text field wants. */
-	.file-input {
-		padding: 0.4rem 0.5rem;
-		font-size: 0.82rem;
+	/*
+	  What is about to be sent and what it will cost, on one line under the source
+	  — whichever source that is. The two ends of a row that wraps: on a phone
+	  they stack in source order, and no breakpoint has to be spent saying so.
+	*/
+	.cost {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 0.2rem 1rem;
+		margin-bottom: 0.9rem;
 	}
 
 	/* Tucked under the box's right edge, where a word count belongs. */
 	.counter {
-		margin: 0;
+		margin: 0 0 0 auto;
 		text-align: right;
 		font-size: 0.78rem;
 		font-variant-numeric: tabular-nums;
@@ -889,11 +1273,23 @@
 		font-weight: 700;
 	}
 
+	.counter.over {
+		color: var(--danger);
+		font-weight: 700;
+	}
+
+	/* Says why the button below is dead, which is the only thing a disabled
+	   control cannot say for itself. */
+	.over-note {
+		margin: -0.5rem 0 0.9rem;
+		color: var(--danger);
+	}
+
 	/* What the paste was recognised as. A note, not a warning: it is the same
 	   door either way, and the learner only needs to see that the app read the
 	   file rather than the timestamps. */
 	.plan {
-		margin: 0 0 0.9rem;
+		margin: 0;
 		font-size: 0.8rem;
 		font-variant-numeric: tabular-nums;
 		color: var(--text-muted);

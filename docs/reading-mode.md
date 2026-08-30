@@ -20,7 +20,8 @@ in the garden with an FSRS strength, marked as known, or not yet met.
 
 1. **Library** (`/read`). Every text the learner has kept, newest first, and a
    composer with two doors: *Write one for me* (optional topic → one LLM call)
-   and *Paste a text* (textarea + title → one LLM call that annotates it).
+   and *Paste a text* (a paste or a brought file, plus an optional recording →
+   one or more LLM calls that annotate it).
 2. **Reader** (`/read/[id]`). The text a page at a time (`?p=`), each page one
    continuous body of tappable words with ruby readings, a translation toggle, a
    Listen button, and a word card for whatever was tapped.
@@ -299,6 +300,28 @@ under the same condition.
 
 ### As built, where it differs from the above
 
+- **The bring door is three parts, and a brought file is an object.** It grew by
+  accretion — a file input that poured raw VTT into the textarea, and a
+  recording section that only existed once a paste happened to validate — and
+  was restructured into *what the text is*, *what it will cost*, *what it plays
+  alongside*. A file the learner brings is recognised by its **content, not its
+  extension**: anything `detectSubtitleFormat` knows becomes a card in the
+  textarea's place stating what it holds (`SRT subtitles · 214 cues · 89
+  sentences · 12:34 · about 4 calls`) with a × that gives the box back, and
+  anything else *is* a paste and lands in the box, where it can still be read
+  and edited. Exactly one of the two is on screen, which is how the page says
+  which is the source; `pasted` survives underneath a card. `plan` stays a
+  single `$derived`, now over `sourceFile?.text ?? pasted`, so the card, the
+  counter, the disabled button and the import cannot disagree. The cost row sits
+  before the button whichever source is in play, and the two states that disable
+  the button — over the cap, nothing readable in the file — say so there, since
+  a dead control cannot explain itself. The **recording group is always
+  rendered** and merely `disabled` (a real `<fieldset>`, one attribute for every
+  control in it) with a line saying subtitles are what a recording follows: a
+  control that materialises only when a paste parses is a feature nobody knows
+  the app has. Both file pickers hide the browser's own control inside a label
+  and wear a dashed slot instead — the native widget says "No file chosen" where
+  a verb belongs, and a dashed edge is where this journal puts things.
 - `add_words` is imported from **`$lib/assistant/tools`**, the path
   `$lib/conversation/teacher` already reuses it by; `$lib/assistant`'s barrel
   does not re-export the def.
