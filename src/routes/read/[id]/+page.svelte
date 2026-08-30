@@ -18,6 +18,7 @@
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import { SvelteSet } from 'svelte/reactivity';
 
 	import { addWordsTool, defaultToolContext } from '$lib/assistant/tools';
 	import {
@@ -27,12 +28,14 @@
 		getProfile,
 		getText,
 		markWord,
-		recordLookup
+		recordLookup,
+		updateItemAfterReview
 	} from '$lib/db';
 	import { annotateSentence, showSentenceReading, tokenizeByTerms, wordKey } from '$lib/reading';
 	import type { AnnotateContext, ReadingWord, TokenizeFn } from '$lib/reading';
 	import { hasLocalRomanizer, loadRomanizer } from '$lib/romanize';
 	import type { Maturity } from '$lib/session/progression';
+	import { Grade, newCardState, reviewCard, type FsrsCardState } from '$lib/srs';
 	import { joinTokens, usesInterWordSpaces } from '$lib/text';
 	import { speak, stopSpeaking, ttsAvailable, warmSpeech } from '$lib/tts';
 	import type { KnowledgeItem, Profile, ReadingText } from '$lib/types';
@@ -81,6 +84,18 @@
 	let pageError = $state('');
 	let playing = $state(false);
 	let confirming = $state(false);
+
+	/**
+	 * Garden words looked up while this text was open, by key — each has been
+	 * graded `Again` once. Session-scoped on purpose: re-tapping a word you have
+	 * already lost is not a second failure, but reopening the text tomorrow and
+	 * needing it again is.
+	 */
+	const lapsed = new SvelteSet<string>();
+	/** The Finished button's two steps, then its receipt. */
+	let finishing = $state(false);
+	let finished = $state(false);
+	let summary = $state('');
 
 	const lang = $derived(profile?.targetLanguage ?? '');
 
@@ -217,6 +232,9 @@
 	}
 
 	function statusLine(word: ReadingWord): string {
+		if (word.status === 'tracked' && word.key && lapsed.has(word.key)) {
+			return `Counted as forgotten · ${BEDS[word.maturity ?? 'new']}, back sooner`;
+		}
 		if (word.status === 'tracked') return `In your garden · ${BEDS[word.maturity ?? 'new']}`;
 		if (word.status === 'known') return 'Marked known';
 		if (word.status === 'new') return 'New word';
@@ -240,6 +258,79 @@
 		// one thing about a reading session that cannot be recovered afterwards.
 		// Once per open, never awaited: a card must not wait on a write.
 		void recordLookup(target.text, text.id, target.itemId);
+
+		// On a garden word the lookup is also a lapse: recall failed in context,
+		// with the reading often showing — the easiest conditions there are — so
+		// it is graded `Again`, once per word per text. `add_words` and the drill
+		// grade through the same repository call, so this lands in the ledger as
+		// an ordinary review, amendable like any other.
+		if (target.status === 'tracked' && target.itemId && !lapsed.has(target.key)) {
+			lapsed.add(target.key);
+			void review(target.itemId, Grade.Again).then(refresh);
+		}
+	}
+
+	/** One graded review, exactly as the session engine files one. */
+	function review(itemId: string, grade: Grade): Promise<unknown> {
+		const at = Date.now();
+		return updateItemAfterReview(
+			itemId,
+			(stored) =>
+				reviewCard((stored as FsrsCardState | null | undefined) ?? newCardState(at), grade, at),
+			{ at, grade }
+		);
+	}
+
+	/** What Finished would do — counted live, so the confirm step can say it. */
+	const finishPlan = $derived.by(() => {
+		const read = new Map<string, string>();
+		const fresh = new Map<string, string>();
+		for (const line of lines) {
+			for (const word of line.words) {
+				if (!word.key) continue;
+				if (word.status === 'tracked' && word.itemId && !lapsed.has(word.key)) {
+					read.set(word.itemId, word.text);
+				} else if (word.status === 'new') {
+					fresh.set(word.key, word.gloss?.term ?? word.text);
+				}
+			}
+		}
+		return { read: [...read.keys()], fresh: [...fresh.values()] };
+	});
+
+	/**
+	 * "Finished": the reading counted.
+	 *
+	 * Not looking a garden word up is the implicit `Good` — recall in context —
+	 * but only at this explicit moment, never by scrolling past. And the `new`
+	 * words that were read without a lookup are marked known: LingQ's paging,
+	 * as one deliberate press rather than an accident of turning the page.
+	 * `plain` words are left alone — unglossed, they are as likely to be a
+	 * segmenter's slip as a word.
+	 */
+	async function finish() {
+		if (!text || writing || finished) return;
+		const { read, fresh } = finishPlan;
+
+		writing = true;
+		pageError = '';
+		try {
+			for (const itemId of read) await review(itemId, Grade.Good);
+			for (const term of fresh) await markWord(term, true);
+			await refresh();
+			finished = true;
+			finishing = false;
+			const parts = [
+				`${read.length} garden word${read.length === 1 ? '' : 's'} read fine`,
+				...(lapsed.size > 0 ? [`${lapsed.size} forgotten`] : []),
+				...(fresh.length > 0 ? [`${fresh.length} new marked known`] : [])
+			];
+			summary = parts.join(' · ');
+		} catch (cause) {
+			pageError = cause instanceof Error ? cause.message : 'Could not finish the text.';
+		} finally {
+			writing = false;
+		}
 	}
 
 	/** `add_words`, verbatim: the one route by which vocabulary enters the garden. */
@@ -363,7 +454,8 @@
 	 * them apart by whether `w-tracked` is there too.
 	 */
 	function wordClass(word: ReadingWord): string {
-		return `w w-${word.status}${word.maturity ? ` w-${word.maturity}` : ''}`;
+		const lapse = word.key && lapsed.has(word.key) ? ' w-lapsed' : '';
+		return `w w-${word.status}${word.maturity ? ` w-${word.maturity}` : ''}${lapse}`;
 	}
 
 	const dates = new Intl.DateTimeFormat(undefined, {
@@ -427,6 +519,30 @@
 					>
 						{playing ? 'Stop' : 'Listen'}
 					</button>
+					{#if finished}
+						<span class="tool done" aria-live="polite">Finished</span>
+					{:else if finishing}
+						<button
+							type="button"
+							class="btn btn-ghost tool"
+							disabled={writing}
+							onclick={() => void finish()}
+						>
+							{writing ? 'Saving…' : 'Yes, done'}
+						</button>
+						<button type="button" class="btn btn-ghost tool" onclick={() => (finishing = false)}>
+							Not yet
+						</button>
+					{:else}
+						<button
+							type="button"
+							class="btn btn-ghost tool"
+							title="Count this reading: garden words you did not look up are reviewed, new words become known"
+							onclick={() => (finishing = true)}
+						>
+							Finished
+						</button>
+					{/if}
 					{#if confirming}
 						<button
 							type="button"
@@ -449,6 +565,21 @@
 
 			{#if pageError}
 				<p class="error spread-full" role="alert">{pageError}</p>
+			{/if}
+
+			{#if finishing && !finished}
+				<p class="hint spread-full">
+					Count this reading? {finishPlan.read.length} garden word{finishPlan.read.length === 1
+						? ''
+						: 's'} you read without looking up will be reviewed as remembered{finishPlan.fresh
+						.length > 0
+						? `, and ${finishPlan.fresh.length} new word${finishPlan.fresh.length === 1 ? '' : 's'} marked known`
+						: ''}.
+				</p>
+			{/if}
+
+			{#if summary}
+				<p class="hint summary spread-full">{summary}</p>
 			{/if}
 
 			<!-- The text. Capped at the reading measure whatever the column allows:
@@ -847,6 +978,23 @@
 		text-underline-offset: 0.22em;
 	}
 
+	/* A garden word looked up in this text: the underline keeps its bed colour
+	   and loses its solidity. A change of texture, not of hue — one more colour
+	   on a page that already carries three would read as an alarm. */
+	.w-tracked.w-lapsed {
+		text-decoration-style: dotted;
+		text-decoration-thickness: 2px;
+	}
+
+	.tool.done {
+		display: inline-flex;
+		align-items: center;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		color: var(--primary-strong);
+		font-weight: 700;
+	}
+
 	.w-tracked.w-new {
 		text-decoration-color: color-mix(in srgb, var(--accent) 55%, transparent);
 	}
@@ -1014,6 +1162,11 @@
 		flex: 1 1 9rem;
 		padding: 0.65rem 1rem;
 		font-size: 0.88rem;
+	}
+
+	.summary {
+		color: var(--primary-strong);
+		font-weight: 700;
 	}
 
 	.error {

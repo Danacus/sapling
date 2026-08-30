@@ -239,14 +239,34 @@ under the same condition.
 - Home's shared card skin was renamed `.talk-*` → **`.door-*`**: two cards wear
   it now, and only one of them is a conversation.
 
+### Reading as review (slice 2, built)
+
+A reading session grades the garden words in it, through the same
+`updateItemAfterReview` the drill uses, so every grade is an ordinary
+`itemReviewed` in the ledger:
+
+- **A lookup on a tracked word is `Again`** — recall failed in context, with the
+  reading often showing, the easiest conditions there are. Once per word per
+  text open (re-tapping a word already lost is not a second failure; needing it
+  again tomorrow is). The page keeps the set (`lapsed`), so the card's status
+  line says "Counted as forgotten" and the word's underline goes *dotted* in its
+  bed colour — a change of texture, not of hue, because the page already
+  carries three colours and a fourth would read as an alarm.
+- **Not looking up is `Good`, at one explicit moment: the Finished button.**
+  Two-step, like Delete, and the confirm line says what it will do. Every
+  tracked word read without a lookup gets one `Good` (same-day repeats of a word
+  reviewed yesterday add almost nothing to stability, so the count needs no
+  cap), and every `new` word read without being added is **marked known** —
+  LingQ's paging, as one deliberate press. `plain` words are left alone: unglossed,
+  they are as likely to be a segmenter's slip as a word. A one-line receipt
+  follows ("12 garden words read fine · 1 forgotten · 4 new marked known").
+- `known` words, the streak and the daily count are untouched: the count is
+  keyed on challenge results, and whether reading should extend a streak is a
+  separate decision.
+
 ## 7. Not in this slice
 
-- Questions about the text (LLM, chat-style) and any **FSRS feedback** from
-  reading — tapping a word is not yet a review. The facts are already kept
-  (`wordLookedUp`); the next slice adds the interpretation as engine logic: a
-  lookup on a tracked word ≈ Hard/Again, finishing a text with its tracked words
-  un-looked-up ≈ a light Good (capped), and "Finished — mark the remaining new
-  words known" as the explicit form of LingQ's paging.
+- Questions about the text (LLM, chat-style).
 - Target-language explanations on tap (immersion glosses); on-demand lookups
   for unglossed words.
 - Audio-first (listen before reading) presentation; per-word timing.
