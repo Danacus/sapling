@@ -92,10 +92,19 @@
 	 * needing it again is.
 	 */
 	const lapsed = new SvelteSet<string>();
+	/** Every word tapped while this text was open, by key — a tapped word was not known. */
+	const lookedUp = new SvelteSet<string>();
 	/** The Finished button's two steps, then its receipt. */
 	let finishing = $state(false);
 	let finished = $state(false);
 	let summary = $state('');
+	/**
+	 * Whether Finished also marks the un-tapped `new` words known. Off by default
+	 * and never remembered: a word becoming "known" because the learner did not
+	 * happen to tap it is LingQ's most-resented mechanic, so here it is a box
+	 * ticked on purpose, every time.
+	 */
+	let markFresh = $state(false);
 
 	const lang = $derived(profile?.targetLanguage ?? '');
 
@@ -258,6 +267,7 @@
 		// one thing about a reading session that cannot be recovered afterwards.
 		// Once per open, never awaited: a card must not wait on a write.
 		void recordLookup(target.text, text.id, target.itemId);
+		lookedUp.add(target.key);
 
 		// On a garden word the lookup is also a lapse: recall failed in context,
 		// with the reading often showing — the easiest conditions there are — so
@@ -290,7 +300,9 @@
 				if (!word.key) continue;
 				if (word.status === 'tracked' && word.itemId && !lapsed.has(word.key)) {
 					read.set(word.itemId, word.text);
-				} else if (word.status === 'new') {
+				} else if (word.status === 'new' && !lookedUp.has(word.key)) {
+					// A tapped new word is one the learner needed explained — the last
+					// thing to call known.
 					fresh.set(word.key, word.gloss?.term ?? word.text);
 				}
 			}
@@ -302,15 +314,15 @@
 	 * "Finished": the reading counted.
 	 *
 	 * Not looking a garden word up is the implicit `Good` — recall in context —
-	 * but only at this explicit moment, never by scrolling past. And the `new`
-	 * words that were read without a lookup are marked known: LingQ's paging,
-	 * as one deliberate press rather than an accident of turning the page.
-	 * `plain` words are left alone — unglossed, they are as likely to be a
-	 * segmenter's slip as a word.
+	 * but only at this explicit moment, never by scrolling past. The `new` words
+	 * read without a tap can be marked known too — LingQ's paging — but only
+	 * with `markFresh` ticked for this press. `plain` words are left alone —
+	 * unglossed, they are as likely to be a segmenter's slip as a word.
 	 */
 	async function finish() {
 		if (!text || writing || finished) return;
-		const { read, fresh } = finishPlan;
+		const { read } = finishPlan;
+		const fresh = markFresh ? finishPlan.fresh : [];
 
 		writing = true;
 		pageError = '';
@@ -568,14 +580,21 @@
 			{/if}
 
 			{#if finishing && !finished}
-				<p class="hint spread-full">
-					Count this reading? {finishPlan.read.length} garden word{finishPlan.read.length === 1
-						? ''
-						: 's'} you read without looking up will be reviewed as remembered{finishPlan.fresh
-						.length > 0
-						? `, and ${finishPlan.fresh.length} new word${finishPlan.fresh.length === 1 ? '' : 's'} marked known`
-						: ''}.
-				</p>
+				<div class="hint finish-plan spread-full">
+					<p>
+						Count this reading? {finishPlan.read.length} garden word{finishPlan.read.length === 1
+							? ''
+							: 's'} you read without looking up will be reviewed as remembered.
+					</p>
+					{#if finishPlan.fresh.length > 0}
+						<label class="finish-opt">
+							<input type="checkbox" bind:checked={markFresh} />
+							Also mark the {finishPlan.fresh.length} new word{finishPlan.fresh.length === 1
+								? ''
+								: 's'} I didn't tap as known
+						</label>
+					{/if}
+				</div>
 			{/if}
 
 			{#if summary}
@@ -1167,6 +1186,22 @@
 	.summary {
 		color: var(--primary-strong);
 		font-weight: 700;
+	}
+
+	.finish-plan p {
+		margin: 0;
+	}
+
+	.finish-opt {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-top: 0.5rem;
+		cursor: pointer;
+	}
+
+	.finish-opt input {
+		accent-color: var(--primary);
 	}
 
 	.error {

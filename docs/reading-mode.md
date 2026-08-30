@@ -256,8 +256,12 @@ A reading session grades the garden words in it, through the same
   Two-step, like Delete, and the confirm line says what it will do. Every
   tracked word read without a lookup gets one `Good` (same-day repeats of a word
   reviewed yesterday add almost nothing to stability, so the count needs no
-  cap), and every `new` word read without being added is **marked known** —
-  LingQ's paging, as one deliberate press. `plain` words are left alone: unglossed,
+  cap). The `new` words read *without a tap* **can** be marked known too —
+  LingQ's paging — but only through a checkbox in the confirm step that is
+  **off by default and never remembered**: a word becoming known because the
+  learner did not happen to tap it is LingQ's most-resented mechanic, so here
+  it is ticked on purpose, every time. A tapped `new` word is never eligible —
+  the learner needed it explained. `plain` words are left alone: unglossed,
   they are as likely to be a segmenter's slip as a word. A one-line receipt
   follows ("12 garden words read fine · 1 forgotten · 4 new marked known").
 - `known` words, the streak and the daily count are untouched: the count is
