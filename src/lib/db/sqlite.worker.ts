@@ -14,8 +14,7 @@
 import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 
 import type { SyncEvent } from './events';
-import { ingest, insertOnly, rebuild, sqlFor, type Sql, type SqlOp } from './materialize';
-import { DDL } from './schema';
+import { ingest, insertOnly, openSchema, rebuild, type Sql, type SqlOp } from './materialize';
 
 export type WorkerRequest =
 	| { id: number; op: 'query'; sql: string; params?: (string | number | null)[] }
@@ -70,8 +69,7 @@ async function boot(): Promise<void> {
 	const sqlite3 = await sqlite3InitModule();
 	const pool = await sqlite3.installOpfsSAHPoolVfs({ name: 'sapling' });
 	const db = new pool.OpfsSAHPoolDb('/sapling.db');
-	db.exec(DDL);
-	sql = sqlFor(db);
+	sql = openSchema(db);
 }
 
 let bootError: string | undefined;

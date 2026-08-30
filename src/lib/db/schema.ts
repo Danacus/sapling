@@ -116,6 +116,18 @@ export function reviewKey(itemId: string, at: number, device: string): string {
 	return `${itemId}|${at}|${device}`;
 }
 
+/**
+ * The shape of the read tables, as a number to bump.
+ *
+ * Every statement above is `CREATE TABLE IF NOT EXISTS`, so a table that
+ * already exists in OPFS keeps the columns it was created with whatever the DDL
+ * says now — a column added to a derived table simply never appears on a
+ * database that predates it. The read tables are throwaway, though: bump this
+ * when one of them changes shape and `openSchema` drops them all and replays
+ * the log on the next boot. `events` and `meta` are never touched by it.
+ */
+export const DERIVED_SCHEMA_VERSION = 1;
+
 /** Every read table the materializer owns; `events` and `meta` survive a rebuild. */
 export const DERIVED_TABLES = [
 	'items',

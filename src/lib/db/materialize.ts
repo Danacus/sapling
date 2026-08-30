@@ -15,7 +15,14 @@
  */
 import { localDay } from './day';
 import type { EventType, PayloadFor, SyncEvent } from './events';
-import { DERIVED_TABLES, PROFILE_ID, RECENT_GRADES_CAP, reviewKey } from './schema';
+import {
+	DDL,
+	DERIVED_SCHEMA_VERSION,
+	DERIVED_TABLES,
+	PROFILE_ID,
+	RECENT_GRADES_CAP,
+	reviewKey
+} from './schema';
 import {
 	Grade as GradeValue,
 	newCardState,
@@ -38,6 +45,38 @@ export interface SqlOp {
 export interface Sql {
 	exec(sql: string, params?: SqlParam[]): void;
 	query<T>(sql: string, params?: SqlParam[]): T[];
+}
+
+/**
+ * Applies the DDL and brings the read tables up to `DERIVED_SCHEMA_VERSION`.
+ *
+ * `CREATE TABLE IF NOT EXISTS` leaves an existing table exactly as it was, so
+ * when a derived table changes shape the version in `meta` is what notices:
+ * on a mismatch every read table is dropped, recreated and replayed from the
+ * log, in one transaction. A fresh database takes the same path over an empty
+ * log, which is how the version row first gets written.
+ */
+export function openSchema(db: Database): Sql {
+	db.exec(DDL);
+	const sql = sqlFor(db);
+	const version = String(DERIVED_SCHEMA_VERSION);
+	const stored = sql.query<{ value: string }>(
+		`SELECT value FROM meta WHERE key = 'derivedSchema'`
+	)[0];
+	if (stored?.value === version) return sql;
+
+	db.exec('BEGIN');
+	try {
+		for (const table of DERIVED_TABLES) db.exec(`DROP TABLE IF EXISTS ${table}`);
+		db.exec(DDL);
+		rebuild(sql);
+		sql.exec(`INSERT OR REPLACE INTO meta (key, value) VALUES ('derivedSchema', ?)`, [version]);
+		db.exec('COMMIT');
+	} catch (error) {
+		db.exec('ROLLBACK');
+		throw error;
+	}
+	return sql;
 }
 
 /** Wraps a `sqlite-wasm` database as an {@link Sql}. */

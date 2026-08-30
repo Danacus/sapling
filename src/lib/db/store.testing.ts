@@ -10,8 +10,7 @@
  */
 import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 
-import { ingest, insertOnly, rebuild, sqlFor, type Sql } from './materialize';
-import { DDL } from './schema';
+import { ingest, insertOnly, openSchema, rebuild, type Sql } from './materialize';
 import { makeStore, type DbClient, type Store } from './store';
 
 function localClient(sql: Sql): DbClient {
@@ -38,6 +37,5 @@ function localClient(sql: Sql): DbClient {
 export async function makeTestStore(): Promise<Store> {
 	const sqlite3 = await sqlite3InitModule();
 	const db = new sqlite3.oo1.DB(':memory:');
-	db.exec(DDL);
-	return makeStore(localClient(sqlFor(db)));
+	return makeStore(localClient(openSchema(db)));
 }
