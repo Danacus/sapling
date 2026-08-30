@@ -75,6 +75,19 @@ export interface KnowledgeItem {
 	 * the Dexie migration, so that both devices name them identically.
 	 */
 	history: { at: number; grade: number; device?: string }[];
+	/**
+	 * Folds of `history` the store maintains, so a bulk read never carries it.
+	 *
+	 * `getAllItems()` returns these with an empty `history`; `getItem()` returns
+	 * both. Optional because anything that builds a `KnowledgeItem` by hand — a
+	 * test, an import, the assistant — supplies `history` alone, so every read
+	 * site falls back to it.
+	 */
+	reviewCount?: number;
+	/** How many of the reviews were graded Good or better. */
+	correctCount?: number;
+	/** The most recent reviews, oldest first — what the ledger's tick strip shows. */
+	recentGrades?: { at: number; grade: number }[];
 }
 
 /**

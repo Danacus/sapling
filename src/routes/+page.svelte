@@ -2,9 +2,8 @@
 	import { browser } from '$app/environment';
 
 	import {
-		activityByDay,
 		getAllItems,
-		getAllResults,
+		getDailyActivity,
 		getPool,
 		getProfile,
 		localDay,
@@ -38,12 +37,12 @@
 		loading = true;
 		loadError = '';
 
-		Promise.all([getProfile(), getAllItems(), getAllResults(), getPool()])
-			.then(([loadedProfile, loadedItems, results, pool]) => {
+		Promise.all([getProfile(), getAllItems(), getDailyActivity(), getPool()])
+			.then(([loadedProfile, loadedItems, days, pool]) => {
 				if (cancelled) return;
 				profile = loadedProfile;
 				items = loadedItems;
-				activity = activityByDay(results);
+				activity = days;
 				streakDays = streakFrom(activity.map((entry) => entry.day));
 				pooled = pool.length;
 				now = Date.now();

@@ -5,25 +5,20 @@
  * hands back), `amendResult` (the learner re-rated a correct answer) and
  * `applyOverturn` (a dispute was won).
  *
- * These used to run against a hand-written in-memory stand-in for `$lib/db`,
- * because IndexedDB does not exist in node. They now run against a **real
- * store** — the node adapter runs the same WASM SQLite and the same
- * materializers the browser does. So what is asserted below is the behaviour
+ * They run against a **real store** — the same WASM SQLite and the same merge
+ * rules the browser runs, in memory. So what is asserted below is the behaviour
  * the app actually has, not a second implementation's impression of it.
  *
- * One deliberate difference from the mock these replace: a card is no longer
- * *stored*, it is folded from the `reviews` table on read. An item that has
- * never been reviewed therefore has a fresh card rather than `null`, and a
- * re-grade moves the card by rewriting history rather than by overwriting a
- * stored card with an arithmetic result.
+ * A card that has never been reviewed is a fresh card rather than `null`, and a
+ * re-grade moves it by rewriting one review rather than by overwriting a stored
+ * card with an arithmetic result.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { getItem } from '$lib/db';
-import { events } from '$lib/livestore/schema';
-import { setStoreForTesting } from '$lib/livestore/store';
-import { makeTestStore } from '$lib/livestore/store.testing';
+import { setStoreForTesting, type Store } from '$lib/db/store';
+import { makeTestStore } from '$lib/db/store.testing';
 import { Grade, newCardState, reviewCard } from '$lib/srs';
 import type { FsrsCardState } from '$lib/srs';
 import type { Challenge } from '$lib/types';
@@ -32,7 +27,7 @@ import { amendResult, applyOverturn, applyResult } from './engine';
 
 const NOW = 1_700_000_000_000;
 
-let store: Awaited<ReturnType<typeof makeTestStore>>;
+let store: Store;
 
 beforeEach(async () => {
 	store = await makeTestStore();
@@ -40,16 +35,14 @@ beforeEach(async () => {
 });
 
 /** Adds one item, introduced at {@link NOW} with no reviews. */
-function seed(id: string): void {
-	store.commit(
-		events.itemAdded({
-			id,
-			kind: 'vocab',
-			term: `term-${id}`,
-			meaning: `meaning-${id}`,
-			introducedAt: NOW
-		})
-	);
+async function seed(id: string): Promise<void> {
+	await store.commit('itemAdded', {
+		id,
+		kind: 'vocab',
+		term: `term-${id}`,
+		meaning: `meaning-${id}`,
+		introducedAt: NOW
+	});
 }
 
 /** One item's history, without the device stamp the assertions do not care about. */
@@ -91,7 +84,7 @@ describe('applyResult', () => {
 	async function gradeFor(challenge: Challenge): Promise<number | undefined> {
 		store = await makeTestStore();
 		setStoreForTesting(store);
-		seed('i1');
+		await seed('i1');
 		await applyResult(challenge, {
 			verdict: 'correct',
 			answerGiven: 'leo',
@@ -128,19 +121,19 @@ describe('applyResult', () => {
 	});
 
 	it('grades almost Hard and wrong Again', async () => {
-		seed('i1');
+		await seed('i1');
 		await applyResult(single, { verdict: 'almost', answerGiven: 'leó', now: NOW });
 		expect((await historyOf('i1')).at(-1)?.grade).toBe(Grade.Hard);
 
 		store = await makeTestStore();
 		setStoreForTesting(store);
-		seed('i1');
+		await seed('i1');
 		await applyResult(single, { verdict: 'wrong', answerGiven: 'como', now: NOW });
 		expect((await historyOf('i1')).at(-1)?.grade).toBe(Grade.Again);
 	});
 
 	it('returns each reviewed item as it was before the review', async () => {
-		seed('i1');
+		await seed('i1');
 		const before = await cardOf('i1');
 
 		const priors = await applyResult(single, { verdict: 'correct', answerGiven: 'leo', now: NOW });
@@ -151,7 +144,7 @@ describe('applyResult', () => {
 	});
 
 	it('hands back a fresh card for an item that has never been reviewed', async () => {
-		seed('i1');
+		await seed('i1');
 
 		const priors = await applyResult(single, { verdict: 'correct', answerGiven: 'leo', now: NOW });
 
@@ -162,7 +155,7 @@ describe('applyResult', () => {
 	});
 
 	it('omits items that no longer exist, and returns nothing for match-pairs', async () => {
-		seed('i1');
+		await seed('i1');
 
 		const priors = await applyResult(
 			{ ...cloze, itemIds: ['i1', 'gone'] },
@@ -181,7 +174,7 @@ describe('amendResult', () => {
 		prior: FsrsCardState;
 		priors: Map<string, FsrsCardState | null>;
 	}> {
-		seed('i1');
+		await seed('i1');
 		const prior = (await cardOf('i1')) as FsrsCardState;
 		const priors = await applyResult(single, { verdict: 'correct', answerGiven: 'leo', now: NOW });
 		return { prior, priors };
@@ -212,7 +205,7 @@ describe('amendResult', () => {
 	it('leaves items the review skipped, and match-pairs rounds, untouched', async () => {
 		const { priors } = await answeredCorrectly();
 		// Present on the challenge but absent from the priors: never reviewed.
-		seed('i2');
+		await seed('i2');
 
 		await amendResult({ ...cloze, itemIds: ['i1', 'i2'] }, Grade.Easy, priors, NOW);
 		expect(await historyOf('i2')).toEqual([]);
@@ -224,8 +217,8 @@ describe('amendResult', () => {
 
 describe('applyOverturn', () => {
 	it('writes one Good review per item on the challenge', async () => {
-		seed('i1');
-		seed('i2');
+		await seed('i1');
+		await seed('i2');
 
 		await applyOverturn(cloze, NOW);
 
@@ -239,7 +232,7 @@ describe('applyOverturn', () => {
 	});
 
 	it('stacks on top of the Again review the wrong answer already wrote', async () => {
-		seed('i1');
+		await seed('i1');
 		// What `applyResult` leaves behind for a wrong answer.
 		await applyResult(
 			{ ...cloze, itemIds: ['i1'] },
@@ -260,7 +253,7 @@ describe('applyOverturn', () => {
 	});
 
 	it('skips items that no longer exist, and match-pairs rounds entirely', async () => {
-		seed('i1');
+		await seed('i1');
 
 		await applyOverturn({ ...cloze, itemIds: ['i1', 'gone'] }, NOW);
 		expect(await historyOf('i1')).toHaveLength(1);

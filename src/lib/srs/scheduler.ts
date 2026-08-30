@@ -222,6 +222,11 @@ export function selectSessionItems(
  * It no longer paces anything locally; it is a difficulty dial for the
  * generation prompt (`BatchArgs.recentAccuracy`), which is where "how is this
  * learner doing" now changes what a lesson looks like.
+ *
+ * Reads `recentGrades` — the trailing slice the store keeps on each item — and
+ * falls back to `history` for items assembled in memory. A window this narrow
+ * only ever looks at the tail anyway, so the two agree; taking the stored one is
+ * what lets the caller work from a `getAllItems()` that carries no entries.
  */
 export function accuracyFromHistory(
 	items: KnowledgeItem[],
@@ -233,7 +238,7 @@ export function accuracyFromHistory(
 	let total = 0;
 	let correct = 0;
 	for (const item of items) {
-		for (const entry of item.history) {
+		for (const entry of item.recentGrades ?? item.history) {
 			if (entry.at >= cutoff && entry.at <= opts.now) {
 				total++;
 				if (entry.grade >= Grade.Good) correct++;

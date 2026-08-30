@@ -40,8 +40,20 @@
 		type WordRow
 	} from '$lib/words/view';
 
-	/** How many history ticks a row draws before it says "and N earlier". */
+	/**
+	 * How many history ticks a row draws before it says "and N earlier".
+	 *
+	 * Matches `RECENT_GRADES_CAP` in `$lib/db/schema`: the store keeps exactly
+	 * this many per item so the ledger never has to read the review rows.
+	 */
 	const HISTORY_CAP = 40;
+
+	/**
+	 * The tick strip reads the stored aggregates, because `getAllItems` carries
+	 * no review entries. The `history` fallback covers items built in memory.
+	 */
+	const reviewsOf = (item: KnowledgeItem) => item.reviewCount ?? item.history.length;
+	const ticksOf = (item: KnowledgeItem) => item.recentGrades ?? item.history;
 
 	/** Sort keys in the order they read best in the menu, not registry order. */
 	const SORT_OPTIONS: { value: SortKey; label: string }[] = [
@@ -564,13 +576,13 @@
 
 									<div class="history">
 										<span class="history-label">Review history</span>
-										{#if row.item.history.length === 0}
+										{#if reviewsOf(row.item) === 0}
 											<p class="sub none">
 												No reviews yet — this word is still waiting for its first.
 											</p>
 										{:else}
-											{@const shown = row.item.history.slice(-HISTORY_CAP)}
-											{@const earlier = row.item.history.length - shown.length}
+											{@const shown = ticksOf(row.item).slice(-HISTORY_CAP)}
+											{@const earlier = reviewsOf(row.item) - shown.length}
 											<div class="ticks">
 												{#each shown as entry, index (`${entry.at}-${index}`)}
 													<span

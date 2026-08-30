@@ -131,16 +131,3 @@ export function setSyncEnabled(enabled: boolean): void {
 	if (ensureSyncPhrase() === undefined) return;
 	write(ENABLED_KEY, '1');
 }
-
-/**
- * The credential to hand `createStorePromise`, or `undefined` when sync is off.
- *
- * Read once, at boot. Changing any of this mid-session does nothing until the
- * next reload, which is deliberate — the sync backend is chosen when the leader
- * worker builds the store, and pretending otherwise in the UI would be a lie.
- */
-export function syncPayload(): { phrase: string } | undefined {
-	if (!isSyncEnabled()) return undefined;
-	const phrase = getSyncPhrase();
-	return phrase === undefined ? undefined : { phrase };
-}

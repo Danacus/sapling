@@ -47,7 +47,7 @@ export const listWordsTool = {
 		const limit = Math.min(MAX_LIMIT, Math.max(1, Math.floor(requested)));
 		const entries = found.slice(0, limit).map((item) => ({
 			...wordView(item),
-			reviews: item.history.length
+			reviews: item.reviewCount ?? item.history.length
 		}));
 
 		return {

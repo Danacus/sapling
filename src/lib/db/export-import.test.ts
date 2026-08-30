@@ -1,23 +1,37 @@
 /**
- * The JSON escape hatch, against LiveStore.
+ * The JSON escape hatch.
  *
- * `exportData` now writes the v3 envelope (`{version: 3, exportedAt, events}`)
- * that the next Sapling build reads back — this build only needs to produce
- * it. `importData` still restores v1/v2 dumps, the one route by which a file
- * written by the old Dexie build can arrive.
+ * `exportData` writes the log itself (`{version: 3, exportedAt, events}`), so a
+ * dump is complete — pool, serves and results included — and importing one is a
+ * union rather than a replacement. v1/v2 envelopes predate the log and still
+ * restore, because they are the only route by which a file written by the old
+ * Dexie build can arrive.
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { exportData, getAllItems, importData } from '$lib/db';
-import type { ExportEnvelope } from '$lib/db';
-import { events } from '$lib/livestore/schema';
-import { setStoreForTesting } from '$lib/livestore/store';
-import { makeTestStore } from '$lib/livestore/store.testing';
-import { reviewKey } from '$lib/livestore/tables';
+import {
+	addResult,
+	addToPool,
+	deleteItem,
+	exportData,
+	getAllItems,
+	getDailyActivity,
+	getItem,
+	getPool,
+	getProfile,
+	importData,
+	recordServe,
+	saveProfile,
+	updateItemAfterReview,
+	upsertItems,
+	type ExportEnvelope
+} from '$lib/db';
 import { newCardState, reviewCard } from '$lib/srs';
-import type { Profile } from '$lib/types';
+import type { Challenge, KnowledgeItem, Profile } from '$lib/types';
+import { setStoreForTesting, type Store } from './store';
+import { makeTestStore } from './store.testing';
 
-let store: Awaited<ReturnType<typeof makeTestStore>>;
+let store: Store;
 
 beforeEach(async () => {
 	store = await makeTestStore();
@@ -33,62 +47,59 @@ const profile: Profile = {
 	createdAt: 1000
 };
 
-/** Seeds one row of every kind `exportData` walks, including a reported challenge. */
-function seedOneOfEach(): void {
-	store.commit(events.profileUpdated(profile));
-	store.commit(
-		events.itemAdded({ id: 'i1', kind: 'vocab', term: '书', meaning: 'book', introducedAt: 1000 })
-	);
-	store.commit(events.itemReviewed({ device: 'dev-a', at: 2000, itemId: 'i1', grade: 3 }));
-	store.commit(
-		events.itemAdded({ id: 'i2', kind: 'vocab', term: '旧', meaning: 'old', introducedAt: 1500 })
-	);
-	store.commit(events.itemDeleted({ itemId: 'i2' }));
-	store.commit(
-		events.challengeAdded({
-			challenge: { id: 'c1', type: 'multiple-choice' },
-			generatedAt: 3000
-		})
-	);
-	store.commit(events.challengeReported({ challengeId: 'c1' }));
-	store.commit(events.challengeServed({ eventId: 'serve-1', challengeId: 'c1', at: 4000 }));
-	store.commit(
-		events.resultLogged({
-			eventId: 'result-1',
-			challengeId: 'c1',
-			verdict: 'correct',
-			answerGiven: '书',
-			at: 5000
-		})
-	);
+const challenge = {
+	id: 'c1',
+	type: 'multiple-choice',
+	direction: 'toTarget',
+	itemIds: ['i1'],
+	prompt: 'book?',
+	options: ['书', '水'],
+	answerIndex: 0
+} as unknown as Challenge;
+
+function item(id: string, term: string, introducedAt: number): KnowledgeItem {
+	return {
+		id,
+		kind: 'vocab',
+		term,
+		meaning: 'book',
+		introducedAt,
+		fsrsCard: newCardState(introducedAt),
+		history: []
+	};
 }
 
-describe('export / import', () => {
-	it('turns every table row into exactly one event with a deterministic id', async () => {
-		seedOneOfEach();
+/** Seeds one write of every kind, through the repositories that produce them. */
+async function seedOneOfEach(): Promise<void> {
+	await saveProfile(profile);
+	await upsertItems([item('i1', '书', 1000), item('i2', '旧', 1500)]);
+	await updateItemAfterReview('i1', (card) => card, { at: 2000, grade: 3 });
+	await deleteItem('i2');
+	await addToPool([challenge], 3000);
+	await recordServe('c1', 4000);
+	await addResult({ challengeId: 'c1', verdict: 'correct', answerGiven: '书', at: 5000 });
+}
+
+describe('export', () => {
+	it('writes the whole log, one event per write', async () => {
+		await seedOneOfEach();
 
 		const envelope = JSON.parse(await exportData()) as ExportEnvelope;
 		expect(envelope.version).toBe(3);
-
-		const byId = new Map(envelope.events.map((event) => [event.id, event]));
-		expect(byId.get('profile')).toMatchObject({ type: 'profileUpdated', at: 1000 });
-		expect(byId.get('item:i1')).toMatchObject({ type: 'itemAdded', at: 1000 });
-		expect(byId.get('item:i2')).toBeUndefined();
-		expect(byId.get(`review:${reviewKey('i1', 2000, 'dev-a')}`)).toMatchObject({
-			type: 'itemReviewed',
-			at: 2000,
-			device: 'dev-a'
-		});
-		expect(byId.get('tombstone:i2')).toMatchObject({ type: 'itemDeleted', at: 0 });
-		expect(byId.get('challenge:c1')).toMatchObject({ type: 'challengeAdded', at: 3000 });
-		expect(byId.get('reported:c1')).toMatchObject({ type: 'challengeReported', at: 3000 });
-		expect(byId.get('serve-1')).toMatchObject({ type: 'challengeServed', at: 4000 });
-		expect(byId.get('result-1')).toMatchObject({ type: 'resultLogged', at: 5000 });
-		expect(envelope.events).toHaveLength(8);
+		expect(envelope.events.map((event) => event.type).sort()).toEqual([
+			'challengeAdded',
+			'challengeServed',
+			'itemAdded',
+			'itemAdded',
+			'itemDeleted',
+			'itemReviewed',
+			'profileUpdated',
+			'resultLogged'
+		]);
 	});
 
 	it('produces identical events across two consecutive exports', async () => {
-		seedOneOfEach();
+		await seedOneOfEach();
 
 		const first = (JSON.parse(await exportData()) as ExportEnvelope).events;
 		const second = (JSON.parse(await exportData()) as ExportEnvelope).events;
@@ -96,17 +107,45 @@ describe('export / import', () => {
 		expect(second).toEqual(first);
 	});
 
-	it('rejects a v3 export', async () => {
-		const v3 = JSON.stringify({ version: 3, exportedAt: 1, events: [] });
-		await expect(importData(v3)).rejects.toThrow(
-			'v3 exports are read by the next version of Sapling'
-		);
+	it('round-trips the whole read model into a fresh store', async () => {
+		// The pool is the sharp end: a whole action's events share a millisecond,
+		// so a replay ordered by `at` could put the serve before the challenge it
+		// stamps and silently lose it. The file carries the causal order instead.
+		await seedOneOfEach();
+		const dump = await exportData();
+		const before = {
+			items: await getAllItems(),
+			pool: await getPool(),
+			profile: await getProfile(),
+			activity: await getDailyActivity()
+		};
+
+		setStoreForTesting(await makeTestStore());
+		await importData(dump);
+
+		expect(await getAllItems()).toEqual(before.items);
+		expect(await getPool()).toEqual(before.pool);
+		expect(await getProfile()).toEqual(before.profile);
+		expect(await getDailyActivity()).toEqual(before.activity);
 	});
 
+	it('skips an event it cannot parse and keeps the rest', async () => {
+		await seedOneOfEach();
+		const envelope = JSON.parse(await exportData()) as ExportEnvelope;
+		envelope.events.push({ id: 'junk', type: 'itemAdded', at: 1, device: 'devA', payload: {} });
+
+		setStoreForTesting(await makeTestStore());
+		await importData(JSON.stringify(envelope));
+
+		expect((await getAllItems()).map((row) => row.id)).toEqual(['i1']);
+	});
+});
+
+describe('legacy import', () => {
 	it('accepts a v2 envelope written by the old Dexie build', async () => {
-		// The old build stored a card alongside history. The new one derives the
-		// card, so the stored one must be ignored rather than trusted — and the
-		// derived result must still reflect the review that produced it.
+		// The old build stored a card alongside history. The new one folds the card
+		// from the reviews, so the stored one is ignored rather than trusted — and
+		// the result must still be the card the old build had.
 		const stored = reviewCard(newCardState(1000), 3, 2000);
 		const legacy = JSON.stringify({
 			version: 2,
@@ -127,23 +166,14 @@ describe('export / import', () => {
 
 		await importData(legacy);
 
-		const [item] = await getAllItems();
-		expect(item.history.map((h) => [h.at, h.grade])).toEqual([[2000, 3]]);
-		// Derived from the same history through the same pure function, so it
-		// agrees with what the old build had stored.
-		expect(item.fsrsCard).toEqual(stored);
+		const restored = await getItem('i1');
+		expect(restored?.history.map((entry) => [entry.at, entry.grade])).toEqual([[2000, 3]]);
+		expect(restored?.fsrsCard).toEqual(stored);
+		expect(restored).toMatchObject({ reviewCount: 1, correctCount: 1 });
 	});
 
 	it('replaces existing items rather than merging into them', async () => {
-		store.commit(
-			events.itemAdded({
-				id: 'old',
-				kind: 'vocab',
-				term: '旧',
-				meaning: 'old',
-				introducedAt: 1
-			})
-		);
+		await upsertItems([item('old', '旧', 1)]);
 
 		await importData(
 			JSON.stringify({
@@ -154,12 +184,16 @@ describe('export / import', () => {
 			})
 		);
 
-		expect((await getAllItems()).map((i) => i.id)).toEqual(['new']);
+		expect((await getAllItems()).map((row) => row.id)).toEqual(['new']);
 	});
 
 	it('rejects an unsupported envelope version', async () => {
 		await expect(importData(JSON.stringify({ version: 99, items: [] }))).rejects.toThrow(
 			/unsupported export version/
 		);
+	});
+
+	it('rejects a file that is not JSON', async () => {
+		await expect(importData('not json')).rejects.toThrow(/not valid JSON/);
 	});
 });

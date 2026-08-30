@@ -42,6 +42,10 @@ export default defineConfig({
 		}
 	],
 
+	// The README's requirement: the package ships its own `.wasm` and must not be
+	// pre-bundled.
+	optimizeDeps: { exclude: ['@sqlite.org/sqlite-wasm'] },
+
 	test: {
 		// Pure-logic unit tests: plain `*.test.ts` files under src/ run in node.
 		//

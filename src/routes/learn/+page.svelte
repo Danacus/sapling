@@ -25,7 +25,7 @@
 
 	import { audioTextsFor, correctAnswerText } from '$lib/challenges/display';
 	import { ALL_READINGS } from '$lib/challenges/props';
-	import { activityByDay, getAllResults, getProfile, streakFrom } from '$lib/db';
+	import { getDailyActivity, getProfile, streakFrom } from '$lib/db';
 	import { LlmError, isMockMode } from '$lib/llm';
 	import type { ProgressStep } from '$lib/llm';
 	import { loadRomanizer, type Romanizer } from '$lib/romanize';
@@ -483,7 +483,9 @@
 	 */
 	function firstTimeWords(ready: SessionPlan): KnowledgeItem[] {
 		const exercised = new Set(ready.challenges.flatMap((challenge) => challenge.itemIds));
-		return ready.items.filter((item) => exercised.has(item.id) && item.history.length === 0);
+		return ready.items.filter(
+			(item) => exercised.has(item.id) && (item.reviewCount ?? item.history.length) === 0
+		);
 	}
 
 	/* ---------------------------------------------------------------------- */
@@ -760,7 +762,7 @@
 
 		// The streak is derived, not bookkept: `pendingWrite` is settled above, so
 		// this session's own results are already in the log being folded.
-		endStreak = streakFrom(activityByDay(await getAllResults()).map((entry) => entry.day));
+		endStreak = streakFrom((await getDailyActivity()).map((entry) => entry.day));
 		phase = 'summary';
 	}
 

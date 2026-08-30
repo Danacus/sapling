@@ -1,15 +1,10 @@
 /**
- * The credential the store boots with.
+ * Whether this device should sync, and with which phrase.
  *
- * `syncPayload()` is the single value that decides whether a device syncs at
- * all: the leader worker reads its presence as "sync is on" and its absence as
- * "sync is off", and picks a real backend or the offline one accordingly. When
- * `store.ts` was not passing it, every browser connected with no credential,
- * the Worker refused, and — because sync degrades silently by design — the
- * symptom was nothing happening at all, on both devices, forever.
- *
- * So these tests pin the two answers that matter, and in particular that an
- * enabled device produces a payload rather than `undefined`.
+ * `isSyncEnabled()` is a three-part answer — the build has a backend, the
+ * learner turned it on, and a phrase survived being stored — so callers can
+ * never get a `true` they cannot act on. Sync fails silently by design, which
+ * is exactly why the conditions are pinned here rather than observed later.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -43,33 +38,32 @@ async function loadConfig(syncUrl: string | undefined) {
 	return import('./config');
 }
 
-describe('syncPayload', () => {
+describe('sync configuration', () => {
 	beforeEach(() => {
 		vi.unstubAllEnvs();
 		vi.unstubAllGlobals();
 		installStorage();
 	});
 
-	it('is undefined when the learner has not turned sync on', async () => {
+	it('is off until the learner turns sync on', async () => {
 		const config = await loadConfig('https://sync.example.test');
-		expect(config.syncPayload()).toBeUndefined();
+		expect(config.isSyncEnabled()).toBe(false);
 	});
 
-	it('carries the phrase once sync is enabled', async () => {
+	it('is on, with the phrase, once sync is enabled', async () => {
 		const config = await loadConfig('https://sync.example.test');
 		config.setSyncPhrase(PHRASE);
 		config.setSyncEnabled(true);
 
-		// The regression: this was never reaching `createStorePromise`, so the
-		// leader worker saw `undefined` and chose the offline backend.
-		expect(config.syncPayload()).toEqual({ phrase: PHRASE });
+		expect(config.isSyncEnabled()).toBe(true);
+		expect(config.getSyncPhrase()).toBe(PHRASE);
 	});
 
-	it('is undefined when the build has no backend, however enabled the device is', async () => {
+	it('stays off when the build has no backend, however enabled the device is', async () => {
 		const config = await loadConfig(undefined);
 		config.setSyncPhrase(PHRASE);
 		config.setSyncEnabled(true);
-		expect(config.syncPayload()).toBeUndefined();
+		expect(config.isSyncEnabled()).toBe(false);
 	});
 
 	it('goes quiet again when sync is switched off, but keeps the phrase', async () => {
@@ -78,7 +72,7 @@ describe('syncPayload', () => {
 		config.setSyncEnabled(true);
 		config.setSyncEnabled(false);
 
-		expect(config.syncPayload()).toBeUndefined();
+		expect(config.isSyncEnabled()).toBe(false);
 		// Kept on purpose: switching back on must rejoin the same library rather
 		// than stranding the device in a fresh empty one.
 		expect(config.getSyncPhrase()).toBe(PHRASE);
@@ -88,6 +82,6 @@ describe('syncPayload', () => {
 		const config = await loadConfig('https://sync.example.test');
 		config.setSyncPhrase('  abcde-fghjk-mnpqr-stvwx  ');
 		config.setSyncEnabled(true);
-		expect(config.syncPayload()).toEqual({ phrase: PHRASE });
+		expect(config.getSyncPhrase()).toBe(PHRASE);
 	});
 });

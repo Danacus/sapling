@@ -2,7 +2,6 @@
 	import { browser } from '$app/environment';
 
 	import {
-		db,
 		DEFAULT_MODEL,
 		exportData,
 		getAllItems,
@@ -13,6 +12,7 @@
 		importData,
 		setApiKey,
 		setBaseUrl,
+		resetData,
 		setModel,
 		upsertItems
 	} from '$lib/db';
@@ -572,7 +572,7 @@
 		resetting = true;
 		resetError = '';
 		try {
-			await db.delete();
+			await resetData();
 			try {
 				const keys = Object.keys(localStorage).filter((key) => key.startsWith('ll.'));
 				for (const key of keys) localStorage.removeItem(key);

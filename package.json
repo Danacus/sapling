@@ -40,6 +40,7 @@
 		"@livestore/svelte": "0.4.0",
 		"@livestore/sync-cf": "0.4.0",
 		"@livestore/utils": "0.4.0",
+		"@sqlite.org/sqlite-wasm": "3.53.0-build1",
 		"dexie": "^4.4.5",
 		"pinyin-pro": "^3.29.3",
 		"ts-fsrs": "^5.4.1",

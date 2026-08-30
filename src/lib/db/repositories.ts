@@ -1,44 +1,34 @@
 /**
  * Repositories: the only sanctioned way for UI code to touch the database.
  *
- * Signatures speak `$lib/types` only, so callers never import LiveStore. The
- * 28 modules that import `$lib/db` did not change when the storage underneath
- * did, which is the whole reason this seam exists.
+ * Signatures speak `$lib/types` only, so the 28 modules that import `$lib/db`
+ * did not change when the storage underneath did, which is the whole reason
+ * this seam exists.
  *
  * ## Every write is an event
  *
- * There is no longer a "write the row, then also append the event" pair to
- * keep in agreement — the event *is* the write, and the tables are a
- * projection LiveStore maintains by replaying it (`$lib/livestore`). The
- * `capture()` helper this module used to carry, the `syncEnabled()` gate on
- * it, and the whole class of bug where a new write path forgot its event, are
- * gone with it.
+ * There is no "write the row, then also append the event" pair to keep in
+ * agreement — the event *is* the write, and the read tables are what
+ * `materialize.ts` makes of the log. Reads never touch `events`.
  *
- * ## Nothing here stores a card
+ * ## Bulk reads are aggregates; the history is per-item
  *
- * `KnowledgeItem.fsrsCard` and `.history` are assembled on read: history is
- * the `reviews` table, and the card is `deriveCard` folding it through
- * `$lib/srs`. Callers still receive whole `KnowledgeItem`s and cannot tell.
- * What they get for free is that a card can no longer disagree with the
- * history it was supposed to be derived from, because it is never stored.
- *
- * ## Reads are synchronous underneath
- *
- * `store.query` is a synchronous SQLite read. These functions stay `async`
- * anyway: their callers are written around promises, and `await storeReady()`
- * is what makes "the store is up" someone else's problem. After boot it is an
- * already-resolved promise.
+ * `fsrsCard`, `reviewCount`, `correctCount` and `recentGrades` are columns,
+ * folded forward one review at a time by the materializer, so {@link getAllItems}
+ * costs a single `SELECT` and never scans `reviews`. The rows are still there —
+ * they are what lets one item be refolded exactly when a review arrives out of
+ * order, and {@link getItem} attaches them for the one word being looked at.
  */
 
-import { getDeviceId, newUuid } from '$lib/device';
-import { deriveCard, serveStats, sortHistory } from '$lib/livestore/derive';
-import { events, PROFILE_ID, tables } from '$lib/livestore/schema';
-import { storeReady } from '$lib/livestore/store';
+import { getDeviceId } from '$lib/device';
 import type { Challenge, ChallengeResult, KnowledgeItem, Profile, Verdict } from '$lib/types';
 import { challengeOf } from './database';
 import type { ChallengeRow } from './database';
-import type { SyncEvent } from './events';
+import { parseEvent, type SyncEvent } from './events';
+import { LOG_ORDER } from './materialize';
 import { toPlain } from './plain';
+import { DERIVED_TABLES, PROFILE_ID } from './schema';
+import { ready, type Fact } from './store';
 
 export { activityByDay, localDay, previousDay, streakFrom } from './day';
 
@@ -46,7 +36,6 @@ export { activityByDay, localDay, previousDay, streakFrom } from './day';
 /* Row assembly                                                                */
 /* -------------------------------------------------------------------------- */
 
-/** One `reviews` row, as much of it as the folds read. */
 interface ReviewRow {
 	itemId: string;
 	at: number;
@@ -54,7 +43,6 @@ interface ReviewRow {
 	device: string;
 }
 
-/** One `items` row, before its history is attached. */
 interface ItemRow {
 	id: string;
 	kind: string;
@@ -63,18 +51,27 @@ interface ItemRow {
 	romanization: string | null;
 	notes: string | null;
 	introducedAt: number;
+	fsrsCard: string;
+	reviewCount: number;
+	correctCount: number;
+	recentGrades: string;
 }
 
-/** Groups review rows by the item they belong to, each already in fold order. */
-function historyByItem(reviews: readonly ReviewRow[]): Map<string, ReviewRow[]> {
-	const byItem = new Map<string, ReviewRow[]>();
-	for (const review of reviews) {
-		const list = byItem.get(review.itemId);
-		if (list) list.push(review);
-		else byItem.set(review.itemId, [review]);
-	}
-	for (const [id, list] of byItem) byItem.set(id, sortHistory(list));
-	return byItem;
+interface ChallengeSqlRow {
+	id: string;
+	content: string;
+	generatedAt: number;
+	topic: string | null;
+	reported: number;
+	timesServed: number;
+	lastServedAt: number | null;
+}
+
+interface ResultSqlRow {
+	challengeId: string;
+	verdict: string;
+	answerGiven: string;
+	at: number;
 }
 
 /**
@@ -83,6 +80,8 @@ function historyByItem(reviews: readonly ReviewRow[]): Map<string, ReviewRow[]> 
  * SQLite has no "absent", so a nullable column comes back as `null` where the
  * domain type means "not set at all". Converting back here keeps `romanization`
  * genuinely optional for the Latin-script languages that never have one.
+ *
+ * The aggregates always come; `history` only when the caller asked for one item.
  */
 function itemFrom(row: ItemRow, history: readonly ReviewRow[]): KnowledgeItem {
 	return {
@@ -93,30 +92,31 @@ function itemFrom(row: ItemRow, history: readonly ReviewRow[]): KnowledgeItem {
 		...(row.romanization === null ? {} : { romanization: row.romanization }),
 		...(row.notes === null ? {} : { notes: row.notes }),
 		introducedAt: row.introducedAt,
-		fsrsCard: deriveCard(row.introducedAt, history),
+		fsrsCard: JSON.parse(row.fsrsCard) as unknown,
+		reviewCount: row.reviewCount,
+		correctCount: row.correctCount,
+		recentGrades: JSON.parse(row.recentGrades) as { at: number; grade: number }[],
 		history: history.map(({ at, grade, device }) => ({ at, grade, device }))
 	};
 }
 
-/** Reassembles a `ChallengeRow` — immutable content plus its serve bookkeeping. */
-function challengeRowFrom(
-	row: {
-		id: string;
-		content: unknown;
-		generatedAt: number;
-		topic: string | null;
-		reported: boolean;
-	},
-	serves: readonly { at: number }[]
-): ChallengeRow {
-	const { timesServed, lastServedAt } = serveStats(serves);
+function challengeRowFrom(row: ChallengeSqlRow): ChallengeRow {
 	return {
-		...(row.content as Challenge),
+		...(JSON.parse(row.content) as Challenge),
 		generatedAt: row.generatedAt,
-		timesServed,
-		lastServedAt,
-		reported: row.reported,
+		timesServed: row.timesServed,
+		lastServedAt: row.lastServedAt,
+		reported: row.reported === 1,
 		...(row.topic === null ? {} : { topic: row.topic })
+	};
+}
+
+function resultFrom(row: ResultSqlRow): ChallengeResult {
+	return {
+		challengeId: row.challengeId,
+		verdict: row.verdict as Verdict,
+		answerGiven: row.answerGiven,
+		at: row.at
 	};
 }
 
@@ -124,18 +124,28 @@ function challengeRowFrom(
 /* Profile                                                                     */
 /* -------------------------------------------------------------------------- */
 
+interface ProfileSqlRow {
+	nativeLanguage: string;
+	targetLanguage: string;
+	level: string;
+	interests: string;
+	about: string | null;
+	model: string;
+	createdAt: number;
+}
+
 /** Returns the stored profile, or `undefined` before onboarding completes. */
 export async function getProfile(): Promise<Profile | undefined> {
-	const store = await storeReady();
-	const row = store.query(
-		tables.profile.where({ id: PROFILE_ID }).first({ behaviour: 'fallback', fallback: () => null })
-	);
+	const store = await ready();
+	const row = (
+		await store.query<ProfileSqlRow>('SELECT * FROM profile WHERE id = ?', [PROFILE_ID])
+	)[0];
 	if (!row) return undefined;
 	return {
 		nativeLanguage: row.nativeLanguage,
 		targetLanguage: row.targetLanguage,
 		level: row.level as Profile['level'],
-		interests: [...row.interests],
+		interests: JSON.parse(row.interests) as string[],
 		...(row.about === null ? {} : { about: row.about }),
 		model: row.model,
 		createdAt: row.createdAt
@@ -144,90 +154,100 @@ export async function getProfile(): Promise<Profile | undefined> {
 
 /** Creates or replaces the profile. */
 export async function saveProfile(profile: Profile, _now: number = Date.now()): Promise<void> {
-	const store = await storeReady();
+	const store = await ready();
 	const plain = toPlain(profile);
-	store.commit(
-		events.profileUpdated({
-			nativeLanguage: plain.nativeLanguage,
-			targetLanguage: plain.targetLanguage,
-			level: plain.level,
-			interests: plain.interests,
-			...(plain.about === undefined ? {} : { about: plain.about }),
-			model: plain.model,
-			createdAt: plain.createdAt
-		})
-	);
+	await store.commit('profileUpdated', {
+		nativeLanguage: plain.nativeLanguage,
+		targetLanguage: plain.targetLanguage,
+		level: plain.level,
+		interests: plain.interests,
+		...(plain.about === undefined ? {} : { about: plain.about }),
+		model: plain.model,
+		createdAt: plain.createdAt
+	});
 }
 
 /* -------------------------------------------------------------------------- */
 /* Knowledge items                                                             */
 /* -------------------------------------------------------------------------- */
 
-/** Every knowledge item the learner has met so far. */
+/**
+ * Every knowledge item the learner has met so far, with an **empty** `history`.
+ *
+ * This is the hot read — 29 call sites, session start included — so it costs one
+ * `SELECT` over `items` and never touches `reviews`. Everything a bulk reader
+ * wants from the history is already a column: `reviewCount`, `correctCount` and
+ * `recentGrades`. A caller that genuinely needs the entries reads {@link getItem}.
+ */
 export async function getAllItems(): Promise<KnowledgeItem[]> {
-	const store = await storeReady();
-	const history = historyByItem(store.query(tables.reviews));
-	return store.query(tables.items).map((row) => itemFrom(row, history.get(row.id) ?? []));
+	const store = await ready();
+	const rows = await store.query<ItemRow>('SELECT * FROM items');
+	return rows.map((row) => itemFrom(row, []));
 }
 
+/** One item, with its whole review history attached. */
 export async function getItem(id: string): Promise<KnowledgeItem | undefined> {
-	const store = await storeReady();
-	const row = store.query(
-		tables.items.where({ id }).first({ behaviour: 'fallback', fallback: () => null })
-	);
+	const store = await ready();
+	const row = (await store.query<ItemRow>('SELECT * FROM items WHERE id = ?', [id]))[0];
 	if (!row) return undefined;
-	return itemFrom(row, sortHistory(store.query(tables.reviews.where({ itemId: id }))));
+	const history = await store.query<ReviewRow>(
+		'SELECT itemId, at, grade, device FROM reviews WHERE itemId = ? ORDER BY at, device',
+		[id]
+	);
+	return itemFrom(row, history);
 }
 
 /**
  * Inserts or replaces items by `id`.
  *
- * An id the table has never seen emits `item-added` (full content); a known one
- * emits `item-updated` (the mutable fields only). That distinction is what lets
+ * An id the table has never seen emits `itemAdded` (full content); a known one
+ * emits `itemUpdated` (the mutable fields only). That distinction is what lets
  * another device tell "the learner met a new word" from "the learner edited a
- * note" — and it is now the *only* write, rather than a second write shadowing
- * a row put.
+ * note".
  *
- * Card and history on the passed items are deliberately ignored: both are
- * derived from the `reviews` table, so there is nothing here that could write
- * them. Reviews arrive through {@link updateItemAfterReview}.
+ * Card and history on the passed items are deliberately ignored: reviews arrive
+ * through {@link updateItemAfterReview} and the card follows from them.
  */
 export async function upsertItems(
 	items: KnowledgeItem[],
 	_now: number = Date.now()
 ): Promise<void> {
 	if (items.length === 0) return;
-	const store = await storeReady();
+	const store = await ready();
 	const plain = toPlain(items);
-	const known = new Set(store.query(tables.items).map((row) => row.id));
+	const known = new Set(
+		(await store.query<{ id: string }>('SELECT id FROM items')).map((r) => r.id)
+	);
 
-	for (const item of plain) {
-		if (known.has(item.id)) {
-			store.commit(
-				events.itemUpdated({
-					itemId: item.id,
-					fields: {
-						term: item.term,
-						meaning: item.meaning,
-						...(item.romanization === undefined ? {} : { romanization: item.romanization }),
-						...(item.notes === undefined ? {} : { notes: item.notes })
+	await store.commitAll(
+		plain.map((item): Fact =>
+			known.has(item.id)
+				? {
+						type: 'itemUpdated',
+						payload: {
+							itemId: item.id,
+							fields: {
+								term: item.term,
+								meaning: item.meaning,
+								...(item.romanization === undefined ? {} : { romanization: item.romanization }),
+								...(item.notes === undefined ? {} : { notes: item.notes })
+							}
+						}
 					}
-				})
-			);
-		} else {
-			store.commit(
-				events.itemAdded({
-					id: item.id,
-					kind: item.kind,
-					term: item.term,
-					meaning: item.meaning,
-					...(item.romanization === undefined ? {} : { romanization: item.romanization }),
-					...(item.notes === undefined ? {} : { notes: item.notes }),
-					introducedAt: item.introducedAt
-				})
-			);
-		}
-	}
+				: {
+						type: 'itemAdded',
+						payload: {
+							id: item.id,
+							kind: item.kind,
+							term: item.term,
+							meaning: item.meaning,
+							...(item.romanization === undefined ? {} : { romanization: item.romanization }),
+							...(item.notes === undefined ? {} : { notes: item.notes }),
+							introducedAt: item.introducedAt
+						}
+					}
+		)
+	);
 }
 
 /**
@@ -238,27 +258,23 @@ export async function upsertItems(
  * learner sees the challenge play out, it just grades nothing.
  */
 export async function deleteItem(id: string, _now: number = Date.now()): Promise<void> {
-	const store = await storeReady();
-	store.commit(events.itemDeleted({ itemId: id }));
+	const store = await ready();
+	await store.commit('itemDeleted', { itemId: id });
 }
 
 /**
  * Folds a review into an item: appends one history entry.
  *
- * `nextCard` is **no longer consulted**. It survives in the signature because
- * every caller is written around it and because it still documents, at the call
- * site, what the review is supposed to do to the card — but the card is now
- * derived from the history this event appends, so computing one here and
- * storing it would be inventing a second source of truth for the thing the
- * migration set out to stop storing twice. `prior` is still returned, still
- * means "the card as it stood before this review", and is still what
- * `amendResult` rewinds to; it is derived rather than read.
+ * `nextCard` is **not consulted**. It survives in the signature because every
+ * caller is written around it and because it documents, at the call site, what
+ * the review is supposed to do to the card — but the card the materializer
+ * folds is the one source of truth. `prior` is the card as it stood before this
+ * review, read straight off the row, and is what `amendResult` rewinds to.
  *
  * With `replaceLast`, the entry supersedes the newest one instead of being
  * appended — for a review being *recomputed* rather than added (the learner
  * re-graded the answer they just gave). Appending there would double-count the
- * review in `reps` and in `accuracyFromHistory`. An empty history has nothing
- * to replace, so it simply appends.
+ * review. An empty history has nothing to replace, so it simply appends.
  *
  * `existed` is `false` when the item no longer exists.
  */
@@ -268,30 +284,35 @@ export async function updateItemAfterReview(
 	historyEntry: { at: number; grade: number },
 	opts: { replaceLast?: boolean } = {}
 ): Promise<{ existed: boolean; prior: unknown }> {
-	const store = await storeReady();
-	const item = store.query(
-		tables.items.where({ id }).first({ behaviour: 'fallback', fallback: () => null })
-	);
-	if (!item) return { existed: false, prior: null };
+	const store = await ready();
+	const row = (
+		await store.query<{ fsrsCard: string }>('SELECT fsrsCard FROM items WHERE id = ?', [id])
+	)[0];
+	if (!row) return { existed: false, prior: null };
 
-	const history = sortHistory(store.query(tables.reviews.where({ itemId: id })));
-	const prior = deriveCard(item.introducedAt, history);
+	const prior = JSON.parse(row.fsrsCard) as unknown;
 	const device = getDeviceId();
 	const { at, grade } = toPlain(historyEntry);
 
-	const replaced = opts.replaceLast ? history[history.length - 1] : undefined;
+	const replaced = opts.replaceLast
+		? (
+				await store.query<{ at: number }>(
+					'SELECT at FROM reviews WHERE itemId = ? ORDER BY at DESC, device DESC LIMIT 1',
+					[id]
+				)
+			)[0]
+		: undefined;
+
 	if (replaced) {
-		store.commit(
-			events.reviewAmended({
-				device,
-				at,
-				itemId: id,
-				grade,
-				replaces: replaced.at
-			})
-		);
+		await store.commit('reviewAmended', {
+			device,
+			at,
+			itemId: id,
+			grade,
+			replaces: replaced.at
+		});
 	} else {
-		store.commit(events.itemReviewed({ device, at, itemId: id, grade }));
+		await store.commit('itemReviewed', { device, at, itemId: id, grade });
 	}
 
 	return { existed: true, prior };
@@ -314,32 +335,19 @@ export async function addToPool(
 	topic?: string
 ): Promise<void> {
 	if (challenges.length === 0) return;
-	const store = await storeReady();
+	const store = await ready();
 	const trimmed = topic?.trim();
 
-	toPlain(challenges).forEach((challenge, index) => {
-		store.commit(
-			events.challengeAdded({
+	await store.commitAll(
+		toPlain(challenges).map((challenge, index): Fact => ({
+			type: 'challengeAdded',
+			payload: {
 				challenge,
 				generatedAt: now + index,
 				...(trimmed ? { topic: trimmed } : {})
-			})
-		);
-	});
-}
-
-/** Every challenge in the pool, with its serve bookkeeping attached. */
-async function allPoolRows(): Promise<ChallengeRow[]> {
-	const store = await storeReady();
-	const byChallenge = new Map<string, { at: number }[]>();
-	for (const serve of store.query(tables.serves)) {
-		const list = byChallenge.get(serve.challengeId);
-		if (list) list.push(serve);
-		else byChallenge.set(serve.challengeId, [serve]);
-	}
-	return store
-		.query(tables.challenges)
-		.map((row) => challengeRowFrom(row, byChallenge.get(row.id) ?? []));
+			}
+		}))
+	);
 }
 
 /**
@@ -351,12 +359,15 @@ async function allPoolRows(): Promise<ChallengeRow[]> {
  * one learner's pool is a few hundred rows, which is not worth an index.
  */
 export async function getPool(): Promise<ChallengeRow[]> {
-	return (await allPoolRows()).filter((row) => !row.reported);
+	const store = await ready();
+	const rows = await store.query<ChallengeSqlRow>('SELECT * FROM challenges WHERE reported = 0');
+	return rows.map(challengeRowFrom);
 }
 
 /** The whole pool, reported rows included — what sync merges over. */
 export async function getAllChallenges(): Promise<ChallengeRow[]> {
-	return allPoolRows();
+	const store = await ready();
+	return (await store.query<ChallengeSqlRow>('SELECT * FROM challenges')).map(challengeRowFrom);
 }
 
 /**
@@ -370,14 +381,10 @@ export async function getAllChallenges(): Promise<ChallengeRow[]> {
  * so `applyResult` can call this unconditionally.
  */
 export async function recordServe(id: string, now: number = Date.now()): Promise<void> {
-	const store = await storeReady();
-	if (
-		!store.query(
-			tables.challenges.where({ id }).first({ behaviour: 'fallback', fallback: () => null })
-		)
-	)
-		return;
-	store.commit(events.challengeServed({ eventId: newUuid(), challengeId: id, at: now }));
+	const store = await ready();
+	const known = await store.query('SELECT 1 FROM challenges WHERE id = ?', [id]);
+	if (known.length === 0) return;
+	await store.commit('challengeServed', { challengeId: id, at: now });
 }
 
 /**
@@ -385,8 +392,8 @@ export async function recordServe(id: string, now: number = Date.now()): Promise
  * point at it) but {@link getPool} never hands it out again.
  */
 export async function reportChallenge(id: string, _now: number = Date.now()): Promise<void> {
-	const store = await storeReady();
-	store.commit(events.challengeReported({ challengeId: id }));
+	const store = await ready();
+	await store.commit('challengeReported', { challengeId: id });
 }
 
 /**
@@ -396,12 +403,13 @@ export async function reportChallenge(id: string, _now: number = Date.now()): Pr
  */
 export async function getChallengesByIds(ids: string[]): Promise<Challenge[]> {
 	if (ids.length === 0) return [];
-	const store = await storeReady();
-	const wanted = new Set(ids);
-	return store
-		.query(tables.challenges)
-		.filter((row) => wanted.has(row.id))
-		.map((row) => row.content as Challenge);
+	const store = await ready();
+	const placeholders = ids.map(() => '?').join(', ');
+	const rows = await store.query<{ content: string }>(
+		`SELECT content FROM challenges WHERE id IN (${placeholders})`,
+		ids
+	);
+	return rows.map((row) => JSON.parse(row.content) as Challenge);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -409,56 +417,61 @@ export async function getChallengesByIds(ids: string[]): Promise<Challenge[]> {
 /* -------------------------------------------------------------------------- */
 
 export async function addResult(result: ChallengeResult): Promise<void> {
-	const store = await storeReady();
+	const store = await ready();
 	const plain = toPlain(result);
-	store.commit(
-		events.resultLogged({
-			eventId: newUuid(),
-			challengeId: plain.challengeId,
-			verdict: plain.verdict,
-			answerGiven: plain.answerGiven,
-			at: plain.at
-		})
-	);
-}
-
-/** One `results` row as the domain type, dropping the event id that keys it. */
-function resultFrom(row: {
-	challengeId: string;
-	verdict: string;
-	answerGiven: string;
-	at: number;
-}): ChallengeResult {
-	return {
-		challengeId: row.challengeId,
-		verdict: row.verdict as Verdict,
-		answerGiven: row.answerGiven,
-		at: row.at
-	};
+	await store.commit('resultLogged', {
+		challengeId: plain.challengeId,
+		verdict: plain.verdict,
+		answerGiven: plain.answerGiven,
+		at: plain.at
+	});
 }
 
 /** The whole answer log, oldest first. Used by genesis; the UI wants {@link recentResults}. */
 export async function getAllResults(): Promise<ChallengeResult[]> {
-	const store = await storeReady();
-	return store.query(tables.results.orderBy('at', 'asc')).map(resultFrom);
+	const store = await ready();
+	return (await store.query<ResultSqlRow>('SELECT * FROM results ORDER BY at ASC')).map(resultFrom);
 }
 
 /** The most recent results, newest first. */
 export async function recentResults(limit: number): Promise<ChallengeResult[]> {
 	if (limit <= 0) return [];
-	const store = await storeReady();
-	return store.query(tables.results.orderBy('at', 'desc').limit(limit)).map(resultFrom);
+	const store = await ready();
+	return (
+		await store.query<ResultSqlRow>('SELECT * FROM results ORDER BY at DESC LIMIT ?', [limit])
+	).map(resultFrom);
+}
+
+/**
+ * How many answers landed on each local calendar day, oldest day first.
+ *
+ * The materializer counts them as results arrive, so the streak and the
+ * activity graph cost one small table read instead of the whole answer log.
+ */
+export async function getDailyActivity(): Promise<{ day: string; count: number }[]> {
+	const store = await ready();
+	return store.query<{ day: string; count: number }>(
+		'SELECT day, count FROM daily ORDER BY day ASC'
+	);
 }
 
 /* -------------------------------------------------------------------------- */
 /* Export / import                                                             */
 /* -------------------------------------------------------------------------- */
 
+/** Empties the whole database, log included — Settings' "reset my progress". */
+export async function resetData(): Promise<void> {
+	const store = await ready();
+	await store.batch(
+		[...DERIVED_TABLES, 'events', 'meta'].map((table) => ({ sql: `DELETE FROM ${table}` }))
+	);
+}
+
 /** Envelope version written by {@link exportData}. */
 export const EXPORT_VERSION = 3;
 
 /** Envelope versions {@link importData} still restores from. */
-const SUPPORTED_IMPORT_VERSIONS = [1, 2];
+const LEGACY_IMPORT_VERSIONS = [1, 2];
 
 /** Shape of the JSON produced by {@link exportData}. */
 export interface ExportEnvelope {
@@ -467,187 +480,37 @@ export interface ExportEnvelope {
 	events: SyncEvent[];
 }
 
-/** Turns every LiveStore table row into the one event it would have produced. */
-function eventsFromTables(
-	items: readonly {
-		id: string;
-		kind: string;
-		term: string;
-		meaning: string;
-		romanization: string | null;
-		notes: string | null;
-		introducedAt: number;
-	}[],
-	reviews: readonly { id: string; itemId: string; at: number; grade: number; device: string }[],
-	tombstones: readonly { itemId: string }[],
-	challenges: readonly {
-		id: string;
-		content: unknown;
-		generatedAt: number;
-		topic: string | null;
-		reported: boolean;
-	}[],
-	serves: readonly { id: string; challengeId: string; at: number }[],
-	results: readonly {
-		id: string;
-		challengeId: string;
-		verdict: string;
-		answerGiven: string;
-		at: number;
-	}[],
-	profile: {
-		nativeLanguage: string;
-		targetLanguage: string;
-		level: string;
-		interests: string[];
-		about: string | null;
-		model: string;
-		createdAt: number;
-	} | null
-): SyncEvent[] {
-	const device = getDeviceId();
-	const out: SyncEvent[] = [];
-
-	for (const row of items) {
-		out.push({
-			id: `item:${row.id}`,
-			type: 'itemAdded',
-			at: row.introducedAt,
-			device,
-			payload: {
-				id: row.id,
-				kind: row.kind,
-				term: row.term,
-				meaning: row.meaning,
-				...(row.romanization === null ? {} : { romanization: row.romanization }),
-				...(row.notes === null ? {} : { notes: row.notes }),
-				introducedAt: row.introducedAt
-			}
-		});
-	}
-
-	for (const row of reviews) {
-		out.push({
-			id: `review:${row.id}`,
-			type: 'itemReviewed',
-			at: row.at,
-			device: row.device,
-			payload: { device: row.device, at: row.at, itemId: row.itemId, grade: row.grade }
-		});
-	}
-
-	for (const row of tombstones) {
-		out.push({
-			id: `tombstone:${row.itemId}`,
-			type: 'itemDeleted',
-			at: 0,
-			device,
-			payload: { itemId: row.itemId }
-		});
-	}
-
-	for (const row of challenges) {
-		out.push({
-			id: `challenge:${row.id}`,
-			type: 'challengeAdded',
-			at: row.generatedAt,
-			device,
-			payload: {
-				challenge: row.content,
-				generatedAt: row.generatedAt,
-				...(row.topic === null ? {} : { topic: row.topic })
-			}
-		});
-		if (row.reported) {
-			out.push({
-				id: `reported:${row.id}`,
-				type: 'challengeReported',
-				at: row.generatedAt,
-				device,
-				payload: { challengeId: row.id }
-			});
-		}
-	}
-
-	for (const row of serves) {
-		out.push({
-			id: row.id,
-			type: 'challengeServed',
-			at: row.at,
-			device,
-			payload: { challengeId: row.challengeId, at: row.at }
-		});
-	}
-
-	for (const row of results) {
-		out.push({
-			id: row.id,
-			type: 'resultLogged',
-			at: row.at,
-			device,
-			payload: {
-				challengeId: row.challengeId,
-				verdict: row.verdict,
-				answerGiven: row.answerGiven,
-				at: row.at
-			}
-		});
-	}
-
-	if (profile) {
-		out.push({
-			id: 'profile',
-			type: 'profileUpdated',
-			at: profile.createdAt,
-			device,
-			payload: {
-				nativeLanguage: profile.nativeLanguage,
-				targetLanguage: profile.targetLanguage,
-				level: profile.level,
-				interests: profile.interests,
-				...(profile.about === null ? {} : { about: profile.about }),
-				model: profile.model,
-				createdAt: profile.createdAt
-			}
-		});
-	}
-
-	return out;
+interface EventSqlRow {
+	id: string;
+	type: string;
+	at: number;
+	device: string;
+	payload: string;
 }
 
 /**
- * Serializes the whole eventlog as JSON — one event per table row, with a
- * deterministic id so re-exporting an unchanged store reproduces it exactly.
- * Excludes only the API key, which lives in `localStorage`.
+ * Serializes the whole log as JSON. The log *is* the data, so the file is
+ * complete — pool, serves and results included. Excludes only the API key,
+ * which lives in `localStorage`.
+ *
+ * Written in `LOG_ORDER`, so the file carries the causal order that produced it
+ * and an importing device replays it the same way.
  */
 export async function exportData(): Promise<string> {
-	const store = await storeReady();
-	const profileRow = store.query(
-		tables.profile.where({ id: PROFILE_ID }).first({ behaviour: 'fallback', fallback: () => null })
-	);
-	const syncEvents = eventsFromTables(
-		store.query(tables.items),
-		store.query(tables.reviews),
-		store.query(tables.tombstones),
-		store.query(tables.challenges),
-		store.query(tables.serves),
-		store.query(tables.results),
-		profileRow
-			? {
-					nativeLanguage: profileRow.nativeLanguage,
-					targetLanguage: profileRow.targetLanguage,
-					level: profileRow.level,
-					interests: [...profileRow.interests],
-					about: profileRow.about,
-					model: profileRow.model,
-					createdAt: profileRow.createdAt
-				}
-			: null
+	const store = await ready();
+	const rows = await store.query<EventSqlRow>(
+		`SELECT id, type, at, device, payload FROM events ORDER BY ${LOG_ORDER}`
 	);
 	const envelope: ExportEnvelope = {
 		version: EXPORT_VERSION,
 		exportedAt: Date.now(),
-		events: syncEvents
+		events: rows.map((row) => ({
+			id: row.id,
+			type: row.type as SyncEvent['type'],
+			at: row.at,
+			device: row.device,
+			payload: JSON.parse(row.payload) as unknown
+		}))
 	};
 	return JSON.stringify(envelope, null, 2);
 }
@@ -664,17 +527,63 @@ interface LegacyExportEnvelope {
 	items: KnowledgeItem[];
 }
 
+/** v1/v2: replaces the item list wholesale, as those envelopes meant. */
+async function importLegacy(parsed: Record<string, unknown>): Promise<void> {
+	if (!Array.isArray(parsed.items)) throw new Error('Import failed: missing item list.');
+	if (parsed.profile !== null && !isRecord(parsed.profile)) {
+		throw new Error('Import failed: malformed profile.');
+	}
+
+	const envelope = toPlain(parsed as unknown as LegacyExportEnvelope);
+	const store = await ready();
+	const device = getDeviceId();
+	const facts: Fact[] = [];
+
+	for (const row of await store.query<{ id: string }>('SELECT id FROM items')) {
+		facts.push({ type: 'itemDeleted', payload: { itemId: row.id } });
+	}
+
+	for (const item of envelope.items) {
+		facts.push({
+			type: 'itemAdded',
+			payload: {
+				id: item.id,
+				kind: item.kind,
+				term: item.term,
+				meaning: item.meaning,
+				...(item.romanization === undefined ? {} : { romanization: item.romanization }),
+				...(item.notes === undefined ? {} : { notes: item.notes }),
+				introducedAt: item.introducedAt
+			}
+		});
+		for (const entry of item.history ?? []) {
+			facts.push({
+				type: 'itemReviewed',
+				payload: {
+					device: entry.device ?? device,
+					at: entry.at,
+					itemId: item.id,
+					grade: entry.grade
+				}
+			});
+		}
+	}
+
+	await store.commitAll(facts);
+	if (envelope.profile) await saveProfile(envelope.profile);
+}
+
 /**
- * Restores a v1 or v2 dump, replacing existing items. A v3 export is rejected
- * — this LiveStore build only produces v3, the next one reads it back.
+ * Restores a dump.
  *
- * "Replacing" is the awkward part in an append-only model, and it is done
- * honestly rather than by reaching under the log: every existing item is
- * deleted with a real `item-deleted`, and every imported one re-enters as an
- * `item-added` plus one `item-reviewed` per history entry. The restored card
- * therefore comes out of `deriveCard` replaying that history, which is the same
- * card the exporting device had — an import can no longer smuggle in a card
- * that disagrees with the reviews under it.
+ * A v3 file is the log itself: its events are unioned in by id — anything
+ * already present is skipped — and the read model is rebuilt from the result.
+ * That makes an import idempotent and order-free, so re-importing an old file
+ * cannot resurrect a word deleted since or revert a profile edited since; the
+ * tombstone and the newer `at` both outrank it.
+ *
+ * A v1/v2 file predates the log and replaces the item list wholesale, which is
+ * what those envelopes meant.
  */
 export async function importData(json: string): Promise<void> {
 	let parsed: unknown;
@@ -685,51 +594,23 @@ export async function importData(json: string): Promise<void> {
 	}
 
 	if (!isRecord(parsed)) throw new Error('Import failed: unexpected file contents.');
-	if (parsed.version === 3) {
-		throw new Error('Import failed: v3 exports are read by the next version of Sapling.');
+
+	if (parsed.version === EXPORT_VERSION) {
+		if (!Array.isArray(parsed.events)) throw new Error('Import failed: missing event list.');
+		const events = parsed.events
+			.map((raw) => parseEvent(raw))
+			.filter((event): event is SyncEvent => event !== undefined);
+		const store = await ready();
+		await store.importEvents(events);
+		return;
 	}
+
 	// A v1 envelope still restores: it carries a `stats` field that no longer
 	// means anything, and everything else is unchanged, so it is simply ignored.
-	if (typeof parsed.version !== 'number' || !SUPPORTED_IMPORT_VERSIONS.includes(parsed.version)) {
+	if (typeof parsed.version !== 'number' || !LEGACY_IMPORT_VERSIONS.includes(parsed.version)) {
 		throw new Error(`Import failed: unsupported export version ${String(parsed.version)}.`);
 	}
-	if (!Array.isArray(parsed.items)) throw new Error('Import failed: missing item list.');
-	if (parsed.profile !== null && !isRecord(parsed.profile)) {
-		throw new Error('Import failed: malformed profile.');
-	}
-
-	const envelope = toPlain(parsed as unknown as LegacyExportEnvelope);
-	const store = await storeReady();
-
-	for (const row of store.query(tables.items)) {
-		store.commit(events.itemDeleted({ itemId: row.id }));
-	}
-
-	for (const item of envelope.items) {
-		store.commit(
-			events.itemAdded({
-				id: item.id,
-				kind: item.kind,
-				term: item.term,
-				meaning: item.meaning,
-				...(item.romanization === undefined ? {} : { romanization: item.romanization }),
-				...(item.notes === undefined ? {} : { notes: item.notes }),
-				introducedAt: item.introducedAt
-			})
-		);
-		for (const entry of item.history ?? []) {
-			store.commit(
-				events.itemReviewed({
-					device: entry.device ?? getDeviceId(),
-					at: entry.at,
-					itemId: item.id,
-					grade: entry.grade
-				})
-			);
-		}
-	}
-
-	if (envelope.profile) await saveProfile(envelope.profile);
+	await importLegacy(parsed);
 }
 
 export { challengeOf };

@@ -23,7 +23,7 @@ export interface WordRow {
 	due: boolean;
 	strength: number;
 	retrievability: number;
-	/** Fraction of history entries graded Good or better; `null` when never reviewed. */
+	/** Fraction of reviews graded Good or better; `null` when never reviewed. */
 	accuracy: number | null;
 	lastReviewAt: number | null;
 }
@@ -31,11 +31,12 @@ export interface WordRow {
 export function toWordRow(item: KnowledgeItem, now: number): WordRow {
 	const card = item.fsrsCard as FsrsCardState;
 
-	let accuracy: number | null = null;
-	if (item.history.length > 0) {
-		const correct = item.history.filter((entry) => entry.grade >= Grade.Good).length;
-		accuracy = correct / item.history.length;
-	}
+	// Counters, not the history: the ledger renders every word the learner has,
+	// and `getAllItems` deliberately does not carry their review entries.
+	const reviews = item.reviewCount ?? item.history.length;
+	const correct =
+		item.correctCount ?? item.history.filter((entry) => entry.grade >= Grade.Good).length;
+	const accuracy = reviews === 0 ? null : correct / reviews;
 
 	return {
 		item,

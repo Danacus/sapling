@@ -62,15 +62,14 @@ const PRECACHED = new Set(PRECACHE);
  * reaches {@link PRECACHE}.
  *
  * SvelteKit assembles `build` from Vite's *client manifest*, and a `?worker`
- * import is a separate Rollup build that never appears there. The LiveStore
- * leader and shared workers are therefore emitted, served, and absent from the
+ * import is a separate Rollup build that never appears there. The database
+ * worker and its WASM are therefore emitted, served, and absent from the
  * precache list. `install` still succeeds, so nothing looks wrong — right up
  * until a learner who installed the PWA opens it offline and the database
  * cannot start, which is the whole local-first promise gone.
  *
  * Adopting these URLs on first fetch closes that without having to predict
- * their filenames, which matters while LiveStore is pre-1.0 and free to rename
- * its output. It also stays out of `cache.addAll`: that call rejects
+ * their filenames. It also stays out of `cache.addAll`: that call rejects
  * atomically, so every path added to it is another way for `install` to fail
  * silently.
  */
@@ -149,7 +148,7 @@ sw.addEventListener('fetch', (event) => {
 				// Adopt a hashed asset the precache list never knew about.
 				//
 				// Deliberately *not* awaited. The response has to reach the page as
-				// soon as it arrives — the biggest assets here are the LiveStore
+				// soon as it arrives — the biggest assets here are the database
 				// worker and its WASM, and holding those behind a cache write would
 				// put a storage round-trip in front of the app's own boot.
 				//

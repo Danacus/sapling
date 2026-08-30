@@ -5,7 +5,6 @@
 
 	import favicon from '$lib/assets/favicon.svg';
 	import { getProfile } from '$lib/db';
-	import { storeReady } from '$lib/livestore/store';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	import '../app.css';
@@ -15,15 +14,8 @@
 	/** Blocks rendering until we know whether onboarding is still required. */
 	let checking = $state(browser);
 
-	// Boot the data layer here rather than on first use, and deliberately so.
-	// The service worker adopts `/_app/immutable/**` into its cache on first
-	// *fetch*, so a learner who installs the PWA, never opens a lesson and then
-	// goes offline would otherwise have no cached leader worker — and therefore
-	// no database at all — on the next launch. Booting from the layout means
-	// every route pays for it once and offline never depends on which screens
-	// the learner happened to visit. Idempotent, and every repository call
-	// awaits the same promise.
-	if (browser) void storeReady();
+	/** The database could not be opened at all — another tab holds it. */
+	let bootError = $state<string | undefined>(undefined);
 
 	/**
 	 * A tab left open across a deploy keeps running the old build's JS. When it
@@ -64,9 +56,11 @@
 				}
 				checking = false;
 			})
-			.catch(() => {
-				// A broken/blocked IndexedDB should not leave the app on a spinner.
-				if (!cancelled) checking = false;
+			.catch((error: unknown) => {
+				// A database that will not open must not leave the app on a spinner.
+				if (cancelled) return;
+				bootError = error instanceof Error ? error.message : 'The database could not be opened.';
+				checking = false;
 			});
 
 		return () => {
@@ -79,7 +73,11 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
-{#if checking}
+{#if bootError}
+	<div class="boot">
+		<p>{bootError}</p>
+	</div>
+{:else if checking}
 	<div class="boot">
 		<Spinner />
 	</div>
@@ -92,5 +90,7 @@
 		display: grid;
 		place-items: center;
 		min-height: 100dvh;
+		padding: var(--gutter);
+		text-align: center;
 	}
 </style>
