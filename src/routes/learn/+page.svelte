@@ -46,6 +46,7 @@
 	import { motionMs } from '$lib/session/motion';
 	import { planReadings, type ReadingPlan } from '$lib/session/romanization';
 	import type { FsrsCardState, Grade } from '$lib/srs';
+	import { runSync } from '$lib/sync';
 	import { getTtsEngine, kokoroSupports, preloadKokoro, warmSpeech } from '$lib/tts';
 	import type { Challenge, KnowledgeItem, Profile, Verdict } from '$lib/types';
 	import { addRecentTopic, getRecentTopics, getRomanizationMode } from '$lib/ui/prefs';
@@ -764,6 +765,9 @@
 		// this session's own results are already in the log being folded.
 		endStreak = streakFrom((await getDailyActivity()).map((entry) => entry.day));
 		phase = 'summary';
+		// The session's writes are in the log; the summary is a moment nobody is
+		// waiting on, so it is the natural place to push them.
+		void runSync();
 	}
 
 	function requestQuit(): void {

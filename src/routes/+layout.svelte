@@ -5,6 +5,7 @@
 
 	import favicon from '$lib/assets/favicon.svg';
 	import { getProfile } from '$lib/db';
+	import { runSync } from '$lib/sync';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	import '../app.css';
@@ -36,7 +37,17 @@
 			sessionStorage.setItem('ll.reloadedForPreloadError', '1');
 			window.location.reload();
 		});
+
+		// Coming back to the tab is the one moment worth spending a sync on: the
+		// device has probably been away, and another one has probably written.
+		// There is nothing periodic — `runSync` no-ops when sync is off.
+		document.addEventListener('visibilitychange', () => {
+			if (document.visibilityState === 'visible') void runSync();
+		});
 	}
+
+	/** Boot sync fires once, not on every navigation the effect below re-runs on. */
+	let syncKicked = false;
 
 	$effect(() => {
 		// Re-runs on every navigation: `page.url.pathname` is the tracked read.
@@ -55,6 +66,12 @@
 					return;
 				}
 				checking = false;
+				// Fire-and-forget, strictly after the render gate: sync must never
+				// be something the app waits on.
+				if (!syncKicked) {
+					syncKicked = true;
+					void runSync();
+				}
 			})
 			.catch((error: unknown) => {
 				// A database that will not open must not leave the app on a spinner.

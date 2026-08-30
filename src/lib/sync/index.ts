@@ -16,4 +16,5 @@ export {
 } from './config';
 export { formatPhrase, isValidPhrase, mintPhrase, normalizePhrase, PHRASE_LENGTH } from './phrase';
 export { probeSync, type SyncProbeResult } from './probe';
+export { lastSyncOutcome, runSync, type SyncOutcome, type SyncRecord } from './run';
 export { SYNC_URL } from './url';

@@ -23,11 +23,14 @@
 		getSyncPhrase,
 		isSyncAvailable,
 		isSyncEnabled,
+		lastSyncOutcome,
 		probeSync,
+		runSync,
 		setSyncEnabled,
 		setSyncPhrase,
 		SYNC_URL,
-		type SyncProbeResult
+		type SyncProbeResult,
+		type SyncRecord
 	} from '$lib/sync';
 	import {
 		audioCacheBytes,
@@ -137,6 +140,9 @@
 	/** Live connection check — the only honest feedback sync can give. */
 	let probing = $state(false);
 	let probe = $state<SyncProbeResult | undefined>(undefined);
+	let syncing = $state(false);
+	/** What the last cycle did, from wherever it ran — boot, a session, or here. */
+	let lastRun = $state<SyncRecord | undefined>(undefined);
 
 	// Export / import -----------------------------------------------------------
 	let exportStatus = $state<Status>('idle');
@@ -177,6 +183,7 @@
 				syncAvailable = isSyncAvailable();
 				syncEnabled = isSyncEnabled();
 				syncPhrase = getSyncPhrase();
+				lastRun = lastSyncOutcome();
 				// Goes to the network, so it must not hold up the page.
 				if (syncEnabled) void checkSyncConnection();
 
@@ -280,6 +287,14 @@
 		probing = true;
 		probe = await probeSync(SYNC_URL, phrase);
 		probing = false;
+	}
+
+	/** Runs a cycle now. It never throws; the outcome is the whole feedback. */
+	async function syncNow() {
+		syncing = true;
+		await runSync();
+		lastRun = lastSyncOutcome();
+		syncing = false;
 	}
 
 	async function copyPhrase() {
@@ -983,7 +998,15 @@
 									Not checked yet.
 								{/if}
 							</p>
+							{#if lastRun}
+								<p class="hint">
+									Last sync {new Date(lastRun.at).toLocaleString()} — {lastRun.message}
+								</p>
+							{/if}
 							<div class="actions-row">
+								<button type="button" class="btn" onclick={() => void syncNow()} disabled={syncing}>
+									{syncing ? 'Syncing…' : 'Sync now'}
+								</button>
 								<button
 									type="button"
 									class="btn btn-ghost"

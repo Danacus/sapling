@@ -1,161 +1,66 @@
 /**
- * Sapling's sync backend: a Cloudflare Worker in front of one Durable Object
- * per learner.
+ * Sapling's sync backend: one Durable Object per learner, and nothing else.
  *
- * It does very little on purpose, and that is the payoff of the LiveStore
- * migration rather than an omission. It accepts pushed events, assigns them a
- * **global total order**, and relays them on pull. It never merges and never
- * looks inside a payload — every merge rule lives in
- * `src/lib/livestore/materializers.ts` and resolves by *position in the log*.
- * A backend that reordered, deduplicated or rewrote events would change
- * application behaviour without ever reading one.
+ * It assigns every event a sequence number and hands events back in that order.
+ * It never merges, never reads a payload and never rewrites anything — every
+ * merge rule lives in `src/lib/db/materialize.ts` and is order-independent, so
+ * the order here is a cursor, not a decision.
  *
- * Two things are ours rather than `@livestore/sync-cf`'s stock `makeWorker`:
+ * Access control is the pairing phrase, carried as `Authorization: Bearer`.
+ * The room is named `SHA-256(phrase)` (`room.ts`), so a caller who cannot
+ * produce the phrase cannot address the room; `SYNC_ALLOWED_PHRASES` narrows a
+ * personal deployment to a fixed set so a leaked URL is not free storage.
  *
- * 1. **The room is named by the pairing phrase, not by the client's storeId.**
- *    Clients all send `storeId: 'sapling'` — their store is local, and its name
- *    is a local fact. What separates one learner from another is the phrase, so
- *    this handler rewrites the request to `SHA-256(phrase)` before delegating,
- *    and Cloudflare's `idFromName` isolates the log from there (`room.ts`).
+ * Only handlers and Durable Object classes may be exported from here — workerd
+ * rejects anything else — so the pure request parsing lives in `protocol.ts`.
  *
- *    Doing it here rather than on the client is what keeps the client's storeId
- *    fixed forever. If the store's *local* name were derived from the phrase,
- *    then pairing a device would rename its store — which in OPFS means a new,
- *    empty database, with everything written before pairing left behind in the
- *    old one. Nothing on disk moves under this design; pairing changes only
- *    which room the events are relayed through.
- *
- * 2. **Access control is `validatePayload`, and it is stateless.** Possession
- *    of the phrase is the authorisation: the room's name is derived from it, so
- *    a caller who cannot produce it cannot address the room. The optional
- *    `SYNC_ALLOWED_PHRASES` narrows that further to a fixed set, which is what
- *    turns a personal deployment into something other than an open relay.
- *
- * Deploy with `pnpm sync:deploy`; run it locally with `pnpm sync:dev`. See
- * `docs/livestore-sync.md`.
+ * Deploy with `pnpm sync:deploy`, run it locally with `pnpm sync:dev`.
  */
-import type { CfTypes } from '@livestore/sync-cf/cf-worker';
-import {
-	handleSyncRequest,
-	makeDurableObject,
-	matchSyncRequest
-} from '@livestore/sync-cf/cf-worker';
-
 import { normalizePhrase } from '../src/lib/sync/phrase';
+import { bearerPhrase, pullRange, pushedEvents } from './protocol';
 import { roomIdForPhrase } from './room';
 
 /**
- * Lets the app read these replies from its own origin.
- *
- * Declared above the Durable Object because the class body below is evaluated
- * at module load and passes this object to `makeDurableObject` — a `const`
- * declared further down would still be in its temporal dead zone.
- *
- * `*` looks broad and is not, because it is not what protects the log. The
- * pairing phrase is: it names the room, it travels in the query string, and a
- * caller who cannot produce it gets a 401 before the Durable Object is ever
- * addressed. CORS only decides which *browser* origins may read a reply, and it
- * has never applied to `curl`, so restricting it would defend against nobody
- * who is not already stopped. Pinning it to the Pages origin is also not
- * available: preview deployments each get their own hostname.
- *
- * (This used to say `*` was safe because the replies "carry no data". That
- * stopped being true when sync moved to HTTP — these responses now carry the
- * eventlog. The reason it is still safe is the phrase, not the emptiness.)
+ * `*` because it is not what protects the log — the phrase is. CORS decides
+ * which *browser* origins may read a reply and has never applied to `curl`, and
+ * pinning it to the Pages origin is not available anyway: preview deployments
+ * each get their own hostname.
  */
-const CORS = { 'Access-Control-Allow-Origin': '*' };
-
-/**
- * One Durable Object per room, storing that room's eventlog in DO SQLite.
- *
- * **HTTP is the only transport enabled**, and that is a deliberate reversal.
- * WebSocket was chosen first because it hibernates between messages, so an idle
- * learner costs no CPU. What that traded away was worse: a hibernating Durable
- * Object drops the in-memory Effect RPC server that owns an in-flight pull,
- * and `@effect/rpc`'s streaming protocol only advances when the *client*
- * acknowledges each page — an acknowledgement it sends after materialising it.
- * A leader slow enough to take ten seconds over a page therefore let the
- * Durable Object hibernate mid-stream, and the acknowledgement then arrived at
- * a freshly-woken server that had never heard of the request and dropped it on
- * the floor. Sync stopped, in silence, with the socket still open. See
- * `docs/sync-stall.md`.
- *
- * Over HTTP a pull is one request. Cloudflare keeps the Durable Object in
- * memory for its duration, there is no cross-message state to lose, and
- * `makeProtocolHttp` reports `supportsAck: false` so the server never waits on
- * the client at all. Between syncs there is no connection, and therefore
- * nothing to hibernate, time out or orphan.
- *
- * The bill is CORS: a cross-origin POST carrying `content-type` and
- * `x-livestore-store-id` is preflighted, and `handleSyncRequest` returns the
- * Durable Object's response verbatim, so the header has to come from here.
- */
-export class SyncBackendDO extends makeDurableObject({
-	enabledTransports: new Set<'http'>(['http']),
-	http: { responseHeaders: CORS }
-}) {}
+const CORS = {
+	'Access-Control-Allow-Origin': '*',
+	'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+	'Access-Control-Allow-Headers': 'authorization, content-type',
+	'Access-Control-Max-Age': '86400'
+};
 
 type Env = {
+	SYNC_ROOM: DurableObjectNamespace;
 	/**
-	 * Typed through `CfTypes` rather than the global `DurableObjectNamespace`.
-	 * They are two different declarations of the same thing, and asking
-	 * TypeScript to reconcile them inside `@livestore/sync-cf`'s binding-name
-	 * lookup makes it give up with "type instantiation is excessively deep".
-	 */
-	SYNC_BACKEND_DO: CfTypes.DurableObjectNamespace;
-	/**
-	 * Optional allow-list of pairing phrases, comma-separated.
-	 *
-	 * Unset, any well-formed phrase opens a room — fine for a private URL
-	 * nobody else knows, and the wrong default for a URL that leaks. Set it
-	 * (`wrangler secret put SYNC_ALLOWED_PHRASES`) and the Worker will serve
-	 * only the listed learners, so a stranger who finds the endpoint cannot use
-	 * it as free storage.
+	 * Optional allow-list of pairing phrases, comma-separated. Unset, any
+	 * well-formed phrase opens a room; set it (`wrangler secret put
+	 * SYNC_ALLOWED_PHRASES`) and only the listed learners are served.
 	 */
 	SYNC_ALLOWED_PHRASES?: string;
 };
 
-/**
- * Answers a CORS preflight.
- *
- * Every sync request is now a cross-origin POST carrying `content-type` and
- * `x-livestore-store-id`, and a custom header always earns a preflight. Without
- * this the browser never sends the real request, and the failure surfaces only
- * as a console message inside a Web Worker — which is the *worst* place for
- * this app to hide a fault, given how much of `docs/sync-stall.md` is about
- * failures that made no noise.
- *
- * The requested headers are echoed rather than listed, so that a header
- * `@livestore/sync-cf` adds in some future version cannot silently break
- * pairing. Allowing a request header discloses nothing: the reply is still
- * gated by the phrase.
- *
- * A preflight is answered without checking the phrase, because it carries no
- * credentials to check and rejecting it would break the authorised request
- * behind it. It leaks nothing either — the answer is identical whether or not
- * the phrase that follows is any good.
- */
-function preflight(request: Request): Response {
-	return new Response(null, {
-		status: 204,
-		headers: {
-			...CORS,
-			'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-			'Access-Control-Allow-Headers':
-				request.headers.get('Access-Control-Request-Headers') ??
-				'content-type, x-livestore-store-id',
-			// Browsers cap this themselves (Chrome at two hours), but without it
-			// every RPC call pays for a second round trip.
-			'Access-Control-Max-Age': '86400'
-		}
+interface EventRow extends Record<string, SqlStorageValue> {
+	seq: number;
+	id: string;
+	type: string;
+	at: number;
+	device: string;
+	payload: string;
+}
+
+function json(body: unknown, status = 200): Response {
+	return new Response(JSON.stringify(body), {
+		status,
+		headers: { 'Content-Type': 'application/json', ...CORS }
 	});
 }
 
-/** The phrase a client presented, or `undefined` if it presented none. */
-function phraseFromPayload(payload: unknown): string | undefined {
-	if (typeof payload !== 'object' || payload === null) return undefined;
-	const phrase = (payload as { phrase?: unknown }).phrase;
-	return typeof phrase === 'string' ? phrase : undefined;
+function text(body: string, status = 200): Response {
+	return new Response(body, { status, headers: { 'Content-Type': 'text/plain', ...CORS } });
 }
 
 /** Whether this deployment will serve the given (normalised) phrase. */
@@ -168,63 +73,113 @@ function isAllowed(env: Env, phrase: string): boolean {
 		.includes(phrase);
 }
 
-export default {
-	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-		// Before the routing below, not after: a preflight goes to the same URL as
-		// the request it precedes, query string and all, so it would otherwise
-		// match as a sync request and be forwarded to a Durable Object that
-		// answers it without any CORS header at all.
-		if (request.method === 'OPTIONS') return preflight(request);
+/** One learner's log, in the Durable Object's own SQLite. */
+export class SyncRoom implements DurableObject {
+	private readonly sql: SqlStorage;
 
-		const searchParams = matchSyncRequest(request as never);
+	constructor(ctx: DurableObjectState) {
+		this.sql = ctx.storage.sql;
+		// `id` is unique so a re-push is a no-op; `seq` is the total order clients
+		// page through, and AUTOINCREMENT keeps it from ever going backwards.
+		this.sql.exec(
+			`CREATE TABLE IF NOT EXISTS events (
+			   seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE, type TEXT,
+			   at INTEGER, device TEXT, payload TEXT)`
+		);
+	}
 
-		if (searchParams === undefined) {
-			// Not a sync request. A bare GET is somebody checking the deployment is
-			// up; anything else is a mistake worth naming rather than routing.
-			const url = new URL(request.url);
-			return url.pathname === '/' && request.method === 'GET'
-				? new Response('Sapling sync backend.\n', {
-						headers: { 'Content-Type': 'text/plain', ...CORS }
-					})
-				: new Response('Not found\n', {
-						status: 404,
-						headers: { 'Content-Type': 'text/plain', ...CORS }
-					});
-		}
-
-		const presented = phraseFromPayload(searchParams.payload);
-		const roomId = presented === undefined ? undefined : await roomIdForPhrase(presented);
-
-		// One response for "no phrase", "malformed phrase" and "not on the
-		// allow-list" alike: telling a caller *which* of those it got would let
-		// them use the endpoint to test phrases.
-		if (presented === undefined || roomId === undefined) {
-			return new Response('Unauthorized\n', { status: 401, headers: CORS });
-		}
-		if (!isAllowed(env, normalizePhrase(presented))) {
-			return new Response('Unauthorized\n', { status: 401, headers: CORS });
-		}
-
-		// Rewrite the request itself, not just the value handed to
-		// `handleSyncRequest`: the Durable Object re-reads `storeId` from the URL
-		// it is given, so leaving the original in place would have every room
-		// recording itself under the client's local name.
+	async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
-		url.searchParams.set('storeId', roomId);
-		const rewritten = new Request(url, request);
+		if (request.method === 'POST' && url.pathname === '/push') return this.push(request);
+		if (request.method === 'GET' && url.pathname === '/pull') return this.pull(url);
+		return text('Not found\n', 404);
+	}
 
-		// Awaited into a local rather than returned directly: handing the call's
-		// result straight to the declared `Promise<Response>` return type makes
-		// TypeScript infer this generic signature against it and give up
-		// ("excessively deep"). The `await` breaks that chain.
-		const response = await handleSyncRequest({
-			request: rewritten as never,
-			searchParams: { ...searchParams, storeId: roomId },
-			env,
-			ctx: ctx as never,
-			syncBackendBinding: 'SYNC_BACKEND_DO',
-			headers: CORS
+	private async push(request: Request): Promise<Response> {
+		let body: unknown;
+		try {
+			body = await request.json();
+		} catch {
+			return text('Bad request\n', 400);
+		}
+		const events = pushedEvents(body);
+		if (events === undefined) return text('Bad request\n', 400);
+		if (events.length === 0) return json({ seqs: {} });
+
+		for (const event of events) {
+			this.sql.exec(
+				'INSERT OR IGNORE INTO events (id, type, at, device, payload) VALUES (?, ?, ?, ?, ?)',
+				event.id,
+				event.type,
+				event.at,
+				event.device,
+				JSON.stringify(event.payload ?? null)
+			);
+		}
+
+		// Read back rather than tracking inserts: an id that was already here has
+		// a seq the pusher still needs, and it is the same answer either way.
+		const placeholders = events.map(() => '?').join(',');
+		const rows = this.sql
+			.exec<{ id: string; seq: number }>(
+				`SELECT id, seq FROM events WHERE id IN (${placeholders})`,
+				...events.map((event) => event.id)
+			)
+			.toArray();
+
+		const seqs: Record<string, number> = {};
+		for (const row of rows) seqs[row.id] = row.seq;
+		return json({ seqs });
+	}
+
+	private pull(url: URL): Response {
+		const { after, limit } = pullRange(url);
+		const rows = this.sql
+			.exec<EventRow>(
+				'SELECT seq, id, type, at, device, payload FROM events WHERE seq > ? ORDER BY seq LIMIT ?',
+				after,
+				limit
+			)
+			.toArray();
+		const latest =
+			this.sql.exec<{ latest: number | null }>('SELECT MAX(seq) AS latest FROM events').toArray()[0]
+				?.latest ?? 0;
+
+		return json({
+			events: rows.map((row) => ({
+				seq: row.seq,
+				id: row.id,
+				type: row.type,
+				at: row.at,
+				device: row.device,
+				payload: JSON.parse(row.payload) as unknown
+			})),
+			latest
 		});
-		return response as unknown as Response;
+	}
+}
+
+export default {
+	async fetch(request: Request, env: Env): Promise<Response> {
+		// Before routing: a preflight goes to the same URL as the request it
+		// precedes and carries no credentials to check.
+		if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+
+		const url = new URL(request.url);
+		if (request.method === 'GET' && url.pathname === '/') {
+			return text('Sapling sync backend.\n');
+		}
+		if (url.pathname !== '/push' && url.pathname !== '/pull') return text('Not found\n', 404);
+
+		// One answer for "no phrase", "malformed phrase" and "not allowed" alike:
+		// telling a caller which it got would let them use the endpoint to test
+		// phrases.
+		const phrase = bearerPhrase(request.headers.get('Authorization'));
+		const roomId = phrase === undefined ? undefined : await roomIdForPhrase(phrase);
+		if (phrase === undefined || roomId === undefined || !isAllowed(env, phrase)) {
+			return text('Unauthorized\n', 401);
+		}
+
+		return env.SYNC_ROOM.get(env.SYNC_ROOM.idFromName(roomId)).fetch(request);
 	}
 };

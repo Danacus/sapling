@@ -5,20 +5,11 @@
 	// apart leaves `static/_headers` and `static/_redirects` — and the two
 	// caching incidents they encode — exactly as they are.
 	//
-	// See `worker/index.ts` for what it does and `docs/livestore-sync.md` for
-	// how to stand it up the first time.
+	// See `worker/index.ts` for what it does.
 	"$schema": "./node_modules/wrangler/config-schema.json",
 	"name": "sapling-sync",
 	"main": "worker/index.ts",
 	"compatibility_date": "2026-08-01",
-	// `nodejs_als` — Effect (which LiveStore is built on) uses AsyncLocalStorage.
-	//
-	// `enable_request_signal` — the HTTP transport answers a pull with a
-	// *streaming* response body, and needs `Request.signal` to notice a client
-	// that walks away mid-stream. `@livestore/sync-cf`'s HTTP client says so in
-	// as many words. It has **no default-on compatibility date**, so a recent
-	// `compatibility_date` does not grant it and it has to be named here.
-	"compatibility_flags": ["nodejs_als", "enable_request_signal"],
 	"observability": { "enabled": true },
 
 	// The public address, and the one the app is built against
@@ -31,10 +22,18 @@
 	"routes": [{ "pattern": "sapling-sync.vanoverloop.xyz", "custom_domain": true }],
 
 	// One Durable Object per room, keyed by the hash of a pairing phrase. The
-	// eventlog lives in the DO's own SQLite: no D1, nothing else to provision,
-	// and it is on the free plan.
+	// log lives in the DO's own SQLite: no D1, nothing else to provision, and it
+	// is on the free plan.
 	"durable_objects": {
-		"bindings": [{ "name": "SYNC_BACKEND_DO", "class_name": "SyncBackendDO" }]
+		"bindings": [{ "name": "SYNC_ROOM", "class_name": "SyncRoom" }]
 	},
-	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SyncBackendDO"] }]
+
+	// `v1` stays as it is — a migration tag that has already run may never be
+	// edited. `v2` replaces the LiveStore-era class with `SyncRoom`; deleting
+	// `SyncBackendDO` drops the log it held, which the v3 export file is the
+	// copy of.
+	"migrations": [
+		{ "tag": "v1", "new_sqlite_classes": ["SyncBackendDO"] },
+		{ "tag": "v2", "new_sqlite_classes": ["SyncRoom"], "deleted_classes": ["SyncBackendDO"] }
+	]
 }
