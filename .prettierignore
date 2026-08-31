@@ -14,3 +14,7 @@ static/tts/sherpa-onnx-*.js
 # Markdown is hand-wrapped prose here, and prettier rewrites *emphasis* to
 # _emphasis_ against the house style. Formatting is for code.
 *.md
+
+# Python virtualenvs (tools/hardsub-ocr) — gitignored, but prettier walks the
+# filesystem, not the index, and paddle ships JSON it cannot even parse.
+.venv
