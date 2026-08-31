@@ -2,34 +2,82 @@
  * Pieces shared by more than one tool: the term-matching rule, the failure
  * shape, and the zod fragments the argument schemas are built from.
  *
- * A leaf module — zod, `$lib/types` and `./def` only — so every tool can import
- * it without ordering the registry.
+ * A leaf module — zod, `$lib/types`, `$lib/text` (dependency-free) and `./def`
+ * only — so every tool can import it without ordering the registry.
  */
 
 import { z } from 'zod';
+import { readingKey, sameCard, termKey } from '$lib/text';
 import type { KnowledgeItem } from '$lib/types';
 import type { ToolOutcome } from './def';
 
 /**
- * Case/whitespace-insensitive key used to tell whether two terms name the same
- * word — the same rule `deriveRecentMistakes` in `$lib/session/engine` applies
- * when it folds missed words into prompt hints, re-implemented here rather than
- * shared, because neither module should be able to change the other's notion of
- * sameness by accident.
+ * The one normalization, shared with the lesson resolver, the session engine and
+ * reading mode (`$lib/text`) rather than re-implemented per module — four
+ * private one-liners is four chances for two sides of a lookup to disagree.
  *
  * It is what makes "Hola" and "hola" one word, so the assistant cannot fork a
  * learner's SRS history in two by adding a word they already have — and since
- * `add_words` is now the *only* way vocabulary enters the collection, this is
- * the app's one guard against a duplicate word.
+ * `add_words` is the *only* way vocabulary enters the collection, this is the
+ * app's one guard against a duplicate word.
  */
-export function termKey(term: string): string {
-	return term.trim().toLowerCase().replace(/\s+/g, ' ');
+export { readingKey, sameCard, termKey };
+
+/**
+ * Every item that shares a spelling with `term`, in list order.
+ *
+ * Usually zero or one. It is more than one exactly when the learner keeps a
+ * homograph as two cards — 长 as `cháng` and 长 as `zhǎng` — which `add_words`
+ * now allows and which the tools addressing a word *by term* therefore have to
+ * be able to see.
+ */
+export function findAllByTerm(items: KnowledgeItem[], term: string): KnowledgeItem[] {
+	const key = termKey(term);
+	return items.filter((item) => termKey(item.term) === key);
 }
 
-/** The item the learner means by `term`, or `undefined`. */
-export function findByTerm(items: KnowledgeItem[], term: string): KnowledgeItem | undefined {
-	const key = termKey(term);
-	return items.find((item) => termKey(item.term) === key);
+/**
+ * The one item the learner means, or `undefined` when there is no such word —
+ * *or* when the term names two and nothing says which.
+ *
+ * A `romanization` picks between siblings; with one candidate it is ignored,
+ * because the model reading a word back from `list_words` should not have to
+ * spell its reading identically to address it. Ambiguity is deliberately
+ * `undefined` rather than a guess: `remove_word` cannot be undone, and choosing
+ * one of two 长s on the learner's behalf is exactly the failure the second card
+ * was created to prevent. {@link describeTermMiss} writes what to say about it.
+ */
+export function findByTerm(
+	items: KnowledgeItem[],
+	term: string,
+	romanization?: string
+): KnowledgeItem | undefined {
+	const candidates = findAllByTerm(items, term);
+	if (candidates.length <= 1) return candidates[0];
+
+	const reading = romanization?.trim();
+	if (!reading) return undefined;
+	const key = readingKey(reading);
+	return candidates.find((item) => item.romanization && readingKey(item.romanization) === key);
+}
+
+/**
+ * Why {@link findByTerm} came back empty, written for the model to act on:
+ * either the word is not there, or it named a homograph and has to say which
+ * reading it means.
+ */
+export function describeTermMiss(
+	items: KnowledgeItem[],
+	term: string,
+	romanization?: string
+): string {
+	const candidates = findAllByTerm(items, term);
+	if (candidates.length <= 1) return `no word "${term}" in the list`;
+
+	const readings = candidates.map((item) => item.romanization ?? '(no romanization)').join(', ');
+	return romanization?.trim()
+		? `no word "${term}" with romanization "${romanization.trim()}" in the list; it has ${readings}`
+		: `"${term}" is in the list ${candidates.length} times (${readings}); pass "romanization" to say which one you mean`;
 }
 
 /**

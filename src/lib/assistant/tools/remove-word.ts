@@ -15,10 +15,18 @@
 
 import { z } from 'zod';
 import type { AssistantToolDef } from './def';
-import { findByTerm, nonEmpty, toolFailure } from './primitives';
+import {
+	describeTermMiss,
+	findByTerm,
+	nonEmpty,
+	optionalText,
+	toolFailure,
+	trimmedOrUndefined
+} from './primitives';
 
 export const removeWordParams = z.object({
-	term: nonEmpty
+	term: nonEmpty,
+	romanization: optionalText
 });
 
 export type RemoveWordParams = z.infer<typeof removeWordParams>;
@@ -26,13 +34,16 @@ export type RemoveWordParams = z.infer<typeof removeWordParams>;
 export const removeWordTool = {
 	name: 'remove_word',
 	description:
-		'Delete one word from the list, by its exact term. This also deletes its review history and cannot be undone, so only call it after the learner has explicitly confirmed that this word should go.',
+		'Delete one word from the list, by its exact term — plus its "romanization" when two words share that spelling as different readings of a homograph. This also deletes its review history and cannot be undone, so only call it after the learner has explicitly confirmed that this word should go.',
 	paramsSchema: removeWordParams,
 
 	async run(params, ctx) {
 		const items = await ctx.getAllItems();
-		const item = findByTerm(items, params.term);
-		if (!item) return toolFailure(`no word "${params.term}" in the list`);
+		const selector = trimmedOrUndefined(params.romanization);
+		const item = findByTerm(items, params.term, selector);
+		// Ambiguity is a failure rather than a guess here above all: this is the
+		// tool the learner cannot undo, and one of two 长s is not a coin flip.
+		if (!item) return toolFailure(describeTermMiss(items, params.term, selector));
 
 		await ctx.deleteItem(item.id);
 		return {

@@ -199,6 +199,21 @@ describe('parseGeneratedText', () => {
 		expect(parsed.glossary).toHaveLength(1);
 	});
 
+	it('keeps both readings of a homograph, and still folds a repeat of one', () => {
+		// The dedupe is by card, not by spelling: a text that uses 长 twice in two
+		// senses needs two glosses, and `./annotate` picks between them.
+		const parsed = parseGeneratedText(
+			textJson({
+				glossary: [
+					{ term: '长', reading: 'cháng', meaning: 'long' },
+					{ term: '长', reading: 'zhǎng', meaning: 'to grow' },
+					{ term: '长', reading: 'cháng', meaning: 'lengthy' }
+				]
+			})
+		);
+		expect(parsed.glossary.map((entry) => entry.meaning)).toEqual(['long', 'to grow']);
+	});
+
 	it('throws on anything that is not a text', () => {
 		expect(() => parseGeneratedText('sorry, I cannot')).toThrow(LlmError);
 		expect(() => parseGeneratedText(JSON.stringify({ title: 'T' }))).toThrow(LlmError);

@@ -252,3 +252,87 @@ describe('showSentenceReading', () => {
 		expect(showSentenceReading(bare, 'adaptive')).toBe(true);
 	});
 });
+
+/**
+ * Two cards, one spelling. Everything here turns on the token's own reading,
+ * which a real romanizer derives from the whole sentence — the only signal that
+ * knows a 长 is being read `zhǎng` this time.
+ */
+describe('homographs', () => {
+	/** A tokenizer that reads a fixed script: one reading per occurrence, in order. */
+	function reading(readings: (string | null)[]) {
+		let n = 0;
+		return (text: string, terms: readonly string[] = []) =>
+			tokenizeByTerms(text, terms).map((token) => ({
+				text: token.text,
+				reading: /[\p{L}\p{N}]/u.test(token.text) ? (readings[n++] ?? null) : null
+			}));
+	}
+
+	const chang = item('长', 0, 'cháng');
+	const zhang = item('长', 0, 'zhǎng');
+
+	it('picks the card whose romanization the token was read as', () => {
+		const words = annotateSentence(
+			'长长',
+			reading(['cháng', 'zhǎng']),
+			ctx({ items: [chang, zhang] })
+		);
+
+		expect(words.map((word) => word.itemId)).toEqual(['id-长', 'id-长']);
+		expect(words.map((word) => word.gloss?.reading)).toEqual(['cháng', 'zhǎng']);
+	});
+
+	it('ignores how a reading was spaced on either side', () => {
+		const bike = item('自行车', 0, 'zìxíngchē');
+		const words = annotateSentence(
+			'自行车',
+			reading(['zì xíng chē']),
+			ctx({ items: [item('自行车', 0, 'wrong'), bike] })
+		);
+
+		expect(words[0].gloss?.reading).toBe('zìxíngchē');
+	});
+
+	it('falls back to the first candidate when the tokenizer brings no readings', () => {
+		const words = annotateSentence('长', tokenizeByTerms, ctx({ items: [chang, zhang] }));
+		expect(words[0].gloss?.reading).toBe('cháng');
+	});
+
+	it('falls back to the first candidate when no reading matches', () => {
+		const words = annotateSentence(
+			'长',
+			reading(['zhang']), // Toneless, so neither card claims it.
+			ctx({ items: [chang, zhang] })
+		);
+		expect(words[0].gloss?.reading).toBe('cháng');
+	});
+
+	it('picks between two glossary entries the same way', () => {
+		const glossary: GlossEntry[] = [
+			{ term: '长', meaning: 'long', reading: 'cháng' },
+			{ term: '长', meaning: 'to grow', reading: 'zhǎng' }
+		];
+		const words = annotateSentence('长长', reading(['zhǎng', 'cháng']), ctx({ glossary }));
+
+		expect(words.map((word) => word.status)).toEqual(['new', 'new']);
+		expect(words.map((word) => word.gloss?.meaning)).toEqual(['to grow', 'long']);
+	});
+
+	it('fades the two cards independently, on their own strengths', () => {
+		// `cháng` is past the ceiling (hide probability 1) and `zhǎng` is below the
+		// floor (0), so one roll can never speak for both.
+		const owned = item('长', 365, 'cháng');
+		const shared = ctx({
+			mode: 'adaptive',
+			items: [owned, zhang],
+			rng: () => 0.5
+		});
+		const words = annotateSentence('长长', reading(['cháng', 'zhǎng']), shared);
+
+		expect(words[0].reading).toBeNull();
+		expect(words[1].reading).toBe('zhǎng');
+		expect(shared.rolls.size).toBe(2);
+		expect([...shared.rolls.keys()].sort()).toEqual(['长 cháng', '长 zhǎng']);
+	});
+});

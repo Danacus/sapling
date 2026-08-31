@@ -26,21 +26,22 @@
  */
 
 import type { RomanizedToken } from '$lib/romanize';
-import { segmentWords, usesInterWordSpaces } from '$lib/text';
+import { segmentWords, termKey, usesInterWordSpaces } from '$lib/text';
 
 /**
- * The one normalization, used on both sides of every lookup.
+ * The spelling normalization, under reading mode's own name for it.
  *
- * Trimmed, NFC, lower-cased — and nothing else. No diacritic folding: in the
- * language's own spelling every mark counts, and `ecole` is not `école` (the
- * same line conversation mode draws around its reading comparison). NFC because
- * a term typed with a combining accent and one typed with the precomposed
- * character are the same word, and the learner has no way to tell which they
- * have.
+ * It *is* `termKey` from `$lib/text` — one implementation shared with the lesson
+ * resolver, the session engine and the assistant's duplicate guard, which each
+ * used to carry a slightly different one-liner. The alias stays because "word"
+ * is this module's unit and the whole reader is written in it.
+ *
+ * It answers one question — same spelling? — and that is no longer enough to
+ * identify a card on its own: two cards may share a term and differ in reading.
+ * See `readingKey`/`cardKey` in `$lib/text`, and `./annotate`, which resolves
+ * the ambiguity with the reading the tokenizer derived from the sentence.
  */
-export function wordKey(s: string): string {
-	return s.trim().normalize('NFC').toLowerCase();
-}
+export const wordKey = termKey;
 
 /** Letters, marks and digits: what a word is made of. */
 const WORD_CHAR = /[\p{L}\p{M}\p{N}]/u;

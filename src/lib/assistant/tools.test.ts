@@ -244,6 +244,95 @@ describe('add_words', () => {
 		expect(store.upserts).toHaveLength(0);
 		expect(outcome.summary).toContain('Nothing added');
 	});
+
+	/**
+	 * The four combinations of "has a reading" across the stored card and the
+	 * offered one. Only one of them is two words; the rest are one word twice,
+	 * and the asymmetry is what keeps every collection written before homographs
+	 * existed from forking an SRS history on a guess.
+	 */
+	describe('homographs', () => {
+		const word = (term: string, meaning: string, romanization: string | null) => ({
+			term,
+			meaning,
+			romanization,
+			notes: null,
+			kind: null
+		});
+
+		it('adds a second reading of a spelling the learner already has', async () => {
+			const store = fake([item('长', 'long', { romanization: 'cháng' })]);
+			const outcome = await addWordsTool.run(
+				{ words: [word('长', 'to grow', 'zhǎng')] },
+				store.ctx
+			);
+
+			expect(outcome.result).toMatchObject({ added: ['长'], skipped: [] });
+			const added = store.upserts[0][0];
+			expect(added.romanization).toBe('zhǎng');
+			expect(added.id).not.toBe('seed-长');
+		});
+
+		it('skips a reading the learner already has, however it was spaced', async () => {
+			const store = fake([item('自行车', 'bicycle', { romanization: 'zìxíngchē' })]);
+			const outcome = await addWordsTool.run(
+				{ words: [word('自行车', 'bike', 'zì xíng chē')] },
+				store.ctx
+			);
+
+			expect(store.upserts).toHaveLength(0);
+			expect(outcome.result).toMatchObject({
+				skipped: [{ term: '自行车', reason: ALREADY_PRESENT }]
+			});
+		});
+
+		it('skips a reading-less word beside a card that has a reading', async () => {
+			const store = fake([item('长', 'long', { romanization: 'cháng' })]);
+			const outcome = await addWordsTool.run({ words: [word('长', 'to grow', null)] }, store.ctx);
+
+			expect(store.upserts).toHaveLength(0);
+			expect(outcome.result).toMatchObject({
+				skipped: [{ term: '长', reason: ALREADY_PRESENT }]
+			});
+		});
+
+		it('skips a read word beside a card stored without one', async () => {
+			const store = fake([item('长', 'long')]);
+			const outcome = await addWordsTool.run(
+				{ words: [word('长', 'to grow', 'zhǎng')] },
+				store.ctx
+			);
+
+			expect(store.upserts).toHaveLength(0);
+			expect(outcome.result).toMatchObject({
+				skipped: [{ term: '长', reason: ALREADY_PRESENT }]
+			});
+		});
+
+		it('separates two readings offered in one batch, and still folds a repeat', async () => {
+			const store = fake();
+			const outcome = await addWordsTool.run(
+				{
+					words: [
+						word('长', 'long', 'cháng'),
+						word('长', 'to grow', 'zhǎng'),
+						word('长', 'lengthy', 'cháng'),
+						word('长', 'either', null)
+					]
+				},
+				store.ctx
+			);
+
+			expect(store.upserts[0].map((row) => row.romanization)).toEqual(['cháng', 'zhǎng']);
+			expect(outcome.result).toMatchObject({
+				added: ['长', '长'],
+				skipped: [
+					{ term: '长', reason: ALREADY_PRESENT },
+					{ term: '长', reason: ALREADY_PRESENT }
+				]
+			});
+		});
+	});
 });
 
 describe('list_words', () => {
@@ -355,6 +444,71 @@ describe('update_word', () => {
 		expect(outcome.ok).toBe(false);
 		expect(store.upserts).toHaveLength(0);
 	});
+
+	it('refuses a spelling that names two words until it is told which', async () => {
+		const store = fake([
+			item('长', 'long', { id: 'chang', romanization: 'cháng' }),
+			item('长', 'to grow', { id: 'zhang', romanization: 'zhǎng' })
+		]);
+
+		const ambiguous = await updateWordTool.run(
+			{
+				term: '长',
+				romanization: null,
+				fields: { term: null, meaning: 'lengthy', romanization: null, notes: null }
+			},
+			store.ctx
+		);
+		expect(ambiguous.ok).toBe(false);
+		expect(String(ambiguous.summary)).toContain('cháng');
+		expect(store.upserts).toHaveLength(0);
+
+		const picked = await updateWordTool.run(
+			{
+				term: '长',
+				romanization: 'zhǎng',
+				fields: { term: null, meaning: 'to grow up', romanization: null, notes: null }
+			},
+			store.ctx
+		);
+		expect(picked.ok).not.toBe(false);
+		expect(store.upserts[0][0].id).toBe('zhang');
+	});
+
+	it('refuses an edit that would walk one card onto another', async () => {
+		const store = fake([
+			item('长', 'long', { id: 'chang', romanization: 'cháng' }),
+			item('长', 'to grow', { id: 'zhang', romanization: 'zhǎng' })
+		]);
+
+		const outcome = await updateWordTool.run(
+			{
+				term: '长',
+				romanization: 'zhǎng',
+				fields: { term: null, meaning: null, romanization: 'cháng', notes: null }
+			},
+			store.ctx
+		);
+
+		expect(outcome.ok).toBe(false);
+		expect(String(outcome.summary)).toContain('collide');
+		expect(store.upserts).toHaveLength(0);
+	});
+
+	it('lets a word keep its own reading while something else changes', async () => {
+		const store = fake([item('长', 'long', { id: 'chang', romanization: 'cháng' })]);
+		const outcome = await updateWordTool.run(
+			{
+				term: '长',
+				romanization: null,
+				fields: { term: null, meaning: 'lengthy', romanization: null, notes: null }
+			},
+			store.ctx
+		);
+
+		expect(outcome.ok).not.toBe(false);
+		expect(store.upserts[0][0].meaning).toBe('lengthy');
+	});
 });
 
 describe('remove_word', () => {
@@ -373,6 +527,21 @@ describe('remove_word', () => {
 		expect(store.deleted).toEqual([]);
 		expect(outcome.ok).toBe(false);
 		expect(outcome.result).toEqual({ error: 'no word "perro" in the list' });
+	});
+
+	it('deletes nothing while a spelling names two words', async () => {
+		const store = fake([
+			item('长', 'long', { id: 'chang', romanization: 'cháng' }),
+			item('长', 'to grow', { id: 'zhang', romanization: 'zhǎng' })
+		]);
+
+		const ambiguous = await removeWordTool.run({ term: '长', romanization: null }, store.ctx);
+		expect(ambiguous.ok).toBe(false);
+		expect(store.deleted).toEqual([]);
+
+		const picked = await removeWordTool.run({ term: '长', romanization: 'cháng' }, store.ctx);
+		expect(picked.ok).not.toBe(false);
+		expect(store.deleted).toEqual(['chang']);
 	});
 });
 

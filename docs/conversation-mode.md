@@ -185,7 +185,8 @@ vocabulary in". Put the static prompt text first and the word block last, so the
 cacheable prefix stays stable across turns.
 
 **Out.** The teacher gets exactly one tool: `add_words`, reused verbatim from
-`$lib/assistant/tools` — so it dedupes by term key, initializes the FSRS card and
+`$lib/assistant/tools` — so it dedupes by card (spelling plus reading, see
+`assistant.md`), initializes the FSRS card and
 captures a sync event, identically to the generation path. It is called when the
 learner *produced* a word that is not in their list and used it correctly; never
 for words the teacher itself introduced. That is the point of the feature: the

@@ -94,7 +94,7 @@
 	import { hasLocalRomanizer, loadRomanizer } from '$lib/romanize';
 	import type { Maturity } from '$lib/session/progression';
 	import { Grade, newCardState, reviewCard, type FsrsCardState } from '$lib/srs';
-	import { joinTokens, usesInterWordSpaces } from '$lib/text';
+	import { cardKey, joinTokens, usesInterWordSpaces } from '$lib/text';
 	import { speak, stopSpeaking, ttsAvailable, warmSpeech } from '$lib/tts';
 	import type { GlossEntry, KnowledgeItem, Profile, ReadingText } from '$lib/types';
 	import { getRomanizationMode } from '$lib/ui/prefs';
@@ -121,9 +121,11 @@
 	let tokenize = $state<TokenizeFn>(tokenizeByTerms);
 
 	/**
-	 * One adaptive roll per word key, for the whole time this text is open. A
-	 * plain `Map`, deliberately not `$state`: the annotator writes to it while a
-	 * `$derived` is computing, and a reactive cache would turn that into a loop.
+	 * One adaptive roll per card, for the whole time this text is open — keyed by
+	 * `cardKey` inside the annotator, so two cards sharing a spelling fade on
+	 * their own schedules. A plain `Map`, deliberately not `$state`: the
+	 * annotator writes to it while a `$derived` is computing, and a reactive
+	 * cache would turn that into a loop.
 	 */
 	const rolls = new Map<string, boolean>();
 	/**
@@ -944,9 +946,13 @@
 			});
 			// There is nothing to look up twice — the button is gone the moment the
 			// word stops being `plain` — so this only catches an answer that arrives
-			// under a spelling something already covers.
-			const key = wordKey(entry.term);
-			if (!extraGlossary.some((known) => wordKey(known.term) === key)) extraGlossary.push(entry);
+			// under a spelling something already covers. By `cardKey`, the same rule
+			// the text's own glossary dedupes under, so a homograph looked up in two
+			// sentences keeps both senses.
+			const key = cardKey(entry.term, entry.reading);
+			if (!extraGlossary.some((known) => cardKey(known.term, known.reading) === key)) {
+				extraGlossary.push(entry);
+			}
 		} catch (cause) {
 			cardError = cause instanceof Error ? cause.message : 'Could not look that word up.';
 		} finally {

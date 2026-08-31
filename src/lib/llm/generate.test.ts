@@ -10,6 +10,8 @@ import {
 	buildBatchPrompt,
 	defaultChallengeCount,
 	generateBatch,
+	knownTermIndex,
+	knownTermLabels,
 	makeMatchPairsChallenge,
 	parseBatch,
 	resolveBatch,
@@ -269,6 +271,27 @@ describe('buildBatchPrompt', () => {
 		);
 	});
 
+	it('qualifies a known term only when the collection holds two of that spelling', () => {
+		// A reading costs tokens and buys nothing where the spelling is already
+		// unique — which is every word, for nearly every learner.
+		const payload = JSON.parse(
+			buildBatchPrompt({
+				...args,
+				knownItems: [
+					{ id: 'k1', term: '长', romanization: 'cháng' },
+					{ id: 'k2', term: '长', romanization: 'zhǎng' },
+					{ id: 'k3', term: '做饭', romanization: 'zuò fàn' }
+				]
+			})[1].content
+		) as Record<string, unknown>;
+
+		expect(payload.known).toEqual(['长 (cháng)', '长 (zhǎng)', '做饭']);
+	});
+
+	it('tells the model what a parenthesised reading in known means', () => {
+		expect(messages[0].content).toContain('"word (reading)"');
+	});
+
 	it('states the difficulty-calibration rules in the system message', () => {
 		const system = messages[0].content;
 		expect(system).toContain('recentAccuracy');
@@ -457,6 +480,29 @@ describe('generateBatch', () => {
 		const resolved = result.challenges.slice(-2);
 		expect(resolved[0].itemIds).toEqual(['k9']);
 		expect(resolved[1].itemIds).toEqual(['i1']);
+	});
+
+	it('resolves a homograph cited with its reading onto that card, not its sibling', async () => {
+		// The whole round trip: the prompt renders `长 (zhǎng)`, the model cites it
+		// back, and the resolver puts the review credit on the right of two cards.
+		const knownItems = [
+			{ id: 'chang', term: '长', romanization: 'cháng' },
+			{ id: 'zhang', term: '长', romanization: 'zhǎng' }
+		];
+		const cited = {
+			...goodBatch,
+			challenges: [
+				...goodBatch.challenges,
+				recognize('长 (zhǎng)', 'to grow'),
+				recognize('长', 'long') // Bare, and therefore a coin the app does not flip.
+			]
+		};
+		const scripted = scriptedFetch([JSON.stringify(cited)]);
+		const result = await generateBatch({ ...args, knownItems }, callOpts(scripted.fetchFn));
+
+		const resolved = result.challenges.slice(-2);
+		expect(resolved[0].itemIds).toEqual(['zhang']);
+		expect(resolved[1].itemIds).toEqual(['chang']);
 	});
 
 	it('retries once with a corrective instruction, then succeeds', async () => {
@@ -1374,5 +1420,61 @@ describe('makeMatchPairsChallenge', () => {
 			];
 			expect(makeMatchPairsChallenge(four, () => 0.5)).toBeUndefined();
 		});
+	});
+});
+
+/**
+ * A spelling is not a word: 长 is `cháng` ("long") and `zhǎng` ("to grow"), and
+ * a learner may hold both. What the prompt sends and what the resolver indexes
+ * have to be the same string, so they are tested together.
+ */
+describe('knownTermLabels and knownTermIndex', () => {
+	const homographs = [
+		{ id: 'chang', term: '长', romanization: 'cháng' },
+		{ id: 'zhang', term: '长', romanization: 'zhǎng' }
+	];
+
+	it('leaves a word with no sibling bare, reading or not', () => {
+		expect(knownTermLabels([{ id: 'k1', term: '做饭', romanization: 'zuò fàn' }])).toEqual([
+			'做饭'
+		]);
+	});
+
+	it('leaves a homograph bare when it has no reading to be told apart by', () => {
+		expect(knownTermLabels([{ id: 'a', term: '长' }, ...homographs])).toEqual([
+			'长',
+			'长 (cháng)',
+			'长 (zhǎng)'
+		]);
+	});
+
+	it('indexes each card under the label it travelled as', () => {
+		const index = knownTermIndex({ ...args, reviewItems: [], knownItems: homographs });
+
+		expect(index.get('长 (cháng)')).toBe('chang');
+		expect(index.get('长 (zhǎng)')).toBe('zhang');
+	});
+
+	it('resolves a bare citation of an ambiguous term to the first card, always', () => {
+		const index = knownTermIndex({ ...args, reviewItems: [], knownItems: homographs });
+		const flipped = knownTermIndex({
+			...args,
+			reviewItems: [],
+			knownItems: [...homographs].reverse()
+		});
+
+		expect(index.get('长')).toBe('chang');
+		expect(flipped.get('长')).toBe('zhang');
+	});
+
+	it('lets a review item keep the bare key: the batch is about it', () => {
+		const index = knownTermIndex({
+			...args,
+			reviewItems: [{ id: 'due', term: '长', meaning: 'to grow' }],
+			knownItems: homographs
+		});
+
+		expect(index.get('长')).toBe('due');
+		expect(index.get('长 (zhǎng)')).toBe('zhang');
 	});
 });

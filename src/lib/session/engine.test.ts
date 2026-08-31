@@ -1014,6 +1014,18 @@ describe('planRefill', () => {
 		]);
 	});
 
+	it('lets a romanization ride along, for the words that have one', () => {
+		// `knownTermLabels` needs it to tell two same-spelled cards apart in the
+		// prompt; a word without one costs nothing for the field.
+		const items = [{ ...item('a', -1 * DAY), romanization: 'cháng' }, item('b', -1 * DAY)];
+		const plan = planRefill(items, profile(), NOW);
+
+		expect(plan.args.knownItems).toEqual([
+			{ id: 'a', term: 'term-a', romanization: 'cháng' },
+			{ id: 'b', term: 'term-b' }
+		]);
+	});
+
 	it('sends words as {id, term, meaning, maturity}, due first and then review-ahead', () => {
 		const items = [item('a', -1 * DAY), item('b', -5 * DAY), item('c', +2 * DAY)];
 		const plan = planRefill(items, profile(), NOW);

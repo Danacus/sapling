@@ -22,6 +22,7 @@
 
 import { isMockMode } from '$lib/llm';
 import type { TokenUsage } from '$lib/llm';
+import { cardKey } from '$lib/text';
 import type { GlossEntry } from '$lib/types';
 import { mockAnnotatedText, mockGeneratedText, mockLookedUpWord } from './mock';
 import { MAX_IMPORT_CHARS, requestAnnotatedText, resolveTitle } from './annotate-call';
@@ -73,9 +74,11 @@ export function importCallCount(sentences: readonly string[]): number {
  * Merging is per chunk, which makes the alignment rule strictly kinder than it
  * was: a model that miscounts one chunk now costs that chunk's readings and
  * translations rather than the whole text's. Glossaries concatenate and dedupe
- * by `wordKey` with the first entry winning — the earliest sense is the one the
- * learner meets first, and the reader matches on that key and nothing else, so
- * a second entry for the same word would simply be unreachable.
+ * by `cardKey` with the first entry winning — the earliest sense is the one the
+ * learner meets first, and a second entry the reader could not tell apart from
+ * the first would simply be unreachable. By card rather than by term so a
+ * homograph keeps both senses: 长 as `cháng` and 长 as `zhǎng` are two entries,
+ * and `./annotate` picks between them by the reading in the sentence.
  *
  * The learner's title goes only to the first chunk. Asked ten times, a model
  * names each chunk after its own contents and the text ends up titled after its
@@ -118,8 +121,9 @@ export async function annotateReadingText(
 		if (!resolved) resolved = draft.title;
 		sentences.push(...draft.sentences);
 		for (const entry of draft.glossary) {
-			const key = wordKey(entry.term);
-			if (!key || seen.has(key)) continue;
+			if (!wordKey(entry.term)) continue;
+			const key = cardKey(entry.term, entry.reading);
+			if (seen.has(key)) continue;
 			seen.add(key);
 			glossary.push(entry);
 		}

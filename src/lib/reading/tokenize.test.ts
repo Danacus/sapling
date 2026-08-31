@@ -7,6 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { termKey } from '$lib/text';
 import { tokenizeByTerms, wordKey } from './tokenize';
 
 /** `text` back out of the tokens, and the readings, in one go. */
@@ -22,7 +23,16 @@ function cut(text: string, terms: string[] = []): string[] {
 	return texts(tokens);
 }
 
+/**
+ * `wordKey` is `termKey` from `$lib/text` under this module's name for it, and
+ * the rule itself is pinned in `$lib/text/keys.test.ts`. What is worth asserting
+ * here is that the reader's own name still answers the reader's own question.
+ */
 describe('wordKey', () => {
+	it('is the shared spelling key', () => {
+		expect(wordKey('  Por   Favor ')).toBe(termKey('por favor'));
+	});
+
 	it('trims, lower-cases and normalizes', () => {
 		expect(wordKey('  Café  ')).toBe('café');
 		expect(wordKey('CAFÉ')).toBe('café');

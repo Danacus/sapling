@@ -29,6 +29,7 @@
  */
 
 import { getModel } from '$lib/db/settings';
+import { termKey } from '$lib/text';
 import type { Challenge, KnowledgeItem, Profile } from '$lib/types';
 import {
 	WIRE_TYPE_DEFS,
@@ -169,9 +170,11 @@ export interface BatchArgs {
 	 * **by its term** — the resolver maps terms back to ids locally.
 	 *
 	 * Only the terms travel in the prompt (a few hundred words costs well under
-	 * 1k tokens, paid only on explicit generation). The ids stay on this side:
-	 * the model never sees them, so it cannot be asked to echo them back — that
-	 * is exactly why term citations must be legal. See {@link knownTermIndex}.
+	 * 1k tokens, paid only on explicit generation) — bare, except where two of
+	 * them share a spelling and a reading has to say which is which
+	 * ({@link knownTermLabels}). The ids stay on this side: the model never sees
+	 * them, so it cannot be asked to echo them back — that is exactly why term
+	 * citations must be legal. See {@link knownTermIndex}.
 	 */
 	knownItems?: KnownItemRef[];
 }
@@ -180,6 +183,12 @@ export interface BatchArgs {
 export interface KnownItemRef {
 	id: string;
 	term: string;
+	/**
+	 * The word's reading, when it has one — sent to the model *only* when the
+	 * collection holds another word spelled the same way. See
+	 * {@link knownTermLabels}.
+	 */
+	romanization?: string;
 }
 
 export interface BatchOptions {
@@ -255,7 +264,8 @@ const SYSTEM_PROMPT = [
 	'Types:',
 	...WIRE_TYPE_DEFS.map((def) => def.promptSpec),
 	'Rules:',
-	'- itemIds: the id of a reviewItem, or — for a challenge built on a word from known — that word exactly as it appears in known. Never invent anything else.',
+	'- itemIds: the id of a reviewItem, or — for a challenge built on a word from known — that word exactly as it appears in known, its parenthesised reading included. Never invent anything else.',
+	'- A known entry written "word (reading)" is one of two same-spelled words told apart by how it is read; cite it with the parenthesis, but write only the word itself into a sentence.',
 	'- Produce exactly one challenge object per requested slot; give the same review item different types.',
 	'- Mix recognition and production across the batch.',
 	'- Match type to maturity ("maturity" on each reviewItem): new → recognize-mc, produce-mc, translate-to-native, spot-error, cloze WITH distractorWords; young adds word-order; solid adds translate-to-target and cloze without distractorWords. A new word\'s first challenges must be recognition.',
@@ -297,6 +307,38 @@ export function defaultChallengeCount(reviewItems: number): number {
 }
 
 /**
+ * How each known word is written into the prompt: bare, or `term (reading)`.
+ *
+ * A spelling is not a word. 长 is `cháng` ("long") and `zhǎng` ("to grow"), and
+ * a learner may hold both as separate cards — so a bare 长 in the known list
+ * would be two words the model cannot tell apart, and a challenge citing it
+ * could only land on one of them by luck.
+ *
+ * The qualification is paid for only where it buys something: a term is
+ * qualified when the collection holds another word spelled the same way *and*
+ * this one has a reading to qualify it with. A learner with no homographs — the
+ * overwhelming case — sends exactly the string they sent before, so nothing
+ * about prompt size or prompt caching changes for them.
+ *
+ * The labels are the citation vocabulary too: whatever is rendered here is what
+ * {@link knownTermIndex} indexes, so a challenge that cites `长 (zhǎng)` back
+ * resolves onto that card and no other.
+ */
+export function knownTermLabels(known: readonly KnownItemRef[]): string[] {
+	const counts = new Map<string, number>();
+	for (const item of known) {
+		const key = termKey(item.term);
+		counts.set(key, (counts.get(key) ?? 0) + 1);
+	}
+
+	return known.map((item) => {
+		const reading = item.romanization?.trim();
+		const ambiguous = (counts.get(termKey(item.term)) ?? 0) > 1;
+		return ambiguous && reading ? `${item.term} (${reading})` : item.term;
+	});
+}
+
+/**
  * Builds the two messages for one batch call. The user message is compact JSON
  * — no field labels in prose, no restating of the rules.
  */
@@ -330,7 +372,7 @@ export function buildBatchPrompt(args: BatchArgs): ChatMessage[] {
 			...(i.maturity ? { maturity: i.maturity } : {})
 		})),
 		// Terms only — the ids stay local (see `knownItems` and `knownTermIndex`).
-		...(args.knownItems?.length ? { known: args.knownItems.map((i) => i.term) } : {})
+		...(args.knownItems?.length ? { known: knownTermLabels(args.knownItems) } : {})
 	};
 	if (args.recentAccuracy !== undefined && Number.isFinite(args.recentAccuracy)) {
 		payload.recentAccuracy = Math.round(args.recentAccuracy * 100) / 100;
@@ -430,22 +472,37 @@ function makeId(newId?: () => string): string {
 	return `c_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
 }
 
-/** Key for matching a model-cited term against the known list; forgiving on case and stray spaces. */
-function termKey(value: string): string {
-	return value.trim().toLowerCase();
-}
-
 /**
  * The term → id index {@link resolveBatch} uses to honour term citations in
  * `itemIds`. Built from everything the model saw a term for: the known list
  * (which travels without ids on purpose) and the review items (whose ids the
  * model *was* given, but which it sometimes cites by term anyway — the intent
  * is unambiguous, so honouring it beats dropping a paid-for challenge).
+ *
+ * A word is indexed under **both** the label it travelled as and its bare term,
+ * so `长 (zhǎng)` resolves onto exactly that card while a bare `长` still
+ * resolves onto *a* 长. First indexed wins the bare key — deliberately, and it
+ * is the reason this needs no cleverer rule: a challenge the model wrote about a
+ * homograph without saying which one only vaguely fits either reading, so the
+ * review credit landing on the sibling card is a cheaper outcome than dropping a
+ * paid-for challenge. Naming the reading is what makes it exact, and the prompt
+ * gives the model the means to.
  */
 export function knownTermIndex(args: BatchArgs): Map<string, string> {
 	const index = new Map<string, string>();
+	// Review items first: they are the subject of this batch, so an ambiguous
+	// bare citation is likelier to be about one of them than about the rest of
+	// the collection.
 	for (const item of args.reviewItems) index.set(termKey(item.term), item.id);
-	for (const item of args.knownItems ?? []) index.set(termKey(item.term), item.id);
+
+	const known = args.knownItems ?? [];
+	const labels = knownTermLabels(known);
+	known.forEach((item, i) => {
+		const bare = termKey(item.term);
+		if (!index.has(bare)) index.set(bare, item.id);
+		const label = termKey(labels[i]);
+		if (label !== bare) index.set(label, item.id);
+	});
 	return index;
 }
 
@@ -455,9 +512,10 @@ export interface ResolveOptions {
 	knownItemIds?: Iterable<string>;
 	/**
 	 * Term → item id, for references the model makes *by term*. Known words
-	 * travel to the model as bare terms (their ids never leave this side to keep
-	 * the prompt cheap), so a challenge built on one can only cite the term —
-	 * see {@link knownTermIndex}, which builds this from the batch args.
+	 * travel to the model as terms (their ids never leave this side to keep the
+	 * prompt cheap), so a challenge built on one can only cite the term — bare,
+	 * or `term (reading)` where the spelling alone would be ambiguous. See
+	 * {@link knownTermIndex}, which builds this from the batch args.
 	 */
 	termToId?: ReadonlyMap<string, string>;
 	/** Injectable `[0,1)` source for the shuffles; defaults to `Math.random`. */
@@ -524,7 +582,8 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
 		const itemIds: string[] = [];
 		for (const ref of generated.itemIds) {
 			// A term citation: known words reach the model without ids, so "this
-			// challenge is about 护照" can only be said with the word itself.
+			// challenge is about 护照" can only be said with the word itself — and
+			// with its reading, when the spelling names two cards.
 			const byTerm = options.termToId?.get(termKey(ref));
 			if (byTerm) {
 				itemIds.push(byTerm);

@@ -11,6 +11,21 @@
  *
  * Dedupe therefore runs against the stored list *and* within the batch itself:
  * a model asked to add ten words from a chat message will happily repeat one.
+ *
+ * ## Two 长s are two words; two bare 长s are one
+ *
+ * A spelling is not a word. 长 is `cháng` ("long") and `zhǎng` ("to grow"), with
+ * different meanings and different schedules, and a learner studying both wants
+ * two cards — which the storage layer has always allowed, since `items.id` is a
+ * surrogate and every review is id-keyed. So the guard is `sameCard`
+ * (`$lib/text`): same spelling *and* a reading that fails to tell them apart.
+ *
+ * The asymmetry about a missing reading is the whole of the back-compat story. A
+ * word offered with no `romanization` collides with every spelling of itself,
+ * and so does an existing card that was stored without one — because there is
+ * nothing in a bare 长 to say which 长 it is, and a careless model call, or a
+ * collection written before any of this, must not be able to fork an SRS history
+ * on a guess. The only way to a second card is to name both readings.
  */
 
 import { z } from 'zod';
@@ -23,7 +38,7 @@ import {
 	nonEmpty,
 	optionalField,
 	optionalText,
-	termKey,
+	sameCard,
 	trimmedOrUndefined
 } from './primitives';
 
@@ -53,26 +68,30 @@ export type AddWordsParams = z.infer<typeof addWordsParams>;
 export const addWordsTool = {
 	name: 'add_words',
 	description:
-		'Add one or more words to the learner\'s word list. Include "romanization" whenever the target language is not written in the Latin script. Words already in the list are skipped, so it is safe to send a whole list.',
+		'Add one or more words to the learner\'s word list. Include "romanization" whenever the target language is not written in the Latin script. Words already in the list are skipped, so it is safe to send a whole list. Two words spelled the same are kept separately only when they are different readings of a homograph AND each one carries its own "romanization" (Mandarin 长 cháng "long" and 长 zhǎng "to grow" are two words); a word sent without a romanization is skipped whenever that spelling is already there at all.',
 	paramsSchema: addWordsParams,
 
 	async run(params, ctx) {
 		const existing = await ctx.getAllItems();
-		const taken = new Set(existing.map((item) => termKey(item.term)));
+		const taken: { term: string; romanization?: string }[] = existing.map((item) => ({
+			term: item.term,
+			romanization: item.romanization
+		}));
 
 		const added: KnowledgeItem[] = [];
 		const skipped: { term: string; reason: string }[] = [];
 
 		for (const word of params.words) {
 			const term = word.term.trim();
-			const key = termKey(term);
-			if (taken.has(key)) {
+			const romanization = trimmedOrUndefined(word.romanization);
+			const card = { term, romanization };
+			if (taken.some((held) => sameCard(held, card))) {
 				skipped.push({ term, reason: ALREADY_PRESENT });
 				continue;
 			}
 			// Claimed immediately, so a batch that repeats a word skips the repeat
 			// rather than writing it twice.
-			taken.add(key);
+			taken.push(card);
 
 			const at = ctx.now();
 			added.push({
@@ -80,7 +99,7 @@ export const addWordsTool = {
 				kind: word.kind ?? 'vocab',
 				term,
 				meaning: word.meaning.trim(),
-				...optionalField('romanization', trimmedOrUndefined(word.romanization)),
+				...optionalField('romanization', romanization),
 				...optionalField('notes', trimmedOrUndefined(word.notes)),
 				fsrsCard: newCardState(at),
 				introducedAt: at,

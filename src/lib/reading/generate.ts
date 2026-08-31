@@ -21,6 +21,7 @@
 
 import { LlmError, MAX_ABOUT_CHARS, chatCompletion, stripFences } from '$lib/llm';
 import type { BatchProfile, ChatMessage, FetchLike } from '$lib/llm';
+import { cardKey } from '$lib/text';
 import type { GlossEntry, Level, ReadingSentence } from '$lib/types';
 import {
 	GENERATED_TEXT_SCHEMA_NAME,
@@ -115,8 +116,9 @@ export const SENTENCES_BY_LEVEL = {
  * caching changes.
  *
  * The two rules after the first are what make the glossary *land*. Matching is
- * `wordKey` — trimmed, NFC, lower-cased — and nothing else: no stemmer, no
- * dictionary, no base-form lookup. So a gloss for the base form of a word the
+ * `wordKey` — trimmed, NFC, lower-cased, spaces collapsed — and nothing else: no
+ * stemmer, no dictionary, no base-form lookup (the entry's `reading` only ever
+ * chooses *between* entries that already match). So a gloss for the base form of a word the
  * text uses inflected matches nothing, and the learner taps a word the app has
  * no answer for. And a model told "never gloss what is already in vocabulary"
  * will happily read 朋友 in the list as covering 小朋友, or 学 as covering 学习,
@@ -241,7 +243,16 @@ export function toGlossEntry(raw: {
 	return { term, meaning, ...(reading ? { reading } : {}) };
 }
 
-/** The glossary, cleaned and deduped by term. Shared with `./annotate-call`. */
+/**
+ * The glossary, cleaned and deduped by {@link cardKey}. Shared with
+ * `./annotate-call`.
+ *
+ * By card rather than by term, so a text that uses both readings of a homograph
+ * can carry both glosses — 长 as `cháng` and 长 as `zhǎng` are two entries, and
+ * `./annotate` picks between them with the reading the tokenizer derived from
+ * the sentence. An entry with no reading still keys as its bare term, which
+ * keeps the old rule exactly where nothing distinguishes two rows: first wins.
+ */
 export function toGlossary(
 	rows: readonly { term: string; reading?: string | null; meaning: string }[]
 ): GlossEntry[] {
@@ -250,7 +261,7 @@ export function toGlossary(
 	for (const row of rows) {
 		const entry = toGlossEntry(row);
 		if (!entry) continue;
-		const key = entry.term.toLowerCase();
+		const key = cardKey(entry.term, entry.reading);
 		if (seen.has(key)) continue;
 		seen.add(key);
 		out.push(entry);

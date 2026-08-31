@@ -45,6 +45,7 @@ import {
 	selectSessionItems,
 	type FsrsCardState
 } from '$lib/srs';
+import { termKey } from '$lib/text';
 import type { Challenge, ChallengeResult, KnowledgeItem, Profile, Verdict } from '$lib/types';
 import { bearable, maturityOf } from './progression';
 
@@ -657,6 +658,9 @@ export interface RefillPlan {
  *
  * `results` are expected newest-first (as {@link recentResults} returns them);
  * only the first mistake per term survives, so the list stays short and recent.
+ * Deliberately per *term* and not per card, even though two cards may share a
+ * spelling: this is a difficulty hint the prompt reads in prose, not a citation
+ * anything resolves, and two entries for 长 would spend tokens saying one thing.
  * Match-pairs rounds are ignored: they are free recognition filler, never
  * evidence that a word is hard.
  *
@@ -778,8 +782,17 @@ export function planRefill(
 		// word can be a real sentence made of words the learner can already read
 		// rather than one padded with strangers. The ids ride along for the
 		// resolver's term index; only the terms reach the prompt.
+		// The romanization rides along for one reason: `knownTermLabels` needs it
+		// to tell two same-spelled cards apart in the prompt. It is dropped again
+		// for every word whose spelling is unambiguous, which is nearly all of them.
 		...(items.length
-			? { knownItems: items.map((item) => ({ id: item.id, term: item.term })) }
+			? {
+					knownItems: items.map((item) => ({
+						id: item.id,
+						term: item.term,
+						...(item.romanization ? { romanization: item.romanization } : {})
+					}))
+				}
 			: {}),
 		// Both are difficulty dials for the prompt: how the learner is doing, and
 		// which words they are currently losing. Omitted when there is nothing to
@@ -822,11 +835,6 @@ export interface GenerateOptions {
 	 * each one from its event to the next.
 	 */
 	onProgress?: OnProgress;
-}
-
-/** Case/whitespace-insensitive key used to tell whether two terms name the same word. */
-function termKey(term: string): string {
-	return term.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
 /**

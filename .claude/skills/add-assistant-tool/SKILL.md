@@ -29,7 +29,8 @@ are kebab-case (`add-words.ts`). Follow the existing four.
   through the repositories is what captures sync events for free; a direct store
   call silently breaks multi-device sync.
 - Anything creating vocabulary must initialise FSRS cards via `$lib/srs` and
-  dedupe by term key, exactly as `add_words` does. **`add_words` is the only
+  dedupe with `sameCard` (`$lib/text`) — same spelling *and* a reading that
+  fails to tell two cards apart — exactly as `add_words` does. **`add_words` is the only
   way words enter the collection** — lesson generation writes challenges and
   never items — so that dedupe is the app's single guard against a forked SRS
   history.

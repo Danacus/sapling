@@ -23,9 +23,19 @@
  * time because it is one screen; a text is many sentences and the same word
  * turns up in several of them, and a word that showed its pinyin in sentence
  * two and hid it in sentence five reads as a bug. So the roll is memoised by
- * word key in a `Map` the *caller* holds — one per text open — which is also
+ * card key in a `Map` the *caller* holds — one per text open — which is also
  * what makes "re-annotate after the learner added a word" cheap: the map
  * survives, and only the new word rolls.
+ *
+ * ## Why a spelling is not a word
+ *
+ * 长 is `cháng` ("long") and `zhǎng` ("to grow"), and a learner may hold both as
+ * separate cards with separate schedules. So the item and glossary lookups are
+ * spelling → *list*, and the token's own reading — which `$lib/romanize` derived
+ * from the whole sentence, the one thing that gets polyphones right — decides
+ * which of the list this occurrence is. No reading anywhere (a language with no
+ * local romanizer, a card written without one) falls back to the first
+ * candidate, which is exactly what this module did before.
  */
 
 import { hideReadingProbability } from '$lib/session/romanization';
@@ -34,7 +44,7 @@ import type { Maturity } from '$lib/session/progression';
 import type { RomanizedToken } from '$lib/romanize';
 import { wordStrength } from '$lib/srs';
 import type { FsrsCardState } from '$lib/srs';
-import { isPunctuationOnly } from '$lib/text';
+import { cardKey, isPunctuationOnly, readingKey } from '$lib/text';
 import type { GlossEntry, KnowledgeItem } from '$lib/types';
 import type { RomanizationMode } from '$lib/ui/prefs';
 import { wordKey } from './tokenize';
@@ -92,7 +102,8 @@ export interface AnnotateContext {
 	/** Epoch milliseconds. */
 	now: number;
 	/**
-	 * Per-key adaptive decisions, memoised across the whole text. The caller
+	 * Per-card adaptive decisions, memoised across the whole text — keyed by
+	 * `cardKey`, so two cards sharing a spelling fade independently. The caller
 	 * creates it (`new Map()`) when the text is opened and keeps it; see the
 	 * module note.
 	 */
@@ -129,23 +140,72 @@ export function termsFor(ctx: AnnotateContext): string[] {
 	return out;
 }
 
-function byKey<T>(rows: readonly T[], term: (row: T) => string): Map<string, T> {
-	const map = new Map<string, T>();
+/**
+ * Rows grouped by spelling, in the order they were given.
+ *
+ * A list rather than a first-wins single row, because a spelling no longer
+ * identifies a word: 长 is `cháng` ("long") and `zhǎng` ("to grow"), and a
+ * learner may be studying both. {@link pickByReading} does the choosing.
+ */
+function byKey<T>(rows: readonly T[], term: (row: T) => string): Map<string, T[]> {
+	const map = new Map<string, T[]>();
 	for (const row of rows) {
 		const key = wordKey(term(row));
-		if (key && !map.has(key)) map.set(key, row);
+		if (!key) continue;
+		const bucket = map.get(key);
+		if (bucket) bucket.push(row);
+		else map.set(key, [row]);
 	}
 	return map;
 }
 
 /**
- * One weighted coin flip per key, remembered.
+ * Which of several same-spelling rows this token is, decided by the reading the
+ * tokenizer derived from the whole sentence.
+ *
+ * That is the only signal available and it is a good one: `$lib/romanize`
+ * romanizes the sentence and slices the result per token precisely so that
+ * polyphones come out right, so a 长 read as `zhǎng` in context arrives here
+ * carrying `zhǎng`. Compared through `readingKey`, which strips spacing on both
+ * sides — a token covering a whole multi-syllable term reads `zì xíng chē`
+ * where the card says `zìxíngchē`.
+ *
+ * Everything else falls back to the first row, which is what the reader did
+ * before homographs existed: a language with no local romanizer brings no token
+ * readings at all, and a card written without one cannot be told from its
+ * sibling anyway.
+ */
+function pickByReading<T>(
+	candidates: readonly T[] | undefined,
+	readingOf: (row: T) => string | undefined,
+	tokenReading: string | null
+): T | undefined {
+	if (!candidates?.length) return undefined;
+	if (candidates.length === 1) return candidates[0];
+
+	const key = tokenReading ? readingKey(tokenReading) : '';
+	if (!key) return candidates[0];
+
+	const match = candidates.find((row) => {
+		const reading = readingOf(row);
+		return reading ? readingKey(reading) === key : false;
+	});
+	return match ?? candidates[0];
+}
+
+/**
+ * One weighted coin flip per card, remembered.
+ *
+ * Keyed by `cardKey` rather than by the word key the token carries, so the two
+ * 长s fade on their own schedules — they are two cards with two strengths, and
+ * one roll shared between them would show a reading the other has outgrown.
  *
  * `>=` rather than `>` at the ends, matching `rollShow` in
  * `$lib/session/romanization`: a probability of 1 hides for every roll in
  * `[0, 1)`, and a probability of 0 shows for all of them.
  */
-function showsReading(key: string, item: KnowledgeItem, ctx: AnnotateContext): boolean {
+function showsReading(item: KnowledgeItem, ctx: AnnotateContext): boolean {
+	const key = cardKey(item.term, item.romanization);
 	const cached = ctx.rolls.get(key);
 	if (cached !== undefined) return cached;
 
@@ -187,8 +247,8 @@ export function annotateSentence(
 		}
 
 		const key = wordKey(token.text);
-		const item = items.get(key);
-		const entry = glossary.get(key);
+		const item = pickByReading(items.get(key), (row) => row.romanization, token.reading);
+		const entry = pickByReading(glossary.get(key), (row) => row.reading, token.reading);
 
 		const status: WordStatus = item
 			? 'tracked'
@@ -206,7 +266,7 @@ export function annotateSentence(
 					: status === 'known'
 						? true
 						: status === 'tracked' && item
-							? !showsReading(key, item, ctx)
+							? !showsReading(item, ctx)
 							: false;
 
 		const gloss = item

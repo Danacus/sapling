@@ -151,7 +151,7 @@ chunks of that size and never splits one; `annotateReadingText` in `index.ts`
 runs them **sequentially** — a rate limit is the ordinary failure, and a
 failure should stop at the first chunk rather than after all of them — through
 the unchanged single-call path, and merges: sentences concatenated in order,
-glossaries concatenated and deduped by `wordKey` (first wins), `usage` summed,
+glossaries concatenated and deduped by `cardKey` (first wins), `usage` summed,
 title from the first chunk. The alignment rule is therefore now
 **per chunk**, which is strictly kinder: a model that miscounts one chunk costs
 that chunk's annotations, not the whole text's. The learner's title goes only to
@@ -226,8 +226,19 @@ override for unspaced ones; whitespace and punctuation runs are their own
 tokens; concatenating every token's `text` reproduces the input. `terms` is the
 union of vocabulary terms, glossary terms and known terms.
 
-`wordKey(s)` = trimmed, NFC, lower-cased — the one normalisation, used on both
-sides of every lookup.
+`wordKey(s)` = trimmed, NFC, lower-cased, internal whitespace collapsed — the
+one spelling normalisation, used on both sides of every lookup. It is `termKey`
+from `$lib/text` under this module's name for it, shared with the lesson
+resolver, the session engine and the assistant.
+
+A spelling is not a word: 长 is `cháng` ("long") and `zhǎng` ("to grow"), and a
+learner may hold both as separate cards. So the item and glossary lookups are
+`wordKey` → *list*, and the token's own `reading` — whole-sentence pinyin, which
+is why a local romanizer exists at all — picks which candidate an occurrence is,
+compared with `readingKey` (the same normalisation with *all* whitespace
+stripped, so `zì xíng chē` matches `zìxíngchē`; tone marks are never folded,
+being the whole difference). No token reading, or no candidate carrying that
+reading, falls back to the first candidate.
 
 Each token becomes a `ReadingWord`:
 
@@ -251,10 +262,11 @@ gloss — the card lets the learner type a meaning).
 
 Reading visibility, under the learner's `RomanizationMode` (`$lib/ui/prefs`):
 `'on'` keeps every reading, `'off'` nulls every reading; `'adaptive'`: `known`
-→ null; `tracked` → one roll per key per text open with
+→ null; `tracked` → one roll per **card** per text open with
 `hideReadingProbability(wordStrength(card, now))` from `$lib/session/romanization`
-(memoised in a `Map` the caller owns, so a word reads the same in every
-sentence); `new`/`plain` keep theirs. A sentence's stored `reading` (the
+(memoised by `cardKey` in a `Map` the caller owns, so a word reads the same in
+every sentence and two cards sharing a spelling fade on their own strengths);
+`new`/`plain` keep theirs. A sentence's stored `reading` (the
 no-romanizer fallback) shows iff at least one of its words kept a per-word
 reading — under `'on'` always, `'off'` never.
 
@@ -283,7 +295,7 @@ place.
 
 **Look it up** is the one paid call the reader makes, and it fires only on that
 press — a tap is free and stays free. The `GlossEntry` it returns goes into a
-page-owned `extraGlossary` (a `$state` array, deduped by `wordKey`) which is
+page-owned `extraGlossary` (a `$state` array, deduped by `cardKey`) which is
 merged into the `AnnotateContext`'s glossary, so the word turns `new` — orange
 underline, gloss on its card, *Add to my words* pre-filled with the meaning —
 everywhere it appears, for the rest of that open. It is deliberately **not
