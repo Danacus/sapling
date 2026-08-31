@@ -61,6 +61,40 @@ export function sentenceAt(sentences: readonly Timed[], ms: number): number {
 }
 
 /**
+ * The contiguous run of sentences sharing the clock's current `start`, as a
+ * half-open range.  Sentences cut from one cue legitimately share its span,
+ * and `sentenceAt` always picks the last — so the unit of following is the
+ * group, not the individual sentence.
+ */
+export function sentenceRangeAt(
+	sentences: readonly Timed[],
+	ms: number
+): { start: number; end: number } {
+	const at = sentenceAt(sentences, ms);
+	if (at < 0) return { start: 0, end: 0 };
+
+	const anchor = sentences[at];
+	if (!timed(anchor)) return { start: 0, end: 0 };
+	const t = anchor.start;
+
+	let start = at;
+	while (start > 0) {
+		const prev = sentences[start - 1];
+		if (!timed(prev) || prev.start !== t) break;
+		start--;
+	}
+
+	let end = at + 1;
+	while (end < sentences.length) {
+		const next = sentences[end];
+		if (!timed(next) || next.start !== t) break;
+		end++;
+	}
+
+	return { start, end };
+}
+
+/**
  * Whether playback has just run off the end of sentence `i`.
  *
  * The auto-pause question, and it is asked between two samples rather than

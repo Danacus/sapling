@@ -25,7 +25,15 @@
  * never stored, only its name (see `$lib/types`' `ReadingMedia`).
  */
 
-export { crossedEnd, firstTimed, nextTimed, prevTimed, sentenceAt, startOf } from './follow';
+export {
+	crossedEnd,
+	firstTimed,
+	nextTimed,
+	prevTimed,
+	sentenceAt,
+	sentenceRangeAt,
+	startOf
+} from './follow';
 export type { Timed } from './follow';
 export { forgetFile, objectUrl, rememberFile, takeFile } from './files';
 export type { Player } from './player';

@@ -6,7 +6,15 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { crossedEnd, firstTimed, nextTimed, prevTimed, sentenceAt, startOf } from './follow';
+import {
+	crossedEnd,
+	firstTimed,
+	nextTimed,
+	prevTimed,
+	sentenceAt,
+	sentenceRangeAt,
+	startOf
+} from './follow';
 import type { Timed } from './follow';
 
 /** Three cues with real gaps between them, the way subtitles actually sit. */
@@ -14,6 +22,13 @@ const cues: Timed[] = [
 	{ start: 1000, end: 2000 },
 	{ start: 3000, end: 4500 },
 	{ start: 6000, end: 7000 }
+];
+
+/** Two sentences cut from one cue, then a lone one — the shared-start case. */
+const shared: Timed[] = [
+	{ start: 1000, end: 3000 },
+	{ start: 1000, end: 3000 },
+	{ start: 5000, end: 6000 }
 ];
 
 /** A prose sentence spliced between two timed ones — the mixed text. */
@@ -113,6 +128,32 @@ describe('nextTimed and prevTimed', () => {
 		expect(firstTimed(mixed)).toBe(0);
 		expect(firstTimed([{}, { start: 4, end: 5 }])).toBe(1);
 		expect(firstTimed([{}])).toBe(-1);
+	});
+});
+
+describe('sentenceRangeAt', () => {
+	it('returns a width-1 range for a sentence with a unique start', () => {
+		expect(sentenceRangeAt(cues, 1500)).toEqual({ start: 0, end: 1 });
+		expect(sentenceRangeAt(cues, 3000)).toEqual({ start: 1, end: 2 });
+	});
+
+	it('widens to cover every sentence sharing the same start', () => {
+		expect(sentenceRangeAt(shared, 1000)).toEqual({ start: 0, end: 2 });
+		expect(sentenceRangeAt(shared, 2000)).toEqual({ start: 0, end: 2 });
+	});
+
+	it('does not widen into a sentence with a different start', () => {
+		expect(sentenceRangeAt(shared, 5000)).toEqual({ start: 2, end: 3 });
+	});
+
+	it('returns an empty range before the first cue and in an empty list', () => {
+		expect(sentenceRangeAt(cues, 0)).toEqual({ start: 0, end: 0 });
+		expect(sentenceRangeAt([], 1000)).toEqual({ start: 0, end: 0 });
+	});
+
+	it('skips untimed sentences, same as sentenceAt', () => {
+		expect(sentenceRangeAt(mixed, 1500)).toEqual({ start: 0, end: 1 });
+		expect(sentenceRangeAt(mixed, 5500)).toEqual({ start: 2, end: 3 });
 	});
 });
 

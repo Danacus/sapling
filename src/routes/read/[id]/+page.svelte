@@ -75,6 +75,7 @@
 		prevTimed,
 		rememberFile,
 		sentenceAt,
+		sentenceRangeAt,
 		startOf,
 		takeFile,
 		videoPlayer,
@@ -303,9 +304,12 @@
 	 * is only the clock reading it is asked about.
 	 */
 	const currentIndex = $derived(following ? sentenceAt(sentences, currentMs) : -1);
-	const prevIndex = $derived(prevTimed(sentences, currentIndex));
+	const currentRange = $derived(
+		following ? sentenceRangeAt(sentences, currentMs) : { start: 0, end: 0 }
+	);
+	const prevIndex = $derived(prevTimed(sentences, currentRange.start));
 	/** From `-1` this is the first timed line, which is what "next" means before the first cue. */
-	const nextIndex = $derived(nextTimed(sentences, currentIndex));
+	const nextIndex = $derived(nextTimed(sentences, currentRange.end - 1));
 
 	/** What to ask for by name when the file is not in hand. */
 	const mediaName = $derived(text?.media?.kind === 'file' ? text.media.name : '');
@@ -352,13 +356,7 @@
 	 * that it is doing so. Before the first cue the range is empty, which is the
 	 * honest answer: nothing is being spoken yet.
 	 */
-	const pageRange = $derived(
-		following
-			? currentIndex >= 0
-				? { start: currentIndex, end: currentIndex + 1 }
-				: { start: 0, end: 0 }
-			: (pages[pageIndex] ?? { start: 0, end: 0 })
-	);
+	const pageRange = $derived(following ? currentRange : (pages[pageIndex] ?? { start: 0, end: 0 }));
 	const lastPage = $derived(pageIndex >= pageCount - 1);
 
 	/** The slice of the annotated text this page shows — the only part rendered. */
@@ -640,7 +638,9 @@
 	 */
 	const transcriptRows: (HTMLElement | null)[] = [];
 	$effect(() => {
-		transcriptRows[currentIndex]?.scrollIntoView({ block: 'nearest' });
+		if (currentRange.start < currentRange.end) {
+			transcriptRows[currentRange.start]?.scrollIntoView({ block: 'nearest' });
+		}
 	});
 
 	/** The file, chosen again on an open that did not inherit it. */
@@ -1286,9 +1286,9 @@
 				     Only this page's slice is rendered, but the indices stay the whole
 				     text's, so `selected` still points into `lines` and a card survives
 				     a re-annotation.
-				     Following, `pageRange` is one sentence wide and this same loop
-				     renders the line being spoken — which is the whole reason the follow
-				     view is a view and not a route. -->
+				     Following, `pageRange` is the line being spoken — one sentence, or
+				     the few that share a cue — and this same loop renders it, which is
+				     the whole reason the follow view is a view and not a route. -->
 				{#if following && prevIndex >= 0}
 					<button type="button" class="neighbour" onclick={() => seekTo(prevIndex)}>
 						{sentences[prevIndex]?.text}
@@ -1647,7 +1647,7 @@
 									<button
 										type="button"
 										class="t-line"
-										class:is-now={i === currentIndex}
+										class:is-now={i >= currentRange.start && i < currentRange.end}
 										bind:this={transcriptRows[i]}
 										disabled={sentence.start === undefined}
 										onclick={() => seekTo(i, true)}
