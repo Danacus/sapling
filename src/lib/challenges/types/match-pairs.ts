@@ -65,7 +65,10 @@ export const matchPairsStoredDef = {
 	},
 
 	// Academic, like `demand` above: match rounds are built locally and never
-	// pooled, so no planner ever asks. Pair count is the one knob it has.
+	// pooled, so no planner ever asks. Pair count is the one knob it has — not a
+	// prose length, so it keeps its own scale — and the type carries no base
+	// offset: joining pairs that are all on screen is the recognition tier's
+	// floor, alongside `multiple-choice`.
 	difficulty(challenge) {
 		return clamp01((challenge.pairs.length - FEWEST_PAIRS) / (MOST_PAIRS - FEWEST_PAIRS));
 	},

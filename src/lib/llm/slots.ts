@@ -24,7 +24,7 @@
  * imported, since `$lib/llm` never reaches into `$lib/session`). It does two
  * jobs now instead of one: {@link allowedKinds} still reads it at the old
  * three-bucket resolution to decide which *types* a word may be asked in, and
- * {@link planSlots} also folds it — plus a continuous shift for how the learner
+ * {@link planSlots} also folds it — plus a whole-rung shift for how the learner
  * is doing and whether this word was just missed — into each slot's own
  * `difficulty`, 1..5, which is what used to be two prompt-wide accuracy cliffs
  * and is now a per-slot number the model scales its writing to (see
@@ -259,16 +259,24 @@ function demands(args: BatchArgs, total: number): Demand[] {
 }
 
 /**
- * The whole-lesson accuracy shift applied to every slot's difficulty level: 0
- * around {@link ACCURACY_FLOOR}, -1 well below it, +1 once accuracy clears
- * {@link ACCURACY_CEILING}. This is the old prompt-side accuracy cliffs made
- * local and continuous — one rung of the five-rung ladder, not two prose
- * paragraphs the model had to interpret itself.
+ * The whole-lesson accuracy shift applied to every slot's difficulty level: -1
+ * below {@link ACCURACY_FLOOR}, +1 at or above {@link ACCURACY_CEILING}, 0
+ * between them.
+ *
+ * A three-valued step on the two named bounds, and deliberately not a rounded
+ * interpolation: the ladder it moves has five rungs, so there is nothing
+ * between -1 and 0 to express, and an arithmetic version only obscures where it
+ * actually steps. (It did: `Math.round((acc - 0.7) * 4)` clamped its *output*,
+ * which put the real seams at 0.575 and 0.825 — neither of them a number this
+ * module names anywhere.) The bounds are the same two {@link productionShare}
+ * interpolates between, which is the point: one accuracy band, read two ways —
+ * continuously for the mix, in whole rungs for the difficulty.
  */
 function accuracyShift(recentAccuracy: number | undefined): -1 | 0 | 1 {
 	if (recentAccuracy === undefined || !Number.isFinite(recentAccuracy)) return 0;
-	const scaled = Math.round((recentAccuracy - ACCURACY_FLOOR) * 4);
-	return Math.max(-1, Math.min(1, scaled)) as -1 | 0 | 1;
+	if (recentAccuracy < ACCURACY_FLOOR) return -1;
+	if (recentAccuracy >= ACCURACY_CEILING) return 1;
+	return 0;
 }
 
 /** `level` folded to the closed `1..5` range every {@link Slot.difficulty} lives in. */
@@ -307,12 +315,20 @@ function pickKind(
  *
  * Each slot also gets a `difficulty`, 1..5: the item's own {@link
  * ReviewItemRef.level}, shifted by {@link accuracyShift} (how the learner is
- * doing across the whole lesson) and pulled down one rung for every word this
- * chunk's `recentMistakes` names — the local, continuous replacement for the
- * two prompt-side accuracy cliffs and the "write it EASIER than last time" rule
- * used to lean on alone. The shift is per *item*, not per slot: every slot about
- * a just-missed word reads easier, not only the extra one {@link demands}
- * inserted for it.
+ * doing across the whole lesson) and pulled down one rung where
+ * `recentMistakes` says so — the local replacement for the two prompt-side
+ * accuracy cliffs and the "write it EASIER than last time" rule used to lean on
+ * alone.
+ *
+ * *Where* a mistake reaches depends on what kind of mistake it was, and the two
+ * are not the same claim. A genuine wrong answer is evidence about the **word**:
+ * the learner tried and could not, so every slot about that word this lesson is
+ * written a rung easier. A `'(skipped)'` is evidence about the **format** — "I
+ * could not even attempt this one" — and {@link demands} already answers that by
+ * making the extra slot recognition-only. Pulling the word's other slots down
+ * too would shorten every recognize-mc about a word whose only sin was meeting a
+ * production format a few days early, so a skip moves that one extra slot and
+ * nothing else.
  */
 export function planSlots(args: BatchArgs, rng: () => number = Math.random): Slot[] {
 	const requested = args.count ?? defaultChallengeCount(args.reviewItems.length);
@@ -321,8 +337,10 @@ export function planSlots(args: BatchArgs, rng: () => number = Math.random): Slo
 
 	const share = productionShare(args.recentAccuracy);
 	const shift = accuracyShift(args.recentAccuracy);
-	const mistakenIds = new Set(
-		mistakenItems(args.reviewItems, args.recentMistakes).map(({ item }) => item.id)
+	const skippedById = new Map(
+		mistakenItems(args.reviewItems, args.recentMistakes).map(
+			({ item, skipped }) => [item.id, skipped] as const
+		)
 	);
 	const usedByItem = new Map<string, Set<string>>();
 	const slots: Slot[] = [];
@@ -352,9 +370,11 @@ export function planSlots(args: BatchArgs, rng: () => number = Math.random): Slo
 		used.add(kindKey(kind));
 		if (canProduce) eligible++;
 		if (wantProduction) production++;
-		const difficulty = clampDifficulty(
-			(demand.item.level ?? 1) + shift - (mistakenIds.has(demand.item.id) ? 1 : 0)
-		);
+		// A wrong answer moves every slot about the word; a skip moves only the
+		// extra slot it earned, which `demands` marks `recognitionOnly`.
+		const skipped = skippedById.get(demand.item.id);
+		const missed = skipped === false || (skipped === true && demand.recognitionOnly === true);
+		const difficulty = clampDifficulty((demand.item.level ?? 1) + shift - (missed ? 1 : 0));
 		slots.push({ itemId: demand.item.id, term: demand.item.term, difficulty, ...kind });
 	}
 

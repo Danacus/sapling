@@ -219,9 +219,10 @@ export function selectSessionItems(
  * `undefined` when there's no review history in the window — day one, where
  * there is nothing to calibrate on.
  *
- * It no longer paces anything locally; it is a difficulty dial for the
- * generation prompt (`BatchArgs.recentAccuracy`), which is where "how is this
- * learner doing" now changes what a lesson looks like.
+ * It paces nothing here, and it never reaches the model either: it travels as
+ * `BatchArgs.recentAccuracy` for `$lib/llm/slots`, which reads it locally to
+ * size the lesson's production share and to shift every slot's difficulty. That
+ * is where "how is this learner doing" now changes what a lesson looks like.
  *
  * Reads `recentGrades` — the trailing slice the store keeps on each item — and
  * falls back to `history` for items assembled in memory. A window this narrow

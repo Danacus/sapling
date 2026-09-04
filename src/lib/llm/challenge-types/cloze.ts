@@ -30,11 +30,13 @@ export const generatedClozeSchema = z.object({
 	after: clozePartSchema,
 	hintNative: nonEmpty,
 	/**
-	 * Three to five wrong candidates turn the challenge into a word bank; null
-	 * means the learner types the answer. Deliberately *not* length-constrained:
-	 * a bank of the wrong size is a cosmetic defect, and rejecting a challenge we
-	 * already paid for over it would be a poor trade. The resolver decides what
-	 * survives.
+	 * Two to five wrong candidates turn the challenge into a word bank; null
+	 * means the learner types the answer. Two is the floor because the bank
+	 * *shrinks* as difficulty rises (the `rulesSpec`), and `clozeWordBank` needs
+	 * two surviving chips to be a choice at all — the answer plus one wrong one.
+	 * Deliberately *not* length-constrained here: a bank of the wrong size is a
+	 * cosmetic defect, and rejecting a challenge we already paid for over it
+	 * would be a poor trade. The resolver decides what survives.
 	 */
 	distractorWords: z.array(targetTextSchema).nullish(),
 	...generatedBase
@@ -47,9 +49,9 @@ export const clozeDef = {
 	schema: generatedClozeSchema,
 	stored: { type: 'cloze', direction: 'toTarget' },
 	promptSpec:
-		'cloze — one target-language word missing from a target-language sentence. {before:TargetText, answer:TargetText, after:TargetText, hintNative, distractorWords:[3-5 TargetText] or null} e.g. {"type":"cloze","before":{"text":"你好，请给我一份","reading":"Nǐ hǎo, qǐng gěi wǒ yī fèn"},"answer":{"text":"菜单","reading":"càidān"},"after":{"text":"。","reading":"."},"hintNative":"Hello, could I have a menu, please?","distractorWords":[{"text":"筷子","reading":"kuàizi"},{"text":"茶","reading":"chá"},{"text":"水","reading":"shuǐ"}],"itemIds":["i3"],"explanation":"份 (fèn) is the measure word for a menu or a portion."} — before and after carry their own spacing and punctuation and the app puts the blank between them; either may be {"text":"","reading":null}. hintNative is the whole sentence in the native language. distractorWords null means the learner types the answer.',
+		'cloze — one target-language word missing from a target-language sentence. {before:TargetText, answer:TargetText, after:TargetText, hintNative, distractorWords:[2-5 TargetText] or null} e.g. {"type":"cloze","before":{"text":"你好，请给我一份","reading":"Nǐ hǎo, qǐng gěi wǒ yī fèn"},"answer":{"text":"菜单","reading":"càidān"},"after":{"text":"。","reading":"."},"hintNative":"Hello, could I have a menu, please?","distractorWords":[{"text":"筷子","reading":"kuàizi"},{"text":"茶","reading":"chá"},{"text":"水","reading":"shuǐ"}],"itemIds":["i3"],"explanation":"份 (fèn) is the measure word for a menu or a portion."} — before and after carry their own spacing and punctuation and the app puts the blank between them; either may be {"text":"","reading":null}. hintNative is the whole sentence in the native language. distractorWords null means the learner types the answer.',
 	rulesSpec:
-		'- Cloze sentences use only vocabulary at or below the learner level. Difficulty scales sentence length; when banked, distractorWords holds 4-5 words at low difficulty, fewer toward high.',
+		'- Cloze sentences use only vocabulary at or below the learner level. Difficulty scales sentence length; when banked, distractorWords holds 5 at difficulty 1, down to 2 at difficulty 5.',
 	correctiveSpec: 'cloze {before,answer,after,hintNative}',
 
 	// The only type with two fixtures per scenario, and deliberately so: one

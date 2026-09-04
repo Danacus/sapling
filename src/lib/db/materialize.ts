@@ -124,8 +124,8 @@ interface ReviewFoldRow {
  * The bulk-read aggregates every `items` row carries.
  *
  * They exist so a word list never reads `reviews`: the ledger's accuracy column,
- * the prompt's difficulty dial and the tick strip are all folds of the history
- * that can be maintained one review at a time.
+ * the slot planner's difficulty dial and the tick strip are all folds of the
+ * history that can be maintained one review at a time.
  */
 function aggregates(rows: readonly ReviewFoldRow[]): {
 	correctCount: number;

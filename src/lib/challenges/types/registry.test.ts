@@ -115,10 +115,12 @@ describe('stored-type purity', () => {
 });
 
 describe('difficulty', () => {
-	it('gives every stored type a difficulty method, 0..1 on a real challenge', () => {
-		// Exhaustive over the registry, so a def added without one fails here
-		// rather than surfacing as a lesson whose planner preference silently
-		// treats every row of that type as equally hard.
+	it('gives every stored type a difficulty method at all', () => {
+		// Membership only — that the number it returns is in range, moves the right
+		// way with each knob and orders sensibly against the other types is
+		// `../difficulty.test.ts`. What this catches is a def added without the
+		// method, which would otherwise surface as a lesson whose planner
+		// preference silently treats every row of that type as equally hard.
 		for (const [type, def] of Object.entries(STORED_TYPE_DEFS)) {
 			expect(typeof def.difficulty, type).toBe('function');
 		}
@@ -126,21 +128,26 @@ describe('difficulty', () => {
 });
 
 describe('stored-type def imports', () => {
-	it('imports only zod, $lib/types, $lib/validate and its own siblings', () => {
+	it('imports only zod, $lib/types, $lib/validate and the three shared siblings', () => {
 		// `./def`'s contract: a def is a leaf, so it may reach for zod, `$lib/types`
-		// and `$lib/validate` plus whatever sibling helper (`./primitives`,
-		// `./word-count`) exists to keep that boundary from bulging every time a
-		// def needs one more cross-cutting fact. Anything else — `$lib/llm`,
-		// `$lib/db`, another challenge's own module — is exactly the cycle `./def`
-		// warns about.
+		// and `$lib/validate` plus the shared siblings that keep that boundary from
+		// bulging every time a def needs one more cross-cutting fact. Anything
+		// else — `$lib/llm`, `$lib/db`, another challenge's own module — is exactly
+		// the cycle `./def` warns about.
+		//
+		// The sibling list is spelled out rather than accepted as "anything
+		// relative": a def importing another *def* (`./cloze` from `./word-order`)
+		// is a def→def edge, which is the same cycle risk under a relative
+		// specifier, and a blanket `./` prefix test waved it straight through.
 		const allowedExternal = new Set(['zod', '$lib/types', '$lib/validate']);
+		const allowedSiblings = new Set(['./def', './primitives', './word-count']);
 		const importLine = /^import\s+(?:type\s+)?[\s\S]*?\s+from\s+'([^']+)';?\s*$/gm;
 
 		for (const file of Object.values(DEF_FILES)) {
 			const source = readFileSync(join(TYPES_DIR, file), 'utf8');
 			for (const match of source.matchAll(importLine)) {
 				const specifier = match[1];
-				const allowed = specifier.startsWith('./') || allowedExternal.has(specifier);
+				const allowed = allowedSiblings.has(specifier) || allowedExternal.has(specifier);
 				expect(allowed, `${file} imports "${specifier}"`).toBe(true);
 			}
 		}

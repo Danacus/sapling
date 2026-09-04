@@ -12,11 +12,14 @@ import { z } from 'zod';
 import type { WordOrderChallenge } from '$lib/types';
 import { normalize } from '$lib/validate';
 import type { StoredTypeDef } from './def';
-import { clamp01, nonEmpty, storedBase } from './primitives';
+import { clamp01, lengthKnob, nonEmpty, storedBase, withBase } from './primitives';
 
-/** Answer-tile count spanning the full 0..1 range: `$lib/llm` keeps sentences to 4-8 tiles. */
-const FEWEST_TILES = 2;
-const MOST_TILES = 8;
+/**
+ * The constrained-production tier's floor, shared with a banked `cloze`: both
+ * put every word the learner needs on screen and withhold only one choice, so
+ * neither should outrank the other before its own knobs are read.
+ */
+const BASE = 0.2;
 
 /**
  * Distractor-tile count spanning the full 0..1 range. Mirrors
@@ -57,15 +60,15 @@ export const wordOrderStoredDef = {
 		return 1;
 	},
 
-	// Two knobs on the tray: how many tiles the answer itself needs, and how many
-	// extra wrong ones are mixed in to sift through.
+	// Two knobs on the tray: how many tiles the answer itself needs — which is
+	// the sentence's own length, so it reads on the shared prose scale like
+	// every other length knob — and how many extra wrong ones are mixed in to
+	// sift through.
 	difficulty(challenge) {
-		const tileFit = clamp01(
-			(challenge.answerTokens.length - FEWEST_TILES) / (MOST_TILES - FEWEST_TILES)
-		);
+		const tileFit = lengthKnob(challenge.answerTokens.length);
 		const distractors = Math.max(0, challenge.tiles.length - challenge.answerTokens.length);
 		const distractorFit = clamp01(distractors / MOST_DISTRACTORS);
-		return clamp01(tileFit * 0.7 + distractorFit * 0.3);
+		return withBase(BASE, tileFit * 0.7 + distractorFit * 0.3);
 	},
 
 	correctAnswerText(challenge) {

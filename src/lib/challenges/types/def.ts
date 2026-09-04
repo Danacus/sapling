@@ -96,6 +96,16 @@ export interface StoredTypeBehaviour<C extends Challenge> {
 	 * span, so a lower-demand challenge can never outrank a higher-demand one
 	 * however hard its own fields make it read.
 	 *
+	 * **Comparable across types, not only within one.** The planner picks between
+	 * rows of different types for the same word, so two things are shared: every
+	 * prose-length knob is measured on `./primitives`' one
+	 * {@link LONGEST_PROMPT_WORDS} scale rather than a per-type ceiling, and each
+	 * type states a `base` — where the *format* stands among its tier-mates
+	 * before any field is read — that `withBase` folds its knobs in above. In the
+	 * recognition tier that ordering is multiple-choice, then typed translation
+	 * `toNative`, then spot-error; in constrained production a banked cloze and a
+	 * tile tray are deliberately level.
+	 *
 	 * Structural only — never the learner's history, never `now`. A word count
 	 * needs `$lib/text/segmentWords` (Chinese and Japanese have no spaces), which
 	 * is why `./word-count` exists as the one sibling a def may reach for beyond

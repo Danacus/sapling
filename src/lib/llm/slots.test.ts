@@ -271,6 +271,21 @@ describe('planSlots', () => {
 			expect(slots[0].difficulty).toBe(2);
 		});
 
+		it('steps on the two bounds it names, and nowhere else', () => {
+			// The shift used to be `round((acc - 0.7) * 4)` clamped on its *output*,
+			// which put the real seams at 0.575 and 0.825 — neither of them a
+			// number this module states anywhere. Three values, two named bounds:
+			// below ACCURACY_FLOOR, between, and at or above ACCURACY_CEILING.
+			const at = (recentAccuracy: number) =>
+				planSlots(argsFor([item('a', 3)], { count: 1, recentAccuracy }), FIRST)[0].difficulty;
+
+			expect(at(0.69)).toBe(2);
+			expect(at(0.7)).toBe(3);
+			expect(at(0.72)).toBe(3);
+			expect(at(0.83)).toBe(3);
+			expect(at(0.85)).toBe(4);
+		});
+
 		it('leaves difficulty alone at the middle of the accuracy band', () => {
 			const slots = planSlots(argsFor([item('a', 3)], { count: 1, recentAccuracy: 0.7 }), FIRST);
 			expect(slots[0].difficulty).toBe(3);
@@ -288,7 +303,7 @@ describe('planSlots', () => {
 			expect(high[0].difficulty).toBe(5);
 		});
 
-		it('pulls every slot about a recently-missed word down a rung, not only the extra one', () => {
+		it('pulls every slot about a wrongly-answered word down a rung, not only the extra one', () => {
 			const slots = planSlots(
 				argsFor(solid, { count: 6, recentMistakes: [{ term: 'term-b', gave: 'wrong' }] }),
 				cyclingRng()
@@ -297,12 +312,23 @@ describe('planSlots', () => {
 			for (const slot of slots.filter((s) => s.itemId !== 'b')) expect(slot.difficulty).toBe(5);
 		});
 
-		it('treats a skipped mistake the same way as any other for the difficulty shift', () => {
+		it('lets a skipped mistake reach only the extra slot it earned', () => {
+			// A skip says the *format* was too early, not that the word is shaky —
+			// and the extra slot is already forced to recognition for exactly that
+			// reason. Pulling the word's other slots down too would shorten every
+			// recognize-mc about a word whose only sin was meeting a production
+			// format a few days early.
 			const slots = planSlots(
 				argsFor(solid, { count: 6, recentMistakes: [{ term: 'term-a', gave: '(skipped)' }] }),
 				cyclingRng()
 			);
-			for (const slot of slots.filter((s) => s.itemId === 'a')) expect(slot.difficulty).toBe(4);
+			// `demands` inserts the extra slot right after the first pass.
+			expect(slots[3].itemId).toBe('a');
+			expect(slots[3].difficulty).toBe(4);
+			for (const [index, slot] of slots.entries()) {
+				if (index === 3) continue;
+				expect(slot.difficulty).toBe(5);
+			}
 		});
 	});
 });

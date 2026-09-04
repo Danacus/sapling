@@ -11,12 +11,16 @@ import { z } from 'zod';
 import type { MultipleChoiceChallenge } from '$lib/types';
 import { checkAnswer } from '$lib/validate';
 import type { StoredTypeDef } from './def';
-import { clamp01, nonEmpty, storedBase } from './primitives';
+import { lengthKnob, nonEmpty, storedBase, withBase } from './primitives';
 import { wordCount } from './word-count';
 
-/** Prompt length, in words, spanning the full 0..1 range: a word to a short clause. */
-const SHORTEST_PROMPT = 1;
-const LONGEST_PROMPT = 8;
+/**
+ * The easiest thing in the recognition tier, and its floor: four options with
+ * the answer among them, one of which is right. Nothing else asked of a word is
+ * less work at the same prompt length, so this type starts at 0 and length is
+ * the whole of what moves it.
+ */
+const BASE = 0;
 
 export const multipleChoiceChallengeSchema = z.object({
 	type: z.literal('multiple-choice'),
@@ -56,9 +60,7 @@ export const multipleChoiceStoredDef = {
 	// picking. A one-word prompt ("el perro") and a full clause are both
 	// recognition, but not the same recognition.
 	difficulty(challenge) {
-		return clamp01(
-			(wordCount(challenge.prompt) - SHORTEST_PROMPT) / (LONGEST_PROMPT - SHORTEST_PROMPT)
-		);
+		return withBase(BASE, lengthKnob(wordCount(challenge.prompt)));
 	},
 
 	correctAnswerText(challenge) {

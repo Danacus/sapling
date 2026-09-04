@@ -11,12 +11,18 @@ import { z } from 'zod';
 import type { TypedTranslationChallenge } from '$lib/types';
 import { checkAnswer } from '$lib/validate';
 import type { StoredTypeDef } from './def';
-import { clamp01, nonEmpty, storedBase } from './primitives';
+import { lengthKnob, nonEmpty, storedBase, withBase } from './primitives';
 import { wordCount } from './word-count';
 
-/** Prompt length, in words, spanning the full 0..1 range. */
-const SHORTEST_PROMPT = 1;
-const LONGEST_PROMPT = 12;
+/**
+ * Above `multiple-choice` and below `spot-error` in the recognition tier, and
+ * the floor of the free-production tier in the other direction. Typing a
+ * translation asks the learner to render the whole prompt rather than pick one
+ * of four readings of it, so at equal length it is more work than a
+ * multiple-choice row; it is less than a `spot-error`, which asks them to hold
+ * the whole sentence and judge every word in it.
+ */
+const BASE = 0.25;
 
 export const typedTranslationChallengeSchema = z.object({
 	type: z.literal('typed-translation'),
@@ -52,9 +58,7 @@ export const typedTranslationStoredDef = {
 
 	// The one knob either direction has: how much there is to translate.
 	difficulty(challenge) {
-		return clamp01(
-			(wordCount(challenge.prompt) - SHORTEST_PROMPT) / (LONGEST_PROMPT - SHORTEST_PROMPT)
-		);
+		return withBase(BASE, lengthKnob(wordCount(challenge.prompt)));
 	},
 
 	correctAnswerText(challenge) {

@@ -51,7 +51,14 @@ import {
 import { difficultyOf } from '$lib/challenges/difficulty';
 import { termKey } from '$lib/text';
 import type { Challenge, ChallengeResult, KnowledgeItem, Profile, Verdict } from '$lib/types';
-import { bearable, difficultyLevelOf, weakestWordStrength } from './progression';
+import {
+	bearable,
+	difficultyLevelOf,
+	itemsById,
+	levelBandCentre,
+	levelForStrength,
+	weakestWordStrength
+} from './progression';
 
 /* -------------------------------------------------------------------------- */
 /* Tuning                                                                      */
@@ -414,9 +421,18 @@ interface PlanBoard {
 	 */
 	bearable: (row: ChallengeRow) => boolean;
 	/**
-	 * How far a row's own difficulty sits from its own weakest word's current
-	 * strength — the planner's third preference (see {@link firstFree}). Lower is
-	 * a closer fit. Memoized for the same reason {@link bearable} is.
+	 * How far a row's own difficulty sits from the **centre of its weakest
+	 * word's level band** — the planner's third preference (see
+	 * {@link firstFree}). Lower is a closer fit. Memoized for the same reason
+	 * {@link bearable} is.
+	 *
+	 * The band centre rather than the word's raw strength, because that is the
+	 * number the lesson was written to: `planRefill` sends `difficultyLevelOf`
+	 * and `planSlots` writes each slot at that rung, so the planner asking for
+	 * the same rung's midpoint is asking for what it ordered. Raw strength would
+	 * degenerate at every band ceiling — a word in the upper half of any band is
+	 * nearer that band's hardest row than its own centre, so the longest, oldest
+	 * sentence in the bucket would win over the short fresh one written for it.
 	 */
 	fitRank: (row: ChallengeRow) => number;
 }
@@ -443,11 +459,16 @@ function planBoard(
 	const rested = playable.filter((row) => isRested(row, now)).sort(byFreshness);
 	const resting = playable.filter((row) => !isRested(row, now)).sort(byRecency);
 
+	// One index over the vocabulary for the whole plan: both predicates below ask
+	// about the weakest word of every row, repeatedly, and each question used to
+	// rebuild this map from scratch.
+	const byId = itemsById(items);
+
 	const memo = new Map<string, boolean>();
 	const bearableRow = (row: ChallengeRow): boolean => {
 		const cached = memo.get(row.id);
 		if (cached !== undefined) return cached;
-		const answer = bearable(row, items, now);
+		const answer = bearable(row, items, now, byId);
 		memo.set(row.id, answer);
 		return answer;
 	};
@@ -456,7 +477,8 @@ function planBoard(
 	const fitRank = (row: ChallengeRow): number => {
 		const cached = fitMemo.get(row.id);
 		if (cached !== undefined) return cached;
-		const rank = Math.abs(difficultyOf(row) - weakestWordStrength(row, items, now));
+		const target = levelBandCentre(levelForStrength(weakestWordStrength(row, items, now, byId)));
+		const rank = Math.abs(difficultyOf(row) - target);
 		fitMemo.set(row.id, rank);
 		return rank;
 	};
@@ -505,9 +527,14 @@ function nearestFit(
  * when nothing does the word is still served — a hard exercise beats a skipped
  * review, exactly as a too-familiar sentence does. *Which* bearable challenge
  * wins is the finer question this answers: not "the freshest one that fits",
- * but "the one whose own difficulty is closest to how strong this word already
- * is" — a strong word gets the harder of two fitting challenges, a shaky one the
- * easier — with freshness/recency (the bucket's own order) breaking a true tie.
+ * but "the one whose own difficulty is closest to the middle of this word's
+ * level band" — a strong word gets the harder of two fitting challenges, a
+ * shaky one the easier — with freshness/recency (the bucket's own order)
+ * breaking a true tie.
+ *
+ * This is the **only** place fit is consulted, and that is deliberate: a
+ * `fitRank` is a distance to one particular word's target, so it means something
+ * inside one word's own bucket and nothing at all between two words' buckets.
  *
  * And because the rule only ever reorders *inside* a bucket, it cannot bend the
  * rest gap: the caller consults the rested bucket first, so an unbearable rested
@@ -528,27 +555,31 @@ function firstFree(
 }
 
 /**
- * `rows` reordered so the bearable ones come first, nearest-fit first among
- * those, and the rest otherwise untouched.
+ * `rows` partitioned so the bearable ones come first, **both halves in exactly
+ * the order they arrived**.
  *
- * {@link firstFree}'s rule applied to a whole bucket at once — which is what
- * repeatedly taking "the closest-fitting unclaimed bearable one, else the first
- * unclaimed" from the same list amounts to. Used by the fillers, where there is
- * no single item to walk and the bucket order *is* the plan. The bearable half
- * is sorted by {@link PlanBoard.fitRank} — a stable sort, so freshness and serve
- * recency still break every tie exactly as they did before this preference
- * existed — and the unbearable half keeps its own order entirely.
+ * Used by the fillers, where there is no single item to walk and the bucket
+ * order *is* the plan: `board.rested` is in {@link byFreshness} order and
+ * `board.resting` in {@link byRecency} order, and those orders carry the two
+ * invariants the whole tail rests on — a never-served row leads, and among
+ * served ones the longest-untouched leads.
+ *
+ * Fit deliberately has no say here. A {@link PlanBoard.fitRank} is a distance
+ * to *one word's* target, so ranking a heterogeneous bucket by it compares
+ * numbers about different words: a stale word-order row that happens to sit near
+ * its own word's band centre would beat a never-served row from the batch the
+ * learner just paid for, and "the newest material leads" would quietly stop
+ * being true. Fit stays where it means something — inside one word's own bucket,
+ * in {@link firstFree}.
  */
 function bearableFirst(
 	rows: ChallengeRow[],
-	bearableRow: (row: ChallengeRow) => boolean,
-	fitRank: (row: ChallengeRow) => number
+	bearableRow: (row: ChallengeRow) => boolean
 ): ChallengeRow[] {
 	const fits: ChallengeRow[] = [];
 	const rest: ChallengeRow[] = [];
 	for (const row of rows) (bearableRow(row) ? fits : rest).push(row);
-	const byFit = [...fits].sort((a, b) => fitRank(a) - fitRank(b));
-	return [...byFit, ...rest];
+	return [...fits, ...rest];
 }
 
 /**
@@ -626,11 +657,13 @@ function byDueDate(now: number): (a: KnowledgeItem, b: KnowledgeItem) => number 
  * recognition while the word is new, production once it has been recalled a few
  * times. **Fit** ({@link PlanBoard.fitRank}, `$lib/challenges/difficulty`) is
  * the fine one, breaking the tie among those: the challenge whose own
- * difficulty sits closest to that word's current strength wins, so a strong
- * word gets the harder of two challenges it can bear and a shaky one the
- * easier — never the other way round, and never merely the freshest. Both
- * layers are only ever preferences *within* a bucket ({@link firstFree}), so
- * neither can cost a review or bend the rest gap.
+ * difficulty sits closest to the middle of that word's level band wins, so a
+ * strong word gets the harder of two challenges it can bear and a shaky one the
+ * easier — never the other way round, and never merely the freshest. Bearability
+ * reorders a bucket wherever the planner takes from one, including the fillers;
+ * fit applies only *within one word's own* bucket ({@link firstFree}), because
+ * that is the only place its numbers are about the same word. Neither can cost a
+ * review or bend the rest gap.
  *
  * Pure and deterministic — no clock, no database, no rng — so a plan can be
  * pinned exactly in tests.
@@ -682,10 +715,11 @@ export function planSession(
 	// least-recently-served leftovers, and only then material still inside its
 	// gap. Each list is already in serve order, with the challenges their words
 	// can bear brought to the front of it — bearable-first *within* each half, so
-	// preferring a fitting challenge never promotes resting material over rested.
+	// preferring a fitting challenge never promotes resting material over rested,
+	// and freshness/recency still orders each half.
 	for (const row of [
-		...bearableFirst(board.rested, board.bearable, board.fitRank),
-		...bearableFirst(board.resting, board.bearable, board.fitRank)
+		...bearableFirst(board.rested, board.bearable),
+		...bearableFirst(board.resting, board.bearable)
 	]) {
 		if (chosen.length >= target) break;
 		if (taken.has(row.id)) continue;
@@ -706,7 +740,13 @@ export interface RefillPlan {
 	args: BatchArgs;
 	/** The words the batch will be written about (full objects, for the UI). */
 	reviewItems: KnowledgeItem[];
-	/** Trailing-week accuracy sent as the prompt's difficulty dial; `undefined` on day one. */
+	/**
+	 * Trailing-week accuracy, `undefined` on day one. It reaches `getBatch` in
+	 * {@link BatchArgs} but never the prompt: `$lib/llm/slots` reads it locally,
+	 * for the lesson's recognition/production mix and its per-slot difficulty.
+	 * Surfaced here for the UI, which shows the learner the figure their next
+	 * lesson is being pitched at.
+	 */
 	recentAccuracy: number | undefined;
 }
 
@@ -802,8 +842,9 @@ export function planRefill(
 	now: number,
 	opts: PlanRefillOptions = {}
 ): RefillPlan {
-	// Not a pacing input any more — it travels to the prompt as the difficulty
-	// dial and nothing else. See `accuracyFromHistory`.
+	// Not a pacing input any more, and it no longer reaches the prompt either:
+	// `planSlots` reads it locally to size the production share and to shift every
+	// slot's difficulty. See `accuracyFromHistory` and `$lib/llm/slots`.
 	const recentAccuracy = accuracyFromHistory(items, { now });
 	const { reviewItems } = selectSessionItems(items, {
 		now,
@@ -856,9 +897,10 @@ export function planRefill(
 					}))
 				}
 			: {}),
-		// Both are difficulty dials for the prompt: how the learner is doing, and
-		// which words they are currently losing. Omitted when there is nothing to
-		// say, so a day-one batch pays no tokens for them.
+		// Both are difficulty dials, but not the same kind: `recentAccuracy` is read
+		// only by `planSlots` and never travels to the model, while `recentMistakes`
+		// both shapes the plan and reaches the prompt as "write these easier".
+		// Omitted when there is nothing to say, so a day-one batch pays no tokens.
 		...(recentAccuracy === undefined
 			? {}
 			: { recentAccuracy: Math.round(recentAccuracy * 100) / 100 }),

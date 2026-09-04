@@ -147,6 +147,30 @@ function strongItem(id: string, dueOffset: number): KnowledgeItem {
 	};
 }
 
+/**
+ * A word partway up level 1: `wordStrength` ≈ 0.10, which is above the band's
+ * centre (0.075) and below its ceiling (`CONSTRAINED_PRODUCTION_FLOOR`, 0.15).
+ * Exactly where matching a challenge against the word's *raw* strength used to
+ * degenerate — every tier-0 row sits below 0.10, so the tier's hardest was
+ * always the nearest.
+ */
+function midLevelOneItem(id: string, dueOffset: number): KnowledgeItem {
+	return {
+		...item(id, dueOffset),
+		fsrsCard: {
+			...newCardState(NOW),
+			due: NOW + dueOffset,
+			// log1p(0.41) / log1p(30) ≈ 0.10, and retrievability is 1 the moment of
+			// a review — see `wordStrength`.
+			stability: 0.41,
+			scheduled_days: 1,
+			reps: 1,
+			state: CardState.Review,
+			last_review: NOW
+		}
+	};
+}
+
 const ids = (challenges: Challenge[]) => challenges.map((challenge) => challenge.id);
 
 /* -------------------------------------------------------------------------- */
@@ -676,6 +700,27 @@ describe('planSession', () => {
 			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['newer', 'older']);
 		});
 
+		it("aims at the middle of the word's level band, not at its raw strength", () => {
+			// The word sits at strength ~0.10: level 1, but in the *upper* half of
+			// level 1's [0, 0.15] band. Measured against 0.10 every recognition row
+			// in existence reads too easy, so the tier's hardest — the longest
+			// sentence anyone ever wrote for this word — was always the nearest, and
+			// the short row generated at level 1 could never win. Measured against
+			// the band's centre (0.075) the short one does, which is the row a
+			// level-1 lesson was asked for in the first place.
+			const items = [midLevelOneItem('mid', -DAY)];
+			const pool = [
+				recognition('long', ['mid'], {
+					prompt: 'perdona, ¿me podrías decir dónde está la estación de tren más cercana?',
+					generatedAt: NOW
+				}),
+				recognition('short', ['mid'], { prompt: 'el perro', generatedAt: NOW - 5 * DAY })
+			];
+
+			// Freshness would take `long`: it is the newer never-served row.
+			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['short', 'long']);
+		});
+
 		it('does not spend the rest gap to find something bearable', () => {
 			// The preference works *within* a bucket, so the rested bucket is still
 			// consulted first and an unbearable rested row wins over a bearable
@@ -741,19 +786,65 @@ describe('planSession', () => {
 
 	it('fills leftover slots with the newest never-served challenges', () => {
 		const items = [item('due', -DAY), item('later', +DAY)];
+		// Recognition rows throughout, and deliberately: these are fresh cards, so a
+		// pool of `row`'s demand-2 typed translations would be uniformly *un*bearable
+		// and the filler's partition would never be exercised at all — the ordering
+		// below would hold for the wrong reason.
 		const pool = [
-			row('due-1', ['due']),
-			row('fill-old', ['later'], { generatedAt: NOW - 5 * DAY }),
-			row('fill-new', ['later'], { generatedAt: NOW }),
-			row('fill-served', ['later'], { timesServed: 1, lastServedAt: NOW - 10 * DAY })
+			recognition('due-1', ['due']),
+			recognition('fill-old', ['later'], { generatedAt: NOW - 5 * DAY }),
+			recognition('fill-new', ['later'], { generatedAt: NOW }),
+			recognition('fill-older', ['later'], { generatedAt: NOW - 9 * DAY }),
+			recognition('fill-served', ['later'], { timesServed: 1, lastServedAt: NOW - 10 * DAY })
 		];
 
 		// Due first, then freshness newest-first, and only then the recyclables.
-		expect(ids(planSession(pool, items, NOW, { target: 4 }))).toEqual([
+		expect(ids(planSession(pool, items, NOW, { target: 5 }))).toEqual([
 			'due-1',
 			'fill-new',
 			'fill-old',
+			'fill-older',
 			'fill-served'
+		]);
+	});
+
+	it('orders the filler by freshness alone, never by fit', () => {
+		// A `fitRank` is a distance to *one word's* target, so between two words it
+		// is noise. Ranking the heterogeneous filler by it let a stale row that
+		// happens to sit near its own word's band centre jump a never-served row
+		// from the batch the learner just paid for — and "the newest material
+		// leads" quietly stopped being true.
+		const items = [strongItem('strong', +DAY), item('weak', +2 * DAY)];
+		// Two rows apiece for the walk to claim (it gives every word two passes),
+		// so exactly one row per word is left for the filler to order. Identical
+		// prompts within a word, so the walk's own fit preference has nothing to
+		// say and takes them in plain freshness order.
+		const strongRow = (id: string, over: Partial<ChallengeRow> = {}) =>
+			row(id, ['strong'], { prompt: 'la cuenta', ...over });
+		const weakRow = (id: string, over: Partial<ChallengeRow> = {}) =>
+			recognition(id, ['weak'], { prompt: 'the bill', ...over });
+
+		const pool = [
+			strongRow('s1', { generatedAt: NOW }),
+			strongRow('s2', { generatedAt: NOW - DAY }),
+			weakRow('w1', { generatedAt: NOW }),
+			weakRow('w2', { generatedAt: NOW - DAY }),
+			// The filler's two candidates, both bearable and both rested. `stale` is
+			// the better fit (a typed translation ~0.63 against a level-4 word's
+			// 0.575 centre) but was served a fortnight ago; `fresh` is the worse fit
+			// (a short multiple-choice ~0.01 against a level-1 word's 0.075) and has
+			// never been served. Freshness decides, and only freshness.
+			weakRow('fresh', { generatedAt: NOW - 2 * DAY }),
+			strongRow('stale', { timesServed: 1, lastServedAt: NOW - 14 * DAY })
+		];
+
+		expect(ids(planSession(pool, items, NOW, { target: 6 }))).toEqual([
+			's1',
+			'w1',
+			's2',
+			'w2',
+			'fresh',
+			'stale'
 		]);
 	});
 
@@ -1073,7 +1164,7 @@ describe('planRefill', () => {
 		expect(byId.get('b')).toBeGreaterThan(1);
 	});
 
-	it('sends recent accuracy to the prompt as its difficulty dial', () => {
+	it('puts recent accuracy in the batch args for the slot planner', () => {
 		const weak = [
 			item('a', -DAY, [
 				{ at: NOW - DAY, grade: Grade.Again },
@@ -1082,9 +1173,9 @@ describe('planRefill', () => {
 			])
 		];
 
-		// The only thing accuracy still decides: how hard the batch is written.
-		// It used to pace new-word introduction as well, and there is no such
-		// thing to pace any more.
+		// Accuracy paces nothing here and never reaches the model: it rides in
+		// `BatchArgs` for `$lib/llm/slots`, which reads it locally to size the
+		// production share and shift each slot's difficulty.
 		const plan = planRefill(weak, profile(), NOW);
 		expect(plan.recentAccuracy).toBeCloseTo(1 / 3);
 		expect(plan.args.recentAccuracy).toBe(0.33);
@@ -1261,7 +1352,7 @@ describe('planRefill difficulty feedback', () => {
 		]);
 	});
 
-	it('reports recent accuracy to the prompt, rounded to two decimals', () => {
+	it('reports recent accuracy rounded to two decimals', () => {
 		const history = [
 			{ at: NOW - DAY, grade: Grade.Good },
 			{ at: NOW - DAY, grade: Grade.Again },

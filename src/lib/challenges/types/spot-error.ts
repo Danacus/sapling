@@ -17,11 +17,16 @@ import { z } from 'zod';
 import type { SpotErrorChallenge } from '$lib/types';
 import { normalize } from '$lib/validate';
 import type { StoredTypeDef } from './def';
-import { clamp01, nonEmpty, storedBase } from './primitives';
+import { lengthKnob, nonEmpty, storedBase, withBase } from './primitives';
 
-/** Sentence length, in tokens, spanning the full 0..1 range. */
-const SHORTEST_SENTENCE = 3;
-const LONGEST_SENTENCE = 14;
+/**
+ * The hardest thing in the recognition tier, and so its highest floor. Every
+ * other recognition type shows the learner an answer and asks them to pick it;
+ * this one shows a sentence with no answer in it and asks them to notice that
+ * one word is wrong — which means reading every word and judging it, at any
+ * length.
+ */
+const BASE = 0.45;
 
 export const spotErrorChallengeSchema = z.object({
 	type: z.literal('spot-error'),
@@ -59,9 +64,7 @@ export const spotErrorStoredDef = {
 	// `tokens` is already one entry per word — the model did the segmenting — so
 	// the length knob reads straight off it with no counting of its own.
 	difficulty(challenge) {
-		return clamp01(
-			(challenge.tokens.length - SHORTEST_SENTENCE) / (LONGEST_SENTENCE - SHORTEST_SENTENCE)
-		);
+		return withBase(BASE, lengthKnob(challenge.tokens.length));
 	},
 
 	// Not the word they had to tap — the word that belonged there.

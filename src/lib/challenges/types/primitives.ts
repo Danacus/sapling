@@ -53,3 +53,41 @@ export function clamp01(value: number): number {
 	if (!Number.isFinite(value)) return 0;
 	return Math.min(1, Math.max(0, value));
 }
+
+/**
+ * The prose-length scale **every** type's length knob is measured on: a single
+ * word at the bottom, a long sentence at the top.
+ *
+ * One scale, shared, because `difficulty` is compared *across* types — the
+ * planner asks "which of these rows best fits this word", and the rows are not
+ * all the same type. Each type normalising its own length against its own
+ * ceiling made those numbers incomparable: at eight words a multiple-choice
+ * prompt read as maximally hard and a spot-error sentence as barely more than
+ * half, so a four-option recognition question outranked reading a whole
+ * sentence and finding the error in it. The per-type ordering that survives
+ * that is expressed as a base offset instead (see the defs' `difficulty`),
+ * which is a claim about the *format*, and length then moves each type over the
+ * remainder of its range.
+ */
+export const SHORTEST_PROMPT_WORDS = 1;
+export const LONGEST_PROMPT_WORDS = 12;
+
+/** Where `words` sits on the shared {@link LONGEST_PROMPT_WORDS} scale, 0..1. */
+export function lengthKnob(words: number): number {
+	return clamp01((words - SHORTEST_PROMPT_WORDS) / (LONGEST_PROMPT_WORDS - SHORTEST_PROMPT_WORDS));
+}
+
+/**
+ * A def's `difficulty` answer: its own floor within its demand tier, plus
+ * whatever its structural knobs add over the remainder.
+ *
+ * `base` is the type's standing relative to the others *in its tier* before any
+ * field is read — how much work the format itself is, at the same length. It is
+ * a fraction of the tier's span, so the result stays in `[0, 1]` and
+ * `$lib/challenges/difficulty` can still scale it into the tier without a
+ * lower-demand row ever outranking a higher-demand one.
+ */
+export function withBase(base: number, knob: number): number {
+	const floor = clamp01(base);
+	return clamp01(floor + (1 - floor) * clamp01(knob));
+}

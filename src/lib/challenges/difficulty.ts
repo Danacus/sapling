@@ -18,6 +18,18 @@
  * lower-demand challenge can never outrank a higher-demand one, however hard
  * its own fields make it read.
  *
+ * Within a tier the numbers have to be comparable *between* types too — the
+ * planner is choosing among the rows one word happens to have, and they are
+ * rarely all the same type — which is why the length scale and the per-type
+ * base offset both live in `./types/primitives` rather than in each def. See
+ * `StoredTypeBehaviour.difficulty`.
+ *
+ * What the caller compares this against is the *centre of the word's level
+ * band* (`$lib/session/progression`'s `levelBandCentre`), not the word's raw
+ * `wordStrength`: a raw target sits above the middle of its own band for half
+ * of every band, and a target above the middle of a tier always selects the
+ * tier's hardest row.
+ *
  * Dispatched through the stored-type registry exactly like `demandOf`, so a
  * type with no `difficulty` fails `pnpm check` at the registry rather than
  * defaulting to some arbitrary number.

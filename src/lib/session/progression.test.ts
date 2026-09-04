@@ -17,11 +17,15 @@ import {
 	FREE_PRODUCTION_FLOOR,
 	LEVEL_3_FLOOR,
 	LEVEL_5_FLOOR,
+	LEVEL_BANDS,
 	bearable,
 	bearableDemand,
 	difficultyLevelOf,
+	levelBandCentre,
+	levelForStrength,
 	maturityOf,
 	weakestWordStrength,
+	type DifficultyLevel,
 	type Maturity
 } from './progression';
 
@@ -292,6 +296,43 @@ describe('difficultyLevelOf', () => {
 		expect(difficultyLevelOf(item('a', LEARNED), NOW)).toBeGreaterThanOrEqual(2);
 		expect(difficultyLevelOf(item('a', LEARNED), NOW)).toBeLessThanOrEqual(3);
 		expect(difficultyLevelOf(item('a', OWNED), NOW)).toBeGreaterThanOrEqual(4);
+	});
+});
+
+describe('LEVEL_BANDS', () => {
+	const LEVELS: DifficultyLevel[] = [1, 2, 3, 4, 5];
+
+	it('tiles [0, 1] with no gap and no overlap', () => {
+		expect(LEVEL_BANDS[1][0]).toBe(0);
+		expect(LEVEL_BANDS[5][1]).toBe(1);
+		for (const level of [2, 3, 4, 5] as DifficultyLevel[]) {
+			expect(LEVEL_BANDS[level][0]).toBe(LEVEL_BANDS[(level - 1) as DifficultyLevel][1]);
+		}
+	});
+
+	it('agrees with difficultyLevelOf about where every band starts', () => {
+		// One geometry, read two ways: `levelForStrength` walks the floors down,
+		// `LEVEL_BANDS` states the spans between them. A drift here would put the
+		// planner's target in a different band from the word it is about.
+		for (const level of LEVELS) {
+			expect(levelForStrength(LEVEL_BANDS[level][0])).toBe(level);
+		}
+	});
+
+	it('puts every band centre strictly inside its own band', () => {
+		for (const level of LEVELS) {
+			const centre = levelBandCentre(level);
+			const [start, end] = LEVEL_BANDS[level];
+			expect(centre).toBeGreaterThan(start);
+			expect(centre).toBeLessThan(end);
+			expect(levelForStrength(centre)).toBe(level);
+		}
+	});
+
+	it('rises with the level, so a stronger word is aimed higher', () => {
+		const centres = LEVELS.map(levelBandCentre);
+		expect(centres).toEqual([...centres].sort((a, b) => a - b));
+		expect(new Set(centres).size).toBe(centres.length);
 	});
 });
 

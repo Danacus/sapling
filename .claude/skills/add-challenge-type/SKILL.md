@@ -64,8 +64,11 @@ rather than checking by eye.
 2. **Stored def** module in `src/lib/challenges/types/<type>.ts`, listed in
    `challenges/types/index.ts` **and** in `STORED_TYPE_ORDER`. It bundles the
    stored zod `schema`, the grading rule `check`, the difficulty tier `demand`,
-   and the four presentation facts (`correctAnswerText`,
-   `answerIsTargetLanguage`, `answerReading`, `spokenAnswerFor`).
+   the within-tier `difficulty` (a `base` offset for how much the *format*
+   asks, plus its structural knobs on the shared `lengthKnob` scale — see
+   `types/primitives.ts`), and the five presentation facts
+   (`correctAnswerText`, `answerIsTargetLanguage`, `answerReading`,
+   `spokenAnswerFor`, `audioTexts`).
    *Forget either:* `pnpm check` fails at the registry mapped type, or at the
    order-parity const.
 3. **Component** in `src/routes/learn/`, composed from `blocks/`, plus a branch
@@ -79,8 +82,10 @@ rather than checking by eye.
 
 ## Rules that are easy to get wrong
 
-- Stored def modules may import **zod, `$lib/types` and `$lib/validate` and
-  nothing else** — asserted by `challenges/types/registry.test.ts`.
+- Stored def modules may import **zod, `$lib/types`, `$lib/validate` and the
+  three shared siblings (`./def`, `./primitives`, `./word-count`) and nothing
+  else** — an explicit allowlist in `challenges/types/registry.test.ts`, so one
+  def importing another def is caught too.
 - `demand` is deliberately **not** consulted by `check`. Grading stays
   type-blind: a verdict is FSRS's evidence about the *word*, so difficulty
   shapes the question stream (`$lib/session/progression`), never what an answer

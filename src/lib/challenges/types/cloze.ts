@@ -11,12 +11,16 @@ import { z } from 'zod';
 import type { ClozeChallenge } from '$lib/types';
 import { checkAnswer } from '$lib/validate';
 import type { StoredTypeDef } from './def';
-import { clamp01, nonEmpty, storedBase } from './primitives';
+import { clamp01, lengthKnob, nonEmpty, storedBase, withBase } from './primitives';
 import { wordCount } from './word-count';
 
-/** Sentence length, in words, spanning the full 0..1 range. */
-const SHORTEST_SENTENCE = 3;
-const LONGEST_SENTENCE = 16;
+/**
+ * The constrained-production tier's floor, shared with `word-order`: a banked
+ * cloze and a tile tray are the same bargain — every word the learner needs is
+ * on screen and only one choice is withheld — so neither type should outrank
+ * the other before its own knobs are read.
+ */
+const BASE = 0.2;
 
 /**
  * Word-bank size spanning the full 0..1 range, smaller-is-harder: a bank with
@@ -74,14 +78,18 @@ export const clozeStoredDef = {
 	// Two knobs, weighted so the sentence carries most of the read: how long the
 	// sentence is, and — only when there is a bank at all — how much support it
 	// gives. A bankless cloze (free recall) reads on sentence length alone.
+	//
+	// The gap is split out before counting: `segmentWords` reads `___` as a word
+	// of its own where it stands alone, and glues it to its neighbours where it
+	// does not (`a___b` is one segment), so counting the raw sentence both
+	// over-counts a five-word sentence and under-counts a mid-word blank.
+	// Rejoining the pieces with a space says what the sentence is made of.
 	difficulty(challenge) {
-		const lengthFit = clamp01(
-			(wordCount(challenge.sentence) - SHORTEST_SENTENCE) / (LONGEST_SENTENCE - SHORTEST_SENTENCE)
-		);
+		const lengthFit = lengthKnob(wordCount(challenge.sentence.split(GAP).join(' ')));
 		const bank = challenge.wordBank;
-		if (!bank || bank.length === 0) return lengthFit;
+		if (!bank || bank.length === 0) return withBase(BASE, lengthFit);
 		const bankFit = clamp01((LARGEST_BANK - bank.length) / (LARGEST_BANK - SMALLEST_BANK));
-		return clamp01(lengthFit * 0.6 + bankFit * 0.4);
+		return withBase(BASE, lengthFit * 0.6 + bankFit * 0.4);
 	},
 
 	correctAnswerText(challenge) {

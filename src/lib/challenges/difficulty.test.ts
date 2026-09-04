@@ -1,11 +1,14 @@
 /**
  * Tests for `difficultyOf`.
  *
- * Two things have to hold at once, and they are tested separately: within one
+ * Three things have to hold at once, and they are tested separately: within one
  * type, difficulty moves the direction a human would expect as a structural
- * field grows or shrinks (monotonic in each knob); and across types, a
- * challenge never escapes the span its own `demand` tier owns, however hard
- * its fields make it read.
+ * field grows or shrinks (monotonic in each knob); across types, a challenge
+ * never escapes the span its own `demand` tier owns, however hard its fields
+ * make it read; and *inside* a tier the types are ordered by how much the
+ * format itself asks, at equal prompt length — which is the whole point of the
+ * shared length scale and the per-type base offsets, since the planner compares
+ * these numbers between types.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -68,6 +71,22 @@ describe('difficultyOf', () => {
 				challenge(banked('Yo, después de comer, siempre ___ un libro antes de dormir.', 4))
 			);
 			expect(short).toBeLessThan(long);
+		});
+
+		it('does not count the blank as a word of the sentence', () => {
+			// `segmentWords` reads a standalone `___` as a word of its own, so
+			// "I want the ___ please." counted five where four are written.
+			const blanked = difficultyOf(challenge(banked('I want the ___ please.', 4)));
+			const written = difficultyOf(challenge(banked('I want the please.', 4)));
+			expect(blanked).toBeCloseTo(written, 10);
+		});
+
+		it('does not glue a mid-word blank to the words around it', () => {
+			// The other half of the same bug: `a___b` is one segment, so a blank
+			// inside a word made the whole sentence read as one word long.
+			const glued = difficultyOf(challenge(banked('ho___la que tal', 4)));
+			const split = difficultyOf(challenge(banked('ho la que tal', 4)));
+			expect(glued).toBeCloseTo(split, 10);
 		});
 
 		it('shrinks as the word bank grows: fewer distractors is harder', () => {
@@ -180,6 +199,81 @@ describe('difficultyOf', () => {
 			expect(few).toBeLessThan(many);
 			expect(few).toBeGreaterThanOrEqual(0);
 			expect(many).toBeLessThanOrEqual(0.15);
+		});
+	});
+
+	describe('across types, at the same prompt length', () => {
+		// The reason the length scale is shared and the base offsets exist. Each
+		// type used to normalise its own length against its own ceiling — 8 words
+		// for multiple-choice, 12 for typed translation, 14 for spot-error — so the
+		// same five-word prompt made the four-option question read *harder* than
+		// finding the wrong word in a whole sentence. The planner compares these
+		// numbers between types, so that ordering was live.
+		const FIVE_WORDS = 'quiero pedir la cuenta ahora';
+
+		it('orders the recognition tier: multiple-choice < typed toNative < spot-error', () => {
+			const mc = difficultyOf(
+				challenge({
+					type: 'multiple-choice',
+					direction: 'toTarget',
+					prompt: FIVE_WORDS,
+					options: ['a', 'b', 'c', 'd'],
+					correctIndex: 0
+				})
+			);
+			const typed = difficultyOf(
+				challenge({
+					type: 'typed-translation',
+					direction: 'toNative',
+					prompt: FIVE_WORDS,
+					acceptedAnswers: ['a']
+				})
+			);
+			const spot = difficultyOf(
+				challenge({
+					type: 'spot-error',
+					direction: 'toNative',
+					tokens: FIVE_WORDS.split(' '),
+					correctIndex: 0,
+					intendedWord: 'w0',
+					correctedSentence: 'x',
+					meaning: 'x'
+				})
+			);
+
+			expect(mc).toBeLessThan(typed);
+			expect(typed).toBeLessThan(spot);
+			// All three are still recognition, so none of them escapes tier 0.
+			expect(spot).toBeLessThanOrEqual(0.15);
+		});
+
+		it('keeps banked cloze and word-order comparable in constrained production', () => {
+			// Both put every word the learner needs on screen and withhold one
+			// choice, so at the same sentence length with no extra support on either
+			// side they should land close together rather than one type-wide apart.
+			const cloze = difficultyOf(
+				challenge({
+					type: 'cloze',
+					direction: 'toTarget',
+					sentence: 'quiero pedir la cuenta ___',
+					acceptedAnswers: ['ahora'],
+					wordBank: ['ahora', 'luego', 'nunca', 'siempre'],
+					translationHint: 'x'
+				})
+			);
+			const tiles = FIVE_WORDS.split(' ');
+			const wordOrder = difficultyOf(
+				challenge({
+					type: 'word-order',
+					direction: 'toTarget',
+					prompt: 'x',
+					tiles: [...tiles, 'd0'],
+					answerTokens: tiles,
+					answer: FIVE_WORDS
+				})
+			);
+
+			expect(Math.abs(cloze - wordOrder)).toBeLessThan(0.05);
 		});
 	});
 

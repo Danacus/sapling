@@ -47,11 +47,18 @@
  * three, for callers that want a gradient rather than a step function (the
  * per-slot `difficulty` a lesson is written at, and the planner's preference for
  * the challenge whose difficulty best matches a word's own strength). It is
- * built on exactly the two floors above plus two more between them, so the
- * three-bucket {@link maturityOf} and the five-rung ladder can never disagree
- * about where a tier boundary falls — `maturityOf` is now just
- * {@link difficultyLevelOf} read at coarser resolution (level 1 → `'new'`,
- * 2–3 → `'young'`, 4–5 → `'solid'`).
+ * built on exactly the two floors above plus one bisecting the tier-1 span
+ * ({@link LEVEL_3_FLOOR}) and one *above* both of them, well inside tier 2
+ * ({@link LEVEL_5_FLOOR}) — so the three-bucket {@link maturityOf} and the
+ * five-rung ladder can never disagree about where a tier boundary falls, and
+ * `maturityOf` is now just {@link difficultyLevelOf} read at coarser resolution
+ * (level 1 → `'new'`, 2–3 → `'young'`, 4–5 → `'solid'`).
+ *
+ * {@link LEVEL_BANDS} publishes the resulting five spans, because the planner
+ * needs more than the rung number: a lesson written *for* level 3 aims at the
+ * middle of level 3's strength range, so that midpoint — not the word's raw
+ * strength — is what `$lib/session/engine` matches a pooled challenge's own
+ * difficulty against.
  */
 
 import { demandOf, type Demand } from '$lib/challenges/demand';
@@ -91,6 +98,19 @@ export const LEVEL_3_FLOOR = 0.3;
 export const LEVEL_5_FLOOR = 0.7;
 
 /**
+ * `items` keyed by id, for the callers below.
+ *
+ * Exported so a caller that asks about many challenges over one vocabulary —
+ * `planSession`, which asks about every pooled row twice — can build the index
+ * once instead of paying a pass over the whole collection per question. The
+ * functions below still accept a bare array; the map is the optimisation, not
+ * the contract.
+ */
+export function itemsById(items: KnowledgeItem[]): ReadonlyMap<string, KnowledgeItem> {
+	return new Map(items.map((item) => [item.id, item]));
+}
+
+/**
  * The strength that decides what a challenge may ask: the **weakest** of the
  * words it exercises.
  *
@@ -101,15 +121,17 @@ export const LEVEL_5_FLOOR = 0.7;
  *
  * Re-exported by `./romanization` as `challengeReadingStrength`, which is what
  * it was called when the reading ramp was its only caller.
+ *
+ * @param byId Optional pre-built {@link itemsById} index over the very same
+ * `items`, so a caller in a loop does not rebuild it per challenge.
  */
 export function weakestWordStrength(
 	challenge: Challenge,
 	items: KnowledgeItem[],
-	now: number
+	now: number,
+	byId: ReadonlyMap<string, KnowledgeItem> = itemsById(items)
 ): number {
 	if (challenge.itemIds.length === 0) return 0;
-
-	const byId = new Map(items.map((item) => [item.id, item]));
 
 	let weakest = 1;
 	for (const id of challenge.itemIds) {
@@ -135,8 +157,13 @@ function demandForStrength(strength: number): Demand {
  * cleared it — the floors are calibration points, not thresholds anything
  * balances on.
  */
-export function bearableDemand(challenge: Challenge, items: KnowledgeItem[], now: number): Demand {
-	return demandForStrength(weakestWordStrength(challenge, items, now));
+export function bearableDemand(
+	challenge: Challenge,
+	items: KnowledgeItem[],
+	now: number,
+	byId?: ReadonlyMap<string, KnowledgeItem>
+): Demand {
+	return demandForStrength(weakestWordStrength(challenge, items, now, byId ?? itemsById(items)));
 }
 
 /**
@@ -148,8 +175,13 @@ export function bearableDemand(challenge: Challenge, items: KnowledgeItem[], now
  * translation, because a hard exercise beats a skipped review. Nothing in the
  * app refuses to serve a challenge on this answer.
  */
-export function bearable(challenge: Challenge, items: KnowledgeItem[], now: number): boolean {
-	return demandOf(challenge) <= bearableDemand(challenge, items, now);
+export function bearable(
+	challenge: Challenge,
+	items: KnowledgeItem[],
+	now: number,
+	byId?: ReadonlyMap<string, KnowledgeItem>
+): boolean {
+	return demandOf(challenge) <= bearableDemand(challenge, items, now, byId);
 }
 
 /** How far along a word is, in the three steps the generation prompt can act on. */
@@ -165,24 +197,66 @@ export type Maturity = 'new' | 'young' | 'solid';
 export type DifficultyLevel = 1 | 2 | 3 | 4 | 5;
 
 /**
- * A word's place on the five-rung ladder, from `wordStrength`.
+ * The `[start, end)` (closed at 1) span of `wordStrength` each rung owns.
  *
- * Anchored on the same two floors {@link bearableDemand} gates *serving* on
- * (`CONSTRAINED_PRODUCTION_FLOOR`, `FREE_PRODUCTION_FLOOR`) plus two more
- * between them ({@link LEVEL_3_FLOOR}, {@link LEVEL_5_FLOOR}), so the ladder and
- * the three-tier demand floors can never disagree about where a boundary falls:
- * level 1 is exactly tier-0 strength, levels 2–3 are exactly tier-1, levels 4–5
- * exactly tier-2. A word with no card at all is level 1 — introduced but never
- * scheduled is exactly what the bottom rung means.
+ * The single source for the ladder's geometry: {@link levelForStrength} reads
+ * it downwards to place a word, {@link levelBandCentre} reads it sideways for
+ * the planner, and `$lib/challenges/difficulty`'s `TIER_SPANS` is the union of
+ * bands 1, 2–3 and 4–5 restated on the other side of the layer boundary.
  */
-export function difficultyLevelOf(item: KnowledgeItem, now: number): DifficultyLevel {
-	const card = (item.fsrsCard as FsrsCardState | null | undefined) ?? null;
-	const strength = card ? wordStrength(card, now) : 0;
+export const LEVEL_BANDS: Record<DifficultyLevel, readonly [number, number]> = {
+	1: [0, CONSTRAINED_PRODUCTION_FLOOR],
+	2: [CONSTRAINED_PRODUCTION_FLOOR, LEVEL_3_FLOOR],
+	3: [LEVEL_3_FLOOR, FREE_PRODUCTION_FLOOR],
+	4: [FREE_PRODUCTION_FLOOR, LEVEL_5_FLOOR],
+	5: [LEVEL_5_FLOOR, 1]
+};
+
+/**
+ * The rung a bare `wordStrength` sits on. Inclusive at each floor, like
+ * {@link bearableDemand}.
+ */
+export function levelForStrength(strength: number): DifficultyLevel {
 	if (strength >= LEVEL_5_FLOOR) return 5;
 	if (strength >= FREE_PRODUCTION_FLOOR) return 4;
 	if (strength >= LEVEL_3_FLOOR) return 3;
 	if (strength >= CONSTRAINED_PRODUCTION_FLOOR) return 2;
 	return 1;
+}
+
+/**
+ * The middle of a rung's {@link LEVEL_BANDS band} — the strength a challenge
+ * written *for* that level is aimed at.
+ *
+ * This, not the word's raw strength, is what the planner matches a pooled
+ * challenge's own `difficultyOf` against. Raw strength would degenerate at
+ * every band ceiling: a word sitting at the top of level 1 is further from
+ * every tier-0 row than the tier's own hardest one, so it would always be
+ * handed the longest sentence in the bucket — and in the upper half of *every*
+ * band the same thing happens. The band centre is the number `planSlots` wrote
+ * the lesson to, so matching against it is the planner asking for exactly what
+ * generation was asked for.
+ */
+export function levelBandCentre(level: DifficultyLevel): number {
+	const [start, end] = LEVEL_BANDS[level];
+	return (start + end) / 2;
+}
+
+/**
+ * A word's place on the five-rung ladder, from `wordStrength`.
+ *
+ * Anchored on the same two floors {@link bearableDemand} gates *serving* on
+ * (`CONSTRAINED_PRODUCTION_FLOOR`, `FREE_PRODUCTION_FLOOR`) plus
+ * {@link LEVEL_3_FLOOR} bisecting the tier-1 span and {@link LEVEL_5_FLOOR}
+ * sitting well inside tier 2, so the ladder and the three-tier demand floors can
+ * never disagree about where a boundary falls: level 1 is exactly tier-0
+ * strength, levels 2–3 are exactly tier-1, levels 4–5 exactly tier-2. A word
+ * with no card at all is level 1 — introduced but never scheduled is exactly
+ * what the bottom rung means.
+ */
+export function difficultyLevelOf(item: KnowledgeItem, now: number): DifficultyLevel {
+	const card = (item.fsrsCard as FsrsCardState | null | undefined) ?? null;
+	return levelForStrength(card ? wordStrength(card, now) : 0);
 }
 
 /**
