@@ -13,7 +13,7 @@
  * can parse into it, and `_registryParity` fails `pnpm check` if the array and
  * the union ever disagree on membership.
  *
- * **Adding a wire type**: write `./<type>.ts` — schema, `promptSpec`,
+ * **Adding a wire type**: write `./<type>.ts` — schema, `stored`, `promptSpec`,
  * `correctiveSpec`, `resolve`, `fixtures`, plus `rulesSpec`/`escalationSpec` if
  * it needs them — and list it twice below: in {@link WIRE_TYPE_DEFS} and in
  * {@link generatedChallengeSchema}'s member list. Everything downstream (the
@@ -40,6 +40,7 @@ export type {
 	FixtureScenario,
 	OptionalSpecs,
 	ResolveContext,
+	StoredShape,
 	WirePayload,
 	WithOptionalSpecs,
 	WireTypeDef,

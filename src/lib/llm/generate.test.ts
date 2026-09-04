@@ -18,9 +18,16 @@ import {
 	stripFences
 } from './generate';
 import type { BatchArgs, ProgressStep, ResolveOptions } from './generate';
+import { byType } from './challenge-types';
+import type { WireType } from './challenge-types';
 import { challengeSchema } from './schemas';
 import { CHUNK_CONCURRENCY, CHUNK_ITEMS, CHUNK_SLOTS, chunkSlots, planSlots } from './slots';
 
+/**
+ * Two solid words, so the plan a lesson gets is a mix of recognition and
+ * production types rather than four ways of recognizing — the generation tests
+ * answer the plan they are given, so a richer plan tests more of the pipeline.
+ */
 const args: BatchArgs = {
 	profile: {
 		nativeLanguage: 'English',
@@ -29,8 +36,8 @@ const args: BatchArgs = {
 		interests: ['cooking', 'cycling']
 	},
 	reviewItems: [
-		{ id: 'i1', term: 'el perro', meaning: 'the dog' },
-		{ id: 'i2', term: 'leer', meaning: 'to read' }
+		{ id: 'i1', term: 'el perro', meaning: 'the dog', level: 5 },
+		{ id: 'i2', term: 'leer', meaning: 'to read', level: 5 }
 	]
 };
 
@@ -133,6 +140,56 @@ function idFactory(): () => string {
 	let n = 0;
 	return () => `id-${++n}`;
 }
+
+/** A planned slot, as `planSlots` returns it and as the chunk payload spells it. */
+interface SlotLike {
+	itemId: string;
+	type: string;
+	bank?: boolean;
+}
+
+/**
+ * The wire challenge a well-behaved model writes for one slot: that wire type's
+ * own Spanish fixture, re-pointed at the slot's word and stamped in
+ * `explanation` with the slot it fills.
+ *
+ * Using the registry's fixtures rather than a hand-rolled recognize-mc is what
+ * makes these tests exercise every type end to end — the plan decides which
+ * types a lesson asks for, and the reply now has to answer in *those* types or
+ * be rejected.
+ */
+function fillSlot(slot: SlotLike): Record<string, unknown> {
+	const def = byType.get(slot.type as WireType);
+	if (!def) throw new Error(`no wire def for ${slot.type}`);
+	const fixtures = def.fixtures.spanish as unknown as readonly {
+		challenge: Record<string, unknown>;
+	}[];
+	const wanted =
+		slot.bank === undefined
+			? fixtures[0]
+			: (fixtures.find((f) => (f.challenge.distractorWords != null) === slot.bank) ?? fixtures[0]);
+	return {
+		...wanted.challenge,
+		itemIds: [slot.itemId],
+		explanation: `${slot.itemId}-${slot.type}`
+	};
+}
+
+/** The reply that fills a whole plan (or one chunk of it), in slot order. */
+function fillPlan(slots: readonly SlotLike[]): { challenges: Record<string, unknown>[] } {
+	return { challenges: slots.map(fillSlot) };
+}
+
+/**
+ * The lesson `args` plans under the `rng` {@link callOpts} passes, in the order
+ * the chunks ask for it (a word's slots travel together), and the reply that
+ * fills it.
+ */
+const plan = chunkSlots(planSlots(args, IDENTITY_RNG), args.reviewItems).flatMap((c) => c.slots);
+const plannedReply = fillPlan(plan);
+
+/** The first slot of the plan about this word — where a term-citation test lands. */
+const slotAbout = (itemId: string): number => plan.findIndex((slot) => slot.itemId === itemId);
 
 /** parse + resolve, the pairing every caller of this layer uses. */
 function resolve(batch: { challenges: unknown[] }, opts: ResolveOptions = {}) {
@@ -265,6 +322,31 @@ describe('buildChunkPrompt', () => {
 		for (const slot of withLevelPayload.slots) {
 			expect(slot).not.toHaveProperty('level');
 		}
+	});
+
+	it('names the word beside the slot, so the brief reads without a lookup', () => {
+		const payload = JSON.parse(messages[1].content) as { slots: { item: string; t: string }[] };
+		const terms = new Map(args.reviewItems.map((i) => [i.id, i.term]));
+		for (const slot of payload.slots) expect(slot.t).toBe(terms.get(slot.item));
+	});
+
+	it('writes everything shared across chunks before anything per-chunk', () => {
+		// Prompt caching pays up to the first byte that differs. `known` is the
+		// biggest block and identical on every chunk of a lesson, so it belongs
+		// above the keys that are the whole reason there are several chunks.
+		const withKnown = firstChunkPrompt({
+			...args,
+			topic: 'ordering in a restaurant',
+			knownItems: [{ id: 'k1', term: '做饭' }],
+			recentMistakes: [{ term: 'leer', gave: 'lees' }]
+		});
+		const keys = Object.keys(JSON.parse(withKnown[1].content) as Record<string, unknown>);
+		const shared = ['native', 'target', 'level', 'topic', 'interests', 'known'];
+		const perChunk = ['reviewItems', 'slots', 'recentMistakes'];
+		for (const key of [...shared, ...perChunk]) expect(keys).toContain(key);
+		expect(Math.max(...shared.map((k) => keys.indexOf(k)))).toBeLessThan(
+			Math.min(...perChunk.map((k) => keys.indexOf(k)))
+		);
 	});
 
 	it('includes recent mistakes for the words this chunk is about', () => {
@@ -442,10 +524,10 @@ describe('buildChunkPrompt', () => {
 
 describe('generateBatch', () => {
 	it('assigns ids and returns challenges only, never vocabulary', async () => {
-		const scripted = scriptedFetch([JSON.stringify(goodBatch)]);
+		const scripted = scriptedFetch([JSON.stringify(plannedReply)]);
 		const result = await generateBatch(args, callOpts(scripted.fetchFn));
 
-		expect(result.challenges).toHaveLength(6);
+		expect(result.challenges).toHaveLength(plan.length);
 		expect(result.usage).toEqual({ promptTokens: 600, completionTokens: 900 });
 		// The learner's collection is not this layer's to grow — there is nothing
 		// in the result for a caller to persist but the pool.
@@ -462,72 +544,78 @@ describe('generateBatch', () => {
 	});
 
 	it('derives direction from the challenge type', async () => {
-		const scripted = scriptedFetch([JSON.stringify(goodBatch)]);
+		const scripted = scriptedFetch([JSON.stringify(plannedReply)]);
 		const result = await generateBatch(args, callOpts(scripted.fetchFn));
-		// recognize-mc, translate-to-target, recognize-mc, cloze, translate, produce-mc
+		// The plan for `args`, in chunk order: both of i1's slots, then both of
+		// i2's — each resolving into the direction its wire def declares, never
+		// one the model chose.
+		expect(plan.map((s) => s.type)).toEqual([
+			'spot-error',
+			'translate-to-native',
+			'cloze',
+			'translate-to-target'
+		]);
 		expect(result.challenges.map((c) => c.direction)).toEqual([
 			'toNative',
-			'toTarget',
 			'toNative',
-			'toTarget',
 			'toTarget',
 			'toTarget'
 		]);
 	});
 
 	it('strips markdown fences around the JSON', async () => {
-		const scripted = scriptedFetch(['```json\n' + JSON.stringify(goodBatch) + '\n```']);
+		const scripted = scriptedFetch(['```json\n' + JSON.stringify(plannedReply) + '\n```']);
 		const result = await generateBatch(args, callOpts(scripted.fetchFn));
-		expect(result.challenges).toHaveLength(6);
+		expect(result.challenges).toHaveLength(plan.length);
 	});
 
 	it('salvages the batch when a single challenge is malformed', async () => {
 		const damaged = {
-			...goodBatch,
 			challenges: [
-				...goodBatch.challenges,
+				...plannedReply.challenges,
 				{ type: 'recognize-mc', shown: { text: 'x' }, distractors: ['a', 'b'] }
 			]
 		};
 		const scripted = scriptedFetch([JSON.stringify(damaged)]);
 		const result = await generateBatch(args, callOpts(scripted.fetchFn));
 
-		expect(result.challenges).toHaveLength(6);
+		expect(result.challenges).toHaveLength(plan.length);
 		expect(scripted.calls).toBe(1);
 	});
 
 	it('drops challenges that reference an id the model invented', async () => {
 		const hallucinated = {
-			...goodBatch,
-			challenges: [...goodBatch.challenges, recognize('i-does-not-exist', 'ghost')]
+			challenges: [...plannedReply.challenges, recognize('i-does-not-exist', 'ghost')]
 		};
 		const scripted = scriptedFetch([JSON.stringify(hallucinated)]);
 		const result = await generateBatch(args, callOpts(scripted.fetchFn));
-		expect(result.challenges).toHaveLength(6);
+		expect(result.challenges).toHaveLength(plan.length);
 	});
 
 	it('honours itemIds cited by term — known words and review items alike', async () => {
 		// Known words travel to the model as bare terms with no ids at all, so a
 		// challenge built on one can only cite the word itself. Dropping those as
 		// "hallucinated" is what made whole batches come back unusable.
-		const byTerm = {
-			...goodBatch,
-			challenges: [
-				...goodBatch.challenges,
-				recognize('做饭', 'to cook'), // a known word, cited the only way it can be
-				recognize(' El Perro ', 'the dog') // a review item cited by term, sloppily
-			]
+		const first = slotAbout('i1');
+		const second = slotAbout('i2');
+		const byTermCitation = {
+			challenges: plannedReply.challenges.map((challenge, i) =>
+				i === first
+					? { ...challenge, itemIds: [' El Perro '] } // a review item, cited sloppily by term
+					: i === second
+						? { ...challenge, itemIds: ['i2', '做饭'] } // plus a known word, the only way it can be cited
+						: challenge
+			)
 		};
-		const scripted = scriptedFetch([JSON.stringify(byTerm)]);
+		const scripted = scriptedFetch([JSON.stringify(byTermCitation)]);
 		const result = await generateBatch(
 			{ ...args, knownItems: [{ id: 'k9', term: '做饭' }] },
 			callOpts(scripted.fetchFn)
 		);
 
-		expect(result.challenges).toHaveLength(8);
-		const resolved = result.challenges.slice(-2);
-		expect(resolved[0].itemIds).toEqual(['k9']);
-		expect(resolved[1].itemIds).toEqual(['i1']);
+		expect(result.challenges).toHaveLength(plan.length);
+		expect(result.challenges[first].itemIds).toEqual(['i1']);
+		expect(result.challenges[second].itemIds).toEqual(['i2', 'k9']);
 	});
 
 	it('resolves a homograph cited with its reading onto that card, not its sibling', async () => {
@@ -537,31 +625,53 @@ describe('generateBatch', () => {
 			{ id: 'chang', term: '长', romanization: 'cháng' },
 			{ id: 'zhang', term: '长', romanization: 'zhǎng' }
 		];
+		const first = slotAbout('i1');
+		const second = slotAbout('i2');
 		const cited = {
-			...goodBatch,
-			challenges: [
-				...goodBatch.challenges,
-				recognize('长 (zhǎng)', 'to grow'),
-				recognize('长', 'long') // Bare, and therefore a coin the app does not flip.
-			]
+			challenges: plannedReply.challenges.map((challenge, i) =>
+				i === first
+					? { ...challenge, itemIds: ['i1', '长 (zhǎng)'] }
+					: i === second
+						? { ...challenge, itemIds: ['i2', '长'] } // Bare: a coin the app does not flip.
+						: challenge
+			)
 		};
 		const scripted = scriptedFetch([JSON.stringify(cited)]);
 		const result = await generateBatch({ ...args, knownItems }, callOpts(scripted.fetchFn));
 
-		const resolved = result.challenges.slice(-2);
-		expect(resolved[0].itemIds).toEqual(['zhang']);
-		expect(resolved[1].itemIds).toEqual(['chang']);
+		expect(result.challenges[first].itemIds).toEqual(['i1', 'zhang']);
+		expect(result.challenges[second].itemIds).toEqual(['i2', 'chang']);
 	});
 
 	it('retries once with a corrective instruction, then succeeds', async () => {
 		const thin = { challenges: [recognize('i1', 'el perro')] };
-		const scripted = scriptedFetch([JSON.stringify(thin), JSON.stringify(goodBatch)]);
+		const scripted = scriptedFetch([JSON.stringify(thin), JSON.stringify(plannedReply)]);
 		const result = await generateBatch(args, callOpts(scripted.fetchFn));
 
 		expect(scripted.calls).toBe(2);
-		expect(result.challenges).toHaveLength(6);
+		expect(result.challenges).toHaveLength(plan.length);
 		// Usage is summed across both attempts.
 		expect(result.usage).toEqual({ promptTokens: 1200, completionTokens: 1800 });
+	});
+
+	it('re-asks a chunk that answered in types nobody asked for', async () => {
+		// A reply of the right *length* that is the wrong lesson: four
+		// recognize-mc challenges where the plan asked for a spot-error, a cloze
+		// and two translations. Counting could not tell the difference; the slot
+		// check can, and the retry gets the lesson that was planned.
+		const wrongTypes = {
+			challenges: plan.map((slot) => recognize(slot.itemId, 'el perro'))
+		};
+		const scripted = scriptedFetch([JSON.stringify(wrongTypes), JSON.stringify(plannedReply)]);
+		const result = await generateBatch(args, callOpts(scripted.fetchFn));
+
+		expect(scripted.calls).toBe(2);
+		expect(result.challenges.map((c) => c.type)).toEqual([
+			'spot-error',
+			'typed-translation',
+			'cloze',
+			'typed-translation'
+		]);
 	});
 
 	it('throws bad-response after the retry also fails', async () => {
@@ -583,7 +693,7 @@ describe('generateBatch', () => {
 	});
 
 	it('reports its progress steps in order, naming the model it waits on', async () => {
-		const scripted = scriptedFetch([JSON.stringify(goodBatch)]);
+		const scripted = scriptedFetch([JSON.stringify(plannedReply)]);
 		const steps: ProgressStep[] = [];
 		await generateBatch(args, { ...callOpts(scripted.fetchFn), onProgress: (s) => steps.push(s) });
 
@@ -594,7 +704,7 @@ describe('generateBatch', () => {
 
 	it('reports the retry step only when a corrective retry fires', async () => {
 		const thin = { challenges: [recognize('i1', 'el perro')] };
-		const scripted = scriptedFetch([JSON.stringify(thin), JSON.stringify(goodBatch)]);
+		const scripted = scriptedFetch([JSON.stringify(thin), JSON.stringify(plannedReply)]);
 		const steps: ProgressStep[] = [];
 		await generateBatch(args, { ...callOpts(scripted.fetchFn), onProgress: (s) => steps.push(s) });
 
@@ -604,13 +714,41 @@ describe('generateBatch', () => {
 		expect(steps.map((s) => s.id)).toEqual(['build-prompt', 'request', 'retry', 'validate']);
 	});
 
+	it('survives a progress callback that throws', async () => {
+		// The step log is the caller's UI. Inside the pool a throw would surface as
+		// an unhandled rejection in a sibling worker, which is a lost lesson and an
+		// unreadable stack for a cosmetic listener.
+		const scripted = scriptedFetch([JSON.stringify(plannedReply)]);
+		const result = await generateBatch(args, {
+			...callOpts(scripted.fetchFn),
+			onProgress: () => {
+				throw new Error('the UI blew up');
+			}
+		});
+		expect(result.challenges).toHaveLength(plan.length);
+	});
+
+	it('says so when there is no vocabulary to write about, instead of blaming the model', async () => {
+		// No call is made, so no step is announced and nothing is the model's
+		// fault — the old path reported "the model returned something unusable".
+		const scripted = scriptedFetch([JSON.stringify(plannedReply)]);
+		const steps: ProgressStep[] = [];
+		const error = await generateBatch(
+			{ ...args, reviewItems: [] },
+			{ ...callOpts(scripted.fetchFn), onProgress: (s) => steps.push(s) }
+		).catch((e: unknown) => e);
+
+		expect(error).toBeInstanceOf(LlmError);
+		expect((error as LlmError).message).toContain('at least one word');
+		expect(scripted.calls).toBe(0);
+		expect(steps).toEqual([]);
+	});
+
 	it('does not demand five challenges from a two-challenge batch', async () => {
-		const tiny = JSON.stringify({ challenges: [recognize('i1', 'el perro')] });
-		const scripted = scriptedFetch([tiny]);
-		const result = await generateBatch(
-			{ ...args, reviewItems: args.reviewItems.slice(0, 1), count: 1 },
-			callOpts(scripted.fetchFn)
-		);
+		const tinyArgs = { ...args, reviewItems: args.reviewItems.slice(0, 1), count: 1 };
+		const tiny = fillPlan(planSlots(tinyArgs, IDENTITY_RNG));
+		const scripted = scriptedFetch([JSON.stringify(tiny)]);
+		const result = await generateBatch(tinyArgs, callOpts(scripted.fetchFn));
 		expect(scripted.calls).toBe(1);
 		expect(result.challenges).toHaveLength(1);
 	});
@@ -641,8 +779,10 @@ const chunkKey = (slots: readonly { item?: string; itemId?: string; type: string
 
 /**
  * A fake that answers each request according to the *slots* it was asked for —
- * one challenge per slot, named after it — so a chunked reply is as long as its
- * brief, and "did the merge keep lesson order?" is a question with an answer.
+ * one challenge per slot, of that slot's own type, taken from that wire type's
+ * fixture and stamped with the slot it fills — so a chunked reply is the brief
+ * it was given, and "did the merge keep lesson order?" is a question with an
+ * answer.
  *
  * Every reply resolves on a macrotask, which is what makes the fan-out real:
  * the pool can only have as many requests open at once as it is allowed to, and
@@ -654,6 +794,12 @@ function chunkFetch(
 		failFirst?: Set<number>;
 		/** Chunk indices that fail both times, and so must be dropped. */
 		failAlways?: Set<number>;
+		/** Chunk indices that answer every slot with a type nobody asked for. */
+		wrongTypes?: Set<number>;
+		/** Chunk indices that answer their brief and then keep writing. */
+		overproduce?: Set<number>;
+		/** Chunk indices that answer every cloze slot on the wrong side of `bank`. */
+		flipBank?: Set<number>;
 	} = {}
 ) {
 	const index = new Map(bigChunks.map((chunk, i) => [chunkKey(chunk.slots), i] as const));
@@ -668,10 +814,16 @@ function chunkFetch(
 	state.fetchFn = async (_input, init) => {
 		const body = JSON.parse(String(init?.body)) as { messages: { content: string }[] };
 		const payload = JSON.parse(body.messages[1].content) as {
-			slots: { item: string; type: string }[];
+			slots: { item: string; type: string; bank?: boolean }[];
 		};
 		const which = index.get(chunkKey(payload.slots)) ?? -1;
 		const isRetry = body.messages.length > 2;
+		const flip = options.flipBank?.has(which) ?? false;
+		const slots: SlotLike[] = payload.slots.map((slot) => ({
+			itemId: slot.item,
+			type: slot.type,
+			...(slot.bank === undefined ? {} : { bank: flip ? !slot.bank : slot.bank })
+		}));
 
 		state.calls++;
 		state.seen.push(payload.slots.length);
@@ -681,9 +833,18 @@ function chunkFetch(
 		state.inFlight--;
 
 		const bad = options.failAlways?.has(which) || (!isRetry && options.failFirst?.has(which));
+		const wrong = !isRetry && options.wrongTypes?.has(which);
 		const challenges = bad
 			? []
-			: payload.slots.map((slot) => recognize(slot.item, `${slot.item}-${slot.type}`, 'a meaning'));
+			: wrong
+				? slots.map((slot) => recognize(slot.itemId, 'el perro'))
+				: [
+						...fillPlan(slots).challenges,
+						// Three more about the chunk's first word, unasked for.
+						...(options.overproduce?.has(which)
+							? fillPlan([slots[0], slots[0], slots[0]]).challenges
+							: [])
+					];
 
 		return new Response(
 			JSON.stringify({
@@ -756,14 +917,48 @@ describe('generateBatch, chunked', () => {
 		const fake = chunkFetch();
 		const result = await generateBatch(bigArgs, callOpts(fake.fetchFn));
 
-		// The fake names every challenge after the slot it filled, so the merged
+		// The fake stamps every challenge with the slot it filled, so the merged
 		// lesson can be read back and compared with the plan it came from.
 		const planned = bigChunks.flatMap((chunk) => chunk.slots.map((s) => `${s.itemId}-${s.type}`));
-		// The fake answers every slot with a recognize-mc, whatever the slot asked
-		// for, so the whole lesson is multiple-choice and `prompt` is the name.
-		expect(
-			result.challenges.map((c) => (c.type === 'multiple-choice' ? c.prompt : c.type))
-		).toEqual(planned);
+		expect(result.challenges.map((c) => c.explanation)).toEqual(planned);
+	});
+
+	it('trims a chunk that over-produces, and the chunks after it survive', async () => {
+		// A chunk that answers its four slots and then writes three more used to
+		// push the lesson past MAX_BATCH_CHALLENGES, and the merge sliced the tail
+		// off — so a well-behaved later chunk paid for an earlier one's enthusiasm.
+		const fake = chunkFetch({ overproduce: new Set([0]) });
+		const result = await generateBatch(bigArgs, callOpts(fake.fetchFn));
+
+		expect(result.challenges).toHaveLength(20);
+		const planned = bigChunks.flatMap((chunk) => chunk.slots.map((s) => `${s.itemId}-${s.type}`));
+		expect(result.challenges.map((c) => c.explanation)).toEqual(planned);
+	});
+
+	it('drops a cloze answered on the wrong side of its word bank', async () => {
+		// `bank` is the difference between two exercises for two stages of a word,
+		// not a cosmetic detail — so a banked cloze does not fill a bankless slot.
+		// One of four is ordinary salvage, so the chunk is not re-asked for it.
+		const fake = chunkFetch({ flipBank: new Set([0]) });
+		const result = await generateBatch(bigArgs, callOpts(fake.fetchFn));
+
+		const clozeSlots = bigChunks[0].slots.filter((s) => s.type === 'cloze').length;
+		expect(clozeSlots).toBeGreaterThan(0);
+		expect(fake.calls).toBe(bigChunks.length);
+		expect(result.challenges).toHaveLength(20 - clozeSlots);
+		expect(result.challenges.map((c) => c.explanation)).not.toContain(
+			`${bigChunks[0].slots.find((s) => s.type === 'cloze')?.itemId}-cloze`
+		);
+	});
+
+	it('re-asks a chunk that answered in the wrong types, then merges it in place', async () => {
+		const fake = chunkFetch({ wrongTypes: new Set([2]) });
+		const result = await generateBatch(bigArgs, callOpts(fake.fetchFn));
+
+		expect(fake.calls).toBe(bigChunks.length + 1);
+		expect(result.challenges).toHaveLength(20);
+		const planned = bigChunks.flatMap((chunk) => chunk.slots.map((s) => `${s.itemId}-${s.type}`));
+		expect(result.challenges.map((c) => c.explanation)).toEqual(planned);
 	});
 
 	it('runs at most CHUNK_CONCURRENCY requests at once', async () => {
@@ -798,12 +993,42 @@ describe('generateBatch, chunked', () => {
 	});
 
 	it('lets a key or rate-limit failure sink the lesson immediately', async () => {
-		// Unlike a bad reply, this would meet every other chunk too.
-		const fetchFn: FetchLike = async () =>
-			new Response(JSON.stringify({ error: { message: 'no credit' } }), { status: 429 });
+		// Unlike a bad reply, this would meet every other chunk too — so "sink the
+		// lesson" has to mean *now*, not after the remaining chunks have each
+		// bought their own 429. The pool opens CHUNK_CONCURRENCY requests before
+		// any of them can answer; nothing beyond those is ever dispatched.
+		let calls = 0;
+		const fetchFn: FetchLike = async () => {
+			calls++;
+			return new Response(JSON.stringify({ error: { message: 'no credit' } }), { status: 429 });
+		};
 		await expect(generateBatch(bigArgs, callOpts(fetchFn))).rejects.toMatchObject({
 			kind: 'rate-limit'
 		});
+
+		expect(bigChunks.length).toBeGreaterThan(CHUNK_CONCURRENCY);
+		expect(calls).toBe(CHUNK_CONCURRENCY);
+	});
+
+	it('cancels the requests still in flight when one chunk sinks the lesson', async () => {
+		// The first chunk to fail fatally aborts its siblings rather than letting
+		// them finish a lesson that is already lost.
+		const aborted: boolean[] = [];
+		let calls = 0;
+		const fetchFn: FetchLike = async (_input, init) => {
+			const mine = calls++;
+			if (mine === 0) {
+				return new Response(JSON.stringify({ error: { message: 'bad key' } }), { status: 401 });
+			}
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			aborted[mine] = init?.signal?.aborted ?? false;
+			return new Response(JSON.stringify({ error: { message: 'too late' } }), { status: 500 });
+		};
+
+		await expect(generateBatch(bigArgs, callOpts(fetchFn))).rejects.toMatchObject({
+			kind: 'auth'
+		});
+		expect(aborted.filter(Boolean).length).toBe(CHUNK_CONCURRENCY - 1);
 	});
 });
 

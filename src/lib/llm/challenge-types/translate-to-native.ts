@@ -25,6 +25,7 @@ export type GeneratedTranslateToNative = z.infer<typeof generatedTranslateToNati
 export const translateToNativeDef = {
 	type: 'translate-to-native',
 	schema: generatedTranslateToNativeSchema,
+	stored: { type: 'typed-translation', direction: 'toNative' },
 	promptSpec:
 		'translate-to-native — type the native language. {prompt:TargetText, answersNative:[1 or more]} e.g. {"type":"translate-to-native","prompt":{"text":"la cuenta","reading":null},"answersNative":["the bill","the check"],"itemIds":["i5"],"explanation":null}',
 	correctiveSpec: 'translate-to-native {prompt,answersNative}',

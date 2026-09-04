@@ -17,7 +17,25 @@
  */
 
 import type { z } from 'zod';
-import type { Challenge } from '$lib/types';
+import type { Challenge, ChallengeType, Direction } from '$lib/types';
+
+/**
+ * What this wire type becomes once resolved: the stored `type` and `direction`
+ * its `resolve` always writes.
+ *
+ * Two wire types can share a stored type — `recognize-mc` and `produce-mc` are
+ * both `multiple-choice`, the two translate types are both `typed-translation` —
+ * and the direction is what tells them apart, which is why both fields are here
+ * and neither is optional. Declared rather than inferred because the generator
+ * has to check a *reply* against the plan it asked for (`matchesSlot` in
+ * `../generate`): a chunk that answered five `cloze` slots with five
+ * `recognize-mc` challenges is not a chunk that came back usable, and counting
+ * challenges alone could never see that.
+ */
+export interface StoredShape {
+	readonly type: ChallengeType;
+	readonly direction: Direction;
+}
 
 /**
  * The least a generated payload must be for the machinery here to work: an
@@ -94,6 +112,13 @@ export interface WireTypeDef<T extends WirePayload = WirePayload> {
 	 * check keeps that list and the registry covering the same types.
 	 */
 	readonly schema: z.ZodType<T>;
+	/**
+	 * The stored `{type, direction}` this def's {@link WireTypeDef.resolve}
+	 * always produces — see {@link StoredShape}. Forgetting it fails
+	 * `pnpm check`; getting it wrong fails `registry.test.ts`, which resolves
+	 * every fixture and compares.
+	 */
+	readonly stored: StoredShape;
 	/**
 	 * This type's line in the prompt's `Types:` block — field list plus one
 	 * inline JSON example. Every token here is paid on every batch call, so it is

@@ -33,6 +33,7 @@ export type GeneratedSpotError = z.infer<typeof generatedSpotErrorSchema>;
 export const spotErrorDef = {
 	type: 'spot-error',
 	schema: generatedSpotErrorSchema,
+	stored: { type: 'spot-error', direction: 'toNative' },
 	promptSpec:
 		'spot-error — one wrong word in a target sentence. {words:[3+ TargetText — the CORRECT sentence split into tiles, in order], wrongWord:TargetText, wrongPosition:int, meaningNative} e.g. {"type":"spot-error","words":[{"text":"我们","reading":"wǒmen"},{"text":"想","reading":"xiǎng"},{"text":"买单","reading":"mǎidān"}],"wrongWord":{"text":"菜单","reading":"càidān"},"wrongPosition":2,"meaningNative":"We would like to pay the bill.","itemIds":["i7"],"explanation":null} — the app replaces words[wrongPosition] with wrongWord and asks the learner to tap it.',
 	rulesSpec:

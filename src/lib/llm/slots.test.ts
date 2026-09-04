@@ -25,11 +25,14 @@ import {
 } from './slots';
 import type { Slot } from './slots';
 
-const PRODUCTION_TYPES = new Set(['translate-to-target', 'word-order']);
+/**
+ * The kinds where the learner produces the target language, banked or not.
+ * A banked cloze is one of them: the words are given, but which one fits the
+ * sentence is not, which is demand 1 on the stored side and not recognition.
+ */
+const PRODUCTION_TYPES = new Set(['translate-to-target', 'word-order', 'cloze']);
 
-/** Bankless cloze is production; cloze with a bank is recognition. */
 function isProduction(slot: Slot): boolean {
-	if (slot.type === 'cloze') return slot.bank === false;
 	return PRODUCTION_TYPES.has(slot.type);
 }
 
@@ -64,17 +67,26 @@ describe('allowedKinds', () => {
 		const { recognition, production } = allowedKinds(1);
 		expect(production).toEqual([]);
 		expect(recognition.map((k) => k.type)).toContain('recognize-mc');
-		// A cloze for a level-1 word always comes with its word bank.
-		expect(recognition.find((k) => k.type === 'cloze')?.bank).toBe(true);
+		// Not even a banked cloze: it reports demand 1 on the stored side, so the
+		// session planner would decline to serve one for a word this new.
+		expect(recognition.some((k) => k.type === 'cloze')).toBe(false);
 	});
 
-	it('opens word-order at levels 2-3 and free production at levels 4-5', () => {
-		expect(allowedKinds(2).production.map((k) => k.type)).toEqual(['word-order']);
-		expect(allowedKinds(3).production.map((k) => k.type)).toEqual(['word-order']);
+	it('opens word-order and banked cloze at levels 2-3, free production at 4-5', () => {
+		for (const level of [2, 3] as const) {
+			const young = allowedKinds(level).production;
+			expect(young.map((k) => k.type)).toEqual(['word-order', 'cloze']);
+			expect(young.find((k) => k.type === 'cloze')?.bank).toBe(true);
+		}
 		for (const level of [4, 5] as const) {
 			const solid = allowedKinds(level).production;
-			expect(solid.map((k) => k.type)).toEqual(['word-order', 'translate-to-target', 'cloze']);
-			expect(solid.find((k) => k.type === 'cloze')?.bank).toBe(false);
+			expect(solid.map((k) => k.type)).toEqual([
+				'word-order',
+				'cloze',
+				'translate-to-target',
+				'cloze'
+			]);
+			expect(solid.filter((k) => k.type === 'cloze').map((k) => k.bank)).toEqual([true, false]);
 		}
 	});
 
@@ -144,6 +156,32 @@ describe('planSlots', () => {
 		expect(strong.filter(isProduction)).toHaveLength(6); // 0.6 of ten
 	});
 
+	it('charges the production budget only to the slots that can pay it', () => {
+		// Four brand-new words beside two mature ones. The new words' slots can
+		// never be production, so counting them in the denominator spent the whole
+		// lesson's production budget on the two mature words — which came back
+		// 100% production, the hardest possible lesson for the words closest to
+		// being forgotten.
+		const mixed = [
+			item('n1', 1),
+			item('n2', 1),
+			item('n3', 1),
+			item('n4', 1),
+			item('m1', 5),
+			item('m2', 5)
+		];
+		const slots = planSlots(argsFor(mixed, { count: 12, recentAccuracy: 0.95 }), cyclingRng());
+		const mature = slots.filter((s) => s.itemId.startsWith('m'));
+
+		expect(slots).toHaveLength(12);
+		// Every new word's slot is recognition, as before.
+		expect(slots.filter((s) => s.itemId.startsWith('n')).some(isProduction)).toBe(false);
+		// And the mature words' four slots split near `productionShare`'s 0.6
+		// rather than going all the way over: two production, two recognition.
+		expect(mature).toHaveLength(4);
+		expect(mature.filter(isProduction)).toHaveLength(2);
+	});
+
 	it('gives a just-failed word an extra slot, in a shape it has not had', () => {
 		const slots = planSlots(
 			argsFor(solid, { count: 7, recentMistakes: [{ term: 'term-b', gave: 'wrong' }] }),
@@ -179,6 +217,25 @@ describe('planSlots', () => {
 		expect(withGhost.map((s) => s.itemId)).toEqual(
 			planSlots(argsFor(solid, { count: 6 }), FIRST).map((s) => s.itemId)
 		);
+	});
+
+	it('stops asking one word more questions than it has kinds', () => {
+		// One review word and a count of fourteen used to deal fourteen slots onto
+		// it, of which only eight could be different questions; the rest repeated a
+		// format the learner had already answered in the same lesson.
+		const solo = planSlots(argsFor([item('solo', 5)], { count: 14 }), cyclingRng());
+		expect(solo).toHaveLength(8); // four recognition kinds plus four production
+		// The cap counts the kinds a word may be asked in, not the kinds it ends up
+		// with: the recognition/production mix can still empty one group and repeat
+		// inside it. What it rules out is the second lap over everything.
+		expect(new Set(solo.map((s) => `${s.type}:${s.bank ?? ''}`)).size).toBeGreaterThanOrEqual(7);
+
+		// A level-1 word has fewer kinds open to it, so its ceiling is lower.
+		const shallow = planSlots(argsFor([item('new', 1)], { count: 14 }), cyclingRng());
+		expect(shallow).toHaveLength(4);
+
+		// The cap is per item: more words, more room.
+		expect(planSlots(argsFor(solid, { count: 14 }), cyclingRng())).toHaveLength(14);
 	});
 
 	it('is deterministic for a given rng', () => {

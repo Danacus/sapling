@@ -67,7 +67,7 @@ import {
 } from './schemas';
 import type { GeneratedChallenge } from './schemas';
 import { CHUNK_CONCURRENCY, MAX_BATCH_CHALLENGES, chunkSlots, planSlots } from './slots';
-import type { SlotChunk } from './slots';
+import type { Slot, SlotChunk } from './slots';
 
 /**
  * Re-exported for callers (and tests) that knew them as part of this module
@@ -395,6 +395,13 @@ export function knownTermLabels(known: readonly KnownItemRef[]): string[] {
  * the resolver indexes — so it rides along whole, in the same order, on every
  * chunk. That repetition is the price of the split; against the static prompt it
  * is the smaller half.
+ *
+ * **Key order is load-bearing.** Everything identical across a lesson's chunks —
+ * profile, `topic`, `about` and the whole `known` list, which is by far the
+ * largest block — is written first, and the per-chunk keys (`reviewItems`,
+ * `slots`, `recentMistakes`) last. A prefix cache pays up to the first byte that
+ * differs, so putting `known` after the slots, as this used to, threw away the
+ * cache on exactly the block worth caching.
  */
 export function buildChunkPrompt(args: BatchArgs, chunk: SlotChunk): ChatMessage[] {
 	const { profile } = args;
@@ -415,17 +422,23 @@ export function buildChunkPrompt(args: BatchArgs, chunk: SlotChunk): ChatMessage
 		// and still below `topic`, which outranks both. Capped: see
 		// {@link MAX_ABOUT_CHARS}.
 		...(about ? { about } : {}),
+		// Terms only — the ids stay local (see `knownItems` and `knownTermIndex`).
+		// Last of the shared block and first of the big ones: everything above it
+		// is byte-identical across a lesson's chunks, and a prefix cache pays only
+		// up to the first byte that differs, so every per-chunk key comes after.
+		...(args.knownItems?.length ? { known: knownTermLabels(args.knownItems) } : {}),
 		reviewItems: chunk.reviewItems.map((i) => ({ id: i.id, t: i.term, m: i.meaning })),
-		// The lesson this chunk is: one entry per challenge to write. `bank` rides
-		// only on cloze slots, where it is the difference between two exercises.
+		// The lesson this chunk is: one entry per challenge to write. The term
+		// rides beside the id so the model reads the word it is writing about
+		// without looking it up in `reviewItems` first; `bank` rides only on cloze
+		// slots, where it is the difference between two exercises.
 		slots: chunk.slots.map((slot) => ({
 			item: slot.itemId,
+			t: slot.term,
 			type: slot.type,
 			difficulty: slot.difficulty,
 			...(slot.bank === undefined ? {} : { bank: slot.bank })
-		})),
-		// Terms only — the ids stay local (see `knownItems` and `knownTermIndex`).
-		...(args.knownItems?.length ? { known: knownTermLabels(args.knownItems) } : {})
+		}))
 	};
 	const mistakes = (args.recentMistakes ?? []).filter((m) => chunkTerms.has(termKey(m.term)));
 	if (mistakes.length) {
@@ -674,15 +687,68 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
 // --------------------------------------------------------------------------
 
 /**
- * How many usable challenges one chunk has to come back with before its reply is
- * accepted without a corrective retry.
+ * How many of its slots one chunk has to fill before its reply is accepted
+ * without a corrective retry.
  *
- * Half its slots, rounded up. A chunk is short enough that "it dropped one" is
- * ordinary salvage and not worth a second call, while "it answered two of five"
- * means the reply was misunderstood and re-asking is cheap.
+ * Half of them, rounded up. A chunk is short enough that "it dropped one" is
+ * ordinary salvage and not worth a second call, while "it filled two of five"
+ * means the brief was misunderstood and re-asking is cheap.
  */
 function chunkMinimum(slots: number): number {
 	return Math.max(1, Math.ceil(slots / 2));
+}
+
+/**
+ * Does this resolved challenge answer that slot?
+ *
+ * A chunk asks for an exact list — five slots, each with a type, a word and (for
+ * cloze) a word bank — and a reply that comes back the right *length* has told
+ * us nothing about whether it is the lesson we asked for. The model does
+ * substitute: five banked clozes come back as five multiple-choice questions,
+ * or one word gets all five challenges. Counting cannot see either.
+ *
+ * The comparison is on the **stored** shape, because that is what `resolveBatch`
+ * hands back: each wire def declares the `{type, direction}` its resolver always
+ * writes (`StoredShape`), which is also what tells the two multiple-choice wire
+ * types and the two translate wire types apart. `bank` is checked against the
+ * word bank that actually survived resolution — a banked cloze whose distractors
+ * all duplicated the answer is not the exercise the slot asked for, and the
+ * retry is the cheaper fix.
+ */
+function matchesSlot(challenge: Challenge, slot: Slot): boolean {
+	const shape = byType.get(slot.type)?.stored;
+	if (!shape || challenge.type !== shape.type || challenge.direction !== shape.direction) {
+		return false;
+	}
+	if (slot.bank !== undefined) {
+		const banked = 'wordBank' in challenge && (challenge.wordBank?.length ?? 0) > 0;
+		if (banked !== slot.bank) return false;
+	}
+	// And it has to be about the word the slot named. A challenge that cites only
+	// some other word is a challenge this chunk never asked for.
+	return challenge.itemIds.includes(slot.itemId);
+}
+
+/**
+ * The challenges from one reply that fill this chunk's brief, **in slot order**.
+ *
+ * Each slot is filled at most once, so a chunk can never return more than it was
+ * asked for — which is what keeps an over-producing chunk from pushing the
+ * chunks after it out of the merged lesson. Anything that matches no unfilled
+ * slot is dropped rather than kept as a bonus: it is a challenge about the wrong
+ * word or in the wrong format, the corrective retry re-asks for the real one,
+ * and a lesson padded with the questions the model felt like writing is the
+ * thing this whole design exists to stop.
+ */
+function fillSlots(challenges: readonly Challenge[], slots: readonly Slot[]): Challenge[] {
+	const filled = new Array<Challenge | undefined>(slots.length).fill(undefined);
+	for (const challenge of challenges) {
+		const at = slots.findIndex(
+			(slot, i) => filled[i] === undefined && matchesSlot(challenge, slot)
+		);
+		if (at >= 0) filled[at] = challenge;
+	}
+	return filled.filter((challenge): challenge is Challenge => challenge !== undefined);
 }
 
 /**
@@ -698,14 +764,19 @@ function abortError(signal: AbortSignal): Error {
 	return error;
 }
 
+/** Cancels the chunks still in flight once one of them has sunk the lesson. */
+function siblingAbort(): Error {
+	const error = new Error('Another request ended the lesson.');
+	error.name = 'AbortError';
+	return error;
+}
+
 /** What one chunk came back with; `error` is set only when it failed outright. */
 interface ChunkOutcome {
 	challenges: Challenge[];
 	usage: TokenUsage;
 	/** Set when the chunk produced nothing usable even after its retry. */
 	error?: LlmError;
-	/** Set when the failure is not the chunk's fault and must sink the lesson. */
-	fatal?: LlmError | Error;
 	retried: boolean;
 }
 
@@ -717,6 +788,10 @@ interface ChunkOutcome {
  * lesson is eight simultaneous completions on a key that may well be rate
  * limited. This is the smallest thing that isn't that: `limit` workers pulling
  * from a shared cursor.
+ *
+ * There is deliberately no cancellation here: a worker that decides the run is
+ * over returns its own (empty) result, so the pool always resolves and the
+ * caller's accounting sees every chunk. See `generateBatch`'s `stop` controller.
  */
 async function runPooled<T, R>(
 	chunks: readonly T[],
@@ -752,7 +827,12 @@ async function runPooled<T, R>(
  * says how many requests failed and how much survived, because "the model
  * returned something unusable" is not a thing anyone can act on. Failures that
  * are not the chunk's fault — a bad key, a rate limit, an abort — sink the whole
- * lesson immediately, since every other chunk would only hit the same wall.
+ * lesson **immediately and literally**: the first one cancels the requests still
+ * in flight and every chunk still queued returns without spending a call, since
+ * they would all only hit the same wall.
+ *
+ * Each reply is then checked against the slots it was asked for, not merely
+ * counted ({@link fillSlots}) — a chunk is worth what it filled.
  *
  * It returns challenges and nothing else: the caller pools them, and no part of
  * the learner's vocabulary is touched by generating a lesson.
@@ -761,12 +841,36 @@ export async function generateBatch(
 	args: BatchArgs,
 	opts: BatchOptions = {}
 ): Promise<BatchResult> {
-	const progress = opts.onProgress;
 	const model = opts.model?.trim() || getModel();
 
+	// A progress callback is the caller's UI; a throw inside one must not take
+	// the lesson with it — and inside the pool it would surface as an unhandled
+	// rejection in a sibling worker rather than as anything anyone could debug.
+	const report = (step: ProgressStep): void => {
+		if (!opts.onProgress) return;
+		try {
+			opts.onProgress(step);
+		} catch {
+			/* The step log is a nicety; losing it never costs the lesson. */
+		}
+	};
+
+	// Nothing to write about. Announcing a `request` step and then reporting an
+	// unusable reply would blame the model for a call that was never made, so
+	// this says what actually happened, before any step is announced.
+	if (args.reviewItems.length === 0) {
+		throw new LlmError(
+			'bad-response',
+			'A lesson needs at least one word to be about, and none were selected.'
+		);
+	}
+
 	const slots = planSlots(args, opts.rng);
+	if (slots.length === 0) {
+		throw new LlmError('bad-response', 'No challenges could be planned for these words.');
+	}
 	const chunks = chunkSlots(slots, args.reviewItems);
-	progress?.({
+	report({
 		id: 'build-prompt',
 		label: chunks.length > 1 ? `Planning ${slots.length} challenges` : 'Building the prompt'
 	});
@@ -785,10 +889,27 @@ export async function generateBatch(
 	const announceRetry = (): void => {
 		if (retryAnnounced) return;
 		retryAnnounced = true;
-		progress?.({ id: 'retry', label: 'Retrying part of the lesson' });
+		report({ id: 'retry', label: 'Retrying part of the lesson' });
 	};
 
-	progress?.({
+	// The lesson's own stop switch. A failure that is not one chunk's fault would
+	// meet every chunk, so the first one to see it records the error here and
+	// aborts `stop`: the siblings already in flight unwind at their `fetch`, and
+	// every chunk the pool has not dispatched yet returns without a call. The
+	// caller's own signal is chained into it, reason and all, so a cancelled
+	// refill still fails as the cancellation it was.
+	let fatal: LlmError | Error | undefined;
+	const stop = new AbortController();
+	const sink = (error: LlmError | Error): void => {
+		fatal ??= error;
+		if (!stop.signal.aborted) stop.abort(siblingAbort());
+	};
+	const onCallerAbort = (): void => {
+		if (!stop.signal.aborted) stop.abort(opts.signal?.reason);
+	};
+	opts.signal?.addEventListener('abort', onCallerAbort, { once: true });
+
+	report({
 		id: 'request',
 		label:
 			chunks.length > 1
@@ -811,9 +932,11 @@ export async function generateBatch(
 			// the same signal would, so a cancelled refill never looks like a model
 			// that returned nothing usable.
 			if (opts.signal?.aborted) {
-				outcome.fatal = abortError(opts.signal);
+				sink(abortError(opts.signal));
 				return outcome;
 			}
+			// A sibling has already sunk the lesson; this chunk is not worth a call.
+			if (stop.signal.aborted) return outcome;
 
 			const attemptMessages: ChatMessage[] =
 				attempt === 0 ? messages : [...messages, { role: 'user', content: CORRECTIVE_INSTRUCTION }];
@@ -828,7 +951,9 @@ export async function generateBatch(
 					messages: attemptMessages,
 					model: opts.model,
 					apiKey: opts.apiKey,
-					signal: opts.signal,
+					// `stop`, not `opts.signal`: it carries the caller's cancellation
+					// *and* a sibling's fatal failure, so neither leaves a call running.
+					signal: stop.signal,
 					fetchFn: opts.fetchFn,
 					responseFormat,
 					temperature: 0.7
@@ -836,12 +961,12 @@ export async function generateBatch(
 			} catch (error) {
 				// `bad-response` is this chunk's problem and costs this chunk only;
 				// anything else (auth, rate limit, network, abort) would meet every
-				// other chunk too, so it ends the lesson.
+				// other chunk too, so it ends the lesson — for every chunk at once.
 				if (error instanceof LlmError && error.kind === 'bad-response') {
 					outcome.error = error;
 					continue;
 				}
-				outcome.fatal = error instanceof Error ? error : new Error(String(error));
+				sink(error instanceof Error ? error : new Error(String(error)));
 				return outcome;
 			}
 
@@ -861,29 +986,35 @@ export async function generateBatch(
 					outcome.error = error;
 					continue;
 				}
-				outcome.fatal = error instanceof Error ? error : new Error(String(error));
+				sink(error instanceof Error ? error : new Error(String(error)));
 				return outcome;
 			}
 
-			if (resolved.challenges.length >= wanted) {
-				outcome.challenges = resolved.challenges;
+			// What the chunk is worth is what it *filled*, not what it returned.
+			const filled = fillSlots(resolved.challenges, chunk.slots);
+			if (filled.length >= wanted) {
+				outcome.challenges = filled;
 				outcome.error = undefined;
 				return outcome;
 			}
 			// Keep the best partial reply: if the retry also comes back thin, these
 			// are still real challenges the learner paid for.
-			if (resolved.challenges.length > outcome.challenges.length) {
-				outcome.challenges = resolved.challenges;
+			if (filled.length > outcome.challenges.length) {
+				outcome.challenges = filled;
 			}
 			outcome.error = new LlmError(
 				'bad-response',
-				`One request produced ${resolved.challenges.length} of ${chunk.slots.length} challenges.`
+				`One request filled ${filled.length} of its ${chunk.slots.length} slots.`
 			);
 		}
 		return outcome;
-	});
+	}).finally(() => opts.signal?.removeEventListener('abort', onCallerAbort));
 
-	progress?.({ id: 'validate', label: 'Validating challenges' });
+	// Ahead of the `validate` step, and of any accounting: nothing was validated,
+	// and a bad key is not a lesson that came back thin.
+	if (fatal) throw fatal;
+
+	report({ id: 'validate', label: 'Validating challenges' });
 
 	const usage: TokenUsage = { promptTokens: 0, completionTokens: 0 };
 	const challenges: Challenge[] = [];
@@ -893,16 +1024,18 @@ export async function generateBatch(
 	for (const outcome of outcomes) {
 		usage.promptTokens += outcome.usage.promptTokens;
 		usage.completionTokens += outcome.usage.completionTokens;
-		if (outcome.fatal) throw outcome.fatal;
 		if (outcome.error) {
-			failed++;
+			// A chunk whose best partial reply was kept is not a failed request: its
+			// challenges are in the lesson. Only one that contributed nothing counts.
+			if (outcome.challenges.length === 0) failed++;
 			lastError = outcome.error;
 		}
 		challenges.push(...outcome.challenges);
 	}
 
 	// Chunk order, then slot order within a chunk — the lesson as it was planned,
-	// not as the network happened to answer it.
+	// not as the network happened to answer it. The slice is belt and braces now
+	// that no chunk can return more slots than it was given.
 	const merged = challenges.slice(0, MAX_BATCH_CHALLENGES);
 	if (merged.length >= minimum) return { challenges: merged, usage };
 

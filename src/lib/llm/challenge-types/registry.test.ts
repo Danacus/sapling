@@ -15,6 +15,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import type { Challenge } from '$lib/types';
 import { CORRECTIVE_INSTRUCTION, buildChunkPrompt, parseBatch } from '../generate';
 import type { BatchArgs } from '../generate';
 import { buildEscalationPrompt } from '../escalation';
@@ -22,6 +23,7 @@ import { mockBatchCompletion } from '../mock';
 import { generatedChallengeSchema } from '../schemas';
 import { PLANNABLE_KINDS } from '../slots';
 import { FIXTURE_SCENARIOS, WIRE_TYPE_DEFS, byType } from './index';
+import type { ResolveContext } from './index';
 
 const systemPrompt = (): string => {
 	const [system] = buildChunkPrompt(
@@ -64,6 +66,27 @@ describe('WIRE_TYPE_DEFS', () => {
 			// discriminator itself must be accepted, which is what pins def→schema.
 			const issues = def.schema.safeParse(sample).error?.issues ?? [];
 			expect(issues.some((issue) => issue.path[0] === 'type')).toBe(false);
+		}
+	});
+
+	it('declares the stored shape its own resolver actually writes', () => {
+		// `stored` is what `../generate` checks a chunk's reply against — a slot
+		// asking for `produce-mc` is filled by a `multiple-choice` in the
+		// `toTarget` direction and by nothing else — so a def whose declaration
+		// drifted from its resolver would quietly reject the very challenges it
+		// asked for. Every fixture is resolved and compared.
+		for (const def of WIRE_TYPE_DEFS) {
+			const resolve = def.resolve as (g: unknown, c: ResolveContext) => Challenge | null;
+			for (const scenario of FIXTURE_SCENARIOS) {
+				for (const fixture of def.fixtures[scenario]) {
+					const resolved = resolve(fixture.challenge, {
+						base: { id: 'c1', itemIds: ['i1'] },
+						rng: () => 0.5
+					});
+					expect(resolved, `${def.type} fixture (${scenario}) did not resolve`).not.toBeNull();
+					expect({ type: resolved?.type, direction: resolved?.direction }).toEqual(def.stored);
+				}
+			}
 		}
 	});
 

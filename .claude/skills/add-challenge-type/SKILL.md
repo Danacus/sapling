@@ -25,15 +25,23 @@ differs.
 
 1. Write one def module in `src/lib/llm/challenge-types/<type>.ts`, using
    `satisfies WireTypeDef<T>` (not a type annotation — an annotation widens the
-   schema and defeats zod's inference). It bundles: zod `schema`, `promptSpec`
-   (its `Types:` line), `correctiveSpec`, `resolve`, `fixtures` (one per mock
-   scenario, with `order` set to the intended lesson position), and optional
-   `rulesSpec` / `escalationSpec`.
+   schema and defeats zod's inference). It bundles: zod `schema`, `stored`,
+   `promptSpec` (its `Types:` line), `correctiveSpec`, `resolve`, `fixtures`
+   (one per mock scenario, with `order` set to the intended lesson position),
+   and optional `rulesSpec` / `escalationSpec`.
+   `stored` is the `{type, direction}` this def's `resolve` always writes —
+   `generate.ts` checks a chunk's reply against the slots it asked for by
+   comparing it. *Forget it:* `pnpm check` fails at the def. *Get it wrong:*
+   `registry.test.ts` resolves every fixture and compares, and the type would
+   otherwise be asked for and then rejected on arrival, every time.
 2. Register it in the ordered `WIRE_TYPE_DEFS` in `challenge-types/index.ts`.
 3. **Add a `SlotKind` for it in `src/lib/llm/slots.ts`** — to
    `RECOGNITION_KINDS` if the answer is visible on screen, to
    `YOUNG_PRODUCTION_KINDS` / `SOLID_PRODUCTION_KINDS` if the learner has to
-   produce it, choosing the maturity at which it becomes fair to ask.
+   produce it, choosing the maturity at which it becomes fair to ask. Match the
+   tier to the *stored* `demand` its resolved challenge reports: a type planned
+   as recognition but stored as demand 1 is written for words the session
+   planner will then refuse to serve it to.
    *Forget it:* the type is described to the model, exampled, and **never asked
    for** — the app chooses types now, not the model. `registry.test.ts` fails on
    the `PLANNABLE_KINDS` parity check.

@@ -81,16 +81,23 @@ const RECOGNITION_KINDS: readonly SlotKind[] = [
 	{ type: 'recognize-mc' },
 	{ type: 'produce-mc' },
 	{ type: 'translate-to-native' },
-	{ type: 'cloze', bank: true },
 	{ type: 'spot-error' }
 ];
 
 /**
- * Types the learner has to produce into. `word-order` is the gentle one — the
- * words are given, only the order is not — which is why a `young` word gets it
- * and a `new` word does not.
+ * Types the learner has to produce into, but with the material in front of
+ * them. Both are demand 1 on the stored side (`$lib/challenges`' `demand`):
+ * `word-order` gives the words and withholds only their order, a banked cloze
+ * gives the candidate words and withholds which one fits. Neither is a question
+ * a word met yesterday can answer — and pretending a banked cloze is
+ * recognition was worse than merely mistaken, because the planner would then
+ * happily write one for a level-1 word and the *session* planner, reading the
+ * same stored demand, would decline to serve it for weeks.
  */
-const YOUNG_PRODUCTION_KINDS: readonly SlotKind[] = [{ type: 'word-order' }];
+const YOUNG_PRODUCTION_KINDS: readonly SlotKind[] = [
+	{ type: 'word-order' },
+	{ type: 'cloze', bank: true }
+];
 
 const SOLID_PRODUCTION_KINDS: readonly SlotKind[] = [
 	...YOUNG_PRODUCTION_KINDS,
@@ -123,7 +130,8 @@ function kindKey(kind: SlotKind): string {
  * stronger, at the same two rungs (`level >= 4`, `level >= 2`) the session
  * planner's floors correspond to — level 1 is `maturityOf`'s `'new'`, 2-3 are
  * `'young'`, 4-5 are `'solid'` — so a batch is not full of challenges the
- * planner will then decline to serve for weeks.
+ * planner will then decline to serve for weeks. A level-1 word therefore gets
+ * no cloze at all: even the banked one is demand 1.
  */
 export function allowedKinds(level: ReviewItemRef['level']): {
 	recognition: readonly SlotKind[];
@@ -189,6 +197,20 @@ function mistakenItems(
 }
 
 /**
+ * How many slots one word can usefully take: one per distinct kind its level
+ * allows, and no more.
+ *
+ * Without this the round-robin will happily deal fourteen slots onto a single
+ * review item, of which only eight can be different questions — the rest repeat
+ * a format the learner has already answered in this same lesson, which is worse
+ * than a shorter lesson. A count is a ceiling, not a quota.
+ */
+function capacityOf(item: ReviewItemRef): number {
+	const { recognition, production } = allowedKinds(item.level);
+	return new Set([...recognition, ...production].map(kindKey)).size;
+}
+
+/**
  * Whose turn each slot is, before any type is chosen.
  *
  * Plain round-robin over the review items, so the lesson spreads itself evenly
@@ -197,24 +219,41 @@ function mistakenItems(
  * after the first pass. That is the local half of the old "every term in
  * recentMistakes gets one more challenge" rule; the *different format* half
  * falls out of the type picker, which prefers a kind the item has not had yet.
+ *
+ * A word stops taking turns once it has reached its {@link capacityOf}, and the
+ * whole plan stops as soon as a full pass adds nothing — so a big `count` over
+ * few words comes back short rather than repetitive.
  */
 function demands(args: BatchArgs, total: number): Demand[] {
 	const items = args.reviewItems;
 	const out: Demand[] = [];
 	if (items.length === 0 || total <= 0) return out;
 
+	const capacity = new Map(items.map((item) => [item.id, capacityOf(item)] as const));
+	const taken = new Map<string, number>();
+	const take = (item: ReviewItemRef, recognitionOnly?: boolean): boolean => {
+		const used = taken.get(item.id) ?? 0;
+		if (used >= (capacity.get(item.id) ?? 0)) return false;
+		taken.set(item.id, used + 1);
+		out.push({ item, ...(recognitionOnly === undefined ? {} : { recognitionOnly }) });
+		return true;
+	};
+
 	const extras = mistakenItems(items, args.recentMistakes);
 	for (let pass = 0; out.length < total; pass++) {
+		let added = 0;
 		for (const item of items) {
 			if (out.length >= total) break;
-			out.push({ item });
+			if (take(item)) added++;
 		}
 		if (pass === 0) {
 			for (const extra of extras) {
 				if (out.length >= total) break;
-				out.push({ item: extra.item, recognitionOnly: extra.skipped });
+				if (take(extra.item, extra.skipped)) added++;
 			}
 		}
+		// Every word is at capacity: this lesson is as long as it can honestly be.
+		if (added === 0) break;
 	}
 	return out;
 }
@@ -253,15 +292,18 @@ function pickKind(
  * Turns a batch request into the explicit list of challenges to generate.
  *
  * The count is the caller's (`count`, else two per review item), clamped to
- * `MAX_BATCH_CHALLENGES`. Types are chosen per slot: the group — recognition or
- * production — is decided across the whole lesson so the mix lands near
- * {@link productionShare}, and the concrete type is then drawn from what the
- * word's ladder level allows, preferring one that word has not had in this
- * lesson.
+ * `MAX_BATCH_CHALLENGES` and to what the words can carry ({@link capacityOf}).
+ * Types are chosen per slot: the group — recognition or production — is decided
+ * across the whole lesson so the mix lands near {@link productionShare} *of the
+ * slots that could be production at all*, and the concrete type is then drawn
+ * from what the word's ladder level allows, preferring one that word has not had
+ * in this lesson.
  *
  * A word whose level allows no production simply takes recognition instead; it
  * still counts as a filled slot, which is why an all-level-1 lesson is all
- * recognition rather than short.
+ * recognition rather than short — and its slots are kept out of the production
+ * budget's denominator, so a mixed lesson does not spend the whole budget on
+ * the two mature words in it.
  *
  * Each slot also gets a `difficulty`, 1..5: the item's own {@link
  * ReviewItemRef.level}, shifted by {@link accuracyShift} (how the learner is
@@ -285,26 +327,30 @@ export function planSlots(args: BatchArgs, rng: () => number = Math.random): Slo
 	const usedByItem = new Map<string, Set<string>>();
 	const slots: Slot[] = [];
 	let production = 0;
+	let eligible = 0;
 
 	for (const demand of queue) {
 		const used = usedByItem.get(demand.item.id) ?? new Set<string>();
 		usedByItem.set(demand.item.id, used);
 
 		const allowed = allowedKinds(demand.item.level);
+		// Charged against the slots that could actually pay it, not against the
+		// whole lesson: a level-1 word's slot can never be production, and counting
+		// it in the denominator hands its share to whichever words *can* produce —
+		// four new words beside two mature ones made the mature two 100% production.
+		const canProduce = !demand.recognitionOnly && allowed.production.length > 0;
 		// The `+ 0.5` is a largest-remainder rounding: a slot flips to production
-		// only once the running share has fallen a *whole* slot behind the target,
-		// which keeps low shares from spending their first slot on production and
-		// makes the resulting mix exactly `share` at every length.
-		const wantProduction =
-			!demand.recognitionOnly &&
-			allowed.production.length > 0 &&
-			production + 0.5 < share * (slots.length + 1);
+		// only once the running share has fallen a *whole* eligible slot behind the
+		// target, which keeps low shares from spending their first slot on
+		// production and makes the resulting mix exactly `share` at every length.
+		const wantProduction = canProduce && production + 0.5 < share * (eligible + 1);
 
 		const group = wantProduction ? allowed.production : allowed.recognition;
 		const kind = pickKind(group, used, rng) ?? pickKind(allowed.recognition, used, rng);
 		if (!kind) continue;
 
 		used.add(kindKey(kind));
+		if (canProduce) eligible++;
 		if (wantProduction) production++;
 		const difficulty = clampDifficulty(
 			(demand.item.level ?? 1) + shift - (mistakenIds.has(demand.item.id) ? 1 : 0)
@@ -344,8 +390,14 @@ export function defaultChallengeCount(reviewItems: number): number {
  */
 export const CHUNK_SLOTS = 5;
 
-/** Distinct review items one request may be about. Fewer words, tighter lesson. */
-export const CHUNK_ITEMS = 3;
+/**
+ * Distinct review items one request may be about. Fewer words, tighter lesson —
+ * but three left a ragged tail: a twelve-word lesson's last words take one slot
+ * each, so the plan cut as 4,4,4,4,3,1 and paid a whole round trip for that one.
+ * Four squares that off (4,4,4,4,4) without making any single brief longer, since
+ * {@link CHUNK_SLOTS} still caps the slots.
+ */
+export const CHUNK_ITEMS = 4;
 
 /**
  * How many chunk requests may be in flight at once. Three is enough to hide most
