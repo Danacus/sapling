@@ -15,10 +15,14 @@ import type { Challenge, ChallengeType, KnowledgeItem } from '$lib/types';
 import {
 	CONSTRAINED_PRODUCTION_FLOOR,
 	FREE_PRODUCTION_FLOOR,
+	LEVEL_3_FLOOR,
+	LEVEL_5_FLOOR,
 	bearable,
 	bearableDemand,
+	difficultyLevelOf,
 	maturityOf,
-	weakestWordStrength
+	weakestWordStrength,
+	type Maturity
 } from './progression';
 
 /** Fixed instant: 2026-01-01T00:00:00.000Z. */
@@ -253,6 +257,44 @@ describe('bearable', () => {
 
 /* -------------------------------------------------------------------------- */
 
+describe('difficultyLevelOf', () => {
+	/** A card solved backwards from `wordStrength` so a boundary is exact rather than approached. */
+	const at = (strength: number) => reviewedCard(Math.expm1(strength * Math.log1p(30)));
+
+	it('is level 1 below the first floor', () => {
+		expect(difficultyLevelOf(item('a', BRAND_NEW), NOW)).toBe(1);
+		expect(difficultyLevelOf(item('a', SHAKY), NOW)).toBe(1);
+	});
+
+	it('calls a word with no card at all level 1', () => {
+		expect(difficultyLevelOf(item('a', null), NOW)).toBe(1);
+	});
+
+	it('climbs one rung at each of the four floors, inclusive', () => {
+		const boundaries: [number, number][] = [
+			[CONSTRAINED_PRODUCTION_FLOOR, 2],
+			[LEVEL_3_FLOOR, 3],
+			[FREE_PRODUCTION_FLOOR, 4],
+			[LEVEL_5_FLOOR, 5]
+		];
+		for (const [floor, level] of boundaries) {
+			const onFloor = item('x', at(floor));
+			expect(wordStrength(onFloor.fsrsCard as FsrsCardState, NOW)).toBeCloseTo(floor, 10);
+			expect(difficultyLevelOf(onFloor, NOW)).toBe(level);
+		}
+	});
+
+	it('never disagrees with the demand floors about a tier boundary', () => {
+		// Levels 2-3 are exactly tier 1 (CONSTRAINED_PRODUCTION_FLOOR..FREE_PRODUCTION_FLOOR)
+		// and 4-5 exactly tier 2 (FREE_PRODUCTION_FLOOR..1) — the whole point of
+		// anchoring the ladder on the same two floors.
+		expect(difficultyLevelOf(item('a', SHAKY), NOW)).toBe(1);
+		expect(difficultyLevelOf(item('a', LEARNED), NOW)).toBeGreaterThanOrEqual(2);
+		expect(difficultyLevelOf(item('a', LEARNED), NOW)).toBeLessThanOrEqual(3);
+		expect(difficultyLevelOf(item('a', OWNED), NOW)).toBeGreaterThanOrEqual(4);
+	});
+});
+
 describe('maturityOf', () => {
 	it('buckets on the same floors the planner gates on', () => {
 		expect(maturityOf(item('a', BRAND_NEW), NOW)).toBe('new');
@@ -263,6 +305,20 @@ describe('maturityOf', () => {
 
 	it('calls a word with no card at all new', () => {
 		expect(maturityOf(item('a', null), NOW)).toBe('new');
+	});
+
+	it('agrees with difficultyLevelOf at every level', () => {
+		const expected: Record<number, Maturity> = {
+			1: 'new',
+			2: 'young',
+			3: 'young',
+			4: 'solid',
+			5: 'solid'
+		};
+		for (const card of [BRAND_NEW, SHAKY, LEARNED, OWNED]) {
+			const sample = item('a', card);
+			expect(maturityOf(sample, NOW)).toBe(expected[difficultyLevelOf(sample, NOW)]);
+		}
 	});
 
 	it('sags as a word is left unreviewed', () => {

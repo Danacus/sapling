@@ -4,9 +4,11 @@
  * These rules used to be prose in the system prompt, where the only way to know
  * whether they held was to read a generated lesson and count. Now they are a
  * pure function, and this file is the thing that could never exist before: an
- * assertion that a `new` word is never asked to produce, that the mix moves with
- * the learner's accuracy, and that a word they just failed gets another go in a
- * shape it has not already had.
+ * assertion that a level-1 word is never asked to produce, that the mix moves
+ * with the learner's accuracy, that a word they just failed gets another go in
+ * a shape it has not already had — and, in `describe('difficulty', ...)`, that
+ * every slot's own `difficulty` tracks its item's level plus the same two
+ * shifts, continuously rather than as a cliff.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -31,8 +33,8 @@ function isProduction(slot: Slot): boolean {
 	return PRODUCTION_TYPES.has(slot.type);
 }
 
-function item(id: string, maturity?: ReviewItemRef['maturity']): ReviewItemRef {
-	return { id, term: `term-${id}`, meaning: `meaning ${id}`, ...(maturity ? { maturity } : {}) };
+function item(id: string, level?: ReviewItemRef['level']): ReviewItemRef {
+	return { id, term: `term-${id}`, meaning: `meaning ${id}`, ...(level ? { level } : {}) };
 }
 
 function argsFor(items: ReviewItemRef[], extra: Partial<BatchArgs> = {}): BatchArgs {
@@ -58,22 +60,25 @@ function cyclingRng(): () => number {
 const FIRST = () => 0;
 
 describe('allowedKinds', () => {
-	it('lets a new word be recognized but never produced', () => {
-		const { recognition, production } = allowedKinds('new');
+	it('lets a level-1 word be recognized but never produced', () => {
+		const { recognition, production } = allowedKinds(1);
 		expect(production).toEqual([]);
 		expect(recognition.map((k) => k.type)).toContain('recognize-mc');
-		// A cloze for a new word always comes with its word bank.
+		// A cloze for a level-1 word always comes with its word bank.
 		expect(recognition.find((k) => k.type === 'cloze')?.bank).toBe(true);
 	});
 
-	it('opens word-order at young and free production at solid', () => {
-		expect(allowedKinds('young').production.map((k) => k.type)).toEqual(['word-order']);
-		const solid = allowedKinds('solid').production;
-		expect(solid.map((k) => k.type)).toEqual(['word-order', 'translate-to-target', 'cloze']);
-		expect(solid.find((k) => k.type === 'cloze')?.bank).toBe(false);
+	it('opens word-order at levels 2-3 and free production at levels 4-5', () => {
+		expect(allowedKinds(2).production.map((k) => k.type)).toEqual(['word-order']);
+		expect(allowedKinds(3).production.map((k) => k.type)).toEqual(['word-order']);
+		for (const level of [4, 5] as const) {
+			const solid = allowedKinds(level).production;
+			expect(solid.map((k) => k.type)).toEqual(['word-order', 'translate-to-target', 'cloze']);
+			expect(solid.find((k) => k.type === 'cloze')?.bank).toBe(false);
+		}
 	});
 
-	it('treats an item with no maturity as new — the cautious end', () => {
+	it('treats an item with no level as level 1 — the cautious end', () => {
 		expect(allowedKinds(undefined).production).toEqual([]);
 	});
 });
@@ -89,7 +94,7 @@ describe('productionShare', () => {
 });
 
 describe('planSlots', () => {
-	const solid = [item('a', 'solid'), item('b', 'solid'), item('c', 'solid')];
+	const solid = [item('a', 5), item('b', 5), item('c', 5)];
 
 	it('honours the requested count, and caps it', () => {
 		expect(planSlots(argsFor(solid, { count: 7 }), FIRST)).toHaveLength(7);
@@ -110,14 +115,14 @@ describe('planSlots', () => {
 	});
 
 	it('gives one item different types rather than the same one twice', () => {
-		const slots = planSlots(argsFor([item('a', 'solid')], { count: 4 }), cyclingRng());
+		const slots = planSlots(argsFor([item('a', 5)], { count: 4 }), cyclingRng());
 		const keys = slots.map((s) => `${s.type}:${s.bank ?? ''}`);
 		expect(new Set(keys).size).toBe(keys.length);
 	});
 
 	it('never asks a new word to be produced', () => {
 		const slots = planSlots(
-			argsFor([item('a'), item('b', 'new')], { count: 8, recentAccuracy: 1 }),
+			argsFor([item('a'), item('b', 1)], { count: 8, recentAccuracy: 1 }),
 			cyclingRng()
 		);
 		expect(slots).toHaveLength(8);
@@ -187,10 +192,66 @@ describe('planSlots', () => {
 			expect(slot.term).toBe(`term-${slot.itemId}`);
 		}
 	});
+
+	describe('difficulty', () => {
+		it('puts a 1-5 difficulty on every slot', () => {
+			for (const slot of planSlots(argsFor(solid, { count: 6 }), cyclingRng())) {
+				expect(slot.difficulty).toBeGreaterThanOrEqual(1);
+				expect(slot.difficulty).toBeLessThanOrEqual(5);
+			}
+		});
+
+		it("defaults to the item's own level with no accuracy history", () => {
+			const mixed = [item('a', 1), item('b', 3), item('c', 5)];
+			const slots = planSlots(argsFor(mixed, { count: 3 }), FIRST);
+			expect(slots.find((s) => s.itemId === 'a')?.difficulty).toBe(1);
+			expect(slots.find((s) => s.itemId === 'b')?.difficulty).toBe(3);
+			expect(slots.find((s) => s.itemId === 'c')?.difficulty).toBe(5);
+		});
+
+		it('shifts every slot down a rung when the learner is struggling', () => {
+			const slots = planSlots(argsFor([item('a', 3)], { count: 1, recentAccuracy: 0.5 }), FIRST);
+			expect(slots[0].difficulty).toBe(2);
+		});
+
+		it('leaves difficulty alone at the middle of the accuracy band', () => {
+			const slots = planSlots(argsFor([item('a', 3)], { count: 1, recentAccuracy: 0.7 }), FIRST);
+			expect(slots[0].difficulty).toBe(3);
+		});
+
+		it('shifts every slot up a rung once the learner clears the accuracy ceiling', () => {
+			const slots = planSlots(argsFor([item('a', 3)], { count: 1, recentAccuracy: 0.85 }), FIRST);
+			expect(slots[0].difficulty).toBe(4);
+		});
+
+		it('clamps the accuracy shift to the 1-5 range rather than overshooting it', () => {
+			const low = planSlots(argsFor([item('a', 1)], { count: 1, recentAccuracy: 0.5 }), FIRST);
+			expect(low[0].difficulty).toBe(1);
+			const high = planSlots(argsFor([item('a', 5)], { count: 1, recentAccuracy: 0.95 }), FIRST);
+			expect(high[0].difficulty).toBe(5);
+		});
+
+		it('pulls every slot about a recently-missed word down a rung, not only the extra one', () => {
+			const slots = planSlots(
+				argsFor(solid, { count: 6, recentMistakes: [{ term: 'term-b', gave: 'wrong' }] }),
+				cyclingRng()
+			);
+			for (const slot of slots.filter((s) => s.itemId === 'b')) expect(slot.difficulty).toBe(4);
+			for (const slot of slots.filter((s) => s.itemId !== 'b')) expect(slot.difficulty).toBe(5);
+		});
+
+		it('treats a skipped mistake the same way as any other for the difficulty shift', () => {
+			const slots = planSlots(
+				argsFor(solid, { count: 6, recentMistakes: [{ term: 'term-a', gave: '(skipped)' }] }),
+				cyclingRng()
+			);
+			for (const slot of slots.filter((s) => s.itemId === 'a')) expect(slot.difficulty).toBe(4);
+		});
+	});
 });
 
 describe('chunkSlots', () => {
-	const many = Array.from({ length: 12 }, (_, i) => item(`w${i + 1}`, 'solid'));
+	const many = Array.from({ length: 12 }, (_, i) => item(`w${i + 1}`, 5));
 
 	it('cuts a full lesson into short requests about few words each', () => {
 		const args = argsFor(many, { count: MAX_BATCH_CHALLENGES });
@@ -232,7 +293,7 @@ describe('chunkSlots', () => {
 	});
 
 	it('splits only a word that alone outgrows a chunk', () => {
-		const one = [item('solo', 'solid')];
+		const one = [item('solo', 5)];
 		const chunks = chunkSlots(planSlots(argsFor(one, { count: 8 }), cyclingRng()), one);
 		expect(chunks).toHaveLength(2);
 		expect(chunks[0].slots).toHaveLength(CHUNK_SLOTS);

@@ -12,7 +12,19 @@ import { z } from 'zod';
 import type { WordOrderChallenge } from '$lib/types';
 import { normalize } from '$lib/validate';
 import type { StoredTypeDef } from './def';
-import { nonEmpty, storedBase } from './primitives';
+import { clamp01, nonEmpty, storedBase } from './primitives';
+
+/** Answer-tile count spanning the full 0..1 range: `$lib/llm` keeps sentences to 4-8 tiles. */
+const FEWEST_TILES = 2;
+const MOST_TILES = 8;
+
+/**
+ * Distractor-tile count spanning the full 0..1 range. Mirrors
+ * `MAX_WORD_ORDER_DISTRACTORS` in `$lib/llm/resolve-helpers`, restated rather
+ * than imported: the stored side must not reach into the generation layer, and
+ * a def may only import zod, `$lib/types` and `$lib/validate`.
+ */
+const MOST_DISTRACTORS = 3;
 
 export const wordOrderChallengeSchema = z.object({
 	type: z.literal('word-order'),
@@ -43,6 +55,17 @@ export const wordOrderStoredDef = {
 	// vocabulary — so this sits a tier below writing the same sentence blind.
 	demand() {
 		return 1;
+	},
+
+	// Two knobs on the tray: how many tiles the answer itself needs, and how many
+	// extra wrong ones are mixed in to sift through.
+	difficulty(challenge) {
+		const tileFit = clamp01(
+			(challenge.answerTokens.length - FEWEST_TILES) / (MOST_TILES - FEWEST_TILES)
+		);
+		const distractors = Math.max(0, challenge.tiles.length - challenge.answerTokens.length);
+		const distractorFit = clamp01(distractors / MOST_DISTRACTORS);
+		return clamp01(tileFit * 0.7 + distractorFit * 0.3);
 	},
 
 	correctAnswerText(challenge) {

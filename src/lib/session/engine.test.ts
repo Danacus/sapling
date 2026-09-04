@@ -648,16 +648,32 @@ describe('planSession', () => {
 			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['typed']);
 		});
 
-		it('leaves the freshness order alone for a word that can bear both', () => {
+		it('prefers the closer-fitting challenge over the fresher one for a word that can bear both', () => {
+			// Both bearable for a strong item, so bearability alone has nothing to
+			// prefer — but they are not equally good a fit: a typed-translation
+			// (difficulty ~0.5) sits far closer to this word's own strength
+			// (~0.7) than a two-word multiple-choice (difficulty ~0.02). Freshness
+			// would pick `choice` (the newer, never-served row); fit overrides it.
 			const items = [strongItem('due', -DAY)];
 			const pool = [
-				row('typed', ['due'], { generatedAt: NOW }),
-				recognition('choice', ['due'], { generatedAt: NOW - 5 * DAY })
+				recognition('choice', ['due'], { generatedAt: NOW }),
+				row('typed', ['due'], { generatedAt: NOW - 5 * DAY })
 			];
 
-			// Both bearable ⇒ nothing to prefer ⇒ the newer never-served row leads,
-			// exactly as it did before bearability existed.
 			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['typed', 'choice']);
+		});
+
+		it('still breaks a true fit tie on freshness, exactly as before this preference existed', () => {
+			// Two multiple-choice rows of the same prompt length are an equally good
+			// (or bad) fit for a strong word, so fit has nothing to decide between
+			// them and freshness — the newer, never-served row — settles it.
+			const items = [strongItem('due', -DAY)];
+			const pool = [
+				recognition('newer', ['due'], { generatedAt: NOW }),
+				recognition('older', ['due'], { generatedAt: NOW - 5 * DAY })
+			];
+
+			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['newer', 'older']);
 		});
 
 		it('does not spend the rest gap to find something bearable', () => {
@@ -1026,23 +1042,23 @@ describe('planRefill', () => {
 		]);
 	});
 
-	it('sends words as {id, term, meaning, maturity}, due first and then review-ahead', () => {
+	it('sends words as {id, term, meaning, level}, due first and then review-ahead', () => {
 		const items = [item('a', -1 * DAY), item('b', -5 * DAY), item('c', +2 * DAY)];
 		const plan = planRefill(items, profile(), NOW);
 
-		// `maturity` is the prompt's type hint (see `./progression`): these cards
-		// are freshly created, so every word is still 'new' and the batch will be
-		// asked for recognition about them. `c` is not due — it rides along because
-		// a lesson has no other source of vocabulary and must not come back empty
-		// for a learner who is caught up.
+		// `level` is the prompt's type-and-difficulty hint (see `./progression`):
+		// these cards are freshly created, so every word is still level 1 and the
+		// batch will be asked for recognition about them. `c` is not due — it rides
+		// along because a lesson has no other source of vocabulary and must not
+		// come back empty for a learner who is caught up.
 		expect(plan.args.reviewItems).toEqual([
-			{ id: 'b', term: 'term-b', meaning: 'meaning-b', maturity: 'new' },
-			{ id: 'a', term: 'term-a', meaning: 'meaning-a', maturity: 'new' },
-			{ id: 'c', term: 'term-c', meaning: 'meaning-c', maturity: 'new' }
+			{ id: 'b', term: 'term-b', meaning: 'meaning-b', level: 1 },
+			{ id: 'a', term: 'term-a', meaning: 'meaning-a', level: 1 },
+			{ id: 'c', term: 'term-c', meaning: 'meaning-c', level: 1 }
 		]);
 	});
 
-	it('reports a reviewed word as more mature than a brand-new one', () => {
+	it('reports a reviewed word at a higher level than a brand-new one', () => {
 		const fresh = item('a', -DAY);
 		const card = reviewCard(newCardState(NOW - 5 * DAY), Grade.Good, NOW - 5 * DAY);
 		const reviewed: KnowledgeItem = {
@@ -1051,10 +1067,10 @@ describe('planRefill', () => {
 		};
 
 		const byId = new Map(
-			planRefill([fresh, reviewed], profile(), NOW).args.reviewItems.map((i) => [i.id, i.maturity])
+			planRefill([fresh, reviewed], profile(), NOW).args.reviewItems.map((i) => [i.id, i.level])
 		);
-		expect(byId.get('a')).toBe('new');
-		expect(byId.get('b')).not.toBe('new');
+		expect(byId.get('a')).toBe(1);
+		expect(byId.get('b')).toBeGreaterThan(1);
 	});
 
 	it('sends recent accuracy to the prompt as its difficulty dial', () => {

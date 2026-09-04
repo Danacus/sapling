@@ -4,7 +4,8 @@
  * A `StoredTypeDef` is the whole of what the app knows about a member of the
  * `Challenge` union once it has been generated: the zod schema that validates it
  * (`schema`), how a learner's answer to it is graded (`check`), how much it asks
- * of the learner (`demand`), and the five presentation facts the feedback banner
+ * of the learner (`demand`), how hard *this one* reads within that tier
+ * (`difficulty`), and the five presentation facts the feedback banner
  * and the TTS warm-up ask of every challenge — *what was the right answer*
  * (`correctAnswerText`), *is that answer in the target language*
  * (`answerIsTargetLanguage`), *what is its Latin reading* (`answerReading`),
@@ -18,15 +19,15 @@
  * error at the registry, naming the type that has no def, before it can render
  * blank or grade wrong.
  *
- * Defs are leaves. They may import zod, `./primitives`, `$lib/types` and
- * `$lib/validate` (the string matchers, which know nothing about challenges),
- * and must import neither `../display` nor anything under `$lib/llm` — both are
- * *downstream*: `$lib/llm/schemas` composes `challengeSchema` out of these, and
- * `../display` dispatches through them, so an import either way would close a
- * cycle. Nothing here touches Svelte, the DB or the learner's preferences: a
- * romanization toggle is the *caller's* question, so {@link
- * StoredTypeBehaviour.answerReading} reports what the challenge has and the
- * banner decides whether to show it.
+ * Defs are leaves. They may import zod, `./primitives`, `./word-count`,
+ * `$lib/types` and `$lib/validate` (the string matchers, which know nothing
+ * about challenges), and must import neither `../display` nor anything under
+ * `$lib/llm` — both are *downstream*: `$lib/llm/schemas` composes
+ * `challengeSchema` out of these, and `../display` dispatches through them, so
+ * an import either way would close a cycle. Nothing here touches Svelte, the DB
+ * or the learner's preferences: a romanization toggle is the *caller's*
+ * question, so {@link StoredTypeBehaviour.answerReading} reports what the
+ * challenge has and the banner decides whether to show it.
  */
 
 import type { z } from 'zod';
@@ -85,6 +86,22 @@ export interface StoredTypeBehaviour<C extends Challenge> {
 	 * direction and comprehension in the other.
 	 */
 	demand(challenge: C): Demand;
+	/**
+	 * How hard *this particular* challenge is, 0..1, purely from its own stored
+	 * fields — a prompt's length, a word bank's size, a tile tray's size, a pair
+	 * count. Where {@link demand} says which of three coarse tiers a challenge
+	 * belongs to, this is the continuous knob within one: two `multiple-choice`
+	 * rows are both demand 0, but a four-word prompt and a one-word one are not
+	 * the same ask. `$lib/challenges/difficulty` scales this into the tier's own
+	 * span, so a lower-demand challenge can never outrank a higher-demand one
+	 * however hard its own fields make it read.
+	 *
+	 * Structural only — never the learner's history, never `now`. A word count
+	 * needs `$lib/text/segmentWords` (Chinese and Japanese have no spaces), which
+	 * is why `./word-count` exists as the one sibling a def may reach for beyond
+	 * zod, `$lib/types` and `$lib/validate`.
+	 */
+	difficulty(challenge: C): number;
 	/**
 	 * What the feedback banner tells the learner they should have answered.
 	 *

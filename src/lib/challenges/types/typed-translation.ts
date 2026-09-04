@@ -11,7 +11,12 @@ import { z } from 'zod';
 import type { TypedTranslationChallenge } from '$lib/types';
 import { checkAnswer } from '$lib/validate';
 import type { StoredTypeDef } from './def';
-import { nonEmpty, storedBase } from './primitives';
+import { clamp01, nonEmpty, storedBase } from './primitives';
+import { wordCount } from './word-count';
+
+/** Prompt length, in words, spanning the full 0..1 range. */
+const SHORTEST_PROMPT = 1;
+const LONGEST_PROMPT = 12;
 
 export const typedTranslationChallengeSchema = z.object({
 	type: z.literal('typed-translation'),
@@ -43,6 +48,13 @@ export const typedTranslationStoredDef = {
 	// target-language recall and belongs with the recognition tier.
 	demand(challenge) {
 		return challenge.direction === 'toTarget' ? 2 : 0;
+	},
+
+	// The one knob either direction has: how much there is to translate.
+	difficulty(challenge) {
+		return clamp01(
+			(wordCount(challenge.prompt) - SHORTEST_PROMPT) / (LONGEST_PROMPT - SHORTEST_PROMPT)
+		);
 	},
 
 	correctAnswerText(challenge) {

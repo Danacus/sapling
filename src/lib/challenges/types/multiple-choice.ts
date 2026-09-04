@@ -11,7 +11,12 @@ import { z } from 'zod';
 import type { MultipleChoiceChallenge } from '$lib/types';
 import { checkAnswer } from '$lib/validate';
 import type { StoredTypeDef } from './def';
-import { nonEmpty, storedBase } from './primitives';
+import { clamp01, nonEmpty, storedBase } from './primitives';
+import { wordCount } from './word-count';
+
+/** Prompt length, in words, spanning the full 0..1 range: a word to a short clause. */
+const SHORTEST_PROMPT = 1;
+const LONGEST_PROMPT = 8;
 
 export const multipleChoiceChallengeSchema = z.object({
 	type: z.literal('multiple-choice'),
@@ -45,6 +50,15 @@ export const multipleChoiceStoredDef = {
 	// recognizing the right member of one is what a beginner can do first.
 	demand() {
 		return 0;
+	},
+
+	// The one knob a multiple-choice row has: how much there is to read before
+	// picking. A one-word prompt ("el perro") and a full clause are both
+	// recognition, but not the same recognition.
+	difficulty(challenge) {
+		return clamp01(
+			(wordCount(challenge.prompt) - SHORTEST_PROMPT) / (LONGEST_PROMPT - SHORTEST_PROMPT)
+		);
 	},
 
 	correctAnswerText(challenge) {

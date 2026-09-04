@@ -18,11 +18,18 @@
  * Everything here is pure and deterministic given an injectable `rng`, so a plan
  * can be replayed in a test without a network or a clock.
  *
- * The one input it reads about a word is `maturity` — the same three buckets the
- * session planner gates *serving* on (`maturityOf` in `$lib/session/progression`).
- * A finer per-item difficulty signal is expected to land here later; it belongs
- * inside {@link allowedKinds} and {@link productionShare}, and callers of
- * {@link planSlots} would not have to change.
+ * The one input it reads about a word is `level` — the same five-rung ladder the
+ * session planner gates *serving* on (`difficultyLevelOf` in
+ * `$lib/session/progression`, expressed here as a bare `1..5` rather than
+ * imported, since `$lib/llm` never reaches into `$lib/session`). It does two
+ * jobs now instead of one: {@link allowedKinds} still reads it at the old
+ * three-bucket resolution to decide which *types* a word may be asked in, and
+ * {@link planSlots} also folds it — plus a continuous shift for how the learner
+ * is doing and whether this word was just missed — into each slot's own
+ * `difficulty`, 1..5, which is what used to be two prompt-wide accuracy cliffs
+ * and is now a per-slot number the model scales its writing to (see
+ * `SYSTEM_PROMPT`'s `Difficulty calibration:` block and each wire type's own
+ * gradient line in `./challenge-types`).
  */
 
 import { termKey } from '$lib/text';
@@ -44,12 +51,25 @@ export interface SlotKind {
 	bank?: boolean;
 }
 
+/**
+ * A slot's difficulty, 1-5, on the same ladder `ReviewItemRef.level` reads —
+ * the number the model is told to scale one challenge's writing to.
+ */
+export type SlotDifficulty = 1 | 2 | 3 | 4 | 5;
+
 /** One challenge to generate: the word it is about, and the shape it takes. */
 export interface Slot extends SlotKind {
 	/** The review item's id — the same id the resolver will accept back. */
 	itemId: string;
 	/** The word itself, so a chunk's payload can name it without a second lookup. */
 	term: string;
+	/**
+	 * How hard this one challenge should read, independent of its wire type.
+	 * Derived from the item's own {@link SlotDifficulty ladder level}, shifted by
+	 * how the learner is doing overall and pulled down a rung when this word was
+	 * just missed — see {@link planSlots}.
+	 */
+	difficulty: SlotDifficulty;
 }
 
 /**
@@ -98,34 +118,44 @@ function kindKey(kind: SlotKind): string {
 }
 
 /**
- * The production types a word at this maturity may be asked for. Recognition is
- * always allowed; production opens up as the word gets stronger, on the same
- * floors the session planner uses to decide what it is willing to *serve*, so a
- * batch is not full of challenges the planner will then decline for weeks.
+ * The production types a word at this ladder level may be asked for.
+ * Recognition is always allowed; production opens up as the word gets
+ * stronger, at the same two rungs (`level >= 4`, `level >= 2`) the session
+ * planner's floors correspond to — level 1 is `maturityOf`'s `'new'`, 2-3 are
+ * `'young'`, 4-5 are `'solid'` — so a batch is not full of challenges the
+ * planner will then decline to serve for weeks.
  */
-export function allowedKinds(maturity: ReviewItemRef['maturity']): {
+export function allowedKinds(level: ReviewItemRef['level']): {
 	recognition: readonly SlotKind[];
 	production: readonly SlotKind[];
 } {
-	if (maturity === 'solid')
+	// Undefined is a caller with no SRS state to judge by — the cautious end,
+	// same as level 1.
+	if ((level ?? 1) >= 4) {
 		return { recognition: RECOGNITION_KINDS, production: SOLID_PRODUCTION_KINDS };
-	if (maturity === 'young') {
+	}
+	if ((level ?? 1) >= 2) {
 		return { recognition: RECOGNITION_KINDS, production: YOUNG_PRODUCTION_KINDS };
 	}
-	// `new`, and anything the caller had no SRS state to judge by.
 	return { recognition: RECOGNITION_KINDS, production: [] };
 }
 
+/** The accuracy band {@link productionShare} and the per-slot difficulty shift both read. */
+const ACCURACY_FLOOR = 0.7;
+const ACCURACY_CEILING = 0.85;
+
 /**
  * What share of the lesson should be production, given how the learner is
- * currently doing. The thresholds are the ones that used to be prose in the
- * prompt: below 0.7 favour recognition, above 0.85 lean into production.
+ * currently doing. Linear between the two bounds that used to be a prompt-side
+ * cliff: 0.2 at {@link ACCURACY_FLOOR} and below, up to 0.6 at
+ * {@link ACCURACY_CEILING} and above, so a learner drifting from 0.72 to 0.78
+ * sees the mix drift with them instead of jumping a whole band at once.
  */
 export function productionShare(recentAccuracy: number | undefined): number {
 	if (recentAccuracy === undefined || !Number.isFinite(recentAccuracy)) return 0.4;
-	if (recentAccuracy < 0.7) return 0.2;
-	if (recentAccuracy > 0.85) return 0.6;
-	return 0.4;
+	const clamped = Math.min(ACCURACY_CEILING, Math.max(ACCURACY_FLOOR, recentAccuracy));
+	const progress = (clamped - ACCURACY_FLOOR) / (ACCURACY_CEILING - ACCURACY_FLOOR);
+	return 0.2 + progress * (0.6 - 0.2);
 }
 
 /** One position in the lesson: whose turn it is, and any constraint on it. */
@@ -134,7 +164,7 @@ interface Demand {
 	/**
 	 * Set on the extra slot a just-failed word earns. `'(skipped)'` means the
 	 * format itself was too demanding, so that slot must be recognition whatever
-	 * the maturity would otherwise allow.
+	 * the word's level would otherwise allow.
 	 */
 	recognitionOnly?: boolean;
 }
@@ -189,6 +219,24 @@ function demands(args: BatchArgs, total: number): Demand[] {
 	return out;
 }
 
+/**
+ * The whole-lesson accuracy shift applied to every slot's difficulty level: 0
+ * around {@link ACCURACY_FLOOR}, -1 well below it, +1 once accuracy clears
+ * {@link ACCURACY_CEILING}. This is the old prompt-side accuracy cliffs made
+ * local and continuous — one rung of the five-rung ladder, not two prose
+ * paragraphs the model had to interpret itself.
+ */
+function accuracyShift(recentAccuracy: number | undefined): -1 | 0 | 1 {
+	if (recentAccuracy === undefined || !Number.isFinite(recentAccuracy)) return 0;
+	const scaled = Math.round((recentAccuracy - ACCURACY_FLOOR) * 4);
+	return Math.max(-1, Math.min(1, scaled)) as -1 | 0 | 1;
+}
+
+/** `level` folded to the closed `1..5` range every {@link Slot.difficulty} lives in. */
+function clampDifficulty(level: number): SlotDifficulty {
+	return Math.max(1, Math.min(5, Math.round(level))) as SlotDifficulty;
+}
+
 /** Picks one of `candidates`, preferring the ones this item has not had yet. */
 function pickKind(
 	candidates: readonly SlotKind[],
@@ -208,11 +256,21 @@ function pickKind(
  * `MAX_BATCH_CHALLENGES`. Types are chosen per slot: the group — recognition or
  * production — is decided across the whole lesson so the mix lands near
  * {@link productionShare}, and the concrete type is then drawn from what the
- * word's maturity allows, preferring one that word has not had in this lesson.
+ * word's ladder level allows, preferring one that word has not had in this
+ * lesson.
  *
- * A word whose maturity allows no production simply takes recognition instead;
- * it still counts as a filled slot, which is why an all-`new` lesson is all
+ * A word whose level allows no production simply takes recognition instead; it
+ * still counts as a filled slot, which is why an all-level-1 lesson is all
  * recognition rather than short.
+ *
+ * Each slot also gets a `difficulty`, 1..5: the item's own {@link
+ * ReviewItemRef.level}, shifted by {@link accuracyShift} (how the learner is
+ * doing across the whole lesson) and pulled down one rung for every word this
+ * chunk's `recentMistakes` names — the local, continuous replacement for the
+ * two prompt-side accuracy cliffs and the "write it EASIER than last time" rule
+ * used to lean on alone. The shift is per *item*, not per slot: every slot about
+ * a just-missed word reads easier, not only the extra one {@link demands}
+ * inserted for it.
  */
 export function planSlots(args: BatchArgs, rng: () => number = Math.random): Slot[] {
 	const requested = args.count ?? defaultChallengeCount(args.reviewItems.length);
@@ -220,6 +278,10 @@ export function planSlots(args: BatchArgs, rng: () => number = Math.random): Slo
 	const queue = demands(args, total);
 
 	const share = productionShare(args.recentAccuracy);
+	const shift = accuracyShift(args.recentAccuracy);
+	const mistakenIds = new Set(
+		mistakenItems(args.reviewItems, args.recentMistakes).map(({ item }) => item.id)
+	);
 	const usedByItem = new Map<string, Set<string>>();
 	const slots: Slot[] = [];
 	let production = 0;
@@ -228,7 +290,7 @@ export function planSlots(args: BatchArgs, rng: () => number = Math.random): Slo
 		const used = usedByItem.get(demand.item.id) ?? new Set<string>();
 		usedByItem.set(demand.item.id, used);
 
-		const allowed = allowedKinds(demand.item.maturity);
+		const allowed = allowedKinds(demand.item.level);
 		// The `+ 0.5` is a largest-remainder rounding: a slot flips to production
 		// only once the running share has fallen a *whole* slot behind the target,
 		// which keeps low shares from spending their first slot on production and
@@ -244,7 +306,10 @@ export function planSlots(args: BatchArgs, rng: () => number = Math.random): Slo
 
 		used.add(kindKey(kind));
 		if (wantProduction) production++;
-		slots.push({ itemId: demand.item.id, term: demand.item.term, ...kind });
+		const difficulty = clampDifficulty(
+			(demand.item.level ?? 1) + shift - (mistakenIds.has(demand.item.id) ? 1 : 0)
+		);
+		slots.push({ itemId: demand.item.id, term: demand.item.term, difficulty, ...kind });
 	}
 
 	return slots;

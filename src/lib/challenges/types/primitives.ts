@@ -43,3 +43,13 @@ export const storedBase = {
 	explanation: z.string().optional(),
 	itemIds: z.array(nonEmpty)
 };
+
+/**
+ * Folds `value` into `[0, 1]`. Every def's `difficulty` ends with this: a
+ * structural count (words, tiles, pairs) is unbounded, and the registry's
+ * contract is a number on the same closed scale every other type reports on.
+ */
+export function clamp01(value: number): number {
+	if (!Number.isFinite(value)) return 0;
+	return Math.min(1, Math.max(0, value));
+}

@@ -40,6 +40,18 @@
  * third. Deliberately *low* — this is a preference the planner spends the moment
  * a due word has nothing else to offer, so an over-tight gate would not starve
  * anyone, it would just stop shaping anything.
+ *
+ * ## The five-rung ladder
+ *
+ * {@link difficultyLevelOf} slices the same axis into five rungs instead of
+ * three, for callers that want a gradient rather than a step function (the
+ * per-slot `difficulty` a lesson is written at, and the planner's preference for
+ * the challenge whose difficulty best matches a word's own strength). It is
+ * built on exactly the two floors above plus two more between them, so the
+ * three-bucket {@link maturityOf} and the five-rung ladder can never disagree
+ * about where a tier boundary falls — `maturityOf` is now just
+ * {@link difficultyLevelOf} read at coarser resolution (level 1 → `'new'`,
+ * 2–3 → `'young'`, 4–5 → `'solid'`).
  */
 
 import { demandOf, type Demand } from '$lib/challenges/demand';
@@ -62,6 +74,21 @@ export const CONSTRAINED_PRODUCTION_FLOOR = 0.15;
  * thing asked.
  */
 export const FREE_PRODUCTION_FLOOR = 0.45;
+
+/**
+ * Weakest-word strength at which {@link difficultyLevelOf} steps from level 2
+ * to level 3 — the ladder's own rung, sitting between the two floors above with
+ * no `demandForStrength` boundary of its own.
+ */
+export const LEVEL_3_FLOOR = 0.3;
+
+/**
+ * Weakest-word strength at which {@link difficultyLevelOf} steps from level 4
+ * to level 5 — comfortably past {@link FREE_PRODUCTION_FLOOR}, so level 5 is a
+ * word that has been free-producible for a while rather than one that only just
+ * crossed into it.
+ */
+export const LEVEL_5_FLOOR = 0.7;
 
 /**
  * The strength that decides what a challenge may ask: the **weakest** of the
@@ -129,6 +156,36 @@ export function bearable(challenge: Challenge, items: KnowledgeItem[], now: numb
 export type Maturity = 'new' | 'young' | 'solid';
 
 /**
+ * How far along a word is, on a five-rung ladder: 1 is a word met for the first
+ * time, 5 one the learner owns outright. Finer than {@link Maturity}, for
+ * callers that want a gradient rather than a step function — a lesson's
+ * per-slot `difficulty`, and the planner's preference for the challenge that
+ * best matches a word's current strength.
+ */
+export type DifficultyLevel = 1 | 2 | 3 | 4 | 5;
+
+/**
+ * A word's place on the five-rung ladder, from `wordStrength`.
+ *
+ * Anchored on the same two floors {@link bearableDemand} gates *serving* on
+ * (`CONSTRAINED_PRODUCTION_FLOOR`, `FREE_PRODUCTION_FLOOR`) plus two more
+ * between them ({@link LEVEL_3_FLOOR}, {@link LEVEL_5_FLOOR}), so the ladder and
+ * the three-tier demand floors can never disagree about where a boundary falls:
+ * level 1 is exactly tier-0 strength, levels 2–3 are exactly tier-1, levels 4–5
+ * exactly tier-2. A word with no card at all is level 1 — introduced but never
+ * scheduled is exactly what the bottom rung means.
+ */
+export function difficultyLevelOf(item: KnowledgeItem, now: number): DifficultyLevel {
+	const card = (item.fsrsCard as FsrsCardState | null | undefined) ?? null;
+	const strength = card ? wordStrength(card, now) : 0;
+	if (strength >= LEVEL_5_FLOOR) return 5;
+	if (strength >= FREE_PRODUCTION_FLOOR) return 4;
+	if (strength >= LEVEL_3_FLOOR) return 3;
+	if (strength >= CONSTRAINED_PRODUCTION_FLOOR) return 2;
+	return 1;
+}
+
+/**
  * A word's maturity bucket, for the generation prompt's type hints.
  *
  * The same floors as {@link bearableDemand}, on purpose: the planner shapes what
@@ -137,12 +194,11 @@ export type Maturity = 'new' | 'young' | 'solid';
  * model had just been asked to write. `'new'` gets recognition written for it,
  * `'solid'` gets production, `'young'` sits between.
  *
- * A word with no card at all is `'new'` — introduced but never scheduled is
- * exactly what the bucket means.
+ * Now just {@link difficultyLevelOf} read at coarser resolution — level 1 is
+ * `'new'`, 2–3 `'young'`, 4–5 `'solid'` — so the two views of the same axis
+ * cannot drift apart.
  */
 export function maturityOf(item: KnowledgeItem, now: number): Maturity {
-	const card = (item.fsrsCard as FsrsCardState | null | undefined) ?? null;
-	const strength = card ? wordStrength(card, now) : 0;
-	const tier = demandForStrength(strength);
-	return tier === 2 ? 'solid' : tier === 1 ? 'young' : 'new';
+	const level = difficultyLevelOf(item, now);
+	return level >= 4 ? 'solid' : level >= 2 ? 'young' : 'new';
 }

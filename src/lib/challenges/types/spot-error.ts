@@ -17,7 +17,11 @@ import { z } from 'zod';
 import type { SpotErrorChallenge } from '$lib/types';
 import { normalize } from '$lib/validate';
 import type { StoredTypeDef } from './def';
-import { nonEmpty, storedBase } from './primitives';
+import { clamp01, nonEmpty, storedBase } from './primitives';
+
+/** Sentence length, in tokens, spanning the full 0..1 range. */
+const SHORTEST_SENTENCE = 3;
+const LONGEST_SENTENCE = 14;
 
 export const spotErrorChallengeSchema = z.object({
 	type: z.literal('spot-error'),
@@ -50,6 +54,14 @@ export const spotErrorStoredDef = {
 	// the very first time it comes back round.
 	demand() {
 		return 0;
+	},
+
+	// `tokens` is already one entry per word — the model did the segmenting — so
+	// the length knob reads straight off it with no counting of its own.
+	difficulty(challenge) {
+		return clamp01(
+			(challenge.tokens.length - SHORTEST_SENTENCE) / (LONGEST_SENTENCE - SHORTEST_SENTENCE)
+		);
 	},
 
 	// Not the word they had to tap — the word that belonged there.

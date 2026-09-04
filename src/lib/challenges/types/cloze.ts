@@ -11,7 +11,20 @@ import { z } from 'zod';
 import type { ClozeChallenge } from '$lib/types';
 import { checkAnswer } from '$lib/validate';
 import type { StoredTypeDef } from './def';
-import { nonEmpty, storedBase } from './primitives';
+import { clamp01, nonEmpty, storedBase } from './primitives';
+import { wordCount } from './word-count';
+
+/** Sentence length, in words, spanning the full 0..1 range. */
+const SHORTEST_SENTENCE = 3;
+const LONGEST_SENTENCE = 16;
+
+/**
+ * Word-bank size spanning the full 0..1 range, smaller-is-harder: a bank with
+ * only the correct answer and a couple of distractors gives the learner far
+ * less to lean on than one with five or six candidates on it.
+ */
+const SMALLEST_BANK = 3;
+const LARGEST_BANK = 6;
 
 export const clozeChallengeSchema = z.object({
 	type: z.literal('cloze'),
@@ -56,6 +69,19 @@ export const clozeStoredDef = {
 	// and the same act a typed translation asks for, sentence-length aside.
 	demand(challenge) {
 		return challenge.wordBank && challenge.wordBank.length > 0 ? 1 : 2;
+	},
+
+	// Two knobs, weighted so the sentence carries most of the read: how long the
+	// sentence is, and — only when there is a bank at all — how much support it
+	// gives. A bankless cloze (free recall) reads on sentence length alone.
+	difficulty(challenge) {
+		const lengthFit = clamp01(
+			(wordCount(challenge.sentence) - SHORTEST_SENTENCE) / (LONGEST_SENTENCE - SHORTEST_SENTENCE)
+		);
+		const bank = challenge.wordBank;
+		if (!bank || bank.length === 0) return lengthFit;
+		const bankFit = clamp01((LARGEST_BANK - bank.length) / (LARGEST_BANK - SMALLEST_BANK));
+		return clamp01(lengthFit * 0.6 + bankFit * 0.4);
 	},
 
 	correctAnswerText(challenge) {

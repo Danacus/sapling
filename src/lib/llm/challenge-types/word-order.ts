@@ -50,7 +50,7 @@ export const wordOrderDef = {
 	promptSpec:
 		'word-order — build a target sentence out of tiles. {promptNative, words:[2+ TargetText — the sentence split into tiles, IN THE CORRECT ORDER], distractorWords:[0-3 TargetText] or null, instruction} e.g. {"type":"word-order","promptNative":"Could you bring us the bill, please?","words":[{"text":"¿Nos","reading":null},{"text":"trae","reading":null},{"text":"la","reading":null},{"text":"cuenta,","reading":null},{"text":"por","reading":null},{"text":"favor?","reading":null}],"distractorWords":[{"text":"carta","reading":null}],"instruction":null,"itemIds":["i6"],"explanation":null} — the app shuffles the tiles, so never state an order anywhere else.',
 	rulesSpec:
-		'- word-order sentences must have exactly one natural order: if the same tiles could be rearranged into a second correct sentence, rewrite it. Keep them to 4-8 tiles — 8 is a hard limit; past it, shorten the sentence. distractorWords are plausible words that fit nowhere in the sentence, never a form of a word already in it.',
+		'- word-order sentences must have exactly one natural order: if the same tiles could be rearranged into a second correct sentence, rewrite it. Keep them to 4-8 tiles — 8 is a hard limit; past it, shorten the sentence. distractorWords are plausible words that fit nowhere in the sentence, never a form of a word already in it. Difficulty scales tile count — 3-4 at 1-2, up to 7-8 at 5 — and distractorWords count, 0 at low difficulty to 2-3 at high.',
 	correctiveSpec: 'word-order {promptNative,words}',
 	escalationSpec:
 		'"word-order": the learner arranged the shuffled "tiles" into a sentence, and "answerTokens" in that order (printed as "answer") is the only accepted arrangement.',

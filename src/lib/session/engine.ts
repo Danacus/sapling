@@ -48,9 +48,10 @@ import {
 	selectSessionItems,
 	type FsrsCardState
 } from '$lib/srs';
+import { difficultyOf } from '$lib/challenges/difficulty';
 import { termKey } from '$lib/text';
 import type { Challenge, ChallengeResult, KnowledgeItem, Profile, Verdict } from '$lib/types';
-import { bearable, maturityOf } from './progression';
+import { bearable, difficultyLevelOf, weakestWordStrength } from './progression';
 
 /* -------------------------------------------------------------------------- */
 /* Tuning                                                                      */
@@ -412,6 +413,12 @@ interface PlanBoard {
 	 * answer costs a pass over the vocabulary.
 	 */
 	bearable: (row: ChallengeRow) => boolean;
+	/**
+	 * How far a row's own difficulty sits from its own weakest word's current
+	 * strength — the planner's third preference (see {@link firstFree}). Lower is
+	 * a closer fit. Memoized for the same reason {@link bearable} is.
+	 */
+	fitRank: (row: ChallengeRow) => number;
 }
 
 function bucketByItem(rows: ChallengeRow[]): Map<string, ChallengeRow[]> {
@@ -445,23 +452,62 @@ function planBoard(
 		return answer;
 	};
 
+	const fitMemo = new Map<string, number>();
+	const fitRank = (row: ChallengeRow): number => {
+		const cached = fitMemo.get(row.id);
+		if (cached !== undefined) return cached;
+		const rank = Math.abs(difficultyOf(row) - weakestWordStrength(row, items, now));
+		fitMemo.set(row.id, rank);
+		return rank;
+	};
+
 	return {
 		rested,
 		resting,
 		restedByItem: bucketByItem(rested),
 		restingByItem: bucketByItem(resting),
-		bearable: bearableRow
+		bearable: bearableRow,
+		fitRank
 	};
 }
 
 /**
- * The challenge a plan takes next out of one already-ordered bucket: the first
- * unclaimed **bearable** one, else the first unclaimed one at all.
+ * The candidate whose {@link PlanBoard.fitRank} is smallest — the one whose own
+ * difficulty sits closest to its own weakest word's current strength. Ties
+ * (including the common case of one candidate) keep the first one in
+ * `candidates`, which is what lets {@link firstFree} and {@link bearableFirst}
+ * hand this a bucket already in freshness/recency order and get that order back
+ * whenever difficulty has nothing to say.
+ */
+function nearestFit(
+	candidates: readonly ChallengeRow[],
+	fitRank: (row: ChallengeRow) => number
+): ChallengeRow {
+	let best = candidates[0];
+	let bestRank = fitRank(best);
+	for (const candidate of candidates.slice(1)) {
+		const rank = fitRank(candidate);
+		if (rank < bestRank) {
+			best = candidate;
+			bestRank = rank;
+		}
+	}
+	return best;
+}
+
+/**
+ * The challenge a plan takes next out of one already-ordered bucket: among the
+ * unclaimed **bearable** ones, whichever is the {@link nearestFit}; failing
+ * that, the first unclaimed one at all.
  *
- * That "else" is the whole of how strength-gated progression stays a preference
- * (see `./progression`). Within a bucket, a challenge the weakest word can bear
- * jumps the queue; when the bucket has none, the word is still served — a hard
- * exercise beats a skipped review, exactly as a too-familiar sentence does.
+ * Bearability is still the firm half of the preference (see `./progression`):
+ * a word gets nothing from the bucket unless something in it fits at all, and
+ * when nothing does the word is still served — a hard exercise beats a skipped
+ * review, exactly as a too-familiar sentence does. *Which* bearable challenge
+ * wins is the finer question this answers: not "the freshest one that fits",
+ * but "the one whose own difficulty is closest to how strong this word already
+ * is" — a strong word gets the harder of two fitting challenges, a shaky one the
+ * easier — with freshness/recency (the bucket's own order) breaking a true tie.
  *
  * And because the rule only ever reorders *inside* a bucket, it cannot bend the
  * rest gap: the caller consults the rested bucket first, so an unbearable rested
@@ -471,31 +517,38 @@ function planBoard(
 function firstFree(
 	bucket: ChallengeRow[] | undefined,
 	taken: Set<string>,
-	bearableRow: (row: ChallengeRow) => boolean
+	bearableRow: (row: ChallengeRow) => boolean,
+	fitRank: (row: ChallengeRow) => number
 ): ChallengeRow | undefined {
 	if (!bucket) return undefined;
 	const free = (row: ChallengeRow) => !taken.has(row.id);
-	return bucket.find((row) => free(row) && bearableRow(row)) ?? bucket.find(free);
+	const fitting = bucket.filter((row) => free(row) && bearableRow(row));
+	if (fitting.length > 0) return nearestFit(fitting, fitRank);
+	return bucket.find(free);
 }
 
 /**
- * `rows` reordered so the bearable ones come first, each group otherwise
- * untouched.
+ * `rows` reordered so the bearable ones come first, nearest-fit first among
+ * those, and the rest otherwise untouched.
  *
  * {@link firstFree}'s rule applied to a whole bucket at once — which is what
- * repeatedly taking "the first unclaimed bearable, else the first unclaimed"
- * from the same list amounts to. Used by the fillers, where there is no item to
- * walk and the bucket order *is* the plan. A stable partition, so freshness and
- * serve recency still decide everything within a tier.
+ * repeatedly taking "the closest-fitting unclaimed bearable one, else the first
+ * unclaimed" from the same list amounts to. Used by the fillers, where there is
+ * no single item to walk and the bucket order *is* the plan. The bearable half
+ * is sorted by {@link PlanBoard.fitRank} — a stable sort, so freshness and serve
+ * recency still break every tie exactly as they did before this preference
+ * existed — and the unbearable half keeps its own order entirely.
  */
 function bearableFirst(
 	rows: ChallengeRow[],
-	bearableRow: (row: ChallengeRow) => boolean
+	bearableRow: (row: ChallengeRow) => boolean,
+	fitRank: (row: ChallengeRow) => number
 ): ChallengeRow[] {
 	const fits: ChallengeRow[] = [];
 	const rest: ChallengeRow[] = [];
 	for (const row of rows) (bearableRow(row) ? fits : rest).push(row);
-	return [...fits, ...rest];
+	const byFit = [...fits].sort((a, b) => fitRank(a) - fitRank(b));
+	return [...byFit, ...rest];
 }
 
 /**
@@ -566,12 +619,18 @@ function byDueDate(now: number): (a: KnowledgeItem, b: KnowledgeItem) => number 
  * precisely what those are for. A slightly too familiar sentence still reviews
  * the word; silence does not.
  *
- * A third preference rides *inside* that structure rather than beside it:
- * **bearability** ({@link bearable}, `./progression`). Where a word has several
- * challenges to choose from, it gets the one whose demand its weakest word can
- * currently carry — recognition while the word is new, production once it has
- * been recalled a few times. It is only ever a tie-break within a bucket, so it
- * never costs a review and never bends the rest gap: see {@link firstFree}.
+ * A third preference rides *inside* that structure rather than beside it, in
+ * two layers. **Bearability** ({@link bearable}, `./progression`) is the coarse
+ * one: where a word has several challenges to choose from, only the ones whose
+ * demand its weakest word can currently carry are even in the running —
+ * recognition while the word is new, production once it has been recalled a few
+ * times. **Fit** ({@link PlanBoard.fitRank}, `$lib/challenges/difficulty`) is
+ * the fine one, breaking the tie among those: the challenge whose own
+ * difficulty sits closest to that word's current strength wins, so a strong
+ * word gets the harder of two challenges it can bear and a shaky one the
+ * easier — never the other way round, and never merely the freshest. Both
+ * layers are only ever preferences *within* a bucket ({@link firstFree}), so
+ * neither can cost a review or bend the rest gap.
  *
  * Pure and deterministic — no clock, no database, no rng — so a plan can be
  * pinned exactly in tests.
@@ -605,9 +664,9 @@ export function planSession(
 			for (const item of queue) {
 				if (chosen.length >= target) break;
 				const next =
-					firstFree(board.restedByItem.get(item.id), taken, board.bearable) ??
+					firstFree(board.restedByItem.get(item.id), taken, board.bearable, board.fitRank) ??
 					(spendGap && pass === 0
-						? firstFree(board.restingByItem.get(item.id), taken, board.bearable)
+						? firstFree(board.restingByItem.get(item.id), taken, board.bearable, board.fitRank)
 						: undefined);
 				if (!next) continue;
 				taken.add(next.id);
@@ -625,8 +684,8 @@ export function planSession(
 	// can bear brought to the front of it — bearable-first *within* each half, so
 	// preferring a fitting challenge never promotes resting material over rested.
 	for (const row of [
-		...bearableFirst(board.rested, board.bearable),
-		...bearableFirst(board.resting, board.bearable)
+		...bearableFirst(board.rested, board.bearable, board.fitRank),
+		...bearableFirst(board.resting, board.bearable, board.fitRank)
 	]) {
 		if (chosen.length >= target) break;
 		if (taken.has(row.id)) continue;
@@ -768,16 +827,16 @@ export function planRefill(
 			// the prompt builder does the length capping.
 			...(profile.about?.trim() ? { about: profile.about.trim() } : {})
 		},
-		// `maturity` is the generation-side half of strength-gated progression
+		// `level` is the generation-side half of strength-gated progression
 		// (`./progression`): the planner shapes what is *served* out of the pool,
-		// this shapes what the model writes into it. Both read the same floors, so
-		// a batch is not full of production challenges the planner will then
-		// decline to serve for weeks.
+		// this shapes what the model writes into it and how hard. Both read the
+		// same floors, so a batch is not full of production challenges the planner
+		// will then decline to serve for weeks.
 		reviewItems: reviewItems.map((item) => ({
 			id: item.id,
 			term: item.term,
 			meaning: item.meaning,
-			maturity: maturityOf(item, now)
+			level: difficultyLevelOf(item, now)
 		})),
 		count: opts.count ?? BATCH_TARGET,
 		// The whole vocabulary, not just the slice the batch is aimed at: it is

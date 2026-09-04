@@ -237,21 +237,34 @@ describe('buildChunkPrompt', () => {
 
 	it('lists the slots to fill, and nothing about how they were chosen', () => {
 		const payload = JSON.parse(messages[1].content) as {
-			slots: { item: string; type: string; bank?: boolean }[];
+			slots: { item: string; type: string; difficulty: number; bank?: boolean }[];
 		};
 		expect(payload.slots).toHaveLength(4);
 		for (const slot of payload.slots) {
 			expect(['i1', 'i2']).toContain(slot.item);
 			expect(typeof slot.type).toBe('string');
+			expect(slot.difficulty).toBeGreaterThanOrEqual(1);
+			expect(slot.difficulty).toBeLessThanOrEqual(5);
 			// The bank flag rides only where it means something.
 			if (slot.type !== 'cloze') expect(slot).not.toHaveProperty('bank');
 		}
-		// `maturity` chose the types; the types are chosen, so it no longer travels.
-		const withMaturity = firstChunkPrompt({
+		// `level` chose the types; the types are chosen, so it no longer travels —
+		// only its already-folded `difficulty` does. (`payload.level` is the
+		// learner's proficiency level, e.g. "beginner" — a different field.)
+		const withLevel = firstChunkPrompt({
 			...args,
-			reviewItems: args.reviewItems.map((i) => ({ ...i, maturity: 'solid' as const }))
+			reviewItems: args.reviewItems.map((i) => ({ ...i, level: 5 as const }))
 		});
-		expect(withMaturity[1].content).not.toContain('maturity');
+		const withLevelPayload = JSON.parse(withLevel[1].content) as {
+			reviewItems: Record<string, unknown>[];
+			slots: Record<string, unknown>[];
+		};
+		for (const reviewItem of withLevelPayload.reviewItems) {
+			expect(reviewItem).not.toHaveProperty('level');
+		}
+		for (const slot of withLevelPayload.slots) {
+			expect(slot).not.toHaveProperty('level');
+		}
 	});
 
 	it('includes recent mistakes for the words this chunk is about', () => {
@@ -268,15 +281,12 @@ describe('buildChunkPrompt', () => {
 		expect(payload.recentMistakes).toEqual([{ t: 'leer', gave: 'lees' }]);
 	});
 
-	it('includes recentAccuracy, rounded to two decimals', () => {
-		const payload = JSON.parse(
-			firstChunkPrompt({ ...args, recentAccuracy: 0.666666 })[1].content
-		) as Record<string, unknown>;
-		expect(payload.recentAccuracy).toBe(0.67);
-	});
-
-	it('omits recentAccuracy when there is no history to report', () => {
+	it('never sends recentAccuracy: it only ever fed the difficulty cliffs, now folded locally into difficulty', () => {
 		expect(JSON.parse(messages[1].content)).not.toHaveProperty('recentAccuracy');
+		const withAccuracy = JSON.parse(
+			firstChunkPrompt({ ...args, recentAccuracy: 0.95 })[1].content
+		) as Record<string, unknown>;
+		expect(withAccuracy).not.toHaveProperty('recentAccuracy');
 	});
 
 	it('includes the known-vocabulary terms when supplied — terms only, never the ids', () => {
@@ -320,12 +330,18 @@ describe('buildChunkPrompt', () => {
 		expect(messages[0].content).toContain('"word (reading)"');
 	});
 
-	it('calibrates content in the system message, and leaves type choice out of it', () => {
+	it('calibrates content off the per-slot difficulty, and leaves type choice out of it', () => {
 		const system = messages[0].content;
-		expect(system).toContain('recentAccuracy');
+		// The one shared ladder line replaces the old recentAccuracy cliffs.
+		expect(system).toContain('difficulty');
+		expect(system).toContain('1-5');
+		expect(system).not.toContain('recentAccuracy');
+		expect(system).not.toContain('0.7');
+		expect(system).not.toContain('0.85');
 		expect(system).toContain('recentMistakes');
-		expect(system).toContain('0.7');
-		expect(system).toContain('0.85');
+		// Every type states its own gradient.
+		expect(system).toContain('Difficulty scales tile count');
+		expect(system).toContain('recognize-mc: difficulty scales');
 		// The slot rule replaced the paragraph of type-selection rules.
 		expect(system).toContain('one challenge object per slot');
 		expect(system).toContain('"bank": true');
@@ -611,7 +627,7 @@ const bigArgs: BatchArgs = {
 		id: `w${i + 1}`,
 		term: `term${i + 1}`,
 		meaning: `meaning ${i + 1}`,
-		maturity: 'solid' as const
+		level: 5 as const
 	})),
 	count: 20
 };

@@ -30,6 +30,8 @@ export const recognizeMcDef = {
 	promptSpec:
 		'recognize-mc — target text shown, native meaning picked. {shown:TargetText, correctMeaning, distractors:[3], instruction} e.g. {"type":"recognize-mc","shown":{"text":"el perro","reading":null},"correctMeaning":"the dog","distractors":["the cat","the bread","the house"],"instruction":null,"itemIds":["i1"],"explanation":null}',
 	correctiveSpec: 'recognize-mc {shown,correctMeaning,distractors}',
+	rulesSpec:
+		"- recognize-mc: difficulty scales shown's length — a word or short phrase at 1-2, a clause at 3, a full sentence at 4-5 — and how close the distractors are to correctMeaning.",
 
 	fixtures: {
 		spanish: [

@@ -36,6 +36,8 @@ export const produceMcDef = {
 	promptSpec:
 		'produce-mc — native prompt shown, target text picked. {promptNative, correct:TargetText, distractors:[3 TargetText], instruction} e.g. {"type":"produce-mc","promptNative":"to order (food in a restaurant)","correct":{"text":"pedir","reading":null},"distractors":[{"text":"pagar","reading":null},{"text":"probar","reading":null},{"text":"servir","reading":null}],"instruction":null,"itemIds":["i2"],"explanation":null}',
 	correctiveSpec: 'produce-mc {promptNative,correct,distractors}',
+	rulesSpec:
+		"- produce-mc: difficulty scales promptNative's length the same way — a word or short phrase at 1-2, a clause at 3, a full sentence at 4-5 — and distractor closeness.",
 
 	fixtures: {
 		spanish: [

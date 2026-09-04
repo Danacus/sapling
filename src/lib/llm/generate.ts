@@ -48,7 +48,10 @@ import {
 	WIRE_TYPE_DEFS,
 	byType,
 	clozeDef,
+	produceMcDef,
+	recognizeMcDef,
 	spotErrorDef,
+	translateToNativeDef,
 	translateToTargetDef,
 	wordOrderDef
 } from './challenge-types';
@@ -88,19 +91,22 @@ export interface ReviewItemRef {
 	term: string;
 	meaning: string;
 	/**
-	 * How far along this word is — a hint for *which types* to write about it.
+	 * How far along this word is on the five-rung ladder, 1..5 — a hint for
+	 * *which types* to write about it and *how hard* to write them.
 	 *
 	 * Free production is a much harder question than recognition, and a word met
 	 * yesterday put through one produces a wrong answer that says nothing about
 	 * the word. The caller derives this from the same strength floors the session
-	 * planner gates serving on (`maturityOf` in `$lib/session/progression`), so
-	 * the two halves agree: the prompt asks for recognition where the planner
-	 * would only serve recognition anyway.
+	 * planner gates serving on (`difficultyLevelOf` in `$lib/session/progression`
+	 * — a bare `1..5` here rather than an imported type, since `$lib/llm` never
+	 * reaches into `$lib/session`), so the two halves agree: the prompt asks for
+	 * recognition where the planner would only serve recognition anyway.
+	 * `./slots` also folds it into every slot's own `difficulty`.
 	 *
 	 * Optional and omitted rather than sent blank — a caller with no SRS state to
 	 * consult pays nothing for the field, and the mock ignores it entirely.
 	 */
-	maturity?: 'new' | 'young' | 'solid';
+	level?: 1 | 2 | 3 | 4 | 5;
 }
 
 export interface RecentMistake {
@@ -173,9 +179,11 @@ export interface BatchArgs {
 	reviewItems: ReviewItemRef[];
 	recentMistakes?: RecentMistake[];
 	/**
-	 * Share of recent reviews the learner got right, 0..1 — the difficulty dial
-	 * for the batch (see the calibration rules in the system prompt). Absent on
-	 * day one, when there is no history to judge by.
+	 * Share of recent reviews the learner got right, 0..1 — a difficulty dial, but
+	 * a *local* one now: `./slots` reads it to shift every slot's `difficulty` and
+	 * to move `productionShare`, and neither number ever reaches the model as
+	 * `recentAccuracy` itself. Absent on day one, when there is no history to
+	 * judge by.
 	 */
 	recentAccuracy?: number;
 	/** Overrides the derived challenge count. */
@@ -250,11 +258,16 @@ export interface BatchResult {
  * it costs: better challenges mean fewer regenerated batches, and the
  * content-only wire format keeps grading local.
  *
- * It no longer says which type to write. Type selection — maturity floors, the
- * recognition/production mix, the extra go a just-failed word earns — is decided
- * locally in `./slots` and arrives as an explicit `slots` list, so those rules
- * cost nothing per call and are testable. What stays here is calibration of
- * *content*: how long an answer should be, how hard a sentence should read.
+ * It no longer says which type to write, or how hard by way of an accuracy
+ * threshold. Type selection — level floors, the recognition/production mix, the
+ * extra go a just-failed word earns — and difficulty selection — the ladder
+ * level itself, shifted by accuracy and by a recent miss — are both decided
+ * locally in `./slots` and arrive as an explicit `slots` list, each entry
+ * carrying its own `type` and `difficulty`, so those rules cost nothing per call
+ * and are testable. What stays here is calibration of *content* given a slot's
+ * `difficulty`: how long an answer should be, how hard a sentence should read —
+ * and, per type, exactly which observable knob to turn (`./challenge-types`'
+ * own gradient line for each).
  *
  * Three blocks earn their keep beyond the bare schema:
  *
@@ -281,11 +294,14 @@ export interface BatchResult {
  * (`./challenge-types`), so a type's field list and example live in the same
  * module as the zod schema they describe and the resolver that consumes it, and
  * the three cannot drift apart — describing a field the schema will reject is
- * one edit away from impossible. In `Rules:` only the four rules
- * that name a single type do — the rest span types (segmentation covers
- * word-order *and* spot-error; the never-swap-sides rule enumerates six fields
- * across five types) and splitting them up would cost tokens to say the same
- * thing several times.
+ * one edit away from impossible. In `Rules:`, every def's `rulesSpec` — its
+ * structural rule where it has one (cloze's vocabulary-level rule, word-order's
+ * one-natural-order rule, ...) *and* now its own difficulty gradient, the same
+ * bullet where the two coexist — is spliced in beside it; only the rules that
+ * name no single type stay hand-written here (segmentation covers word-order
+ * *and* spot-error; the never-swap-sides rule enumerates six fields across five
+ * types) and splitting those up would cost tokens to say the same thing several
+ * times.
  */
 const SYSTEM_PROMPT = [
 	'You are an expert language-course author. Output one JSON object and nothing else: no prose, no markdown fences.',
@@ -301,7 +317,10 @@ const SYSTEM_PROMPT = [
 	'- A "cloze" slot with "bank": true has distractorWords; with "bank": false it has none.',
 	'- Distractors must be plausible: same part of speech and register, never synonyms of the correct answer, never obviously absurd. Exactly one of the four may be correct given the prompt; if two would both answer it, rewrite the prompt.',
 	'- Sides never swap: correctMeaning, recognize-mc distractors, promptNative, hintNative, meaningNative, answersNative and instruction are NATIVE-language text and never contain target-language words or script. A challenge whose prompt and options are in the same language is invalid — one side is always the native language.',
+	recognizeMcDef.rulesSpec,
+	produceMcDef.rulesSpec,
 	translateToTargetDef.rulesSpec,
+	translateToNativeDef.rulesSpec,
 	'- Answerable from what is shown alone: the prompt, plus the challenge type, must uniquely determine the answer. Never an open question whose answer depends on facts you never state — directions, prices, names, times, opinions, anything from an imagined scene the learner cannot see.',
 	'- In a situational dialogue either give the exact line to produce ("Say: \'the fish stall is to the right\'") or make answers cover every plausible alternative reply.',
 	'- instruction: a short heading, in the NATIVE language, matched to what the challenge actually asks — "What does this mean?" for a plain meaning question, "Pick the best reply" or "How would you answer?" for a conversational turn; null when the default meaning-question heading fits.',
@@ -311,9 +330,7 @@ const SYSTEM_PROMPT = [
 	spotErrorDef.rulesSpec,
 	"- known is the learner's whole vocabulary and it is what you build with: every challenge is about a reviewItem, and the words around it come from known, so the learner mostly reads what they can already read. Teach nothing new — a word outside known may appear as glue when a sentence needs it, never as the thing being tested.",
 	'Difficulty calibration:',
-	'- recentAccuracy (0-1, share of recent answers the learner got right) and recentMistakes are their current form; calibrate the writing to them. They change how hard each challenge reads, never which type it is — the types are already fixed by slots.',
-	'- recentAccuracy below 0.7: keep answers to one or two words and sentences short and plainly worded.',
-	'- recentAccuracy above 0.85: longer sentences, richer vocabulary, less scaffolding.',
+	'- Each slot carries "difficulty" 1-5, 1 easiest: scale sentence length, glue vocabulary and scaffolding to it — never correctness. Each type above states its own gradient.',
 	'- A term in recentMistakes is one the learner just got wrong; write it EASIER than last time, with more of the sentence given.',
 	'Voice:',
 	'- Conversation, not flashcards: every prompt, sentence and translation is a line someone would really say — a dialogue turn, a question put to the learner, a request, a reaction, an opinion. Never an isolated textbook statement.',
@@ -366,9 +383,12 @@ export function knownTermLabels(known: readonly KnownItemRef[]): string[] {
  * The system half is the same static string for every chunk, so a lesson's four
  * or five requests share one cached prefix and only the short user half differs.
  * That user half is now genuinely short: the `slots` list replaces the paragraph
- * of type-selection rules the prompt used to carry, `maturity` no longer travels
- * at all (it decided the type, and the type is decided), and `recentMistakes` is
- * narrowed to the words this chunk is actually about.
+ * of type-selection *and* difficulty-cliff rules the prompt used to carry —
+ * `level` no longer travels at all (it decided the type, and the type is
+ * decided; `./slots` folds it into each slot's own `difficulty` instead) and
+ * neither does `recentAccuracy` (it only ever fed those same cliffs, and the
+ * shift it now applies is entirely local) — and `recentMistakes` is narrowed to
+ * the words this chunk is actually about.
  *
  * `known` is *not* narrowed. It is the vocabulary every sentence is built out
  * of, whichever words the chunk is testing, and it is the citation vocabulary
@@ -401,14 +421,12 @@ export function buildChunkPrompt(args: BatchArgs, chunk: SlotChunk): ChatMessage
 		slots: chunk.slots.map((slot) => ({
 			item: slot.itemId,
 			type: slot.type,
+			difficulty: slot.difficulty,
 			...(slot.bank === undefined ? {} : { bank: slot.bank })
 		})),
 		// Terms only — the ids stay local (see `knownItems` and `knownTermIndex`).
 		...(args.knownItems?.length ? { known: knownTermLabels(args.knownItems) } : {})
 	};
-	if (args.recentAccuracy !== undefined && Number.isFinite(args.recentAccuracy)) {
-		payload.recentAccuracy = Math.round(args.recentAccuracy * 100) / 100;
-	}
 	const mistakes = (args.recentMistakes ?? []).filter((m) => chunkTerms.has(termKey(m.term)));
 	if (mistakes.length) {
 		payload.recentMistakes = mistakes.map((m) => ({ t: m.term, gave: m.gave }));

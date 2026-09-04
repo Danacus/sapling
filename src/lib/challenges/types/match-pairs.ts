@@ -17,7 +17,11 @@ import { z } from 'zod';
 import type { MatchPairsChallenge } from '$lib/types';
 import { normalize } from '$lib/validate';
 import type { StoredTypeDef } from './def';
-import { nonEmpty, storedBase } from './primitives';
+import { clamp01, nonEmpty, storedBase } from './primitives';
+
+/** Pair count spanning the full 0..1 range — `$lib/llm/generate` builds 4-5 pairs. */
+const FEWEST_PAIRS = 2;
+const MOST_PAIRS = 6;
 
 export const matchPairsChallengeSchema = z.object({
 	type: z.literal('match-pairs'),
@@ -58,6 +62,12 @@ export const matchPairsStoredDef = {
 	// registry is total by construction and an honest answer costs one line.
 	demand() {
 		return 0;
+	},
+
+	// Academic, like `demand` above: match rounds are built locally and never
+	// pooled, so no planner ever asks. Pair count is the one knob it has.
+	difficulty(challenge) {
+		return clamp01((challenge.pairs.length - FEWEST_PAIRS) / (MOST_PAIRS - FEWEST_PAIRS));
 	},
 
 	correctAnswerText() {

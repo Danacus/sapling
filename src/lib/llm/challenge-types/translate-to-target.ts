@@ -29,7 +29,7 @@ export const translateToTargetDef = {
 	promptSpec:
 		'translate-to-target — type the target language. {promptNative, answers:[TargetText, 1 or more]} e.g. {"type":"translate-to-target","promptNative":"Excuse me, the bill please.","answers":[{"text":"服务员，买单","reading":"fúwùyuán, mǎidān"},{"text":"买单","reading":"mǎidān"}],"itemIds":["i4"],"explanation":null}',
 	rulesSpec:
-		'- translate-to-target answers must be exhaustive, one entry per genuinely different way to say it: with and without the article, contractions, common synonyms and word orders. Do NOT list tone- or accent-stripped spellings — the app derives those from "reading".',
+		'- translate-to-target answers must be exhaustive, one entry per genuinely different way to say it: with and without the article, contractions, common synonyms and word orders. Do NOT list tone- or accent-stripped spellings — the app derives those from "reading". Difficulty scales promptNative\'s length in words.',
 	correctiveSpec: 'translate-to-target {promptNative,answers}',
 
 	fixtures: {

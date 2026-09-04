@@ -16,10 +16,27 @@
  * registry twice.
  */
 
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { challengeSchema } from '$lib/llm/schemas';
 import type { Challenge, ChallengeType } from '$lib/types';
 import { STORED_TYPE_DEFS, STORED_TYPE_ORDER, storedDefFor } from './index';
+
+const TYPES_DIR = dirname(fileURLToPath(import.meta.url));
+
+/** One source file per registered def, by its own type — not derived, since the
+ * point is to catch a def whose import list drifted from what this test knows
+ * about, and a derived list could drift the same way. */
+const DEF_FILES: Record<ChallengeType, string> = {
+	'multiple-choice': 'multiple-choice.ts',
+	cloze: 'cloze.ts',
+	'typed-translation': 'typed-translation.ts',
+	'match-pairs': 'match-pairs.ts',
+	'word-order': 'word-order.ts',
+	'spot-error': 'spot-error.ts'
+};
 
 /** The `type` literal each member of the stored union pins, in union order. */
 const unionTypes = (): string[] => challengeSchema.options.map((option) => option.shape.type.value);
@@ -94,5 +111,38 @@ describe('stored-type purity', () => {
 			'spot-error': true
 		};
 		expect(Object.keys(STORED_TYPE_DEFS).sort()).toEqual(Object.keys(expected).sort());
+	});
+});
+
+describe('difficulty', () => {
+	it('gives every stored type a difficulty method, 0..1 on a real challenge', () => {
+		// Exhaustive over the registry, so a def added without one fails here
+		// rather than surfacing as a lesson whose planner preference silently
+		// treats every row of that type as equally hard.
+		for (const [type, def] of Object.entries(STORED_TYPE_DEFS)) {
+			expect(typeof def.difficulty, type).toBe('function');
+		}
+	});
+});
+
+describe('stored-type def imports', () => {
+	it('imports only zod, $lib/types, $lib/validate and its own siblings', () => {
+		// `./def`'s contract: a def is a leaf, so it may reach for zod, `$lib/types`
+		// and `$lib/validate` plus whatever sibling helper (`./primitives`,
+		// `./word-count`) exists to keep that boundary from bulging every time a
+		// def needs one more cross-cutting fact. Anything else — `$lib/llm`,
+		// `$lib/db`, another challenge's own module — is exactly the cycle `./def`
+		// warns about.
+		const allowedExternal = new Set(['zod', '$lib/types', '$lib/validate']);
+		const importLine = /^import\s+(?:type\s+)?[\s\S]*?\s+from\s+'([^']+)';?\s*$/gm;
+
+		for (const file of Object.values(DEF_FILES)) {
+			const source = readFileSync(join(TYPES_DIR, file), 'utf8');
+			for (const match of source.matchAll(importLine)) {
+				const specifier = match[1];
+				const allowed = specifier.startsWith('./') || allowedExternal.has(specifier);
+				expect(allowed, `${file} imports "${specifier}"`).toBe(true);
+			}
+		}
 	});
 });
