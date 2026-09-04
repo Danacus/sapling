@@ -191,6 +191,49 @@ describe('chatCompletion', () => {
 		).rejects.toMatchObject({ kind: 'network' });
 	});
 
+	it('lets an abort through as an abort, not as a network failure', async () => {
+		// A lesson is several concurrent completions on one signal (see
+		// `generate.ts`); if a cancelled call came back as `LlmError('network')`,
+		// quitting a refill would look to the learner like the network died.
+		const controller = new AbortController();
+		const fetchFn: FetchLike = async (_url, init) => {
+			controller.abort();
+			const error = new Error('aborted');
+			error.name = 'AbortError';
+			void init;
+			throw error;
+		};
+		const error = await chatCompletion({
+			messages,
+			apiKey: KEY,
+			model: 'm',
+			fetchFn,
+			signal: controller.signal
+		}).catch((e: unknown) => e);
+
+		expect(error).not.toBeInstanceOf(LlmError);
+		expect((error as Error).name).toBe('AbortError');
+	});
+
+	it('forwards the caller signal to every fetch, retry included', async () => {
+		const controller = new AbortController();
+		const { fetchFn, calls } = recordingFetch([
+			() => jsonResponse({ error: { message: 'response_format unsupported' } }, 400),
+			() => jsonResponse(okCompletion())
+		]);
+		await chatCompletion({
+			messages,
+			apiKey: KEY,
+			model: 'm',
+			fetchFn,
+			responseFormat: 'json',
+			signal: controller.signal
+		});
+
+		expect(calls).toHaveLength(2);
+		for (const call of calls) expect(call.init.signal).toBe(controller.signal);
+	});
+
 	it('fails with no-key when nothing is configured', async () => {
 		const { fetchFn } = recordingFetch([() => jsonResponse(okCompletion())]);
 		// No apiKey argument and no localStorage in node.

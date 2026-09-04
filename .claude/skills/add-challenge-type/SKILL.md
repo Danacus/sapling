@@ -13,7 +13,7 @@ argument-hint: [type-name]
 Two different jobs live here. Pick the right one first:
 
 - **Wire type only** — a new shape the model may *emit*, resolving into an
-  existing stored type. Two edits. Nothing downstream changes.
+  existing stored type. Three edits. Nothing downstream changes.
 - **Challenge type, end to end** — a new member of `ChallengeType`, with its own
   grading, presentation and component. Four registrations.
 
@@ -21,7 +21,7 @@ If the new question can be graded and drawn by an existing stored type, it is a
 wire type. Only widen the stored union when grading or presentation genuinely
 differs.
 
-## Wire type only — two edits
+## Wire type only — three edits
 
 1. Write one def module in `src/lib/llm/challenge-types/<type>.ts`, using
    `satisfies WireTypeDef<T>` (not a type annotation — an annotation widens the
@@ -30,9 +30,17 @@ differs.
    scenario, with `order` set to the intended lesson position), and optional
    `rulesSpec` / `escalationSpec`.
 2. Register it in the ordered `WIRE_TYPE_DEFS` in `challenge-types/index.ts`.
+3. **Add a `SlotKind` for it in `src/lib/llm/slots.ts`** — to
+   `RECOGNITION_KINDS` if the answer is visible on screen, to
+   `YOUNG_PRODUCTION_KINDS` / `SOLID_PRODUCTION_KINDS` if the learner has to
+   produce it, choosing the maturity at which it becomes fair to ask.
+   *Forget it:* the type is described to the model, exampled, and **never asked
+   for** — the app chooses types now, not the model. `registry.test.ts` fails on
+   the `PLANNABLE_KINDS` parity check.
 
 Import direction is strict: `primitives.ts` ← def modules ← `index.ts` ←
-`schemas.ts` ← `generate.ts`. **A def module must never import `schemas.ts`.**
+`schemas.ts` ← `generate.ts`, with `slots.ts` importing only types back from
+`generate.ts`. **A def module must never import `schemas.ts`.**
 
 Registry order *is* prompt order *is* union order — inserting in the middle
 changes the composed prompt. Prefer appending unless order matters.

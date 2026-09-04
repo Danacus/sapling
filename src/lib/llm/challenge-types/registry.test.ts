@@ -15,23 +15,27 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { CORRECTIVE_INSTRUCTION, buildBatchPrompt, parseBatch } from '../generate';
+import { CORRECTIVE_INSTRUCTION, buildChunkPrompt, parseBatch } from '../generate';
 import type { BatchArgs } from '../generate';
 import { buildEscalationPrompt } from '../escalation';
 import { mockBatchCompletion } from '../mock';
 import { generatedChallengeSchema } from '../schemas';
+import { PLANNABLE_KINDS } from '../slots';
 import { FIXTURE_SCENARIOS, WIRE_TYPE_DEFS, byType } from './index';
 
 const systemPrompt = (): string => {
-	const [system] = buildBatchPrompt({
-		profile: {
-			nativeLanguage: 'English',
-			targetLanguage: 'Spanish',
-			level: 'beginner',
-			interests: []
+	const [system] = buildChunkPrompt(
+		{
+			profile: {
+				nativeLanguage: 'English',
+				targetLanguage: 'Spanish',
+				level: 'beginner',
+				interests: []
+			},
+			reviewItems: []
 		},
-		reviewItems: []
-	});
+		{ slots: [], reviewItems: [] }
+	);
 	return system.content;
 };
 
@@ -66,6 +70,15 @@ describe('WIRE_TYPE_DEFS', () => {
 	it('is reachable by type', () => {
 		for (const def of WIRE_TYPE_DEFS) expect(byType.get(def.type)).toBe(def);
 		expect(byType.size).toBe(WIRE_TYPE_DEFS.length);
+	});
+
+	it('is plannable: every registered type is one the slot planner can ask for', () => {
+		// Type choice is local now (`../slots`), so being in the registry is no
+		// longer enough to be generated — a type the planner never names is a type
+		// the model is told about, shown an example of, and never asked for.
+		expect([...new Set(PLANNABLE_KINDS.map((kind) => kind.type))].sort()).toEqual(
+			WIRE_TYPE_DEFS.map((def) => def.type).sort()
+		);
 	});
 });
 

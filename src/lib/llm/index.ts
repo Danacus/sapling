@@ -78,7 +78,7 @@ export {
 	MAX_ABOUT_CHARS,
 	MAX_BATCH_CHALLENGES,
 	MIN_BATCH_CHALLENGES,
-	buildBatchPrompt,
+	buildChunkPrompt,
 	defaultChallengeCount,
 	generateBatch,
 	makeMatchPairsChallenge,
@@ -100,6 +100,17 @@ export type {
 	ResolvedBatch,
 	ReviewItemRef
 } from './generate';
+
+export {
+	CHUNK_CONCURRENCY,
+	CHUNK_ITEMS,
+	CHUNK_SLOTS,
+	allowedKinds,
+	chunkSlots,
+	planSlots,
+	productionShare
+} from './slots';
+export type { Slot, SlotChunk, SlotKind } from './slots';
 
 export {
 	ROMANIZE_SCHEMA_NAME,

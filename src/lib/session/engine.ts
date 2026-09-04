@@ -14,10 +14,13 @@
  * assembles a session out of whatever is already there — so starting is
  * instant, always, and never waits on the network.
  *
- * Token economy, restated because it is what allows that: one batched
- * `getBatch` call produces a whole lesson (~2.5k tokens), grading is local and
- * free, and only an explicit "explain this" spends more. So we generate rarely
- * and generously, and get many sessions out of each batch by recycling.
+ * Token economy, restated because it is what allows that: one `getBatch` call
+ * produces a whole lesson — internally a handful of short concurrent requests
+ * against one cached system prompt, see `$lib/llm/generate` — grading is local
+ * and free, and only an explicit "explain this" spends more. So we generate
+ * rarely and generously, and get many sessions out of each batch by recycling.
+ * `getBatch` is still one `await` from here: chunking, per-chunk retries and
+ * dropping a chunk that fails are all below the seam.
  */
 
 import {

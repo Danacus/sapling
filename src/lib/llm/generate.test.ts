@@ -7,7 +7,7 @@ import {
 	MAX_BATCH_CHALLENGES,
 	MAX_WORD_ORDER_DISTRACTORS,
 	MAX_WORD_ORDER_TILES,
-	buildBatchPrompt,
+	buildChunkPrompt,
 	defaultChallengeCount,
 	generateBatch,
 	knownTermIndex,
@@ -19,6 +19,7 @@ import {
 } from './generate';
 import type { BatchArgs, ProgressStep, ResolveOptions } from './generate';
 import { challengeSchema } from './schemas';
+import { CHUNK_CONCURRENCY, CHUNK_ITEMS, CHUNK_SLOTS, chunkSlots, planSlots } from './slots';
 
 const args: BatchArgs = {
 	profile: {
@@ -157,8 +158,18 @@ describe('stripFences', () => {
 	});
 });
 
-describe('buildBatchPrompt', () => {
-	const messages = buildBatchPrompt(args);
+/**
+ * The messages for a lesson's first chunk. Everything the prompt tests care
+ * about — the static system half, the profile, `known`, the calibration dials —
+ * is on every chunk, so the first one is a fair witness for all of them.
+ */
+function firstChunkPrompt(batchArgs: BatchArgs = args) {
+	const chunks = chunkSlots(planSlots(batchArgs, ZERO_RNG), batchArgs.reviewItems);
+	return buildChunkPrompt(batchArgs, chunks[0]);
+}
+
+describe('buildChunkPrompt', () => {
+	const messages = firstChunkPrompt();
 
 	it('is exactly one system and one user message', () => {
 		expect(messages).toHaveLength(2);
@@ -217,7 +228,6 @@ describe('buildBatchPrompt', () => {
 		expect(payload.target).toBe('Spanish');
 		expect(payload.level).toBe('beginner');
 		expect(payload).not.toHaveProperty('newItemSlots');
-		expect(payload.challengeCount).toBe(4);
 		expect(payload.reviewItems).toEqual([
 			{ id: 'i1', t: 'el perro', m: 'the dog' },
 			{ id: 'i2', t: 'leer', m: 'to read' }
@@ -225,24 +235,42 @@ describe('buildBatchPrompt', () => {
 		expect(payload.recentMistakes).toBeUndefined();
 	});
 
-	it('includes recent mistakes when supplied', () => {
-		const withMistakes = buildBatchPrompt({
+	it('lists the slots to fill, and nothing about how they were chosen', () => {
+		const payload = JSON.parse(messages[1].content) as {
+			slots: { item: string; type: string; bank?: boolean }[];
+		};
+		expect(payload.slots).toHaveLength(4);
+		for (const slot of payload.slots) {
+			expect(['i1', 'i2']).toContain(slot.item);
+			expect(typeof slot.type).toBe('string');
+			// The bank flag rides only where it means something.
+			if (slot.type !== 'cloze') expect(slot).not.toHaveProperty('bank');
+		}
+		// `maturity` chose the types; the types are chosen, so it no longer travels.
+		const withMaturity = firstChunkPrompt({
+			...args,
+			reviewItems: args.reviewItems.map((i) => ({ ...i, maturity: 'solid' as const }))
+		});
+		expect(withMaturity[1].content).not.toContain('maturity');
+	});
+
+	it('includes recent mistakes for the words this chunk is about', () => {
+		const withMistakes = firstChunkPrompt({
 			...args,
 			recentMistakes: [
 				{ term: 'leer', gave: 'lees' },
+				// Not a review item of this lesson: nothing in the chunk can be written
+				// easier for it, so it is not worth a token.
 				{ term: 'temprano', gave: '(skipped)' }
 			]
 		});
 		const payload = JSON.parse(withMistakes[1].content) as Record<string, unknown>;
-		expect(payload.recentMistakes).toEqual([
-			{ t: 'leer', gave: 'lees' },
-			{ t: 'temprano', gave: '(skipped)' }
-		]);
+		expect(payload.recentMistakes).toEqual([{ t: 'leer', gave: 'lees' }]);
 	});
 
 	it('includes recentAccuracy, rounded to two decimals', () => {
 		const payload = JSON.parse(
-			buildBatchPrompt({ ...args, recentAccuracy: 0.666666 })[1].content
+			firstChunkPrompt({ ...args, recentAccuracy: 0.666666 })[1].content
 		) as Record<string, unknown>;
 		expect(payload.recentAccuracy).toBe(0.67);
 	});
@@ -260,13 +288,13 @@ describe('buildBatchPrompt', () => {
 			{ id: 'k2', term: '做饭' },
 			{ id: 'k3', term: '点菜' }
 		];
-		const content = buildBatchPrompt({ ...args, knownItems: known })[1].content;
+		const content = firstChunkPrompt({ ...args, knownItems: known })[1].content;
 		const payload = JSON.parse(content) as Record<string, unknown>;
 		expect(payload.known).toEqual(['名字', '做饭', '点菜']);
 		expect(content).not.toContain('k1');
 
 		expect(JSON.parse(messages[1].content)).not.toHaveProperty('known');
-		expect(JSON.parse(buildBatchPrompt({ ...args, knownItems: [] })[1].content)).not.toHaveProperty(
+		expect(JSON.parse(firstChunkPrompt({ ...args, knownItems: [] })[1].content)).not.toHaveProperty(
 			'known'
 		);
 	});
@@ -275,7 +303,7 @@ describe('buildBatchPrompt', () => {
 		// A reading costs tokens and buys nothing where the spelling is already
 		// unique — which is every word, for nearly every learner.
 		const payload = JSON.parse(
-			buildBatchPrompt({
+			firstChunkPrompt({
 				...args,
 				knownItems: [
 					{ id: 'k1', term: '长', romanization: 'cháng' },
@@ -292,14 +320,18 @@ describe('buildBatchPrompt', () => {
 		expect(messages[0].content).toContain('"word (reading)"');
 	});
 
-	it('states the difficulty-calibration rules in the system message', () => {
+	it('calibrates content in the system message, and leaves type choice out of it', () => {
 		const system = messages[0].content;
 		expect(system).toContain('recentAccuracy');
 		expect(system).toContain('recentMistakes');
 		expect(system).toContain('0.7');
 		expect(system).toContain('0.85');
-		expect(system).toContain('distractorWords');
-		expect(system).toContain('(skipped)');
+		// The slot rule replaced the paragraph of type-selection rules.
+		expect(system).toContain('one challenge object per slot');
+		expect(system).toContain('"bank": true');
+		expect(system).not.toContain('Match type to maturity');
+		expect(system).not.toContain('Mix recognition and production');
+		expect(system).not.toContain('(skipped)');
 	});
 
 	it('derives two challenges per word, and caps the count', () => {
@@ -308,7 +340,7 @@ describe('buildBatchPrompt', () => {
 	});
 
 	it('threads the session topic into the user message, ahead of interests', () => {
-		const withTopic = buildBatchPrompt({ ...args, topic: 'ordering in a restaurant' });
+		const withTopic = firstChunkPrompt({ ...args, topic: 'ordering in a restaurant' });
 		const raw = withTopic[1].content;
 		expect(raw).toContain('ordering in a restaurant');
 
@@ -319,7 +351,7 @@ describe('buildBatchPrompt', () => {
 	});
 
 	it("sends the learner's self-description when they wrote one", () => {
-		const withAbout = buildBatchPrompt({
+		const withAbout = firstChunkPrompt({
 			...args,
 			profile: { ...args.profile, about: 'Nurse in Valencia, two kids, I climb on weekends.' }
 		});
@@ -329,14 +361,14 @@ describe('buildBatchPrompt', () => {
 
 	it('omits about when it is absent or blank', () => {
 		expect(JSON.parse(messages[1].content)).not.toHaveProperty('about');
-		const blank = buildBatchPrompt({ ...args, profile: { ...args.profile, about: '  \n ' } });
+		const blank = firstChunkPrompt({ ...args, profile: { ...args.profile, about: '  \n ' } });
 		expect(JSON.parse(blank[1].content)).not.toHaveProperty('about');
 	});
 
 	it('caps about, so the token budget never depends on how much they typed', () => {
 		const essay = 'x'.repeat(1000);
 		const payload = JSON.parse(
-			buildBatchPrompt({ ...args, profile: { ...args.profile, about: essay } })[1].content
+			firstChunkPrompt({ ...args, profile: { ...args.profile, about: essay } })[1].content
 		) as Record<string, unknown>;
 		expect(payload.about).toHaveLength(MAX_ABOUT_CHARS);
 		expect(payload.about).toBe('x'.repeat(MAX_ABOUT_CHARS));
@@ -348,7 +380,7 @@ describe('buildBatchPrompt', () => {
 
 	it('omits the topic key entirely when there is none', () => {
 		expect(JSON.parse(messages[1].content)).not.toHaveProperty('topic');
-		const blank = buildBatchPrompt({ ...args, topic: '   ' });
+		const blank = firstChunkPrompt({ ...args, topic: '   ' });
 		expect(JSON.parse(blank[1].content)).not.toHaveProperty('topic');
 	});
 
@@ -544,20 +576,16 @@ describe('generateBatch', () => {
 		for (const step of steps) expect(step.label.length).toBeGreaterThan(0);
 	});
 
-	it('reports the retry step only when the corrective retry fires', async () => {
+	it('reports the retry step only when a corrective retry fires', async () => {
 		const thin = { challenges: [recognize('i1', 'el perro')] };
 		const scripted = scriptedFetch([JSON.stringify(thin), JSON.stringify(goodBatch)]);
 		const steps: ProgressStep[] = [];
 		await generateBatch(args, { ...callOpts(scripted.fetchFn), onProgress: (s) => steps.push(s) });
 
-		expect(steps.map((s) => s.id)).toEqual([
-			'build-prompt',
-			'request',
-			'validate',
-			'retry',
-			'request',
-			'validate'
-		]);
+		// One step per id, whatever the chunks do: `request` covers every call in
+		// flight, `retry` fires the first time any of them is re-asked, `validate`
+		// once they have all settled.
+		expect(steps.map((s) => s.id)).toEqual(['build-prompt', 'request', 'retry', 'validate']);
 	});
 
 	it('does not demand five challenges from a two-challenge batch', async () => {
@@ -569,6 +597,197 @@ describe('generateBatch', () => {
 		);
 		expect(scripted.calls).toBe(1);
 		expect(result.challenges).toHaveLength(1);
+	});
+});
+
+/* -------------------------------------------------------------------------- */
+/* Chunked, concurrent generation                                              */
+/* -------------------------------------------------------------------------- */
+
+/** Twelve review items — a full lesson, and therefore several chunks. */
+const bigArgs: BatchArgs = {
+	...args,
+	reviewItems: Array.from({ length: 12 }, (_, i) => ({
+		id: `w${i + 1}`,
+		term: `term${i + 1}`,
+		meaning: `meaning ${i + 1}`,
+		maturity: 'solid' as const
+	})),
+	count: 20
+};
+
+/** The lesson `bigArgs` plans, as the chunker cuts it. `IDENTITY_RNG` is what `callOpts` passes. */
+const bigChunks = chunkSlots(planSlots(bigArgs, IDENTITY_RNG), bigArgs.reviewItems);
+
+/** A chunk's identity, so a fake reply can be scripted per chunk. */
+const chunkKey = (slots: readonly { item?: string; itemId?: string; type: string }[]): string =>
+	slots.map((s) => `${s.item ?? s.itemId}:${s.type}`).join('|');
+
+/**
+ * A fake that answers each request according to the *slots* it was asked for —
+ * one challenge per slot, named after it — so a chunked reply is as long as its
+ * brief, and "did the merge keep lesson order?" is a question with an answer.
+ *
+ * Every reply resolves on a macrotask, which is what makes the fan-out real:
+ * the pool can only have as many requests open at once as it is allowed to, and
+ * `maxInFlight` records how many that was.
+ */
+function chunkFetch(
+	options: {
+		/** Chunk indices (into {@link bigChunks}) whose *first* reply is unusable. */
+		failFirst?: Set<number>;
+		/** Chunk indices that fail both times, and so must be dropped. */
+		failAlways?: Set<number>;
+	} = {}
+) {
+	const index = new Map(bigChunks.map((chunk, i) => [chunkKey(chunk.slots), i] as const));
+	const state = {
+		calls: 0,
+		inFlight: 0,
+		maxInFlight: 0,
+		seen: [] as number[],
+		fetchFn: null as unknown as FetchLike
+	};
+
+	state.fetchFn = async (_input, init) => {
+		const body = JSON.parse(String(init?.body)) as { messages: { content: string }[] };
+		const payload = JSON.parse(body.messages[1].content) as {
+			slots: { item: string; type: string }[];
+		};
+		const which = index.get(chunkKey(payload.slots)) ?? -1;
+		const isRetry = body.messages.length > 2;
+
+		state.calls++;
+		state.seen.push(payload.slots.length);
+		state.inFlight++;
+		state.maxInFlight = Math.max(state.maxInFlight, state.inFlight);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		state.inFlight--;
+
+		const bad = options.failAlways?.has(which) || (!isRetry && options.failFirst?.has(which));
+		const challenges = bad
+			? []
+			: payload.slots.map((slot) => recognize(slot.item, `${slot.item}-${slot.type}`, 'a meaning'));
+
+		return new Response(
+			JSON.stringify({
+				model: 'test/model',
+				choices: [{ message: { content: JSON.stringify({ challenges }) } }],
+				usage: { prompt_tokens: 100, completion_tokens: 200 }
+			}),
+			{ status: 200, headers: { 'Content-Type': 'application/json' } }
+		);
+	};
+	return state;
+}
+
+describe('generateBatch, chunked', () => {
+	it('fans a lesson out into one short request per chunk', async () => {
+		const fake = chunkFetch();
+		const result = await generateBatch(bigArgs, callOpts(fake.fetchFn));
+
+		expect(bigChunks.length).toBeGreaterThan(1);
+		expect(fake.calls).toBe(bigChunks.length);
+		// Each request is short: a handful of slots about at most three words.
+		for (const slots of fake.seen) expect(slots).toBeLessThanOrEqual(CHUNK_SLOTS);
+		for (const chunk of bigChunks)
+			expect(chunk.reviewItems.length).toBeLessThanOrEqual(CHUNK_ITEMS);
+		expect(result.challenges).toHaveLength(20);
+	});
+
+	it('sums usage across every chunk and every retry', async () => {
+		const fake = chunkFetch({ failFirst: new Set([0]) });
+		const result = await generateBatch(bigArgs, callOpts(fake.fetchFn));
+
+		expect(fake.calls).toBe(bigChunks.length + 1);
+		expect(result.usage).toEqual({
+			promptTokens: 100 * fake.calls,
+			completionTokens: 200 * fake.calls
+		});
+	});
+
+	it('retries only the chunk that came back bad', async () => {
+		const fake = chunkFetch({ failFirst: new Set([1]) });
+		const result = await generateBatch(bigArgs, callOpts(fake.fetchFn));
+
+		expect(fake.calls).toBe(bigChunks.length + 1);
+		expect(result.challenges).toHaveLength(20);
+	});
+
+	it('drops a chunk that fails twice instead of sinking the lesson', async () => {
+		const fake = chunkFetch({ failAlways: new Set([0]) });
+		const result = await generateBatch(bigArgs, callOpts(fake.fetchFn));
+
+		expect(result.challenges).toHaveLength(20 - bigChunks[0].slots.length);
+		// The failed chunk cost two calls, every other chunk one.
+		expect(fake.calls).toBe(bigChunks.length + 1);
+	});
+
+	it('throws bad-response only when the merged total misses the minimum', async () => {
+		const fake = chunkFetch({ failAlways: new Set(bigChunks.map((_, i) => i)) });
+		const error = await generateBatch(bigArgs, callOpts(fake.fetchFn)).catch((e: unknown) => e);
+
+		expect(error).toBeInstanceOf(LlmError);
+		expect((error as LlmError).kind).toBe('bad-response');
+		// Informative: how much survived, and how many requests failed.
+		expect((error as LlmError).message).toContain('Only 0 usable');
+		expect((error as LlmError).message).toContain(
+			`${bigChunks.length} of ${bigChunks.length} requests failed`
+		);
+	});
+
+	it('merges in lesson order, not completion order', async () => {
+		const fake = chunkFetch();
+		const result = await generateBatch(bigArgs, callOpts(fake.fetchFn));
+
+		// The fake names every challenge after the slot it filled, so the merged
+		// lesson can be read back and compared with the plan it came from.
+		const planned = bigChunks.flatMap((chunk) => chunk.slots.map((s) => `${s.itemId}-${s.type}`));
+		// The fake answers every slot with a recognize-mc, whatever the slot asked
+		// for, so the whole lesson is multiple-choice and `prompt` is the name.
+		expect(
+			result.challenges.map((c) => (c.type === 'multiple-choice' ? c.prompt : c.type))
+		).toEqual(planned);
+	});
+
+	it('runs at most CHUNK_CONCURRENCY requests at once', async () => {
+		expect(bigChunks.length).toBeGreaterThan(CHUNK_CONCURRENCY);
+		const fake = chunkFetch();
+		await generateBatch(bigArgs, callOpts(fake.fetchFn));
+
+		expect(fake.maxInFlight).toBe(CHUNK_CONCURRENCY);
+	});
+
+	it('says how many requests it is waiting on, in one step', async () => {
+		const fake = chunkFetch();
+		const steps: ProgressStep[] = [];
+		await generateBatch(bigArgs, { ...callOpts(fake.fetchFn), onProgress: (s) => steps.push(s) });
+
+		expect(steps.map((s) => s.id)).toEqual(['build-prompt', 'request', 'validate']);
+		expect(steps[1].label).toContain(`${bigChunks.length} requests`);
+	});
+
+	it('propagates an abort rather than reporting an unusable lesson', async () => {
+		const controller = new AbortController();
+		const fake = chunkFetch();
+		controller.abort();
+
+		const error = await generateBatch(bigArgs, {
+			...callOpts(fake.fetchFn),
+			signal: controller.signal
+		}).catch((e: unknown) => e);
+
+		expect((error as Error).name).toBe('AbortError');
+		expect(fake.calls).toBe(0);
+	});
+
+	it('lets a key or rate-limit failure sink the lesson immediately', async () => {
+		// Unlike a bad reply, this would meet every other chunk too.
+		const fetchFn: FetchLike = async () =>
+			new Response(JSON.stringify({ error: { message: 'no credit' } }), { status: 429 });
+		await expect(generateBatch(bigArgs, callOpts(fetchFn))).rejects.toMatchObject({
+			kind: 'rate-limit'
+		});
 	});
 });
 

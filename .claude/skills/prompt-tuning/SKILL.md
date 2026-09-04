@@ -23,22 +23,42 @@ The composed prompt is assembled from parts — do not hand-write a monolith.
 | Retry fragment | each def's `correctiveSpec` | one type |
 | Escalation gloss | each def's `escalationSpec`, composed by `escalation.ts` | one type |
 | `Rules:` block | hand-written in `generate.ts` | genuinely cross-type only |
+| Which type gets written | **not prose at all** — `llm/slots.ts` | see below |
 
 If a rule names one type, it belongs in that def's `promptSpec`. The `Rules:`
-block is reserved for rules that by definition span types (segmentation,
-sides-never-swap, difficulty calibration).
+block is reserved for rules that by definition span types (the slot rule,
+segmentation, sides-never-swap, content calibration).
+
+## Type choice is code, not prompt
+
+A lesson's shape is planned locally by `planSlots` (`src/lib/llm/slots.ts`) and
+handed to the model as an explicit `slots` list. **Do not write a prompt rule
+about which type to use** — it will be ignored at best and fight the plan at
+worst. Everything below belongs in `slots.ts`, with a unit test in
+`slots.test.ts`:
+
+- maturity floors (what a `new` / `young` / `solid` word may be asked)
+- the recognition-vs-production mix, and how `recentAccuracy` moves it
+- whether a cloze gets a word bank (`bank: true|false` on the slot)
+- the extra go a `recentMistakes` term earns, and `'(skipped)'` → recognition
+
+What stays prose is *content* calibration: how long an answer should be, how
+hard the sentence reads, "easier than last time", voice, answerability.
 
 ## Constraints on `SYSTEM_PROMPT`
 
 - It is **static and token-budgeted**, deliberately, because a static string is
-  prompt-cache friendly. Never interpolate per-session values into it; per-user
-  signals (`recentAccuracy`, `recentMistakes`) travel in the request, not the
-  system prompt.
+  prompt-cache friendly — and a lesson is now several concurrent chunk requests
+  that all quote it, so the cache matters more than before, not less. Never
+  interpolate per-session values into it; per-user signals (`recentAccuracy`,
+  `recentMistakes`, `slots`) travel in the request, not the system prompt.
 - Its load-bearing blocks are voice/anti-blandness, the one-line `TargetText`
-  reading rule, answerability, and difficulty calibration. Deleting one to save
-  tokens regresses a whole class of output — say which block you are changing
-  and why.
+  reading rule, answerability, the slot rule, and content calibration. Deleting
+  one to save tokens regresses a whole class of output — say which block you are
+  changing and why.
 - Composition keeps it a static string. Adding a def module does not change that.
+- One chunk sees only its own few words. A rule phrased "across the batch" is no
+  longer enforceable by the model — write it per reply, or move it to `slots.ts`.
 
 ## What the resolver will and won't rescue
 
@@ -68,6 +88,7 @@ common false negative here.
 ## Completion criteria
 
 - [ ] The edit is in the narrowest place that covers it (def `promptSpec` over `Rules:`)
+- [ ] Nothing about *which type to write* was added to the prompt — that is `slots.ts`
 - [ ] `SYSTEM_PROMPT` is still a static string
 - [ ] `pnpm test` passes (fixtures + registry parity)
 - [ ] Judged against a **freshly generated** batch, not the existing pool

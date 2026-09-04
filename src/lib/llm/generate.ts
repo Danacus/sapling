@@ -8,11 +8,24 @@
  * is a different job and a different conversation. Everything the model is told
  * about words, it is told so that it can *write about* them.
  *
- * This is the token-economy heart of the app. One batched call produces a whole
- * lesson; grading happens locally for free (`$lib/validate`, `$lib/srs`) and
- * only an explicit "explain this" escalates to a second call
+ * This is the token-economy heart of the app. A lesson is a handful of small
+ * concurrent calls; grading happens locally for free (`$lib/validate`,
+ * `$lib/srs`) and only an explicit "explain this" escalates to a second call
  * (`./escalation`). `match-pairs` never costs a token at all — see
  * {@link makeMatchPairsChallenge}.
+ *
+ * **A lesson is many short requests, not one long one.** Asking for twenty
+ * challenges about twelve words in a single completion produced visibly worse
+ * output towards the end: the model loses track of the rules and of what it has
+ * already written, one bad reply costs the whole lesson a corrective retry, and
+ * the wall clock is one long serial completion. So {@link planSlots} decides
+ * locally *which* challenges the lesson is made of, {@link chunkSlots} cuts that
+ * plan into requests of a few slots about a few words, and {@link generateBatch}
+ * runs them concurrently against the *same static* `SYSTEM_PROMPT` — static
+ * because that is what keeps prompt caching paying for itself across chunks and
+ * across sessions. Each chunk carries its own corrective retry, and a chunk that
+ * still fails is **dropped, not fatal**: the lesson is whatever came back, and
+ * only a merged total below {@link MIN_BATCH_CHALLENGES} is an error.
  *
  * Everything here is stateless with respect to the database: data in, data out.
  * The caller persists the result.
@@ -23,7 +36,7 @@
  * registry and dispatches to it, and even `generatedChallengeSchema` — imported
  * below from `./schemas` — is a projection of that same registry. The pipeline
  * it keeps for itself is the part
- * that is the same for every type: the call and its one corrective retry,
+ * that is the same for every type: the calls and their corrective retries,
  * salvage-parsing, id minting, term-citation resolution, and counting what had
  * to be dropped.
  */
@@ -50,6 +63,8 @@ import {
 	looseBatchSchema
 } from './schemas';
 import type { GeneratedChallenge } from './schemas';
+import { CHUNK_CONCURRENCY, MAX_BATCH_CHALLENGES, chunkSlots, planSlots } from './slots';
+import type { SlotChunk } from './slots';
 
 /**
  * Re-exported for callers (and tests) that knew them as part of this module
@@ -58,10 +73,13 @@ import type { GeneratedChallenge } from './schemas';
  */
 export { MAX_WORD_ORDER_DISTRACTORS, MAX_WORD_ORDER_TILES } from './resolve-helpers';
 
-/** Hard ceiling on challenges per batch, so one call can never run away. */
-export const MAX_BATCH_CHALLENGES = 20;
+/**
+ * Re-exported for the same reason: how big a lesson is belongs with the planner
+ * that lays it out (`./slots`), but every caller has always asked this module.
+ */
+export { MAX_BATCH_CHALLENGES, defaultChallengeCount } from './slots';
 
-/** Below this many salvaged challenges a batch is not worth playing. */
+/** Below this many salvaged challenges across all chunks a lesson is not worth playing. */
 export const MIN_BATCH_CHALLENGES = 5;
 
 /** One word the batch is to be written about: the id, the word, its meaning. */
@@ -103,6 +121,13 @@ export interface RecentMistake {
  * call. `queue-check`, `select-items` and `save` are emitted by the session
  * engine, the rest by {@link generateBatch} (and by the mock, so practice mode
  * walks the same list, just instantly).
+ *
+ * A lesson is several concurrent requests, and the list stays **one step per
+ * id** regardless: `request` fires once and says how many calls are in flight,
+ * `retry` fires once the first time any of them has to be re-asked, and
+ * `validate` fires once when they have all settled. The learn screen times each
+ * step from its event to the next, so a step per chunk would turn a truthful
+ * timeline into a flickering list of near-zero durations.
  */
 export type ProgressStepId =
 	'queue-check' | 'select-items' | 'build-prompt' | 'request' | 'validate' | 'retry' | 'save';
@@ -218,12 +243,18 @@ export interface BatchResult {
 
 /**
  * The system prompt. Written for tokens, not for looks: no pleasantries, one
- * inline example per challenge type, rules as bare imperatives. Roughly 1400
- * prompt tokens — seven types cost more to spell out than five, and the whole
- * per-field romanization block they replace is gone — unchanged across every
- * call, so it caches well on providers that support prompt caching. It buys
- * back more than it costs: better challenges mean fewer regenerated batches,
- * and the content-only wire format keeps grading local.
+ * inline example per challenge type, rules as bare imperatives. Unchanged across
+ * every call — and now across every *chunk* of every call, which is what makes
+ * the chunked design cheap: a lesson's four or five requests all quote the same
+ * cached prefix and differ only in a short user message. It buys back more than
+ * it costs: better challenges mean fewer regenerated batches, and the
+ * content-only wire format keeps grading local.
+ *
+ * It no longer says which type to write. Type selection — maturity floors, the
+ * recognition/production mix, the extra go a just-failed word earns — is decided
+ * locally in `./slots` and arrives as an explicit `slots` list, so those rules
+ * cost nothing per call and are testable. What stays here is calibration of
+ * *content*: how long an answer should be, how hard a sentence should read.
  *
  * Three blocks earn their keep beyond the bare schema:
  *
@@ -266,9 +297,8 @@ const SYSTEM_PROMPT = [
 	'Rules:',
 	'- itemIds: the id of a reviewItem, or — for a challenge built on a word from known — that word exactly as it appears in known, its parenthesised reading included. Never invent anything else.',
 	'- A known entry written "word (reading)" is one of two same-spelled words told apart by how it is read; cite it with the parenthesis, but write only the word itself into a sentence.',
-	'- Produce exactly one challenge object per requested slot; give the same review item different types.',
-	'- Mix recognition and production across the batch.',
-	'- Match type to maturity ("maturity" on each reviewItem): new → recognize-mc, produce-mc, translate-to-native, spot-error, cloze WITH distractorWords; young adds word-order; solid adds translate-to-target and cloze without distractorWords. A new word\'s first challenges must be recognition.',
+	'- slots is the exact lesson to write: produce one challenge object per slot, in the same order, of that slot\'s "type", about the reviewItem its "item" names. Never a type that is not asked for, never an extra challenge, never a slot left unwritten.',
+	'- A "cloze" slot with "bank": true has distractorWords; with "bank": false it has none.',
 	'- Distractors must be plausible: same part of speech and register, never synonyms of the correct answer, never obviously absurd. Exactly one of the four may be correct given the prompt; if two would both answer it, rewrite the prompt.',
 	'- Sides never swap: correctMeaning, recognize-mc distractors, promptNative, hintNative, meaningNative, answersNative and instruction are NATIVE-language text and never contain target-language words or script. A challenge whose prompt and options are in the same language is invalid — one side is always the native language.',
 	translateToTargetDef.rulesSpec,
@@ -281,30 +311,21 @@ const SYSTEM_PROMPT = [
 	spotErrorDef.rulesSpec,
 	"- known is the learner's whole vocabulary and it is what you build with: every challenge is about a reviewItem, and the words around it come from known, so the learner mostly reads what they can already read. Teach nothing new — a word outside known may appear as glue when a sentence needs it, never as the thing being tested.",
 	'Difficulty calibration:',
-	'- recentAccuracy (0-1, share of recent answers the learner got right) and recentMistakes are their current form; calibrate the batch to them.',
-	'- recentAccuracy below 0.7: favour recognition — recognize-mc, produce-mc and cloze WITH distractorWords — keep answers to one or two words, and avoid full-sentence translate-to-target.',
-	'- recentAccuracy above 0.85: lean into production — translate-to-target and cloze without distractorWords, longer sentences.',
-	'- Every term in recentMistakes gets one more challenge in this batch, EASIER than last time and in a different format from the one it was failed in.',
-	'- gave "(skipped)" means the format was too demanding for that term: re-practise it with a recognition format.',
+	'- recentAccuracy (0-1, share of recent answers the learner got right) and recentMistakes are their current form; calibrate the writing to them. They change how hard each challenge reads, never which type it is — the types are already fixed by slots.',
+	'- recentAccuracy below 0.7: keep answers to one or two words and sentences short and plainly worded.',
+	'- recentAccuracy above 0.85: longer sentences, richer vocabulary, less scaffolding.',
+	'- A term in recentMistakes is one the learner just got wrong; write it EASIER than last time, with more of the sentence given.',
 	'Voice:',
 	'- Conversation, not flashcards: every prompt, sentence and translation is a line someone would really say — a dialogue turn, a question put to the learner, a request, a reaction, an opinion. Never an isolated textbook statement.',
 	'- With a "topic", EVERY challenge happens inside that scenario: cloze sentences are turns of that dialogue, translations are things you would really say there, and the reviewItems are worked into it. "interests" then only colour word choice, never the sentence frame.',
 	'- "about" is the learner in their own words. Set scenarios in their life — their city, work, people, tastes — and let it colour word choice and examples. Never recite it back to them, never contradict it, and "topic" still outranks it.',
-	'- Banned: "I like <interest>", "<interest> is fun", any sentence whose only content is that the learner likes their interest, and reusing a sentence frame twice in one batch. Vary speaker, question vs statement, and register for the level.',
+	'- Banned: "I like <interest>", "<interest> is fun", any sentence whose only content is that the learner likes their interest, and reusing a sentence frame twice in one reply. Vary speaker, question vs statement, and register for the level.',
 	'- explanation: one line of usage or culture (register, politeness, word order) when non-obvious, written in the NATIVE language (target-language words may be quoted inside it); null when it would only restate the answer.'
 ]
 	// `rulesSpec` is optional — a wire type with no rule of its own contributes
 	// no line, rather than a blank one the model would have to read past.
 	.filter((line): line is string => line !== undefined)
 	.join('\n');
-
-/**
- * Default batch size: two challenges per word the batch is about — one
- * recognition, one production, which is the shape a session wants to serve.
- */
-export function defaultChallengeCount(reviewItems: number): number {
-	return Math.min(MAX_BATCH_CHALLENGES, Math.max(1, reviewItems * 2));
-}
 
 /**
  * How each known word is written into the prompt: bare, or `term (reading)`.
@@ -339,15 +360,28 @@ export function knownTermLabels(known: readonly KnownItemRef[]): string[] {
 }
 
 /**
- * Builds the two messages for one batch call. The user message is compact JSON
- * — no field labels in prose, no restating of the rules.
+ * Builds the two messages for **one chunk** of a lesson. The user message is
+ * compact JSON — no field labels in prose, no restating of the rules.
+ *
+ * The system half is the same static string for every chunk, so a lesson's four
+ * or five requests share one cached prefix and only the short user half differs.
+ * That user half is now genuinely short: the `slots` list replaces the paragraph
+ * of type-selection rules the prompt used to carry, `maturity` no longer travels
+ * at all (it decided the type, and the type is decided), and `recentMistakes` is
+ * narrowed to the words this chunk is actually about.
+ *
+ * `known` is *not* narrowed. It is the vocabulary every sentence is built out
+ * of, whichever words the chunk is testing, and it is the citation vocabulary
+ * the resolver indexes — so it rides along whole, in the same order, on every
+ * chunk. That repetition is the price of the split; against the static prompt it
+ * is the smaller half.
  */
-export function buildBatchPrompt(args: BatchArgs): ChatMessage[] {
-	const { profile, reviewItems } = args;
-	const count = args.count ?? defaultChallengeCount(reviewItems.length);
+export function buildChunkPrompt(args: BatchArgs, chunk: SlotChunk): ChatMessage[] {
+	const { profile } = args;
 
 	const topic = args.topic?.trim();
 	const about = profile.about?.trim().slice(0, MAX_ABOUT_CHARS);
+	const chunkTerms = new Set(chunk.reviewItems.map((i) => termKey(i.term)));
 
 	const payload: Record<string, unknown> = {
 		native: profile.nativeLanguage,
@@ -361,15 +395,13 @@ export function buildBatchPrompt(args: BatchArgs): ChatMessage[] {
 		// and still below `topic`, which outranks both. Capped: see
 		// {@link MAX_ABOUT_CHARS}.
 		...(about ? { about } : {}),
-		challengeCount: Math.min(count, MAX_BATCH_CHALLENGES),
-		reviewItems: reviewItems.map((i) => ({
-			id: i.id,
-			t: i.term,
-			m: i.meaning,
-			// Spelled out rather than abbreviated like `t`/`m`: the rule that reads it
-			// names the field, and a dozen review items make the difference a rounding
-			// error against a 1450-token static prompt.
-			...(i.maturity ? { maturity: i.maturity } : {})
+		reviewItems: chunk.reviewItems.map((i) => ({ id: i.id, t: i.term, m: i.meaning })),
+		// The lesson this chunk is: one entry per challenge to write. `bank` rides
+		// only on cloze slots, where it is the difference between two exercises.
+		slots: chunk.slots.map((slot) => ({
+			item: slot.itemId,
+			type: slot.type,
+			...(slot.bank === undefined ? {} : { bank: slot.bank })
 		})),
 		// Terms only — the ids stay local (see `knownItems` and `knownTermIndex`).
 		...(args.knownItems?.length ? { known: knownTermLabels(args.knownItems) } : {})
@@ -377,8 +409,9 @@ export function buildBatchPrompt(args: BatchArgs): ChatMessage[] {
 	if (args.recentAccuracy !== undefined && Number.isFinite(args.recentAccuracy)) {
 		payload.recentAccuracy = Math.round(args.recentAccuracy * 100) / 100;
 	}
-	if (args.recentMistakes?.length) {
-		payload.recentMistakes = args.recentMistakes.map((m) => ({ t: m.term, gave: m.gave }));
+	const mistakes = (args.recentMistakes ?? []).filter((m) => chunkTerms.has(termKey(m.term)));
+	if (mistakes.length) {
+		payload.recentMistakes = mistakes.map((m) => ({ t: m.term, gave: m.gave }));
 	}
 
 	return [
@@ -623,12 +656,85 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
 // --------------------------------------------------------------------------
 
 /**
- * Generates one lesson batch.
+ * How many usable challenges one chunk has to come back with before its reply is
+ * accepted without a corrective retry.
  *
- * A single completion with the batch JSON schema attached; the reply is parsed
- * leniently (fences stripped, bad entries dropped). If too few challenges
- * survive, one corrective retry is made, after which it gives up with
- * `LlmError('bad-response')`.
+ * Half its slots, rounded up. A chunk is short enough that "it dropped one" is
+ * ordinary salvage and not worth a second call, while "it answered two of five"
+ * means the reply was misunderstood and re-asking is cheap.
+ */
+function chunkMinimum(slots: number): number {
+	return Math.max(1, Math.ceil(slots / 2));
+}
+
+/**
+ * The rejection a `fetch` on an already-aborted signal would have produced. The
+ * signal's own `reason` is preferred when the caller supplied one, so a refill
+ * cancelled with a message keeps it.
+ */
+function abortError(signal: AbortSignal): Error {
+	const reason: unknown = signal.reason;
+	if (reason instanceof Error) return reason;
+	const error = new Error('The generation was cancelled.');
+	error.name = 'AbortError';
+	return error;
+}
+
+/** What one chunk came back with; `error` is set only when it failed outright. */
+interface ChunkOutcome {
+	challenges: Challenge[];
+	usage: TokenUsage;
+	/** Set when the chunk produced nothing usable even after its retry. */
+	error?: LlmError;
+	/** Set when the failure is not the chunk's fault and must sink the lesson. */
+	fatal?: LlmError | Error;
+	retried: boolean;
+}
+
+/**
+ * Runs `worker` over `chunks` with at most `limit` in flight, returning results
+ * in **chunk order** whatever order they finish in.
+ *
+ * A plain `Promise.all` would fire every chunk at once, which for a twelve-word
+ * lesson is eight simultaneous completions on a key that may well be rate
+ * limited. This is the smallest thing that isn't that: `limit` workers pulling
+ * from a shared cursor.
+ */
+async function runPooled<T, R>(
+	chunks: readonly T[],
+	limit: number,
+	worker: (chunk: T, index: number) => Promise<R>
+): Promise<R[]> {
+	const results = new Array<R>(chunks.length);
+	let cursor = 0;
+
+	const run = async (): Promise<void> => {
+		for (;;) {
+			const index = cursor++;
+			if (index >= chunks.length) return;
+			results[index] = await worker(chunks[index], index);
+		}
+	};
+
+	await Promise.all(Array.from({ length: Math.min(limit, chunks.length) }, run));
+	return results;
+}
+
+/**
+ * Generates one lesson.
+ *
+ * The plan is made locally ({@link planSlots}), cut into short requests
+ * ({@link chunkSlots}) and run concurrently. Each reply is parsed leniently
+ * (fences stripped, bad entries dropped) and gets one corrective retry if too
+ * little of it survives.
+ *
+ * **A chunk that fails is dropped, not fatal.** Four fifths of a lesson is a
+ * lesson; it is the merged total that has to clear {@link MIN_BATCH_CHALLENGES},
+ * and only then does this throw `LlmError('bad-response')` — with a message that
+ * says how many requests failed and how much survived, because "the model
+ * returned something unusable" is not a thing anyone can act on. Failures that
+ * are not the chunk's fault — a bad key, a rate limit, an abort — sink the whole
+ * lesson immediately, since every other chunk would only hit the same wall.
  *
  * It returns challenges and nothing else: the caller pools them, and no part of
  * the learner's vocabulary is touched by generating a lesson.
@@ -638,70 +744,156 @@ export async function generateBatch(
 	opts: BatchOptions = {}
 ): Promise<BatchResult> {
 	const progress = opts.onProgress;
-	progress?.({ id: 'build-prompt', label: 'Building the prompt' });
-	const messages = buildBatchPrompt(args);
 	const model = opts.model?.trim() || getModel();
-	const requested = args.count ?? defaultChallengeCount(args.reviewItems.length);
-	// A two-challenge batch can never reach five; do not demand the impossible.
-	const minimum = Math.min(MIN_BATCH_CHALLENGES, Math.min(requested, MAX_BATCH_CHALLENGES));
+
+	const slots = planSlots(args, opts.rng);
+	const chunks = chunkSlots(slots, args.reviewItems);
+	progress?.({
+		id: 'build-prompt',
+		label: chunks.length > 1 ? `Planning ${slots.length} challenges` : 'Building the prompt'
+	});
+
+	// A two-challenge lesson can never reach five; do not demand the impossible.
+	const minimum = Math.max(1, Math.min(MIN_BATCH_CHALLENGES, slots.length));
 	const knownItemIds = args.reviewItems.map((i) => i.id);
 	const termToId = knownTermIndex(args);
 
-	const usage: TokenUsage = { promptTokens: 0, completionTokens: 0 };
-	let lastError: LlmError | undefined;
-
-	// Built once, not per attempt: it is a pure function of a static registry,
-	// and the retry sends the very same schema back.
+	// Built once, not per chunk or per attempt: it is a pure function of a static
+	// registry, and every retry sends the very same schema back.
 	const responseFormat = { name: BATCH_SCHEMA_NAME, schema: batchJsonSchema() };
 
-	for (let attempt = 0; attempt < 2; attempt++) {
-		const attemptMessages: ChatMessage[] =
-			attempt === 0 ? messages : [...messages, { role: 'user', content: CORRECTIVE_INSTRUCTION }];
+	// Fired at most once each, however many chunks retry — see ProgressStepId.
+	let retryAnnounced = false;
+	const announceRetry = (): void => {
+		if (retryAnnounced) return;
+		retryAnnounced = true;
+		progress?.({ id: 'retry', label: 'Retrying part of the lesson' });
+	};
 
-		if (attempt > 0) progress?.({ id: 'retry', label: 'Retrying generation' });
-		progress?.({ id: 'request', label: `Waiting for ${model}` });
+	progress?.({
+		id: 'request',
+		label:
+			chunks.length > 1
+				? `Waiting for ${model} (${chunks.length} requests)`
+				: `Waiting for ${model}`
+	});
 
-		const completion = await chatCompletion({
-			messages: attemptMessages,
-			model: opts.model,
-			apiKey: opts.apiKey,
-			signal: opts.signal,
-			fetchFn: opts.fetchFn,
-			responseFormat,
-			temperature: 0.7
-		});
-		usage.promptTokens += completion.usage.promptTokens;
-		usage.completionTokens += completion.usage.completionTokens;
+	const outcomes = await runPooled(chunks, CHUNK_CONCURRENCY, async (chunk) => {
+		const outcome: ChunkOutcome = {
+			challenges: [],
+			usage: { promptTokens: 0, completionTokens: 0 },
+			retried: false
+		};
+		const messages = buildChunkPrompt(args, chunk);
+		const wanted = chunkMinimum(chunk.slots.length);
 
-		progress?.({ id: 'validate', label: 'Validating challenges' });
-
-		let resolved: ResolvedBatch;
-		try {
-			resolved = resolveBatch(parseBatch(completion.content), {
-				newId: opts.newId,
-				knownItemIds,
-				termToId,
-				rng: opts.rng
-			});
-		} catch (error) {
-			if (error instanceof LlmError && error.kind === 'bad-response') {
-				lastError = error;
-				continue;
+		for (let attempt = 0; attempt < 2; attempt++) {
+			// An abort between chunks: stop dispatching rather than spending a call
+			// nobody is waiting for, and report it the way an in-flight `fetch` on
+			// the same signal would, so a cancelled refill never looks like a model
+			// that returned nothing usable.
+			if (opts.signal?.aborted) {
+				outcome.fatal = abortError(opts.signal);
+				return outcome;
 			}
-			throw error;
-		}
 
-		if (resolved.challenges.length >= minimum) {
-			return { challenges: resolved.challenges, usage };
+			const attemptMessages: ChatMessage[] =
+				attempt === 0 ? messages : [...messages, { role: 'user', content: CORRECTIVE_INSTRUCTION }];
+			if (attempt > 0) {
+				outcome.retried = true;
+				announceRetry();
+			}
+
+			let completion;
+			try {
+				completion = await chatCompletion({
+					messages: attemptMessages,
+					model: opts.model,
+					apiKey: opts.apiKey,
+					signal: opts.signal,
+					fetchFn: opts.fetchFn,
+					responseFormat,
+					temperature: 0.7
+				});
+			} catch (error) {
+				// `bad-response` is this chunk's problem and costs this chunk only;
+				// anything else (auth, rate limit, network, abort) would meet every
+				// other chunk too, so it ends the lesson.
+				if (error instanceof LlmError && error.kind === 'bad-response') {
+					outcome.error = error;
+					continue;
+				}
+				outcome.fatal = error instanceof Error ? error : new Error(String(error));
+				return outcome;
+			}
+
+			outcome.usage.promptTokens += completion.usage.promptTokens;
+			outcome.usage.completionTokens += completion.usage.completionTokens;
+
+			let resolved: ResolvedBatch;
+			try {
+				resolved = resolveBatch(parseBatch(completion.content), {
+					newId: opts.newId,
+					knownItemIds,
+					termToId,
+					rng: opts.rng
+				});
+			} catch (error) {
+				if (error instanceof LlmError && error.kind === 'bad-response') {
+					outcome.error = error;
+					continue;
+				}
+				outcome.fatal = error instanceof Error ? error : new Error(String(error));
+				return outcome;
+			}
+
+			if (resolved.challenges.length >= wanted) {
+				outcome.challenges = resolved.challenges;
+				outcome.error = undefined;
+				return outcome;
+			}
+			// Keep the best partial reply: if the retry also comes back thin, these
+			// are still real challenges the learner paid for.
+			if (resolved.challenges.length > outcome.challenges.length) {
+				outcome.challenges = resolved.challenges;
+			}
+			outcome.error = new LlmError(
+				'bad-response',
+				`One request produced ${resolved.challenges.length} of ${chunk.slots.length} challenges.`
+			);
 		}
-		lastError = new LlmError(
-			'bad-response',
-			`The model only produced ${resolved.challenges.length} usable challenge(s). Try again.`
-		);
+		return outcome;
+	});
+
+	progress?.({ id: 'validate', label: 'Validating challenges' });
+
+	const usage: TokenUsage = { promptTokens: 0, completionTokens: 0 };
+	const challenges: Challenge[] = [];
+	let failed = 0;
+	let lastError: LlmError | undefined;
+
+	for (const outcome of outcomes) {
+		usage.promptTokens += outcome.usage.promptTokens;
+		usage.completionTokens += outcome.usage.completionTokens;
+		if (outcome.fatal) throw outcome.fatal;
+		if (outcome.error) {
+			failed++;
+			lastError = outcome.error;
+		}
+		challenges.push(...outcome.challenges);
 	}
 
-	throw (
-		lastError ?? new LlmError('bad-response', 'The model returned no usable challenges. Try again.')
+	// Chunk order, then slot order within a chunk — the lesson as it was planned,
+	// not as the network happened to answer it.
+	const merged = challenges.slice(0, MAX_BATCH_CHALLENGES);
+	if (merged.length >= minimum) return { challenges: merged, usage };
+
+	throw new LlmError(
+		'bad-response',
+		`Only ${merged.length} usable challenge(s) came back` +
+			(chunks.length > 1 ? ` — ${failed} of ${chunks.length} requests failed` : '') +
+			'. Try again.' +
+			(lastError ? ` (${lastError.message})` : '')
 	);
 }
 

@@ -52,7 +52,7 @@ browser to [OpenRouter](https://openrouter.ai) with your own API key.
 - **Starting is instant, generating is deliberate.** Every challenge ever
   generated stays in a persistent pool, and starting a session only plans over
   it — no network call, no waiting, ever. *Generate new lesson* is a separate
-  button that spends one batched call in the background while you are already
+  button that generates in the background while you are already
   playing. Answering doesn't consume a challenge, so quitting early is
   self-cleaning: what you never saw simply comes back in the next plan.
 - **Romanization for non-Latin scripts.** Learning Mandarin, Japanese or
@@ -199,11 +199,16 @@ instead concentrates spending into rare, batched calls and does everything else
 locally.
 
 - **Batched generation.** One `getBatch` call produces a whole lesson — up to
-  20 challenges, written about vocabulary you already have — from a static
-  system prompt (so it caches well) and a compact JSON user message. Roughly
-  **2.5k tokens per batch**, a fraction of a cent on a small model. It is
-  spent only when you press *Generate new lesson*; the start card nudges you
-  when the pool runs low, but nothing generates behind your back.
+  20 challenges, written about vocabulary you already have. Underneath it is a
+  handful of small requests run concurrently: the app decides locally *which*
+  challenges the lesson is made of (which word, which exercise type) and asks
+  the model only to write four or five of them at a time, about two or three
+  words, against the same static system prompt (so it caches well) and a
+  compact JSON user message. Short briefs come back better and faster than one
+  long one, and a request that fails costs its own few challenges rather than
+  the lesson. Still a fraction of a cent on a small model, and spent only when
+  you press *Generate new lesson*; the start card nudges you when the pool runs
+  low, but nothing generates behind your back.
 - **Local grading.** Every answer is graded in the browser by
   `$lib/validate` — no judge call, no latency, no cost. The three-way verdict is
   what lets "café" typed as "cafe" be accepted *and* corrected.
