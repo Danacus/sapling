@@ -1,0 +1,159 @@
+{
+	"meta": {
+		"deviceId": "fixture-device",
+		"now": 1710244800000,
+		"orderFree": true,
+		"note": "Every overwrite is decided by `at`; arrival order is the opposite of time order for half of them."
+	},
+	"events": [
+		{
+			"seq": 1,
+			"id": "ev-profile-b",
+			"type": "profileUpdated",
+			"at": 1710063000000,
+			"device": "dev-b",
+			"payload": {
+				"nativeLanguage": "en",
+				"targetLanguage": "ja",
+				"level": "elementary",
+				"interests": [
+					"anime",
+					"cooking"
+				],
+				"model": "anthropic/claude-3.5-haiku",
+				"createdAt": 1710061200000
+			}
+		},
+		{
+			"seq": 2,
+			"id": "ev-profile-a",
+			"type": "profileUpdated",
+			"at": 1710061800000,
+			"device": "dev-a",
+			"payload": {
+				"nativeLanguage": "en",
+				"targetLanguage": "ja",
+				"level": "beginner",
+				"interests": [
+					"anime"
+				],
+				"about": "Just started.",
+				"model": "openai/gpt-4o-mini",
+				"createdAt": 1710061200000
+			}
+		},
+		{
+			"seq": 3,
+			"id": "ev-add-1",
+			"type": "itemAdded",
+			"at": 1710061260000,
+			"device": "dev-a",
+			"payload": {
+				"id": "item-1",
+				"kind": "vocab",
+				"term": "こんにちは",
+				"meaning": "hello",
+				"romanization": "konnichiwa",
+				"introducedAt": 1710061260000
+			}
+		},
+		{
+			"seq": 4,
+			"id": "ev-add-2",
+			"type": "itemAdded",
+			"at": 1710061320000,
+			"device": "dev-a",
+			"payload": {
+				"id": "item-2",
+				"kind": "vocab",
+				"term": "ありがとう",
+				"meaning": "thanks",
+				"romanization": "arigatou",
+				"introducedAt": 1710061320000
+			}
+		},
+		{
+			"seq": 5,
+			"id": "ev-mark-x-a",
+			"type": "wordMarked",
+			"at": 1710064800000,
+			"device": "dev-a",
+			"payload": {
+				"term": "x",
+				"known": true
+			}
+		},
+		{
+			"seq": 6,
+			"id": "ev-mark-x-b",
+			"type": "wordMarked",
+			"at": 1710064860000,
+			"device": "dev-b",
+			"payload": {
+				"term": "x",
+				"known": false
+			}
+		},
+		{
+			"seq": 7,
+			"id": "ev-mark-y-a",
+			"type": "wordMarked",
+			"at": 1710064980000,
+			"device": "dev-a",
+			"payload": {
+				"term": "y",
+				"known": true
+			}
+		},
+		{
+			"seq": 8,
+			"id": "ev-mark-y-b",
+			"type": "wordMarked",
+			"at": 1710064920000,
+			"device": "dev-b",
+			"payload": {
+				"term": "y",
+				"known": false
+			}
+		},
+		{
+			"seq": 9,
+			"id": "ev-review-1-b",
+			"type": "itemReviewed",
+			"at": 1710072000000,
+			"device": "dev-b",
+			"payload": {
+				"device": "dev-b",
+				"at": 1710072000000,
+				"itemId": "item-1",
+				"grade": 4
+			}
+		},
+		{
+			"seq": 10,
+			"id": "ev-review-1-a",
+			"type": "itemReviewed",
+			"at": 1710068400000,
+			"device": "dev-a",
+			"payload": {
+				"device": "dev-a",
+				"at": 1710068400000,
+				"itemId": "item-1",
+				"grade": 1
+			}
+		},
+		{
+			"seq": 11,
+			"id": "ev-review-1-a2",
+			"type": "itemReviewed",
+			"at": 1710154800000,
+			"device": "dev-a",
+			"payload": {
+				"device": "dev-a",
+				"at": 1710154800000,
+				"itemId": "item-1",
+				"grade": 3
+			}
+		}
+	]
+}

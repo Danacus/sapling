@@ -1,0 +1,102 @@
+{
+	"meta": {
+		"deviceId": "fixture-device",
+		"now": 1710244800000,
+		"orderFree": true,
+		"note": "Reviews fold in (at, device) order however they arrive; a second copy of a review — same event id, or a new id over the same identity — counts once."
+	},
+	"events": [
+		{
+			"seq": 1,
+			"id": "ev-add-r",
+			"type": "itemAdded",
+			"at": 1710061200000,
+			"device": "dev-a",
+			"payload": {
+				"id": "item-r",
+				"kind": "vocab",
+				"term": "r",
+				"meaning": "are",
+				"introducedAt": 1710061200000
+			}
+		},
+		{
+			"seq": 2,
+			"id": "ev-review-r-3",
+			"type": "itemReviewed",
+			"at": 1710063000000,
+			"device": "dev-a",
+			"payload": {
+				"device": "dev-a",
+				"at": 1710063000000,
+				"itemId": "item-r",
+				"grade": 3
+			}
+		},
+		{
+			"seq": 3,
+			"id": "ev-review-r-1",
+			"type": "itemReviewed",
+			"at": 1710061800000,
+			"device": "dev-a",
+			"payload": {
+				"device": "dev-a",
+				"at": 1710061800000,
+				"itemId": "item-r",
+				"grade": 1
+			}
+		},
+		{
+			"seq": 4,
+			"id": "ev-review-r-2",
+			"type": "itemReviewed",
+			"at": 1710062400000,
+			"device": "dev-a",
+			"payload": {
+				"device": "dev-a",
+				"at": 1710062400000,
+				"itemId": "item-r",
+				"grade": 2
+			}
+		},
+		{
+			"seq": 5,
+			"id": "ev-review-r-3-again",
+			"type": "itemReviewed",
+			"at": 1710063060000,
+			"device": "dev-a",
+			"payload": {
+				"device": "dev-a",
+				"at": 1710063000000,
+				"itemId": "item-r",
+				"grade": 3
+			}
+		},
+		{
+			"seq": 6,
+			"id": "ev-review-nope",
+			"type": "itemReviewed",
+			"at": 1710063600000,
+			"device": "dev-a",
+			"payload": {
+				"device": "dev-a",
+				"at": 1710063600000,
+				"itemId": "item-nope",
+				"grade": 4
+			}
+		},
+		{
+			"seq": 4,
+			"id": "ev-review-r-2",
+			"type": "itemReviewed",
+			"at": 1710062400000,
+			"device": "dev-a",
+			"payload": {
+				"device": "dev-a",
+				"at": 1710062400000,
+				"itemId": "item-r",
+				"grade": 2
+			}
+		}
+	]
+}

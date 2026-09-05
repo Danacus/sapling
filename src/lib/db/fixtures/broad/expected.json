@@ -1,0 +1,1523 @@
+{
+	"getProfile": {
+		"nativeLanguage": "en",
+		"targetLanguage": "zh",
+		"level": "beginner",
+		"interests": [
+			"food",
+			"travel"
+		],
+		"about": "Learning for a trip to Beijing.",
+		"model": "openai/gpt-4o-mini",
+		"createdAt": 1710061140000
+	},
+	"getAllItems": {
+		"lean": [
+			{
+				"id": "item-gram",
+				"kind": "grammar",
+				"term": "是…的",
+				"meaning": "emphasis construction",
+				"introducedAt": 1710061262000,
+				"fsrsCard": {
+					"due": 1710061262000,
+					"stability": 0,
+					"difficulty": 0,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 0,
+					"reps": 0,
+					"lapses": 0,
+					"state": 0,
+					"last_review": null
+				},
+				"reviewCount": 0,
+				"correctCount": 0,
+				"history": []
+			},
+			{
+				"id": "item-ni",
+				"kind": "vocab",
+				"term": "你好",
+				"meaning": "hello",
+				"romanization": "nǐ hǎo",
+				"introducedAt": 1710061260000,
+				"fsrsCard": {
+					"due": 1710062250000,
+					"stability": 2.3065,
+					"difficulty": 4.75285849,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 1,
+					"reps": 2,
+					"lapses": 0,
+					"state": 1,
+					"last_review": 1710061890000
+				},
+				"reviewCount": 2,
+				"correctCount": 1,
+				"history": []
+			},
+			{
+				"id": "item-xie",
+				"kind": "vocab",
+				"term": "谢谢",
+				"meaning": "thanks",
+				"romanization": "xièxie",
+				"notes": "very polite",
+				"introducedAt": 1710061261000,
+				"fsrsCard": {
+					"due": 1710062520000,
+					"stability": 2.3065,
+					"difficulty": 2.11810397,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 1,
+					"reps": 1,
+					"lapses": 0,
+					"state": 1,
+					"last_review": 1710061920000
+				},
+				"reviewCount": 1,
+				"correctCount": 1,
+				"history": []
+			}
+		],
+		"withRecentGrades": [
+			{
+				"id": "item-gram",
+				"kind": "grammar",
+				"term": "是…的",
+				"meaning": "emphasis construction",
+				"introducedAt": 1710061262000,
+				"fsrsCard": {
+					"due": 1710061262000,
+					"stability": 0,
+					"difficulty": 0,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 0,
+					"reps": 0,
+					"lapses": 0,
+					"state": 0,
+					"last_review": null
+				},
+				"reviewCount": 0,
+				"correctCount": 0,
+				"recentGrades": [],
+				"history": []
+			},
+			{
+				"id": "item-ni",
+				"kind": "vocab",
+				"term": "你好",
+				"meaning": "hello",
+				"romanization": "nǐ hǎo",
+				"introducedAt": 1710061260000,
+				"fsrsCard": {
+					"due": 1710062250000,
+					"stability": 2.3065,
+					"difficulty": 4.75285849,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 1,
+					"reps": 2,
+					"lapses": 0,
+					"state": 1,
+					"last_review": 1710061890000
+				},
+				"reviewCount": 2,
+				"correctCount": 1,
+				"recentGrades": [
+					{
+						"at": 1710061800000,
+						"grade": 3
+					},
+					{
+						"at": 1710061890000,
+						"grade": 2
+					}
+				],
+				"history": []
+			},
+			{
+				"id": "item-xie",
+				"kind": "vocab",
+				"term": "谢谢",
+				"meaning": "thanks",
+				"romanization": "xièxie",
+				"notes": "very polite",
+				"introducedAt": 1710061261000,
+				"fsrsCard": {
+					"due": 1710062520000,
+					"stability": 2.3065,
+					"difficulty": 2.11810397,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 1,
+					"reps": 1,
+					"lapses": 0,
+					"state": 1,
+					"last_review": 1710061920000
+				},
+				"reviewCount": 1,
+				"correctCount": 1,
+				"recentGrades": [
+					{
+						"at": 1710061920000,
+						"grade": 3
+					}
+				],
+				"history": []
+			}
+		]
+	},
+	"getItem": {
+		"item-gone": null,
+		"item-gram": {
+			"id": "item-gram",
+			"kind": "grammar",
+			"term": "是…的",
+			"meaning": "emphasis construction",
+			"introducedAt": 1710061262000,
+			"fsrsCard": {
+				"due": 1710061262000,
+				"stability": 0,
+				"difficulty": 0,
+				"elapsed_days": 0,
+				"scheduled_days": 0,
+				"learning_steps": 0,
+				"reps": 0,
+				"lapses": 0,
+				"state": 0,
+				"last_review": null
+			},
+			"reviewCount": 0,
+			"correctCount": 0,
+			"recentGrades": [],
+			"history": []
+		},
+		"item-ni": {
+			"id": "item-ni",
+			"kind": "vocab",
+			"term": "你好",
+			"meaning": "hello",
+			"romanization": "nǐ hǎo",
+			"introducedAt": 1710061260000,
+			"fsrsCard": {
+				"due": 1710062250000,
+				"stability": 2.3065,
+				"difficulty": 4.75285849,
+				"elapsed_days": 0,
+				"scheduled_days": 0,
+				"learning_steps": 1,
+				"reps": 2,
+				"lapses": 0,
+				"state": 1,
+				"last_review": 1710061890000
+			},
+			"reviewCount": 2,
+			"correctCount": 1,
+			"recentGrades": [
+				{
+					"at": 1710061800000,
+					"grade": 3
+				},
+				{
+					"at": 1710061890000,
+					"grade": 2
+				}
+			],
+			"history": [
+				{
+					"at": 1710061800000,
+					"grade": 3,
+					"device": "dev-a"
+				},
+				{
+					"at": 1710061890000,
+					"grade": 2,
+					"device": "dev-a"
+				}
+			]
+		},
+		"item-xie": {
+			"id": "item-xie",
+			"kind": "vocab",
+			"term": "谢谢",
+			"meaning": "thanks",
+			"romanization": "xièxie",
+			"notes": "very polite",
+			"introducedAt": 1710061261000,
+			"fsrsCard": {
+				"due": 1710062520000,
+				"stability": 2.3065,
+				"difficulty": 2.11810397,
+				"elapsed_days": 0,
+				"scheduled_days": 0,
+				"learning_steps": 1,
+				"reps": 1,
+				"lapses": 0,
+				"state": 1,
+				"last_review": 1710061920000
+			},
+			"reviewCount": 1,
+			"correctCount": 1,
+			"recentGrades": [
+				{
+					"at": 1710061920000,
+					"grade": 3
+				}
+			],
+			"history": [
+				{
+					"at": 1710061920000,
+					"grade": 3,
+					"device": "dev-a"
+				}
+			]
+		}
+	},
+	"getPool": [
+		{
+			"id": "ch-cloze",
+			"type": "cloze",
+			"direction": "toTarget",
+			"sentence": "___，我是李明。",
+			"sentenceRomanization": "___, wǒ shì Lǐ Míng.",
+			"acceptedAnswers": [
+				"你好"
+			],
+			"answerRomanization": "nǐ hǎo",
+			"wordBank": [
+				"你好",
+				"谢谢",
+				"再见"
+			],
+			"wordBankRomanization": [
+				"nǐ hǎo",
+				"xièxie",
+				"zàijiàn"
+			],
+			"translationHint": "Hello, I am Li Ming.",
+			"itemIds": [
+				"item-ni"
+			],
+			"generatedAt": 1710061500001,
+			"timesServed": 1,
+			"lastServedAt": 1710061860000,
+			"reported": false,
+			"topic": "greetings"
+		},
+		{
+			"id": "ch-mc",
+			"type": "multiple-choice",
+			"direction": "toNative",
+			"prompt": "你好",
+			"promptRomanization": "nǐ hǎo",
+			"instruction": "What does this mean?",
+			"options": [
+				"hello",
+				"thanks",
+				"goodbye",
+				"please"
+			],
+			"correctIndex": 0,
+			"explanation": "The everyday greeting.",
+			"itemIds": [
+				"item-ni"
+			],
+			"generatedAt": 1710061500000,
+			"timesServed": 2,
+			"lastServedAt": 1710199800000,
+			"reported": false,
+			"topic": "greetings"
+		},
+		{
+			"id": "ch-mp",
+			"type": "match-pairs",
+			"direction": "toNative",
+			"pairs": [
+				{
+					"a": "你好",
+					"b": "hello",
+					"aRom": "nǐ hǎo"
+				},
+				{
+					"a": "谢谢",
+					"b": "thanks",
+					"aRom": "xièxie"
+				}
+			],
+			"itemIds": [
+				"item-ni",
+				"item-xie"
+			],
+			"generatedAt": 1710061560000,
+			"timesServed": 0,
+			"lastServedAt": null,
+			"reported": false
+		},
+		{
+			"id": "ch-tt",
+			"type": "typed-translation",
+			"direction": "toTarget",
+			"prompt": "thank you",
+			"acceptedAnswers": [
+				"谢谢"
+			],
+			"answerRomanization": "xièxie",
+			"itemIds": [
+				"item-xie"
+			],
+			"generatedAt": 1710061500002,
+			"timesServed": 1,
+			"lastServedAt": 1710061920000,
+			"reported": false,
+			"topic": "greetings"
+		},
+		{
+			"id": "ch-wo",
+			"type": "word-order",
+			"direction": "toTarget",
+			"prompt": "I am Li Ming.",
+			"tiles": [
+				"李明",
+				"是",
+				"我"
+			],
+			"tilesRomanization": [
+				"Lǐ Míng",
+				"shì",
+				"wǒ"
+			],
+			"answerTokens": [
+				"我",
+				"是",
+				"李明"
+			],
+			"answer": "我是李明",
+			"answerRomanization": "wǒ shì Lǐ Míng",
+			"itemIds": [
+				"item-gram"
+			],
+			"generatedAt": 1710061560001,
+			"timesServed": 0,
+			"lastServedAt": null,
+			"reported": false
+		}
+	],
+	"poolSize": 5,
+	"getChallengesByIds": [
+		{
+			"id": "ch-cloze",
+			"type": "cloze",
+			"direction": "toTarget",
+			"sentence": "___，我是李明。",
+			"sentenceRomanization": "___, wǒ shì Lǐ Míng.",
+			"acceptedAnswers": [
+				"你好"
+			],
+			"answerRomanization": "nǐ hǎo",
+			"wordBank": [
+				"你好",
+				"谢谢",
+				"再见"
+			],
+			"wordBankRomanization": [
+				"nǐ hǎo",
+				"xièxie",
+				"zàijiàn"
+			],
+			"translationHint": "Hello, I am Li Ming.",
+			"itemIds": [
+				"item-ni"
+			]
+		},
+		{
+			"id": "ch-mc",
+			"type": "multiple-choice",
+			"direction": "toNative",
+			"prompt": "你好",
+			"promptRomanization": "nǐ hǎo",
+			"instruction": "What does this mean?",
+			"options": [
+				"hello",
+				"thanks",
+				"goodbye",
+				"please"
+			],
+			"correctIndex": 0,
+			"explanation": "The everyday greeting.",
+			"itemIds": [
+				"item-ni"
+			]
+		},
+		{
+			"id": "ch-mp",
+			"type": "match-pairs",
+			"direction": "toNative",
+			"pairs": [
+				{
+					"a": "你好",
+					"b": "hello",
+					"aRom": "nǐ hǎo"
+				},
+				{
+					"a": "谢谢",
+					"b": "thanks",
+					"aRom": "xièxie"
+				}
+			],
+			"itemIds": [
+				"item-ni",
+				"item-xie"
+			]
+		},
+		{
+			"id": "ch-se",
+			"type": "spot-error",
+			"direction": "toTarget",
+			"tokens": [
+				"我",
+				"是",
+				"谢谢"
+			],
+			"correctIndex": 2,
+			"intendedWord": "李明",
+			"correctedSentence": "我是李明",
+			"meaning": "I am Li Ming.",
+			"itemIds": [
+				"item-gram",
+				"item-xie"
+			]
+		},
+		{
+			"id": "ch-tt",
+			"type": "typed-translation",
+			"direction": "toTarget",
+			"prompt": "thank you",
+			"acceptedAnswers": [
+				"谢谢"
+			],
+			"answerRomanization": "xièxie",
+			"itemIds": [
+				"item-xie"
+			]
+		},
+		{
+			"id": "ch-wo",
+			"type": "word-order",
+			"direction": "toTarget",
+			"prompt": "I am Li Ming.",
+			"tiles": [
+				"李明",
+				"是",
+				"我"
+			],
+			"tilesRomanization": [
+				"Lǐ Míng",
+				"shì",
+				"wǒ"
+			],
+			"answerTokens": [
+				"我",
+				"是",
+				"李明"
+			],
+			"answer": "我是李明",
+			"answerRomanization": "wǒ shì Lǐ Míng",
+			"itemIds": [
+				"item-gram"
+			]
+		}
+	],
+	"recentResults": [
+		{
+			"challengeId": "ch-mc",
+			"verdict": "correct",
+			"answerGiven": "hello",
+			"at": 1710230400000
+		},
+		{
+			"challengeId": "ch-tt",
+			"verdict": "correct",
+			"answerGiven": "谢谢",
+			"at": 1710202500000
+		},
+		{
+			"challengeId": "ch-mc",
+			"verdict": "almost",
+			"answerGiven": "hallo",
+			"at": 1710199800000
+		},
+		{
+			"challengeId": "ch-tt",
+			"verdict": "correct",
+			"answerGiven": "谢谢",
+			"at": 1710061920000
+		},
+		{
+			"challengeId": "ch-cloze",
+			"verdict": "wrong",
+			"answerGiven": "再见",
+			"at": 1710061860000
+		}
+	],
+	"getDailyActivity": [
+		{
+			"day": "2024-03-10",
+			"count": 3
+		},
+		{
+			"day": "2024-03-11",
+			"count": 1
+		},
+		{
+			"day": "2024-03-12",
+			"count": 2
+		}
+	],
+	"getTexts": [
+		{
+			"id": "text-2",
+			"title": "Subtitles",
+			"source": "imported",
+			"sentences": [
+				{
+					"text": "你好吗？",
+					"start": 0,
+					"end": 1500
+				},
+				{
+					"text": "我很好。",
+					"start": 1500,
+					"end": 3200
+				}
+			],
+			"glossary": [],
+			"media": {
+				"kind": "youtube",
+				"videoId": "dQw4w9WgXcQ"
+			},
+			"createdAt": 1710065100000
+		},
+		{
+			"id": "text-1",
+			"title": "早餐",
+			"source": "generated",
+			"topic": "food",
+			"sentences": [
+				{
+					"text": "我吃早餐。",
+					"reading": "wǒ chī zǎocān.",
+					"translation": "I eat breakfast."
+				},
+				{
+					"text": "很好吃。",
+					"translation": "Delicious."
+				}
+			],
+			"glossary": [
+				{
+					"term": "早餐",
+					"reading": "zǎocān",
+					"meaning": "breakfast"
+				}
+			],
+			"createdAt": 1710064800000
+		}
+	],
+	"getText": {
+		"text-1": {
+			"id": "text-1",
+			"title": "早餐",
+			"source": "generated",
+			"topic": "food",
+			"sentences": [
+				{
+					"text": "我吃早餐。",
+					"reading": "wǒ chī zǎocān.",
+					"translation": "I eat breakfast."
+				},
+				{
+					"text": "很好吃。",
+					"translation": "Delicious."
+				}
+			],
+			"glossary": [
+				{
+					"term": "早餐",
+					"reading": "zǎocān",
+					"meaning": "breakfast"
+				}
+			],
+			"createdAt": 1710064800000
+		},
+		"text-2": {
+			"id": "text-2",
+			"title": "Subtitles",
+			"source": "imported",
+			"sentences": [
+				{
+					"text": "你好吗？",
+					"start": 0,
+					"end": 1500
+				},
+				{
+					"text": "我很好。",
+					"start": 1500,
+					"end": 3200
+				}
+			],
+			"glossary": [],
+			"media": {
+				"kind": "youtube",
+				"videoId": "dQw4w9WgXcQ"
+			},
+			"createdAt": 1710065100000
+		},
+		"text-3": null
+	},
+	"getKnownTerms": [
+		"早餐"
+	],
+	"getConversations": [
+		{
+			"id": "conv-1",
+			"scenario": {
+				"setting": "A café in Beijing",
+				"teacherRole": "barista",
+				"learnerRole": "customer",
+				"firstSpeaker": "teacher",
+				"opener": {
+					"text": "你好！要喝什么？",
+					"reading": "nǐ hǎo! yào hē shénme?"
+				},
+				"openerTranslation": "Hello! What would you like to drink?"
+			},
+			"topic": "ordering",
+			"createdAt": 1710068400000,
+			"turnCount": 2,
+			"lastTurnAt": 1710068520000
+		}
+	],
+	"getConversation": {
+		"conv-1": {
+			"conversation": {
+				"id": "conv-1",
+				"scenario": {
+					"setting": "A café in Beijing",
+					"teacherRole": "barista",
+					"learnerRole": "customer",
+					"firstSpeaker": "teacher",
+					"opener": {
+						"text": "你好！要喝什么？",
+						"reading": "nǐ hǎo! yào hē shénme?"
+					},
+					"openerTranslation": "Hello! What would you like to drink?"
+				},
+				"topic": "ordering",
+				"createdAt": 1710068400000
+			},
+			"exchanges": [
+				{
+					"conversationId": "conv-1",
+					"index": 0,
+					"teacher": {
+						"role": "teacher",
+						"reply": {
+							"text": "你好！要喝什么？",
+							"reading": "nǐ hǎo! yào hē shénme?"
+						},
+						"translation": "Hello! What would you like to drink?",
+						"actions": []
+					}
+				},
+				{
+					"conversationId": "conv-1",
+					"index": 1,
+					"learner": {
+						"role": "learner",
+						"text": "我要咖啡",
+						"heard": {
+							"text": "我要咖啡",
+							"reading": "wǒ yào kāfēi"
+						},
+						"correction": {
+							"corrected": {
+								"text": "我要一杯咖啡。"
+							},
+							"note": "Add a measure word."
+						}
+					},
+					"teacher": {
+						"role": "teacher",
+						"reply": {
+							"text": "好的，一杯咖啡。"
+						},
+						"translation": "OK, one coffee.",
+						"actions": [
+							{
+								"tool": "add_words",
+								"summary": "Added 咖啡",
+								"ok": true
+							}
+						]
+					}
+				}
+			]
+		},
+		"conv-2": null
+	},
+	"exportData": {
+		"version": 3,
+		"exportedAt": 1710244800000,
+		"events": [
+			{
+				"id": "ev-profile",
+				"type": "profileUpdated",
+				"at": 1710061200000,
+				"device": "dev-a",
+				"payload": {
+					"nativeLanguage": "en",
+					"targetLanguage": "zh",
+					"level": "beginner",
+					"interests": [
+						"food",
+						"travel"
+					],
+					"about": "Learning for a trip to Beijing.",
+					"model": "openai/gpt-4o-mini",
+					"createdAt": 1710061140000
+				}
+			},
+			{
+				"id": "ev-add-ni",
+				"type": "itemAdded",
+				"at": 1710061260000,
+				"device": "dev-a",
+				"payload": {
+					"id": "item-ni",
+					"kind": "vocab",
+					"term": "你好",
+					"meaning": "hello",
+					"romanization": "nǐ hǎo",
+					"introducedAt": 1710061260000
+				}
+			},
+			{
+				"id": "ev-add-xie",
+				"type": "itemAdded",
+				"at": 1710061261000,
+				"device": "dev-a",
+				"payload": {
+					"id": "item-xie",
+					"kind": "vocab",
+					"term": "谢谢",
+					"meaning": "thanks",
+					"romanization": "xièxie",
+					"notes": "polite",
+					"introducedAt": 1710061261000
+				}
+			},
+			{
+				"id": "ev-add-gram",
+				"type": "itemAdded",
+				"at": 1710061262000,
+				"device": "dev-a",
+				"payload": {
+					"id": "item-gram",
+					"kind": "grammar",
+					"term": "是…的",
+					"meaning": "emphasis construction",
+					"introducedAt": 1710061262000
+				}
+			},
+			{
+				"id": "ev-ch-mc",
+				"type": "challengeAdded",
+				"at": 1710061500000,
+				"device": "dev-a",
+				"payload": {
+					"challenge": {
+						"id": "ch-mc",
+						"type": "multiple-choice",
+						"direction": "toNative",
+						"prompt": "你好",
+						"promptRomanization": "nǐ hǎo",
+						"instruction": "What does this mean?",
+						"options": [
+							"hello",
+							"thanks",
+							"goodbye",
+							"please"
+						],
+						"correctIndex": 0,
+						"explanation": "The everyday greeting.",
+						"itemIds": [
+							"item-ni"
+						]
+					},
+					"generatedAt": 1710061500000,
+					"topic": "greetings"
+				}
+			},
+			{
+				"id": "ev-ch-cloze",
+				"type": "challengeAdded",
+				"at": 1710061500000,
+				"device": "dev-a",
+				"payload": {
+					"challenge": {
+						"id": "ch-cloze",
+						"type": "cloze",
+						"direction": "toTarget",
+						"sentence": "___，我是李明。",
+						"sentenceRomanization": "___, wǒ shì Lǐ Míng.",
+						"acceptedAnswers": [
+							"你好"
+						],
+						"answerRomanization": "nǐ hǎo",
+						"wordBank": [
+							"你好",
+							"谢谢",
+							"再见"
+						],
+						"wordBankRomanization": [
+							"nǐ hǎo",
+							"xièxie",
+							"zàijiàn"
+						],
+						"translationHint": "Hello, I am Li Ming.",
+						"itemIds": [
+							"item-ni"
+						]
+					},
+					"generatedAt": 1710061500001,
+					"topic": "greetings"
+				}
+			},
+			{
+				"id": "ev-ch-tt",
+				"type": "challengeAdded",
+				"at": 1710061500000,
+				"device": "dev-a",
+				"payload": {
+					"challenge": {
+						"id": "ch-tt",
+						"type": "typed-translation",
+						"direction": "toTarget",
+						"prompt": "thank you",
+						"acceptedAnswers": [
+							"谢谢"
+						],
+						"answerRomanization": "xièxie",
+						"itemIds": [
+							"item-xie"
+						]
+					},
+					"generatedAt": 1710061500002,
+					"topic": "greetings"
+				}
+			},
+			{
+				"id": "ev-ch-mp",
+				"type": "challengeAdded",
+				"at": 1710061560000,
+				"device": "dev-a",
+				"payload": {
+					"challenge": {
+						"id": "ch-mp",
+						"type": "match-pairs",
+						"direction": "toNative",
+						"pairs": [
+							{
+								"a": "你好",
+								"b": "hello",
+								"aRom": "nǐ hǎo"
+							},
+							{
+								"a": "谢谢",
+								"b": "thanks",
+								"aRom": "xièxie"
+							}
+						],
+						"itemIds": [
+							"item-ni",
+							"item-xie"
+						]
+					},
+					"generatedAt": 1710061560000
+				}
+			},
+			{
+				"id": "ev-ch-wo",
+				"type": "challengeAdded",
+				"at": 1710061560000,
+				"device": "dev-a",
+				"payload": {
+					"challenge": {
+						"id": "ch-wo",
+						"type": "word-order",
+						"direction": "toTarget",
+						"prompt": "I am Li Ming.",
+						"tiles": [
+							"李明",
+							"是",
+							"我"
+						],
+						"tilesRomanization": [
+							"Lǐ Míng",
+							"shì",
+							"wǒ"
+						],
+						"answerTokens": [
+							"我",
+							"是",
+							"李明"
+						],
+						"answer": "我是李明",
+						"answerRomanization": "wǒ shì Lǐ Míng",
+						"itemIds": [
+							"item-gram"
+						]
+					},
+					"generatedAt": 1710061560001
+				}
+			},
+			{
+				"id": "ev-ch-se",
+				"type": "challengeAdded",
+				"at": 1710061560000,
+				"device": "dev-a",
+				"payload": {
+					"challenge": {
+						"id": "ch-se",
+						"type": "spot-error",
+						"direction": "toTarget",
+						"tokens": [
+							"我",
+							"是",
+							"谢谢"
+						],
+						"correctIndex": 2,
+						"intendedWord": "李明",
+						"correctedSentence": "我是李明",
+						"meaning": "I am Li Ming.",
+						"itemIds": [
+							"item-gram",
+							"item-xie"
+						]
+					},
+					"generatedAt": 1710061560002
+				}
+			},
+			{
+				"id": "ev-ch-unknown",
+				"type": "challengeAdded",
+				"at": 1710061560000,
+				"device": "dev-a",
+				"payload": {
+					"challenge": {
+						"id": "ch-unknown",
+						"type": "listening",
+						"direction": "toNative",
+						"itemIds": []
+					},
+					"generatedAt": 1710061560003
+				}
+			},
+			{
+				"id": "ev-serve-1",
+				"type": "challengeServed",
+				"at": 1710061800000,
+				"device": "dev-a",
+				"payload": {
+					"challengeId": "ch-mc",
+					"at": 1710061800000
+				}
+			},
+			{
+				"id": "ev-result-1",
+				"type": "resultLogged",
+				"at": 1710061800000,
+				"device": "dev-a",
+				"payload": {
+					"challengeId": "ch-mc",
+					"verdict": "correct",
+					"answerGiven": "hello",
+					"at": 1710061800000
+				}
+			},
+			{
+				"id": "ev-review-1",
+				"type": "itemReviewed",
+				"at": 1710061800000,
+				"device": "dev-a",
+				"payload": {
+					"device": "dev-a",
+					"at": 1710061800000,
+					"itemId": "item-ni",
+					"grade": 3
+				}
+			},
+			{
+				"id": "ev-serve-2",
+				"type": "challengeServed",
+				"at": 1710061860000,
+				"device": "dev-a",
+				"payload": {
+					"challengeId": "ch-cloze",
+					"at": 1710061860000
+				}
+			},
+			{
+				"id": "ev-result-2",
+				"type": "resultLogged",
+				"at": 1710061860000,
+				"device": "dev-a",
+				"payload": {
+					"challengeId": "ch-cloze",
+					"verdict": "wrong",
+					"answerGiven": "再见",
+					"at": 1710061860000
+				}
+			},
+			{
+				"id": "ev-review-2",
+				"type": "itemReviewed",
+				"at": 1710061860000,
+				"device": "dev-a",
+				"payload": {
+					"device": "dev-a",
+					"at": 1710061860000,
+					"itemId": "item-ni",
+					"grade": 1
+				}
+			},
+			{
+				"id": "ev-amend-2",
+				"type": "reviewAmended",
+				"at": 1710061890000,
+				"device": "dev-a",
+				"payload": {
+					"device": "dev-a",
+					"at": 1710061890000,
+					"itemId": "item-ni",
+					"grade": 2,
+					"replaces": 1710061860000
+				}
+			},
+			{
+				"id": "ev-serve-3",
+				"type": "challengeServed",
+				"at": 1710061920000,
+				"device": "dev-a",
+				"payload": {
+					"challengeId": "ch-tt",
+					"at": 1710061920000
+				}
+			},
+			{
+				"id": "ev-result-3",
+				"type": "resultLogged",
+				"at": 1710061920000,
+				"device": "dev-a",
+				"payload": {
+					"challengeId": "ch-tt",
+					"verdict": "correct",
+					"answerGiven": "谢谢",
+					"at": 1710061920000
+				}
+			},
+			{
+				"id": "ev-review-3",
+				"type": "itemReviewed",
+				"at": 1710061920000,
+				"device": "dev-a",
+				"payload": {
+					"device": "dev-a",
+					"at": 1710061920000,
+					"itemId": "item-xie",
+					"grade": 3
+				}
+			},
+			{
+				"id": "ev-report-se",
+				"type": "challengeReported",
+				"at": 1710062100000,
+				"device": "dev-a",
+				"payload": {
+					"challengeId": "ch-se"
+				}
+			},
+			{
+				"id": "ev-update-xie",
+				"type": "itemUpdated",
+				"at": 1710062400000,
+				"device": "dev-a",
+				"payload": {
+					"itemId": "item-xie",
+					"fields": {
+						"notes": "very polite"
+					}
+				}
+			},
+			{
+				"id": "ev-add-gone",
+				"type": "itemAdded",
+				"at": 1710062700000,
+				"device": "dev-a",
+				"payload": {
+					"id": "item-gone",
+					"kind": "vocab",
+					"term": "再见",
+					"meaning": "goodbye",
+					"romanization": "zàijiàn",
+					"introducedAt": 1710062700000
+				}
+			},
+			{
+				"id": "ev-review-gone",
+				"type": "itemReviewed",
+				"at": 1710062760000,
+				"device": "dev-a",
+				"payload": {
+					"device": "dev-a",
+					"at": 1710062760000,
+					"itemId": "item-gone",
+					"grade": 3
+				}
+			},
+			{
+				"id": "ev-delete-gone",
+				"type": "itemDeleted",
+				"at": 1710063000000,
+				"device": "dev-a",
+				"payload": {
+					"itemId": "item-gone"
+				}
+			},
+			{
+				"id": "ev-serve-4",
+				"type": "challengeServed",
+				"at": 1710199800000,
+				"device": "dev-a",
+				"payload": {
+					"challengeId": "ch-mc",
+					"at": 1710199800000
+				}
+			},
+			{
+				"id": "ev-result-4",
+				"type": "resultLogged",
+				"at": 1710199800000,
+				"device": "dev-a",
+				"payload": {
+					"challengeId": "ch-mc",
+					"verdict": "almost",
+					"answerGiven": "hallo",
+					"at": 1710199800000
+				}
+			},
+			{
+				"id": "ev-result-5",
+				"type": "resultLogged",
+				"at": 1710202500000,
+				"device": "dev-a",
+				"payload": {
+					"challengeId": "ch-tt",
+					"verdict": "correct",
+					"answerGiven": "谢谢",
+					"at": 1710202500000
+				}
+			},
+			{
+				"id": "ev-result-6",
+				"type": "resultLogged",
+				"at": 1710230400000,
+				"device": "dev-a",
+				"payload": {
+					"challengeId": "ch-mc",
+					"verdict": "correct",
+					"answerGiven": "hello",
+					"at": 1710230400000
+				}
+			},
+			{
+				"id": "ev-text-1",
+				"type": "textAdded",
+				"at": 1710064800000,
+				"device": "dev-a",
+				"payload": {
+					"id": "text-1",
+					"title": "早餐",
+					"source": "generated",
+					"topic": "food",
+					"sentences": [
+						{
+							"text": "我吃早餐。",
+							"reading": "wǒ chī zǎocān.",
+							"translation": "I eat breakfast."
+						},
+						{
+							"text": "很好吃。",
+							"translation": "Delicious."
+						}
+					],
+					"glossary": [
+						{
+							"term": "早餐",
+							"reading": "zǎocān",
+							"meaning": "breakfast"
+						}
+					],
+					"createdAt": 1710064800000
+				}
+			},
+			{
+				"id": "ev-text-2",
+				"type": "textAdded",
+				"at": 1710065100000,
+				"device": "dev-a",
+				"payload": {
+					"id": "text-2",
+					"title": "Subtitles",
+					"source": "imported",
+					"sentences": [
+						{
+							"text": "你好吗？",
+							"start": 0,
+							"end": 1500
+						},
+						{
+							"text": "我很好。",
+							"start": 1500,
+							"end": 3200
+						}
+					],
+					"glossary": [],
+					"media": {
+						"kind": "youtube",
+						"videoId": "dQw4w9WgXcQ"
+					},
+					"createdAt": 1710065100000
+				}
+			},
+			{
+				"id": "ev-text-3",
+				"type": "textAdded",
+				"at": 1710065160000,
+				"device": "dev-a",
+				"payload": {
+					"id": "text-3",
+					"title": "Episode 1",
+					"source": "imported",
+					"sentences": [
+						{
+							"text": "开始了。",
+							"start": 100,
+							"end": 900
+						}
+					],
+					"glossary": [],
+					"media": {
+						"kind": "file",
+						"name": "ep1.mp4",
+						"type": "video/mp4"
+					},
+					"createdAt": 1710065160000
+				}
+			},
+			{
+				"id": "ev-text-3-deleted",
+				"type": "textDeleted",
+				"at": 1710065220000,
+				"device": "dev-a",
+				"payload": {
+					"textId": "text-3"
+				}
+			},
+			{
+				"id": "ev-mark-1",
+				"type": "wordMarked",
+				"at": 1710065400000,
+				"device": "dev-a",
+				"payload": {
+					"term": "早餐",
+					"known": true
+				}
+			},
+			{
+				"id": "ev-mark-2",
+				"type": "wordMarked",
+				"at": 1710065460000,
+				"device": "dev-a",
+				"payload": {
+					"term": "很",
+					"known": true
+				}
+			},
+			{
+				"id": "ev-mark-3",
+				"type": "wordMarked",
+				"at": 1710065520000,
+				"device": "dev-a",
+				"payload": {
+					"term": "很",
+					"known": false
+				}
+			},
+			{
+				"id": "ev-lookup-1",
+				"type": "wordLookedUp",
+				"at": 1710065580000,
+				"device": "dev-a",
+				"payload": {
+					"term": "早餐",
+					"textId": "text-1"
+				}
+			},
+			{
+				"id": "ev-lookup-2",
+				"type": "wordLookedUp",
+				"at": 1710065640000,
+				"device": "dev-a",
+				"payload": {
+					"term": "谢谢",
+					"itemId": "item-xie",
+					"textId": "text-1"
+				}
+			},
+			{
+				"id": "ev-conv-1",
+				"type": "conversationStarted",
+				"at": 1710068400000,
+				"device": "dev-a",
+				"payload": {
+					"id": "conv-1",
+					"scenario": {
+						"setting": "A café in Beijing",
+						"teacherRole": "barista",
+						"learnerRole": "customer",
+						"firstSpeaker": "teacher",
+						"opener": {
+							"text": "你好！要喝什么？",
+							"reading": "nǐ hǎo! yào hē shénme?"
+						},
+						"openerTranslation": "Hello! What would you like to drink?"
+					},
+					"topic": "ordering",
+					"createdAt": 1710068400000
+				}
+			},
+			{
+				"id": "ev-turn-1-0",
+				"type": "turnAdded",
+				"at": 1710068400000,
+				"device": "dev-a",
+				"payload": {
+					"conversationId": "conv-1",
+					"index": 0,
+					"teacher": {
+						"role": "teacher",
+						"reply": {
+							"text": "你好！要喝什么？",
+							"reading": "nǐ hǎo! yào hē shénme?"
+						},
+						"translation": "Hello! What would you like to drink?",
+						"actions": []
+					}
+				}
+			},
+			{
+				"id": "ev-turn-1-1",
+				"type": "turnAdded",
+				"at": 1710068520000,
+				"device": "dev-a",
+				"payload": {
+					"conversationId": "conv-1",
+					"index": 1,
+					"learner": {
+						"role": "learner",
+						"text": "我要咖啡",
+						"heard": {
+							"text": "我要咖啡",
+							"reading": "wǒ yào kāfēi"
+						},
+						"correction": {
+							"corrected": {
+								"text": "我要一杯咖啡。"
+							},
+							"note": "Add a measure word."
+						}
+					},
+					"teacher": {
+						"role": "teacher",
+						"reply": {
+							"text": "好的，一杯咖啡。"
+						},
+						"translation": "OK, one coffee.",
+						"actions": [
+							{
+								"tool": "add_words",
+								"summary": "Added 咖啡",
+								"ok": true
+							}
+						]
+					}
+				}
+			},
+			{
+				"id": "ev-conv-2",
+				"type": "conversationStarted",
+				"at": 1710069000000,
+				"device": "dev-a",
+				"payload": {
+					"id": "conv-2",
+					"scenario": {
+						"setting": "A taxi",
+						"teacherRole": "driver",
+						"learnerRole": "passenger",
+						"firstSpeaker": "learner"
+					},
+					"createdAt": 1710069000000
+				}
+			},
+			{
+				"id": "ev-turn-2-0",
+				"type": "turnAdded",
+				"at": 1710069060000,
+				"device": "dev-a",
+				"payload": {
+					"conversationId": "conv-2",
+					"index": 0,
+					"learner": {
+						"role": "learner",
+						"text": "去机场。"
+					},
+					"teacher": {
+						"role": "teacher",
+						"reply": {
+							"text": "好，上车吧。"
+						},
+						"translation": "OK, get in.",
+						"actions": []
+					}
+				}
+			},
+			{
+				"id": "ev-conv-2-deleted",
+				"type": "conversationDeleted",
+				"at": 1710069300000,
+				"device": "dev-a",
+				"payload": {
+					"conversationId": "conv-2"
+				}
+			}
+		]
+	},
+	"pendingEvents": [],
+	"getPullCursor": 0
+}

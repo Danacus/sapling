@@ -12,6 +12,7 @@ pnpm build                              # static build -> build/
 pnpm check                              # svelte-check + tsc -p worker (typecheck both targets)
 pnpm test                               # vitest run (all suites)
 pnpm test src/lib/srs/scheduler.test.ts # single test file
+pnpm golden:update                      # rebless src/lib/db/fixtures/*/expected.json after a deliberate merge-rule change
 pnpm sync:dev                           # sync Worker locally (localhost:8787)
 pnpm sync:deploy                        # deploy the sync Worker (wrangler)
 pnpm format                             # prettier --write . (bulk pass)
@@ -73,4 +74,4 @@ Every area is a registry with one module per member; forgetting a registration f
 
 ### Testing
 
-Vitest, **node environment**, `src/**/*.test.ts`. No network, and no browser APIs — but the same SQLite-WASM package runs in-memory here, so the data layer is tested against a real store (`db/backend.testing.ts`, the same `core.ts` the Worker runs) rather than mocked: there is one implementation of the merge rules, not a write path and a replay path that have to be kept agreeing.
+Vitest, **node environment**, `src/**/*.test.ts`. No network, and no browser APIs — but the same SQLite-WASM package runs in-memory here, so the data layer is tested against a real store (`db/backend.testing.ts`, the same `core.ts` the Worker runs) rather than mocked: there is one implementation of the merge rules, not a write path and a replay path that have to be kept agreeing. The merge rules are also pinned by **golden fixtures** (`src/lib/db/fixtures/`, one event log in, every `Backend` read out as JSON) — language-neutral, so they double as the conformance suite for any other implementation of `core.ts`.

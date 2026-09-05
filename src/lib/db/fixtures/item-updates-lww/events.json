@@ -1,0 +1,94 @@
+{
+	"meta": {
+		"deviceId": "fixture-device",
+		"now": 1710244800000,
+		"orderFree": false,
+		"note": "An itemUpdated that arrives before its itemAdded is dropped — there is no row to patch, and unlike a review it is not kept inert — so this log replays in seq order only. Between two updates, newest `at` wins both ways: item-1 has the newer copy arriving first, item-2 the older."
+	},
+	"events": [
+		{
+			"seq": 1,
+			"id": "ev-add-1",
+			"type": "itemAdded",
+			"at": 1710061260000,
+			"device": "dev-a",
+			"payload": {
+				"id": "item-1",
+				"kind": "vocab",
+				"term": "こんにちは",
+				"meaning": "hello",
+				"romanization": "konnichiwa",
+				"introducedAt": 1710061260000
+			}
+		},
+		{
+			"seq": 2,
+			"id": "ev-add-2",
+			"type": "itemAdded",
+			"at": 1710061320000,
+			"device": "dev-a",
+			"payload": {
+				"id": "item-2",
+				"kind": "vocab",
+				"term": "ありがとう",
+				"meaning": "thanks",
+				"romanization": "arigatou",
+				"introducedAt": 1710061320000
+			}
+		},
+		{
+			"seq": 3,
+			"id": "ev-update-1-b",
+			"type": "itemUpdated",
+			"at": 1710063600000,
+			"device": "dev-b",
+			"payload": {
+				"itemId": "item-1",
+				"fields": {
+					"meaning": "hello (b)",
+					"notes": "from b"
+				}
+			}
+		},
+		{
+			"seq": 4,
+			"id": "ev-update-1-a",
+			"type": "itemUpdated",
+			"at": 1710063300000,
+			"device": "dev-a",
+			"payload": {
+				"itemId": "item-1",
+				"fields": {
+					"meaning": "hello (a)"
+				}
+			}
+		},
+		{
+			"seq": 5,
+			"id": "ev-update-2-a",
+			"type": "itemUpdated",
+			"at": 1710064200000,
+			"device": "dev-a",
+			"payload": {
+				"itemId": "item-2",
+				"fields": {
+					"notes": "from a"
+				}
+			}
+		},
+		{
+			"seq": 6,
+			"id": "ev-update-2-b",
+			"type": "itemUpdated",
+			"at": 1710063900000,
+			"device": "dev-b",
+			"payload": {
+				"itemId": "item-2",
+				"fields": {
+					"meaning": "thanks (b)",
+					"notes": "from b"
+				}
+			}
+		}
+	]
+}

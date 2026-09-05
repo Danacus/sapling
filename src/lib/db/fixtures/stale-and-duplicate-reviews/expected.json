@@ -1,0 +1,212 @@
+{
+	"getAllItems": {
+		"lean": [
+			{
+				"id": "item-r",
+				"kind": "vocab",
+				"term": "r",
+				"meaning": "are",
+				"introducedAt": 1710061200000,
+				"fsrsCard": {
+					"due": 1710063600000,
+					"stability": 0.24668919,
+					"difficulty": 7.59183393,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 1,
+					"reps": 3,
+					"lapses": 0,
+					"state": 1,
+					"last_review": 1710063000000
+				},
+				"reviewCount": 3,
+				"correctCount": 1,
+				"history": []
+			}
+		],
+		"withRecentGrades": [
+			{
+				"id": "item-r",
+				"kind": "vocab",
+				"term": "r",
+				"meaning": "are",
+				"introducedAt": 1710061200000,
+				"fsrsCard": {
+					"due": 1710063600000,
+					"stability": 0.24668919,
+					"difficulty": 7.59183393,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 1,
+					"reps": 3,
+					"lapses": 0,
+					"state": 1,
+					"last_review": 1710063000000
+				},
+				"reviewCount": 3,
+				"correctCount": 1,
+				"recentGrades": [
+					{
+						"at": 1710061800000,
+						"grade": 1
+					},
+					{
+						"at": 1710062400000,
+						"grade": 2
+					},
+					{
+						"at": 1710063000000,
+						"grade": 3
+					}
+				],
+				"history": []
+			}
+		]
+	},
+	"getItem": {
+		"item-nope": null,
+		"item-r": {
+			"id": "item-r",
+			"kind": "vocab",
+			"term": "r",
+			"meaning": "are",
+			"introducedAt": 1710061200000,
+			"fsrsCard": {
+				"due": 1710063600000,
+				"stability": 0.24668919,
+				"difficulty": 7.59183393,
+				"elapsed_days": 0,
+				"scheduled_days": 0,
+				"learning_steps": 1,
+				"reps": 3,
+				"lapses": 0,
+				"state": 1,
+				"last_review": 1710063000000
+			},
+			"reviewCount": 3,
+			"correctCount": 1,
+			"recentGrades": [
+				{
+					"at": 1710061800000,
+					"grade": 1
+				},
+				{
+					"at": 1710062400000,
+					"grade": 2
+				},
+				{
+					"at": 1710063000000,
+					"grade": 3
+				}
+			],
+			"history": [
+				{
+					"at": 1710061800000,
+					"grade": 1,
+					"device": "dev-a"
+				},
+				{
+					"at": 1710062400000,
+					"grade": 2,
+					"device": "dev-a"
+				},
+				{
+					"at": 1710063000000,
+					"grade": 3,
+					"device": "dev-a"
+				}
+			]
+		}
+	},
+	"getPool": [],
+	"poolSize": 0,
+	"getChallengesByIds": [],
+	"recentResults": [],
+	"getDailyActivity": [],
+	"getTexts": [],
+	"getText": {},
+	"getKnownTerms": [],
+	"getConversations": [],
+	"getConversation": {},
+	"exportData": {
+		"version": 3,
+		"exportedAt": 1710244800000,
+		"events": [
+			{
+				"id": "ev-add-r",
+				"type": "itemAdded",
+				"at": 1710061200000,
+				"device": "dev-a",
+				"payload": {
+					"id": "item-r",
+					"kind": "vocab",
+					"term": "r",
+					"meaning": "are",
+					"introducedAt": 1710061200000
+				}
+			},
+			{
+				"id": "ev-review-r-3",
+				"type": "itemReviewed",
+				"at": 1710063000000,
+				"device": "dev-a",
+				"payload": {
+					"device": "dev-a",
+					"at": 1710063000000,
+					"itemId": "item-r",
+					"grade": 3
+				}
+			},
+			{
+				"id": "ev-review-r-1",
+				"type": "itemReviewed",
+				"at": 1710061800000,
+				"device": "dev-a",
+				"payload": {
+					"device": "dev-a",
+					"at": 1710061800000,
+					"itemId": "item-r",
+					"grade": 1
+				}
+			},
+			{
+				"id": "ev-review-r-2",
+				"type": "itemReviewed",
+				"at": 1710062400000,
+				"device": "dev-a",
+				"payload": {
+					"device": "dev-a",
+					"at": 1710062400000,
+					"itemId": "item-r",
+					"grade": 2
+				}
+			},
+			{
+				"id": "ev-review-r-3-again",
+				"type": "itemReviewed",
+				"at": 1710063060000,
+				"device": "dev-a",
+				"payload": {
+					"device": "dev-a",
+					"at": 1710063000000,
+					"itemId": "item-r",
+					"grade": 3
+				}
+			},
+			{
+				"id": "ev-review-nope",
+				"type": "itemReviewed",
+				"at": 1710063600000,
+				"device": "dev-a",
+				"payload": {
+					"device": "dev-a",
+					"at": 1710063600000,
+					"itemId": "item-nope",
+					"grade": 4
+				}
+			}
+		]
+	},
+	"pendingEvents": [],
+	"getPullCursor": 0
+}

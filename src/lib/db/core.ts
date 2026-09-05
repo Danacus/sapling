@@ -15,6 +15,11 @@
  * `deviceId` arrives from the window at boot. It is a `localStorage` fact, and
  * a Worker has no `localStorage`; reading it here would mint a fresh id per
  * boot, and the id is half of a review's identity.
+ *
+ * `clock` is the one place the core reads the time — the `at` a local commit is
+ * stamped with, the default `now` of a serve or a pool add, an export's
+ * `exportedAt`. The app passes nothing and gets `Date.now`; the golden fixtures
+ * (`golden.test.ts`) pin it, so every read they record is reproducible.
  */
 import { newUuid } from '$lib/device';
 import type {
@@ -259,7 +264,7 @@ function seqOf(raw: unknown): number | undefined {
 /* -------------------------------------------------------------------------- */
 
 /** Builds the backend over an open, schema-applied database. */
-export function makeCore(sql: Sql, deviceId: string): Core {
+export function makeCore(sql: Sql, deviceId: string, clock: () => number = Date.now): Core {
 	/** Runs `body` in one transaction; a throw rolls the whole thing back. */
 	function transaction<T>(body: () => T): T {
 		sql.exec('BEGIN');
@@ -275,7 +280,7 @@ export function makeCore(sql: Sql, deviceId: string): Core {
 
 	function commitAll(facts: Fact[]): void {
 		if (facts.length === 0) return;
-		const at = Date.now();
+		const at = clock();
 		transaction(() => {
 			for (const fact of facts) {
 				ingest(
@@ -444,7 +449,7 @@ export function makeCore(sql: Sql, deviceId: string): Core {
 
 		/* ---- Challenge pool ---------------------------------------------- */
 
-		addToPool(challenges, now = Date.now(), topic) {
+		addToPool(challenges, now = clock(), topic) {
 			if (challenges.length === 0) return;
 			const trimmed = topic?.trim();
 			commitAll(
@@ -472,7 +477,7 @@ export function makeCore(sql: Sql, deviceId: string): Core {
 			return row?.count ?? 0;
 		},
 
-		recordServe(id, now = Date.now()) {
+		recordServe(id, now = clock()) {
 			const known = sql.query('SELECT 1 FROM challenges WHERE id = ?', [id]);
 			if (known.length === 0) return;
 			commit('challengeServed', { challengeId: id, at: now });
@@ -645,7 +650,7 @@ export function makeCore(sql: Sql, deviceId: string): Core {
 			);
 			const envelope: ExportEnvelope = {
 				version: EXPORT_VERSION,
-				exportedAt: Date.now(),
+				exportedAt: clock(),
 				events: rows.map(eventFrom)
 			};
 			return JSON.stringify(envelope, null, 2);

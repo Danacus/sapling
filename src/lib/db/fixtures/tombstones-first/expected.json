@@ -1,0 +1,395 @@
+{
+	"getAllItems": {
+		"lean": [
+			{
+				"id": "item-y",
+				"kind": "vocab",
+				"term": "y",
+				"meaning": "why",
+				"introducedAt": 1710061200000,
+				"fsrsCard": {
+					"due": 1710061920000,
+					"stability": 2.3065,
+					"difficulty": 2.11810397,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 1,
+					"reps": 1,
+					"lapses": 0,
+					"state": 1,
+					"last_review": 1710061320000
+				},
+				"reviewCount": 1,
+				"correctCount": 1,
+				"history": []
+			}
+		],
+		"withRecentGrades": [
+			{
+				"id": "item-y",
+				"kind": "vocab",
+				"term": "y",
+				"meaning": "why",
+				"introducedAt": 1710061200000,
+				"fsrsCard": {
+					"due": 1710061920000,
+					"stability": 2.3065,
+					"difficulty": 2.11810397,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 1,
+					"reps": 1,
+					"lapses": 0,
+					"state": 1,
+					"last_review": 1710061320000
+				},
+				"reviewCount": 1,
+				"correctCount": 1,
+				"recentGrades": [
+					{
+						"at": 1710061320000,
+						"grade": 3
+					}
+				],
+				"history": []
+			}
+		]
+	},
+	"getItem": {
+		"item-y": {
+			"id": "item-y",
+			"kind": "vocab",
+			"term": "y",
+			"meaning": "why",
+			"introducedAt": 1710061200000,
+			"fsrsCard": {
+				"due": 1710061920000,
+				"stability": 2.3065,
+				"difficulty": 2.11810397,
+				"elapsed_days": 0,
+				"scheduled_days": 0,
+				"learning_steps": 1,
+				"reps": 1,
+				"lapses": 0,
+				"state": 1,
+				"last_review": 1710061320000
+			},
+			"reviewCount": 1,
+			"correctCount": 1,
+			"recentGrades": [
+				{
+					"at": 1710061320000,
+					"grade": 3
+				}
+			],
+			"history": [
+				{
+					"at": 1710061320000,
+					"grade": 3,
+					"device": "dev-a"
+				}
+			]
+		},
+		"item-z": null
+	},
+	"getPool": [],
+	"poolSize": 0,
+	"getChallengesByIds": [],
+	"recentResults": [],
+	"getDailyActivity": [],
+	"getTexts": [
+		{
+			"id": "text-k",
+			"title": "Kept",
+			"source": "generated",
+			"sentences": [
+				{
+					"text": "k"
+				}
+			],
+			"glossary": [],
+			"createdAt": 1710064920000
+		}
+	],
+	"getText": {
+		"text-k": {
+			"id": "text-k",
+			"title": "Kept",
+			"source": "generated",
+			"sentences": [
+				{
+					"text": "k"
+				}
+			],
+			"glossary": [],
+			"createdAt": 1710064920000
+		},
+		"text-z": null
+	},
+	"getKnownTerms": [],
+	"getConversations": [
+		{
+			"id": "conv-k",
+			"scenario": {
+				"setting": "k",
+				"teacherRole": "k",
+				"learnerRole": "k",
+				"firstSpeaker": "teacher"
+			},
+			"createdAt": 1710070200000,
+			"turnCount": 2,
+			"lastTurnAt": 1710070320000
+		}
+	],
+	"getConversation": {
+		"conv-k": {
+			"conversation": {
+				"id": "conv-k",
+				"scenario": {
+					"setting": "k",
+					"teacherRole": "k",
+					"learnerRole": "k",
+					"firstSpeaker": "teacher"
+				},
+				"createdAt": 1710070200000
+			},
+			"exchanges": [
+				{
+					"conversationId": "conv-k",
+					"index": 0,
+					"teacher": {
+						"role": "teacher",
+						"reply": {
+							"text": "k"
+						},
+						"actions": []
+					}
+				},
+				{
+					"conversationId": "conv-k",
+					"index": 1,
+					"learner": {
+						"role": "learner",
+						"text": "k?"
+					},
+					"teacher": {
+						"role": "teacher",
+						"reply": {
+							"text": "k!"
+						},
+						"actions": []
+					}
+				}
+			]
+		},
+		"conv-z": null
+	},
+	"exportData": {
+		"version": 3,
+		"exportedAt": 1710244800000,
+		"events": [
+			{
+				"id": "ev-del-z",
+				"type": "itemDeleted",
+				"at": 1710061500000,
+				"device": "dev-a",
+				"payload": {
+					"itemId": "item-z"
+				}
+			},
+			{
+				"id": "ev-add-z",
+				"type": "itemAdded",
+				"at": 1710061200000,
+				"device": "dev-a",
+				"payload": {
+					"id": "item-z",
+					"kind": "vocab",
+					"term": "z",
+					"meaning": "zed",
+					"introducedAt": 1710061200000
+				}
+			},
+			{
+				"id": "ev-review-z",
+				"type": "itemReviewed",
+				"at": 1710061260000,
+				"device": "dev-a",
+				"payload": {
+					"device": "dev-a",
+					"at": 1710061260000,
+					"itemId": "item-z",
+					"grade": 3
+				}
+			},
+			{
+				"id": "ev-review-y",
+				"type": "itemReviewed",
+				"at": 1710061320000,
+				"device": "dev-a",
+				"payload": {
+					"device": "dev-a",
+					"at": 1710061320000,
+					"itemId": "item-y",
+					"grade": 3
+				}
+			},
+			{
+				"id": "ev-add-y",
+				"type": "itemAdded",
+				"at": 1710061200000,
+				"device": "dev-a",
+				"payload": {
+					"id": "item-y",
+					"kind": "vocab",
+					"term": "y",
+					"meaning": "why",
+					"introducedAt": 1710061200000
+				}
+			},
+			{
+				"id": "ev-del-text-z",
+				"type": "textDeleted",
+				"at": 1710064860000,
+				"device": "dev-a",
+				"payload": {
+					"textId": "text-z"
+				}
+			},
+			{
+				"id": "ev-add-text-z",
+				"type": "textAdded",
+				"at": 1710064800000,
+				"device": "dev-a",
+				"payload": {
+					"id": "text-z",
+					"title": "Gone",
+					"source": "generated",
+					"sentences": [
+						{
+							"text": "z"
+						}
+					],
+					"glossary": [],
+					"createdAt": 1710064800000
+				}
+			},
+			{
+				"id": "ev-add-text-k",
+				"type": "textAdded",
+				"at": 1710064920000,
+				"device": "dev-a",
+				"payload": {
+					"id": "text-k",
+					"title": "Kept",
+					"source": "generated",
+					"sentences": [
+						{
+							"text": "k"
+						}
+					],
+					"glossary": [],
+					"createdAt": 1710064920000
+				}
+			},
+			{
+				"id": "ev-del-conv-z",
+				"type": "conversationDeleted",
+				"at": 1710068700000,
+				"device": "dev-a",
+				"payload": {
+					"conversationId": "conv-z"
+				}
+			},
+			{
+				"id": "ev-turn-z-0",
+				"type": "turnAdded",
+				"at": 1710068400000,
+				"device": "dev-a",
+				"payload": {
+					"conversationId": "conv-z",
+					"index": 0,
+					"teacher": {
+						"role": "teacher",
+						"reply": {
+							"text": "z"
+						},
+						"actions": []
+					}
+				}
+			},
+			{
+				"id": "ev-conv-z",
+				"type": "conversationStarted",
+				"at": 1710068400000,
+				"device": "dev-a",
+				"payload": {
+					"id": "conv-z",
+					"scenario": {
+						"setting": "z",
+						"teacherRole": "z",
+						"learnerRole": "z",
+						"firstSpeaker": "teacher"
+					},
+					"createdAt": 1710068400000
+				}
+			},
+			{
+				"id": "ev-turn-k-1",
+				"type": "turnAdded",
+				"at": 1710070320000,
+				"device": "dev-a",
+				"payload": {
+					"conversationId": "conv-k",
+					"index": 1,
+					"learner": {
+						"role": "learner",
+						"text": "k?"
+					},
+					"teacher": {
+						"role": "teacher",
+						"reply": {
+							"text": "k!"
+						},
+						"actions": []
+					}
+				}
+			},
+			{
+				"id": "ev-conv-k",
+				"type": "conversationStarted",
+				"at": 1710070200000,
+				"device": "dev-a",
+				"payload": {
+					"id": "conv-k",
+					"scenario": {
+						"setting": "k",
+						"teacherRole": "k",
+						"learnerRole": "k",
+						"firstSpeaker": "teacher"
+					},
+					"createdAt": 1710070200000
+				}
+			},
+			{
+				"id": "ev-turn-k-0",
+				"type": "turnAdded",
+				"at": 1710070200000,
+				"device": "dev-a",
+				"payload": {
+					"conversationId": "conv-k",
+					"index": 0,
+					"teacher": {
+						"role": "teacher",
+						"reply": {
+							"text": "k"
+						},
+						"actions": []
+					}
+				}
+			}
+		]
+	},
+	"pendingEvents": [],
+	"getPullCursor": 0
+}
