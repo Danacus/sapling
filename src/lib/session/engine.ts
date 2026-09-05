@@ -734,12 +734,13 @@ export interface PlanRefillOptions extends PlanTopUpOptions {
  * Turns the pool and the learner's collection into one batch request.
  *
  * The brief is {@link planTopUp}'s: a want for every kind an upcoming word is
- * short of, and nothing for a word already covered. A batch is written *about*
- * vocabulary the learner already has and introduces none of its own — new words
- * arrive through the assistant and conversation mode — so a learner with no
- * words has no wants, and one whose upcoming words are all covered has none
- * either. Both come back as an empty `wants`, and {@link generateChallenges}
- * says which before spending anything.
+ * short of, and nothing for a word already covered — unless `extra` is set, in
+ * which case every upcoming word gets its full share regardless. A batch is
+ * written *about* vocabulary the learner already has and introduces none of its
+ * own — new words arrive through the assistant and conversation mode — so a
+ * learner with no words has no wants, and one whose upcoming words are all
+ * covered has none either without `extra`. Both come back as an empty `wants`,
+ * and {@link generateChallenges} says which before spending anything.
  *
  * Pure: no clock, no database, no network. `now` is passed in so the SRS
  * decisions are reproducible in tests.
@@ -753,7 +754,8 @@ export function planRefill(
 ): BatchArgs {
 	const wants = planTopUp(pool, items, now, {
 		...(opts.maxItems === undefined ? {} : { maxItems: opts.maxItems }),
-		...(opts.rng === undefined ? {} : { rng: opts.rng })
+		...(opts.rng === undefined ? {} : { rng: opts.rng }),
+		...(opts.extra === undefined ? {} : { extra: opts.extra })
 	});
 	const topic = opts.topic?.trim();
 
@@ -819,6 +821,12 @@ export interface GenerateOptions {
 	/** Forwarded to {@link planRefill}; see {@link PlanRefillOptions.topic}. */
 	topic?: string;
 	/**
+	 * Forwarded to {@link planTopUp}: write for every upcoming word, covered or
+	 * not. The start screen sets it when coverage is complete, so the button is
+	 * always live — "more variety" is a legitimate thing to spend on.
+	 */
+	extra?: boolean;
+	/**
 	 * Called as each phase of generation starts, so the learn screen can show
 	 * what is being waited on. Steps are reported, not measured: the caller times
 	 * each one from its event to the next.
@@ -865,14 +873,16 @@ export async function generateChallenges(
 	const [pool, items] = await Promise.all([getPool(), getAllItems()]);
 
 	const args = planRefill(pool, items, profile, now, {
-		...(opts.topic === undefined ? {} : { topic: opts.topic })
+		...(opts.topic === undefined ? {} : { topic: opts.topic }),
+		...(opts.extra === undefined ? {} : { extra: opts.extra })
 	});
 
 	// Said here, before any request step is announced, so an empty brief is
-	// never reported as a model that returned nothing.
+	// never reported as a model that returned nothing. In extra mode coverage
+	// is no reason to refuse, so an empty brief there can only mean no words.
 	if (args.wants.length === 0) {
 		throw new Error(
-			items.length === 0
+			items.length === 0 || opts.extra
 				? 'There are no words to write challenges about yet.'
 				: 'Every word coming up already has fresh challenges waiting. Play a session, then generate again.'
 		);
@@ -914,11 +924,20 @@ export interface SessionPlan {
 	 * planned (`topUpCoverage`). This is the start screen's freshness figure and
 	 * the Generate button's label in one: "N of M upcoming words have fresh
 	 * challenges" is exactly the question the learner is asking, and `wants`
-	 * being zero is exactly when the button would refuse. A pool-wide count of
-	 * rested rows used to stand here, and it could say "running low" on a day
-	 * every upcoming word was already covered.
+	 * being zero is exactly when the button switches to *extra* mode. A pool-wide
+	 * count of rested rows used to stand here, and it could say "running low" on
+	 * a day every upcoming word was already covered.
 	 */
-	topUp: TopUpCoverage;
+	topUp: StartCoverage;
+}
+
+/**
+ * {@link TopUpCoverage} plus what an *extra* top-up would write — the label the
+ * Generate button wears once every upcoming word is covered, so it is never
+ * disabled while there are words to write about.
+ */
+export interface StartCoverage extends TopUpCoverage {
+	extraWants: number;
 }
 
 export interface StartSessionOptions extends PlanSessionOptions {
@@ -949,7 +968,10 @@ export async function startSession(opts: StartSessionOptions = {}): Promise<Sess
 		challenges,
 		items,
 		dueCount,
-		topUp: topUpCoverage(pool, items, now)
+		topUp: {
+			...topUpCoverage(pool, items, now),
+			extraWants: topUpCoverage(pool, items, now, { extra: true }).wants
+		}
 	};
 }
 

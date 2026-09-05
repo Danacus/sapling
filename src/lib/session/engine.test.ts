@@ -1128,6 +1128,15 @@ describe('planRefill', () => {
 		});
 	});
 
+	it('with extra, writes for a word the pool already covers', () => {
+		const word = item('a', -DAY);
+		const pool = [recognition('r1', ['a']), recognition('r2', ['a'], { direction: 'toTarget' })];
+		expect(planRefill(pool, [word], profile(), NOW).wants).toEqual([]);
+		const extra = planRefill(pool, [word], profile(), NOW, { extra: true });
+		expect(extra.wants.length).toBeGreaterThan(0);
+		expect(wordsOf(extra)).toEqual(['a']);
+	});
+
 	it('sends the wants and the vocabulary they are written against, and nothing else', () => {
 		// The batch args are the whole request: nothing in them can introduce a
 		// word, and nothing about how the learner has been doing rides along.

@@ -365,4 +365,82 @@ describe('topUpCoverage', () => {
 	it('is all zeros with no words', () => {
 		expect(topUpCoverage([], [], NOW)).toEqual({ upcoming: 0, covered: 0, wants: 0 });
 	});
+
+	it('with extra, counts what an extra top-up would write while coverage stays plain', () => {
+		const pool = [pooled('r', RECOGNITION[0], ['a']), pooled('p', FREE[0], ['a'])];
+		const items = [strong('a')];
+		expect(topUpCoverage(pool, items, NOW, { extra: true })).toEqual({
+			upcoming: 1,
+			covered: 1,
+			wants: WANT_PER_WORD
+		});
+		expect(topUpCoverage(pool, items, NOW, { extra: true }).wants).toBe(
+			planTopUp(pool, items, NOW, { extra: true }).length
+		);
+	});
+});
+
+describe('planTopUp with extra', () => {
+	/** A pool that fully covers `a` (strong) and `b` (new). */
+	const covered = () => [
+		pooled('ar', RECOGNITION[0], ['a']),
+		pooled('ap', FREE[0], ['a']),
+		pooled('br1', RECOGNITION[0], ['b']),
+		pooled('br2', RECOGNITION[1], ['b'])
+	];
+
+	it('writes the full share for every upcoming word, covered or not', () => {
+		const items = [strong('a'), item('b')];
+		expect(planTopUp(covered(), items, NOW)).toEqual([]);
+		const wants = planTopUp(covered(), items, NOW, { extra: true });
+		expect(wants.filter((want) => want.item.id === 'a')).toHaveLength(WANT_PER_WORD);
+		expect(wants.filter((want) => want.item.id === 'b')).toHaveLength(WANT_PER_WORD);
+	});
+
+	it('still writes one of each group, within what the word can bear', () => {
+		const wants = planTopUp(covered(), [strong('a'), item('b')], NOW, { extra: true });
+		const a = wants.filter((want) => want.item.id === 'a').map((want) => demandOfKind(want.kind));
+		expect(a.filter((demand) => demand === 0)).toHaveLength(1);
+		expect(a.filter((demand) => demand > 0)).toHaveLength(1);
+		const b = wants.filter((want) => want.item.id === 'b').map((want) => demandOfKind(want.kind));
+		expect(b).toEqual([0, 0]);
+	});
+
+	it('prefers a kind the word has never had', () => {
+		const wants = planTopUp(covered(), [item('b')], NOW, { extra: true });
+		const had = new Set([kindKey(RECOGNITION[0]), kindKey(RECOGNITION[1])]);
+		for (const key of keysOf(wants)) expect(had.has(key)).toBe(false);
+	});
+
+	it('then spreads onto the kind the word has fewest rows of', () => {
+		// Every recognition kind already in the pool for `b`, one of them twice.
+		const pool = RECOGNITION.map((kind, i) => pooled(`b${i}`, kind, ['b']));
+		pool.push(pooled('again', RECOGNITION[0], ['b']));
+		const wants = planTopUp(pool, [item('b')], NOW, { extra: true, rng: () => 0 });
+		expect(keysOf(wants)).not.toContain(kindKey(RECOGNITION[0]));
+		expect(wants).toHaveLength(WANT_PER_WORD);
+	});
+
+	it('never gives one word the same kind twice', () => {
+		const rng = cyclingRng();
+		for (let n = 0; n < 12; n++) {
+			const wants = planTopUp(covered(), [strong('a'), item('b')], NOW, { extra: true, rng });
+			const seen = new Set(wants.map((want) => `${want.item.id}:${kindKey(want.kind)}`));
+			expect(seen.size).toBe(wants.length);
+		}
+	});
+
+	it('is capped like a plain top-up', () => {
+		const items = Array.from({ length: 20 }, (_, i) => strong(`w${i}`, (i - 10) * DAY));
+		const wants = planTopUp([], items, NOW, { extra: true, maxItems: 20 });
+		expect(wants).toHaveLength(MAX_TOPUP_WANTS);
+	});
+
+	it('leaves the plain plan exactly as it was', () => {
+		const items = [item('a'), strong('b'), item('c')];
+		const pool = [pooled('r', RECOGNITION[0], ['a'])];
+		expect(planTopUp(pool, items, NOW, { rng: () => 0.3, extra: false })).toEqual(
+			planTopUp(pool, items, NOW, { rng: () => 0.3 })
+		);
+	});
 });

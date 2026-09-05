@@ -16,20 +16,27 @@ export interface TopUpInput {
 	profile: Profile;
 	/** The scenario the lesson leans into, when the learner gave one. */
 	topic?: string;
+	/**
+	 * Write for every upcoming word whether or not it is covered — the start
+	 * screen's button once the pool has nothing missing. See `GenerateOptions`.
+	 */
+	extra?: boolean;
 }
 
 export const topUpTask = {
 	serial: true,
 
 	title(input) {
-		return input.topic ? `New lesson · ${input.topic}` : 'New lesson';
+		const what = input.extra ? 'Extra challenges' : 'New lesson';
+		return input.topic ? `${what} · ${input.topic}` : what;
 	},
 
 	run(input, ctx) {
 		return generateChallenges(input.profile, {
 			signal: ctx.signal,
 			onProgress: (step) => ctx.step(step.id, step.label),
-			...(input.topic ? { topic: input.topic } : {})
+			...(input.topic ? { topic: input.topic } : {}),
+			...(input.extra ? { extra: true } : {})
 		});
 	},
 

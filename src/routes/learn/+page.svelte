@@ -149,6 +149,12 @@
 	const upcoming = $derived(plan?.topUp.upcoming ?? 0);
 	const covered = $derived(plan?.topUp.covered ?? 0);
 	const wants = $derived(plan?.topUp.wants ?? 0);
+	/**
+	 * What an *extra* top-up would write: the button's count once every
+	 * upcoming word is covered, so it always has something to offer while there
+	 * are words at all.
+	 */
+	const extraWants = $derived(plan?.topUp.extraWants ?? 0);
 	const uncovered = $derived(upcoming - covered);
 	const canStart = $derived((plan?.challenges.length ?? 0) > 0);
 	/**
@@ -399,13 +405,18 @@
 	 * the runner; the effect above re-plans when it lands.
 	 */
 	function generate(): void {
-		// `wants === 0` is the button's disabled state; the Enter key in the topic
-		// field lands here too, and a task that would only refuse is not worth
-		// a row in the tray.
-		if (generating || !profile || wants === 0) return;
+		// No words is the button's only disabled state; the Enter key in the
+		// topic field lands here too, and a task that would only refuse is not
+		// worth a row in the tray. With every upcoming word covered the press
+		// means "more", and the task is told so.
+		if (generating || !profile || !hasWords) return;
 		const topic = topicInput.trim();
 		if (topic) recentTopics = addRecentTopic(topic);
-		startTask('top-up', { profile, ...(topic ? { topic } : {}) });
+		startTask('top-up', {
+			profile,
+			...(topic ? { topic } : {}),
+			...(wants === 0 ? { extra: true } : {})
+		});
 	}
 
 	/**
@@ -947,11 +958,7 @@
 							transition:slide={{ duration: motionMs(220) }}
 						>
 							<p class="hint gen-hint">
-								{#if wants > 0 || generating}
-									Optional — pick or type a scenario and the lesson leans into it.
-								{:else}
-									Topics colour new challenges, and there is nothing to write right now.
-								{/if}
+								Optional — pick or type a scenario and the lesson leans into it.
 							</p>
 
 							<input
@@ -1008,7 +1015,7 @@
 							<button
 								type="button"
 								class="btn btn-block generate-btn"
-								disabled={generating || wants === 0}
+								disabled={generating || !hasWords}
 								onclick={() => {
 									genOpenChoice = true;
 									generate();
@@ -1017,11 +1024,17 @@
 								{#if generating}
 									Generating… details in the task tray
 								{:else if wants === 0}
-									All upcoming words are covered
+									Write {extraWants} extra challenge{extraWants === 1 ? '' : 's'}
 								{:else}
 									Write {wants} new challenge{wants === 1 ? '' : 's'}
 								{/if}
 							</button>
+
+							{#if wants === 0 && hasWords && !generating}
+								<p class="hint gen-hint">
+									All upcoming words are covered — extra challenges add variety.
+								</p>
+							{/if}
 
 							{#if genSummary}
 								<p class="gen-summary">{genSummary}</p>

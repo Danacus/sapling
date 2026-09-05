@@ -58,6 +58,15 @@ export interface PlanTopUpOptions {
 	maxItems?: number;
 	/** Injectable `[0,1)` source for tie-breaking between kinds; defaults to `Math.random`. */
 	rng?: () => number;
+	/**
+	 * Write {@link WANT_PER_WORD} challenges for every upcoming word whether or
+	 * not it is covered — the learner asked for *more*, not for what is missing.
+	 * Kind choice then prefers a kind the word has never had, then the kind it
+	 * has fewest rows of, so extra challenges add variety rather than a third
+	 * copy of the one format the pool already leans on. Everything else — the
+	 * bearable tiers, one-of-each-group, no kind twice, the cap — is unchanged.
+	 */
+	extra?: boolean;
 }
 
 /** What one word already has in the pool, by kind. */
@@ -66,6 +75,8 @@ interface Coverage {
 	rested: Set<string>;
 	/** Kinds the word has *ever* had a playable challenge of, rested or not. */
 	ever: Set<string>;
+	/** Playable rows per kind, rested or not — what `extra` spreads new ones across. */
+	rows: Map<string, number>;
 }
 
 /**
@@ -88,17 +99,18 @@ function coverageOf(pool: readonly ChallengeRow[], items: readonly KnowledgeItem
 		for (const id of row.itemIds) {
 			let entry = coverage.get(id);
 			if (!entry) {
-				entry = { rested: new Set(), ever: new Set() };
+				entry = { rested: new Set(), ever: new Set(), rows: new Map() };
 				coverage.set(id, entry);
 			}
 			entry.ever.add(key);
+			entry.rows.set(key, (entry.rows.get(key) ?? 0) + 1);
 			if (rested) entry.rested.add(key);
 		}
 	}
 	return coverage;
 }
 
-const NONE: Coverage = { rested: new Set(), ever: new Set() };
+const NONE: Coverage = { rested: new Set(), ever: new Set(), rows: new Map() };
 
 /**
  * The wants the pool is missing for the words the learner is about to meet.
@@ -143,7 +155,9 @@ export interface TopUpCoverage {
  * the start screen can show the same number the Generate button acts on.
  *
  * `covered` is counted before the cap: a word past {@link MAX_TOPUP_WANTS}
- * still has gaps, it just does not get them filled this time.
+ * still has gaps, it just does not get them filled this time. With `extra`,
+ * `wants` is what an extra top-up would write while `covered` stays the plain
+ * coverage — the figure is about the pool, the count is about the button.
  */
 export function topUpCoverage(
 	pool: readonly ChallengeRow[],
@@ -151,12 +165,14 @@ export function topUpCoverage(
 	now: number,
 	opts: PlanTopUpOptions = {}
 ): TopUpCoverage {
-	const { upcoming, wants } = collectWants(pool, items, now, opts);
+	const { extra, ...plain } = opts;
+	const { upcoming, wants } = collectWants(pool, items, now, plain);
 	const short = new Set(wants.map((want) => want.item.id));
+	const written = extra ? collectWants(pool, items, now, opts).wants : wants;
 	return {
 		upcoming: upcoming.length,
 		covered: upcoming.length - short.size,
-		wants: Math.min(wants.length, MAX_TOPUP_WANTS)
+		wants: Math.min(written.length, MAX_TOPUP_WANTS)
 	};
 }
 
@@ -172,6 +188,7 @@ function collectWants(
 	opts: PlanTopUpOptions
 ): { upcoming: KnowledgeItem[]; wants: Want[] } {
 	const rng = opts.rng ?? Math.random;
+	const extra = opts.extra === true;
 	const { reviewItems } = selectSessionItems(items, {
 		now,
 		...(opts.maxItems === undefined ? {} : { maxItems: opts.maxItems })
@@ -210,14 +227,24 @@ function collectWants(
 				: [[recognition, WANT_PER_WORD]];
 
 		for (const [group, need] of groups) {
-			const covered = group.filter((kind) => have.rested.has(kindKey(kind))).length;
+			// Extra mode ignores coverage: the learner asked for more, and a rested
+			// row is no reason to refuse a second angle on the same word.
+			const covered = extra ? 0 : group.filter((kind) => have.rested.has(kindKey(kind))).length;
 			for (let missing = need - covered; missing > 0; missing--) {
 				const candidates = group.filter(
-					(kind) => !have.rested.has(kindKey(kind)) && !chosen.has(kindKey(kind))
+					(kind) => (extra || !have.rested.has(kindKey(kind))) && !chosen.has(kindKey(kind))
 				);
 				if (candidates.length === 0) break;
 				const fresh = candidates.filter((kind) => !have.ever.has(kindKey(kind)));
-				const from = fresh.length > 0 ? fresh : candidates;
+				let from = fresh.length > 0 ? fresh : candidates;
+				// Nothing fresh left, and extra mode asked anyway: spread the new row
+				// onto the kind this word has fewest of, so variety keeps growing
+				// instead of the pool piling up one format.
+				if (extra && fresh.length === 0) {
+					const rowsOf = (kind: PlannableKind) => have.rows.get(kindKey(kind)) ?? 0;
+					const fewest = Math.min(...from.map(rowsOf));
+					from = from.filter((kind) => rowsOf(kind) === fewest);
+				}
 				const kind = from[Math.min(from.length - 1, Math.floor(rng() * from.length))];
 				chosen.add(kindKey(kind));
 				wants.push({ item, kind: bareKind(kind), difficulty: level });
