@@ -219,10 +219,10 @@ export function selectSessionItems(
  * `undefined` when there's no review history in the window — day one, where
  * there is nothing to calibrate on.
  *
- * It paces nothing here, and it never reaches the model either: it travels as
- * `BatchArgs.recentAccuracy` for `$lib/llm/slots`, which reads it locally to
- * size the lesson's production share and to shift every slot's difficulty. That
- * is where "how is this learner doing" now changes what a lesson looks like.
+ * It paces nothing, and generation no longer reads it either: what a word's
+ * challenges look like follows from that word's own strength (`wordStrength`),
+ * which FSRS already moves on every answer. Kept as the one place a trailing
+ * accuracy is computed, for the screens that show the learner the figure.
  *
  * Reads `recentGrades` — the trailing slice the store keeps on each item — and
  * falls back to `history` for items assembled in memory. A window this narrow

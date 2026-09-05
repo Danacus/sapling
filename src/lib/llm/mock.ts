@@ -40,7 +40,7 @@
  *
  * That vocabulary is **borrowed, never introduced**: generation adds no words
  * to a collection, so the mock cannot either. Each scenario word is bound to
- * one of the learner's own review items before resolving — see
+ * one of the words the wants are about before resolving — see
  * {@link mockTermIndex} — which keeps the canned lesson readable as the scene
  * it was written as while every id it ends up citing is one the caller really
  * asked about.
@@ -51,14 +51,9 @@ import { bcp47For } from '$lib/tts/languages';
 import { WIRE_TYPE_DEFS } from './challenge-types';
 import type { FixtureScenario } from './challenge-types';
 import type { TokenUsage } from './client';
-import type { BatchArgs, BatchOptions, BatchResult, ReviewItemRef } from './generate';
-import {
-	MAX_BATCH_CHALLENGES,
-	defaultChallengeCount,
-	knownTermIndex,
-	parseBatch,
-	resolveBatch
-} from './generate';
+import type { BatchArgs, BatchOptions, BatchResult } from './generate';
+import { knownTermIndex, parseBatch, resolveBatch } from './generate';
+import type { WantItem } from './requests';
 import type { EscalationArgs, EscalationResult } from './escalation';
 
 /** localStorage flag that forces the mock even when a key is present. */
@@ -176,14 +171,29 @@ function fixtureFor(args: BatchArgs): Fixture {
 }
 
 /**
- * Two challenges per review item — one recognition, one production — so the
+ * The distinct words the wants are about, in first-appearance order — the
+ * mock's anchors, since a scenario cannot know the learner's ids.
+ */
+function wantedItems(args: BatchArgs): WantItem[] {
+	const seen = new Set<string>();
+	const out: WantItem[] = [];
+	for (const want of args.wants) {
+		if (seen.has(want.item.id)) continue;
+		seen.add(want.item.id);
+		out.push(want.item);
+	}
+	return out;
+}
+
+/**
+ * Two challenges per wanted word — one recognition, one production — so the
  * mock reflects the real batch shape.
  *
  * Nothing here picks a slot for the correct answer: the resolver shuffles, and
  * the mock's seeded rng makes that shuffle reproducible, so practice mode never
  * trains "always pick the first one" and never changes between runs either.
  */
-function reviewChallenges(items: ReviewItemRef[]): unknown[] {
+function reviewChallenges(items: WantItem[]): unknown[] {
 	const out: unknown[] = [];
 	items.slice(0, 5).forEach((item) => {
 		const others = items.filter((o) => o.id !== item.id).map((o) => o.meaning);
@@ -216,19 +226,15 @@ function reviewChallenges(items: ReviewItemRef[]): unknown[] {
  * cheap model would return it.
  */
 export function mockBatchCompletion(args: BatchArgs): string {
-	const count = Math.min(
-		args.count ?? defaultChallengeCount(args.reviewItems.length),
-		MAX_BATCH_CHALLENGES
-	);
 	const canned = fixtureFor(args).challenges;
-	const review = reviewChallenges(args.reviewItems);
+	const review = reviewChallenges(wantedItems(args));
 
 	// Always keep the canned set — it is what makes the mock cover every
-	// challenge type — and always let at least a couple of per-review-item
-	// challenges ride along, so the mock exercises id references even when the
-	// derived `count` is no bigger than the canned set.
+	// challenge type — and always let at least a couple of per-word challenges
+	// ride along, so the mock exercises id references even when fewer challenges
+	// were wanted than the canned set holds.
 	const floor = canned.length + Math.min(review.length, 2);
-	const challenges = [...canned, ...review].slice(0, Math.max(floor, count));
+	const challenges = [...canned, ...review].slice(0, Math.max(floor, args.wants.length));
 
 	return '```json\n' + JSON.stringify({ challenges }, null, 1) + '\n```';
 }
@@ -250,7 +256,7 @@ export function mockBatchCompletion(args: BatchArgs): string {
  */
 function mockTermIndex(args: BatchArgs, scenario: Fixture): Map<string, string> {
 	const index = knownTermIndex(args);
-	const anchors = args.reviewItems;
+	const anchors = wantedItems(args);
 	if (anchors.length === 0) return index;
 
 	scenario.terms.forEach((term, position) => {
@@ -296,14 +302,14 @@ export function mockBatch(args: BatchArgs, opts: BatchOptions = {}): BatchResult
 
 	const resolved = resolveBatch(parseBatch(mockBatchCompletion(args)), {
 		newId: opts.newId ?? mockIdFactory(),
-		knownItemIds: args.reviewItems.map((i) => i.id),
+		knownItemIds: wantedItems(args).map((i) => i.id),
 		// The canned half cites its words by term, so the mock leans on exactly the
 		// term-citation path a paid batch uses — with the scenario's own words bound
 		// in on top. See {@link mockTermIndex}.
 		termToId: mockTermIndex(args, fixtureFor(args)),
 		rng: opts.rng ?? mockRng()
 	});
-	return { challenges: resolved.challenges, usage: NO_USAGE };
+	return { challenges: resolved.challenges, usage: NO_USAGE, failedRequests: 0 };
 }
 
 /**

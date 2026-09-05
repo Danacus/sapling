@@ -10,26 +10,26 @@
  * **Generation and play are decoupled.** Every challenge ever generated lives
  * in a persistent pool (the `challenges` table); answering one stamps it
  * rather than consuming it. {@link generateChallenges} is an explicit,
- * backgroundable user action that adds to the pool, and {@link planSession}
- * assembles a session out of whatever is already there — so starting is
- * instant, always, and never waits on the network.
+ * backgroundable user action that tops the pool up with what it is missing
+ * (`./topup`), and {@link planSession} assembles a session out of whatever is
+ * already there — so starting is instant, always, and never waits on the
+ * network.
  *
  * Token economy, restated because it is what allows that: one `getBatch` call
- * produces a whole lesson — internally a handful of short concurrent requests
- * against one cached system prompt, see `$lib/llm/generate` — grading is local
- * and free, and only an explicit "explain this" spends more. So we generate
- * rarely and generously, and get many sessions out of each batch by recycling.
- * `getBatch` is still one `await` from here: chunking, per-chunk retries and
- * dropping a chunk that fails are all below the seam.
+ * fills the whole top-up — internally a handful of short concurrent requests,
+ * one per challenge kind, each against its own cached system prompt, see
+ * `$lib/llm/generate` — grading is local and free, and only an explicit
+ * "explain this" spends more. So we generate only what the pool lacks, and get
+ * many sessions out of each challenge by recycling. `getBatch` is still one
+ * `await` from here: cutting the brief into requests, per-request retries and
+ * dropping a request that fails are all below the seam.
  */
 
 import {
 	addResult,
 	addToPool,
 	getAllItems,
-	getChallengesByIds,
 	getPool,
-	recentResults,
 	recordServe,
 	reportChallenge as flagChallengeReported,
 	updateItemAfterReview
@@ -37,19 +37,19 @@ import {
 import type { ChallengeRow } from '$lib/db';
 import { challengeOf } from '$lib/db';
 import { getBatch, isMockMode, makeMatchPairsChallenge } from '$lib/llm';
-import type { BatchArgs, OnProgress, RecentMistake, TokenUsage } from '$lib/llm';
+import type { BatchArgs, OnProgress, TokenUsage } from '$lib/llm';
 import {
 	Grade,
-	accuracyFromHistory,
 	gradeFromResult,
 	isDue,
 	newCardState,
 	reviewCard,
-	selectSessionItems,
 	type FsrsCardState
 } from '$lib/srs';
+import { RESERVE_GAP, isPlayable, isRested, knownItemIds } from './pool';
+import { planTopUp } from './topup';
+import type { PlanTopUpOptions } from './topup';
 import { difficultyOf } from '$lib/challenges/difficulty';
-import { termKey } from '$lib/text';
 import type { Challenge, ChallengeResult, KnowledgeItem, Profile, Verdict } from '$lib/types';
 import {
 	bearable,
@@ -70,17 +70,10 @@ export const BATCH_TARGET = 14;
 
 /**
  * How long a challenge rests after being served before it may be planned again.
- *
- * The pool is recycled, but not tightly: re-seeing the exact same sentence a
- * few minutes later trains *the card* — the shape of that one prompt and the
- * answer that goes with it — rather than the word underneath. Three days is
- * long enough that the sentence has to be re-read rather than recognized, and
- * short enough that a modest pool still covers a daily habit.
- *
- * A preference, not a rule: {@link planSession} bends it when a word that owes
- * a review has nothing else to offer.
+ * Lives in `./pool` with the eligibility predicates, since the top-up planner
+ * reads it too; re-exported here where every caller has always found it.
  */
-export const RESERVE_GAP = 3 * 24 * 60 * 60 * 1000;
+export { RESERVE_GAP };
 
 /**
  * Fewer rested challenges than this is reported as `poolLow`, so the start
@@ -109,18 +102,12 @@ export const MATCH_PAIRS_EVERY = 4;
  * `answerGiven` written when the learner presses "Too hard — skip".
  *
  * It is a `wrong` answer in every respect, FSRS `Again` included —
- * "I could not produce it" is exactly what `Again` encodes. The literal string
- * also travels into the next batch's *plan* as a `recentMistakes.gave` value,
- * where `planSlots` reads it as "that format was too demanding for this word"
- * and answers with a recognition slot rather than an easier one.
+ * "I could not produce it" is exactly what `Again` encodes. That grade is the
+ * whole of its effect on what gets written next: the word's strength falls, its
+ * ladder rung falls with it, and the next top-up sizes every challenge about it
+ * to the lower rung. Nothing else carries the skip forward.
  */
 export const SKIP_ANSWER = '(skipped)';
-
-/** How many trouble words are worth carrying into the next batch's plan. */
-export const MAX_RECENT_MISTAKES = 8;
-
-/** How far back {@link generateChallenges} reads the result log for those. */
-export const RECENT_RESULTS_WINDOW = 30;
 
 /* -------------------------------------------------------------------------- */
 /* The component contract                                                      */
@@ -377,42 +364,11 @@ function cardOf(item: KnowledgeItem): FsrsCardState | null {
 	return asCard(item.fsrsCard);
 }
 
-/**
- * True while a pooled challenge is worth playing at all.
- *
- * Absolute, unlike {@link isRested}: not flagged by the learner, and every word
- * it exercises still there. A challenge whose vocabulary was deleted grades
- * nothing and often no longer even makes sense; it is dead weight, not
- * practice. Nothing here is about *timing* — that is the negotiable half, and
- * it lives in its own predicate for exactly that reason.
+/*
+ * `isPlayable`, `isRested` and `knownItemIds` — the two halves of eligibility
+ * and the lookup they share — live in `./pool`, because the top-up planner
+ * (`./topup`) asks exactly the same questions to decide what is *missing*.
  */
-function isPlayable(row: ChallengeRow, known: Set<string>): boolean {
-	if (row.reported) return false;
-	if (row.itemIds.length === 0) return false;
-	return row.itemIds.every((id) => known.has(id));
-}
-
-/**
- * True while a challenge is out of its {@link RESERVE_GAP} — never served, or
- * served long enough ago that the sentence has to be re-read. The preference
- * half of eligibility; see {@link planSession} for when it yields.
- */
-function isRested(row: ChallengeRow, now: number): boolean {
-	return row.lastServedAt === null || now - row.lastServedAt >= RESERVE_GAP;
-}
-
-/**
- * Every word the learner has, as a set of ids.
- *
- * The learner's whole vocabulary participates in every session — a word added
- * yesterday and never reviewed is as eligible as one they have seen ten times,
- * because a session *is* the FSRS review of what they have. So this is not a
- * filter, and the set exists only for the lookup: {@link isPlayable} uses it to
- * check that a pooled challenge's words all still resolve.
- */
-function knownItemIds(items: KnowledgeItem[]): Set<string> {
-	return new Set(items.map((item) => item.id));
-}
 
 /**
  * Ranks two served challenges by how long they have been left alone: least
@@ -470,9 +426,9 @@ interface PlanBoard {
 	 * {@link bearable} is.
 	 *
 	 * The band centre rather than the word's raw strength, because that is the
-	 * number the lesson was written to: `planRefill` sends `difficultyLevelOf`
-	 * and `planSlots` writes each slot at that rung, so the planner asking for
-	 * the same rung's midpoint is asking for what it ordered. Raw strength would
+	 * number the challenge was written to: `planTopUp` writes each want at
+	 * `difficultyLevelOf`'s rung, so the planner asking for the same rung's
+	 * midpoint is asking for what it ordered. Raw strength would
 	 * degenerate at every band ceiling — a word in the upper half of any band is
 	 * nearer that band's hardest row than its own centre, so the longest, oldest
 	 * sentence in the bucket would win over the short fresh one written for it.
@@ -774,93 +730,23 @@ export function planSession(
 }
 
 /* -------------------------------------------------------------------------- */
-/* Batch-request planning (pure)                                               */
+/* Top-up planning (pure)                                                      */
 /* -------------------------------------------------------------------------- */
 
 /** What {@link planRefill} decided, ready to hand to `getBatch`. */
 export interface RefillPlan {
 	/** Exactly the argument object `getBatch` expects. */
 	args: BatchArgs;
-	/** The words the batch will be written about (full objects, for the UI). */
+	/**
+	 * The words the top-up will be written about (full objects, for the UI), in
+	 * the order their wants were planned — most overdue first.
+	 */
 	reviewItems: KnowledgeItem[];
-	/**
-	 * Trailing-week accuracy, `undefined` on day one. It reaches `getBatch` in
-	 * {@link BatchArgs} but never the prompt: `$lib/llm/slots` reads it locally,
-	 * for the lesson's recognition/production mix and its per-slot difficulty.
-	 * Surfaced here for the UI, which shows the learner the figure their next
-	 * lesson is being pitched at.
-	 */
-	recentAccuracy: number | undefined;
 }
 
-/**
- * Turns the answer log back into "you got these wrong lately" hints.
- *
- * A `ChallengeResult` only records *which challenge* was missed, so the words
- * behind it have to be recovered: result → challenge row → `itemIds` → item
- * terms. Anything that no longer resolves (a challenge or item the learner
- * deleted) is skipped silently — a missing hint is not worth an error.
- *
- * `results` are expected newest-first (as {@link recentResults} returns them);
- * only the first mistake per term survives, so the list stays short and recent.
- * Deliberately per *term* and not per card, even though two cards may share a
- * spelling: this is a difficulty hint the prompt reads in prose, not a citation
- * anything resolves, and two entries for 长 would spend tokens saying one thing.
- * Match-pairs rounds are ignored: they are free recognition filler, never
- * evidence that a word is hard.
- *
- * Pure: no clock, no database.
- */
-export function deriveRecentMistakes(
-	results: ChallengeResult[],
-	challenges: Challenge[],
-	items: KnowledgeItem[],
-	limit: number = MAX_RECENT_MISTAKES
-): RecentMistake[] {
-	const challengeById = new Map(challenges.map((challenge) => [challenge.id, challenge]));
-	const termById = new Map(items.map((item) => [item.id, item.term]));
-
-	const out: RecentMistake[] = [];
-	const seen = new Set<string>();
-
-	for (const result of results) {
-		if (out.length >= limit) break;
-		if (result.verdict !== 'wrong') continue;
-
-		const challenge = challengeById.get(result.challengeId);
-		if (!challenge || challenge.type === 'match-pairs') continue;
-
-		const gave = result.answerGiven.trim() || '(no answer)';
-		for (const itemId of challenge.itemIds) {
-			if (out.length >= limit) break;
-			const term = termById.get(itemId)?.trim();
-			if (!term) continue;
-			const key = termKey(term);
-			if (seen.has(key)) continue;
-			seen.add(key);
-			out.push({ term, gave });
-		}
-	}
-
-	return out;
-}
-
-export interface PlanRefillOptions {
-	/** Cap on words pulled into one batch. Defaults to the SRS default (12). */
-	maxItems?: number;
-	/** Challenges requested. Defaults to {@link BATCH_TARGET}. */
-	count?: number;
+export interface PlanRefillOptions extends PlanTopUpOptions {
 	/**
-	 * Ready-made "you got these wrong lately" hints. Takes precedence over
-	 * {@link recentResults}/{@link recentChallenges}, which are the usual input.
-	 */
-	recentMistakes?: RecentMistake[];
-	/** Answer log, newest first; fed to {@link deriveRecentMistakes}. */
-	recentResults?: ChallengeResult[];
-	/** The challenge rows those results point at, in any order. */
-	recentChallenges?: Challenge[];
-	/**
-	 * Free-form scenario for this lesson, e.g. `'ordering in a restaurant'`.
+	 * Free-form scenario for this top-up, e.g. `'ordering in a restaurant'`.
 	 * Blank/whitespace-only is treated the same as absent — the key is only
 	 * added to {@link BatchArgs} when it carries real content.
 	 */
@@ -868,37 +754,38 @@ export interface PlanRefillOptions {
 }
 
 /**
- * Turns the learner's whole item collection into one batch request.
+ * Turns the pool and the learner's collection into one batch request.
  *
- * A batch is written *about* vocabulary the learner already has and introduces
- * none of its own: new words arrive through the assistant and conversation
- * mode. {@link selectSessionItems} therefore decides the whole subject matter —
- * due work first, review-ahead behind it — and a learner with no words at all
- * has no lesson to generate.
+ * The brief is {@link planTopUp}'s: a want for every kind an upcoming word is
+ * short of, and nothing for a word already covered. A batch is written *about*
+ * vocabulary the learner already has and introduces none of its own — new words
+ * arrive through the assistant and conversation mode — so a learner with no
+ * words has no wants, and one whose upcoming words are all covered has none
+ * either. Both come back as an empty `wants`, and {@link generateChallenges}
+ * says which before spending anything.
  *
  * Pure: no clock, no database, no network. `now` is passed in so the SRS
  * decisions are reproducible in tests.
  */
 export function planRefill(
+	pool: readonly ChallengeRow[],
 	items: KnowledgeItem[],
 	profile: Profile,
 	now: number,
 	opts: PlanRefillOptions = {}
 ): RefillPlan {
-	// Not a pacing input any more, and it no longer reaches the prompt either:
-	// `planSlots` reads it locally to size the production share and to shift every
-	// slot's difficulty. See `accuracyFromHistory` and `$lib/llm/slots`.
-	const recentAccuracy = accuracyFromHistory(items, { now });
-	const { reviewItems } = selectSessionItems(items, {
-		now,
-		...(opts.maxItems === undefined ? {} : { maxItems: opts.maxItems })
+	const wants = planTopUp(pool, items, now, {
+		...(opts.maxItems === undefined ? {} : { maxItems: opts.maxItems }),
+		...(opts.rng === undefined ? {} : { rng: opts.rng })
 	});
-
 	const topic = opts.topic?.trim();
 
-	const recentMistakes =
-		opts.recentMistakes ??
-		deriveRecentMistakes(opts.recentResults ?? [], opts.recentChallenges ?? [], items);
+	const byId = itemsById(items);
+	const reviewItems: KnowledgeItem[] = [];
+	for (const want of wants) {
+		const item = byId.get(want.item.id);
+		if (item && !reviewItems.includes(item)) reviewItems.push(item);
+	}
 
 	const args: BatchArgs = {
 		profile: {
@@ -911,19 +798,8 @@ export function planRefill(
 			// the prompt builder does the length capping.
 			...(profile.about?.trim() ? { about: profile.about.trim() } : {})
 		},
-		// `level` is the generation-side half of strength-gated progression
-		// (`./progression`): the planner shapes what is *served* out of the pool,
-		// this shapes what the model writes into it and how hard. Both read the
-		// same floors, so a batch is not full of production challenges the planner
-		// will then decline to serve for weeks.
-		reviewItems: reviewItems.map((item) => ({
-			id: item.id,
-			term: item.term,
-			meaning: item.meaning,
-			level: difficultyLevelOf(item, now)
-		})),
-		count: opts.count ?? BATCH_TARGET,
-		// The whole vocabulary, not just the slice the batch is aimed at: it is
+		wants,
+		// The whole vocabulary, not just the words the wants are about: it is
 		// what the model may build sentences out of, so a challenge about a due
 		// word can be a real sentence made of words the learner can already read
 		// rather than one padded with strangers. The ids ride along for the
@@ -940,20 +816,10 @@ export function planRefill(
 					}))
 				}
 			: {}),
-		// Two difficulty dials, both of them purely local: `planSlots` reads
-		// `recentAccuracy` to shift every slot a rung and move the production mix,
-		// and `recentMistakes` to give a just-missed word an extra go in a format
-		// it has not had and to write every slot about it a rung easier. Neither
-		// reaches the model — what it is told is the size that rung works out to
-		// for the type it is writing. Omitted when there is nothing to say.
-		...(recentAccuracy === undefined
-			? {}
-			: { recentAccuracy: Math.round(recentAccuracy * 100) / 100 }),
-		...(recentMistakes.length ? { recentMistakes } : {}),
 		...(topic ? { topic } : {})
 	};
 
-	return { args, reviewItems, recentAccuracy };
+	return { args, reviewItems };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -964,6 +830,13 @@ export function planRefill(
 export interface GenerateInfo {
 	addedChallenges: number;
 	usage: TokenUsage;
+	/**
+	 * Requests that came back with nothing usable even after their retry. Not an
+	 * error: their wants are still wanting, and the next top-up asks for them
+	 * again. Surfaced so the learner can be told the pool grew by less than it
+	 * might have.
+	 */
+	failedRequests: number;
 	/** True when the offline mock produced this batch (no key configured). */
 	mock: boolean;
 	/** The vocabulary the batch was written about — unchanged by the run. */
@@ -975,7 +848,6 @@ export interface GenerateOptions {
 	now?: number;
 	signal?: AbortSignal;
 	maxItems?: number;
-	count?: number;
 	/** Forwarded to {@link planRefill}; see {@link PlanRefillOptions.topic}. */
 	topic?: string;
 	/**
@@ -987,15 +859,19 @@ export interface GenerateOptions {
 }
 
 /**
- * Writes one new lesson into the pool. The learner asked for this.
+ * Tops the pool up. The learner asked for this.
  *
- * There is no threshold and no "if needed": generating is a deliberate button
- * press, it is the only thing in the app that spends tokens on content, and the
- * pool it adds to is never drained by playing. The caller runs this in the
- * background — a session can be played from existing material while it is in
- * flight, and the batch simply shows up in the pool for next time.
+ * There is no threshold and no "if needed" about *when*: generating is a
+ * deliberate button press, it is the only thing in the app that spends tokens
+ * on content, and the pool it adds to is never drained by playing. What gets
+ * written, though, is exactly what the pool is missing ({@link planTopUp}) —
+ * so a second press straight after the first has nothing to ask for, and says
+ * so instead of paying for a lesson the pool already holds. The caller runs
+ * this in the background — a session can be played from existing material while
+ * it is in flight, and the new challenges simply show up in the pool for next
+ * time.
  *
- * **It writes challenges and nothing else.** A lesson is drilling practice for
+ * **It writes challenges and nothing else.** A top-up is drilling practice for
  * vocabulary the learner already has, so nothing here touches the item table:
  * new words are added deliberately, by the learner and the assistant, through
  * `add_words` (`$lib/assistant`, `$lib/conversation`). That is why the batch
@@ -1005,7 +881,8 @@ export interface GenerateOptions {
  * an item into the database behind it.
  *
  * `LlmError` is deliberately **not** caught: its `message` is already written
- * for a human, and the learn screen renders it inline with a retry button.
+ * for a human, and the learn screen renders it inline with a retry button. The
+ * two "nothing to write" cases throw a plain `Error` with the same contract.
  */
 export async function generateChallenges(
 	profile: Profile,
@@ -1015,30 +892,24 @@ export async function generateChallenges(
 	const progress = opts.onProgress;
 	const mock = isMockMode();
 
-	progress?.({ id: 'select-items', label: 'Selecting review words' });
+	progress?.({ id: 'select-items', label: 'Checking what the pool is missing' });
 
-	// The trouble list for the prompt: recent misses, resolved back to the words
-	// they exercised. Answered rows stay in the pool, so this is a plain lookup —
-	// bounded by RECENT_RESULTS_WINDOW so it stays one cheap read. It does not
-	// depend on the items, so the two reads go together. `withRecentGrades` is
-	// needed here (unlike `startSession`'s read) because `planRefill` below folds
-	// them into the prompt's accuracy dial via `accuracyFromHistory`.
-	const [items, results] = await Promise.all([
-		getAllItems({ withRecentGrades: true }),
-		recentResults(RECENT_RESULTS_WINDOW)
-	]);
-	const missed = results.filter((result) => result.verdict === 'wrong');
-	const recentChallenges = await getChallengesByIds([
-		...new Set(missed.map((result) => result.challengeId))
-	]);
+	const [pool, items] = await Promise.all([getPool(), getAllItems()]);
 
-	const plan = planRefill(items, profile, now, {
-		recentResults: missed,
-		recentChallenges,
+	const plan = planRefill(pool, items, profile, now, {
 		...(opts.maxItems === undefined ? {} : { maxItems: opts.maxItems }),
-		...(opts.count === undefined ? {} : { count: opts.count }),
 		...(opts.topic === undefined ? {} : { topic: opts.topic })
 	});
+
+	// Said here, before any request step is announced, so an empty brief is
+	// never reported as a model that returned nothing.
+	if (plan.args.wants.length === 0) {
+		throw new Error(
+			items.length === 0
+				? 'There are no words to write challenges about yet.'
+				: 'Every word coming up already has fresh challenges waiting. Play a session, then generate again.'
+		);
+	}
 
 	const batch = await getBatch(plan.args, {
 		...(opts.signal ? { signal: opts.signal } : {}),
@@ -1051,6 +922,7 @@ export async function generateChallenges(
 	return {
 		addedChallenges: batch.challenges.length,
 		usage: batch.usage,
+		failedRequests: batch.failedRequests,
 		mock,
 		items,
 		plan

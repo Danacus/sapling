@@ -21,19 +21,20 @@ import type { BatchArgs } from '../generate';
 import { buildEscalationPrompt } from '../escalation';
 import { mockBatchCompletion } from '../mock';
 import { generatedChallengeSchema } from '../schemas';
-import { PLANNABLE_KINDS } from '../slots';
-import type { SlotDifficulty } from '../slots';
+import { PLANNABLE_KINDS, bareKind, kindOf } from '../requests';
+import { demandOf } from '$lib/challenges/demand';
 import { difficultyOf } from '$lib/challenges/difficulty';
 import { FIXTURE_SCENARIOS, WIRE_TYPE_DEFS, byType, clozeDef, wordOrderDef } from './index';
 import type {
 	AnyWireTypeDef,
 	ChallengeParams,
+	DifficultyRung,
 	ResolveContext,
 	SizingKind,
 	WireTypeDef
 } from './index';
 
-const RUNGS: SlotDifficulty[] = [1, 2, 3, 4, 5];
+const RUNGS: DifficultyRung[] = [1, 2, 3, 4, 5];
 
 /**
  * A def's parameters at one rung, read through the `WireTypeDef` contract.
@@ -45,7 +46,7 @@ const RUNGS: SlotDifficulty[] = [1, 2, 3, 4, 5];
  */
 const paramsOf = (
 	def: AnyWireTypeDef,
-	rung: SlotDifficulty,
+	rung: DifficultyRung,
 	kind: SizingKind = {}
 ): ChallengeParams => (def.params as WireTypeDef['params'])(rung, kind);
 
@@ -103,13 +104,53 @@ describe('WIRE_TYPE_DEFS', () => {
 		expect(byType.size).toBe(WIRE_TYPE_DEFS.length);
 	});
 
-	it('is plannable: every registered type is one the slot planner can ask for', () => {
-		// Type choice is local now (`../slots`), so being in the registry is no
-		// longer enough to be generated — a type the planner never names is a type
-		// the model is told about, shown an example of, and never asked for.
+	it('is plannable: every registered type is one the top-up planner can ask for', () => {
+		// Type choice is the session's (`$lib/session/topup`, over `../requests`'
+		// `PLANNABLE_KINDS`), so being in the registry is not enough to be
+		// generated — a type no kind names is a type the model could be told
+		// about, shown an example of, and never asked for.
 		expect([...new Set(PLANNABLE_KINDS.map((kind) => kind.type))].sort()).toEqual(
 			WIRE_TYPE_DEFS.map((def) => def.type).sort()
 		);
+	});
+
+	it('states, for every plannable kind, the demand tier its resolved challenge reports', () => {
+		// The session gates a want on this number — a level-1 word may only be
+		// asked for demand-0 kinds — and reads a pooled row back through `kindOf`
+		// to see what it already has. Both are checked against every def's own
+		// fixtures, resolved for real: a kind whose stated tier drifted from its
+		// resolver would have the session ask for challenges it then declines to
+		// serve, or count coverage it does not have.
+		for (const kind of PLANNABLE_KINDS) {
+			const def = byType.get(kind.type);
+			if (!def) throw new Error(`no def for ${kind.type}`);
+			const resolve = def.resolve as (g: unknown, c: ResolveContext) => Challenge | null;
+			let seen = 0;
+			for (const scenario of FIXTURE_SCENARIOS) {
+				for (const fixture of def.fixtures[scenario]) {
+					const generated = fixture.challenge as { distractorWords?: unknown[] | null };
+					const banked = (generated.distractorWords?.length ?? 0) > 0;
+					if (kind.bank !== undefined && banked !== kind.bank) continue;
+					const resolved = resolve(fixture.challenge, {
+						base: { id: 'c1', itemIds: ['i1'] },
+						rng: () => 0.5
+					});
+					if (!resolved) throw new Error(`${def.type} fixture (${scenario}) did not resolve`);
+					seen++;
+					expect(kindOf(resolved), `${def.type} read back`).toEqual(bareKind(kind));
+					expect(demandOf(resolved), `${def.type} (bank: ${kind.bank}) demand`).toBe(kind.demand);
+				}
+			}
+			expect(seen, `no fixture exercises ${def.type} (bank: ${kind.bank})`).toBeGreaterThan(0);
+		}
+	});
+
+	it('reads a match-pairs round back as no kind at all', () => {
+		// Built locally, never generated: it is not coverage of anything a top-up
+		// could ask for.
+		expect(
+			kindOf({ id: 'm', type: 'match-pairs', direction: 'toNative', itemIds: ['i1'], pairs: [] })
+		).toBeUndefined();
 	});
 });
 
@@ -158,7 +199,7 @@ describe('difficulty parameters', () => {
 });
 
 describe('the rungs, as the stored side reads them back', () => {
-	// The loop this closes: `../slots` plans a rung, a def turns it into counts,
+	// The loop this closes: the session plans a rung, a def turns it into counts,
 	// the model writes to those counts, and `$lib/challenges/difficulty` reads
 	// the result back off the stored row. If the two ladders disagreed, a lesson
 	// written for a strong word would be filed as easy material and the session
@@ -177,7 +218,7 @@ describe('the rungs, as the stored side reads them back', () => {
 	const wordsOf = (count: number) =>
 		Array.from({ length: count }, (_, i) => ({ text: `w${i}`, reading: null }));
 
-	const clozeAt = (rung: SlotDifficulty) => {
+	const clozeAt = (rung: DifficultyRung) => {
 		const params = paramsOf(clozeDef, rung, { bank: true });
 		return resolveAs(
 			clozeDef,
@@ -200,7 +241,7 @@ describe('the rungs, as the stored side reads them back', () => {
 		);
 	};
 
-	const wordOrderAt = (rung: SlotDifficulty) => {
+	const wordOrderAt = (rung: DifficultyRung) => {
 		const params = paramsOf(wordOrderDef, rung);
 		return resolveAs(
 			wordOrderDef,
@@ -314,9 +355,17 @@ describe('mock coverage', () => {
 		profile: { nativeLanguage: 'English', targetLanguage, level: 'beginner', interests: [] },
 		// Two words for the scenario's own pair to be bound onto — with none, the
 		// canned half has nothing to cite and resolves away. See `mock.ts`.
-		reviewItems: [
-			{ id: 'i1', term: 'el perro', meaning: 'the dog' },
-			{ id: 'i2', term: 'la canción', meaning: 'the song' }
+		wants: [
+			{
+				item: { id: 'i1', term: 'el perro', meaning: 'the dog' },
+				kind: { type: 'recognize-mc' },
+				difficulty: 1
+			},
+			{
+				item: { id: 'i2', term: 'la canción', meaning: 'the song' },
+				kind: { type: 'recognize-mc' },
+				difficulty: 1
+			}
 		]
 	});
 

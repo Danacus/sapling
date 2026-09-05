@@ -57,22 +57,28 @@ differs.
    error should be). Only rules that name no type at all belong in
    `generate.ts`'s shared preamble.
 2. Register it in the ordered `WIRE_TYPE_DEFS` in `challenge-types/index.ts`.
-3. **Add a `SlotKind` for it in `src/lib/llm/slots.ts`** — to
-   `RECOGNITION_KINDS` if the answer is visible on screen, to
-   `YOUNG_PRODUCTION_KINDS` / `SOLID_PRODUCTION_KINDS` if the learner has to
-   produce it, choosing the maturity at which it becomes fair to ask. Match the
-   tier to the *stored* `demand` its resolved challenge reports: a type planned
-   as recognition but stored as demand 1 is written for words the session
-   planner will then refuse to serve it to.
+3. **Add a `PlannableKind` for it to `PLANNABLE_KINDS` in
+   `src/lib/llm/requests.ts`**, with the `demand` tier its *stored* challenge
+   reports (`$lib/challenges`' `demand`: 0 recognition, 1 constrained
+   production, 2 free production). The session's top-up planner
+   (`$lib/session/topup`) only asks a word for kinds at or below the tier its
+   rung can bear, so a kind whose stated tier is lower than its stored one is
+   written for words the session planner will then refuse to serve it to, and
+   one stated higher is never written for words that could use it. A type with
+   a presentation choice that changes its tier (cloze's word bank) is listed
+   once per choice.
    *Forget it:* the type is described to the model, exampled, and **never asked
-   for** — the app chooses types now, not the model. `registry.test.ts` fails on
-   the `PLANNABLE_KINDS` parity check.
+   for** — the session chooses kinds, not the model. `registry.test.ts` fails on
+   the `PLANNABLE_KINDS` parity check. *Get the tier wrong:* `registry.test.ts`
+   resolves every fixture of the type and compares `demandOf` with the stated
+   `demand` — and checks `kindOf` reads the resolved challenge back as that kind.
 
 Import direction is strict: `primitives.ts` ← def modules ← `index.ts` ←
-`schemas.ts` ← `generate.ts`, with `slots.ts` importing only types back from
-`generate.ts`. **A def module must never import `schemas.ts`**, and never
-`slots.ts` either — a def sizes itself by `DifficultyRung` and `SizingKind`,
-which `def.ts` declares for exactly that reason.
+`schemas.ts` ← `generate.ts`, with `requests.ts` importing the registry and
+`generate.ts` importing `requests.ts`. **A def module must never import
+`schemas.ts`**, and never `requests.ts` either — a def sizes itself by
+`DifficultyRung` and `SizingKind`, which `def.ts` declares for exactly that
+reason.
 
 Registry order *is* union order and escalation-gloss order — but no longer
 prompt order, since each type composes its own prompt. Prefer appending.

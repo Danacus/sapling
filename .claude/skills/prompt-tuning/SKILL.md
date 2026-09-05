@@ -30,7 +30,7 @@ is always a question of *which* of the three places below.
 | Retry fragment | its `correctiveSpec` | one type |
 | Escalation gloss | its `escalationSpec`, composed by `escalation.ts` | one type |
 | The shared preamble | hand-written in `generate.ts` | rules that name **no** type |
-| Which type gets written, and how hard | **not prose at all** — `llm/slots.ts` + each def's `params` | see below |
+| Which kind gets written, and how hard | **not prose at all** — `session/topup.ts` + each def's `params` | see below |
 
 If a rule names a type, it belongs in that def — never in the preamble. A rule
 two types need is written out in **both** (segmentation is spelled out in full in
@@ -42,33 +42,37 @@ plausible wrong options, answerability, voice/anti-blandness, `explanation`, and
 "known is what you build with" — plus the `instruction` heading rule, which is
 spliced in automatically for a type whose schema has that field.
 
-## Type choice — and difficulty — is code, not prompt
+## Kind choice — and difficulty — is code, not prompt
 
-A lesson's shape is planned locally by `planSlots` (`src/lib/llm/slots.ts`).
-**Do not write a prompt rule about which type to use, or add a new accuracy
-threshold** — either will be ignored at best and fight the plan at worst.
-Everything below belongs in `slots.ts`, with a unit test in `slots.test.ts`:
+What gets written is decided by the session's top-up planner (`planTopUp` in
+`src/lib/session/topup.ts`) from what the pool is missing; the LLM layer plans
+nothing. **Do not write a prompt rule about which type to use, or add an
+accuracy threshold anywhere** — the first will be ignored at best and fight the
+brief at worst, and the second is a mechanism the design deliberately has none
+of (FSRS already lowers a missed word's strength, which lowers its rung, which
+shortens what is written about it). Everything below belongs in `topup.ts`,
+with a unit test in `topup.test.ts`:
 
-- ladder floors (what a level-1 / level-2-3 / level-4-5 word may be asked — see
-  `$lib/session/progression`'s `difficultyLevelOf`)
-- the recognition-vs-production mix, and how `recentAccuracy` moves it
-  (`productionShare`, continuous)
-- each slot's own rung: the item's level, shifted by `recentAccuracy` and pulled
-  down one for a `recentMistakes` word
-- whether a cloze gets a word bank (`bank: true|false` on the slot)
-- the extra go a `recentMistakes` term earns, and `'(skipped)'` → recognition
-- how many distinct kinds a lesson opens (`MAX_LESSON_KINDS`) — a kind is a
-  request, so this is the lesson's round-trip count
+- which kinds a rung may be asked (`demandForLevel` in
+  `$lib/session/progression`, against each kind's `demand` in
+  `llm/requests.ts`' `PLANNABLE_KINDS`)
+- how many fresh challenges a word should have waiting (`WANT_PER_WORD`), and in
+  which groups (a recognition kind and a production kind, or two recognition
+  kinds before production is bearable)
+- what counts as coverage (rested, playable, bearable — `session/pool.ts`)
+- which kind wins among the missing ones (never-had first, then `rng`)
+- the top-up cap (`MAX_TOPUP_WANTS`)
 
-**Difficulty never reaches the model as a number on a scale.** The rung is local;
-what travels is each def's `params(rung, kind)` — a sentence length, a bank size,
-a tile count, on the item itself. To make lessons easier or harder for a type,
-edit that def's `params` ladder (and keep it monotone; `registry.test.ts` checks,
-and also checks a rung-1 challenge scores a lower stored `difficultyOf` than a
-rung-5 one). Do **not** reintroduce a "difficulty 1-5" line: a number the model
-has to interpret is exactly what the counts replaced. What stays prose in a
-`rulesSpec` is the judgement no count expresses — distractor closeness, how
-subtle a planted error should be — stated once, with no rung attached.
+**Difficulty never reaches the model as a number on a scale.** The rung is the
+word's own `difficultyLevelOf`, on the want; what travels is each def's
+`params(rung, kind)` — a sentence length, a bank size, a tile count, on the item
+itself. To make challenges easier or harder for a type, edit that def's `params`
+ladder (and keep it monotone; `registry.test.ts` checks, and also checks a
+rung-1 challenge scores a lower stored `difficultyOf` than a rung-5 one). Do
+**not** reintroduce a "difficulty 1-5" line: a number the model has to interpret
+is exactly what the counts replaced. What stays prose in a `rulesSpec` is the
+judgement no count expresses — distractor closeness, how subtle a planted error
+should be — stated once, with no rung attached.
 
 ## Constraints on a type's prompt
 
@@ -76,10 +80,10 @@ subtle a planted error should be — stated once, with no rung attached.
   string is prompt-cache friendly — and a lesson's requests of one kind all quote
   it. Never interpolate per-session values into it; per-user signals travel in
   the user payload.
-- `recentAccuracy` and `recentMistakes` never travel at all now. Both are folded
-  into the plan (a missed word gets an extra slot in a fresh format and a rung
-  off), and "write this one easier" on top of a length that already says how long
-  to write it was two instructions for one decision.
+- Nothing about how the learner has been doing travels, and nothing local reads
+  it either: a missed word's strength has already fallen, so its rung and its
+  sizes fell with it. "Write this one easier" on top of a length that already
+  says how long to write it was two instructions for one decision.
 - Load-bearing blocks: voice/anti-blandness, the `TargetText` reading rule,
   answerability, the `items` rule, and the size-is-a-target rule. Deleting one to
   save tokens regresses a whole class of output — say which block you are
@@ -118,7 +122,7 @@ common false negative here.
 ## Completion criteria
 
 - [ ] The edit is in the narrowest place that covers it (def `promptSpec`/`paramsSpec`/`rulesSpec` over the shared preamble)
-- [ ] Nothing about *which type to write*, or a new accuracy threshold, was added to the prompt — both are `slots.ts`
+- [ ] Nothing about *which type to write* was added to the prompt (that is `session/topup.ts`), and no accuracy threshold was added anywhere
 - [ ] No difficulty scale was reintroduced: difficulty is each def's `params`, in counts
 - [ ] Every type's prompt is still a static string, and names no other type
 - [ ] `pnpm test` passes (fixtures + registry parity)

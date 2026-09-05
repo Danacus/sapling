@@ -198,12 +198,14 @@ Generating one challenge at a time would be both slow and expensive. The design
 instead concentrates spending into rare, batched calls and does everything else
 locally.
 
-- **Batched generation.** One `getBatch` call produces a whole lesson — up to
-  20 challenges, written about vocabulary you already have. Underneath it is a
-  handful of small requests run concurrently, **one per exercise type**: the app
-  decides locally *which* challenges the lesson is made of (which word, which
-  type, how hard) and then asks the model to write half a dozen of one type at a
-  time. Each request's system prompt explains that one type and nothing else,
+- **Batched generation.** One `getBatch` call tops the pool up with exactly
+  what it is missing — a fresh challenge of each kind the words coming up can
+  bear and do not yet have, written about vocabulary you already have.
+  Underneath it is a handful of small requests run concurrently, **one per
+  exercise type**: the app decides locally *what* to write (which word, which
+  type, how hard) by reading its own pool, and then asks the model to write half
+  a dozen of one type at a time. Each request's system prompt explains that one
+  type and nothing else,
   its JSON schema admits that one type and nothing else, and its payload is a
   list of words each carrying the concrete sizes to write it at — how many words
   the sentence should have, how many tiles to cut it into, how big the word bank

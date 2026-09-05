@@ -63,19 +63,19 @@ export interface ChallengeBase {
 }
 
 /**
- * The five-rung ladder a lesson is planned on — the same one `../slots` writes
- * onto every planned challenge and `$lib/session/progression` gates serving on.
+ * The five-rung ladder a want is written at — the same one `../requests`' `Want`
+ * carries and `$lib/session/progression` gates serving on.
  *
- * Declared here rather than imported from `../slots` so the arrow keeps pointing
- * one way: `../slots` names wire types, so a def that named a slot type would
- * close the loop. `../slots` aliases this back as `SlotDifficulty`.
+ * Declared here rather than imported from `../requests` so the arrow keeps
+ * pointing one way: `../requests` names wire types, so a def that named a
+ * request type would close the loop.
  */
 export type DifficultyRung = 1 | 2 | 3 | 4 | 5;
 
 /**
- * The one planning fact besides the rung a def may size itself by: whether a
- * cloze was planned with a word bank. Structurally a `SlotKind` minus its
- * `type`, which the def already knows about itself.
+ * The one fact besides the rung a def may size itself by: whether a cloze was
+ * asked for with a word bank. Structurally a `ChallengeKind` minus its `type`,
+ * which the def already knows about itself.
  */
 export interface SizingKind {
 	readonly bank?: boolean;

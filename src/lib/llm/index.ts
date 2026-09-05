@@ -75,11 +75,8 @@ export type {
 
 export {
 	MAX_ABOUT_CHARS,
-	MAX_BATCH_CHALLENGES,
-	MIN_BATCH_CHALLENGES,
 	buildRequestPrompt,
 	correctiveInstructionFor,
-	defaultChallengeCount,
 	generateBatch,
 	makeMatchPairsChallenge,
 	parseBatch,
@@ -98,22 +95,20 @@ export type {
 	ParsedBatch,
 	ProgressStep,
 	ProgressStepId,
-	RecentMistake,
 	ResolveOptions,
-	ResolvedBatch,
-	ReviewItemRef
+	ResolvedBatch
 } from './generate';
 
 export {
-	MAX_LESSON_KINDS,
+	PLANNABLE_KINDS,
 	REQUEST_CONCURRENCY,
 	REQUEST_ITEMS,
-	allowedKinds,
+	bareKind,
 	groupIntoRequests,
-	planSlots,
-	productionShare
-} from './slots';
-export type { RequestItem, Slot, SlotKind, TypeRequest } from './slots';
+	kindKey,
+	kindOf
+} from './requests';
+export type { ChallengeKind, PlannableKind, TypeRequest, Want, WantItem } from './requests';
 
 export {
 	ROMANIZE_SCHEMA_NAME,

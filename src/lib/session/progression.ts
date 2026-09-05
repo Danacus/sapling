@@ -233,9 +233,9 @@ export function levelForStrength(strength: number): DifficultyLevel {
  * every band ceiling: a word sitting at the top of level 1 is further from
  * every tier-0 row than the tier's own hardest one, so it would always be
  * handed the longest sentence in the bucket — and in the upper half of *every*
- * band the same thing happens. The band centre is the number `planSlots` wrote
- * the lesson to, so matching against it is the planner asking for exactly what
- * generation was asked for.
+ * band the same thing happens. The band centre is the number `planTopUp` wrote
+ * the challenge to, so matching against it is the planner asking for exactly
+ * what generation was asked for.
  */
 export function levelBandCentre(level: DifficultyLevel): number {
 	const [start, end] = LEVEL_BANDS[level];
@@ -275,4 +275,15 @@ export function difficultyLevelOf(item: KnowledgeItem, now: number): DifficultyL
 export function maturityOf(item: KnowledgeItem, now: number): Maturity {
 	const level = difficultyLevelOf(item, now);
 	return level >= 4 ? 'solid' : level >= 2 ? 'young' : 'new';
+}
+
+/**
+ * The demand tier a word at this ladder level can bear — {@link maturityOf}
+ * read as a tier: level 1 bears recognition only, 2–3 constrained production,
+ * 4–5 free production. The same floors as {@link bearableDemand}, which is what
+ * lets the top-up planner (`./topup`) ask for kinds the session will then
+ * actually serve.
+ */
+export function demandForLevel(level: DifficultyLevel): Demand {
+	return level >= 4 ? 2 : level >= 2 ? 1 : 0;
 }

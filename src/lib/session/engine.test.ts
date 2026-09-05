@@ -16,12 +16,11 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ChallengeRow } from '$lib/db';
-import { getBatch, isMockMode } from '$lib/llm';
+import { getBatch, isMockMode, kindKey } from '$lib/llm';
 import type { ProgressStep } from '$lib/llm';
 import { CardState, gradeFromResult, newCardState, reviewCard, Grade } from '$lib/srs';
 import type {
 	Challenge,
-	ChallengeResult,
 	KnowledgeItem,
 	MultipleChoiceChallenge,
 	Profile,
@@ -31,11 +30,8 @@ import {
 	BATCH_TARGET,
 	LISTENING_SHARE,
 	MATCH_PAIRS_EVERY,
-	MAX_RECENT_MISTAKES,
 	RESERVE_GAP,
 	SESSION_LENGTH,
-	SKIP_ANSWER,
-	deriveRecentMistakes,
 	interleaveMatchRounds,
 	isListeningChallenge,
 	planRefill,
@@ -1110,11 +1106,14 @@ describe('planSession', () => {
 /* -------------------------------------------------------------------------- */
 
 describe('planRefill', () => {
-	it('produces getBatch args from an empty collection', () => {
-		const plan = planRefill([], profile(), NOW);
+	/** A second demand-0 kind beside {@link recognition}: `produce-mc`. */
+	const production = (id: string, itemIds: string[]): ChallengeRow =>
+		recognition(id, itemIds, { direction: 'toTarget' });
+
+	it('produces getBatch args from an empty collection: nothing to want', () => {
+		const plan = planRefill([], [], profile(), NOW);
 
 		expect(plan.reviewItems).toEqual([]);
-		expect(plan.recentAccuracy).toBeUndefined();
 		expect(plan.args).toEqual({
 			profile: {
 				nativeLanguage: 'English',
@@ -1122,21 +1121,21 @@ describe('planRefill', () => {
 				level: 'beginner',
 				interests: ['cooking', 'football']
 			},
-			reviewItems: [],
-			count: BATCH_TARGET
+			wants: []
 		});
 	});
 
 	it('never asks for new vocabulary, however well the learner is doing', () => {
 		// The batch args are the whole request; nothing in them can introduce a
 		// word, so there is no slot count to get wrong.
-		const plan = planRefill([], profile(), NOW);
+		const plan = planRefill([], [item('a', -DAY)], profile(), NOW);
 		expect(plan.args).not.toHaveProperty('newItemSlots');
+		expect(plan.args).not.toHaveProperty('count');
 		expect(plan).not.toHaveProperty('newItemSlots');
 	});
 
 	it('carries only the profile fields the prompt needs', () => {
-		const plan = planRefill([], profile(), NOW);
+		const plan = planRefill([], [], profile(), NOW);
 		expect(Object.keys(plan.args.profile).sort()).toEqual([
 			'interests',
 			'level',
@@ -1149,19 +1148,21 @@ describe('planRefill', () => {
 
 	it("threads the learner's self-description through, and omits it when blank", () => {
 		const about = 'Nurse in Valencia, two kids, I climb on weekends.';
-		expect(planRefill([], profile({ about }), NOW).args.profile.about).toBe(about);
+		expect(planRefill([], [], profile({ about }), NOW).args.profile.about).toBe(about);
 
-		expect(planRefill([], profile(), NOW).args.profile).not.toHaveProperty('about');
-		expect(planRefill([], profile({ about: '  ' }), NOW).args.profile).not.toHaveProperty('about');
+		expect(planRefill([], [], profile(), NOW).args.profile).not.toHaveProperty('about');
+		expect(planRefill([], [], profile({ about: '  ' }), NOW).args.profile).not.toHaveProperty(
+			'about'
+		);
 	});
 
 	it('sends the whole vocabulary as knownItems, due or not', () => {
-		// Only the due slice travels as reviewItems, so without this list the
-		// model re-proposes words the learner already has and the dedupe silently
-		// eats the batch's new-word slots. Ids ride along for the resolver's
-		// term index; buildBatchPrompt sends only the terms.
+		// Only the upcoming words are wanted, so without this list the model
+		// builds sentences out of strangers rather than words the learner can
+		// already read. Ids ride along for the resolver's term index;
+		// `buildRequestPrompt` sends only the terms.
 		const items = [item('a', -1 * DAY), item('b', -5 * DAY), item('c', +2 * DAY)];
-		const plan = planRefill(items, profile(), NOW);
+		const plan = planRefill([], items, profile(), NOW);
 
 		expect(plan.args.knownItems).toEqual([
 			{ id: 'a', term: 'term-a' },
@@ -1174,7 +1175,7 @@ describe('planRefill', () => {
 		// `knownTermLabels` needs it to tell two same-spelled cards apart in the
 		// prompt; a word without one costs nothing for the field.
 		const items = [{ ...item('a', -1 * DAY), romanization: 'cháng' }, item('b', -1 * DAY)];
-		const plan = planRefill(items, profile(), NOW);
+		const plan = planRefill([], items, profile(), NOW);
 
 		expect(plan.args.knownItems).toEqual([
 			{ id: 'a', term: 'term-a', romanization: 'cháng' },
@@ -1182,23 +1183,24 @@ describe('planRefill', () => {
 		]);
 	});
 
-	it('sends words as {id, term, meaning, level}, due first and then review-ahead', () => {
+	it('wants two challenges per upcoming word, due first and then review-ahead', () => {
 		const items = [item('a', -1 * DAY), item('b', -5 * DAY), item('c', +2 * DAY)];
-		const plan = planRefill(items, profile(), NOW);
+		const plan = planRefill([], items, profile(), NOW);
 
-		// `level` is the prompt's type-and-difficulty hint (see `./progression`):
-		// these cards are freshly created, so every word is still level 1 and the
-		// batch will be asked for recognition about them. `c` is not due — it rides
-		// along because a lesson has no other source of vocabulary and must not
-		// come back empty for a learner who is caught up.
-		expect(plan.args.reviewItems).toEqual([
-			{ id: 'b', term: 'term-b', meaning: 'meaning-b', level: 1 },
-			{ id: 'a', term: 'term-a', meaning: 'meaning-a', level: 1 },
-			{ id: 'c', term: 'term-c', meaning: 'meaning-c', level: 1 }
-		]);
+		// These cards are freshly created, so every word is still rung 1 and only
+		// recognition kinds are wanted. `c` is not due — it rides along because a
+		// top-up has no other source of vocabulary and must not come back empty
+		// for a learner who is caught up.
+		expect(plan.reviewItems.map((i) => i.id)).toEqual(['b', 'a', 'c']);
+		expect(plan.args.wants.map((w) => w.item.id)).toEqual(['b', 'b', 'a', 'a', 'c', 'c']);
+		for (const want of plan.args.wants) {
+			const id = want.item.id;
+			expect(want.item).toEqual({ id, term: `term-${id}`, meaning: `meaning-${id}` });
+			expect(want.difficulty).toBe(1);
+		}
 	});
 
-	it('reports a reviewed word at a higher level than a brand-new one', () => {
+	it('writes a reviewed word at a higher rung than a brand-new one', () => {
 		const fresh = item('a', -DAY);
 		const card = reviewCard(newCardState(NOW - 5 * DAY), Grade.Good, NOW - 5 * DAY);
 		const reviewed: KnowledgeItem = {
@@ -1206,217 +1208,79 @@ describe('planRefill', () => {
 			fsrsCard: { ...card, due: NOW - DAY }
 		};
 
-		const byId = new Map(
-			planRefill([fresh, reviewed], profile(), NOW).args.reviewItems.map((i) => [i.id, i.level])
-		);
-		expect(byId.get('a')).toBe(1);
-		expect(byId.get('b')).toBeGreaterThan(1);
-	});
-
-	it('puts recent accuracy in the batch args for the slot planner', () => {
-		const weak = [
-			item('a', -DAY, [
-				{ at: NOW - DAY, grade: Grade.Again },
-				{ at: NOW - DAY, grade: Grade.Again },
-				{ at: NOW - DAY, grade: Grade.Good }
+		const rungs = new Map(
+			planRefill([], [fresh, reviewed], profile(), NOW).args.wants.map((w) => [
+				w.item.id,
+				w.difficulty
 			])
-		];
-
-		// Accuracy paces nothing here and never reaches the model: it rides in
-		// `BatchArgs` for `$lib/llm/slots`, which reads it locally to size the
-		// production share and shift each slot's difficulty.
-		const plan = planRefill(weak, profile(), NOW);
-		expect(plan.recentAccuracy).toBeCloseTo(1 / 3);
-		expect(plan.args.recentAccuracy).toBe(0.33);
-	});
-
-	it('honours maxItems, count and recentMistakes overrides', () => {
-		const items = [item('a', -3 * DAY), item('b', -2 * DAY), item('c', -DAY)];
-		const plan = planRefill(items, profile(), NOW, {
-			maxItems: 2,
-			count: 6,
-			recentMistakes: [{ term: 'temprano', gave: 'tarde' }]
-		});
-
-		expect(plan.args.reviewItems).toHaveLength(2);
-		expect(plan.args.count).toBe(6);
-		expect(plan.args.recentMistakes).toEqual([{ term: 'temprano', gave: 'tarde' }]);
-	});
-
-	it('omits recentMistakes entirely when there are none', () => {
-		expect(planRefill([], profile(), NOW, { recentMistakes: [] }).args).not.toHaveProperty(
-			'recentMistakes'
 		);
+		expect(rungs.get('a')).toBe(1);
+		expect(rungs.get('b')).toBeGreaterThan(1);
+	});
+
+	it('wants nothing for a word the pool already covers', () => {
+		// Two rested recognition kinds about a new word: it has what a session
+		// would serve it, so the brief is empty and the word is not in it.
+		const pool = [recognition('r1', ['a']), production('r2', ['a'])];
+		const plan = planRefill(pool, [item('a', -DAY)], profile(), NOW);
+
+		expect(plan.args.wants).toEqual([]);
+		expect(plan.reviewItems).toEqual([]);
+	});
+
+	it('asks only for what a word is missing', () => {
+		const pool = [recognition('r1', ['a'])];
+		const plan = planRefill(pool, [item('a', -DAY)], profile(), NOW);
+
+		expect(plan.args.wants).toHaveLength(1);
+		expect(kindKey(plan.args.wants[0].kind)).not.toBe('recognize-mc');
+		expect(plan.reviewItems.map((i) => i.id)).toEqual(['a']);
+	});
+
+	it('honours maxItems', () => {
+		const items = [item('a', -3 * DAY), item('b', -2 * DAY), item('c', -DAY)];
+		const plan = planRefill([], items, profile(), NOW, { maxItems: 2 });
+
+		expect(plan.reviewItems.map((i) => i.id)).toEqual(['a', 'b']);
+		expect(plan.args.wants).toHaveLength(4);
 	});
 
 	it('includes a trimmed topic in the batch args when one is given', () => {
-		const plan = planRefill([], profile(), NOW, { topic: '  ordering in a restaurant  ' });
+		const plan = planRefill([], [], profile(), NOW, { topic: '  ordering in a restaurant  ' });
 		expect(plan.args.topic).toBe('ordering in a restaurant');
 	});
 
 	it('omits topic entirely when absent or blank', () => {
-		expect(planRefill([], profile(), NOW).args).not.toHaveProperty('topic');
-		expect(planRefill([], profile(), NOW, { topic: '   ' }).args).not.toHaveProperty('topic');
-		expect(planRefill([], profile(), NOW, { topic: '' }).args).not.toHaveProperty('topic');
+		expect(planRefill([], [], profile(), NOW).args).not.toHaveProperty('topic');
+		expect(planRefill([], [], profile(), NOW, { topic: '   ' }).args).not.toHaveProperty('topic');
+		expect(planRefill([], [], profile(), NOW, { topic: '' }).args).not.toHaveProperty('topic');
 	});
 
-	it('is pure: it does not mutate the items it is given', () => {
+	it('is pure: it does not mutate the pool or the items it is given', () => {
 		const items = [item('a', -DAY), item('b', +DAY)];
-		const snapshot = structuredClone(items);
-		planRefill(items, profile(), NOW);
-		expect(items).toEqual(snapshot);
+		const pool = [recognition('r1', ['a'])];
+		const snapshot = structuredClone({ items, pool });
+		planRefill(pool, items, profile(), NOW);
+		expect({ items, pool }).toEqual(snapshot);
 	});
 
 	it('still writes about a card that was just reviewed, as review-ahead', () => {
 		// It is no longer due, and it is the only word there is. Excluding it would
-		// hand the model an empty lesson; a batch about it is graded normally when
-		// it is played, just for a smaller stability gain.
+		// hand the model an empty brief; a challenge about it is graded normally
+		// when it is played, just for a smaller stability gain.
 		const reviewed = item('a', -DAY);
 		const plan = planRefill(
+			[],
 			[{ ...reviewed, fsrsCard: reviewCard(reviewed.fsrsCard as never, Grade.Easy, NOW) }],
 			profile(),
 			NOW
 		);
-		expect(plan.args.reviewItems.map((i) => i.id)).toEqual(['a']);
+		expect(plan.reviewItems.map((i) => i.id)).toEqual(['a']);
+		expect(plan.args.wants.length).toBeGreaterThan(0);
 	});
 });
 
 /* -------------------------------------------------------------------------- */
-
-describe('deriveRecentMistakes', () => {
-	/** A typed-translation challenge exercising `itemIds`. */
-	function challenge(id: string, itemIds: string[]): Challenge {
-		return {
-			id,
-			type: 'typed-translation',
-			direction: 'toTarget',
-			prompt: 'p',
-			acceptedAnswers: ['a'],
-			itemIds
-		};
-	}
-
-	function result(challengeId: string, verdict: Verdict, answerGiven: string): ChallengeResult {
-		return { challengeId, verdict, answerGiven, at: NOW };
-	}
-
-	const items = [item('a', -DAY), item('b', -DAY), item('c', -DAY)];
-
-	it('resolves a wrong result back to the term it exercised', () => {
-		const mistakes = deriveRecentMistakes(
-			[result('c1', 'wrong', 'lees')],
-			[challenge('c1', ['a'])],
-			items
-		);
-		expect(mistakes).toEqual([{ term: 'term-a', gave: 'lees' }]);
-	});
-
-	it('carries a skip through as its own kind of mistake', () => {
-		const mistakes = deriveRecentMistakes(
-			[result('c1', 'wrong', SKIP_ANSWER)],
-			[challenge('c1', ['a'])],
-			items
-		);
-		expect(mistakes).toEqual([{ term: 'term-a', gave: '(skipped)' }]);
-	});
-
-	it('ignores accepted answers and match-pairs rounds', () => {
-		const match: Challenge = {
-			id: 'm1',
-			type: 'match-pairs',
-			direction: 'toNative',
-			pairs: [{ a: 'term-a', b: 'meaning-a' }],
-			itemIds: ['a']
-		};
-		const mistakes = deriveRecentMistakes(
-			[result('c1', 'correct', 'leo'), result('c2', 'almost', 'leo'), result('m1', 'wrong', 'x')],
-			[challenge('c1', ['a']), challenge('c2', ['b']), match],
-			items
-		);
-		expect(mistakes).toEqual([]);
-	});
-
-	it('skips silently when the challenge row or the item is gone', () => {
-		const mistakes = deriveRecentMistakes(
-			[result('vanished', 'wrong', 'x'), result('c1', 'wrong', 'y')],
-			[challenge('c1', ['deleted-item'])],
-			items
-		);
-		expect(mistakes).toEqual([]);
-	});
-
-	it('keeps only the most recent entry per term and caps the list', () => {
-		const results = [
-			result('c1', 'wrong', 'newest'),
-			result('c2', 'wrong', 'older') // same item
-		];
-		const mistakes = deriveRecentMistakes(
-			results,
-			[challenge('c1', ['a']), challenge('c2', ['a'])],
-			items
-		);
-		expect(mistakes).toEqual([{ term: 'term-a', gave: 'newest' }]);
-
-		const many = Array.from({ length: 20 }, (_, i) => result(`c${i}`, 'wrong', `g${i}`));
-		const manyChallenges = Array.from({ length: 20 }, (_, i) => challenge(`c${i}`, [`i${i}`]));
-		const manyItems = Array.from({ length: 20 }, (_, i) => item(`i${i}`, -DAY));
-		expect(deriveRecentMistakes(many, manyChallenges, manyItems)).toHaveLength(MAX_RECENT_MISTAKES);
-	});
-
-	it('labels a blank answer rather than sending an empty string', () => {
-		const mistakes = deriveRecentMistakes(
-			[result('c1', 'wrong', '   ')],
-			[challenge('c1', ['a'])],
-			items
-		);
-		expect(mistakes).toEqual([{ term: 'term-a', gave: '(no answer)' }]);
-	});
-});
-
-describe('planRefill difficulty feedback', () => {
-	function challenge(id: string, itemIds: string[]): Challenge {
-		return {
-			id,
-			type: 'typed-translation',
-			direction: 'toTarget',
-			prompt: 'p',
-			acceptedAnswers: ['a'],
-			itemIds
-		};
-	}
-
-	it('derives recentMistakes from the result log and the challenges behind it', () => {
-		const items = [item('a', -DAY), item('b', -DAY)];
-		const plan = planRefill(items, profile(), NOW, {
-			recentResults: [
-				{ challengeId: 'c1', verdict: 'wrong', answerGiven: SKIP_ANSWER, at: NOW - 1000 },
-				{ challengeId: 'c2', verdict: 'wrong', answerGiven: 'tarde', at: NOW - 2000 }
-			],
-			recentChallenges: [challenge('c1', ['a']), challenge('c2', ['b'])]
-		});
-
-		expect(plan.args.recentMistakes).toEqual([
-			{ term: 'term-a', gave: '(skipped)' },
-			{ term: 'term-b', gave: 'tarde' }
-		]);
-	});
-
-	it('reports recent accuracy rounded to two decimals', () => {
-		const history = [
-			{ at: NOW - DAY, grade: Grade.Good },
-			{ at: NOW - DAY, grade: Grade.Again },
-			{ at: NOW - DAY, grade: Grade.Again }
-		];
-		const plan = planRefill([item('a', -DAY, history)], profile(), NOW);
-
-		expect(plan.recentAccuracy).toBeCloseTo(1 / 3);
-		expect(plan.args.recentAccuracy).toBe(0.33);
-	});
-
-	it('omits recentAccuracy on day one, when there is no history', () => {
-		expect(planRefill([], profile(), NOW).args).not.toHaveProperty('recentAccuracy');
-	});
-});
 
 describe('a skipped challenge', () => {
 	it('grades FSRS Again', () => {
@@ -1441,7 +1305,7 @@ describe('planRefill → getBatch (mock mode)', () => {
 
 	it('produces a playable batch that introduces no vocabulary', async () => {
 		const items = [item('a', -2 * DAY), item('b', -DAY)];
-		const plan = planRefill(items, profile(), NOW);
+		const plan = planRefill([], items, profile(), NOW);
 		const batch = await getBatch(plan.args);
 
 		expect(batch.challenges.length).toBeGreaterThanOrEqual(5);
@@ -1462,19 +1326,19 @@ describe('planRefill → getBatch (mock mode)', () => {
 	});
 
 	it('has nothing to build from when the learner has no words', async () => {
-		const batch = await getBatch(planRefill([], profile(), NOW).args);
+		const batch = await getBatch(planRefill([], [], profile(), NOW).args);
 		expect(batch.challenges).toEqual([]);
 	});
 
 	it('walks the same progress steps as the real path, instantly', async () => {
 		const steps: ProgressStep[] = [];
-		await getBatch(planRefill([], profile(), NOW).args, { onProgress: (s) => steps.push(s) });
+		await getBatch(planRefill([], [], profile(), NOW).args, { onProgress: (s) => steps.push(s) });
 		expect(steps.map((s) => s.id)).toEqual(['build-prompt', 'request', 'validate']);
 	});
 
 	it('covers every gradeable challenge type the session renders', async () => {
 		const items = [item('a', -2 * DAY), item('b', -DAY)];
-		const plan = planRefill(items, profile(), NOW);
+		const plan = planRefill([], items, profile(), NOW);
 		const batch = await getBatch(plan.args);
 		const types = new Set(batch.challenges.map((c) => c.type));
 
@@ -1500,7 +1364,7 @@ describe('session walkthrough (mock batch, no database)', () => {
 		known: KnowledgeItem[],
 		answerAs: (challenge: Challenge, index: number) => Verdict
 	) {
-		const plan = planRefill(known, profile(), NOW);
+		const plan = planRefill([], known, profile(), NOW);
 		const batch = await getBatch(plan.args);
 
 		// The vocabulary is exactly what went in — generating changes nothing about
@@ -1550,7 +1414,7 @@ describe('session walkthrough (mock batch, no database)', () => {
 	}
 
 	it('plays a flawless session: the whole plan and 3 free rounds', async () => {
-		const known = Array.from({ length: 6 }, (_, i) => item(`k${i}`, -DAY));
+		const known = Array.from({ length: 7 }, (_, i) => item(`k${i}`, -DAY));
 		const run = await playSession(known, () => 'correct');
 
 		// A BATCH_TARGET-sized plan, played to the end: the session is sized by
@@ -1564,7 +1428,7 @@ describe('session walkthrough (mock batch, no database)', () => {
 	});
 
 	it('counts a single miss without disturbing the rest of the session', async () => {
-		const known = Array.from({ length: 6 }, (_, i) => item(`k${i}`, -DAY));
+		const known = Array.from({ length: 7 }, (_, i) => item(`k${i}`, -DAY));
 		const run = await playSession(known, (_challenge, index) =>
 			index === 4 ? 'wrong' : 'correct'
 		);
@@ -1576,7 +1440,7 @@ describe('session walkthrough (mock batch, no database)', () => {
 
 	it('ends gracefully when the plan is shorter than a full session', async () => {
 		// A tiny batch: mock mode still returns its canned challenges.
-		const plan = planRefill([], profile(), NOW, { count: 5 });
+		const plan = planRefill([], [], profile(), NOW);
 		const batch = await getBatch(plan.args);
 		expect(batch.challenges.length).toBeLessThan(SESSION_LENGTH);
 
@@ -1587,7 +1451,7 @@ describe('session walkthrough (mock batch, no database)', () => {
 	});
 
 	it('match rounds carry no item ids into the summary', async () => {
-		const known = Array.from({ length: 6 }, (_, i) => item(`k${i}`, -DAY));
+		const known = Array.from({ length: 7 }, (_, i) => item(`k${i}`, -DAY));
 		const run = await playSession(known, () => 'correct');
 
 		for (const answer of run.answers) {

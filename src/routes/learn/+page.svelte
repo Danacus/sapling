@@ -713,9 +713,8 @@
 	 * "Too hard — skip": an answer event like any other, with the verdict a skip
 	 * honestly deserves. `wrong` counts as a miss in the summary, and
 	 * `applyResult` grades the item FSRS-`Again` — which is exactly "I could not
-	 * produce this". The word then travels into the next batch prompt as a
-	 * `recentMistakes` entry with `gave: '(skipped)'`, asking the model for an
-	 * easier format next time.
+	 * produce this". That grade lowers the word's strength, and so the ladder
+	 * rung the next top-up writes it at; nothing else carries the skip forward.
 	 */
 	function skipCurrent(): void {
 		const challenge = current;

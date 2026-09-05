@@ -24,21 +24,22 @@
  * seven types' field lists and rules, plus a list of slots to match them up
  * against, plus an abstract difficulty number to interpret.
  *
- * So {@link planSlots} decides locally *which* challenges the lesson is made of,
- * {@link groupIntoRequests} cuts that plan by **kind**, and {@link generateBatch}
- * runs the requests concurrently. One request is one wire type: its system
- * prompt ({@link systemPromptFor}) explains that type and no other, its JSON
- * schema admits that type and no other, and its payload is a list of words each
- * carrying the **countable parameters** that type is sized by — a sentence
- * length, a word-bank size, a tile count, computed here from the word's ladder
- * rung by the def's own `params`. The model never sees the word "slot", a
- * difficulty from 1 to 5, or the six types it is not writing. The prompt stays
- * static *per type*, which is what keeps prompt caching paying across the
- * lesson's requests and across sessions.
+ * So this layer **plans nothing**. It is handed a list of wants — one word, one
+ * kind, one rung each, decided by the session against what its pool already
+ * holds (`$lib/session/topup`) — {@link groupIntoRequests} cuts that list by
+ * **kind**, and {@link generateBatch} runs the requests concurrently. One
+ * request is one wire type: its system prompt ({@link systemPromptFor})
+ * explains that type and no other, its JSON schema admits that type and no
+ * other, and its payload is a list of words each carrying the **countable
+ * parameters** that type is sized by — a sentence length, a word-bank size, a
+ * tile count, computed here from the want's rung by the def's own `params`. The
+ * model never sees the word "want", a difficulty from 1 to 5, or the six types
+ * it is not writing. The prompt stays static *per type*, which is what keeps
+ * prompt caching paying across a top-up's requests and across sessions.
  *
  * Each request carries its own corrective retry, and a request that still fails
- * is **dropped, not fatal**: the lesson is whatever came back, and only a merged
- * total below {@link MIN_BATCH_CHALLENGES} is an error.
+ * is **dropped, not fatal**: the result is whatever came back, reported with
+ * how many requests failed, and only *nothing* coming back is an error.
  *
  * Everything here is stateless with respect to the database: data in, data out.
  * The caller persists the result.
@@ -75,8 +76,8 @@ import {
 	looseBatchSchema
 } from './schemas';
 import type { GeneratedChallenge } from './schemas';
-import { MAX_BATCH_CHALLENGES, REQUEST_CONCURRENCY, groupIntoRequests, planSlots } from './slots';
-import type { TypeRequest } from './slots';
+import { REQUEST_CONCURRENCY, groupIntoRequests, kindKey, kindOf } from './requests';
+import type { TypeRequest, Want } from './requests';
 
 /**
  * Re-exported for callers (and tests) that knew them as part of this module
@@ -84,45 +85,6 @@ import type { TypeRequest } from './slots';
  * `./resolve-helpers`.
  */
 export { MAX_WORD_ORDER_DISTRACTORS, MAX_WORD_ORDER_TILES } from './resolve-helpers';
-
-/**
- * Re-exported for the same reason: how big a lesson is belongs with the planner
- * that lays it out (`./slots`), but every caller has always asked this module.
- */
-export { MAX_BATCH_CHALLENGES, defaultChallengeCount } from './slots';
-
-/** Below this many salvaged challenges across every request a lesson is not worth playing. */
-export const MIN_BATCH_CHALLENGES = 5;
-
-/** One word the batch is to be written about: the id, the word, its meaning. */
-export interface ReviewItemRef {
-	id: string;
-	term: string;
-	meaning: string;
-	/**
-	 * How far along this word is on the five-rung ladder, 1..5 — a hint for
-	 * *which types* to write about it and *how hard* to write them.
-	 *
-	 * Free production is a much harder question than recognition, and a word met
-	 * yesterday put through one produces a wrong answer that says nothing about
-	 * the word. The caller derives this from the same strength floors the session
-	 * planner gates serving on (`difficultyLevelOf` in `$lib/session/progression`
-	 * — a bare `1..5` here rather than an imported type, since `$lib/llm` never
-	 * reaches into `$lib/session`), so the two halves agree: the prompt asks for
-	 * recognition where the planner would only serve recognition anyway.
-	 * `./slots` also folds it into every slot's own `difficulty`.
-	 *
-	 * Optional and omitted rather than sent blank — a caller with no SRS state to
-	 * consult pays nothing for the field, and the mock ignores it entirely.
-	 */
-	level?: 1 | 2 | 3 | 4 | 5;
-}
-
-export interface RecentMistake {
-	term: string;
-	/** What the learner answered; `'(skipped)'` when they gave up on it. */
-	gave: string;
-}
 
 /* -------------------------------------------------------------------------- */
 /* Progress reporting                                                          */
@@ -180,31 +142,14 @@ export type BatchProfile = Pick<
 export interface BatchArgs {
 	profile: BatchProfile;
 	/**
-	 * The words this batch is for: what the SRS says is due, topped up with what
-	 * comes due soonest (see `selectSessionItems`). Every challenge should
-	 * exercise one of them — they are the subject of the lesson, and a batch has
-	 * no other source of vocabulary.
+	 * The challenges to write: one word, one kind, one rung each. This is the
+	 * whole brief — the session decides it against what its pool already holds
+	 * (`$lib/session/topup`), and this layer only fills it. Every challenge that
+	 * comes back exercises one of these words; a batch has no other source of
+	 * vocabulary. No accuracy or recent-mistake dial rides along: FSRS already
+	 * lowers a missed word's strength, so its rung falls on its own.
 	 */
-	reviewItems: ReviewItemRef[];
-	/**
-	 * What the learner just got wrong — a **local** dial like `recentAccuracy`,
-	 * and no longer part of any prompt. `./slots` reads it twice: a missed word
-	 * earns an extra slot in a format it has not had, and every slot about it is
-	 * planned a rung easier. Sending "write this one easier" on top of a
-	 * parameter that already says how long to write it was two instructions for
-	 * one decision, and the model could only guess how the two combined.
-	 */
-	recentMistakes?: RecentMistake[];
-	/**
-	 * Share of recent reviews the learner got right, 0..1 — a difficulty dial, but
-	 * a *local* one now: `./slots` reads it to shift every slot's `difficulty` and
-	 * to move `productionShare`, and neither number ever reaches the model as
-	 * `recentAccuracy` itself. Absent on day one, when there is no history to
-	 * judge by.
-	 */
-	recentAccuracy?: number;
-	/** Overrides the derived challenge count. */
-	count?: number;
+	wants: Want[];
 	/**
 	 * Free-form scenario for this session, e.g. `'ordering in a restaurant'` or
 	 * `'talking about your hobbies'`. When set, every challenge in the batch is
@@ -260,6 +205,13 @@ export interface BatchOptions {
 export interface BatchResult {
 	challenges: Challenge[];
 	usage: TokenUsage;
+	/**
+	 * Requests that contributed nothing even after their retry. Their wants are
+	 * simply still wanting: the next top-up asks for them again, so this is
+	 * information for the learner, not an error — unless it is *every* request,
+	 * which {@link generateBatch} throws on instead.
+	 */
+	failedRequests: number;
 }
 
 // --------------------------------------------------------------------------
@@ -416,17 +368,14 @@ export function knownTermLabels(known: readonly KnownItemRef[]): string[] {
  * Builds the two messages for **one request**. The user message is compact JSON
  * — no field labels in prose, no restating of the rules.
  *
- * The system half is this type's own static string, so a lesson's requests of
- * one kind share a cached prefix and every lesson after this one shares it too.
+ * The system half is this type's own static string, so a top-up's requests of
+ * one kind share a cached prefix and every top-up after this one shares it too.
  * The user half is genuinely short. `type` does not travel — it is the whole
  * subject of the system prompt. Neither does `difficulty`: each item carries the
  * *parameters* that rung means for this type instead, which is a number the
- * model can count rather than a scale it has to interpret. Nor does `level` (it
- * chose the type, and the type is chosen), nor `recentAccuracy` (it only ever
- * fed local decisions), nor `recentMistakes` — a just-missed word already earns
- * an extra slot and a rung off in `./slots`, and telling the model "write this
- * one easier" on top of a parameter that already says how long to write it is
- * two instructions for one decision.
+ * model can count rather than a scale it has to interpret. Nothing about how
+ * the learner has been doing travels either: a missed word's strength has
+ * already fallen, so its rung — and so its sizes — fell with it.
  *
  * `known` is *not* narrowed to the request's words. It is the vocabulary every
  * sentence is built out of, whichever words are being tested, and it is the
@@ -434,7 +383,7 @@ export function knownTermLabels(known: readonly KnownItemRef[]): string[] {
  * same order, on every request. That repetition is the price of the split;
  * against the static prompt it is the smaller half.
  *
- * **Key order is load-bearing.** Everything identical across a lesson's requests
+ * **Key order is load-bearing.** Everything identical across a top-up's requests
  * — profile, `topic`, `about` and the whole `known` list, which is by far the
  * largest block — is written first, and only `items` last. A prefix cache pays
  * up to the first byte that differs, so putting `known` after the items would
@@ -446,7 +395,6 @@ export function buildRequestPrompt(args: BatchArgs, request: TypeRequest): ChatM
 
 	const topic = args.topic?.trim();
 	const about = profile.about?.trim().slice(0, MAX_ABOUT_CHARS);
-	const meanings = new Map(args.reviewItems.map((item) => [item.id, item.meaning] as const));
 
 	const payload: Record<string, unknown> = {
 		native: profile.nativeLanguage,
@@ -468,15 +416,12 @@ export function buildRequestPrompt(args: BatchArgs, request: TypeRequest): ChatM
 		// The brief: one entry per challenge to write. The term and meaning ride
 		// beside the id so the entry reads without a lookup, and this type's own
 		// parameters — however many keys that is — spread in beside them.
-		items: request.items.map((item) => {
-			const meaning = meanings.get(item.itemId);
-			return {
-				id: item.itemId,
-				t: item.term,
-				...(meaning ? { m: meaning } : {}),
-				...def.params(item.difficulty, request.kind)
-			};
-		})
+		items: request.wants.map((want) => ({
+			id: want.item.id,
+			t: want.item.term,
+			...(want.item.meaning ? { m: want.item.meaning } : {}),
+			...def.params(want.difficulty, request.kind)
+		}))
 	};
 
 	return [
@@ -610,10 +555,13 @@ function makeId(newId?: () => string): string {
  */
 export function knownTermIndex(args: BatchArgs): Map<string, string> {
 	const index = new Map<string, string>();
-	// Review items first: they are the subject of this batch, so an ambiguous
+	// The wanted words first: they are the subject of this batch, so an ambiguous
 	// bare citation is likelier to be about one of them than about the rest of
 	// the collection.
-	for (const item of args.reviewItems) index.set(termKey(item.term), item.id);
+	for (const want of args.wants) {
+		const key = termKey(want.item.term);
+		if (!index.has(key)) index.set(key, want.item.id);
+	}
 
 	const known = args.knownItems ?? [];
 	const labels = knownTermLabels(known);
@@ -788,70 +736,39 @@ function defFor(request: TypeRequest): AnyWireTypeDef {
 }
 
 /**
- * Does this resolved challenge answer that entry?
+ * The challenges from one reply that fill this request's brief, in the order
+ * the brief listed its words.
  *
- * A request asks for an exact list — six challenges of one type, one per word,
- * banked or not — and a reply that comes back the right *length* has told us
- * nothing about whether it is the lesson we asked for. The model does
- * substitute: six banked clozes come back as six multiple-choice questions, or
- * one word gets all six challenges. Counting cannot see either.
- *
- * The comparison is on the **stored** shape, because that is what `resolveBatch`
- * hands back: each wire def declares the `{type, direction}` its resolver always
- * writes (`StoredShape`), which is also what tells the two multiple-choice wire
- * types and the two translate wire types apart. `bank` is checked against the
- * word bank that actually survived resolution — a banked cloze whose distractors
- * all duplicated the answer is not the exercise that was asked for, and the
- * retry is the cheaper fix.
- */
-function matchesRequest(challenge: Challenge, request: TypeRequest, def: AnyWireTypeDef): boolean {
-	if (challenge.type !== def.stored.type || challenge.direction !== def.stored.direction) {
-		return false;
-	}
-	if (request.kind.bank !== undefined) {
-		const banked = 'wordBank' in challenge && (challenge.wordBank?.length ?? 0) > 0;
-		if (banked !== request.kind.bank) return false;
-	}
-	return true;
-}
-
-/** One filled entry: the challenge, and where in the plan it belongs. */
-interface FilledItem {
-	index: number;
-	challenge: Challenge;
-}
-
-/**
- * The challenges from one reply that fill this request's brief, each tagged with
- * its **plan index** so the merge can put the lesson back in the order it was
- * planned rather than the order the network answered.
+ * A request asks for an exact list — six challenges of one kind, one per word —
+ * and a reply that comes back the right *length* has told us nothing about
+ * whether it is what was asked for. The model does substitute: six banked
+ * clozes come back as six multiple-choice questions, or one word gets all six
+ * challenges. Counting cannot see either. So each resolved challenge is read
+ * back as the kind it *is* ({@link kindOf}: the stored `{type, direction}` its
+ * wire def declares, plus whether a word bank actually survived resolution — a
+ * banked cloze whose distractors all duplicated the answer is not the exercise
+ * that was asked for, and the retry is the cheaper fix) and has to be about the
+ * word the entry named.
  *
  * Each entry is filled at most once, so a request can never return more than it
- * was asked for — which is what keeps an over-producing request from pushing
- * later ones out of the merged lesson. Anything that matches no unfilled entry
- * is dropped rather than kept as a bonus: it is a challenge about the wrong word
- * or in the wrong format, the corrective retry re-asks for the real one, and a
- * lesson padded with the questions the model felt like writing is the thing this
- * whole design exists to stop.
+ * was asked for. Anything that matches no unfilled entry is dropped rather than
+ * kept as a bonus: it is a challenge about the wrong word or in the wrong
+ * format, the corrective retry re-asks for the real one, and a pool padded with
+ * the questions the model felt like writing is the thing this whole design
+ * exists to stop.
  */
-function fillRequest(
-	challenges: readonly Challenge[],
-	request: TypeRequest,
-	def: AnyWireTypeDef
-): FilledItem[] {
-	const filled = new Array<Challenge | undefined>(request.items.length).fill(undefined);
+function fillRequest(challenges: readonly Challenge[], request: TypeRequest): Challenge[] {
+	const wanted = kindKey(request.kind);
+	const filled = new Array<Challenge | undefined>(request.wants.length).fill(undefined);
 	for (const challenge of challenges) {
-		if (!matchesRequest(challenge, request, def)) continue;
-		// And it has to be about the word the entry named. A challenge that cites
-		// only some other word is one this request never asked for.
-		const at = request.items.findIndex(
-			(item, i) => filled[i] === undefined && challenge.itemIds.includes(item.itemId)
+		const kind = kindOf(challenge);
+		if (!kind || kindKey(kind) !== wanted) continue;
+		const at = request.wants.findIndex(
+			(want, i) => filled[i] === undefined && challenge.itemIds.includes(want.item.id)
 		);
 		if (at >= 0) filled[at] = challenge;
 	}
-	return filled.flatMap((challenge, i) =>
-		challenge ? [{ index: request.items[i].index, challenge }] : []
-	);
+	return filled.filter((challenge): challenge is Challenge => challenge !== undefined);
 }
 
 /**
@@ -876,7 +793,7 @@ function siblingAbort(): Error {
 
 /** What one request came back with; `error` is set only when it failed outright. */
 interface RequestOutcome {
-	filled: FilledItem[];
+	filled: Challenge[];
 	usage: TokenUsage;
 	/** Set when the request produced nothing usable even after its retry. */
 	error?: LlmError;
@@ -917,32 +834,33 @@ async function runPooled<T, R>(
 }
 
 /**
- * Generates one lesson.
+ * Fills a list of wants.
  *
- * The plan is made locally ({@link planSlots}), cut by kind into single-type
- * requests ({@link groupIntoRequests}) and run concurrently. Each reply is
- * parsed leniently (fences stripped, bad entries dropped) and gets one
- * corrective retry if too little of it survives.
+ * The wants are cut by kind into single-type requests
+ * ({@link groupIntoRequests}) and run concurrently. Each reply is parsed
+ * leniently (fences stripped, bad entries dropped) and gets one corrective
+ * retry if too little of it survives.
  *
- * **A request that fails is dropped, not fatal.** Four fifths of a lesson is a
- * lesson; it is the merged total that has to clear {@link MIN_BATCH_CHALLENGES},
- * and only then does this throw `LlmError('bad-response')` — with a message that
- * says how many requests failed and how much survived, because "the model
- * returned something unusable" is not a thing anyone can act on. Failures that
- * are not one request's fault — a bad key, a rate limit, an abort — sink the
- * whole lesson **immediately and literally**: the first one cancels the requests
+ * **A request that fails is dropped, not fatal.** Its wants are simply still
+ * wanting, and the next top-up asks for them again; the result says how many
+ * requests failed (`failedRequests`) so the learner can be told, and only when
+ * *nothing* came back does this throw `LlmError('bad-response')` — with a
+ * message that says how many requests failed, because "the model returned
+ * something unusable" is not a thing anyone can act on. Failures that are not
+ * one request's fault — a bad key, a rate limit, an abort — sink the whole
+ * top-up **immediately and literally**: the first one cancels the requests
  * still in flight and every one still queued returns without spending a call,
  * since they would all only hit the same wall.
  *
- * Each reply is then checked against the entries it was asked for, not merely
+ * Each reply is checked against the entries it was asked for, not merely
  * counted ({@link fillRequest}) — a request is worth what it filled — and the
- * survivors are merged in **plan order**, which is not the order the requests
- * were made in and certainly not the order they finished in: a lesson is a
- * round-robin over words, and grouping the calls by type must not turn it into
- * five clozes followed by five translations.
+ * survivors come back in **request order**, requests in first-appearance order
+ * and challenges in brief order within each, whatever order the network
+ * answered. The pool the caller writes them into has no order of its own to
+ * preserve; the session plans what to play out of the whole of it.
  *
  * It returns challenges and nothing else: the caller pools them, and no part of
- * the learner's vocabulary is touched by generating a lesson.
+ * the learner's vocabulary is touched by generating.
  */
 export async function generateBatch(
 	args: BatchArgs,
@@ -962,29 +880,20 @@ export async function generateBatch(
 		}
 	};
 
-	// Nothing to write about. Announcing a `request` step and then reporting an
+	// Nothing to write. Announcing a `request` step and then reporting an
 	// unusable reply would blame the model for a call that was never made, so
 	// this says what actually happened, before any step is announced.
-	if (args.reviewItems.length === 0) {
-		throw new LlmError(
-			'bad-response',
-			'A lesson needs at least one word to be about, and none were selected.'
-		);
+	const requests = groupIntoRequests(args.wants);
+	if (requests.length === 0) {
+		throw new LlmError('bad-response', 'There is nothing to write: no challenges were asked for.');
 	}
-
-	const slots = planSlots(args, opts.rng);
-	if (slots.length === 0) {
-		throw new LlmError('bad-response', 'No challenges could be planned for these words.');
-	}
-	const requests = groupIntoRequests(slots);
+	const total = requests.reduce((n, request) => n + request.wants.length, 0);
 	report({
 		id: 'build-prompt',
-		label: requests.length > 1 ? `Planning ${slots.length} challenges` : 'Building the prompt'
+		label: requests.length > 1 ? `Preparing ${total} challenges` : 'Building the prompt'
 	});
 
-	// A two-challenge lesson can never reach five; do not demand the impossible.
-	const minimum = Math.max(1, Math.min(MIN_BATCH_CHALLENGES, slots.length));
-	const knownItemIds = args.reviewItems.map((i) => i.id);
+	const knownItemIds = [...new Set(args.wants.map((want) => want.item.id))];
 	const termToId = knownTermIndex(args);
 
 	// Fired at most once each, however many requests retry — see ProgressStepId.
@@ -1028,7 +937,7 @@ export async function generateBatch(
 		};
 		const def = defFor(request);
 		const messages = buildRequestPrompt(args, request);
-		const wanted = requestMinimum(request.items.length);
+		const wanted = requestMinimum(request.wants.length);
 		// One type per request means one schema per request — the model cannot
 		// return a shape this brief did not ask for. Built once per request, since
 		// a retry sends the very same schema back.
@@ -1039,7 +948,9 @@ export async function generateBatch(
 		// A word appears at most once in a request, so its parameters are the ones
 		// any challenge citing it was asked for. See `ResolveOptions.paramsByItem`.
 		const paramsByItem = new Map(
-			request.items.map((item) => [item.itemId, def.params(item.difficulty, request.kind)] as const)
+			request.wants.map(
+				(want) => [want.item.id, def.params(want.difficulty, request.kind)] as const
+			)
 		);
 
 		for (let attempt = 0; attempt < 2; attempt++) {
@@ -1112,7 +1023,7 @@ export async function generateBatch(
 			}
 
 			// What the request is worth is what it *filled*, not what it returned.
-			const filled = fillRequest(resolved.challenges, request, def);
+			const filled = fillRequest(resolved.challenges, request);
 			if (filled.length >= wanted) {
 				outcome.filled = filled;
 				outcome.error = undefined;
@@ -1125,7 +1036,7 @@ export async function generateBatch(
 			}
 			outcome.error = new LlmError(
 				'bad-response',
-				`One request filled ${filled.length} of its ${request.items.length} ${def.type} challenges.`
+				`One request filled ${filled.length} of its ${request.wants.length} ${def.type} challenges.`
 			);
 		}
 		return outcome;
@@ -1138,37 +1049,30 @@ export async function generateBatch(
 	report({ id: 'validate', label: 'Validating challenges' });
 
 	const usage: TokenUsage = { promptTokens: 0, completionTokens: 0 };
-	const filled: FilledItem[] = [];
-	let failed = 0;
+	const challenges: Challenge[] = [];
+	let failedRequests = 0;
 	let lastError: LlmError | undefined;
 
+	// Request order — `runPooled` hands the outcomes back in job order whatever
+	// order they settled in — and brief order within each request.
 	for (const outcome of outcomes) {
 		usage.promptTokens += outcome.usage.promptTokens;
 		usage.completionTokens += outcome.usage.completionTokens;
 		if (outcome.error) {
 			// A request whose best partial reply was kept is not a failed request:
-			// its challenges are in the lesson. Only one that contributed nothing.
-			if (outcome.filled.length === 0) failed++;
+			// its challenges are in the result. Only one that contributed nothing.
+			if (outcome.filled.length === 0) failedRequests++;
 			lastError = outcome.error;
 		}
-		filled.push(...outcome.filled);
+		challenges.push(...outcome.filled);
 	}
 
-	// **Plan order**, which is neither request order nor completion order. The plan
-	// is a round-robin over the lesson's words; grouping the calls by type is a
-	// transport decision, and letting it reach the learner would serve them every
-	// cloze in a row. The slice is belt and braces now that no request can return
-	// more entries than it was given.
-	const merged = filled
-		.sort((a, b) => a.index - b.index)
-		.map((entry) => entry.challenge)
-		.slice(0, MAX_BATCH_CHALLENGES);
-	if (merged.length >= minimum) return { challenges: merged, usage };
+	if (challenges.length > 0) return { challenges, usage, failedRequests };
 
 	throw new LlmError(
 		'bad-response',
-		`Only ${merged.length} usable challenge(s) came back` +
-			(requests.length > 1 ? ` — ${failed} of ${requests.length} requests failed` : '') +
+		'Nothing usable came back' +
+			(requests.length > 1 ? ` — all ${requests.length} requests failed` : '') +
 			'. Try again.' +
 			(lastError ? ` (${lastError.message})` : '')
 	);
