@@ -9,15 +9,22 @@ import { makeTestBackend } from './backend.testing';
 import { BACKEND_METHODS, dispatch, isBackendMethod, promised } from './protocol';
 
 describe('protocol', () => {
-	it('lists only methods the core implements', async () => {
-		const { core } = await makeTestBackend('devA');
-		for (const method of BACKEND_METHODS) expect(typeof core[method]).toBe('function');
+	it('lists only methods the core answers', async () => {
+		const { direct } = await makeTestBackend('devA');
+		for (const method of BACKEND_METHODS) expect(typeof direct[method]).toBe('function');
 	});
 
 	it('dispatches a request to the named method with its arguments', async () => {
-		const { core } = await makeTestBackend('devA');
-		dispatch(core, { id: 1, method: 'markWord', args: ['  hola ', true] });
-		expect(dispatch(core, { id: 2, method: 'getKnownTerms', args: [] })).toEqual(['hola']);
+		const { direct } = await makeTestBackend('devA');
+		dispatch(direct, { id: 1, method: 'markWord', args: ['  hola ', true] });
+		expect(dispatch(direct, { id: 2, method: 'getKnownTerms', args: [] })).toEqual(['hola']);
+	});
+
+	it('answers undefined, not null, where the TypeScript signature says so', async () => {
+		const { direct } = await makeTestBackend('devA');
+		expect(dispatch(direct, { id: 1, method: 'getProfile', args: [] })).toBeUndefined();
+		expect(dispatch(direct, { id: 2, method: 'getItem', args: ['missing'] })).toBeUndefined();
+		expect(dispatch(direct, { id: 3, method: 'resetData', args: [] })).toBeUndefined();
 	});
 
 	it('refuses names that are not methods, so a stray property is never called', () => {
@@ -27,7 +34,7 @@ describe('protocol', () => {
 	});
 
 	it('turns a throw into a rejection when wrapping the core in-process', async () => {
-		const { core } = await makeTestBackend('devA');
-		await expect(promised(core).importData('not json')).rejects.toThrow('not valid JSON');
+		const { direct } = await makeTestBackend('devA');
+		await expect(promised(direct).importData('not json')).rejects.toThrow('not valid JSON');
 	});
 });

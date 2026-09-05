@@ -249,9 +249,9 @@ learner half, because that is the bubble they belong to and the pairing the
 replay demonstrates. `learner` is absent only at index 0, where the scenario's
 opener seeds the transcript with a line nobody prompted.
 
-Three events, in the house pattern (`events.ts` zod payload, `materialize.ts`
-rule, `schema.ts` table, `DERIVED_TABLES`, repositories, tests against the real
-in-memory store):
+Three events, in the house pattern (payload struct in `events.rs` mirrored by
+a type in `events.ts`, `materialize.rs` rule, `schema.rs` table,
+`DERIVED_TABLES`, a `Backend` method, tests against the real in-memory store):
 
 | Event | Payload | Rule |
 |---|---|---|

@@ -154,6 +154,9 @@ src/lib/db/           Repositories: the only sanctioned way to touch storage,
                       of the tables are a projection of it, produced by a
                       materializer. Device secrets live in localStorage
                       (settings.ts), never in the database.
+crates/sapling-core/  That materializer, the SRS and every backend method, in
+                      Rust over a SQLite seam; compiled to wasm by
+                      `pnpm core:wasm` and run inside the database Worker.
 src/lib/srs/          Spaced repetition (ts-fsrs). Pure and deterministic:
                       `now` is always a parameter, never `Date.now()`.
                       The single place `KnowledgeItem.fsrsCard` is cast.

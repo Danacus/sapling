@@ -1,0 +1,17 @@
+[package]
+name = "sapling-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "sapling-core behind wasm-bindgen: the persistence core the database Worker runs, over the browser's own sqlite-wasm."
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+sapling-core = { path = "../sapling-core" }
+# Pinned to the exact version of `wasm-bindgen-cli` the flake ships: the CLI
+# refuses (or, worse, misreads) a `.wasm` built by a different version.
+wasm-bindgen = "=0.2.121"
+js-sys = "0.3"
+serde_json = { version = "1", features = ["preserve_order"] }

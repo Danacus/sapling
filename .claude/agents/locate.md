@@ -47,7 +47,8 @@ Where the rest lives:
 - `src/lib/llm/` — generation (`generate.ts`, `SYSTEM_PROMPT`), `escalation.ts`, `mock.ts`, `schemas.ts` (a re-exporting façade)
 - `src/lib/session/` — `engine.ts` (orchestrator, all play-time DB writes), `progression.ts`, `romanization.ts`
 - `src/lib/srs/` — FSRS, pure, every function takes `now`
-- `src/lib/db/` — repositories, the only store access; `events.ts` / `schema.ts` / `materialize.ts` / `store.ts` are the events log and its materializer, over SQLite-WASM in OPFS (`sqlite.worker.ts` + `client.ts`); `database.ts` keeps only `ChallengeRow`/`challengeOf`
+- `src/lib/db/` — repositories, the only store access; `protocol.ts` is the `Backend` boundary, `client.ts` + `sqlite.worker.ts` the transport, `host.ts` the glue that lends the Rust core sqlite-wasm; `events.ts` is types only; `database.ts` keeps only `ChallengeRow`/`challengeOf`
+- `crates/sapling-core/` — the persistence core itself: `events.rs` (payload schemas), `schema.rs` (DDL), `materialize.rs` (merge rules), `srs.rs`, `core.rs` (every `Backend` method), `dispatch.rs` (by name, over JSON); `crates/sapling-wasm/` wraps it for the browser
 - `src/lib/romanize/`, `src/lib/tts/`, `src/lib/validate/`
 - `src/routes/learn/` — the six challenge components + `ChallengeHost.svelte` (an `{#if}` dispatch chain); shared UI in `blocks/`
 - `src/routes/` — `chat/`, `words/`, `settings/`, and the dashboard

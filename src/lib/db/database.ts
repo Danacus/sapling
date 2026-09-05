@@ -3,7 +3,7 @@
  *
  * All that is left of the old Dexie schema: the domain `Challenge` union plus
  * the four pool-bookkeeping fields the session planner reads. Everything else
- * moved to the facts log (`schema.ts`).
+ * moved to the facts log (`crates/sapling-core/src/schema.rs`).
  */
 
 import type { Challenge } from '$lib/types';

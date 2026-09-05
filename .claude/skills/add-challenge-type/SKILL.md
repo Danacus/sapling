@@ -104,11 +104,14 @@ rather than checking by eye.
 3. **Component** in `src/routes/learn/`, composed from `blocks/`, plus a branch
    in `ChallengeHost.svelte`'s `{#if}` chain.
    *Forget it:* the `{:else}` `unhandledChallenge(challenge: never)` fails `pnpm check`.
-4. **`CHALLENGE_TYPE_TABLE` in `src/lib/db/materialize.ts`** — the
-   allow-list the pool materializer checks before storing a challenge.
-   *Forget it:* `pnpm check` fails at the `Record<ChallengeType, true>` literal.
-   Without that typing it would instead be silent — challenges of the new type
-   would be written to the log and then skipped on the way into the pool.
+4. **`CHALLENGE_TYPES` in `crates/sapling-core/src/materialize.rs`** — the
+   allow-list the pool materializer checks before storing a challenge. It is a
+   Rust array of wire names, so nothing in `pnpm check` notices a missing one.
+   *Forget it:* silent — challenges of the new type are written to the log and
+   then skipped on the way into the pool, so the learner never sees one. Add a
+   pooled challenge of the new type to the `broad` golden fixture
+   (`src/lib/db/fixtures/broad/events.json`), rebless with `pnpm golden:update`,
+   and check the diff shows it in `getPool`; that is the gate.
 
 ## Rules that are easy to get wrong
 

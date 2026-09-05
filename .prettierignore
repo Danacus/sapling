@@ -28,3 +28,4 @@ src/lib/db/fixtures/**/*.json
 crates
 Cargo.lock
 target
+src/lib/db/wasm

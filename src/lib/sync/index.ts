@@ -3,7 +3,7 @@
  *
  * The server half is `worker/`, a Cloudflare Worker that orders and relays the
  * event log and nothing else — every merge rule lives in
- * `src/lib/db/materialize.ts`.
+ * `crates/sapling-core/src/materialize.rs`.
  */
 export {
 	clearSyncPhrase,

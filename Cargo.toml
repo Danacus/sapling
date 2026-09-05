@@ -1,3 +1,10 @@
 [workspace]
-members = ["crates/sapling-core"]
+members = ["crates/sapling-core", "crates/sapling-wasm"]
 resolver = "2"
+
+# The release profile is what the wasm build ships; size is what matters there.
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"

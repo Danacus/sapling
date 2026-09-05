@@ -13,7 +13,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { parseEvent, type EventType, type SyncEvent } from './events';
+import type { EventType, SyncEvent } from './events';
 import { makeTestBackend, type TestBackend } from './backend.testing';
 
 /** One event, with only the envelope fields a case cares about spelled out. */
@@ -499,21 +499,44 @@ describe('reading texts and word marks', () => {
 });
 
 describe('unknown events', () => {
-	it('skips an event type this build has never heard of', () => {
+	/**
+	 * One raw row through the gate a pulled page passes: how many applied, and
+	 * what the log holds afterwards — the export is the log, field for field.
+	 */
+	async function gate(raw: unknown) {
+		const store = await makeTestBackend();
+		const applied = await store.applyRemote([{ ...(raw as object), seq: ++seq }]);
+		const { events: kept } = JSON.parse(await store.exportData()) as { events: unknown[] };
+		return { applied, kept };
+	}
+
+	it('skips an event type this build has never heard of', async () => {
 		// The retired `xp-banked` is the case: an old log carrying it must keep
 		// working, and the caller drops the event and keeps going.
-		expect(
-			parseEvent({ id: 'x', type: 'xpBanked', at: 1, device: 'devA', payload: { amount: 5 } })
-		).toBeUndefined();
+		const { applied, kept } = await gate({
+			id: 'x',
+			type: 'xpBanked',
+			at: 1,
+			device: 'devA',
+			payload: { amount: 5 }
+		});
+		expect(applied).toBe(0);
+		expect(kept).toEqual([]);
 	});
 
-	it('skips an event whose payload will not parse', () => {
-		expect(
-			parseEvent({ id: 'x', type: 'itemAdded', at: 1, device: 'devA', payload: { id: 'i1' } })
-		).toBeUndefined();
+	it('skips an event whose payload will not parse', async () => {
+		const { applied, kept } = await gate({
+			id: 'x',
+			type: 'itemAdded',
+			at: 1,
+			device: 'devA',
+			payload: { id: 'i1' }
+		});
+		expect(applied).toBe(0);
+		expect(kept).toEqual([]);
 	});
 
-	it('accepts a well-formed one', () => {
+	it('accepts a well-formed one', async () => {
 		const raw: SyncEvent = {
 			id: 'x',
 			type: 'itemDeleted',
@@ -521,15 +544,17 @@ describe('unknown events', () => {
 			device: 'devA',
 			payload: { itemId: 'i1' }
 		};
-		expect(parseEvent(raw)).toEqual(raw);
+		const { applied, kept } = await gate(raw);
+		expect(applied).toBe(1);
+		expect(kept).toEqual([raw]);
 	});
 
-	// Zod strips what it is not told about, and this is the gate every event off
-	// sync or out of a backup file goes through — so a field the schema forgets
-	// survives on the device that wrote it and vanishes on the one it lands on.
-	// The subtitle timings and the media reference are the whole of the follow
-	// view, so they are the ones worth pinning.
-	it('carries a subtitled text’s timings and media through, field for field', () => {
+	// The gate strips what it is not told about, and every event off sync or out
+	// of a backup file goes through it — so a field the schema forgets survives
+	// on the device that wrote it and vanishes on the one it lands on. The
+	// subtitle timings and the media reference are the whole of the follow view,
+	// so they are the ones worth pinning.
+	it('carries a subtitled text’s timings and media through, field for field', async () => {
 		const raw: SyncEvent = {
 			id: 'x',
 			type: 'textAdded',
@@ -545,10 +570,10 @@ describe('unknown events', () => {
 				createdAt: 5000
 			}
 		};
-		expect(parseEvent(raw)).toEqual(raw);
+		expect((await gate(raw)).kept).toEqual([raw]);
 	});
 
-	it('carries a youtube media through, so the variant is portable before it plays', () => {
+	it('carries a youtube media through, so the variant is portable before it plays', async () => {
 		const raw: SyncEvent = {
 			id: 'x',
 			type: 'textAdded',
@@ -564,6 +589,6 @@ describe('unknown events', () => {
 				createdAt: 5000
 			}
 		};
-		expect(parseEvent(raw)).toEqual(raw);
+		expect((await gate(raw)).kept).toEqual([raw]);
 	});
 });

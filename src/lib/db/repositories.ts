@@ -6,8 +6,9 @@
  * seam exists.
  *
  * Every function here is one {@link Backend} method, forwarded: the contract is
- * `protocol.ts`, the implementation is `core.ts` beside the database, and this
- * module is what a caller on the window thread holds. A method's optional
+ * `protocol.ts`, the implementation is the Rust core (`crates/sapling-core`)
+ * beside the database, and this module is what a caller on the window thread
+ * holds. A method's optional
  * trailing arguments are applied by the backend, so a call that leaves them out
  * gets the backend's clock, not this thread's.
  */

@@ -39,3 +39,7 @@ result-*
 
 # Rust
 /target
+
+# The core compiled to wasm plus its wasm-bindgen glue — `pnpm core:wasm`
+# writes it, every `pnpm dev|build|test|check` runs that first.
+/src/lib/db/wasm/

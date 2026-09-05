@@ -8,15 +8,24 @@
  * and no retry.
  *
  * The RPC is the domain protocol (`protocol.ts`): one message names a
- * {@link Backend} method and carries its arguments, and `core.ts` answers it
- * over the open database. Nothing SQL-shaped crosses this boundary, so the
- * window never learns how the data is laid out.
+ * {@link Backend} method and carries its arguments, and the Rust core —
+ * `crates/sapling-core`, compiled to wasm and lent this thread's database
+ * through `host.ts` — answers it. Nothing SQL-shaped crosses this boundary, so
+ * the window never learns how the data is laid out.
  */
 import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 
-import { makeCore, type Core } from './core';
-import { openSchema } from './materialize';
-import { dispatch, isBackendMethod, type WorkerInbound, type WorkerOutbound } from './protocol';
+import { directOf, openCore } from './host';
+import {
+	dispatch,
+	isBackendMethod,
+	type Backend,
+	type Direct,
+	type WorkerInbound,
+	type WorkerOutbound
+} from './protocol';
+import init from './wasm/sapling_core';
+import wasmUrl from './wasm/sapling_core_bg.wasm?url';
 
 function reply(message: WorkerOutbound): void {
 	postMessage(message);
@@ -28,15 +37,14 @@ const deviceId = new Promise<string>((resolve) => {
 	resolveDeviceId = resolve;
 });
 
-async function boot(): Promise<Core> {
-	const sqlite3 = await sqlite3InitModule();
+async function boot(): Promise<Direct<Backend>> {
+	const [sqlite3] = await Promise.all([sqlite3InitModule(), init({ module_or_path: wasmUrl })]);
 	const pool = await sqlite3.installOpfsSAHPoolVfs({ name: 'sapling' });
 	const db = new pool.OpfsSAHPoolDb('/sapling.db');
-	const sql = openSchema(db);
-	return makeCore(sql, await deviceId);
+	return directOf(openCore(db, { deviceId: await deviceId }));
 }
 
-let core: Core | undefined;
+let core: Direct<Backend> | undefined;
 let bootError: string | undefined;
 
 const booted = boot().then(
