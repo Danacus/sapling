@@ -1,0 +1,224 @@
+{
+	"meta": {
+		"deviceId": "fixture-device",
+		"now": 1710244800000,
+		"orderFree": true,
+		"note": "A tombstone outranks an add whenever it arrives; a review or a turn that outruns its parent sits inert until the parent lands."
+	},
+	"events": [
+		{
+			"seq": 1,
+			"id": "ev-del-z",
+			"type": "itemDeleted",
+			"at": 1710061500000,
+			"device": "dev-a",
+			"payload": {
+				"itemId": "item-z"
+			}
+		},
+		{
+			"seq": 2,
+			"id": "ev-add-z",
+			"type": "itemAdded",
+			"at": 1710061200000,
+			"device": "dev-a",
+			"payload": {
+				"id": "item-z",
+				"kind": "vocab",
+				"term": "z",
+				"meaning": "zed",
+				"introducedAt": 1710061200000
+			}
+		},
+		{
+			"seq": 3,
+			"id": "ev-review-z",
+			"type": "itemReviewed",
+			"at": 1710061260000,
+			"device": "dev-a",
+			"payload": {
+				"device": "dev-a",
+				"at": 1710061260000,
+				"itemId": "item-z",
+				"grade": 3
+			}
+		},
+		{
+			"seq": 4,
+			"id": "ev-review-y",
+			"type": "itemReviewed",
+			"at": 1710061320000,
+			"device": "dev-a",
+			"payload": {
+				"device": "dev-a",
+				"at": 1710061320000,
+				"itemId": "item-y",
+				"grade": 3
+			}
+		},
+		{
+			"seq": 5,
+			"id": "ev-add-y",
+			"type": "itemAdded",
+			"at": 1710061200000,
+			"device": "dev-a",
+			"payload": {
+				"id": "item-y",
+				"kind": "vocab",
+				"term": "y",
+				"meaning": "why",
+				"introducedAt": 1710061200000
+			}
+		},
+		{
+			"seq": 6,
+			"id": "ev-del-text-z",
+			"type": "textDeleted",
+			"at": 1710064860000,
+			"device": "dev-a",
+			"payload": {
+				"textId": "text-z"
+			}
+		},
+		{
+			"seq": 7,
+			"id": "ev-add-text-z",
+			"type": "textAdded",
+			"at": 1710064800000,
+			"device": "dev-a",
+			"payload": {
+				"id": "text-z",
+				"title": "Gone",
+				"source": "generated",
+				"sentences": [
+					{
+						"text": "z"
+					}
+				],
+				"glossary": [],
+				"createdAt": 1710064800000
+			}
+		},
+		{
+			"seq": 8,
+			"id": "ev-add-text-k",
+			"type": "textAdded",
+			"at": 1710064920000,
+			"device": "dev-a",
+			"payload": {
+				"id": "text-k",
+				"title": "Kept",
+				"source": "generated",
+				"sentences": [
+					{
+						"text": "k"
+					}
+				],
+				"glossary": [],
+				"createdAt": 1710064920000
+			}
+		},
+		{
+			"seq": 9,
+			"id": "ev-del-conv-z",
+			"type": "conversationDeleted",
+			"at": 1710068700000,
+			"device": "dev-a",
+			"payload": {
+				"conversationId": "conv-z"
+			}
+		},
+		{
+			"seq": 10,
+			"id": "ev-turn-z-0",
+			"type": "turnAdded",
+			"at": 1710068400000,
+			"device": "dev-a",
+			"payload": {
+				"conversationId": "conv-z",
+				"index": 0,
+				"teacher": {
+					"role": "teacher",
+					"reply": {
+						"text": "z"
+					},
+					"actions": []
+				}
+			}
+		},
+		{
+			"seq": 11,
+			"id": "ev-conv-z",
+			"type": "conversationStarted",
+			"at": 1710068400000,
+			"device": "dev-a",
+			"payload": {
+				"id": "conv-z",
+				"scenario": {
+					"setting": "z",
+					"teacherRole": "z",
+					"learnerRole": "z",
+					"firstSpeaker": "teacher"
+				},
+				"createdAt": 1710068400000
+			}
+		},
+		{
+			"seq": 12,
+			"id": "ev-turn-k-1",
+			"type": "turnAdded",
+			"at": 1710070320000,
+			"device": "dev-a",
+			"payload": {
+				"conversationId": "conv-k",
+				"index": 1,
+				"learner": {
+					"role": "learner",
+					"text": "k?"
+				},
+				"teacher": {
+					"role": "teacher",
+					"reply": {
+						"text": "k!"
+					},
+					"actions": []
+				}
+			}
+		},
+		{
+			"seq": 13,
+			"id": "ev-conv-k",
+			"type": "conversationStarted",
+			"at": 1710070200000,
+			"device": "dev-a",
+			"payload": {
+				"id": "conv-k",
+				"scenario": {
+					"setting": "k",
+					"teacherRole": "k",
+					"learnerRole": "k",
+					"firstSpeaker": "teacher"
+				},
+				"createdAt": 1710070200000
+			}
+		},
+		{
+			"seq": 14,
+			"id": "ev-turn-k-0",
+			"type": "turnAdded",
+			"at": 1710070200000,
+			"device": "dev-a",
+			"payload": {
+				"conversationId": "conv-k",
+				"index": 0,
+				"teacher": {
+					"role": "teacher",
+					"reply": {
+						"text": "k"
+					},
+					"actions": []
+				}
+			}
+		}
+	]
+}

@@ -25,11 +25,19 @@ export interface TestBackend extends Backend {
 	core: Core;
 }
 
-/** A fresh in-memory backend, with the DDL already applied. */
-export async function makeTestBackend(deviceId: string = getDeviceId()): Promise<TestBackend> {
+/**
+ * A fresh in-memory backend, with the DDL already applied.
+ *
+ * `clock` pins what the core stamps and reports as "now"; leave it out and the
+ * core reads the real clock, as the app does.
+ */
+export async function makeTestBackend(
+	deviceId: string = getDeviceId(),
+	clock?: () => number
+): Promise<TestBackend> {
 	const sqlite3 = await sqlite3InitModule();
 	const db = new sqlite3.oo1.DB(':memory:');
-	const core = makeCore(openSchema(db), deviceId);
+	const core = makeCore(openSchema(db), deviceId, clock);
 	return {
 		...promised(core),
 		commit: async (type, payload) => core.commit(type, payload),

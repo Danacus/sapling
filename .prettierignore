@@ -15,6 +15,10 @@ static/tts/sherpa-onnx-*.js
 # _emphasis_ against the house style. Formatting is for code.
 *.md
 
+# Golden fixtures are data: `events.json` is authored, `expected.json` is
+# written by `pnpm golden:update`, and neither is code to restyle.
+src/lib/db/fixtures/**/*.json
+
 # Python virtualenvs (tools/hardsub-ocr) — gitignored, but prettier walks the
 # filesystem, not the index, and paddle ships JSON it cannot even parse.
 .venv
