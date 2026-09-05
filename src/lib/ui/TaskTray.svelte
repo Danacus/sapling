@@ -29,6 +29,15 @@
 	const tasks = $derived(taskStore.tasks);
 	const running = $derived(taskStore.running);
 	const failed = $derived(tasks.filter((task) => task.status === 'failed'));
+	const settled = $derived(
+		tasks.filter((task) => task.status !== 'queued' && task.status !== 'running')
+	);
+
+	/** Dismisses every finished task at once; the tray goes with them when nothing is left. */
+	function clearSettled() {
+		for (const task of settled) dismissTask(task.id);
+		if (settled.length === tasks.length) open = false;
+	}
 
 	/** Newest first: the job the learner just started is the one they came to see. */
 	const listed = $derived(tasks.slice().reverse());
@@ -88,6 +97,11 @@
 			>
 				<header class="panel-head">
 					<h2>Background tasks</h2>
+					{#if settled.length > 0}
+						<button type="button" class="btn btn-ghost small clear" onclick={clearSettled}>
+							Clear
+						</button>
+					{/if}
 					<button type="button" class="close" aria-label="Close" onclick={() => (open = false)}>
 						<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"
 							><path d="M6 6l12 12M18 6 6 18" /></svg
@@ -231,6 +245,15 @@
 		color: var(--danger);
 	}
 
+	/* Line icons: no fill, or an open path such as the close cross draws nothing. */
+	.ico {
+		flex: 0 0 auto;
+		fill: none;
+		stroke: currentColor;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+
 	.pill .ico {
 		width: 1rem;
 		height: 1rem;
@@ -286,7 +309,8 @@
 	}
 
 	.panel-head h2 {
-		margin: 0;
+		/* Pushes Clear and the close cross to the far end of the row. */
+		margin: 0 auto 0 0;
 		font-size: 0.95rem;
 	}
 
