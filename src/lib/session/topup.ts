@@ -123,21 +123,69 @@ export function planTopUp(
 	now: number,
 	opts: PlanTopUpOptions = {}
 ): Want[] {
+	return collectWants(pool, items, now, opts).wants.slice(0, MAX_TOPUP_WANTS);
+}
+
+/** How well the pool covers the words coming up — the start screen's figure. */
+export interface TopUpCoverage {
+	/** Words the next top-up would consider: the same list a session draws on. */
+	upcoming: number;
+	/** Of those, the words with nothing left to write — every kind they need is rested and waiting. */
+	covered: number;
+	/** What a top-up would write right now, after the cap. Zero means the button has nothing to do. */
+	wants: number;
+}
+
+/**
+ * Counts, not wants: how many upcoming words are fully covered, and how many
+ * challenges a top-up would write. Deterministic whatever `rng` says — the
+ * roll only picks *which* kind fills a gap, never whether there is one — so
+ * the start screen can show the same number the Generate button acts on.
+ *
+ * `covered` is counted before the cap: a word past {@link MAX_TOPUP_WANTS}
+ * still has gaps, it just does not get them filled this time.
+ */
+export function topUpCoverage(
+	pool: readonly ChallengeRow[],
+	items: KnowledgeItem[],
+	now: number,
+	opts: PlanTopUpOptions = {}
+): TopUpCoverage {
+	const { upcoming, wants } = collectWants(pool, items, now, opts);
+	const short = new Set(wants.map((want) => want.item.id));
+	return {
+		upcoming: upcoming.length,
+		covered: upcoming.length - short.size,
+		wants: Math.min(wants.length, MAX_TOPUP_WANTS)
+	};
+}
+
+/**
+ * The uncapped plan: every upcoming word that can be written about, and every
+ * want it has. {@link planTopUp} cuts the list; {@link topUpCoverage} counts
+ * it — the one walk, so the two can never disagree about a word.
+ */
+function collectWants(
+	pool: readonly ChallengeRow[],
+	items: KnowledgeItem[],
+	now: number,
+	opts: PlanTopUpOptions
+): { upcoming: KnowledgeItem[]; wants: Want[] } {
 	const rng = opts.rng ?? Math.random;
-	const { reviewItems: upcoming } = selectSessionItems(items, {
+	const { reviewItems } = selectSessionItems(items, {
 		now,
 		...(opts.maxItems === undefined ? {} : { maxItems: opts.maxItems })
 	});
+	// A word with no term or no meaning has nothing to write a challenge
+	// about — and nothing a challenge could be graded against — so it is
+	// neither upcoming nor covered: it is not in the picture at all.
+	const upcoming = reviewItems.filter((word) => word.term?.trim() && word.meaning?.trim());
 	const coverage = coverageOf(pool, items, now);
 	const wants: Want[] = [];
 
 	for (const word of upcoming) {
-		if (wants.length >= MAX_TOPUP_WANTS) break;
-		const term = word.term?.trim();
-		const meaning = word.meaning?.trim();
-		// Nothing to write a challenge about — and nothing a challenge could be
-		// graded against.
-		if (!term || !meaning) continue;
+		const term = word.term.trim();
+		const meaning = word.meaning.trim();
 
 		const level = difficultyLevelOf(word, now);
 		const bearable = demandForLevel(level);
@@ -164,7 +212,6 @@ export function planTopUp(
 		for (const [group, need] of groups) {
 			const covered = group.filter((kind) => have.rested.has(kindKey(kind))).length;
 			for (let missing = need - covered; missing > 0; missing--) {
-				if (wants.length >= MAX_TOPUP_WANTS) break;
 				const candidates = group.filter(
 					(kind) => !have.rested.has(kindKey(kind)) && !chosen.has(kindKey(kind))
 				);
@@ -178,5 +225,5 @@ export function planTopUp(
 		}
 	}
 
-	return wants;
+	return { upcoming, wants };
 }

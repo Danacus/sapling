@@ -47,8 +47,8 @@ import {
 	type FsrsCardState
 } from '$lib/srs';
 import { RESERVE_GAP, isPlayable, isRested, knownItemIds } from './pool';
-import { planTopUp } from './topup';
-import type { PlanTopUpOptions } from './topup';
+import { planTopUp, topUpCoverage } from './topup';
+import type { PlanTopUpOptions, TopUpCoverage } from './topup';
 import { difficultyOf } from '$lib/challenges/difficulty';
 import type { Challenge, KnowledgeItem, Profile, Verdict } from '$lib/types';
 import {
@@ -74,19 +74,6 @@ export const BATCH_TARGET = 14;
  * reads it too; re-exported here where every caller has always found it.
  */
 export { RESERVE_GAP };
-
-/**
- * Fewer rested challenges than this is reported as `poolLow`, so the start
- * screen can nudge towards generating. Deliberately below {@link BATCH_TARGET}:
- * a session built partly from re-reads is still a session, and nagging on every
- * visit is how a nudge becomes wallpaper.
- *
- * Measured against *rested* material rather than plan length, because the plan
- * is never short any more — it fills the tail with early reviews. "How much can
- * you play without re-reading a sentence you saw this week" is the figure that
- * actually tells you when to generate.
- */
-export const POOL_LOW_THRESHOLD = 8;
 
 /**
  * Hard ceiling on LLM challenges in one session. {@link BATCH_TARGET} is what
@@ -633,7 +620,8 @@ function byDueDate(now: number): (a: KnowledgeItem, b: KnowledgeItem) => number 
  * gain when taken ahead of time — so nothing downstream changes; only the
  * choice of what to play does. Nothing is generated and no new word is
  * introduced either way: this is the existing pool, replayed. What tells the
- * learner it is time to generate is `poolLow`, not an empty session.
+ * learner it is time to generate is coverage (`SessionPlan.topUp`), not an
+ * empty session.
  *
  * Two gates decide what any of that may draw on, and only one of them is firm.
  * *Playable* ({@link isPlayable}) is absolute. *Rested* ({@link isRested}) is a
@@ -918,22 +906,19 @@ export interface SessionPlan {
 	challenges: Challenge[];
 	/** Every item known right now — the match-pairs pool and the item lookup. */
 	items: KnowledgeItem[];
-	/**
-	 * Pooled challenges playable without bending the rest gap (before session
-	 * sizing). A plan may exceed this — a due word will spend the gap to get its
-	 * one review — but as a "how much material is there" figure it is the honest
-	 * one: this is what a session can be built from without repeating anything.
-	 */
-	readyCount: number;
 	/** Words whose card is due at `now`. */
 	dueCount: number;
 	/**
-	 * Fresh material is thinning out: fewer than {@link POOL_LOW_THRESHOLD}
-	 * rested challenges left, so a session is starting to be built out of
-	 * sentences the learner saw this week. The UI nudges towards generating; it
-	 * never blocks starting, because a re-read still reviews the word.
+	 * How well the pool covers the words coming up, and what a top-up would
+	 * write — the same `planTopUp` walk generation makes, counted rather than
+	 * planned (`topUpCoverage`). This is the start screen's freshness figure and
+	 * the Generate button's label in one: "N of M upcoming words have fresh
+	 * challenges" is exactly the question the learner is asking, and `wants`
+	 * being zero is exactly when the button would refuse. A pool-wide count of
+	 * rested rows used to stand here, and it could say "running low" on a day
+	 * every upcoming word was already covered.
 	 */
-	poolLow: boolean;
+	topUp: TopUpCoverage;
 }
 
 export interface StartSessionOptions extends PlanSessionOptions {
@@ -948,8 +933,9 @@ export interface StartSessionOptions extends PlanSessionOptions {
  *
  * Cheap enough to re-run whenever the pool may have moved (a background
  * generation finishing, say) so the start screen's counts stay honest. The
- * counts describe the *schedule*, not the plan: `dueCount` is what is actually
- * due, and the plan routinely reaches past it into early review.
+ * counts describe the *schedule* and the *pool*, not the plan: `dueCount` is
+ * what is actually due (the plan routinely reaches past it into early review),
+ * and `topUp` is what the next generation would find missing.
  */
 export async function startSession(opts: StartSessionOptions = {}): Promise<SessionPlan> {
 	const now = opts.now ?? Date.now();
@@ -957,17 +943,13 @@ export async function startSession(opts: StartSessionOptions = {}): Promise<Sess
 
 	const [pool, items] = await Promise.all([getPool(), getAllItems()]);
 	const challenges = planSession(pool, items, now, planOpts);
-
-	const known = knownItemIds(items);
-	const readyCount = pool.filter((row) => isPlayable(row, known) && isRested(row, now)).length;
 	const dueCount = items.filter((item) => owesReview(item, now)).length;
 
 	return {
 		challenges,
 		items,
-		readyCount,
 		dueCount,
-		poolLow: readyCount < POOL_LOW_THRESHOLD
+		topUp: topUpCoverage(pool, items, now)
 	};
 }
 

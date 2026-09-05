@@ -13,7 +13,7 @@ import type { ChallengeKind, Want } from '$lib/llm';
 import { CardState, newCardState } from '$lib/srs';
 import type { KnowledgeItem } from '$lib/types';
 import { RESERVE_GAP } from './pool';
-import { MAX_TOPUP_WANTS, WANT_PER_WORD, planTopUp } from './topup';
+import { MAX_TOPUP_WANTS, WANT_PER_WORD, planTopUp, topUpCoverage } from './topup';
 
 const NOW = 1_700_000_000_000;
 const DAY = 24 * 60 * 60 * 1000;
@@ -306,5 +306,63 @@ describe('planTopUp', () => {
 		const snapshot = structuredClone({ items, pool });
 		planTopUp(pool, items, NOW, { rng: cyclingRng() });
 		expect({ items, pool }).toEqual(snapshot);
+	});
+});
+
+describe('topUpCoverage', () => {
+	it('counts a fully covered vocabulary as covered, with nothing to write', () => {
+		const pool = [pooled('r', RECOGNITION[0], ['a']), pooled('p', FREE[0], ['a'])];
+		expect(topUpCoverage(pool, [strong('a')], NOW)).toEqual({
+			upcoming: 1,
+			covered: 1,
+			wants: 0
+		});
+	});
+
+	it('counts a word short of one kind as uncovered, and the want it would write', () => {
+		const pool = [pooled('r', RECOGNITION[0], ['a'])];
+		expect(topUpCoverage(pool, [strong('a'), item('b')], NOW)).toEqual({
+			upcoming: 2,
+			covered: 0,
+			wants: 3
+		});
+	});
+
+	it('reports exactly what planTopUp would write', () => {
+		const items = [item('a'), strong('b'), item('c')];
+		const pool = [pooled('r', RECOGNITION[0], ['a']), pooled('r2', RECOGNITION[1], ['a'])];
+		const coverage = topUpCoverage(pool, items, NOW);
+		expect(coverage.wants).toBe(planTopUp(pool, items, NOW).length);
+		expect(coverage.covered).toBe(1);
+	});
+
+	it('does not depend on the rng: the roll picks kinds, never whether a gap exists', () => {
+		const items = [item('a'), strong('b'), item('c')];
+		const pool = [pooled('r', RECOGNITION[0], ['a'])];
+		const seeds = [0, 0.25, 0.5, 0.75, 0.999];
+		const seen = new Set(
+			seeds.map((seed) => JSON.stringify(topUpCoverage(pool, items, NOW, { rng: () => seed })))
+		);
+		expect(seen.size).toBe(1);
+	});
+
+	it('caps the wants but not the coverage', () => {
+		const items = Array.from({ length: 20 }, (_, i) => item(`w${i}`, (i - 10) * DAY));
+		const coverage = topUpCoverage([], items, NOW, { maxItems: 20 });
+		expect(coverage.wants).toBe(MAX_TOPUP_WANTS);
+		expect(coverage).toMatchObject({ upcoming: 20, covered: 0 });
+	});
+
+	it('leaves a word with nothing to write about out of both counts', () => {
+		const blank = { ...item('a'), meaning: '  ' };
+		expect(topUpCoverage([], [blank, item('b')], NOW)).toEqual({
+			upcoming: 1,
+			covered: 0,
+			wants: WANT_PER_WORD
+		});
+	});
+
+	it('is all zeros with no words', () => {
+		expect(topUpCoverage([], [], NOW)).toEqual({ upcoming: 0, covered: 0, wants: 0 });
 	});
 });

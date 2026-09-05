@@ -59,7 +59,7 @@ which of the three registries or which `src/lib/<area>` owns the question.
 
 Grep for the **identifier**, not prose. For a behaviour with no obvious symbol,
 grep the constant or the type name that governs it (e.g. `RESERVE_GAP`,
-`POOL_LOW_THRESHOLD`, `demandOf`, `planSession`, `toPlain`).
+`MAX_TOPUP_WANTS`, `demandOf`, `planSession`, `toPlain`).
 
 Don't stop at the definition. The question "where is X" almost always also
 means "and what reads it" — grep the identifier a second time for call sites,
