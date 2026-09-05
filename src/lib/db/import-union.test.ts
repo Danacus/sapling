@@ -21,15 +21,15 @@ import {
 	saveProfile
 } from '$lib/db';
 import type { SyncEvent } from './events';
-import { setStoreForTesting, type Store } from './store';
-import { makeTestStore } from './store.testing';
+import { setBackendForTesting } from './backend';
+import { makeTestBackend, type TestBackend } from './backend.testing';
 
-let store: Store;
+let store: TestBackend;
 
 /** A fresh store, installed and kept — `lookups` has no repository read yet. */
 async function freshStore(): Promise<void> {
-	store = await makeTestStore();
-	setStoreForTesting(store);
+	store = await makeTestBackend();
+	setBackendForTesting(store);
 }
 
 beforeEach(freshStore);

@@ -7,91 +7,67 @@
  * to install while another tab holds its files — which is reported as one line
  * and no retry.
  *
- * The RPC is deliberately small: read, write a batch, ingest events, import a
- * file. The merge rules are `materialize.ts`, running here unchanged from the
- * copy node tests exercise.
+ * The RPC is the domain protocol (`protocol.ts`): one message names a
+ * {@link Backend} method and carries its arguments, and `core.ts` answers it
+ * over the open database. Nothing SQL-shaped crosses this boundary, so the
+ * window never learns how the data is laid out.
  */
 import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 
-import type { SyncEvent } from './events';
-import { ingest, insertOnly, openSchema, rebuild, type Sql, type SqlOp } from './materialize';
+import { makeCore, type Core } from './core';
+import { openSchema } from './materialize';
+import { dispatch, isBackendMethod, type WorkerInbound, type WorkerOutbound } from './protocol';
 
-export type WorkerRequest =
-	| { id: number; op: 'query'; sql: string; params?: (string | number | null)[] }
-	| { id: number; op: 'batch'; ops: SqlOp[] }
-	| { id: number; op: 'ingest'; entries: { event: SyncEvent; seq: number | null }[] }
-	| { id: number; op: 'importEvents'; events: SyncEvent[] };
-
-export type WorkerResponse =
-	| { id: number; rows: unknown[] }
-	| { id: number; error: string }
-	| { ready: true }
-	| { bootError: string };
-
-let sql: Sql | undefined;
-
-/** Runs `body` in one transaction; a throw rolls the whole thing back. */
-function transaction(db: Sql, body: () => void): void {
-	db.exec('BEGIN');
-	try {
-		body();
-		db.exec('COMMIT');
-	} catch (error) {
-		db.exec('ROLLBACK');
-		throw error;
-	}
+function reply(message: WorkerOutbound): void {
+	postMessage(message);
 }
 
-function handle(db: Sql, request: WorkerRequest): unknown[] {
-	switch (request.op) {
-		case 'query':
-			return db.query(request.sql, request.params);
-		case 'batch':
-			transaction(db, () => {
-				for (const op of request.ops) db.exec(op.sql, op.params);
-			});
-			return [];
-		case 'ingest':
-			transaction(db, () => {
-				for (const entry of request.entries) ingest(db, entry.event, entry.seq);
-			});
-			return [];
-		case 'importEvents':
-			transaction(db, () => {
-				for (const event of request.events) insertOnly(db, event);
-				rebuild(db);
-			});
-			return [];
-	}
-}
+/** The device id arrives in the first message; the database opens meanwhile. */
+let resolveDeviceId!: (deviceId: string) => void;
+const deviceId = new Promise<string>((resolve) => {
+	resolveDeviceId = resolve;
+});
 
-async function boot(): Promise<void> {
+async function boot(): Promise<Core> {
 	const sqlite3 = await sqlite3InitModule();
 	const pool = await sqlite3.installOpfsSAHPoolVfs({ name: 'sapling' });
 	const db = new pool.OpfsSAHPoolDb('/sapling.db');
-	sql = openSchema(db);
+	const sql = openSchema(db);
+	return makeCore(sql, await deviceId);
 }
 
+let core: Core | undefined;
 let bootError: string | undefined;
 
 const booted = boot().then(
-	() => postMessage({ ready: true } satisfies WorkerResponse),
+	(made) => {
+		core = made;
+		reply({ ready: true });
+	},
 	(error: unknown) => {
 		bootError = String(error);
-		postMessage({ bootError } satisfies WorkerResponse);
+		reply({ bootError });
 	}
 );
 
-self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
-	const request = event.data;
+self.onmessage = async (event: MessageEvent<WorkerInbound>) => {
+	const message = event.data;
+	if ('init' in message) {
+		resolveDeviceId(message.init.deviceId);
+		return;
+	}
 	await booted;
-	if (!sql) {
-		postMessage({ id: request.id, error: bootError ?? 'no database' } satisfies WorkerResponse);
+	if (!core) {
+		reply({ id: message.id, error: bootError ?? 'no database' });
+		return;
+	}
+	if (!isBackendMethod(message.method)) {
+		reply({ id: message.id, error: `Unknown backend method ${String(message.method)}` });
 		return;
 	}
 	try {
-		postMessage({ id: request.id, rows: handle(sql, request) } satisfies WorkerResponse);
+		reply({ id: message.id, result: dispatch(core, message) });
 	} catch (error) {
-		postMessage({ id: request.id, error: String(error) } satisfies WorkerResponse);
+		reply({ id: message.id, error: String(error) });
 	}
 };

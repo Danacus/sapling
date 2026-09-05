@@ -18,9 +18,8 @@
  * - **One cycle at a time.** Several triggers overlap by design, so a later
  *   caller joins the run already going rather than starting a second one.
  */
-import { parseEvent, type SequencedEvent } from '$lib/db/events';
-import { LOG_ORDER } from '$lib/db/materialize';
-import { ready, type Store } from '$lib/db/store';
+import { ready } from '$lib/db/backend';
+import type { Backend } from '$lib/db/protocol';
 import { getSyncPhrase, isSyncEnabled } from './config';
 import { SYNC_URL } from './url';
 
@@ -47,7 +46,6 @@ export interface SyncRecord {
 const PUSH_PAGE = 500;
 const PULL_PAGE = 1000;
 const LAST_KEY = 'll.sync.last';
-const CURSOR_KEY = 'pullCursor';
 
 /** The in-flight cycle, or `undefined` when idle. */
 let inFlight: Promise<SyncOutcome> | undefined;
@@ -73,9 +71,9 @@ async function syncCycle(fetchImpl: typeof fetch): Promise<SyncOutcome> {
 	let pushed = 0;
 	let pulled = 0;
 	try {
-		const store = await ready();
-		pushed = await pushPending(store, SYNC_URL, headers, fetchImpl);
-		pulled = await pullPages(store, SYNC_URL, headers, fetchImpl);
+		const backend = await ready();
+		pushed = await pushPending(backend, SYNC_URL, headers, fetchImpl);
+		pulled = await pullPages(backend, SYNC_URL, headers, fetchImpl);
 	} catch (error) {
 		return record({ ok: false, pushed, pulled, message: messageOf(error) });
 	}
@@ -86,40 +84,22 @@ async function syncCycle(fetchImpl: typeof fetch): Promise<SyncOutcome> {
 /* Push                                                                        */
 /* -------------------------------------------------------------------------- */
 
-interface PendingRow {
-	id: string;
-	type: string;
-	at: number;
-	device: string;
-	payload: string;
-}
-
 /**
- * Sends every `seq IS NULL` row in log order and stamps the seqs that come
- * back. A row keeps its NULL until the server has answered for it, so an
- * interrupted push is simply re-sent.
+ * Sends every unacknowledged event in log order and stamps the seqs that come
+ * back. An event keeps its NULL `seq` until the server has answered for it, so
+ * an interrupted push is simply re-sent.
  */
 async function pushPending(
-	store: Store,
+	backend: Backend,
 	url: string,
 	headers: Record<string, string>,
 	fetchImpl: typeof fetch
 ): Promise<number> {
 	let pushed = 0;
 	for (;;) {
-		const rows = await store.query<PendingRow>(
-			`SELECT id, type, at, device, payload FROM events
-			 WHERE seq IS NULL ORDER BY ${LOG_ORDER} LIMIT ${PUSH_PAGE}`
-		);
-		if (rows.length === 0) return pushed;
+		const events = await backend.pendingEvents(PUSH_PAGE);
+		if (events.length === 0) return pushed;
 
-		const events = rows.map((row) => ({
-			id: row.id,
-			type: row.type,
-			at: row.at,
-			device: row.device,
-			payload: JSON.parse(row.payload) as unknown
-		}));
 		const body = await requestJson(
 			`${url}/push`,
 			{ method: 'POST', headers, body: JSON.stringify({ events }) },
@@ -127,18 +107,17 @@ async function pushPending(
 		);
 		const seqs = readSeqs(body);
 
-		const ops = rows
-			.filter((row) => typeof seqs[row.id] === 'number')
-			.map((row) => ({
-				sql: 'UPDATE events SET seq = ? WHERE id = ?',
-				params: [seqs[row.id], row.id]
-			}));
+		const acknowledged: Record<string, number> = {};
+		for (const event of events) {
+			if (typeof seqs[event.id] === 'number') acknowledged[event.id] = seqs[event.id];
+		}
 		// A page nothing could be stamped from would be re-sent forever.
-		if (ops.length === 0) throw new Error('The sync server did not accept this device’s changes.');
-		await store.batch(ops);
-		pushed += ops.length;
+		if (Object.keys(acknowledged).length === 0) {
+			throw new Error('The sync server did not accept this device’s changes.');
+		}
+		pushed += await backend.markPushed(acknowledged);
 
-		if (rows.length < PUSH_PAGE) return pushed;
+		if (events.length < PUSH_PAGE) return pushed;
 	}
 }
 
@@ -153,12 +132,12 @@ async function pushPending(
  * with fewer events than asked for and still have more.
  */
 async function pullPages(
-	store: Store,
+	backend: Backend,
 	url: string,
 	headers: Record<string, string>,
 	fetchImpl: typeof fetch
 ): Promise<number> {
-	let cursor = await readCursor(store);
+	let cursor = await backend.getPullCursor();
 	let applied = 0;
 
 	for (;;) {
@@ -170,18 +149,13 @@ async function pullPages(
 		const page = readPage(body);
 		if (page.events.length === 0) return applied;
 
+		// The cursor moves past every row with a usable `seq`, parseable or not:
+		// an event this build cannot read costs one row rather than the whole sync.
 		let highest = cursor;
-		const events: SequencedEvent[] = [];
 		for (const raw of page.events) {
 			const seq = seqOf(raw);
-			if (seq === undefined) continue;
-			highest = Math.max(highest, seq);
-			// An event this build cannot parse is skipped but still moves the
-			// cursor past itself, so it costs one row rather than the whole sync.
-			const parsed = parseEvent(raw);
-			if (parsed) events.push({ ...parsed, seq });
+			if (seq !== undefined) highest = Math.max(highest, seq);
 		}
-
 		if (highest <= cursor) {
 			throw new Error('The sync server sent a page that does not advance the cursor.');
 		}
@@ -189,31 +163,12 @@ async function pullPages(
 		// Apply strictly before the cursor that covers it: an interruption
 		// between the two costs a re-apply, which the log dedupes, while the
 		// other order would skip events for good.
-		if (events.length > 0) await store.applyRemote(events);
-		await writeCursor(store, highest);
+		applied += await backend.applyRemote(page.events);
+		await backend.setPullCursor(highest);
 		cursor = highest;
-		applied += events.length;
 
 		if (cursor >= page.latest) return applied;
 	}
-}
-
-async function readCursor(store: Store): Promise<number> {
-	const row = (
-		await store.query<{ value: string }>('SELECT value FROM meta WHERE key = ?', [CURSOR_KEY])
-	)[0];
-	const parsed = row ? Number.parseInt(row.value, 10) : 0;
-	return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function writeCursor(store: Store, cursor: number): Promise<void> {
-	return store.batch([
-		{
-			sql: `INSERT INTO meta (key, value) VALUES (?, ?)
-			      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-			params: [CURSOR_KEY, String(cursor)]
-		}
-	]);
 }
 
 /* -------------------------------------------------------------------------- */

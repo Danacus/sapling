@@ -26,8 +26,8 @@ import {
 	recordLookup,
 	upsertItems
 } from '$lib/db';
-import { setStoreForTesting, type Store } from './store';
-import { makeTestStore } from './store.testing';
+import { setBackendForTesting } from './backend';
+import { makeTestBackend, type TestBackend } from './backend.testing';
 import { newCardState } from '$lib/srs';
 import type {
 	Challenge,
@@ -37,11 +37,11 @@ import type {
 	ReadingText
 } from '$lib/types';
 
-let store: Store;
+let store: TestBackend;
 
 beforeEach(async () => {
-	store = await makeTestStore();
-	setStoreForTesting(store);
+	store = await makeTestBackend();
+	setBackendForTesting(store);
 });
 
 function item(id: string, term: string, introducedAt: number): KnowledgeItem {

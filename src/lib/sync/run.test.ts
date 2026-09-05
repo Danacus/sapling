@@ -10,7 +10,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { Store } from '$lib/db/store';
+import type { TestBackend } from '$lib/db/backend.testing';
 
 const T0 = 1_700_000_000_000;
 const PHRASE = 'ABCDEFGHJKMNPQRSTVWX';
@@ -21,8 +21,8 @@ const OTHER = 'devB';
 /** `url.ts` reads `import.meta.env` at module load, so this must precede it. */
 vi.stubEnv('VITE_SYNC_URL', SERVER);
 
-const { setStoreForTesting } = await import('$lib/db/store');
-const { makeTestStore } = await import('$lib/db/store.testing');
+const { setBackendForTesting } = await import('$lib/db/backend');
+const { makeTestBackend } = await import('$lib/db/backend.testing');
 const { runSync, lastSyncOutcome } = await import('./run');
 
 /* -------------------------------------------------------------------------- */
@@ -45,7 +45,7 @@ class MemoryStorage {
 	}
 }
 
-let store: Store;
+let store: TestBackend;
 
 beforeEach(async () => {
 	const storage = new MemoryStorage();
@@ -54,8 +54,8 @@ beforeEach(async () => {
 	storage.setItem('ll.syncDevice', DEVICE);
 	vi.stubGlobal('localStorage', storage);
 
-	store = await makeTestStore();
-	setStoreForTesting(store);
+	store = await makeTestBackend();
+	setBackendForTesting(store);
 });
 
 /** One `itemAdded` payload, enough to see the item land in the read model. */
