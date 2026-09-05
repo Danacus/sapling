@@ -24,11 +24,9 @@
 	import { deleteItem, getAllItems, getProfile } from '$lib/db';
 	import { itemReadingTokens, loadRomanizer } from '$lib/romanize';
 	import type { Romanizer } from '$lib/romanize';
-	import { hideReadingProbability } from '$lib/session/romanization';
 	import { CardState } from '$lib/srs';
 	import type { KnowledgeItem, Profile } from '$lib/types';
 	import ProgressBar from '$lib/ui/ProgressBar.svelte';
-	import { getRomanizationMode } from '$lib/ui/prefs';
 	import RubyText from '$lib/ui/RubyText.svelte';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
@@ -83,9 +81,6 @@
 
 	/** ts-fsrs `Rating` names, for the review-history tooltips. */
 	const GRADE_LABELS: Record<number, string> = { 1: 'Again', 2: 'Hard', 3: 'Good', 4: 'Easy' };
-
-	/** Read once — the setting lives in Settings, not mid-page. */
-	const romanizationMode = getRomanizationMode();
 
 	let loading = $state(true);
 	let loadError = $state('');
@@ -200,17 +195,6 @@
 	const rows = $derived(filterWords(allRows, { search, sort, dir, filter }));
 
 	const filtered = $derived(search.trim() !== '' || filter !== 'all');
-
-	/**
-	 * Whether a word shows its reading, matching the dashboard exactly: adaptive
-	 * mode hides only what the learner fully owns, and never rolls a coin on a
-	 * static list where a reading that came and went would read as a bug.
-	 */
-	function showsReading(strength: number): boolean {
-		if (romanizationMode === 'on') return true;
-		if (romanizationMode === 'off') return false;
-		return hideReadingProbability(strength) < 1;
-	}
 
 	/**
 	 * Red below 0.5, amber below 0.85, green above — the dashboard's thresholds,
@@ -547,9 +531,13 @@
 				<ul class="ledger">
 					{#each rows as row (row.item.id)}
 						{@const open = isOpen(row.item.id)}
-						{@const reading = showsReading(row.strength)
-							? itemReadingTokens(row.item, romanizer)
-							: null}
+						<!--
+						  Always annotated, whatever the romanization preference says. That
+						  preference fades a *crutch* during play; here the reading is a
+						  fact about the word in a reference list, and a list where it
+						  came and went by strength read as a bug.
+						-->
+						{@const reading = itemReadingTokens(row.item, romanizer)}
 						<li class="row" class:open>
 							<div class="entry">
 								<button
