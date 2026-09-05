@@ -2,8 +2,8 @@
 	"meta": {
 		"deviceId": "fixture-device",
 		"now": 1710244800000,
-		"orderFree": false,
-		"note": "An itemUpdated that arrives before its itemAdded is dropped — there is no row to patch, and unlike a review it is not kept inert — so this log replays in seq order only. Between two updates, newest `at` wins both ways: item-1 has the newer copy arriving first, item-2 the older."
+		"orderFree": true,
+		"note": "Patches fold per field in `at` order, from the log, so arrival order does not matter — an itemUpdated before its itemAdded waits until the item lands. item-1 has the newer patch arriving first, item-2 the older; item-2's older patch set `meaning`, which the newer patch (notes only) must not erase."
 	},
 	"events": [
 		{

@@ -262,21 +262,33 @@ describe('the two overwrites are decided by `at`', () => {
 		expect(state.items[0]).toMatchObject({ notes: 'written second' });
 	});
 
-	it('does not let an absent patch field blank a set one', async () => {
-		const state = await apply([
-			addItem('i1'),
-			{
-				id: 'p1',
-				type: 'itemUpdated',
-				at: 1000,
-				payload: { itemId: 'i1', fields: { notes: 'kept' } }
-			},
-			{ id: 'p2', type: 'itemUpdated', at: 2000, payload: { itemId: 'i1', fields: { term: '水' } } }
-		]);
+	it('folds patches per field, so an absent field never blanks a set one, whichever arrives first', async () => {
+		const state = await converges(
+			[addItem('i1')],
+			[
+				{
+					id: 'p1',
+					type: 'itemUpdated',
+					at: 1000,
+					payload: { itemId: 'i1', fields: { notes: 'kept' } }
+				},
+				{
+					id: 'p2',
+					type: 'itemUpdated',
+					at: 2000,
+					payload: { itemId: 'i1', fields: { term: '水' } }
+				}
+			]
+		);
 		expect(state.items[0]).toMatchObject({ term: '水', notes: 'kept' });
 	});
 
-	it('ignores a patch for an item it does not have', async () => {
+	it('holds a patch that arrives before its item until the item lands', async () => {
+		const state = await converges([], [addItem('i1'), patch('early', 1000)]);
+		expect(state.items[0]).toMatchObject({ notes: 'early' });
+	});
+
+	it('shows nothing for a patch whose item never arrives', async () => {
 		const state = await apply([patch('orphan', 1000, 'missing')]);
 		expect(state.items).toHaveLength(0);
 	});

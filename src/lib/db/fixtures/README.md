@@ -17,9 +17,8 @@ replace this one.
 - `orderFree` — whether every rule the log exercises is arrival-order
   independent. When `true`, the test also applies the rows in reverse and
   expects identical reads. When `false`, `note` says which rule is not:
-  a serve or report before its `challengeAdded`, an `itemUpdated` before its
-  `itemAdded`, and a `reviewAmended` before the review it replaces all depend
-  on log order.
+  a serve or report before its `challengeAdded`, and a `reviewAmended` before
+  the review it replaces, both depend on log order.
 
 ## How the reads are probed
 
@@ -49,10 +48,9 @@ Reads are always taken under `TZ=UTC` (`daily` buckets by local day).
   arriving first for half of them; reviews from two devices landing out of time
   order, so the card must fold the same whichever arrives first.
 - `item-updates-lww` — two devices patching the same items, newest `at` winning
-  in both arrival orders. Order-dependent only because an update cannot
-  precede the add it patches. Note the overwrite is per event, not per field:
-  a later patch that leaves `meaning` alone still outranks an earlier one that
-  set it.
+  per field in both arrival orders: a later patch that leaves `meaning` alone
+  does not erase an earlier one that set it, and a patch that arrives before
+  its add waits in the log until the item lands.
 - `tombstones-first` — deletes that arrive before the add they delete, for an
   item, a text and a conversation; a review and a conversation turn that
   arrive before their parent and count once it lands.
