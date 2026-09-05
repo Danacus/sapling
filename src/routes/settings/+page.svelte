@@ -60,7 +60,6 @@
 		setRomanizationMode,
 		type RomanizationMode
 	} from '$lib/ui/prefs';
-	import ProgressBar from '$lib/ui/ProgressBar.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	type Status = 'idle' | 'saved' | 'error';
@@ -103,12 +102,6 @@
 	const preloading = $derived(
 		preloadTask?.status === 'queued' || preloadTask?.status === 'running'
 	);
-	/** 0-100 across the model files, or `null` while the size is still unknown. */
-	const preloadPercent = $derived.by((): number | null => {
-		const progress = preloadTask?.progress;
-		if (!preloading || !progress || progress.total <= 0) return null;
-		return Math.min(100, Math.round((progress.done / progress.total) * 100));
-	});
 	let preloadStatus = $state<Status>('idle');
 	let preloadMessage = $state('');
 	/** Stored spoken clips, in bytes. 0 until the first read comes back. */
@@ -832,22 +825,6 @@
 						thread. Each clip is then kept, so a word you have heard before plays back instantly —
 						including after a reload.
 					</p>
-
-					{#if preloading}
-						<div class="preload-progress">
-							{#if preloadPercent === null}
-								<Spinner />
-								<p class="hint">Starting the download…</p>
-							{:else}
-								<ProgressBar
-									value={preloadPercent / 100}
-									color="var(--accent)"
-									label="Voice model download progress"
-								/>
-								<p class="hint">{preloadPercent}% downloaded</p>
-							{/if}
-						</div>
-					{/if}
 				{/if}
 
 				<!--
@@ -1556,10 +1533,6 @@
 		.switch-thumb {
 			transition: none;
 		}
-	}
-
-	.preload-progress {
-		margin-top: 0.9rem;
 	}
 
 	.test-bench-link {

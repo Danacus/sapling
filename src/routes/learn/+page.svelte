@@ -52,7 +52,6 @@
 	import { addRecentTopic, getRecentTopics, getRomanizationMode } from '$lib/ui/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
-	import TaskLedger from '$lib/ui/TaskLedger.svelte';
 
 	import ChallengeHost from './ChallengeHost.svelte';
 	import FeedbackBanner from './FeedbackBanner.svelte';
@@ -265,36 +264,23 @@
 	/** When the current challenge was first shown; used for a skip's response time. */
 	let challengeShownAt = Date.now();
 
-	/* Generation log ---------------------------------------------------------- */
+	/* Generation ------------------------------------------------------------- */
 
-	/** Total generation time, kept on screen once the lesson has landed. */
-	const prepTotalMs = $derived(
-		topUp?.status === 'done' && topUp.startedAt !== undefined && topUp.finishedAt !== undefined
-			? topUp.finishedAt - topUp.startedAt
-			: null
-	);
+	/** One line of outcome once the latest top-up has landed; the tray has the rest. */
+	const genSummary = $derived(topUp?.status === 'done' ? (topUp.summary ?? '') : '');
 
 	/**
 	 * Where the "New lesson" disclosure sits before the learner has an opinion:
-	 * open whenever a run has something to show (in flight, a failure to retry,
-	 * a ledger that only just finished), and open when generating is genuinely
-	 * the *only* way forward. A merely thinning pool gets the highlight
-	 * (`.urged`) instead — a hint, not a drawer opening itself in the learner's
-	 * face. "Only just" matters now that a task outlives this page: a lesson
-	 * generated an hour ago is in the tray, not a reason to open the drawer on
-	 * every visit.
+	 * open while a run is in flight or has failed, and open when generating is
+	 * genuinely the *only* way forward. A merely thinning pool gets the
+	 * highlight (`.urged`) instead — a hint, not a drawer opening itself in the
+	 * learner's face. A finished run is not a reason: its details are in the
+	 * task tray, not here.
 	 */
-	const RECENT_MS = 2 * 60_000;
-	const genAutoOpen = $derived(
-		generating ||
-			genError !== '' ||
-			(topUp?.status === 'done' && (topUp.finishedAt ?? 0) > Date.now() - RECENT_MS) ||
-			(nudgeGenerate && !canStart)
-	);
+	const genAutoOpen = $derived(generating || genError !== '' || (nudgeGenerate && !canStart));
 	/**
 	 * An explicit tap always wins, so the caret never has a dead click — and the
-	 * two Generate buttons set the choice themselves, which is what keeps the
-	 * ledger on screen through a run the learner started.
+	 * two Generate buttons set the choice themselves.
 	 */
 	const genOpen = $derived(genOpenChoice ?? genAutoOpen);
 
@@ -996,17 +982,11 @@
 									generate();
 								}}
 							>
-								{generating ? 'Generating…' : 'Generate new lesson'}
+								{generating ? 'Generating… details in the task tray' : 'Generate new lesson'}
 							</button>
 
-							{#if topUp && topUp.steps.length > 0}
-								<div class="prep">
-									<TaskLedger
-										steps={topUp.steps}
-										totalMs={prepTotalMs}
-										doneMessage="the lesson is in the pool"
-									/>
-								</div>
+							{#if genSummary}
+								<p class="gen-summary">{genSummary}</p>
 							{/if}
 
 							{#if genError}
@@ -1516,6 +1496,13 @@
 		border-color: var(--border-strong);
 	}
 
+	/* The one line a finished run leaves behind; the ledger is the tray's. */
+	.gen-summary {
+		margin: 0.7rem 0 0;
+		color: var(--text-muted);
+		font-size: 0.88rem;
+	}
+
 	.gen-error {
 		display: flex;
 		flex-direction: column;
@@ -1597,14 +1584,6 @@
 		padding: 1.05rem 1.5rem;
 		font-size: 1.05rem;
 		letter-spacing: 0.005em;
-	}
-
-	/* Generation log ------------------------------------------------------- */
-
-	/* The ledger itself is `$lib/ui/TaskLedger`; this only sets it off from the button. */
-	.prep {
-		width: 100%;
-		margin-top: 1.1rem;
 	}
 
 	/* Errors --------------------------------------------------------------- */

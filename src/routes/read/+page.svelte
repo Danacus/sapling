@@ -139,9 +139,6 @@
 	/** One flag for both doors — a page that is mid-call has nothing else to do. */
 	const busy = $derived(composing !== undefined);
 	let composeError = $state('');
-	/** How many annotate calls have landed, of how many. Zero when not chunked. */
-	const annotateDone = $derived(composing?.progress?.done ?? 0);
-	const annotateTotal = $derived(composing?.progress?.total ?? 0);
 
 	/**
 	 * Whether this page has been left. A composer task outlives the page, and
@@ -780,9 +777,7 @@
 						onclick={() => void add()}
 					>
 						{#if busy}
-							{annotateTotal > 1
-								? `Annotating ${Math.min(annotateDone + 1, annotateTotal)} / ${annotateTotal}…`
-								: 'Annotating…'}
+							Annotating… details in the task tray
 						{:else if composeError}
 							Try again
 						{:else}
