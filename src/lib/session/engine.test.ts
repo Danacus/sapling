@@ -251,8 +251,7 @@ describe('interleaveMatchRounds', () => {
 	});
 
 	/**
-	 * The rounds are the one part of a session nobody pays for, and they used to
-	 * be the one part that ignored how far along the learner was. These pin the
+	 * The rounds are the one part of a session nobody pays for. These pin the
 	 * ladder reaching them, and — more importantly — pin *which* rung a round of
 	 * mixed vocabulary is written at.
 	 */
@@ -1110,11 +1109,15 @@ describe('planRefill', () => {
 	const production = (id: string, itemIds: string[]): ChallengeRow =>
 		recognition(id, itemIds, { direction: 'toTarget' });
 
+	/** The distinct words a brief is about, in the order their wants were planned. */
+	const wordsOf = (args: { wants: { item: { id: string } }[] }): string[] => [
+		...new Set(args.wants.map((want) => want.item.id))
+	];
+
 	it('produces getBatch args from an empty collection: nothing to want', () => {
 		const plan = planRefill([], [], profile(), NOW);
 
-		expect(plan.reviewItems).toEqual([]);
-		expect(plan.args).toEqual({
+		expect(plan).toEqual({
 			profile: {
 				nativeLanguage: 'English',
 				targetLanguage: 'Spanish',
@@ -1125,35 +1128,31 @@ describe('planRefill', () => {
 		});
 	});
 
-	it('never asks for new vocabulary, however well the learner is doing', () => {
-		// The batch args are the whole request; nothing in them can introduce a
-		// word, so there is no slot count to get wrong.
+	it('sends the wants and the vocabulary they are written against, and nothing else', () => {
+		// The batch args are the whole request: nothing in them can introduce a
+		// word, and nothing about how the learner has been doing rides along.
 		const plan = planRefill([], [item('a', -DAY)], profile(), NOW);
-		expect(plan.args).not.toHaveProperty('newItemSlots');
-		expect(plan.args).not.toHaveProperty('count');
-		expect(plan).not.toHaveProperty('newItemSlots');
+		expect(Object.keys(plan).sort()).toEqual(['knownItems', 'profile', 'wants']);
 	});
 
 	it('carries only the profile fields the prompt needs', () => {
 		const plan = planRefill([], [], profile(), NOW);
-		expect(Object.keys(plan.args.profile).sort()).toEqual([
+		expect(Object.keys(plan.profile).sort()).toEqual([
 			'interests',
 			'level',
 			'nativeLanguage',
 			'targetLanguage'
 		]);
-		expect(plan.args.profile).not.toHaveProperty('model');
-		expect(plan.args.profile).not.toHaveProperty('createdAt');
+		expect(plan.profile).not.toHaveProperty('model');
+		expect(plan.profile).not.toHaveProperty('createdAt');
 	});
 
 	it("threads the learner's self-description through, and omits it when blank", () => {
 		const about = 'Nurse in Valencia, two kids, I climb on weekends.';
-		expect(planRefill([], [], profile({ about }), NOW).args.profile.about).toBe(about);
+		expect(planRefill([], [], profile({ about }), NOW).profile.about).toBe(about);
 
-		expect(planRefill([], [], profile(), NOW).args.profile).not.toHaveProperty('about');
-		expect(planRefill([], [], profile({ about: '  ' }), NOW).args.profile).not.toHaveProperty(
-			'about'
-		);
+		expect(planRefill([], [], profile(), NOW).profile).not.toHaveProperty('about');
+		expect(planRefill([], [], profile({ about: '  ' }), NOW).profile).not.toHaveProperty('about');
 	});
 
 	it('sends the whole vocabulary as knownItems, due or not', () => {
@@ -1164,7 +1163,7 @@ describe('planRefill', () => {
 		const items = [item('a', -1 * DAY), item('b', -5 * DAY), item('c', +2 * DAY)];
 		const plan = planRefill([], items, profile(), NOW);
 
-		expect(plan.args.knownItems).toEqual([
+		expect(plan.knownItems).toEqual([
 			{ id: 'a', term: 'term-a' },
 			{ id: 'b', term: 'term-b' },
 			{ id: 'c', term: 'term-c' }
@@ -1177,7 +1176,7 @@ describe('planRefill', () => {
 		const items = [{ ...item('a', -1 * DAY), romanization: 'cháng' }, item('b', -1 * DAY)];
 		const plan = planRefill([], items, profile(), NOW);
 
-		expect(plan.args.knownItems).toEqual([
+		expect(plan.knownItems).toEqual([
 			{ id: 'a', term: 'term-a', romanization: 'cháng' },
 			{ id: 'b', term: 'term-b' }
 		]);
@@ -1191,9 +1190,9 @@ describe('planRefill', () => {
 		// recognition kinds are wanted. `c` is not due — it rides along because a
 		// top-up has no other source of vocabulary and must not come back empty
 		// for a learner who is caught up.
-		expect(plan.reviewItems.map((i) => i.id)).toEqual(['b', 'a', 'c']);
-		expect(plan.args.wants.map((w) => w.item.id)).toEqual(['b', 'b', 'a', 'a', 'c', 'c']);
-		for (const want of plan.args.wants) {
+		expect(wordsOf(plan)).toEqual(['b', 'a', 'c']);
+		expect(plan.wants.map((w) => w.item.id)).toEqual(['b', 'b', 'a', 'a', 'c', 'c']);
+		for (const want of plan.wants) {
 			const id = want.item.id;
 			expect(want.item).toEqual({ id, term: `term-${id}`, meaning: `meaning-${id}` });
 			expect(want.difficulty).toBe(1);
@@ -1209,10 +1208,7 @@ describe('planRefill', () => {
 		};
 
 		const rungs = new Map(
-			planRefill([], [fresh, reviewed], profile(), NOW).args.wants.map((w) => [
-				w.item.id,
-				w.difficulty
-			])
+			planRefill([], [fresh, reviewed], profile(), NOW).wants.map((w) => [w.item.id, w.difficulty])
 		);
 		expect(rungs.get('a')).toBe(1);
 		expect(rungs.get('b')).toBeGreaterThan(1);
@@ -1224,36 +1220,35 @@ describe('planRefill', () => {
 		const pool = [recognition('r1', ['a']), production('r2', ['a'])];
 		const plan = planRefill(pool, [item('a', -DAY)], profile(), NOW);
 
-		expect(plan.args.wants).toEqual([]);
-		expect(plan.reviewItems).toEqual([]);
+		expect(plan.wants).toEqual([]);
 	});
 
 	it('asks only for what a word is missing', () => {
 		const pool = [recognition('r1', ['a'])];
 		const plan = planRefill(pool, [item('a', -DAY)], profile(), NOW);
 
-		expect(plan.args.wants).toHaveLength(1);
-		expect(kindKey(plan.args.wants[0].kind)).not.toBe('recognize-mc');
-		expect(plan.reviewItems.map((i) => i.id)).toEqual(['a']);
+		expect(plan.wants).toHaveLength(1);
+		expect(kindKey(plan.wants[0].kind)).not.toBe('recognize-mc');
+		expect(wordsOf(plan)).toEqual(['a']);
 	});
 
 	it('honours maxItems', () => {
 		const items = [item('a', -3 * DAY), item('b', -2 * DAY), item('c', -DAY)];
 		const plan = planRefill([], items, profile(), NOW, { maxItems: 2 });
 
-		expect(plan.reviewItems.map((i) => i.id)).toEqual(['a', 'b']);
-		expect(plan.args.wants).toHaveLength(4);
+		expect(wordsOf(plan)).toEqual(['a', 'b']);
+		expect(plan.wants).toHaveLength(4);
 	});
 
 	it('includes a trimmed topic in the batch args when one is given', () => {
 		const plan = planRefill([], [], profile(), NOW, { topic: '  ordering in a restaurant  ' });
-		expect(plan.args.topic).toBe('ordering in a restaurant');
+		expect(plan.topic).toBe('ordering in a restaurant');
 	});
 
 	it('omits topic entirely when absent or blank', () => {
-		expect(planRefill([], [], profile(), NOW).args).not.toHaveProperty('topic');
-		expect(planRefill([], [], profile(), NOW, { topic: '   ' }).args).not.toHaveProperty('topic');
-		expect(planRefill([], [], profile(), NOW, { topic: '' }).args).not.toHaveProperty('topic');
+		expect(planRefill([], [], profile(), NOW)).not.toHaveProperty('topic');
+		expect(planRefill([], [], profile(), NOW, { topic: '   ' })).not.toHaveProperty('topic');
+		expect(planRefill([], [], profile(), NOW, { topic: '' })).not.toHaveProperty('topic');
 	});
 
 	it('is pure: it does not mutate the pool or the items it is given', () => {
@@ -1275,8 +1270,8 @@ describe('planRefill', () => {
 			profile(),
 			NOW
 		);
-		expect(plan.reviewItems.map((i) => i.id)).toEqual(['a']);
-		expect(plan.args.wants.length).toBeGreaterThan(0);
+		expect(wordsOf(plan)).toEqual(['a']);
+		expect(plan.wants.length).toBeGreaterThan(0);
 	});
 });
 
@@ -1306,7 +1301,7 @@ describe('planRefill → getBatch (mock mode)', () => {
 	it('produces a playable batch that introduces no vocabulary', async () => {
 		const items = [item('a', -2 * DAY), item('b', -DAY)];
 		const plan = planRefill([], items, profile(), NOW);
-		const batch = await getBatch(plan.args);
+		const batch = await getBatch(plan);
 
 		expect(batch.challenges.length).toBeGreaterThanOrEqual(5);
 		// The invariant the whole generation path now rests on: a lesson is
@@ -1326,20 +1321,20 @@ describe('planRefill → getBatch (mock mode)', () => {
 	});
 
 	it('has nothing to build from when the learner has no words', async () => {
-		const batch = await getBatch(planRefill([], [], profile(), NOW).args);
+		const batch = await getBatch(planRefill([], [], profile(), NOW));
 		expect(batch.challenges).toEqual([]);
 	});
 
 	it('walks the same progress steps as the real path, instantly', async () => {
 		const steps: ProgressStep[] = [];
-		await getBatch(planRefill([], [], profile(), NOW).args, { onProgress: (s) => steps.push(s) });
+		await getBatch(planRefill([], [], profile(), NOW), { onProgress: (s) => steps.push(s) });
 		expect(steps.map((s) => s.id)).toEqual(['build-prompt', 'request', 'validate']);
 	});
 
 	it('covers every gradeable challenge type the session renders', async () => {
 		const items = [item('a', -2 * DAY), item('b', -DAY)];
 		const plan = planRefill([], items, profile(), NOW);
-		const batch = await getBatch(plan.args);
+		const batch = await getBatch(plan);
 		const types = new Set(batch.challenges.map((c) => c.type));
 
 		expect(types.has('multiple-choice')).toBe(true);
@@ -1365,7 +1360,7 @@ describe('session walkthrough (mock batch, no database)', () => {
 		answerAs: (challenge: Challenge, index: number) => Verdict
 	) {
 		const plan = planRefill([], known, profile(), NOW);
-		const batch = await getBatch(plan.args);
+		const batch = await getBatch(plan);
 
 		// The vocabulary is exactly what went in — generating changes nothing about
 		// it — and what `addToPool` writes is a fresh, never-served batch.
@@ -1441,7 +1436,7 @@ describe('session walkthrough (mock batch, no database)', () => {
 	it('ends gracefully when the plan is shorter than a full session', async () => {
 		// A tiny batch: mock mode still returns its canned challenges.
 		const plan = planRefill([], [], profile(), NOW);
-		const batch = await getBatch(plan.args);
+		const batch = await getBatch(plan);
 		expect(batch.challenges.length).toBeLessThan(SESSION_LENGTH);
 
 		const run = await playSession([], () => 'correct');

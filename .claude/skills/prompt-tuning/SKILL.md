@@ -77,22 +77,23 @@ should be — stated once, with no rung attached.
 ## Constraints on a type's prompt
 
 - Each one is **static and token-budgeted**, deliberately, because a static
-  string is prompt-cache friendly — and a lesson's requests of one kind all quote
-  it. Never interpolate per-session values into it; per-user signals travel in
-  the user payload.
+  string is prompt-cache friendly — and a top-up's requests of one kind all
+  quote it. Never interpolate per-session values into it; per-user signals
+  travel in the user payload.
 - Nothing about how the learner has been doing travels, and nothing local reads
   it either: a missed word's strength has already fallen, so its rung and its
-  sizes fell with it. "Write this one easier" on top of a length that already
-  says how long to write it was two instructions for one decision.
+  sizes fell with it. Do not add a "write this one easier" hint on top of a
+  length that already says how long to write it.
 - Load-bearing blocks: voice/anti-blandness, the `TargetText` reading rule,
   answerability, the `items` rule, and the size-is-a-target rule. Deleting one to
   save tokens regresses a whole class of output — say which block you are
   changing and why.
-- One reply is now six challenges of the **same** type, which is where a model
+- One reply is six challenges of the **same** type, which is where a model
   starts writing variations on one sentence. The no-repeated-frame rule in the
-  voice block matters more than it did, not less.
+  voice block carries extra weight for that reason.
 - A rule phrased "across the batch" is not enforceable by the model — one request
-  sees only its own words. Write it per reply, or move it to `slots.ts`.
+  sees only its own words. Write it per reply, or make it a want-level decision
+  in `$lib/session/topup`.
 
 ## What the resolver will and won't rescue
 

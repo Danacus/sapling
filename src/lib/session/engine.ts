@@ -50,7 +50,7 @@ import { RESERVE_GAP, isPlayable, isRested, knownItemIds } from './pool';
 import { planTopUp } from './topup';
 import type { PlanTopUpOptions } from './topup';
 import { difficultyOf } from '$lib/challenges/difficulty';
-import type { Challenge, ChallengeResult, KnowledgeItem, Profile, Verdict } from '$lib/types';
+import type { Challenge, KnowledgeItem, Profile, Verdict } from '$lib/types';
 import {
 	bearable,
 	difficultyLevelOf,
@@ -221,7 +221,7 @@ export function sessionSummary(answers: SessionAnswer[]): SessionSummary {
  * items to fill even the smallest round) simply gets no round; with static items
  * that means none anywhere.
  *
- * **The rounds are sized off the ladder, like everything else in a lesson.**
+ * **The rounds are sized off the ladder, like every paid challenge.**
  * `makeMatchPairsChallenge` takes a rung and turns it into a pair count, and the
  * rung comes from {@link medianRoundRung} over the very words the round is drawn
  * from — so a beginner gets three pairs to breathe and someone who owns their
@@ -733,17 +733,6 @@ export function planSession(
 /* Top-up planning (pure)                                                      */
 /* -------------------------------------------------------------------------- */
 
-/** What {@link planRefill} decided, ready to hand to `getBatch`. */
-export interface RefillPlan {
-	/** Exactly the argument object `getBatch` expects. */
-	args: BatchArgs;
-	/**
-	 * The words the top-up will be written about (full objects, for the UI), in
-	 * the order their wants were planned — most overdue first.
-	 */
-	reviewItems: KnowledgeItem[];
-}
-
 export interface PlanRefillOptions extends PlanTopUpOptions {
 	/**
 	 * Free-form scenario for this top-up, e.g. `'ordering in a restaurant'`.
@@ -773,21 +762,14 @@ export function planRefill(
 	profile: Profile,
 	now: number,
 	opts: PlanRefillOptions = {}
-): RefillPlan {
+): BatchArgs {
 	const wants = planTopUp(pool, items, now, {
 		...(opts.maxItems === undefined ? {} : { maxItems: opts.maxItems }),
 		...(opts.rng === undefined ? {} : { rng: opts.rng })
 	});
 	const topic = opts.topic?.trim();
 
-	const byId = itemsById(items);
-	const reviewItems: KnowledgeItem[] = [];
-	for (const want of wants) {
-		const item = byId.get(want.item.id);
-		if (item && !reviewItems.includes(item)) reviewItems.push(item);
-	}
-
-	const args: BatchArgs = {
+	return {
 		profile: {
 			nativeLanguage: profile.nativeLanguage,
 			targetLanguage: profile.targetLanguage,
@@ -818,8 +800,6 @@ export function planRefill(
 			: {}),
 		...(topic ? { topic } : {})
 	};
-
-	return { args, reviewItems };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -839,15 +819,15 @@ export interface GenerateInfo {
 	failedRequests: number;
 	/** True when the offline mock produced this batch (no key configured). */
 	mock: boolean;
-	/** The vocabulary the batch was written about — unchanged by the run. */
+	/** The whole collection at the time — unchanged by the run. */
 	items: KnowledgeItem[];
-	plan: RefillPlan;
+	/** Exactly what was sent: the wants, and the vocabulary they were written against. */
+	args: BatchArgs;
 }
 
 export interface GenerateOptions {
 	now?: number;
 	signal?: AbortSignal;
-	maxItems?: number;
 	/** Forwarded to {@link planRefill}; see {@link PlanRefillOptions.topic}. */
 	topic?: string;
 	/**
@@ -866,7 +846,7 @@ export interface GenerateOptions {
  * on content, and the pool it adds to is never drained by playing. What gets
  * written, though, is exactly what the pool is missing ({@link planTopUp}) —
  * so a second press straight after the first has nothing to ask for, and says
- * so instead of paying for a lesson the pool already holds. The caller runs
+ * so instead of paying for challenges the pool already holds. The caller runs
  * this in the background — a session can be played from existing material while
  * it is in flight, and the new challenges simply show up in the pool for next
  * time.
@@ -896,14 +876,13 @@ export async function generateChallenges(
 
 	const [pool, items] = await Promise.all([getPool(), getAllItems()]);
 
-	const plan = planRefill(pool, items, profile, now, {
-		...(opts.maxItems === undefined ? {} : { maxItems: opts.maxItems }),
+	const args = planRefill(pool, items, profile, now, {
 		...(opts.topic === undefined ? {} : { topic: opts.topic })
 	});
 
 	// Said here, before any request step is announced, so an empty brief is
 	// never reported as a model that returned nothing.
-	if (plan.args.wants.length === 0) {
+	if (args.wants.length === 0) {
 		throw new Error(
 			items.length === 0
 				? 'There are no words to write challenges about yet.'
@@ -911,12 +890,12 @@ export async function generateChallenges(
 		);
 	}
 
-	const batch = await getBatch(plan.args, {
+	const batch = await getBatch(args, {
 		...(opts.signal ? { signal: opts.signal } : {}),
 		...(progress ? { onProgress: progress } : {})
 	});
 
-	progress?.({ id: 'save', label: 'Saving your lesson' });
+	progress?.({ id: 'save', label: 'Saving new challenges' });
 	await addToPool(batch.challenges, now, opts.topic);
 
 	return {
@@ -925,7 +904,7 @@ export async function generateChallenges(
 		failedRequests: batch.failedRequests,
 		mock,
 		items,
-		plan
+		args
 	};
 }
 
@@ -1094,7 +1073,7 @@ export async function applyResult(
  * `priorCards`, the pre-review snapshot {@link applyResult} handed back, and the
  * history entry *replaces* the one that review appended instead of adding to
  * it. A second appended review would inflate `reps` and double-count the answer
- * in {@link accuracyFromHistory}. Recomputing from the same priors every time
+ * in the item's recent grades. Recomputing from the same priors every time
  * is also what makes repeated calls safe: assessing Easy and then Hard lands
  * exactly where assessing Hard once would, because neither reads the card it is
  * about to overwrite.

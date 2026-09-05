@@ -44,19 +44,19 @@
  * ## The five-rung ladder
  *
  * {@link difficultyLevelOf} slices the same axis into five rungs instead of
- * three, for callers that want a gradient rather than a step function (the
- * per-slot `difficulty` a lesson is written at, and the planner's preference for
- * the challenge whose difficulty best matches a word's own strength). It is
- * built on exactly the two floors above plus one bisecting the tier-1 span
+ * three, for callers that want a gradient rather than a step function (the rung
+ * a want is written at in `./topup`, and the planner's preference for the
+ * challenge whose difficulty best matches a word's own strength). It is built
+ * on exactly the two floors above plus one bisecting the tier-1 span
  * ({@link LEVEL_3_FLOOR}) and one *above* both of them, well inside tier 2
  * ({@link LEVEL_5_FLOOR}) — so the three-bucket {@link maturityOf} and the
- * five-rung ladder can never disagree about where a tier boundary falls, and
- * `maturityOf` is now just {@link difficultyLevelOf} read at coarser resolution
- * (level 1 → `'new'`, 2–3 → `'young'`, 4–5 → `'solid'`).
+ * five-rung ladder can never disagree about where a tier boundary falls:
+ * `maturityOf` is {@link difficultyLevelOf} read at coarser resolution (level 1
+ * → `'new'`, 2–3 → `'young'`, 4–5 → `'solid'`).
  *
  * {@link LEVEL_BANDS} publishes the resulting five spans, because the planner
- * needs more than the rung number: a lesson written *for* level 3 aims at the
- * middle of level 3's strength range, so that midpoint — not the word's raw
+ * needs more than the rung number: a challenge written *for* level 3 aims at
+ * the middle of level 3's strength range, so that midpoint — not the word's raw
  * strength — is what `$lib/session/engine` matches a pooled challenge's own
  * difficulty against.
  */
@@ -184,15 +184,15 @@ export function bearable(
 	return demandOf(challenge) <= bearableDemand(challenge, items, now, byId);
 }
 
-/** How far along a word is, in the three steps the generation prompt can act on. */
+/** How far along a word is, in three coarse steps — what the screens that colour a word by it read. */
 export type Maturity = 'new' | 'young' | 'solid';
 
 /**
  * How far along a word is, on a five-rung ladder: 1 is a word met for the first
  * time, 5 one the learner owns outright. Finer than {@link Maturity}, for
- * callers that want a gradient rather than a step function — a lesson's
- * per-slot `difficulty`, and the planner's preference for the challenge that
- * best matches a word's current strength.
+ * callers that want a gradient rather than a step function — the rung a want
+ * is written at, and the planner's preference for the challenge that best
+ * matches a word's current strength.
  */
 export type DifficultyLevel = 1 | 2 | 3 | 4 | 5;
 
@@ -260,17 +260,11 @@ export function difficultyLevelOf(item: KnowledgeItem, now: number): DifficultyL
 }
 
 /**
- * A word's maturity bucket, for the generation prompt's type hints.
- *
- * The same floors as {@link bearableDemand}, on purpose: the planner shapes what
- * is served out of the pool and the prompt shapes what enters it, and if the two
- * disagreed the planner would spend every session declining to serve what the
- * model had just been asked to write. `'new'` gets recognition written for it,
- * `'solid'` gets production, `'young'` sits between.
- *
- * Now just {@link difficultyLevelOf} read at coarser resolution — level 1 is
- * `'new'`, 2–3 `'young'`, 4–5 `'solid'` — so the two views of the same axis
- * cannot drift apart.
+ * A word's maturity bucket: {@link difficultyLevelOf} read at coarser
+ * resolution — level 1 is `'new'`, 2–3 `'young'`, 4–5 `'solid'` — so the two
+ * views of the same axis cannot drift apart. The same floors as
+ * {@link bearableDemand}: `'new'` bears recognition, `'solid'` free production,
+ * `'young'` sits between.
  */
 export function maturityOf(item: KnowledgeItem, now: number): Maturity {
 	const level = difficultyLevelOf(item, now);

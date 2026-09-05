@@ -8,33 +8,25 @@
  * is a different job and a different conversation. Everything the model is told
  * about words, it is told so that it can *write about* them.
  *
- * This is the token-economy heart of the app. A lesson is a handful of small
+ * This is the token-economy heart of the app. A top-up is a handful of small
  * concurrent calls; grading happens locally for free (`$lib/validate`,
  * `$lib/srs`) and only an explicit "explain this" escalates to a second call
  * (`./escalation`). `match-pairs` never costs a token at all — see
  * {@link makeMatchPairsChallenge}, which reads the same 1-5 ladder the paid
  * types are sized by and spends nothing to do it.
  *
- * **A lesson is many short requests, and each one is about exactly one type.**
- * Asking for twenty challenges about twelve words in a single completion
- * produced visibly worse output towards the end: the model loses track of the
- * rules and of what it has already written, one bad reply costs the whole lesson
- * a corrective retry, and the wall clock is one long serial completion. Asking
- * for a *mixed* handful was better but still a puzzle — every request carried all
- * seven types' field lists and rules, plus a list of slots to match them up
- * against, plus an abstract difficulty number to interpret.
- *
- * So this layer **plans nothing**. It is handed a list of wants — one word, one
- * kind, one rung each, decided by the session against what its pool already
- * holds (`$lib/session/topup`) — {@link groupIntoRequests} cuts that list by
- * **kind**, and {@link generateBatch} runs the requests concurrently. One
- * request is one wire type: its system prompt ({@link systemPromptFor})
- * explains that type and no other, its JSON schema admits that type and no
- * other, and its payload is a list of words each carrying the **countable
- * parameters** that type is sized by — a sentence length, a word-bank size, a
- * tile count, computed here from the want's rung by the def's own `params`. The
- * model never sees the word "want", a difficulty from 1 to 5, or the six types
- * it is not writing. The prompt stays static *per type*, which is what keeps
+ * **This layer plans nothing, and each request is about exactly one type.** It
+ * is handed a list of wants — one word, one kind, one rung each, decided by the
+ * session against what its pool already holds (`$lib/session/topup`) —
+ * {@link groupIntoRequests} cuts that list by **kind**, and
+ * {@link generateBatch} runs the requests concurrently. One request is one wire
+ * type: its system prompt ({@link systemPromptFor}) explains that type and no
+ * other, its JSON schema admits that type and no other, and its payload is a
+ * list of words each carrying the **countable parameters** that type is sized
+ * by — a sentence length, a word-bank size, a tile count, computed here from
+ * the want's rung by the def's own `params`. A model writing six of one thing
+ * keeps the rules and its earlier answers in mind; one writing twenty across
+ * seven types does not. The prompt stays static *per type*, which is what keeps
  * prompt caching paying across a top-up's requests and across sessions.
  *
  * Each request carries its own corrective retry, and a request that still fails
@@ -79,27 +71,20 @@ import type { GeneratedChallenge } from './schemas';
 import { REQUEST_CONCURRENCY, groupIntoRequests, kindKey, kindOf } from './requests';
 import type { TypeRequest, Want } from './requests';
 
-/**
- * Re-exported for callers (and tests) that knew them as part of this module
- * before the per-type defs moved out to `./challenge-types`. Their home is
- * `./resolve-helpers`.
- */
-export { MAX_WORD_ORDER_DISTRACTORS, MAX_WORD_ORDER_TILES } from './resolve-helpers';
-
 /* -------------------------------------------------------------------------- */
 /* Progress reporting                                                          */
 /* -------------------------------------------------------------------------- */
 
 /**
- * The coarse phases a refill goes through, in the order they normally fire.
+ * The coarse phases a top-up goes through, in the order they normally fire.
  *
  * They exist for one reason: generation takes seconds and the learner deserves
  * to see *which* second is being spent where — above all whether it is the API
- * call. `queue-check`, `select-items` and `save` are emitted by the session
- * engine, the rest by {@link generateBatch} (and by the mock, so practice mode
- * walks the same list, just instantly).
+ * call. `select-items` and `save` are emitted by the session engine, the rest
+ * by {@link generateBatch} (and by the mock, so practice mode walks the same
+ * list, just instantly).
  *
- * A lesson is several concurrent requests, and the list stays **one step per
+ * A top-up is several concurrent requests, and the list stays **one step per
  * id** regardless: `request` fires once and says how many calls are in flight,
  * `retry` fires once the first time any of them has to be re-asked, and
  * `validate` fires once when they have all settled. The learn screen times each
@@ -107,7 +92,7 @@ export { MAX_WORD_ORDER_DISTRACTORS, MAX_WORD_ORDER_TILES } from './resolve-help
  * timeline into a flickering list of near-zero durations.
  */
 export type ProgressStepId =
-	'queue-check' | 'select-items' | 'build-prompt' | 'request' | 'validate' | 'retry' | 'save';
+	'select-items' | 'build-prompt' | 'request' | 'validate' | 'retry' | 'save';
 
 /**
  * One step *starting*. Duration is the caller's business: it times each step
@@ -238,10 +223,8 @@ function hasInstructionField(def: AnyWireTypeDef): boolean {
  * pleasantries, one inline example, rules as bare imperatives.
  *
  * Static per type and memoised, which is what keeps prompt caching paying: a
- * lesson's requests of the same kind quote a byte-identical prefix, and so does
- * every lesson after this one. Splitting the prompt per type made it *cheaper*
- * rather than dearer — a request used to carry all seven types' field lists,
- * examples and rules to ask for four challenges of one of them.
+ * top-up's requests of the same kind quote a byte-identical prefix, and so does
+ * every top-up after this one.
  *
  * What it says is only ever about this one type. The shared preamble names no
  * type at all, then `promptSpec` gives this type's fields and example,
@@ -261,9 +244,9 @@ function hasInstructionField(def: AnyWireTypeDef): boolean {
  *   cook", "Cooking is fun" — one bland declarative per interest. The voice
  *   rules force dialogue turns, questions and situational phrases instead, and
  *   name the bland patterns explicitly so they can be refused. The
- *   no-repeated-frame rule matters more here than it did: a reply is now six
- *   challenges of the *same* type, which is exactly where a model starts
- *   producing variations on one sentence.
+ *   no-repeated-frame rule carries extra weight here: a reply is six challenges
+ *   of the *same* type, which is exactly where a model starts producing
+ *   variations on one sentence.
  *
  * - **Romanization.** Non-Latin scripts are unreadable and untypeable for a
  *   beginner, so every target-language string travels as a `TargetText`: the
@@ -275,11 +258,11 @@ function hasInstructionField(def: AnyWireTypeDef): boolean {
  *   listing "nǐ hǎo" and "ni hao" side by side. Latin-script targets send
  *   `"reading": null` everywhere and pay nothing.
  *
- * There is no difficulty ladder here at all any more, and no "difficulty" key
- * for the model to interpret. Difficulty *is* the parameters on each item — a
- * word count, a bank size, a tile count — which each def computes from the
- * planned rung and explains in its own `paramsSpec`. A number the model can
- * count is a number it can hit.
+ * There is no difficulty ladder here and no "difficulty" key for the model to
+ * interpret. Difficulty *is* the parameters on each item — a word count, a bank
+ * size, a tile count — which each def computes from the want's rung and
+ * explains in its own `paramsSpec`. A number the model can count is a number it
+ * can hit.
  */
 function composeSystemPrompt(def: AnyWireTypeDef): string {
 	return (
@@ -370,12 +353,10 @@ export function knownTermLabels(known: readonly KnownItemRef[]): string[] {
  *
  * The system half is this type's own static string, so a top-up's requests of
  * one kind share a cached prefix and every top-up after this one shares it too.
- * The user half is genuinely short. `type` does not travel — it is the whole
- * subject of the system prompt. Neither does `difficulty`: each item carries the
+ * The user half is short. `type` does not travel — it is the whole subject of
+ * the system prompt. Neither does `difficulty`: each item carries the
  * *parameters* that rung means for this type instead, which is a number the
- * model can count rather than a scale it has to interpret. Nothing about how
- * the learner has been doing travels either: a missed word's strength has
- * already fallen, so its rung — and so its sizes — fell with it.
+ * model can count rather than a scale it has to interpret.
  *
  * `known` is *not* narrowed to the request's words. It is the vocabulary every
  * sentence is built out of, whichever words are being tested, and it is the
@@ -410,7 +391,7 @@ export function buildRequestPrompt(args: BatchArgs, request: TypeRequest): ChatM
 		...(about ? { about } : {}),
 		// Terms only — the ids stay local (see `knownItems` and `knownTermIndex`).
 		// Last of the shared block and first of the big ones: everything above it
-		// is byte-identical across a lesson's requests, and a prefix cache pays
+		// is byte-identical across a top-up's requests, and a prefix cache pays
 		// only up to the first byte that differs, so `items` comes after.
 		...(args.knownItems?.length ? { known: knownTermLabels(args.knownItems) } : {}),
 		// The brief: one entry per challenge to write. The term and meaning ride
@@ -598,7 +579,7 @@ export interface ResolveOptions {
 	 * until it *is* a challenge. Within one request a word appears exactly once,
 	 * so the first of a challenge's resolved ids that this map knows is
 	 * unambiguously the entry it answers. Omitted by the mock and by tests, and
-	 * then every resolver behaves exactly as it did before.
+	 * then no parameter is enforced.
 	 */
 	paramsByItem?: ReadonlyMap<string, ChallengeParams>;
 }
@@ -645,7 +626,7 @@ function resolveOne(generated: GeneratedChallenge, ctx: ResolveContext): Challen
  * references at all is dropped — which is what keeps a batch from pooling a row
  * that points at a word the database has never heard of.
  *
- * Salvage philosophy is unchanged: a cosmetic defect — a missing or partial
+ * Salvage: a cosmetic defect — a missing or partial
  * reading, a word bank that dedupes down to nothing — degrades silently, and
  * only a structural failure (no resolvable `itemIds`) costs a challenge.
  *
@@ -725,7 +706,7 @@ function requestMinimum(items: number): number {
 /**
  * The def a request is for.
  *
- * Total by construction — a `SlotKind` names a registered wire type, and
+ * Total by construction — a `ChallengeKind` names a registered wire type, and
  * `_registryParity` in `./challenge-types` fails `pnpm check` if the registry
  * and the union ever disagree — so the throw is an assertion, not a path.
  */
@@ -784,9 +765,9 @@ function abortError(signal: AbortSignal): Error {
 	return error;
 }
 
-/** Cancels the requests still in flight once one of them has sunk the lesson. */
+/** Cancels the requests still in flight once one of them has sunk the top-up. */
 function siblingAbort(): Error {
-	const error = new Error('Another request ended the lesson.');
+	const error = new Error('Another request ended the top-up.');
 	error.name = 'AbortError';
 	return error;
 }
@@ -805,7 +786,7 @@ interface RequestOutcome {
  * **job order** whatever order they finish in.
  *
  * A plain `Promise.all` would fire every request at once, which for a twelve-word
- * lesson is several simultaneous completions on a key that may well be rate
+ * top-up is several simultaneous completions on a key that may well be rate
  * limited. This is the smallest thing that isn't that: `limit` workers pulling
  * from a shared cursor.
  *
@@ -869,14 +850,14 @@ export async function generateBatch(
 	const model = opts.model?.trim() || getModel();
 
 	// A progress callback is the caller's UI; a throw inside one must not take
-	// the lesson with it — and inside the pool it would surface as an unhandled
+	// the top-up with it — and inside the pool it would surface as an unhandled
 	// rejection in a sibling worker rather than as anything anyone could debug.
 	const report = (step: ProgressStep): void => {
 		if (!opts.onProgress) return;
 		try {
 			opts.onProgress(step);
 		} catch {
-			/* The step log is a nicety; losing it never costs the lesson. */
+			/* The step log is a nicety; losing it never costs the top-up. */
 		}
 	};
 
@@ -901,10 +882,10 @@ export async function generateBatch(
 	const announceRetry = (): void => {
 		if (retryAnnounced) return;
 		retryAnnounced = true;
-		report({ id: 'retry', label: 'Retrying part of the lesson' });
+		report({ id: 'retry', label: 'Retrying a request' });
 	};
 
-	// The lesson's own stop switch. A failure that is not one request's fault
+	// The top-up's own stop switch. A failure that is not one request's fault
 	// would meet every request, so the first one to see it records the error here
 	// and aborts `stop`: the siblings already in flight unwind at their `fetch`,
 	// and every request the pool has not dispatched yet returns without a call.
@@ -962,7 +943,7 @@ export async function generateBatch(
 				sink(abortError(opts.signal));
 				return outcome;
 			}
-			// A sibling has already sunk the lesson; this one is not worth a call.
+			// A sibling has already sunk the top-up; this one is not worth a call.
 			if (stop.signal.aborted) return outcome;
 
 			const attemptMessages: ChatMessage[] =
@@ -990,7 +971,7 @@ export async function generateBatch(
 			} catch (error) {
 				// `bad-response` is this request's problem and costs this request only;
 				// anything else (auth, rate limit, network, abort) would meet every
-				// other request too, so it ends the lesson — for all of them at once.
+				// other request too, so it ends the top-up — for all of them at once.
 				if (error instanceof LlmError && error.kind === 'bad-response') {
 					outcome.error = error;
 					continue;
@@ -1043,7 +1024,7 @@ export async function generateBatch(
 	}).finally(() => opts.signal?.removeEventListener('abort', onCallerAbort));
 
 	// Ahead of the `validate` step, and of any accounting: nothing was validated,
-	// and a bad key is not a lesson that came back thin.
+	// and a bad key is not a top-up that came back thin.
 	if (fatal) throw fatal;
 
 	report({ id: 'validate', label: 'Validating challenges' });
@@ -1084,16 +1065,14 @@ export async function generateBatch(
 
 /**
  * Smallest and largest pair count for an *unsized* round — one built without a
- * ladder rung, which is what every caller that has no vocabulary strength to
- * read gets. Kept exactly where it has always been, so nothing that never asked
- * for a difficulty sees a different round than it did before.
+ * ladder rung, which is what a caller with no vocabulary strength to read gets.
  */
 const MATCH_MIN = 4;
 const MATCH_MAX = 5;
 
 /**
- * Pairs per round at each rung of the ladder — the free round's answer to the
- * `params` ladders every paid type now has. A new word's round is three pairs
+ * Pairs per round at each rung of the ladder — the free round's counterpart to
+ * the `params` ladders the paid types have. A new word's round is three pairs
  * because the point of it is a breather; a word the learner owns gets six,
  * which is about as tall a column as a phone screen holds — the learn route's
  * stage grows rather than clips, so a taller round only costs a scroll, but six
@@ -1131,9 +1110,8 @@ export interface MatchPairsOptions {
  *
  * **Size comes from the same ladder everything else is written to.** Given a
  * rung, the round asks for {@link MATCH_PAIRS_LADDER} pairs — the zero-cost
- * type's version of a def's `params`, so the one challenge nobody pays for is no
- * longer the one challenge that ignores how far along the learner is. Given
- * none, it is the four-or-five it always was.
+ * type's version of a def's `params`. Given none, it is four or five pairs
+ * drawn from `rng`.
  *
  * Returns `undefined` when fewer collision-free items remain than the smallest
  * round that mode can ask for: four unsized, {@link LADDER_MIN} with a rung.

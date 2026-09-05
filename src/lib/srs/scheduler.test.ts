@@ -3,7 +3,6 @@ import type { KnowledgeItem } from '$lib/types';
 import {
 	CardState,
 	Grade,
-	accuracyFromHistory,
 	gradeFromResult,
 	isDue,
 	newCardState,
@@ -254,49 +253,5 @@ describe('selectSessionItems', () => {
 		// The honest answer, and the reason the learn screen has a "no words yet"
 		// message: there is no lesson to build.
 		expect(selectSessionItems([], { now: NOW }).reviewItems).toEqual([]);
-	});
-});
-
-describe('accuracyFromHistory', () => {
-	function withHistory(history: { at: number; grade: number }[]): KnowledgeItem {
-		return item({ fsrsCard: newCardState(NOW), history });
-	}
-
-	it('returns undefined when there is no history in the window', () => {
-		expect(accuracyFromHistory([], { now: NOW })).toBeUndefined();
-		expect(
-			accuracyFromHistory([withHistory([{ at: NOW - 30 * DAY, grade: Grade.Good }])], { now: NOW })
-		).toBeUndefined();
-	});
-
-	it('counts Good and Easy as correct, Again and Hard as incorrect', () => {
-		const items = [
-			withHistory([
-				{ at: NOW - DAY, grade: Grade.Good },
-				{ at: NOW - DAY, grade: Grade.Easy },
-				{ at: NOW - DAY, grade: Grade.Again },
-				{ at: NOW - DAY, grade: Grade.Hard }
-			])
-		];
-		expect(accuracyFromHistory(items, { now: NOW })).toBeCloseTo(0.5);
-	});
-
-	it('aggregates history across multiple items', () => {
-		const items = [
-			withHistory([{ at: NOW - DAY, grade: Grade.Good }]),
-			withHistory([{ at: NOW - DAY, grade: Grade.Again }])
-		];
-		expect(accuracyFromHistory(items, { now: NOW })).toBeCloseTo(0.5);
-	});
-
-	it('respects a custom window', () => {
-		const items = [
-			withHistory([
-				{ at: NOW - 2 * DAY, grade: Grade.Again },
-				{ at: NOW - 10 * DAY, grade: Grade.Good }
-			])
-		];
-		// within a 3-day window, only the Again counts
-		expect(accuracyFromHistory(items, { now: NOW, window: 3 * DAY })).toBe(0);
 	});
 });

@@ -28,15 +28,15 @@
  * and it is why each scenario's own two-word vocabulary, which belongs to the
  * scene rather than to any one challenge, is the only fixture data left below.
  *
- * The mock ignores the plan, deliberately, exactly as it has always ignored
- * `maturity`. Its job is to show every wire type and every romanization case at
- * once so the UI can be built against them; a mock that honoured the plan would
- * serve whichever handful of types it happened to pick and would stop being a
- * fixture. That is also why it hands `parseBatch` the *union* schema rather than
- * one type's member — the paid path validates each reply against the one type
- * that request asked for. It stays *one* assembly rather than a fan-out —
- * nothing is being timed or rate-limited here — so `mockBatch` is still
- * synchronous and byte-identical across runs.
+ * The mock ignores the wants' kinds and rungs, deliberately. Its job is to show
+ * every wire type and every romanization case at once so the UI can be built
+ * against them; a mock that honoured the wants would serve whichever handful
+ * of types they happened to name and would stop being a fixture. That is also
+ * why it hands `parseBatch` the *union* schema rather than one type's member —
+ * the paid path validates each reply against the one type that request asked
+ * for. It stays *one* assembly rather than a fan-out — nothing is being timed
+ * or rate-limited here — so `mockBatch` is synchronous and byte-identical
+ * across runs.
  *
  * That vocabulary is **borrowed, never introduced**: generation adds no words
  * to a collection, so the mock cannot either. Each scenario word is bound to
@@ -111,9 +111,8 @@ interface Fixture {
  *
  * Asked of the free-form `targetLanguage` the learner typed during onboarding,
  * so "zh", "Chinese" and "Mandarin Chinese" all land on the same set — via
- * `bcp47For`, which is where the app's list of what counts as Chinese already
- * lives. This used to carry a second, private alias regex; the two could only
- * drift, since an alias added to one had no reason to reach the other.
+ * `bcp47For`, which is where the app's list of what counts as Chinese lives —
+ * a second alias list here could only drift from it.
  *
  * Traditional (`zh-TW`) is included deliberately: these are the only non-Latin
  * fixtures there are, and pinyin beats no mock at all.
@@ -133,8 +132,8 @@ export function usesMandarinFixtures(targetLanguage: string): boolean {
  * opens on recognition and closes on the production types, and each cloze sits
  * beside the challenge it follows on from. Sorting by it lets a def put its
  * examples wherever they read best without moving the registry's own order,
- * which is the order the model is shown the types in and answers to the prompt,
- * not to the mock.
+ * which is union order and escalation-gloss order and answers to those, not to
+ * the mock.
  */
 function scenarioChallenges(scenario: FixtureScenario): unknown[] {
 	return WIRE_TYPE_DEFS.flatMap((def) => [...def.fixtures[scenario]])
@@ -193,7 +192,7 @@ function wantedItems(args: BatchArgs): WantItem[] {
  * the mock's seeded rng makes that shuffle reproducible, so practice mode never
  * trains "always pick the first one" and never changes between runs either.
  */
-function reviewChallenges(items: WantItem[]): unknown[] {
+function perWordChallenges(items: WantItem[]): unknown[] {
 	const out: unknown[] = [];
 	items.slice(0, 5).forEach((item) => {
 		const others = items.filter((o) => o.id !== item.id).map((o) => o.meaning);
@@ -227,14 +226,14 @@ function reviewChallenges(items: WantItem[]): unknown[] {
  */
 export function mockBatchCompletion(args: BatchArgs): string {
 	const canned = fixtureFor(args).challenges;
-	const review = reviewChallenges(wantedItems(args));
+	const perWord = perWordChallenges(wantedItems(args));
 
 	// Always keep the canned set — it is what makes the mock cover every
 	// challenge type — and always let at least a couple of per-word challenges
 	// ride along, so the mock exercises id references even when fewer challenges
 	// were wanted than the canned set holds.
-	const floor = canned.length + Math.min(review.length, 2);
-	const challenges = [...canned, ...review].slice(0, Math.max(floor, args.wants.length));
+	const floor = canned.length + Math.min(perWord.length, 2);
+	const challenges = [...canned, ...perWord].slice(0, Math.max(floor, args.wants.length));
 
 	return '```json\n' + JSON.stringify({ challenges }, null, 1) + '\n```';
 }

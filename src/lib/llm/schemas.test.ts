@@ -13,13 +13,10 @@ import {
 } from './schemas';
 import { WIRE_TYPE_DEFS } from './challenge-types';
 
-type JsonNode = Record<string, unknown>;
-
 /**
  * Every request's schema, serialized together — one per wire type, since a
- * request asks for one type. What used to be a single union schema is now this
- * set, and a claim about "the schema the model is sent" has to hold of all of
- * them.
+ * request asks for one type. A claim about "the schema the model is sent" has
+ * to hold of all of them.
  */
 const allRequestSchemas = (): string =>
 	WIRE_TYPE_DEFS.map((def) => JSON.stringify(batchJsonSchemaFor(def))).join('\n');
@@ -447,7 +444,7 @@ describe('batchJsonSchemaFor', () => {
 	it('admits exactly the one wire type its request is about', () => {
 		// The cheapest enforcement there is: a request for six clozes cannot come
 		// back as six multiple-choice questions, because the shape is not
-		// expressible. The union schema used to make every wrong answer legal.
+		// expressible; the union schema would make every wrong answer legal.
 		for (const def of WIRE_TYPE_DEFS) {
 			const only = JSON.stringify(batchJsonSchemaFor(def));
 			expect(only, def.type).toContain(def.type);

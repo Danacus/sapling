@@ -80,8 +80,8 @@ Import direction is strict: `primitives.ts` ← def modules ← `index.ts` ←
 `DifficultyRung` and `SizingKind`, which `def.ts` declares for exactly that
 reason.
 
-Registry order *is* union order and escalation-gloss order — but no longer
-prompt order, since each type composes its own prompt. Prefer appending.
+Registry order *is* union order and escalation-gloss order — not prompt order,
+since each type composes its own prompt. Prefer appending.
 
 ## Challenge type, end to end — four registrations
 

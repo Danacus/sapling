@@ -2,10 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { Challenge, KnowledgeItem } from '$lib/types';
 import type { FetchLike } from './client';
 import { LlmError } from './client';
+import { MAX_WORD_ORDER_DISTRACTORS, MAX_WORD_ORDER_TILES } from './resolve-helpers';
 import {
 	MAX_ABOUT_CHARS,
-	MAX_WORD_ORDER_DISTRACTORS,
-	MAX_WORD_ORDER_TILES,
 	buildRequestPrompt,
 	generateBatch,
 	knownTermIndex,
@@ -380,9 +379,8 @@ describe('buildRequestPrompt', () => {
 	});
 
 	it('describes the one type this request is about, and no other', () => {
-		// The whole point of the split. A request for recognize-mc used to carry
-		// six other types' field lists, examples and rules, and a slots list to
-		// match them up against.
+		// The whole point of the split: a request for recognize-mc carries nothing
+		// about the other six types.
 		const system = promptForType('recognize-mc');
 		expect(system).toContain('recognize-mc');
 		expect(system).toContain('correctMeaning');
@@ -436,7 +434,7 @@ describe('buildRequestPrompt', () => {
 	it('never mentions the presentation the app assembles for itself', () => {
 		const system = messages[0].content;
 		// Direction, option order and blank placement are not the model's to get
-		// wrong; asking for them is what used to produce slot-A bias and spoilers.
+		// wrong; asking for them is what produces slot-A bias and spoilers.
 		expect(system).not.toContain('correctIndex');
 		expect(system).not.toContain('"direction"');
 		expect(system).not.toContain('promptRomanization');
@@ -449,10 +447,9 @@ describe('buildRequestPrompt', () => {
 		expect(payload.native).toBe('English');
 		expect(payload.target).toBe('Spanish');
 		expect(payload.level).toBe('beginner');
-		expect(payload).not.toHaveProperty('newItemSlots');
-		// One list, not two: the words the lesson is about *are* the brief now.
-		expect(payload).not.toHaveProperty('reviewItems');
-		expect(payload).not.toHaveProperty('slots');
+		// One list: the words *are* the brief, and nothing else about the learner
+		// or the plan rides along.
+		expect(Object.keys(payload)).toEqual(['native', 'target', 'level', 'interests', 'items']);
 	});
 
 	it('lists the words to write about, with the sizes to write them at', () => {
@@ -590,14 +587,11 @@ describe('buildRequestPrompt', () => {
 		expect(system).not.toContain('Difficulty calibration');
 		expect(system).not.toContain('recentAccuracy');
 		expect(system).not.toContain('recentMistakes');
-		expect(system).not.toContain('(skipped)');
 		// What replaces it: this type's own keys, named and explained.
 		expect(system).toContain('words: how many words');
 		expect(system).toContain('Treat every size as a target to hit');
 		// And one rule tying the brief to the reply.
 		expect(system).toContain('items is the exact lesson to write');
-		expect(system).not.toContain('Match type to maturity');
-		expect(system).not.toContain('Mix recognition and production');
 	});
 
 	it('threads the session topic into the user message, ahead of interests', () => {

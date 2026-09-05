@@ -84,7 +84,7 @@ export interface SizingKind {
 /**
  * The observable knobs one challenge is written to, as plain counts.
  *
- * This is what difficulty *is* on the wire now. The model is never told a rung
+ * This is what difficulty *is* on the wire. The model is never told a rung
  * or an abstract 1-5: it is told how many words the sentence should have, how
  * many words the bank should hold, how many tiles to cut. A number it can count
  * is a number it can hit, and the resolver can check some of them afterwards
@@ -174,7 +174,7 @@ export interface WireTypeDef<T extends WirePayload = WirePayload> {
 	 * shared preamble.
 	 *
 	 * It states no difficulty gradient. Difficulty is {@link WireTypeDef.params}
-	 * now — countable, per challenge, and in the payload. What stays here is the
+	 * — countable, per challenge, and in the payload. What belongs here is the
 	 * judgement no number can express: how close a distractor should sit, how
 	 * subtle a planted error should be.
 	 */

@@ -2,15 +2,11 @@
  * Top-up planning: deciding what the pool is missing, so generation can write
  * exactly that and nothing else.
  *
- * Generation used to plan a *lesson* — a count of challenges, a
- * recognition/production mix, an accuracy dial, an extra go for a missed word —
- * and the pool got whatever that lesson happened to be, whether or not it
- * already held the same thing. But play never consumes a challenge, so "a
- * lesson" was never the unit that mattered; the pool is. What a word needs is
- * not a lesson's worth of new questions but a **fresh challenge of each kind it
- * can bear**, and only where it has none.
+ * Play never consumes a challenge, so the pool — not a lesson — is the unit
+ * that matters. What a word needs is a **fresh challenge of each kind it can
+ * bear**, and only where it has none.
  *
- * So the brief comes from here, and it is a list of *wants*: one word, one
+ * The brief comes from here, and it is a list of *wants*: one word, one
  * kind, one rung each. A want exists where one of the words the learner is
  * about to meet ({@link selectSessionItems}: due first, then soonest due) has
  * no rested, playable challenge of a kind that word can bear
