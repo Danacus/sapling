@@ -13,6 +13,8 @@
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"golden:update": "UPDATE_GOLDEN=1 vitest run src/lib/db/golden.test.ts",
+		"core:test": "cargo test",
+		"core:check": "cargo clippy --all-targets -- -D warnings && cargo fmt --check",
 		"sync:dev": "wrangler dev",
 		"sync:deploy": "wrangler deploy",
 		"format": "prettier --write .",

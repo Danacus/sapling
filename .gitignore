@@ -36,3 +36,6 @@ result-*
 
 # Claude Code worktrees — not used here (see CLAUDE.md), but old ones linger
 .claude/worktrees/
+
+# Rust
+/target
