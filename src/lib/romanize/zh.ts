@@ -220,5 +220,37 @@ export function tokenizeMandarin(text: string, terms: readonly string[] = []): R
 	return tokens;
 }
 
+/**
+ * The pinyin of one term on its own, where nothing about it can depend on a
+ * sentence — else `null`.
+ *
+ * Two shapes qualify. A term of two or more characters is resolved by the word
+ * dictionary the same way it would be inside a sentence (银行 is `yín háng`
+ * whether or not 我们去 precedes it), so the whole-text invariant above is not
+ * being bent, only applied to a text that happens to be one word. A single
+ * character qualifies only when `pinyin-pro` lists exactly one reading for it:
+ * 菜 is `cài` and nothing else, but 行, 长, 好 and 了 each have several, and which
+ * one a lone card means is knowledge only the card's meaning carries — so those
+ * answer `null` and are left for a reader who knows the meaning. Anything that is
+ * not purely Han script — Latin, digits, punctuation, a mixed term — is `null`
+ * too: there is no pinyin to give.
+ */
+export function unambiguousMandarinReading(term: string): string | null {
+	const trimmed = term.trim();
+	if (!PURE_HAN.test(trimmed)) return null;
+
+	const entries: readonly (PinyinEntry & { readonly polyphonic: readonly string[] })[] = pinyin(
+		trimmed,
+		{ type: 'all' }
+	);
+	if (entries.length === 0 || entries.some((entry) => !entry.isZh || !entry.pinyin)) return null;
+	if (entries.length === 1 && entries[0].polyphonic.length > 1) return null;
+
+	return entries.map((entry) => entry.pinyin).join(' ');
+}
+
 /** Mandarin's entry in the `./index` registry. */
-export const zhRomanizer: Romanizer = { tokenize: tokenizeMandarin };
+export const zhRomanizer: Romanizer = {
+	tokenize: tokenizeMandarin,
+	unambiguousReading: unambiguousMandarinReading
+};

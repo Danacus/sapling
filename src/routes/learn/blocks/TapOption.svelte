@@ -34,7 +34,7 @@
 <script lang="ts">
 	import type { RomanizedToken } from '$lib/romanize';
 
-	import RubyText from './RubyText.svelte';
+	import RubyText from '$lib/ui/RubyText.svelte';
 
 	let {
 		text,

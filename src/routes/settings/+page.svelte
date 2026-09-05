@@ -17,6 +17,8 @@
 		upsertItems
 	} from '$lib/db';
 	import { fillRomanizations, isMockMode } from '$lib/llm';
+	import { loadRomanizer, localReadings } from '$lib/romanize';
+	import type { Romanizer } from '$lib/romanize';
 	import {
 		clearSyncPhrase,
 		formatPhrase,
@@ -81,6 +83,8 @@
 	let loadError = $state('');
 	let profile = $state<Profile | undefined>(undefined);
 	let allItems = $state<KnowledgeItem[]>([]);
+	/** The target language's local romanizer once its chunk has landed; `null` before, and for languages without one. */
+	let romanizer = $state<Romanizer | null>(null);
 	/** No key configured (or the flag is set): nothing here may offer to spend. */
 	let mockMode = $state(false);
 
@@ -169,6 +173,13 @@
 				if (cancelled) return;
 				profile = loadedProfile;
 				allItems = loadedItems;
+				// Lazy chunk; until it lands every missing reading looks like a model
+				// job, and the count corrects itself when it arrives.
+				loadRomanizer(loadedProfile?.targetLanguage)
+					.then((loaded) => {
+						if (!cancelled) romanizer = loaded;
+					})
+					.catch(() => {});
 
 				mockMode = isMockMode();
 				apiKeySet = getApiKey() !== undefined;
@@ -466,34 +477,59 @@
 		return /\p{L}/u.test(item.term.replace(/\p{Script=Latin}/gu, ''));
 	}
 
-	/**
-	 * Words that predate romanization support. Only worth offering when there is
-	 * a real key behind it — the mock has no readings to give, and this is the
-	 * one button in the app that spends tokens on something other than a lesson.
-	 */
+	/** Words that predate romanization support, or were added without one. */
 	const missingReadings = $derived(allItems.filter(needsReading));
 
-	/** Backfills readings for every unreadable word in one batched call. */
+	/**
+	 * The missing readings the local romanizer can answer *for keeps* — only
+	 * where no context could change them (`localReadings`). These cost nothing;
+	 * the rest are words a reader has to know the meaning of to romanize, which
+	 * is the model's job and the one button in the app that spends tokens on
+	 * something other than a lesson.
+	 */
+	const freeReadings = $derived(localReadings(missingReadings, romanizer));
+	const modelReadings = $derived(missingReadings.filter((item) => !freeReadings.has(item.id)));
+
+	/**
+	 * Whether the fill can be offered at all: anything free is always on the
+	 * table, the model's share only with a real key behind it.
+	 */
+	const canBackfill = $derived(freeReadings.size > 0 || (!mockMode && modelReadings.length > 0));
+
+	/** How many the button will actually fill — the model's share is skipped without a key. */
+	const backfillCount = $derived(freeReadings.size + (mockMode ? 0 : modelReadings.length));
+
+	/** Backfills readings: the local ones first, then one batched model call for the rest. */
 	async function backfillReadings() {
 		if (backfilling || !profile) return;
 		backfilling = true;
 		backfillStatus = 'idle';
 		backfillMessage = '';
 
-		const targets = missingReadings;
 		try {
-			const { readings } = await fillRomanizations({
-				items: targets.map((item) => ({ id: item.id, term: item.term })),
-				targetLanguage: profile.targetLanguage
-			});
+			const free = missingReadings
+				.filter((item) => freeReadings.has(item.id))
+				.map((item) => ({ ...item, romanization: freeReadings.get(item.id) as string }));
+			// Land the free ones before the model is even asked: a failed call must
+			// not cost the readings that never needed it.
+			if (free.length > 0) await upsertItems(free);
 
-			const patched = targets
-				.filter((item) => readings.has(item.id))
-				.map((item) => ({ ...item, romanization: readings.get(item.id) as string }));
-			await upsertItems(patched);
+			let fromModel: KnowledgeItem[] = [];
+			const targets = mockMode ? [] : modelReadings;
+			if (targets.length > 0) {
+				const { readings } = await fillRomanizations({
+					items: targets.map((item) => ({ id: item.id, term: item.term })),
+					targetLanguage: profile.targetLanguage
+				});
+				fromModel = targets
+					.filter((item) => readings.has(item.id))
+					.map((item) => ({ ...item, romanization: readings.get(item.id) as string }));
+				if (fromModel.length > 0) await upsertItems(fromModel);
+			}
 
 			// Patch the local copy rather than re-reading: the count in the button
 			// label has to fall the moment the write lands.
+			const patched = [...free, ...fromModel];
 			const byId = new Map(patched.map((item) => [item.id, item]));
 			allItems = allItems.map((item) => byId.get(item.id) ?? item);
 
@@ -501,7 +537,10 @@
 				backfillMessage = 'The model returned no usable readings.';
 				backfillStatus = 'error';
 			} else {
-				backfillMessage = `Added ${patched.length} reading${patched.length === 1 ? '' : 's'}`;
+				const plural = patched.length === 1 ? '' : 's';
+				backfillMessage =
+					`Added ${patched.length} reading${plural}` +
+					(fromModel.length > 0 && free.length > 0 ? ` (${fromModel.length} from the model)` : '');
 				flash((value) => (backfillStatus = value), 3000);
 			}
 		} catch (cause) {
@@ -1105,13 +1144,24 @@
 					<InlineStatus status={exportStatus} message={exportMessage} />
 				</div>
 
-				{#if !mockMode && missingReadings.length > 0}
+				{#if canBackfill}
 					<div class="field backfill-field">
 						<span class="label">Missing pronunciations</span>
 						<p class="hint">
-							{missingReadings.length} word{missingReadings.length === 1 ? '' : 's'} from before pronunciations
-							were supported {missingReadings.length === 1 ? 'has' : 'have'} no reading. One short model
-							call fills them all in.
+							{missingReadings.length} word{missingReadings.length === 1 ? '' : 's'}
+							{missingReadings.length === 1 ? 'has' : 'have'} no reading.
+							{#if modelReadings.length === 0}
+								All of them can be worked out on this device — no model call.
+							{:else if freeReadings.size === 0}
+								One short model call fills them all in.
+							{:else}
+								{freeReadings.size} can be worked out on this device; {modelReadings.length}
+								{modelReadings.length === 1 ? 'is' : 'are'} ambiguous on {modelReadings.length === 1
+									? 'its'
+									: 'their'} own and {modelReadings.length === 1 ? 'needs' : 'need'} one short model call{mockMode
+									? ', which needs an API key'
+									: ''}.
+							{/if}
 						</p>
 						<div class="actions-row">
 							<button
@@ -1120,7 +1170,10 @@
 								onclick={() => void backfillReadings()}
 								disabled={backfilling}
 							>
-								{backfilling ? 'Fetching…' : `Add missing readings (${missingReadings.length})`}
+								{backfilling
+									? 'Adding…'
+									: `Add ${backfillCount} reading${backfillCount === 1 ? '' : 's'}` +
+										(modelReadings.length === 0 || mockMode ? ' (no model call)' : '')}
 							</button>
 							<InlineStatus status={backfillStatus} message={backfillMessage} />
 						</div>

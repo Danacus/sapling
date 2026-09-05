@@ -22,11 +22,14 @@
 	import { untrack } from 'svelte';
 
 	import { deleteItem, getAllItems, getProfile } from '$lib/db';
+	import { itemReadingTokens, loadRomanizer } from '$lib/romanize';
+	import type { Romanizer } from '$lib/romanize';
 	import { hideReadingProbability } from '$lib/session/romanization';
 	import { CardState } from '$lib/srs';
 	import type { KnowledgeItem, Profile } from '$lib/types';
 	import ProgressBar from '$lib/ui/ProgressBar.svelte';
 	import { getRomanizationMode } from '$lib/ui/prefs';
+	import RubyText from '$lib/ui/RubyText.svelte';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 	import {
@@ -87,6 +90,8 @@
 	let loading = $state(true);
 	let loadError = $state('');
 	let profile = $state<Profile | undefined>(undefined);
+	/** The target language's local romanizer once its chunk has landed; see the load effect. */
+	let romanizer = $state<Romanizer | null>(null);
 	let items = $state<KnowledgeItem[]>([]);
 	/** Captured once at load, so every relative time on the page agrees. */
 	let now = $state(Date.now());
@@ -156,6 +161,14 @@
 				items = loadedItems;
 				now = Date.now();
 				loading = false;
+				// The local romanizer's chunk lands after the list has rendered;
+				// until then, and for languages without one, the stored readings
+				// carry the ruby. A failed fetch just keeps it that way.
+				loadRomanizer(loadedProfile?.targetLanguage)
+					.then((loaded) => {
+						if (!cancelled) romanizer = loaded;
+					})
+					.catch(() => {});
 			})
 			.catch((cause) => {
 				if (cancelled) return;
@@ -534,6 +547,9 @@
 				<ul class="ledger">
 					{#each rows as row (row.item.id)}
 						{@const open = isOpen(row.item.id)}
+						{@const reading = showsReading(row.strength)
+							? itemReadingTokens(row.item, romanizer)
+							: null}
 						<li class="row" class:open>
 							<div class="entry">
 								<button
@@ -547,10 +563,9 @@
 										<path d="m9.6 5.8 6.4 6.2-6.4 6.2" />
 									</svg>
 									<span class="word-text">
-										<span class="term">{row.item.term}</span>
-										{#if showsReading(row.strength) && row.item.romanization}
-											<span class="rom">{row.item.romanization}</span>
-										{/if}
+										<span class="term" class:annotated={reading !== null}>
+											{#if reading}<RubyText tokens={reading} />{:else}{row.item.term}{/if}
+										</span>
 										<span class="meaning">{row.item.meaning}</span>
 									</span>
 									<span class="readout">
@@ -1229,10 +1244,17 @@
 		white-space: nowrap;
 	}
 
-	.word-text :global(.rom) {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+	/*
+	  A term with its reading over it needs the ruby line that `RubyText` reserves
+	  (its ruby run is set at line-height 1.9), and clipping would cut the
+	  annotation off at the top of the line box. So the ellipsis treatment is for
+	  bare terms only; an annotated one wraps instead — it occupies the height the
+	  old `.rom` line took anyway, so the row's rhythm does not change.
+	*/
+	.term.annotated {
+		overflow: visible;
+		text-overflow: clip;
+		white-space: normal;
 	}
 
 	.meaning {

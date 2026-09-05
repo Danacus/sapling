@@ -27,7 +27,7 @@
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
 	import CheckButton from './blocks/CheckButton.svelte';
 	import PromptHeader from './blocks/PromptHeader.svelte';
-	import RubyText from './blocks/RubyText.svelte';
+	import RubyText from '$lib/ui/RubyText.svelte';
 	import TapOption from './blocks/TapOption.svelte';
 	import WordBank from './blocks/WordBank.svelte';
 

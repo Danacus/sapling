@@ -26,7 +26,7 @@
 	import type { RomanizedToken } from '$lib/romanize';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 
-	import RubyText from './RubyText.svelte';
+	import RubyText from '$lib/ui/RubyText.svelte';
 
 	let {
 		kicker,

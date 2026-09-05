@@ -55,4 +55,18 @@ export interface Romanizer {
 	 * would be a correctness bug, not an optimization (see `./zh`).
 	 */
 	tokenize(text: string, terms?: readonly string[]): RomanizedToken[];
+
+	/**
+	 * The reading of one vocabulary term on its own, but **only where no context
+	 * could change it** — otherwise `null`.
+	 *
+	 * The one sanctioned exception to "never romanize in isolation", and it is
+	 * sanctioned because it refuses exactly the cases the rule exists for: a
+	 * single character with several readings answers `null`, and so does any term
+	 * the implementation cannot read at all. What comes back is safe to *store* as
+	 * the term's reading, which is what the settings backfill does with it.
+	 * Optional: a language whose readings are never context-free simply leaves it
+	 * out, and every caller treats that as `null`.
+	 */
+	unambiguousReading?(term: string): string | null;
 }

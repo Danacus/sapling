@@ -1,11 +1,38 @@
 import { describe, expect, it } from 'vitest';
 
-import { tokenizeMandarin, zhRomanizer } from './zh';
+import { tokenizeMandarin, unambiguousMandarinReading, zhRomanizer } from './zh';
 
 /** `text` back out of the tokens — the invariant every case is checked against. */
 function rebuild(tokens: readonly { text: string }[]): string {
 	return tokens.map((token) => token.text).join('');
 }
+
+describe('unambiguousMandarinReading', () => {
+	it('reads a multi-character word through the dictionary', () => {
+		expect(unambiguousMandarinReading('银行')).toBe('yín háng');
+		expect(unambiguousMandarinReading('自行车')).toBe('zì xíng chē');
+	});
+
+	it('reads a single character with one reading', () => {
+		expect(unambiguousMandarinReading('菜')).toBe('cài');
+	});
+
+	it('declines a single polyphone', () => {
+		for (const char of ['行', '长', '好', '了']) {
+			expect(unambiguousMandarinReading(char), char).toBeNull();
+		}
+	});
+
+	it('declines anything that is not purely Han script', () => {
+		for (const term of ['café', 'gracias', '', '  ', '菜单!', 'A菜']) {
+			expect(unambiguousMandarinReading(term), JSON.stringify(term)).toBeNull();
+		}
+	});
+
+	it('is what the registry entry exposes', () => {
+		expect(zhRomanizer.unambiguousReading?.(' 菜单 ')).toBe('cài dān');
+	});
+});
 
 describe('tokenizeMandarin', () => {
 	describe('polyphone readings come from the sentence, not the character', () => {
