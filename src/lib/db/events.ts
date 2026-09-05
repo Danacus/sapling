@@ -3,9 +3,9 @@
  *
  * The envelope `id` is the set-union key — an id already in `events` is never
  * materialised twice — so no payload carries an id of its own. `at` is when the
- * learner did the thing, and doubles as the last-write-wins input for the three
- * overwrites (`itemUpdated`, `profileUpdated`, `wordMarked`); every other rule
- * is order-independent by construction.
+ * learner did the thing, and doubles as the last-write-wins input for the two
+ * overwrites (`profileUpdated`, `wordMarked`) and the per-field fold of
+ * `itemUpdated`; every other rule is order-independent by construction.
  *
  * Payload shapes are frozen: they are what v3 export files on disk contain.
  */

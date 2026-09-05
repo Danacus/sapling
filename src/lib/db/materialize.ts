@@ -202,6 +202,12 @@ function itemAdded(sql: Sql, p: PayloadFor<'itemAdded'>): void {
 		[p.id]
 	);
 	if (rows.length > 0) writeFold(sql, p.id, p.introducedAt, rows);
+
+	// Patches that arrived before their item wait in the log; this is where they
+	// apply. The row was just written from the add, so no reset is needed.
+	for (const row of patchesOf(sql, p.id)) {
+		applyPatch(sql, row.at, JSON.parse(row.payload) as PayloadFor<'itemUpdated'>);
+	}
 }
 
 function itemReviewed(sql: Sql, p: PayloadFor<'itemReviewed'>): void {
@@ -261,12 +267,29 @@ function reviewAmended(sql: Sql, p: PayloadFor<'reviewAmended'>): void {
 
 const PATCHABLE = ['term', 'meaning', 'romanization', 'notes'] as const;
 
-function itemUpdated(sql: Sql, at: number, p: PayloadFor<'itemUpdated'>): void {
-	const row = sql.query<{ updatedAt: number }>('SELECT updatedAt FROM items WHERE id = ?', [
-		p.itemId
-	])[0];
-	if (!row || at < row.updatedAt) return;
+interface PatchRow {
+	at: number;
+	device: string;
+	payload: string;
+}
 
+/**
+ * The `itemUpdated` rows the log holds for one item, in fold order `(at, device)`.
+ *
+ * Patches have no table of their own the way reviews do; the log is where they
+ * wait, so this reads `events` directly (`events_type` keeps it cheap).
+ */
+function patchesOf(sql: Sql, itemId: string): PatchRow[] {
+	return sql.query<PatchRow>(
+		`SELECT at, device, payload FROM events
+		 WHERE type = 'itemUpdated' AND json_extract(payload, '$.itemId') = ?
+		 ORDER BY at, device`,
+		[itemId]
+	);
+}
+
+/** Writes the fields one patch names; the others keep whatever they hold. */
+function applyPatch(sql: Sql, at: number, p: PayloadFor<'itemUpdated'>): void {
 	const sets: string[] = [];
 	const params: SqlParam[] = [];
 	for (const field of PATCHABLE) {
@@ -281,6 +304,44 @@ function itemUpdated(sql: Sql, at: number, p: PayloadFor<'itemUpdated'>): void {
 		at,
 		p.itemId
 	]);
+}
+
+/**
+ * Replays an item's patches over the fields its `itemAdded` carried, in
+ * `(at, device)` order — the counterpart of {@link refold} for reviews.
+ *
+ * The fold is per field: a patch that set `meaning` survives a newer one that
+ * only set `notes`, whichever of the two arrived first.
+ */
+function refoldPatches(sql: Sql, itemId: string): void {
+	const base = sql.query<{ payload: string }>(
+		`SELECT payload FROM events
+		 WHERE type = 'itemAdded' AND json_extract(payload, '$.id') = ?
+		 ORDER BY ${LOG_ORDER} LIMIT 1`,
+		[itemId]
+	)[0];
+	if (!base) return;
+	const added = JSON.parse(base.payload) as PayloadFor<'itemAdded'>;
+	sql.exec(
+		'UPDATE items SET term = ?, meaning = ?, romanization = ?, notes = ?, updatedAt = 0 WHERE id = ?',
+		[added.term, added.meaning, added.romanization ?? null, added.notes ?? null, itemId]
+	);
+	for (const row of patchesOf(sql, itemId)) {
+		applyPatch(sql, row.at, JSON.parse(row.payload) as PayloadFor<'itemUpdated'>);
+	}
+}
+
+function itemUpdated(sql: Sql, at: number, p: PayloadFor<'itemUpdated'>): void {
+	const row = sql.query<{ updatedAt: number }>('SELECT updatedAt FROM items WHERE id = ?', [
+		p.itemId
+	])[0];
+	// No row yet: the patch waits in the log, and `itemAdded` folds it in when
+	// the item lands.
+	if (!row) return;
+	// The newest patch applies straight onto the row; an older one arriving late
+	// refolds from the add, because the fields it names may since have moved on.
+	if (at >= row.updatedAt) applyPatch(sql, at, p);
+	else refoldPatches(sql, p.itemId);
 }
 
 function itemDeleted(sql: Sql, p: PayloadFor<'itemDeleted'>): void {

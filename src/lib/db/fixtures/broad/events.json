@@ -3,7 +3,7 @@
 		"deviceId": "fixture-device",
 		"now": 1710244800000,
 		"orderFree": false,
-		"note": "Contains the three rules the log order is load-bearing for: a serve or report before its challengeAdded is dropped, an itemUpdated before its itemAdded is dropped, and a reviewAmended before the review it replaces leaves two rows. Replayed in seq order only."
+		"note": "Contains the two rules the log order is load-bearing for: a serve or report before its challengeAdded is dropped, and a reviewAmended before the review it replaces leaves two rows. Replayed in seq order only."
 	},
 	"events": [
 		{

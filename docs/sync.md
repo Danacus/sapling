@@ -30,7 +30,7 @@ Applied once per event id, in arrival order (`seq`, else insertion order).
 | `itemAdded` | skip if tombstoned or present; insert with a fresh FSRS card; fold in any reviews that arrived first |
 | `itemReviewed` | insert the review row (dedup by id); if `at` is the newest for the item, fold it onto the stored card, else refold the item from all its rows; missing item: row kept, inert |
 | `reviewAmended` | delete the replaced row if named; insert the new one; refold the item |
-| `itemUpdated` | apply the given fields if `at >= item.updatedAt`; missing item: no-op |
+| `itemUpdated` | fold per field over the `itemAdded` fields in `(at, device)` order, read from the log; missing item: waits until `itemAdded` lands |
 | `itemDeleted` | tombstone the id; delete the item and its reviews |
 | `challengeAdded` | skip if present or an unknown challenge type; insert with zeroed counters |
 | `challengeServed` | `timesServed += 1`, `lastServedAt = max(lastServedAt, at)`; missing: no-op |

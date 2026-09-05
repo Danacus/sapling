@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS events (
   seq INTEGER, id TEXT PRIMARY KEY, type TEXT NOT NULL, at INTEGER NOT NULL,
   device TEXT NOT NULL, payload TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS events_seq ON events(seq);
+CREATE INDEX IF NOT EXISTS events_type ON events(type);
 
 CREATE TABLE IF NOT EXISTS items (
   id TEXT PRIMARY KEY, kind TEXT, term TEXT, meaning TEXT, romanization TEXT, notes TEXT,
@@ -130,7 +131,7 @@ export function reviewKey(itemId: string, at: number, device: string): string {
  * when one of them changes shape and `openSchema` drops them all and replays
  * the log on the next boot. `events` and `meta` are never touched by it.
  */
-export const DERIVED_SCHEMA_VERSION = 2;
+export const DERIVED_SCHEMA_VERSION = 3;
 
 /** Every read table the materializer owns; `events` and `meta` survive a rebuild. */
 export const DERIVED_TABLES = [
