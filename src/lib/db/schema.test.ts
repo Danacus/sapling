@@ -1,16 +1,18 @@
 import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 import { describe, expect, it } from 'vitest';
 
-import { openSchema } from './materialize';
-import { DERIVED_SCHEMA_VERSION } from './schema';
+import { loadWasmCore } from './backend.testing';
+import { openCore, queryRows } from './host';
+import { WasmCore } from './wasm/sapling_core';
 
 /**
  * `CREATE TABLE IF NOT EXISTS` keeps whatever columns a table was created with,
  * so a read table that changed shape has to be rebuilt from the log — and that
- * rebuild must not lose a single event.
+ * rebuild must not lose a single event. Opening the core is what does it.
  */
-describe('openSchema', () => {
+describe('opening the core', () => {
 	it('rebuilds a read table left in an older shape, keeping the log', async () => {
+		loadWasmCore();
 		const sqlite3 = await sqlite3InitModule();
 		const db = new sqlite3.oo1.DB(':memory:');
 
@@ -28,29 +30,32 @@ describe('openSchema', () => {
 			  '{"conversationId":"c1","index":0,"teacher":{"role":"teacher","reply":{"text":"hi"},"actions":[]}}');
 		`);
 
-		const sql = openSchema(db);
+		openCore(db, { deviceId: 'dev' });
 
 		expect(
-			sql.query<{ at: number }>('SELECT at FROM conversationTurns WHERE conversationId = ?', ['c1'])
+			queryRows<{ at: number }>(db, 'SELECT at FROM conversationTurns WHERE conversationId = ?', [
+				'c1'
+			])
 		).toEqual([{ at: 5 }]);
-		expect(sql.query<{ n: number }>('SELECT count(*) AS n FROM events')).toEqual([{ n: 1 }]);
+		expect(queryRows<{ n: number }>(db, 'SELECT count(*) AS n FROM events')).toEqual([{ n: 1 }]);
 		expect(
-			sql.query<{ value: string }>(`SELECT value FROM meta WHERE key = 'derivedSchema'`)
-		).toEqual([{ value: String(DERIVED_SCHEMA_VERSION) }]);
+			queryRows<{ value: string }>(db, `SELECT value FROM meta WHERE key = 'derivedSchema'`)
+		).toEqual([{ value: String(WasmCore.derivedSchemaVersion()) }]);
 	});
 
 	it('leaves a current database alone', async () => {
+		loadWasmCore();
 		const sqlite3 = await sqlite3InitModule();
 		const db = new sqlite3.oo1.DB(':memory:');
-		const sql = openSchema(db);
-		sql.exec(
+		openCore(db, { deviceId: 'dev' });
+		db.exec(
 			`INSERT INTO items (id, kind, term, meaning, fsrsCard, introducedAt) VALUES (?, ?, ?, ?, ?, ?)`,
-			['i1', 'vocab', '木', 'tree', '{}', 1]
+			{ bind: ['i1', 'vocab', '木', 'tree', '{}', 1] }
 		);
 
 		// A second open at the same version must not drop the row: no event backs
 		// it, so a rebuild would lose it.
-		openSchema(db);
-		expect(sql.query<{ n: number }>('SELECT count(*) AS n FROM items')).toEqual([{ n: 1 }]);
+		openCore(db, { deviceId: 'dev' });
+		expect(queryRows<{ n: number }>(db, 'SELECT count(*) AS n FROM items')).toEqual([{ n: 1 }]);
 	});
 });

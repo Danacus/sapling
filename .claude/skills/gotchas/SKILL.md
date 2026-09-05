@@ -27,6 +27,18 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
 - **The SQLite SAH-pool VFS is exclusive.** Only one tab can hold `/sapling.db`
   at a time; a second tab's boot fails with "Sapling is already open in another
   tab." — close the other tab and reload. There is no leader election.
+- **The core is a build artefact.** `src/lib/db/wasm/` is gitignored and
+  written by `pnpm core:wasm`; `Cannot find module './wasm/sapling_core'` from
+  vitest or svelte-check means it has not run. Every `pnpm dev|build|check|test`
+  script chains it first (explicitly, not via `pre*` hooks), so use those rather
+  than calling `vite`/`vitest` directly after touching `crates/`. A stale
+  artefact runs stale merge rules silently — the golden tests are what notice.
+- **`undefined` does not cross the wasm boundary; `null` does.** `host.ts`
+  sends arguments as a JSON array, so a trailing `undefined` becomes `null` and
+  `dispatch.rs` reads `null` as "absent" — which is why no `Backend` argument
+  may mean something by being `null`. Answers go the other way: a method that
+  returns nothing, or a read of a missing row, returns no string at all and the
+  host hands back `undefined`, matching the TypeScript signatures.
 
 ## TTS
 
@@ -82,6 +94,18 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
 - **Nix flakes only see files that are `git add`ed.** A brand-new file the flake
   needs must be staged before direnv (or `nix develop`) picks it up. This looks
   exactly like "the flake is broken".
+- **`wasm-bindgen-cli` and the `wasm-bindgen` crate must be the same version,
+  to the patch.** The CLI reads a schema the macro embedded in the `.wasm` and
+  refuses any other version with a long, unhelpful error. The crate is pinned
+  `=` in `crates/sapling-wasm/Cargo.toml` to what the flake's nixpkgs ships
+  (`wasm-bindgen --version`); bumping the flake lock means re-pinning the crate,
+  and `nix eval` against a *different* nixpkgs than the lock will tell you the
+  wrong version.
+- **The wasm target links with `lld`, and nixpkgs' rustc does not bundle it.**
+  `error: linker 'lld' not found` from `cargo build --target
+  wasm32-unknown-unknown` means the devShell is missing `pkgs.lld`, not that
+  the target's std is missing — rustc's sysroot already ships
+  `wasm32-unknown-unknown`, so no overlay or rustup is needed.
 - `server/` is a separate package with its own `node_modules`. Its tests fail
   confusingly until `cd server && pnpm install` has run once.
 

@@ -71,9 +71,9 @@ glossed nor drilled. Three acts, kept distinct:
 
 ### Events
 
-Four new events, in the house pattern (`events.ts` zod payload, `materialize.ts`
-rule, `schema.ts` table, `DERIVED_TABLES`, repositories, tests against the real
-in-memory store):
+Four new events, in the house pattern (payload struct in `events.rs` mirrored
+by a type in `events.ts`, `materialize.rs` rule, `schema.rs` table,
+`DERIVED_TABLES`, a `Backend` method, tests against the real in-memory store):
 
 | Event | Payload | Rule |
 |---|---|---|

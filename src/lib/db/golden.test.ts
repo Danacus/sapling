@@ -6,13 +6,14 @@
  * would arrive off sync, `expected.json` what {@link probe} reads back after
  * applying them. The test replays the log through `applyRemote`, the same gate
  * a pulled page passes, and diffs the reads against the file. `expected.json`
- * is data, not code: another implementation of `core.ts` in another language
- * must reproduce it byte for byte before it may replace this one.
+ * is data, not code: the Rust core reproduces it natively in `tests/golden.rs`,
+ * and this file runs the same fixtures through the wasm build the browser
+ * loads, so the two paths to the same rules are checked against one answer.
  *
  * Four more checks ride on every fixture, because they are what the merge
  * rules promise: applying the log twice reads the same; exporting it and
  * importing the file into a fresh backend reads the same; the exported log
- * *is* the input log, field for field (`parseEvent(raw)` equals `raw` — the
+ * *is* the input log, field for field (`parse_event(raw)` equals `raw` — the
  * schema-strips-unknown-fields trap); and, where the fixture says its rules
  * are order-free, applying the rows in reverse arrival order reads the same.
  *

@@ -17,6 +17,7 @@
 
 pub mod core;
 pub mod day;
+pub mod dispatch;
 pub mod events;
 pub mod js;
 pub mod materialize;

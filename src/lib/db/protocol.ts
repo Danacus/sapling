@@ -2,16 +2,18 @@
  * The domain-level protocol between the app and its backend.
  *
  * {@link Backend} is the whole surface the window thread may ask of persistence:
- * every method speaks `$lib/types`, none speaks SQL. `core.ts` implements it
- * beside SQLite — inside the database Worker in the browser, in-process in node
- * tests — and `client.ts` forwards it over `postMessage`. Fixing the boundary
- * here, rather than at the SQL, is what lets the implementation move without
- * the app noticing: a different transport (a native shell, a remote host) or a
- * different language behind the same methods.
+ * every method speaks `$lib/types`, none speaks SQL. The Rust core
+ * (`crates/sapling-core`, compiled to wasm) implements it beside SQLite —
+ * inside the database Worker in the browser, in-process in node tests, both
+ * through `host.ts` — and `client.ts` forwards it over `postMessage`. Fixing
+ * the boundary here, rather than at the SQL, is what let the implementation
+ * change language without the app noticing, and is what would let it change
+ * transport (a native shell, a remote host) the same way.
  *
  * Adding a method means adding it to the interface **and** to
- * {@link BACKEND_METHODS}; leaving either out fails `pnpm check`, because `core.ts`
- * must implement the interface and {@link _everyMethodListed} must stay `never`.
+ * {@link BACKEND_METHODS} **and** to `dispatch.rs`; leaving one out fails a
+ * gate: {@link _everyMethodListed} must stay `never` for `pnpm check`, and
+ * `cargo test` reads this file and compares the list to the Rust arms.
  */
 import type {
 	Challenge,
@@ -56,8 +58,8 @@ export interface ExportEnvelope {
  * ## Every write is an event
  *
  * There is no "write the row, then also append the event" pair to keep in
- * agreement — the event *is* the write, and the read tables are what
- * `materialize.ts` makes of the log. Reads never touch `events`.
+ * agreement — the event *is* the write, and the read tables are what the
+ * materializer makes of the log. Reads never touch `events`.
  *
  * ## Bulk reads are aggregates; the history is per-item
  *
