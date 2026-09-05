@@ -16,6 +16,9 @@
 		"core:wasm": "cargo build -p sapling-wasm --release --target wasm32-unknown-unknown && wasm-bindgen --target web --out-dir src/lib/db/wasm --out-name sapling_core target/wasm32-unknown-unknown/release/sapling_wasm.wasm",
 		"core:test": "cargo test",
 		"core:check": "cargo clippy --all-targets -- -D warnings && cargo fmt --check",
+		"desktop:dev": "cd crates/sapling-desktop && cargo tauri dev",
+		"desktop:build": "cd crates/sapling-desktop && cargo tauri build --no-bundle",
+		"desktop:check": "cargo clippy -p sapling-desktop --all-targets -- -D warnings && cargo test -p sapling-desktop",
 		"sync:dev": "wrangler dev",
 		"sync:deploy": "wrangler deploy",
 		"format": "prettier --write .",
@@ -38,6 +41,7 @@
 	},
 	"dependencies": {
 		"@sqlite.org/sqlite-wasm": "3.53.0-build1",
+		"@tauri-apps/api": "^2.11.1",
 		"pinyin-pro": "^3.29.3",
 		"ts-fsrs": "^5.4.1",
 		"zod": "^4.4.3"

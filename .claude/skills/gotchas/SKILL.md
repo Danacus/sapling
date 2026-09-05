@@ -51,6 +51,40 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   artifact URLs and sizes.
 - Audio failures must degrade silently to fallback. Sound never blocks gameplay.
 
+## Desktop (Tauri)
+
+- **2026-09-05: in WebKitGTK without the GStreamer plugins, `new AudioContext()`
+  kills the whole web process.** Not a silent failure, not a caught exception —
+  the page vanishes and stderr shows `GStreamer element appsink not found`
+  followed by `GStreamer-CRITICAL` assertions. WebKitGTK routes *Web Audio*
+  through GStreamer, not just `<video>`, so this is every spoken word.
+  `flake.nix`'s `desktop` shell carries `gst-plugins-{base,good,bad}` +
+  `gst-libav` and exports `GST_PLUGIN_SYSTEM_PATH_1_0` for this reason.
+  `glib-networking` (`GIO_MODULE_DIR`) is the same shape of trap one step
+  earlier: runtime-only, no build error, every `https://` request fails.
+- **WebKitGTK has no OPFS** (`navigator.storage.getDirectory` is `undefined`)
+  and no `SpeechRecognition`. The first is why the desktop build must run the
+  native core — the sqlite-wasm/OPFS Worker cannot boot there at all. Both were
+  measured, along with working cross-origin `fetch` to OpenRouter and a working
+  YouTube iframe, from the real `tauri://localhost` origin; the table is in
+  `docs/desktop.md`.
+- **`Core` is `!Send`, so `Mutex<Core>` is not a way to share it.** Its `Sql`,
+  clock, ids and calendar are plain boxed trait objects and have to stay that
+  way, because the wasm host's `JsSql` holds a `js_sys::Function`. Adding
+  `+ Send` to the core's bounds would break the browser build. `host.rs` gives
+  the core its own thread and posts closures to it instead.
+- **In a nix `let`, a binding shadows a `with`.** `gstreamer = with
+  pkgs.gst_all_1; [ gstreamer ... ]` refers to *itself* and fails with
+  `error: stack overflow; max-call-depth exceeded`, which reads like a nixpkgs
+  bug and is not one. The binding is named `gst`.
+- `cargo tauri` finds a project by the `tauri.conf.json` beside a `Cargo.toml`,
+  searching the cwd and `src-tauri/`. There is no `src-tauri/` here, so the
+  scripts `cd crates/sapling-desktop` first, and `beforeDevCommand` carries an
+  explicit `cwd: "../.."` to run `pnpm dev` back at the repo root.
+- **`bundle.icon` paths resolve relative to `tauri.conf.json`, and a missing one
+  fails inside `generate_context!()`** — a proc-macro panic pointing at
+  `.run(...)`, not at the config.
+
 ## Deploying / edge caching
 
 - **2026-08-24 incident:** `/_app/immutable/*` must serve a real 404
