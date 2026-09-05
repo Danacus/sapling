@@ -1,0 +1,31 @@
+[package]
+name = "sapling-desktop"
+version = "0.0.1"
+edition = "2021"
+description = "Sapling as a Tauri v2 desktop app: the persistence core over a real SQLite file, behind the same Backend protocol the browser speaks."
+publish = false
+
+[lib]
+# The host lives in the library so `tests/` can open it without a webview; the
+# binary is three lines over it.
+name = "sapling_desktop"
+crate-type = ["lib"]
+
+[[bin]]
+name = "sapling-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+sapling-core = { path = "../sapling-core", features = ["sqlite"] }
+tauri = { version = "2", features = [] }
+# The host opens the file, so it needs the driver the core's adapter wraps.
+# The version must match `sapling-core`'s or two SQLite builds link at once.
+rusqlite = { version = "0.40", features = ["bundled"] }
+# `localDay` is the only place a time zone exists (see `core.md`), and on a
+# desktop that zone is the operating system's.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+uuid = { version = "1", features = ["v4"] }
+serde_json = { version = "1", features = ["preserve_order"] }

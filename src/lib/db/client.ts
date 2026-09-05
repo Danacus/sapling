@@ -1,14 +1,22 @@
 /**
- * The window side of the database Worker: a {@link Backend} whose every method
- * is one `postMessage` and one reply.
+ * The window's {@link Backend}, over whatever carries a call to the core.
  *
- * Browser-only — `backend.ts` reaches it through a dynamic import so node never
- * loads the Worker at all.
+ * The protocol is domain-level and the transport is the only thing that varies
+ * by host, so it is one function here: {@link Transport} takes a method name
+ * and its arguments and answers. In the browser that is one `postMessage` to
+ * the database Worker; in the Tauri shell it is one `invoke` to the native core
+ * (`./tauri`). Both build their `Backend` with {@link backendOver}, so there is
+ * one place where arguments are made plain and one shape of proxy.
  *
  * Arguments pass through `toPlain` on the way out. Svelte `$state` values are
  * `Proxy` objects and structured clone throws `DataCloneError` on one, so the
  * transport is where they are stripped: no caller and no backend method has to
  * remember to.
+ *
+ * Browser-only — `backend.ts` reaches this module through a dynamic import so
+ * node never loads the Worker at all. The desktop shell imports `backendOver`
+ * from here too; the Worker is constructed in `openWorkerBackend` and nowhere
+ * else, so importing this module does not start one.
  */
 import SqliteWorker from './sqlite.worker?worker';
 import { BUSY_MESSAGE } from './backend';
@@ -20,6 +28,27 @@ import {
 	type WorkerInbound,
 	type WorkerOutbound
 } from './protocol';
+
+/** One `Backend` call, carried to wherever the core runs. */
+export type Transport = (method: BackendMethod, args: unknown[]) => Promise<unknown>;
+
+/**
+ * A {@link Backend} whose every method is one {@link Transport} call.
+ *
+ * Each argument is made plain on its own, so a trailing `undefined` stays
+ * `undefined` (a default parameter still applies) rather than becoming `null`.
+ */
+export function backendOver(transport: Transport): Backend {
+	const backend: Partial<Record<BackendMethod, unknown>> = {};
+	for (const method of BACKEND_METHODS) {
+		backend[method] = (...args: unknown[]) =>
+			transport(
+				method,
+				args.map((arg) => toPlain(arg))
+			);
+	}
+	return backend as Backend;
+}
 
 export async function openWorkerBackend(deviceId: string): Promise<Backend> {
 	const worker = new SqliteWorker();
@@ -62,22 +91,16 @@ export async function openWorkerBackend(deviceId: string): Promise<Backend> {
 		worker.postMessage(message);
 	}
 
-	function call(method: BackendMethod, args: unknown[]): Promise<unknown> {
+	const call: Transport = (method, args) => {
 		const id = nextId++;
 		return new Promise<unknown>((resolve, reject) => {
 			waiting.set(id, { resolve, reject });
-			// Each argument on its own, so a trailing `undefined` stays `undefined`
-			// (a default parameter still applies) rather than becoming `null`.
-			post({ id, method, args: args.map((arg) => toPlain(arg)) } as WorkerInbound);
+			post({ id, method, args } as WorkerInbound);
 		});
-	}
+	};
 
 	post({ init: { deviceId } });
 	await opened;
 
-	const backend: Partial<Record<BackendMethod, unknown>> = {};
-	for (const method of BACKEND_METHODS) {
-		backend[method] = (...args: unknown[]) => call(method, args);
-	}
-	return backend as Backend;
+	return backendOver(call);
 }

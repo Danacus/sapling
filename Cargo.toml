@@ -1,5 +1,10 @@
 [workspace]
-members = ["crates/sapling-core", "crates/sapling-wasm"]
+members = ["crates/sapling-core", "crates/sapling-wasm", "crates/sapling-desktop"]
+# `sapling-desktop` is a member but not a *default* member: it links WebKitGTK,
+# which only the `desktop` devShell provides, and a bare `cargo test` /
+# `cargo clippy --all-targets` at the root is what `pnpm core:test` and
+# `pnpm core:check` run in the default shell. Reach it explicitly, with `-p`.
+default-members = ["crates/sapling-core", "crates/sapling-wasm"]
 resolver = "2"
 
 # The release profile is what the wasm build ships; size is what matters there.

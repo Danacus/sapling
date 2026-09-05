@@ -43,3 +43,6 @@ result-*
 # The core compiled to wasm plus its wasm-bindgen glue — `pnpm core:wasm`
 # writes it, every `pnpm dev|build|test|check` runs that first.
 /src/lib/db/wasm/
+
+# Tauri's generated ACL schemas, written by `tauri-build` on every desktop build.
+/crates/sapling-desktop/gen/
