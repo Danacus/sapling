@@ -1,0 +1,22 @@
+[package]
+name = "sapling-core"
+version = "0.1.0"
+edition = "2021"
+description = "Sapling's persistence core: the event log, its merge rules, the SRS and the backend surface, over a SQLite seam."
+publish = false
+
+[features]
+default = []
+# An `Sql` over rusqlite's bundled SQLite. The crate never opens a database on
+# its own; this is the adapter native hosts and the crate's own tests use.
+sqlite = ["dep:rusqlite"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# `preserve_order` so an object round-trips with its keys where JavaScript put them.
+serde_json = { version = "1", features = ["preserve_order"] }
+rusqlite = { version = "0.40", features = ["bundled"], optional = true }
+
+[dev-dependencies]
+# The crate's tests need the adapter; this is how a crate turns on its own feature.
+sapling-core = { path = ".", features = ["sqlite"] }

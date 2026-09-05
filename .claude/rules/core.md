@@ -1,0 +1,19 @@
+---
+paths:
+  - 'crates/**'
+  - 'Cargo.toml'
+---
+
+# The Rust core
+
+`crates/sapling-core` is `src/lib/db/core.ts` again, in Rust: the event log and its merge rules, the SRS they call, and every `Backend` method — the module a wasm build, a Tauri shell or a hosted instance would run instead of the TypeScript. Until one of those exists it is wired into nothing; the golden fixtures are what it is for.
+
+- **It never opens a database.** Everything is written against the `Sql` trait in `sql.rs` — `exec` and `query`, synchronous, parameters as `Param`, rows as `Row` — and a host hands the crate a database: `rusqlite_sql.rs` (behind the `sqlite` feature) is the adapter native hosts and the crate's own tests use, and a browser build would wrap sqlite-wasm the same way. Nothing in the crate may depend on which. The SQL text is the TypeScript's, statement for statement, so the two cores diff cleanly and a database one wrote opens under the other. A number binds as sqlite-wasm binds a JavaScript `number`: integral as `INTEGER`, otherwise `REAL` (`Param::number`).
+
+- **What JavaScript would print is the contract.** Cards, payloads, `recentGrades`, challenge content and the export file are stored or shipped as JSON text the TypeScript made with `JSON.stringify`, and the fixtures diff them. `js.rs` is therefore the only way this crate writes a number or a document: `number_to_string` is `Number::toString` (`1` for `1.0`, `1e+21` past twenty-one digits), `stringify`/`stringify_pretty` are `JSON.stringify` with and without an indent, `round` is `Math.round` (halves towards `+∞`, and not `floor(x + 0.5)`), `round_to` is ts-fsrs's `roundTo`. serde_json's own formatting is never used for output; `preserve_order` is on so objects keep the key order JavaScript gave them.
+
+- **Payload structs mirror the zod schemas, optional fields included** (`events.rs`, `types.rs`). Serde strips unknown fields exactly as zod does, so a struct that forgets an optional field loses it on every device the event arrives at. Every optional field is `#[serde(default, deserialize_with = "absent_or", skip_serializing_if = "Option::is_none")]`: absent is `None`, `null` is a parse error (zod's `.optional()` is not `.nullable()`), and `None` is omitted on the way out (`JSON.stringify` drops `undefined`). The `parse_event(raw) == raw` test in `events.rs` lists one payload per type with every optional field present; a new field goes there or that test is what fails. `parse_event` is the gate for every row off sync or out of a backup file, and a local `commit` never goes through it.
+
+- **The SRS is ts-fsrs 5.4.1, ported operation for operation** (`srs.rs`): `BasicScheduler` over FSRS-6 with the default weights, `request_retention` 0.9, learning steps `1m`/`10m`, relearning `10m`, fuzz off — the one path `reviewCard` takes. Keep the TypeScript's operation order and every `roundTo(x, 8)`; a card is compared bit for bit. `Math.pow(x, -1)` is `1 / x` (fdlibm special-cases it). The four runtime facts the TypeScript reads ambiently arrive as `Core` arguments — device id, clock, id generator, `LocalDay` for the `daily` table's calendar — because a crate has none of them; `Utc` is what the fixtures pin.
+
+- **The fixtures are the acceptance test** (`tests/golden.rs`). It discovers `src/lib/db/fixtures/*`, probes every read exactly as `golden.test.ts` and the fixtures README describe, canonicalises through `js::stringify`, and runs the same idempotence, export/import, log round-trip and reverse-arrival checks. A value that does not match is a finding about one of the two cores, never a reason to edit a fixture. `pnpm core:test` runs it; `pnpm core:check` is clippy with warnings denied plus rustfmt. Nix flakes only see staged files — `git add` a new source file before `nix develop` or the toolchain will not see it either.

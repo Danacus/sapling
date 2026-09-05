@@ -22,3 +22,9 @@ src/lib/db/fixtures/**/*.json
 # Python virtualenvs (tools/hardsub-ocr) — gitignored, but prettier walks the
 # filesystem, not the index, and paddle ships JSON it cannot even parse.
 .venv
+
+# The Rust core is rustfmt's, not prettier's; the lockfile and build output are
+# cargo's.
+crates
+Cargo.lock
+target

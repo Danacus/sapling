@@ -21,6 +21,13 @@
             # everything else. `svelte-language-server` provides `svelteserver`.
             pkgs.typescript-language-server
             pkgs.svelte-language-server
+            # The Rust core (`crates/sapling-core`): compiler, cargo, the two
+            # linters `pnpm core:check` runs, and the language server.
+            pkgs.rustc
+            pkgs.cargo
+            pkgs.clippy
+            pkgs.rustfmt
+            pkgs.rust-analyzer
           ];
         };
       });

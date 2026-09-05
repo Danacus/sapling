@@ -4,7 +4,7 @@ The app is called **Sapling** (manifest, titles, icon); the repo/package name st
 
 ## Commands
 
-The repo ships a `flake.nix` devShell (Node 22 + pnpm + the language servers) with a `.envrc` (`use flake`), so direnv loads it automatically on `cd`. Fall back to `nix develop -c` only if direnv isn't active.
+The repo ships a `flake.nix` devShell (Node 22 + pnpm + the language servers + the Rust toolchain) with a `.envrc` (`use flake`), so direnv loads it automatically on `cd`. Fall back to `nix develop -c` only if direnv isn't active.
 
 ```sh
 pnpm dev                                # dev server
@@ -13,6 +13,8 @@ pnpm check                              # svelte-check + tsc -p worker (typechec
 pnpm test                               # vitest run (all suites)
 pnpm test src/lib/srs/scheduler.test.ts # single test file
 pnpm golden:update                      # rebless src/lib/db/fixtures/*/expected.json after a deliberate merge-rule change
+pnpm core:test                          # cargo test — the Rust core, golden fixtures included
+pnpm core:check                         # cargo clippy -D warnings + cargo fmt --check
 pnpm sync:dev                           # sync Worker locally (localhost:8787)
 pnpm sync:deploy                        # deploy the sync Worker (wrangler)
 pnpm format                             # prettier --write . (bulk pass)
@@ -63,6 +65,7 @@ Every area is a registry with one module per member; forgetting a registration f
 | `src/lib/reading/` | Stateless too — **never imports `$lib/db`**; a text is immutable and every colour, reading and status is derived at render time, so the adaptive roll is memoised in a `Map` the *page* owns. | `reading.md` |
 | `src/lib/media/` | The player is a **seam** — a `<video>` or YouTube's iframe behind one interface, and the reader never learns which. Only a *reference* is stored: a video id, or a file's name. | `media.md` |
 | `src/lib/db/` | Repositories are the **only** store access, and **the window thread never speaks SQL**: `protocol.ts`'s `Backend` is the boundary, `core.ts` implements it beside SQLite (in the Worker, or in-process in tests). The `events` table is the facts log; everything else is an aggregate read model the materializer maintains, and UI reads never touch `events`. | `data.md` |
+| `crates/sapling-core/` | The same core in Rust, over a four-line `Sql` trait — **it never opens a database**, and it must reproduce every golden fixture before it may replace `core.ts`. What JavaScript would print is the contract: `js.rs` formats numbers and JSON as `JSON.stringify` does, and the SRS is ts-fsrs ported operation for operation. Not yet wired into any build. | `core.md` |
 | `src/lib/sync/`, `worker/` | The backend **orders and relays; it never merges**. A learner is a pairing phrase; the *Worker* hashes it to pick the room. | `data.md`, `deploy.md` |
 | `src/lib/srs/` | Pure and deterministic: every function takes `now` (epoch ms). | `data.md` |
 | `src/lib/types.ts` | Treat as frozen; extend with **additive optional fields only**. | `data.md` |
