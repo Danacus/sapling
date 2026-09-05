@@ -3,9 +3,15 @@
  *
  * Wraps `preloadKokoro`, whose per-file progress events are summed here into
  * one fraction in megabytes — the same arithmetic the Settings bar did. Not
- * cancellable: the download runs in the TTS worker, which does not listen for
- * an abort, so cancelling only stops the tray waiting on it. Serial, though
- * `initSherpa` already coalesces concurrent starts onto one promise.
+ * cancellable: the download runs in the TTS worker (or, on the desktop, in the
+ * Tauri host), neither of which listens for an abort, so cancelling only stops
+ * the tray waiting on it. Serial, though both providers already coalesce
+ * concurrent starts onto one promise.
+ *
+ * Nothing here knows which host is downloading. `preloadKokoro` routes, and
+ * the progress events have the same three fields either way — two mirrored
+ * runtime files in a browser, one archive and its unpacking natively — so the
+ * sum is the same sum.
  */
 
 import { preloadKokoro } from '$lib/tts';

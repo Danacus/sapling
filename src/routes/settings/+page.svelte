@@ -16,6 +16,7 @@
 		setModel
 	} from '$lib/db';
 	import { isMockMode } from '$lib/llm';
+	import { inTauri } from '$lib/platform';
 	import { loadRomanizer, localReadings } from '$lib/romanize';
 	import { TASK_KINDS, startTask } from '$lib/tasks';
 	import { taskStore } from '$lib/tasks/store.svelte';
@@ -48,6 +49,7 @@
 		RUNTIME_DOWNLOAD_BYTES,
 		setTtsEngine,
 		setTtsVoice,
+		voiceDownloadBytes,
 		type TtsEngine,
 		type TtsVoice
 	} from '$lib/tts';
@@ -209,6 +211,12 @@
 					if (!cancelled) audioBytes = bytes;
 				});
 
+				// Crosses to the host on the desktop, and is already known on the
+				// web — either way it is not worth waiting for.
+				void voiceDownloadBytes().then((bytes) => {
+					if (!cancelled) downloadSize = formatMb(bytes);
+				});
+
 				usagePromptTokens = readUsage('ll.usage.promptTokens');
 				usageCompletionTokens = readUsage('ll.usage.completionTokens');
 				usageRequests = readUsage('ll.usage.requests');
@@ -234,8 +242,17 @@
 	 */
 	const kokoroCoversTarget = $derived(kokoroSupports(profile?.targetLanguage));
 
-	/** e.g. "227 MB" — never hard-coded, so the copy cannot drift. */
-	const downloadSize = formatMb(RUNTIME_DOWNLOAD_BYTES);
+	/**
+	 * e.g. "439 MB" — never hard-coded, so the copy cannot drift.
+	 *
+	 * The two hosts download different things (two mirrored runtime files in a
+	 * browser, one release archive natively), so the number is asked for rather
+	 * than imported. The web constant seeds it because on the web that is
+	 * already the answer and nothing should flicker.
+	 */
+	let downloadSize = $state(formatMb(RUNTIME_DOWNLOAD_BYTES));
+	/** True in the Tauri desktop shell, where the voice is native. */
+	const nativeVoice = inTauri();
 
 	/** e.g. "37 MB of 105 MB" — both halves come from the cache module. */
 	const audioCacheSize = $derived(formatCacheSize(audioBytes));
@@ -796,10 +813,17 @@
 							Three of the model's 100 Mandarin speakers. English always uses its own voice (Maple,
 							or Vale if your language is set to British English).
 						</p>
-						<p class="hint">
-							Runs on your CPU (WASM + SIMD) in a background thread — there is no GPU path, and none
-							is needed for single words and short sentences.
-						</p>
+						{#if nativeVoice}
+							<p class="hint">
+								Runs natively on your CPU, on every core — there is no GPU path, and none is needed
+								for single words and short sentences.
+							</p>
+						{:else}
+							<p class="hint">
+								Runs on your CPU (WASM + SIMD) in a background thread — there is no GPU path, and
+								none is needed for single words and short sentences.
+							</p>
+						{/if}
 					</div>
 
 					<div class="actions-row">
@@ -814,44 +838,61 @@
 						<InlineStatus status={preloadStatus} message={preloadMessage} />
 					</div>
 
-					<p class="hint">
-						{downloadSize} in two files (the sherpa-onnx runtime and the Kokoro model), stored in your
-						browser's cache. It happens once per browser profile, and everything works offline afterwards.
-						The model is the full-precision build on purpose — the small quantized one is half the size
-						but produces silence in WebAssembly.
-					</p>
-					<p class="hint">
-						Synthesis takes roughly a second or two per phrase on a laptop CPU, in a background
-						thread. Each clip is then kept, so a word you have heard before plays back instantly —
-						including after a reload.
-					</p>
+					{#if nativeVoice}
+						<p class="hint">
+							{downloadSize} in one archive, unpacked into this app's own data folder. It happens once
+							per machine, and everything works offline afterwards. The model is the full-precision build,
+							the same one the web app uses, so a phrase sounds the same wherever you study.
+						</p>
+						<p class="hint">
+							Synthesis runs several times faster than real time here, so clips are made fresh
+							rather than stored — only the ones you have just played are kept, in memory.
+						</p>
+					{:else}
+						<p class="hint">
+							{downloadSize} in two files (the sherpa-onnx runtime and the Kokoro model), stored in your
+							browser's cache. It happens once per browser profile, and everything works offline afterwards.
+							The model is the full-precision build on purpose — the small quantized one is half the size
+							but produces silence in WebAssembly.
+						</p>
+						<p class="hint">
+							Synthesis takes roughly a second or two per phrase on a laptop CPU, in a background
+							thread. Each clip is then kept, so a word you have heard before plays back instantly —
+							including after a reload.
+						</p>
+					{/if}
 				{/if}
 
 				<!--
 			  Outside the Kokoro block on purpose: only Kokoro fills this cache, but
 			  someone who has just switched to the browser voice is exactly the
-			  person who wants to reclaim the space.
+			  person who wants to reclaim the space. Hidden only where nothing can
+			  ever fill it — the desktop host synthesizes too fast for a stored
+			  clip to be worth its bytes — and even there it comes back if some
+			  earlier build left something behind.
 			-->
-				<div class="field">
-					<span class="label">Audio cache</span>
-					<p class="hint">
-						{audioCacheSize} of spoken clips, out of {audioCacheCap}. Stored in your browser
-						alongside the voice model; once it is full the clips you have not played in longest are
-						dropped. Clearing them costs nothing but a moment's re-synthesis — the {downloadSize} voice
-						model is a separate cache and stays put.
-					</p>
-					<div class="actions-row">
-						<button
-							type="button"
-							class="btn btn-ghost"
-							onclick={() => void clearAudioClips()}
-							disabled={clearingAudio || audioBytes === 0}
-						>
-							{clearingAudio ? 'Clearing…' : 'Clear audio cache'}
-						</button>
-						<InlineStatus status={audioCacheStatus} message={audioCacheMessage} />
+				{#if !nativeVoice || audioBytes > 0}
+					<div class="field">
+						<span class="label">Audio cache</span>
+						<p class="hint">
+							{audioCacheSize} of spoken clips, out of {audioCacheCap}. Stored in your browser
+							alongside the voice model; once it is full the clips you have not played in longest
+							are dropped. Clearing them costs nothing but a moment's re-synthesis — the {downloadSize}
+							voice model is a separate cache and stays put.
+						</p>
+						<div class="actions-row">
+							<button
+								type="button"
+								class="btn btn-ghost"
+								onclick={() => void clearAudioClips()}
+								disabled={clearingAudio || audioBytes === 0}
+							>
+								{clearingAudio ? 'Clearing…' : 'Clear audio cache'}
+							</button>
+							<InlineStatus status={audioCacheStatus} message={audioCacheMessage} />
+						</div>
 					</div>
-				</div>
+				{/if}
 			</section>
 
 			<section class="card ll-rise" style="animation-delay: 200ms">
