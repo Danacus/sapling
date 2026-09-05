@@ -26,15 +26,13 @@
 	import { audioTextsFor, correctAnswerText } from '$lib/challenges/display';
 	import { ALL_READINGS } from '$lib/challenges/props';
 	import { getDailyActivity, getProfile, streakFrom } from '$lib/db';
-	import { LlmError, isMockMode } from '$lib/llm';
-	import type { ProgressStep } from '$lib/llm';
+	import { isMockMode } from '$lib/llm';
 	import { loadRomanizer, type Romanizer } from '$lib/romanize';
 	import {
 		SKIP_ANSWER,
 		amendResult,
 		applyOverturn,
 		applyResult,
-		generateChallenges,
 		interleaveMatchRounds,
 		reportChallenge,
 		sessionSummary,
@@ -47,11 +45,14 @@
 	import { planReadings, type ReadingPlan } from '$lib/session/romanization';
 	import type { FsrsCardState, Grade } from '$lib/srs';
 	import { runSync } from '$lib/sync';
+	import { startTask } from '$lib/tasks';
+	import { taskStore } from '$lib/tasks/store.svelte';
 	import { getTtsEngine, kokoroSupports, preloadKokoro, warmSpeech } from '$lib/tts';
 	import type { Challenge, KnowledgeItem, Profile, Verdict } from '$lib/types';
 	import { addRecentTopic, getRecentTopics, getRomanizationMode } from '$lib/ui/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
+	import TaskLedger from '$lib/ui/TaskLedger.svelte';
 
 	import ChallengeHost from './ChallengeHost.svelte';
 	import FeedbackBanner from './FeedbackBanner.svelte';
@@ -100,9 +101,17 @@
 	let plan = $state<SessionPlan | null>(null);
 	let topicInput = $state('');
 	let recentTopics = $state<string[]>([]);
+	/**
+	 * The newest lesson top-up, whatever its state. The task runner keeps it,
+	 * not this page, which is what lets the learner walk away mid-generation
+	 * and find the same ledger on the start screen when they come back.
+	 */
+	const topUp = $derived(taskStore.latestOf('top-up'));
 	/** A generation is in flight; the button is latched and the log is live. */
-	let generating = $state(false);
-	let genError = $state('');
+	const generating = $derived(topUp?.status === 'queued' || topUp?.status === 'running');
+	const genError = $derived(
+		topUp?.status === 'failed' ? (topUp.error ?? 'Something went wrong building your lesson.') : ''
+	);
 
 	/**
 	 * Presentation-only: the learner's explicit choice about the "New lesson"
@@ -258,33 +267,29 @@
 
 	/* Generation log ---------------------------------------------------------- */
 
-	/**
-	 * One step of a generation run, as reported by `generateChallenges`.
-	 * `endedAt` is filled in when the *next* step starts (or when the run
-	 * finishes), which is what makes the list honest about where the seconds
-	 * went — especially whether they went into the model call.
-	 */
-	interface PrepStep {
-		label: string;
-		startedAt: number;
-		endedAt?: number;
-	}
-
-	let prepSteps = $state<PrepStep[]>([]);
-	/** Ticks while generating, so the running step's counter moves. */
-	let prepNow = $state(Date.now());
 	/** Total generation time, kept on screen once the lesson has landed. */
-	let prepTotalMs = $state<number | null>(null);
+	const prepTotalMs = $derived(
+		topUp?.status === 'done' && topUp.startedAt !== undefined && topUp.finishedAt !== undefined
+			? topUp.finishedAt - topUp.startedAt
+			: null
+	);
 
 	/**
 	 * Where the "New lesson" disclosure sits before the learner has an opinion:
-	 * open whenever a run has something to show (in flight, its ledger, a
-	 * failure to retry), and open when generating is genuinely the *only* way
-	 * forward. A merely thinning pool gets the highlight (`.urged`) instead —
-	 * a hint, not a drawer opening itself in the learner's face.
+	 * open whenever a run has something to show (in flight, a failure to retry,
+	 * a ledger that only just finished), and open when generating is genuinely
+	 * the *only* way forward. A merely thinning pool gets the highlight
+	 * (`.urged`) instead — a hint, not a drawer opening itself in the learner's
+	 * face. "Only just" matters now that a task outlives this page: a lesson
+	 * generated an hour ago is in the tray, not a reason to open the drawer on
+	 * every visit.
 	 */
+	const RECENT_MS = 2 * 60_000;
 	const genAutoOpen = $derived(
-		generating || genError !== '' || prepSteps.length > 0 || (nudgeGenerate && !canStart)
+		generating ||
+			genError !== '' ||
+			(topUp?.status === 'done' && (topUp.finishedAt ?? 0) > Date.now() - RECENT_MS) ||
+			(nudgeGenerate && !canStart)
 	);
 	/**
 	 * An explicit tap always wins, so the caret never has a dead click — and the
@@ -292,21 +297,6 @@
 	 * ledger on screen through a run the learner started.
 	 */
 	const genOpen = $derived(genOpenChoice ?? genAutoOpen);
-
-	/** Closes whichever step is still open at `at`. */
-	function closeOpenStep(steps: PrepStep[], at: number): PrepStep[] {
-		return steps.map((step) => (step.endedAt === undefined ? { ...step, endedAt: at } : step));
-	}
-
-	function recordPrepStep(step: ProgressStep): void {
-		const at = Date.now();
-		prepNow = at;
-		prepSteps = [...closeOpenStep(prepSteps, at), { label: step.label, startedAt: at }];
-	}
-
-	function stepSeconds(step: PrepStep): string {
-		return (((step.endedAt ?? prepNow) - step.startedAt) / 1000).toFixed(1);
-	}
 
 	/**
 	 * The in-flight `applyResult`. Never dropped on the floor: the UI advances
@@ -337,10 +327,28 @@
 		void loadStartScreen();
 	});
 
+	/**
+	 * The pool moved: re-plan so the counts and the Start button are honest.
+	 * Keyed on the task rather than awaited from `generate`, so a top-up that
+	 * finished while the learner was elsewhere still refreshes the start screen
+	 * the moment they are back. Harmless mid-session — the running session
+	 * plays its own array.
+	 */
+	let replannedFor = '';
 	$effect(() => {
-		if (!generating) return;
-		const timer = setInterval(() => (prepNow = Date.now()), 100);
-		return () => clearInterval(timer);
+		if (topUp?.status !== 'done' || topUp.id === replannedFor) return;
+		replannedFor = topUp.id;
+		void refreshPlan();
+	});
+
+	/**
+	 * A challenge on the table is the one screen the task tray must stay out of:
+	 * it would sit on the feedback banner. Back the moment play ends, and on
+	 * the way out of this page whatever the phase was.
+	 */
+	$effect(() => {
+		taskStore.setHidden(phase === 'playing');
+		return () => taskStore.setHidden(false);
 	});
 
 	/**
@@ -381,52 +389,18 @@
 	}
 
 	/**
-	 * "Generate new lesson": one batched LLM call, in the background.
+	 * "Generate new lesson": a background task, started and left alone.
 	 *
-	 * Deliberately not awaited by anything the learner is waiting on — they can
-	 * start a session from existing material while this runs, and if they do,
-	 * the finished batch just sits in the pool for next time. The only thing it
-	 * touches on completion is the plan behind the start screen.
+	 * Nothing here waits on it — the learner can start a session from existing
+	 * material while it runs, and if they do, the finished batch just sits in
+	 * the pool for next time. Its ledger, its error and its retry all live in
+	 * the runner; the effect above re-plans when it lands.
 	 */
-	async function generate(): Promise<void> {
+	function generate(): void {
 		if (generating || !profile) return;
-		generating = true;
-		genError = '';
-		prepSteps = [];
-		prepTotalMs = null;
-		const startedAt = Date.now();
-		prepNow = startedAt;
-
 		const topic = topicInput.trim();
 		if (topic) recentTopics = addRecentTopic(topic);
-
-		try {
-			await generateChallenges(profile, {
-				onProgress: recordPrepStep,
-				...(topic ? { topic } : {})
-			});
-
-			// Close the last step and keep the total on screen, so "that felt long"
-			// can be checked against a number.
-			const finishedAt = Date.now();
-			prepSteps = closeOpenStep(prepSteps, finishedAt);
-			prepTotalMs = finishedAt - startedAt;
-
-			// The pool moved: re-plan so the counts and the Start button are honest.
-			// Harmless mid-session — the running session plays its own array.
-			await refreshPlan();
-		} catch (cause) {
-			genError =
-				cause instanceof LlmError
-					? cause.message
-					: cause instanceof Error
-						? cause.message
-						: 'Something went wrong building your lesson.';
-			prepSteps = [];
-			prepTotalMs = null;
-		} finally {
-			generating = false;
-		}
+		startTask('top-up', { profile, ...(topic ? { topic } : {}) });
 	}
 
 	/**
@@ -973,7 +947,7 @@
 									if (event.key === 'Enter') {
 										event.preventDefault();
 										genOpenChoice = true;
-										void generate();
+										generate();
 									}
 								}}
 							/>
@@ -1019,36 +993,20 @@
 								disabled={generating}
 								onclick={() => {
 									genOpenChoice = true;
-									void generate();
+									generate();
 								}}
 							>
 								{generating ? 'Generating…' : 'Generate new lesson'}
 							</button>
 
-							{#if prepSteps.length > 0}
-								<ul class="prep-steps" role="status" aria-live="polite">
-									{#each prepSteps as step, index (index)}
-										{@const done = step.endedAt !== undefined}
-										<li class:done>
-											{#if done}
-												<span class="prep-mark" aria-hidden="true">
-													<svg class="ico" viewBox="0 0 24 24"
-														><path d="m5 12.8 4.4 4.4L19 7.6" /></svg
-													>
-												</span>
-											{:else}
-												<span class="prep-mark prep-spinner" aria-hidden="true"></span>
-											{/if}
-											<span class="prep-label">{step.label}</span>
-											<span class="prep-secs">{stepSeconds(step)}s</span>
-										</li>
-									{/each}
-								</ul>
-								{#if prepTotalMs !== null}
-									<p class="prep-total" transition:fade={{ duration: motionMs(200) }}>
-										Lesson ready in {(prepTotalMs / 1000).toFixed(1)}s — it's in the pool.
-									</p>
-								{/if}
+							{#if topUp && topUp.steps.length > 0}
+								<div class="prep">
+									<TaskLedger
+										steps={topUp.steps}
+										totalMs={prepTotalMs}
+										doneMessage="the lesson is in the pool"
+									/>
+								</div>
 							{/if}
 
 							{#if genError}
@@ -1059,7 +1017,7 @@
 										class="btn btn-ghost retry-btn"
 										onclick={() => {
 											genOpenChoice = true;
-											void generate();
+											generate();
 										}}
 									>
 										Try again
@@ -1643,94 +1601,10 @@
 
 	/* Generation log ------------------------------------------------------- */
 
-	/* A ruled ledger of what the run is doing and where the seconds went —
-	   hairline between entries, the same rule the word lists use. */
-	.prep-steps {
-		display: flex;
-		flex-direction: column;
+	/* The ledger itself is `$lib/ui/TaskLedger`; this only sets it off from the button. */
+	.prep {
 		width: 100%;
-		margin: 1.1rem 0 0;
-		padding: 0;
-		list-style: none;
-		font-size: 0.84rem;
-		color: var(--text-muted);
-	}
-
-	.prep-steps li {
-		display: flex;
-		align-items: center;
-		gap: 0.55rem;
-		padding: 0.35rem 0;
-	}
-
-	.prep-steps li + li {
-		border-top: 1px solid var(--border);
-	}
-
-	.prep-steps li.done {
-		opacity: 0.65;
-	}
-
-	.prep-mark {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		flex: 0 0 1rem;
-	}
-
-	.prep-mark .ico {
-		width: 0.95rem;
-		height: 0.95rem;
-		stroke-width: 1.9;
-	}
-
-	.prep-spinner {
-		width: 0.75rem;
-		height: 0.75rem;
-		border: 2px solid var(--border);
-		border-top-color: var(--primary);
-		border-radius: 50%;
-		animation: ll-step-spin 0.8s linear infinite;
-	}
-
-	@keyframes ll-step-spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.prep-spinner {
-			animation-duration: 2.4s;
-		}
-	}
-
-	.prep-steps li.done .prep-mark {
-		color: var(--primary);
-	}
-
-	.prep-label {
-		flex: 1;
-		min-width: 0;
-		overflow-wrap: anywhere;
-	}
-
-	.prep-steps li:not(.done) .prep-label {
-		color: var(--text);
-		font-weight: 700;
-	}
-
-	.prep-secs {
-		flex: 0 0 auto;
-		font-variant-numeric: tabular-nums;
-		letter-spacing: 0.01em;
-	}
-
-	.prep-total {
-		margin: 0.6rem 0 0;
-		font-size: 0.78rem;
-		font-weight: 500;
-		color: var(--text-muted);
+		margin-top: 1.1rem;
 	}
 
 	/* Errors --------------------------------------------------------------- */

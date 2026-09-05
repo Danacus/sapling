@@ -7,6 +7,7 @@
 	import { getProfile } from '$lib/db';
 	import { isSyncEnabled, runSync } from '$lib/sync';
 	import Spinner from '$lib/ui/Spinner.svelte';
+	import TaskTray from '$lib/ui/TaskTray.svelte';
 
 	import '../app.css';
 
@@ -117,6 +118,8 @@
 	</div>
 {:else}
 	{@render children()}
+	<!-- Mounted once, here, so a job started on one route is still watchable on the next. -->
+	<TaskTray />
 {/if}
 
 <style>

@@ -13,11 +13,12 @@
 		setApiKey,
 		setBaseUrl,
 		resetData,
-		setModel,
-		upsertItems
+		setModel
 	} from '$lib/db';
-	import { fillRomanizations, isMockMode } from '$lib/llm';
+	import { isMockMode } from '$lib/llm';
 	import { loadRomanizer, localReadings } from '$lib/romanize';
+	import { TASK_KINDS, startTask } from '$lib/tasks';
+	import { taskStore } from '$lib/tasks/store.svelte';
 	import type { Romanizer } from '$lib/romanize';
 	import {
 		clearSyncPhrase,
@@ -44,7 +45,6 @@
 		getTtsVoice,
 		kokoroSupports,
 		MANDARIN_SPEAKERS,
-		preloadKokoro,
 		RUNTIME_DOWNLOAD_BYTES,
 		setTtsEngine,
 		setTtsVoice,
@@ -95,13 +95,22 @@
 	// Speech ----------------------------------------------------------------------
 	let ttsEngine = $state<TtsEngine>('kokoro');
 	let ttsVoice = $state<TtsVoice>('auto');
-	let preloading = $state(false);
+	/**
+	 * The download is a background task, so its state is the runner's: still
+	 * right after a navigation, and watchable from the tray anywhere.
+	 */
+	const preloadTask = $derived(taskStore.latestOf('tts-model'));
+	const preloading = $derived(
+		preloadTask?.status === 'queued' || preloadTask?.status === 'running'
+	);
 	/** 0-100 across the model files, or `null` while the size is still unknown. */
-	let preloadPercent = $state<number | null>(null);
+	const preloadPercent = $derived.by((): number | null => {
+		const progress = preloadTask?.progress;
+		if (!preloading || !progress || progress.total <= 0) return null;
+		return Math.min(100, Math.round((progress.done / progress.total) * 100));
+	});
 	let preloadStatus = $state<Status>('idle');
 	let preloadMessage = $state('');
-	/** Bytes seen per file, so the percentage is over the whole download. */
-	let preloadBytes = new Map<string, { loaded: number; total: number }>();
 	/** Stored spoken clips, in bytes. 0 until the first read comes back. */
 	let audioBytes = $state(0);
 	let clearingAudio = $state(false);
@@ -122,7 +131,10 @@
 	let usageRequests = $state(0);
 
 	// Readings backfill -------------------------------------------------------------
-	let backfilling = $state(false);
+	const backfillTask = $derived(taskStore.latestOf('readings'));
+	const backfilling = $derived(
+		backfillTask?.status === 'queued' || backfillTask?.status === 'running'
+	);
 	let backfillStatus = $state<Status>('idle');
 	let backfillMessage = $state('');
 
@@ -391,33 +403,18 @@
 	 */
 	async function preloadVoiceModel() {
 		if (preloading) return;
-		preloading = true;
 		preloadStatus = 'idle';
 		preloadMessage = '';
-		preloadPercent = null;
-		preloadBytes = new Map();
 
-		try {
-			await preloadKokoro((progress) => {
-				preloadBytes.set(progress.file, { loaded: progress.loaded, total: progress.total });
-				let loaded = 0;
-				let total = 0;
-				for (const entry of preloadBytes.values()) {
-					loaded += entry.loaded;
-					total += entry.total;
-				}
-				preloadPercent = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : null;
-			});
-			preloadPercent = 100;
+		// The task does the download and sums the progress; this only reports
+		// how it ended, in the same inline slot as every other action here.
+		const outcome = await startTask('tts-model', undefined).done;
+		if (outcome.status === 'done') {
 			preloadMessage = 'Voice model ready';
 			flash((value) => (preloadStatus = value), 3000);
-		} catch (cause) {
-			preloadPercent = null;
-			preloadMessage =
-				cause instanceof Error ? cause.message : 'Could not download the voice model.';
+		} else if (outcome.status === 'failed') {
+			preloadMessage = outcome.error;
 			preloadStatus = 'error';
-		} finally {
-			preloading = false;
 		}
 	}
 
@@ -499,55 +496,37 @@
 	/** How many the button will actually fill — the model's share is skipped without a key. */
 	const backfillCount = $derived(freeReadings.size + (mockMode ? 0 : modelReadings.length));
 
-	/** Backfills readings: the local ones first, then one batched model call for the rest. */
+	/**
+	 * Backfills readings as a background task: the local ones first, then one
+	 * batched model call for the rest (`$lib/tasks/kinds/readings`). This page
+	 * works out the two lists — it needs them for its own copy — and reports
+	 * how the task ended in the inline slot.
+	 */
 	async function backfillReadings() {
 		if (backfilling || !profile) return;
-		backfilling = true;
 		backfillStatus = 'idle';
 		backfillMessage = '';
 
-		try {
-			const free = missingReadings
-				.filter((item) => freeReadings.has(item.id))
-				.map((item) => ({ ...item, romanization: freeReadings.get(item.id) as string }));
-			// Land the free ones before the model is even asked: a failed call must
-			// not cost the readings that never needed it.
-			if (free.length > 0) await upsertItems(free);
+		const free = missingReadings
+			.filter((item) => freeReadings.has(item.id))
+			.map((item) => ({ ...item, romanization: freeReadings.get(item.id) as string }));
 
-			let fromModel: KnowledgeItem[] = [];
-			const targets = mockMode ? [] : modelReadings;
-			if (targets.length > 0) {
-				const { readings } = await fillRomanizations({
-					items: targets.map((item) => ({ id: item.id, term: item.term })),
-					targetLanguage: profile.targetLanguage
-				});
-				fromModel = targets
-					.filter((item) => readings.has(item.id))
-					.map((item) => ({ ...item, romanization: readings.get(item.id) as string }));
-				if (fromModel.length > 0) await upsertItems(fromModel);
-			}
+		const outcome = await startTask('readings', {
+			targetLanguage: profile.targetLanguage,
+			free,
+			fromModel: mockMode ? [] : [...modelReadings]
+		}).done;
 
+		if (outcome.status === 'done') {
 			// Patch the local copy rather than re-reading: the count in the button
 			// label has to fall the moment the write lands.
-			const patched = [...free, ...fromModel];
-			const byId = new Map(patched.map((item) => [item.id, item]));
+			const byId = new Map(outcome.result.patched.map((item) => [item.id, item]));
 			allItems = allItems.map((item) => byId.get(item.id) ?? item);
-
-			if (patched.length === 0) {
-				backfillMessage = 'The model returned no usable readings.';
-				backfillStatus = 'error';
-			} else {
-				const plural = patched.length === 1 ? '' : 's';
-				backfillMessage =
-					`Added ${patched.length} reading${plural}` +
-					(fromModel.length > 0 && free.length > 0 ? ` (${fromModel.length} from the model)` : '');
-				flash((value) => (backfillStatus = value), 3000);
-			}
-		} catch (cause) {
-			backfillMessage = cause instanceof Error ? cause.message : 'Could not fetch the readings.';
+			backfillMessage = TASK_KINDS.readings.summary(outcome.result);
+			flash((value) => (backfillStatus = value), 3000);
+		} else if (outcome.status === 'failed') {
+			backfillMessage = outcome.error;
 			backfillStatus = 'error';
-		} finally {
-			backfilling = false;
 		}
 	}
 

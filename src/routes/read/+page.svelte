@@ -46,32 +46,27 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
+	import { onDestroy } from 'svelte';
 
-	import { addText, getAllItems, getKnownTerms, getProfile, getTexts } from '$lib/db';
-	import { newUuid } from '$lib/device';
+	import { getAllItems, getKnownTerms, getProfile, getTexts } from '$lib/db';
 	import { isMockMode } from '$lib/llm';
-	import { rememberFile, videoIdFrom } from '$lib/media';
+	import { videoIdFrom } from '$lib/media';
 	import {
 		MAX_FOCUS_WORDS,
 		MAX_IMPORT_TOTAL_CHARS,
 		MAX_TOPIC_CHARS,
-		annotateReadingText,
 		cuesToSentences,
 		detectSubtitleFormat,
-		generateReadingText,
 		importCallCount,
 		parseSubtitles,
 		splitSentences
 	} from '$lib/reading';
 	import type { SubtitleFormat } from '$lib/reading';
 	import { selectSessionItems } from '$lib/srs';
-	import type {
-		KnowledgeItem,
-		Profile,
-		ReadingMedia,
-		ReadingSentence,
-		ReadingText
-	} from '$lib/types';
+	import { startTask } from '$lib/tasks';
+	import type { TaskOutcome } from '$lib/tasks';
+	import { taskStore } from '$lib/tasks/store.svelte';
+	import type { KnowledgeItem, Profile, ReadingMedia, ReadingText } from '$lib/types';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	/** Nudges, not choices — the same shape `/converse` offers over its topic box. */
@@ -133,12 +128,31 @@
 	let mediaLink = $state('');
 	/** The file input, so choosing a link can visibly empty it. */
 	let mediaInput = $state<HTMLInputElement | null>(null);
+	/**
+	 * The composer's job in flight, if any — read from the task runner rather
+	 * than kept here, so it is still right after the learner has left and come
+	 * back, and so the tray can show the same job elsewhere.
+	 */
+	const composing = $derived(
+		taskStore.running.find((task) => task.kind === 'read-generate' || task.kind === 'read-annotate')
+	);
 	/** One flag for both doors — a page that is mid-call has nothing else to do. */
-	let busy = $state(false);
+	const busy = $derived(composing !== undefined);
 	let composeError = $state('');
 	/** How many annotate calls have landed, of how many. Zero when not chunked. */
-	let annotateDone = $state(0);
-	let annotateTotal = $state(0);
+	const annotateDone = $derived(composing?.progress?.done ?? 0);
+	const annotateTotal = $derived(composing?.progress?.total ?? 0);
+
+	/**
+	 * Whether this page has been left. A composer task outlives the page, and
+	 * the one thing it must not do from the shelf is `goto` into a session the
+	 * learner has since started — so the text is opened only while this page
+	 * is still the one on screen, and otherwise simply waits in the library.
+	 */
+	let left = false;
+	onDestroy(() => {
+		left = true;
+	});
 
 	const dates = new Intl.DateTimeFormat(undefined, {
 		day: 'numeric',
@@ -266,56 +280,45 @@
 	}
 
 	/**
-	 * Mints the id and the timestamp, stores the text, and opens it.
-	 *
-	 * `file` is the recording, and it is handed to the session cache rather than
-	 * to `addText`: the reader is one navigation away and would otherwise open a
-	 * picker for a file the learner chose seconds ago. The id only exists here,
-	 * which is why the remembering happens here too.
+	 * Opens the text a composer task produced, once it has — while this page is
+	 * still on screen. The task did the saving; this is only the navigation, and
+	 * a failure lands in the box as it always did (and in the tray besides).
 	 */
-	async function keep(draft: Omit<ReadingText, 'id' | 'createdAt'>, file?: File) {
-		const text: ReadingText = { ...draft, id: newUuid(), createdAt: Date.now() };
-		await addText(text);
-		if (file) rememberFile(text.id, file);
-		await goto(`/read/${text.id}`);
+	async function open(done: Promise<TaskOutcome<{ id: string }>>): Promise<void> {
+		const outcome = await done;
+		if (left) return;
+		if (outcome.status === 'done') await goto(`/read/${outcome.result.id}`);
+		else if (outcome.status === 'failed') composeError = outcome.error;
 	}
 
 	/** Door one: a text written out of the learner's own words. */
 	async function generate() {
 		if (!profile || busy) return;
-		busy = true;
 		composeError = '';
 		const chosen = topic.trim();
 
+		let vocabulary: string[];
 		try {
-			const vocabulary = await vocabularyNow();
-			// The focus list is the schedule's, so a text is a genuine review and not
-			// only pleasant reading — most overdue first, capped where the prompt caps
-			// it.
-			const { reviewItems } = selectSessionItems(items, {
-				now: Date.now(),
-				maxItems: MAX_FOCUS_WORDS
-			});
-
-			const draft = await generateReadingText({
-				profile,
-				vocabulary,
-				focus: reviewItems.map((item) => ({ term: item.term, meaning: item.meaning })),
-				...(chosen ? { topic: chosen } : {})
-			});
-
-			await keep({
-				title: draft.title,
-				source: 'generated',
-				...(chosen ? { topic: chosen } : {}),
-				sentences: draft.sentences,
-				glossary: draft.glossary
-			});
+			vocabulary = await vocabularyNow();
 		} catch (cause) {
 			composeError = cause instanceof Error ? cause.message : 'Could not write a text just now.';
-		} finally {
-			busy = false;
+			return;
 		}
+		// The focus list is the schedule's, so a text is a genuine review and not
+		// only pleasant reading — most overdue first, capped where the prompt caps
+		// it.
+		const { reviewItems } = selectSessionItems(items, {
+			now: Date.now(),
+			maxItems: MAX_FOCUS_WORDS
+		});
+
+		const { done } = startTask('read-generate', {
+			profile,
+			vocabulary,
+			focus: reviewItems.map((item) => ({ term: item.term, meaning: item.meaning })),
+			...(chosen ? { topic: chosen } : {})
+		});
+		await open(done);
 	}
 
 	/**
@@ -419,67 +422,47 @@
 			return;
 		}
 
-		busy = true;
 		composeError = '';
-		annotateDone = 0;
-		annotateTotal = plan.calls;
 		const own = title.trim();
 
+		let vocabulary: string[];
 		try {
-			const vocabulary = await vocabularyNow();
-			const draft = await annotateReadingText(
-				{
-					profile,
-					vocabulary,
-					sentences,
-					...(own ? { title: own } : {})
-				},
-				{ onProgress: (done) => (annotateDone = done) }
-			);
-
-			// The timings never reach `$lib/reading`: it is handed strings and gives
-			// back one annotation per string, so zipping them on here by index is
-			// exact and keeps the module ignorant of where the text came from.
-			const stored: ReadingSentence[] = timings
-				? draft.sentences.map((sentence, i) =>
-						timings[i] ? { ...sentence, ...timings[i] } : sentence
-					)
-				: draft.sentences;
-
-			// A reference and never the thing itself: an id for YouTube, and for a
-			// file only its name and type — the file never leaves this tab. Guarded
-			// on `timings` as well, because a media reference on a text whose
-			// sentences have no offsets would point at a recording nothing could
-			// follow. The link wins where both are somehow set; the two inputs clear
-			// each other, so that is a tie that should not arise.
-			const media: ReadingMedia | undefined = !timings
-				? undefined
-				: linkId
-					? { kind: 'youtube', videoId: linkId }
-					: mediaFile
-						? {
-								kind: 'file',
-								name: mediaFile.name,
-								...(mediaFile.type ? { type: mediaFile.type } : {})
-							}
-						: undefined;
-
-			await keep(
-				{
-					title: draft.title,
-					source: 'imported',
-					sentences: stored,
-					glossary: draft.glossary,
-					...(media ? { media } : {})
-				},
-				media?.kind === 'file' ? mediaFile : undefined
-			);
+			vocabulary = await vocabularyNow();
 		} catch (cause) {
 			composeError = cause instanceof Error ? cause.message : 'Could not annotate that text.';
-		} finally {
-			busy = false;
-			annotateTotal = 0;
+			return;
 		}
+
+		// A reference and never the thing itself: an id for YouTube, and for a
+		// file only its name and type — the file never leaves this tab. Guarded
+		// on `timings` as well, because a media reference on a text whose
+		// sentences have no offsets would point at a recording nothing could
+		// follow. The link wins where both are somehow set; the two inputs clear
+		// each other, so that is a tie that should not arise.
+		const media: ReadingMedia | undefined = !timings
+			? undefined
+			: linkId
+				? { kind: 'youtube', videoId: linkId }
+				: mediaFile
+					? {
+							kind: 'file',
+							name: mediaFile.name,
+							...(mediaFile.type ? { type: mediaFile.type } : {})
+						}
+					: undefined;
+
+		// The task zips the timings back on and does the saving; the recording
+		// rides along so it can be remembered against the id the task mints.
+		const { done } = startTask('read-annotate', {
+			profile,
+			vocabulary,
+			sentences,
+			...(timings ? { timings } : {}),
+			...(own ? { title: own } : {}),
+			...(media ? { media } : {}),
+			...(media?.kind === 'file' && mediaFile ? { file: mediaFile } : {})
+		});
+		await open(done);
 	}
 </script>
 
