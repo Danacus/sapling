@@ -41,7 +41,7 @@ code, its tests and its contracts agree and the gates are green — not before.
 - `pnpm`, never `npm`/`yarn`. Toolchain comes from the flake via direnv; if a
   binary is missing, prefix that one command with `nix develop -c`.
 - Node tests are always in mock mode; no network, no browser APIs. The data
-  layer is tested against the real in-memory store (`db/store.testing.ts`).
+  layer is tested against the real in-memory store (`db/backend.testing.ts`).
   An LLM call is tested with a fake `fetchFn`, never a mock of the module.
 - The invariants that bite most: `src/lib/types.ts` is frozen (additive optional
   fields only); `src/lib/llm/`, `src/lib/reading/`, `src/lib/conversation/`

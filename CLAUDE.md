@@ -61,7 +61,7 @@ Every area is a registry with one module per member; forgetting a registration f
 | `src/lib/conversation/` | Role-play on the assistant's seam: **never imports `$lib/db`**, and exposes exactly one tool — `add_words`, reused verbatim. Corrections travel beside the spoken line, never inside it — and `heard` puts the target script under a learner bubble that needed no correction. | `assistant.md` |
 | `src/lib/reading/` | Stateless too — **never imports `$lib/db`**; a text is immutable and every colour, reading and status is derived at render time, so the adaptive roll is memoised in a `Map` the *page* owns. | `reading.md` |
 | `src/lib/media/` | The player is a **seam** — a `<video>` or YouTube's iframe behind one interface, and the reader never learns which. Only a *reference* is stored: a video id, or a file's name. | `media.md` |
-| `src/lib/db/` | Repositories are the **only** store access. The `events` table is the facts log; everything else is an aggregate read model the materializer maintains, and UI reads never touch `events`. | `data.md` |
+| `src/lib/db/` | Repositories are the **only** store access, and **the window thread never speaks SQL**: `protocol.ts`'s `Backend` is the boundary, `core.ts` implements it beside SQLite (in the Worker, or in-process in tests). The `events` table is the facts log; everything else is an aggregate read model the materializer maintains, and UI reads never touch `events`. | `data.md` |
 | `src/lib/sync/`, `worker/` | The backend **orders and relays; it never merges**. A learner is a pairing phrase; the *Worker* hashes it to pick the room. | `data.md`, `deploy.md` |
 | `src/lib/srs/` | Pure and deterministic: every function takes `now` (epoch ms). | `data.md` |
 | `src/lib/types.ts` | Treat as frozen; extend with **additive optional fields only**. | `data.md` |
@@ -73,4 +73,4 @@ Every area is a registry with one module per member; forgetting a registration f
 
 ### Testing
 
-Vitest, **node environment**, `src/**/*.test.ts`. No network, and no browser APIs — but the same SQLite-WASM package runs in-memory here, so the data layer is tested against a real store (`db/store.testing.ts`) rather than mocked: there is one implementation of the merge rules, not a write path and a replay path that have to be kept agreeing.
+Vitest, **node environment**, `src/**/*.test.ts`. No network, and no browser APIs — but the same SQLite-WASM package runs in-memory here, so the data layer is tested against a real store (`db/backend.testing.ts`, the same `core.ts` the Worker runs) rather than mocked: there is one implementation of the merge rules, not a write path and a replay path that have to be kept agreeing.

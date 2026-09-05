@@ -14,8 +14,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { parseEvent, type EventType, type SyncEvent } from './events';
-import { makeTestStore } from './store.testing';
-import type { Store } from './store';
+import { makeTestBackend, type TestBackend } from './backend.testing';
 
 /** One event, with only the envelope fields a case cares about spelled out. */
 interface Draft {
@@ -33,7 +32,7 @@ let seq = 0;
  * a comparable snapshot of every read table.
  */
 async function apply(drafts: Draft[]) {
-	const store = await makeTestStore();
+	const store = await makeTestBackend();
 	await store.applyRemote(
 		drafts.map((draft) => ({
 			id: draft.id,
@@ -47,7 +46,7 @@ async function apply(drafts: Draft[]) {
 	return snapshot(store);
 }
 
-async function snapshot(store: Store) {
+async function snapshot(store: TestBackend) {
 	return {
 		items: await store.query<{ notes: string | null; recentGrades: string }>(
 			'SELECT * FROM items ORDER BY id'

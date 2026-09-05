@@ -15,12 +15,13 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
 
 ## Persistence
 
-- **Never hand a Svelte `$state` proxy to an event payload.** IndexedDB and
-  Dexie are gone, but the reason for `toPlain()` survived them: the payload
-  crosses `postMessage` to the SQLite Worker, which uses structured clone and
-  throws `DataCloneError` on a bare Proxy just the same. Every write goes
-  through `toPlain()` in `$lib/db`, which strips them. Repositories are the
-  only store access.
+- **Never hand a Svelte `$state` proxy across `postMessage`.** IndexedDB and
+  Dexie are gone, but the reason for `toPlain()` survived them: every backend
+  call crosses `postMessage` to the SQLite Worker, which uses structured clone
+  and throws `DataCloneError` on a bare Proxy just the same. `db/client.ts`
+  runs every argument through `toPlain()` at the transport, so no caller has
+  to — and nothing on the window thread may bypass the client to reach the
+  Worker. Repositories are the only store access.
 - API key and prefs live in **localStorage** (`ll.*` keys, via `db/settings.ts`
   and `ui/prefs.ts`) — never in the store, and never in the JSON export.
 - **The SQLite SAH-pool VFS is exclusive.** Only one tab can hold `/sapling.db`

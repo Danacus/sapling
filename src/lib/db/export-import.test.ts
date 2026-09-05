@@ -33,14 +33,14 @@ import {
 } from '$lib/db';
 import { newCardState, reviewCard } from '$lib/srs';
 import type { Challenge, KnowledgeItem, Profile, ReadingText } from '$lib/types';
-import { setStoreForTesting, type Store } from './store';
-import { makeTestStore } from './store.testing';
+import { setBackendForTesting } from './backend';
+import { makeTestBackend, type TestBackend } from './backend.testing';
 
-let store: Store;
+let store: TestBackend;
 
 beforeEach(async () => {
-	store = await makeTestStore();
-	setStoreForTesting(store);
+	store = await makeTestBackend();
+	setBackendForTesting(store);
 });
 
 const profile: Profile = {
@@ -99,7 +99,7 @@ async function seedOneOfEach(): Promise<void> {
 }
 
 /** `lookups` has no repository read yet, so the round trip checks the rows. */
-function lookupRows(from: Store) {
+function lookupRows(from: TestBackend) {
 	return from.query<{ term: string; itemId: string | null; textId: string; at: number }>(
 		'SELECT term, itemId, textId, at FROM lookups ORDER BY rowid'
 	);
@@ -151,8 +151,8 @@ describe('export', () => {
 			lookups: await lookupRows(store)
 		};
 
-		store = await makeTestStore();
-		setStoreForTesting(store);
+		store = await makeTestBackend();
+		setBackendForTesting(store);
 		await importData(dump);
 
 		expect(await getAllItems()).toEqual(before.items);
@@ -169,7 +169,7 @@ describe('export', () => {
 		const envelope = JSON.parse(await exportData()) as ExportEnvelope;
 		envelope.events.push({ id: 'junk', type: 'itemAdded', at: 1, device: 'devA', payload: {} });
 
-		setStoreForTesting(await makeTestStore());
+		setBackendForTesting(await makeTestBackend());
 		await importData(JSON.stringify(envelope));
 
 		expect((await getAllItems()).map((row) => row.id)).toEqual(['i1']);

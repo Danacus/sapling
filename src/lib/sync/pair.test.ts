@@ -8,7 +8,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { Store } from '$lib/db/store';
+import type { TestBackend } from '$lib/db/backend.testing';
 
 const T0 = 1_700_000_000_000;
 const PHRASE = 'ABCDEFGHJKMNPQRSTVWX';
@@ -17,8 +17,8 @@ const SERVER = 'https://sync.example';
 /** `url.ts` reads `import.meta.env` at module load, so this must precede it. */
 vi.stubEnv('VITE_SYNC_URL', SERVER);
 
-const { setStoreForTesting } = await import('$lib/db/store');
-const { makeTestStore } = await import('$lib/db/store.testing');
+const { setBackendForTesting } = await import('$lib/db/backend');
+const { makeTestBackend } = await import('$lib/db/backend.testing');
 const { getProfile } = await import('$lib/db/repositories');
 const { pairDevice } = await import('./pair');
 const { getSyncPhrase, isSyncEnabled } = await import('./config');
@@ -39,15 +39,15 @@ class MemoryStorage {
 	}
 }
 
-let store: Store;
+let store: TestBackend;
 
 beforeEach(async () => {
 	const storage = new MemoryStorage();
 	storage.setItem('ll.syncDevice', 'devA');
 	vi.stubGlobal('localStorage', storage);
 
-	store = await makeTestStore();
-	setStoreForTesting(store);
+	store = await makeTestBackend();
+	setBackendForTesting(store);
 });
 
 /** The profile row the first device wrote, as it comes back off the log. */

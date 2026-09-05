@@ -17,8 +17,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { getItem } from '$lib/db';
-import { setStoreForTesting, type Store } from '$lib/db/store';
-import { makeTestStore } from '$lib/db/store.testing';
+import { setBackendForTesting } from '$lib/db/backend';
+import { makeTestBackend, type TestBackend } from '$lib/db/backend.testing';
 import { Grade, newCardState, reviewCard } from '$lib/srs';
 import type { FsrsCardState } from '$lib/srs';
 import type { Challenge } from '$lib/types';
@@ -27,11 +27,11 @@ import { amendResult, applyOverturn, applyResult } from './engine';
 
 const NOW = 1_700_000_000_000;
 
-let store: Store;
+let store: TestBackend;
 
 beforeEach(async () => {
-	store = await makeTestStore();
-	setStoreForTesting(store);
+	store = await makeTestBackend();
+	setBackendForTesting(store);
 });
 
 /** Adds one item, introduced at {@link NOW} with no reviews. */
@@ -82,8 +82,8 @@ const match: Challenge = {
 describe('applyResult', () => {
 	/** The grade written for a fast, correct answer to `challenge`. */
 	async function gradeFor(challenge: Challenge): Promise<number | undefined> {
-		store = await makeTestStore();
-		setStoreForTesting(store);
+		store = await makeTestBackend();
+		setBackendForTesting(store);
 		await seed('i1');
 		await applyResult(challenge, {
 			verdict: 'correct',
@@ -125,8 +125,8 @@ describe('applyResult', () => {
 		await applyResult(single, { verdict: 'almost', answerGiven: 'leó', now: NOW });
 		expect((await historyOf('i1')).at(-1)?.grade).toBe(Grade.Hard);
 
-		store = await makeTestStore();
-		setStoreForTesting(store);
+		store = await makeTestBackend();
+		setBackendForTesting(store);
 		await seed('i1');
 		await applyResult(single, { verdict: 'wrong', answerGiven: 'como', now: NOW });
 		expect((await historyOf('i1')).at(-1)?.grade).toBe(Grade.Again);

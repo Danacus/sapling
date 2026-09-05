@@ -41,13 +41,16 @@ Applied once per event id, in arrival order (`seq`, else insertion order).
 ## Local store
 
 SQLite-WASM (OPFS, SAH-pool VFS) in one dedicated module Worker
-(`sqlite.worker.ts`); the window talks to it over a small RPC (`client.ts`).
-`events` is the facts log; `items`, `reviews`, `challenges`, `results`,
-`daily`, `tombstones`, `profile` are aggregates the materializer maintains —
-UI reads never touch `events`. The VFS is exclusive: a second tab gets
-"Sapling is already open in another tab." and stops; no leader election.
-Node tests run the same DDL and materializer against an in-memory database
-(`store.testing.ts`).
+(`sqlite.worker.ts`). The window talks to it in domain terms, never SQL: the
+`Backend` interface in `protocol.ts` — the repository functions, the sync
+operations (`pendingEvents`, `markPushed`, `applyRemote`, the pull cursor) and
+export/import — is implemented by `core.ts` beside the database and forwarded
+by `client.ts`, one `postMessage` per call. `events` is the facts log; `items`,
+`reviews`, `challenges`, `results`, `daily`, `tombstones`, `profile` are
+aggregates the materializer maintains — UI reads never touch `events`. The VFS
+is exclusive: a second tab gets "Sapling is already open in another tab." and
+stops; no leader election. Node tests run the same core, DDL and materializer
+against an in-memory database (`backend.testing.ts`).
 
 ## Wire protocol
 
