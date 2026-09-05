@@ -26,14 +26,36 @@ differs.
 1. Write one def module in `src/lib/llm/challenge-types/<type>.ts`, using
    `satisfies WireTypeDef<T>` (not a type annotation — an annotation widens the
    schema and defeats zod's inference). It bundles: zod `schema`, `stored`,
-   `promptSpec` (its `Types:` line), `correctiveSpec`, `resolve`, `fixtures`
-   (one per mock scenario, with `order` set to the intended lesson position),
-   and optional `rulesSpec` / `escalationSpec`.
+   `promptSpec` (its field list plus one inline example), `params` +
+   `paramsSpec`, `correctiveSpec`, `resolve`, `fixtures` (one per mock scenario,
+   with `order` set to the intended lesson position), and optional `rulesSpec` /
+   `escalationSpec`.
    `stored` is the `{type, direction}` this def's `resolve` always writes —
-   `generate.ts` checks a chunk's reply against the slots it asked for by
+   `generate.ts` checks a request's reply against the brief it asked for by
    comparing it. *Forget it:* `pnpm check` fails at the def. *Get it wrong:*
    `registry.test.ts` resolves every fixture and compares, and the type would
    otherwise be asked for and then rejected on arrival, every time.
+
+   **`params(difficulty, kind)` is this type's difficulty**, as counts the model
+   can hit: `{words}`, `{tiles, distractors}`, `{words, bank}`. It must be pure,
+   keep the same keys at every rung, and be monotone in the rung (lengths never
+   fall; a word bank shrinks, since a bank is support). Align the ends with the
+   *stored* side's scales — `challenges/types/primitives.ts`' 1..12-word
+   `lengthKnob`, and whatever constants that type's stored `difficulty` reads —
+   so a challenge written at rung 1 sits at the low end of its tier and one at
+   rung 5 at the high end. `paramsSpec` is one prompt line explaining exactly
+   the keys `params` returns, in the model's terms.
+   *Forget either, or emit a key `paramsSpec` does not name:* `registry.test.ts`
+   fails (and `pnpm check` fails at the def for a missing one).
+
+   Its `rulesSpec` is where **any** rule about this type goes — including one
+   another type also needs, spelled out in full in both (segmentation is in
+   `word-order` *and* `spot-error`). A duplicated line costs nothing it did not
+   already cost: each copy only ever travels on its own type's calls. It states
+   **no difficulty gradient** — `params` is the difficulty — only the judgement
+   no number expresses (how close a distractor should sit, how subtle a planted
+   error should be). Only rules that name no type at all belong in
+   `generate.ts`'s shared preamble.
 2. Register it in the ordered `WIRE_TYPE_DEFS` in `challenge-types/index.ts`.
 3. **Add a `SlotKind` for it in `src/lib/llm/slots.ts`** — to
    `RECOGNITION_KINDS` if the answer is visible on screen, to
@@ -48,10 +70,12 @@ differs.
 
 Import direction is strict: `primitives.ts` ← def modules ← `index.ts` ←
 `schemas.ts` ← `generate.ts`, with `slots.ts` importing only types back from
-`generate.ts`. **A def module must never import `schemas.ts`.**
+`generate.ts`. **A def module must never import `schemas.ts`**, and never
+`slots.ts` either — a def sizes itself by `DifficultyRung` and `SizingKind`,
+which `def.ts` declares for exactly that reason.
 
-Registry order *is* prompt order *is* union order — inserting in the middle
-changes the composed prompt. Prefer appending unless order matters.
+Registry order *is* union order and escalation-gloss order — but no longer
+prompt order, since each type composes its own prompt. Prefer appending.
 
 ## Challenge type, end to end — four registrations
 

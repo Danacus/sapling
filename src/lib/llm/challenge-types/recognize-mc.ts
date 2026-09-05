@@ -24,15 +24,25 @@ export const generatedRecognizeMcSchema = z.object({
 
 export type GeneratedRecognizeMc = z.infer<typeof generatedRecognizeMcSchema>;
 
+/**
+ * How long the shown text runs at each rung: a bare word, a phrase, a clause, a
+ * sentence, a long one. Measured on the same 1..12-word scale the stored side's
+ * `lengthKnob` reads, so a challenge written at rung 1 lands near the bottom of
+ * `multiple-choice`'s difficulty span and one written at rung 5 near the top.
+ */
+const SHOWN_WORDS = [1, 3, 5, 8, 11] as const;
+
 export const recognizeMcDef = {
 	type: 'recognize-mc',
 	schema: generatedRecognizeMcSchema,
 	stored: { type: 'multiple-choice', direction: 'toNative' },
 	promptSpec:
 		'recognize-mc — target text shown, native meaning picked. {shown:TargetText, correctMeaning, distractors:[3], instruction} e.g. {"type":"recognize-mc","shown":{"text":"el perro","reading":null},"correctMeaning":"the dog","distractors":["the cat","the bread","the house"],"instruction":null,"itemIds":["i1"],"explanation":null}',
-	correctiveSpec: 'recognize-mc {shown,correctMeaning,distractors}',
+	correctiveSpec: 'recognize-mc {shown,correctMeaning,distractors: exactly 3}',
+	paramsSpec: '- words: how many words the target text in "shown" should have.',
+	params: (difficulty) => ({ words: SHOWN_WORDS[difficulty - 1] }),
 	rulesSpec:
-		"- recognize-mc: difficulty scales shown's length — a word or short phrase at 1-2, a clause at 3, a full sentence at 4-5 — and how close the distractors are to correctMeaning.",
+		'- recognize-mc: exactly one of the four options may be correct given "shown"; if two would both answer it, rewrite it. The closer the distractors sit to correctMeaning without being a second right answer, the better the challenge.',
 
 	fixtures: {
 		spanish: [

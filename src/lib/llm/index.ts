@@ -74,23 +74,26 @@ export type {
 } from './escalation';
 
 export {
-	CORRECTIVE_INSTRUCTION,
 	MAX_ABOUT_CHARS,
 	MAX_BATCH_CHALLENGES,
 	MIN_BATCH_CHALLENGES,
-	buildChunkPrompt,
+	buildRequestPrompt,
+	correctiveInstructionFor,
 	defaultChallengeCount,
 	generateBatch,
 	makeMatchPairsChallenge,
 	parseBatch,
 	resolveBatch,
-	stripFences
+	stripFences,
+	systemPromptFor
 } from './generate';
 export type {
 	BatchArgs,
 	BatchOptions,
 	BatchProfile,
 	BatchResult,
+	ChallengeMemberSchema,
+	MatchPairsOptions,
 	OnProgress,
 	ParsedBatch,
 	ProgressStep,
@@ -102,15 +105,15 @@ export type {
 } from './generate';
 
 export {
-	CHUNK_CONCURRENCY,
-	CHUNK_ITEMS,
-	CHUNK_SLOTS,
+	MAX_LESSON_KINDS,
+	REQUEST_CONCURRENCY,
+	REQUEST_ITEMS,
 	allowedKinds,
-	chunkSlots,
+	groupIntoRequests,
 	planSlots,
 	productionShare
 } from './slots';
-export type { Slot, SlotChunk, SlotKind } from './slots';
+export type { RequestItem, Slot, SlotKind, TypeRequest } from './slots';
 
 export {
 	ROMANIZE_SCHEMA_NAME,
@@ -132,8 +135,8 @@ export {
 } from './mock';
 
 export {
-	BATCH_SCHEMA_NAME,
-	batchJsonSchema,
+	batchJsonSchemaFor,
+	batchSchemaNameFor,
 	challengeSchema,
 	generatedBatchSchema,
 	generatedChallengeSchema

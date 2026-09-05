@@ -179,25 +179,32 @@ export function clozeSentenceRomanization(generated: {
  * two identical chips make one of them wrong by position alone. The answer
  * itself never is. A bank of fewer than two chips is not a choice, so the
  * challenge falls back to typing.
+ *
+ * `limit` is the bank size the challenge was *planned* at, answer included —
+ * how much support a word at that rung should get. Surplus distractors are cut
+ * before the shuffle, never after, so which chip the answer lands on stays a
+ * question only `rng` answers.
  */
 export function clozeWordBank(
 	answer: TargetText,
 	distractors: TargetText[] | null | undefined,
-	rng: () => number
+	rng: () => number,
+	limit?: number
 ): Partial<Pick<ClozeChallenge, 'wordBank' | 'wordBankRomanization'>> {
 	if (!distractors?.length) return {};
 	const answerChoice: Choice = { text: answer.text.trim(), reading: readingOf(answer) };
 	const seen = new Set([labelKey(answerChoice.text)]);
-	const entries = shuffled(
-		[answerChoice, ...distractors.map((d) => ({ text: d.text.trim(), reading: readingOf(d) }))],
-		rng
-	).filter((entry) => {
-		if (entry === answerChoice) return true;
-		const key = labelKey(entry.text);
-		if (!key || seen.has(key)) return false;
+	const allowance = limit === undefined ? Infinity : Math.max(0, limit - 1);
+	const kept: Choice[] = [];
+	for (const distractor of distractors) {
+		if (kept.length >= allowance) break;
+		const text = distractor.text.trim();
+		const key = labelKey(text);
+		if (!key || seen.has(key)) continue;
 		seen.add(key);
-		return true;
-	});
+		kept.push({ text, reading: readingOf(distractor) });
+	}
+	const entries = shuffled([answerChoice, ...kept], rng);
 	if (entries.length < 2) return {};
 
 	const readings = entries.map((entry) => entry.reading);

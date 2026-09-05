@@ -16,30 +16,38 @@
 
 import { describe, expect, it } from 'vitest';
 import type { Challenge } from '$lib/types';
-import { CORRECTIVE_INSTRUCTION, buildChunkPrompt, parseBatch } from '../generate';
+import { correctiveInstructionFor, parseBatch, systemPromptFor } from '../generate';
 import type { BatchArgs } from '../generate';
 import { buildEscalationPrompt } from '../escalation';
 import { mockBatchCompletion } from '../mock';
 import { generatedChallengeSchema } from '../schemas';
 import { PLANNABLE_KINDS } from '../slots';
-import { FIXTURE_SCENARIOS, WIRE_TYPE_DEFS, byType } from './index';
-import type { ResolveContext } from './index';
+import type { SlotDifficulty } from '../slots';
+import { difficultyOf } from '$lib/challenges/difficulty';
+import { FIXTURE_SCENARIOS, WIRE_TYPE_DEFS, byType, clozeDef, wordOrderDef } from './index';
+import type {
+	AnyWireTypeDef,
+	ChallengeParams,
+	ResolveContext,
+	SizingKind,
+	WireTypeDef
+} from './index';
 
-const systemPrompt = (): string => {
-	const [system] = buildChunkPrompt(
-		{
-			profile: {
-				nativeLanguage: 'English',
-				targetLanguage: 'Spanish',
-				level: 'beginner',
-				interests: []
-			},
-			reviewItems: []
-		},
-		{ slots: [], reviewItems: [] }
-	);
-	return system.content;
-};
+const RUNGS: SlotDifficulty[] = [1, 2, 3, 4, 5];
+
+/**
+ * A def's parameters at one rung, read through the `WireTypeDef` contract.
+ *
+ * The defs are written with `satisfies`, which keeps each `params` at its own
+ * literal type — a function of one argument returning `{words: 1 | 3 | ...}`.
+ * That is what the registry wants; it is not what a test iterating over every
+ * def can index by key, so this reads them as the contract declares them.
+ */
+const paramsOf = (
+	def: AnyWireTypeDef,
+	rung: SlotDifficulty,
+	kind: SizingKind = {}
+): ChallengeParams => (def.params as WireTypeDef['params'])(rung, kind);
 
 /** The `type` literal each member of the generated union pins, in union order. */
 const unionTypes = (): string[] =>
@@ -70,8 +78,8 @@ describe('WIRE_TYPE_DEFS', () => {
 	});
 
 	it('declares the stored shape its own resolver actually writes', () => {
-		// `stored` is what `../generate` checks a chunk's reply against — a slot
-		// asking for `produce-mc` is filled by a `multiple-choice` in the
+		// `stored` is what `../generate` checks a request's reply against — a
+		// request for `produce-mc` is filled by a `multiple-choice` in the
 		// `toTarget` direction and by nothing else — so a def whose declaration
 		// drifted from its resolver would quietly reject the very challenges it
 		// asked for. Every fixture is resolved and compared.
@@ -105,32 +113,174 @@ describe('WIRE_TYPE_DEFS', () => {
 	});
 });
 
+describe('difficulty parameters', () => {
+	// Difficulty is these numbers now. A def that forgot them would be prompted,
+	// asked for and written at whatever size the model felt like.
+	it('gives every def a params function and a line explaining its keys', () => {
+		for (const def of WIRE_TYPE_DEFS) {
+			expect(typeof def.params, def.type).toBe('function');
+			expect(def.paramsSpec.length, def.type).toBeGreaterThan(0);
+			const keys = Object.keys(paramsOf(def, 3));
+			expect(keys.length, `${def.type} sizes itself by nothing`).toBeGreaterThan(0);
+			// Every key it emits is named in the line that explains them, or the
+			// model is handed a number with no idea what it counts.
+			for (const key of keys) {
+				expect(def.paramsSpec, `${def.type} paramsSpec omits ${key}`).toContain(key);
+			}
+		}
+	});
+
+	it('keeps the same keys at every rung', () => {
+		for (const def of WIRE_TYPE_DEFS) {
+			const shapes = RUNGS.map((rung) => Object.keys(paramsOf(def, rung, { bank: true })).sort());
+			expect(new Set(shapes.map((keys) => keys.join(','))).size, def.type).toBe(1);
+		}
+	});
+
+	it('is monotone in the rung: lengths never fall, a word bank never grows', () => {
+		for (const def of WIRE_TYPE_DEFS) {
+			for (const kind of [{}, { bank: true }, { bank: false }]) {
+				const ladders = RUNGS.map((rung) => paramsOf(def, rung, kind));
+				for (const key of Object.keys(ladders[0])) {
+					const values = ladders.map((params) => params[key]);
+					// A bank is support, so it shrinks as the rung rises; everything
+					// else — words, tiles, distractors — grows.
+					const rising = key === 'bank' ? [...values].reverse() : values;
+					for (let i = 1; i < rising.length; i++) {
+						expect(rising[i], `${def.type}.${key} at rung ${i + 1}`).toBeGreaterThanOrEqual(
+							rising[i - 1]
+						);
+					}
+				}
+			}
+		}
+	});
+});
+
+describe('the rungs, as the stored side reads them back', () => {
+	// The loop this closes: `../slots` plans a rung, a def turns it into counts,
+	// the model writes to those counts, and `$lib/challenges/difficulty` reads
+	// the result back off the stored row. If the two ladders disagreed, a lesson
+	// written for a strong word would be filed as easy material and the session
+	// planner would serve it to a weak one.
+	const resolveAs = (def: AnyWireTypeDef, generated: unknown, params: ChallengeParams) => {
+		const resolve = def.resolve as (g: unknown, c: ResolveContext) => Challenge | null;
+		const resolved = resolve(generated, {
+			base: { id: 'c1', itemIds: ['i1'] },
+			rng: () => 0.5,
+			params
+		});
+		if (!resolved) throw new Error(`${def.type} did not resolve`);
+		return resolved;
+	};
+
+	const wordsOf = (count: number) =>
+		Array.from({ length: count }, (_, i) => ({ text: `w${i}`, reading: null }));
+
+	const clozeAt = (rung: SlotDifficulty) => {
+		const params = paramsOf(clozeDef, rung, { bank: true });
+		return resolveAs(
+			clozeDef,
+			{
+				type: 'cloze',
+				// The gap counts as one of the sentence's words.
+				before: {
+					text: `${wordsOf(params.words - 1)
+						.map((w) => w.text)
+						.join(' ')} `,
+					reading: null
+				},
+				answer: { text: 'x', reading: null },
+				after: { text: '', reading: null },
+				hintNative: 'what it means',
+				distractorWords: wordsOf(5).map((w) => ({ text: `d${w.text}`, reading: null })),
+				itemIds: ['i1']
+			},
+			params
+		);
+	};
+
+	const wordOrderAt = (rung: SlotDifficulty) => {
+		const params = paramsOf(wordOrderDef, rung);
+		return resolveAs(
+			wordOrderDef,
+			{
+				type: 'word-order',
+				promptNative: 'what it means',
+				words: wordsOf(params.tiles),
+				distractorWords: wordsOf(3).map((w) => ({ text: `d${w.text}`, reading: null })),
+				itemIds: ['i1']
+			},
+			params
+		);
+	};
+
+	it('files a cloze written at rung 1 easier than one written at rung 5', () => {
+		expect(difficultyOf(clozeAt(1))).toBeLessThan(difficultyOf(clozeAt(5)));
+	});
+
+	it('files a word-order written at rung 1 easier than one written at rung 5', () => {
+		expect(difficultyOf(wordOrderAt(1))).toBeLessThan(difficultyOf(wordOrderAt(5)));
+	});
+
+	it('rises with every rung, never falling back', () => {
+		for (const build of [clozeAt, wordOrderAt]) {
+			const ladder = RUNGS.map((rung) => difficultyOf(build(rung)));
+			for (let i = 1; i < ladder.length; i++) {
+				expect(ladder[i]).toBeGreaterThanOrEqual(ladder[i - 1]);
+			}
+		}
+	});
+
+	it('gives the resolver the bank and tile counts it was told to expect', () => {
+		// The parameters the resolver can enforce, enforced: a bank sized to the
+		// rung, and a tray that stops where the plan said it should.
+		const easy = clozeAt(1);
+		const hard = clozeAt(5);
+		expect(easy.type === 'cloze' && easy.wordBank).toHaveLength(6);
+		expect(hard.type === 'cloze' && hard.wordBank).toHaveLength(3);
+
+		const shortest = wordOrderAt(1);
+		expect(shortest.type === 'word-order' && shortest.tiles).toHaveLength(3);
+	});
+});
+
 describe('prompt composition', () => {
-	it('lists every def in the system prompt, in registry order', () => {
-		const prompt = systemPrompt();
-		let cursor = prompt.indexOf('Types:');
-		expect(cursor).toBeGreaterThanOrEqual(0);
+	const promptFor = (def: AnyWireTypeDef): string => systemPromptFor(def);
+
+	it("puts each def's own spec, params and rules in its own system prompt", () => {
 		for (const def of WIRE_TYPE_DEFS) {
-			const at = prompt.indexOf(def.promptSpec, cursor);
-			expect(at, `promptSpec missing or out of order: ${def.type}`).toBeGreaterThan(cursor);
-			cursor = at;
+			const prompt = promptFor(def);
+			expect(prompt, `promptSpec: ${def.type}`).toContain(def.promptSpec);
+			expect(prompt, `paramsSpec: ${def.type}`).toContain(def.paramsSpec);
+			if (def.rulesSpec) {
+				expect(prompt.split(def.rulesSpec).length - 1, `rulesSpec: ${def.type}`).toBe(1);
+			}
 		}
 	});
 
-	it('includes every rulesSpec exactly once', () => {
-		const prompt = systemPrompt();
+	it('never names another wire type in a type’s own prompt', () => {
+		// The saving that pays for the split: a request for one type carries one
+		// type's field list, example and rules — not seven.
 		for (const def of WIRE_TYPE_DEFS) {
-			if (!def.rulesSpec) continue;
-			expect(prompt.split(def.rulesSpec).length - 1, `rulesSpec: ${def.type}`).toBe(1);
+			const prompt = promptFor(def);
+			for (const other of WIRE_TYPE_DEFS) {
+				if (other.type === def.type) continue;
+				// `cloze` is a substring of nothing else, and no type name is a
+				// substring of another, so a bare `includes` is exact here.
+				expect(prompt, `${def.type}'s prompt mentions ${other.type}`).not.toContain(other.type);
+			}
 		}
 	});
 
-	it('lists every def in the corrective instruction, in registry order', () => {
-		let cursor = -1;
+	it('restates only this type’s fields in its corrective instruction', () => {
 		for (const def of WIRE_TYPE_DEFS) {
-			const at = CORRECTIVE_INSTRUCTION.indexOf(def.correctiveSpec, cursor + 1);
-			expect(at, `correctiveSpec missing or out of order: ${def.type}`).toBeGreaterThan(cursor);
-			cursor = at;
+			const corrective = correctiveInstructionFor(def);
+			expect(corrective, def.type).toContain(def.correctiveSpec);
+			for (const other of WIRE_TYPE_DEFS) {
+				if (other.type === def.type) continue;
+				expect(corrective, `${def.type}'s retry mentions ${other.type}`).not.toContain(other.type);
+			}
 		}
 	});
 

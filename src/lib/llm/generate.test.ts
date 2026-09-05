@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { KnowledgeItem } from '$lib/types';
+import type { Challenge, KnowledgeItem } from '$lib/types';
 import type { FetchLike } from './client';
 import { LlmError } from './client';
 import {
@@ -7,7 +7,7 @@ import {
 	MAX_BATCH_CHALLENGES,
 	MAX_WORD_ORDER_DISTRACTORS,
 	MAX_WORD_ORDER_TILES,
-	buildChunkPrompt,
+	buildRequestPrompt,
 	defaultChallengeCount,
 	generateBatch,
 	knownTermIndex,
@@ -21,7 +21,8 @@ import type { BatchArgs, ProgressStep, ResolveOptions } from './generate';
 import { byType } from './challenge-types';
 import type { WireType } from './challenge-types';
 import { challengeSchema } from './schemas';
-import { CHUNK_CONCURRENCY, CHUNK_ITEMS, CHUNK_SLOTS, chunkSlots, planSlots } from './slots';
+import { REQUEST_CONCURRENCY, REQUEST_ITEMS, groupIntoRequests, planSlots } from './slots';
+import type { TypeRequest } from './slots';
 
 /**
  * Two solid words, so the plan a lesson gets is a mix of recognition and
@@ -141,54 +142,38 @@ function idFactory(): () => string {
 	return () => `id-${++n}`;
 }
 
-/** A planned slot, as `planSlots` returns it and as the chunk payload spells it. */
-interface SlotLike {
-	itemId: string;
-	type: string;
-	bank?: boolean;
-}
-
 /**
- * The wire challenge a well-behaved model writes for one slot: that wire type's
- * own Spanish fixture, re-pointed at the slot's word and stamped in
- * `explanation` with the slot it fills.
+ * The wire challenge a well-behaved model writes for one entry: that wire type's
+ * own Spanish fixture, re-pointed at the entry's word and stamped in
+ * `explanation` with the entry it fills.
  *
  * Using the registry's fixtures rather than a hand-rolled recognize-mc is what
  * makes these tests exercise every type end to end — the plan decides which
- * types a lesson asks for, and the reply now has to answer in *those* types or
- * be rejected.
+ * types a lesson asks for, and a reply now has to answer in *that* type or be
+ * rejected before it is even parsed.
  */
-function fillSlot(slot: SlotLike): Record<string, unknown> {
-	const def = byType.get(slot.type as WireType);
-	if (!def) throw new Error(`no wire def for ${slot.type}`);
+function fillEntry(type: WireType, itemId: string, banked?: boolean): Record<string, unknown> {
+	const def = byType.get(type);
+	if (!def) throw new Error(`no wire def for ${type}`);
 	const fixtures = def.fixtures.spanish as unknown as readonly {
 		challenge: Record<string, unknown>;
 	}[];
 	const wanted =
-		slot.bank === undefined
+		banked === undefined
 			? fixtures[0]
-			: (fixtures.find((f) => (f.challenge.distractorWords != null) === slot.bank) ?? fixtures[0]);
-	return {
-		...wanted.challenge,
-		itemIds: [slot.itemId],
-		explanation: `${slot.itemId}-${slot.type}`
-	};
-}
-
-/** The reply that fills a whole plan (or one chunk of it), in slot order. */
-function fillPlan(slots: readonly SlotLike[]): { challenges: Record<string, unknown>[] } {
-	return { challenges: slots.map(fillSlot) };
+			: (fixtures.find((f) => (f.challenge.distractorWords != null) === banked) ?? fixtures[0]);
+	return { ...wanted.challenge, itemIds: [itemId], explanation: `${itemId}-${type}` };
 }
 
 /**
- * The lesson `args` plans under the `rng` {@link callOpts} passes, in the order
- * the chunks ask for it (a word's slots travel together), and the reply that
- * fills it.
+ * The lesson `args` plans under the `rng` {@link callOpts} passes, and the
+ * requests it is cut into — which is not the order the lesson plays in, and that
+ * is exactly what the merge has to put right.
  */
-const plan = chunkSlots(planSlots(args, IDENTITY_RNG), args.reviewItems).flatMap((c) => c.slots);
-const plannedReply = fillPlan(plan);
+const plan = planSlots(args, IDENTITY_RNG);
+const requests = groupIntoRequests(plan);
 
-/** The first slot of the plan about this word — where a term-citation test lands. */
+/** The plan index of the first challenge about this word — where a citation test lands. */
 const slotAbout = (itemId: string): number => plan.findIndex((slot) => slot.itemId === itemId);
 
 /** parse + resolve, the pairing every caller of this layer uses. */
@@ -198,6 +183,140 @@ function resolve(batch: { challenges: unknown[] }, opts: ResolveOptions = {}) {
 		rng: IDENTITY_RNG,
 		...opts
 	});
+}
+
+/**
+ * The type a request is about, read back out of its system prompt — which is the
+ * only place it is named now. The payload does not carry a `type` at all.
+ */
+function typeOfPrompt(system: string): WireType {
+	const match = /type \(always "([a-z-]+)"\)/.exec(system);
+	if (!match) throw new Error('the system prompt does not name its type');
+	return match[1] as WireType;
+}
+
+/** One request as the model saw it. */
+interface SeenRequest {
+	type: WireType;
+	/** Only a cloze brief has a `bank` parameter, and it is a count, not a flag. */
+	banked?: boolean;
+	itemIds: string[];
+	params: Record<string, number>[];
+	retry: boolean;
+}
+
+function readRequest(rawBody: unknown): SeenRequest {
+	const body = JSON.parse(String(rawBody)) as { messages: { content: string }[] };
+	const payload = JSON.parse(body.messages[1].content) as {
+		items: (Record<string, number> & { id: string })[];
+	};
+	const type = typeOfPrompt(body.messages[0].content);
+	const params = payload.items.map(({ id: _id, t: _t, m: _m, ...rest }) => rest as never);
+	return {
+		type,
+		...(type === 'cloze' ? { banked: (payload.items[0].bank ?? 0) > 0 } : {}),
+		itemIds: payload.items.map((item) => item.id),
+		params,
+		retry: body.messages.length > 2
+	};
+}
+
+/** A request's identity, so a fake can be scripted per request. */
+function requestKey(request: SeenRequest | TypeRequest): string {
+	if ('kind' in request) {
+		return `${request.kind.type}:${request.kind.bank ?? ''}|${request.items.map((i) => i.itemId).join(',')}`;
+	}
+	return `${request.type}:${request.banked ?? ''}|${request.itemIds.join(',')}`;
+}
+
+interface ModelBehaviour {
+	/** Request indices whose *first* reply is unusable. */
+	failFirst?: Set<number>;
+	/** Request indices that fail both times, and so must be dropped. */
+	failAlways?: Set<number>;
+	/** Request indices that answer in a type nobody asked them for. */
+	wrongTypes?: Set<number>;
+	/** Request indices that answer their brief and then keep writing. */
+	overproduce?: Set<number>;
+	/** Request indices that answer a cloze brief on the wrong side of `bank`. */
+	flipBank?: Set<number>;
+	/** Wrap every reply in a ```json fence, as cheap models do. */
+	fenced?: boolean;
+	/** Extra entries appended to every reply — junk, ghosts, whatever. */
+	extras?: Record<string, unknown>[];
+	/** Last look at each challenge before it is sent. */
+	rewrite?: (challenge: Record<string, unknown>, itemId: string, index: number) => unknown;
+}
+
+/**
+ * A model that answers whatever brief it is handed: one challenge per item, of
+ * the type the system prompt is about, taken from that type's own fixture and
+ * stamped with the entry it fills. So a reply is the brief it was given, and
+ * "did the merge put the lesson back in plan order?" is a question with an
+ * answer.
+ *
+ * Every reply resolves on a macrotask, which is what makes the fan-out real: the
+ * pool can only have as many requests open at once as it is allowed to, and
+ * `maxInFlight` records how many that was.
+ */
+function modelFetch(plans: readonly TypeRequest[], options: ModelBehaviour = {}) {
+	const index = new Map(plans.map((request, i) => [requestKey(request), i] as const));
+	const state = {
+		calls: 0,
+		inFlight: 0,
+		maxInFlight: 0,
+		seen: [] as SeenRequest[],
+		fetchFn: null as unknown as FetchLike
+	};
+
+	state.fetchFn = async (_input, init) => {
+		const seen = readRequest(init?.body);
+		const which = index.get(requestKey(seen)) ?? -1;
+		state.calls++;
+		state.seen.push(seen);
+		state.inFlight++;
+		state.maxInFlight = Math.max(state.maxInFlight, state.inFlight);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		state.inFlight--;
+
+		const bad = options.failAlways?.has(which) || (!seen.retry && options.failFirst?.has(which));
+		const wrong = !seen.retry && options.wrongTypes?.has(which);
+		const type = wrong
+			? seen.type === 'recognize-mc'
+				? 'translate-to-native'
+				: 'recognize-mc'
+			: seen.type;
+		const banked = options.flipBank?.has(which) ? !seen.banked : seen.banked;
+
+		const written = bad
+			? []
+			: [
+					...seen.itemIds.map((id) => fillEntry(type, id, banked)),
+					// Three more about the brief's first word, unasked for.
+					...(options.overproduce?.has(which)
+						? [0, 1, 2].map(() => fillEntry(type, seen.itemIds[0], banked))
+						: []),
+					...(options.extras ?? [])
+				];
+		const challenges = options.rewrite
+			? written.map(
+					(challenge, i) => options.rewrite?.(challenge, seen.itemIds[i] ?? '', i) ?? challenge
+				)
+			: written;
+
+		const content = JSON.stringify({ challenges });
+		return new Response(
+			JSON.stringify({
+				model: 'test/model',
+				choices: [
+					{ message: { content: options.fenced ? '```json\n' + content + '\n```' : content } }
+				],
+				usage: { prompt_tokens: 600, completion_tokens: 900 }
+			}),
+			{ status: 200, headers: { 'Content-Type': 'application/json' } }
+		);
+	};
+	return state;
 }
 
 describe('stripFences', () => {
@@ -216,17 +335,33 @@ describe('stripFences', () => {
 });
 
 /**
- * The messages for a lesson's first chunk. Everything the prompt tests care
- * about — the static system half, the profile, `known`, the calibration dials —
- * is on every chunk, so the first one is a fair witness for all of them.
+ * The messages for one request of a lesson. Everything about the *payload* that
+ * the prompt tests care about — the profile, `topic`, `about`, `known` and the
+ * key order — is identical on every request, so the first is a fair witness; the
+ * system half is per type, so a test about prose says which type it is reading.
+ *
+ * `ZERO_RNG` makes the plan deterministic: it draws the first fresh candidate,
+ * which puts `recognize-mc` first (a type with an `instruction` field, and the
+ * one most of these assertions are about).
  */
-function firstChunkPrompt(batchArgs: BatchArgs = args) {
-	const chunks = chunkSlots(planSlots(batchArgs, ZERO_RNG), batchArgs.reviewItems);
-	return buildChunkPrompt(batchArgs, chunks[0]);
+function requestPrompt(batchArgs: BatchArgs = args, at = 0) {
+	const plans = groupIntoRequests(planSlots(batchArgs, ZERO_RNG));
+	return buildRequestPrompt(batchArgs, plans[at]);
 }
 
-describe('buildChunkPrompt', () => {
-	const messages = firstChunkPrompt();
+/** The system prompt for one type, whatever a plan happens to ask for. */
+function promptForType(type: WireType): string {
+	const def = byType.get(type);
+	if (!def) throw new Error(`no wire def for ${type}`);
+	const [system] = buildRequestPrompt(args, {
+		kind: { type, ...(type === 'cloze' ? { bank: true } : {}) },
+		items: [{ index: 0, itemId: 'i1', term: 'el perro', difficulty: 3 }]
+	});
+	return system.content;
+}
+
+describe('buildRequestPrompt', () => {
+	const messages = requestPrompt();
 
 	it('is exactly one system and one user message', () => {
 		expect(messages).toHaveLength(2);
@@ -234,38 +369,58 @@ describe('buildChunkPrompt', () => {
 		expect(messages[1].role).toBe('user');
 	});
 
-	it('states every challenge type and the itemIds contract in the system message', () => {
-		const system = messages[0].content;
-		for (const type of [
-			'recognize-mc',
+	it('describes the one type this request is about, and no other', () => {
+		// The whole point of the split. A request for recognize-mc used to carry
+		// six other types' field lists, examples and rules, and a slots list to
+		// match them up against.
+		const system = promptForType('recognize-mc');
+		expect(system).toContain('recognize-mc');
+		expect(system).toContain('correctMeaning');
+		for (const other of [
 			'produce-mc',
 			'cloze',
 			'translate-to-target',
 			'translate-to-native',
 			'word-order',
-			'spot-error'
+			'spot-error',
+			'match-pairs'
 		]) {
-			expect(system).toContain(type);
+			expect(system, `recognize-mc's prompt mentions ${other}`).not.toContain(other);
 		}
-		expect(system).not.toContain('match-pairs');
 		// A batch has no vocabulary of its own to point at, so the only legal
 		// references are an id it was given and a term it was shown.
 		expect(system).not.toContain('new:<index>');
 		expect(system).not.toContain('newItems');
 	});
 
-	it('spells out the segmentation and answerability rules for the tile types', () => {
-		const system = messages[0].content;
+	it('spells the segmentation rule out in both tile types, and nowhere else', () => {
 		// One tile per word is the rule that makes these types work for Chinese at
-		// all; a per-character split would turn word order into calligraphy.
-		expect(system).toContain('one tile per WORD');
-		expect(system).toContain('菜单 is one tile');
-		// Answerability, per type: one right order, one unambiguously wrong word.
-		expect(system).toContain('exactly one natural order');
-		expect(system).toContain('unambiguously wrong');
+		// all; a per-character split would turn word order into calligraphy. Two
+		// types need it, so both carry it — a duplicated line costs nothing it did
+		// not already cost, since each copy only ever travels on its own calls.
+		for (const type of ['word-order', 'spot-error'] as const) {
+			const system = promptForType(type);
+			expect(system, type).toContain('one tile per WORD');
+			expect(system, type).toContain('菜单 is one tile');
+		}
+		expect(promptForType('cloze')).not.toContain('one tile per WORD');
+	});
+
+	it('states each type’s own answerability rule on its own prompt', () => {
+		expect(promptForType('word-order')).toContain('exactly one natural order');
+		expect(promptForType('spot-error')).toContain('unambiguously wrong');
 		// The shuffle and the corruption are the app's, and the prompt says so.
-		expect(system).toContain('the app shuffles the tiles');
-		expect(system).toContain('the app replaces words[wrongPosition]');
+		expect(promptForType('word-order')).toContain('the app shuffles the tiles');
+		expect(promptForType('spot-error')).toContain('the app replaces words[wrongPosition]');
+	});
+
+	it('carries the instruction heading rule only where there is a field for it', () => {
+		for (const type of ['recognize-mc', 'produce-mc', 'word-order'] as const) {
+			expect(promptForType(type), type).toContain('Pick the best reply');
+		}
+		for (const type of ['cloze', 'spot-error', 'translate-to-native'] as const) {
+			expect(promptForType(type), type).not.toContain('Pick the best reply');
+		}
 	});
 
 	it('never mentions the presentation the app assembles for itself', () => {
@@ -285,90 +440,114 @@ describe('buildChunkPrompt', () => {
 		expect(payload.target).toBe('Spanish');
 		expect(payload.level).toBe('beginner');
 		expect(payload).not.toHaveProperty('newItemSlots');
-		expect(payload.reviewItems).toEqual([
-			{ id: 'i1', t: 'el perro', m: 'the dog' },
-			{ id: 'i2', t: 'leer', m: 'to read' }
-		]);
-		expect(payload.recentMistakes).toBeUndefined();
+		// One list, not two: the words the lesson is about *are* the brief now.
+		expect(payload).not.toHaveProperty('reviewItems');
+		expect(payload).not.toHaveProperty('slots');
 	});
 
-	it('lists the slots to fill, and nothing about how they were chosen', () => {
+	it('lists the words to write about, with the sizes to write them at', () => {
 		const payload = JSON.parse(messages[1].content) as {
-			slots: { item: string; type: string; difficulty: number; bank?: boolean }[];
+			items: (Record<string, unknown> & { id: string; t: string; m: string })[];
 		};
-		expect(payload.slots).toHaveLength(4);
-		for (const slot of payload.slots) {
-			expect(['i1', 'i2']).toContain(slot.item);
-			expect(typeof slot.type).toBe('string');
-			expect(slot.difficulty).toBeGreaterThanOrEqual(1);
-			expect(slot.difficulty).toBeLessThanOrEqual(5);
-			// The bank flag rides only where it means something.
-			if (slot.type !== 'cloze') expect(slot).not.toHaveProperty('bank');
-		}
-		// `level` chose the types; the types are chosen, so it no longer travels —
-		// only its already-folded `difficulty` does. (`payload.level` is the
-		// learner's proficiency level, e.g. "beginner" — a different field.)
-		const withLevel = firstChunkPrompt({
-			...args,
-			reviewItems: args.reviewItems.map((i) => ({ ...i, level: 5 as const }))
-		});
-		const withLevelPayload = JSON.parse(withLevel[1].content) as {
-			reviewItems: Record<string, unknown>[];
-			slots: Record<string, unknown>[];
-		};
-		for (const reviewItem of withLevelPayload.reviewItems) {
-			expect(reviewItem).not.toHaveProperty('level');
-		}
-		for (const slot of withLevelPayload.slots) {
-			expect(slot).not.toHaveProperty('level');
+		const terms = new Map(args.reviewItems.map((i) => [i.id, i] as const));
+		for (const entry of payload.items) {
+			// The word and its meaning ride beside the id, so the brief reads
+			// without a lookup.
+			expect(entry.t).toBe(terms.get(entry.id)?.term);
+			expect(entry.m).toBe(terms.get(entry.id)?.meaning);
+			// recognize-mc is sized by one number, and it is a word count.
+			expect(typeof entry.words).toBe('number');
 		}
 	});
 
-	it('names the word beside the slot, so the brief reads without a lookup', () => {
-		const payload = JSON.parse(messages[1].content) as { slots: { item: string; t: string }[] };
-		const terms = new Map(args.reviewItems.map((i) => [i.id, i.term]));
-		for (const slot of payload.slots) expect(slot.t).toBe(terms.get(slot.item));
+	it('sends countable parameters, never a type or a difficulty', () => {
+		// The two things this rewrite exists to remove from the payload. `type` is
+		// the subject of the system prompt; `difficulty` was a scale the model had
+		// to interpret, and is now a set of lengths it can count. (`bank` survives
+		// as a *count* of words, not as the flag the plan holds.)
+		for (const request of groupIntoRequests(planSlots(args, ZERO_RNG))) {
+			const [, user] = buildRequestPrompt(args, request);
+			const payload = JSON.parse(user.content) as { items: Record<string, unknown>[] };
+			for (const entry of payload.items) {
+				expect(entry).not.toHaveProperty('type');
+				expect(entry).not.toHaveProperty('difficulty');
+				expect(entry).not.toHaveProperty('level');
+				for (const [key, value] of Object.entries(entry)) {
+					if (['id', 't', 'm'].includes(key)) continue;
+					expect(typeof value, key).toBe('number');
+				}
+			}
+		}
 	});
 
-	it('writes everything shared across chunks before anything per-chunk', () => {
+	it('grows the sizes it sends as the rung rises', () => {
+		const wordsAt = (difficulty: 1 | 5): number => {
+			const [, user] = buildRequestPrompt(args, {
+				kind: { type: 'translate-to-native' },
+				items: [{ index: 0, itemId: 'i1', term: 'el perro', difficulty }]
+			});
+			return (JSON.parse(user.content) as { items: { words: number }[] }).items[0].words;
+		};
+		expect(wordsAt(1)).toBeLessThan(wordsAt(5));
+	});
+
+	it('sends a cloze its bank size, as a count including the answer', () => {
+		const bankAt = (bank: boolean): number => {
+			const [, user] = buildRequestPrompt(args, {
+				kind: { type: 'cloze', bank },
+				items: [{ index: 0, itemId: 'i1', term: 'el perro', difficulty: 1 }]
+			});
+			return (JSON.parse(user.content) as { items: { bank: number }[] }).items[0].bank;
+		};
+		// Six candidates at the easy end; nothing at all when the plan asked for a
+		// typed cloze, which is what `bank: false` means.
+		expect(bankAt(true)).toBe(6);
+		expect(bankAt(false)).toBe(0);
+	});
+
+	it('writes everything shared across requests before the brief itself', () => {
 		// Prompt caching pays up to the first byte that differs. `known` is the
-		// biggest block and identical on every chunk of a lesson, so it belongs
-		// above the keys that are the whole reason there are several chunks.
-		const withKnown = firstChunkPrompt({
+		// biggest block and identical on every request of a lesson, so it belongs
+		// above the one key that is the whole reason there are several requests.
+		const withKnown = requestPrompt({
 			...args,
 			topic: 'ordering in a restaurant',
-			knownItems: [{ id: 'k1', term: '做饭' }],
-			recentMistakes: [{ term: 'leer', gave: 'lees' }]
+			knownItems: [{ id: 'k1', term: '做饭' }]
 		});
 		const keys = Object.keys(JSON.parse(withKnown[1].content) as Record<string, unknown>);
 		const shared = ['native', 'target', 'level', 'topic', 'interests', 'known'];
-		const perChunk = ['reviewItems', 'slots', 'recentMistakes'];
-		for (const key of [...shared, ...perChunk]) expect(keys).toContain(key);
-		expect(Math.max(...shared.map((k) => keys.indexOf(k)))).toBeLessThan(
-			Math.min(...perChunk.map((k) => keys.indexOf(k)))
-		);
+		for (const key of [...shared, 'items']) expect(keys).toContain(key);
+		expect(Math.max(...shared.map((k) => keys.indexOf(k)))).toBeLessThan(keys.indexOf('items'));
 	});
 
-	it('includes recent mistakes for the words this chunk is about', () => {
-		const withMistakes = firstChunkPrompt({
+	it('is byte-identical up to the brief across every request of a lesson', () => {
+		const withKnown: BatchArgs = {
 			...args,
-			recentMistakes: [
-				{ term: 'leer', gave: 'lees' },
-				// Not a review item of this lesson: nothing in the chunk can be written
-				// easier for it, so it is not worth a token.
-				{ term: 'temprano', gave: '(skipped)' }
-			]
+			topic: 'ordering in a restaurant',
+			knownItems: [{ id: 'k1', term: '做饭' }]
+		};
+		const prefixes = groupIntoRequests(planSlots(withKnown, ZERO_RNG)).map((request) => {
+			const [, user] = buildRequestPrompt(withKnown, request);
+			return user.content.slice(0, user.content.indexOf('"items"'));
 		});
-		const payload = JSON.parse(withMistakes[1].content) as Record<string, unknown>;
-		expect(payload.recentMistakes).toEqual([{ t: 'leer', gave: 'lees' }]);
+		expect(new Set(prefixes).size).toBe(1);
 	});
 
-	it('never sends recentAccuracy: it only ever fed the difficulty cliffs, now folded locally into difficulty', () => {
-		expect(JSON.parse(messages[1].content)).not.toHaveProperty('recentAccuracy');
-		const withAccuracy = JSON.parse(
-			firstChunkPrompt({ ...args, recentAccuracy: 0.95 })[1].content
-		) as Record<string, unknown>;
-		expect(withAccuracy).not.toHaveProperty('recentAccuracy');
+	it('never sends recentMistakes or recentAccuracy: both are folded into the plan', () => {
+		// A just-missed word already earns an extra slot in a fresh format and a
+		// rung off every slot about it. Saying "write this one easier" on top of a
+		// length that already says how long to write it is two instructions for one
+		// decision.
+		const withBoth = requestPrompt({
+			...args,
+			recentAccuracy: 0.95,
+			recentMistakes: [{ term: 'leer', gave: 'lees' }]
+		});
+		const payload = JSON.parse(withBoth[1].content) as Record<string, unknown>;
+		expect(payload).not.toHaveProperty('recentMistakes');
+		expect(payload).not.toHaveProperty('recentAccuracy');
+		expect(withBoth[0].content).not.toContain('recentMistakes');
+		expect(withBoth[1].content).not.toContain('lees');
 	});
 
 	it('includes the known-vocabulary terms when supplied — terms only, never the ids', () => {
@@ -380,13 +559,13 @@ describe('buildChunkPrompt', () => {
 			{ id: 'k2', term: '做饭' },
 			{ id: 'k3', term: '点菜' }
 		];
-		const content = firstChunkPrompt({ ...args, knownItems: known })[1].content;
+		const content = requestPrompt({ ...args, knownItems: known })[1].content;
 		const payload = JSON.parse(content) as Record<string, unknown>;
 		expect(payload.known).toEqual(['名字', '做饭', '点菜']);
 		expect(content).not.toContain('k1');
 
 		expect(JSON.parse(messages[1].content)).not.toHaveProperty('known');
-		expect(JSON.parse(firstChunkPrompt({ ...args, knownItems: [] })[1].content)).not.toHaveProperty(
+		expect(JSON.parse(requestPrompt({ ...args, knownItems: [] })[1].content)).not.toHaveProperty(
 			'known'
 		);
 	});
@@ -395,7 +574,7 @@ describe('buildChunkPrompt', () => {
 		// A reading costs tokens and buys nothing where the spelling is already
 		// unique — which is every word, for nearly every learner.
 		const payload = JSON.parse(
-			firstChunkPrompt({
+			requestPrompt({
 				...args,
 				knownItems: [
 					{ id: 'k1', term: '长', romanization: 'cháng' },
@@ -412,24 +591,22 @@ describe('buildChunkPrompt', () => {
 		expect(messages[0].content).toContain('"word (reading)"');
 	});
 
-	it('calibrates content off the per-slot difficulty, and leaves type choice out of it', () => {
+	it('explains the parameters instead of a difficulty scale', () => {
 		const system = messages[0].content;
-		// The one shared ladder line replaces the old recentAccuracy cliffs.
-		expect(system).toContain('difficulty');
-		expect(system).toContain('1-5');
+		// No ladder, no scale, no dial the model has to interpret.
+		expect(system).not.toContain('1-5');
+		expect(system).not.toContain('1 easiest');
+		expect(system).not.toContain('Difficulty calibration');
 		expect(system).not.toContain('recentAccuracy');
-		expect(system).not.toContain('0.7');
-		expect(system).not.toContain('0.85');
-		expect(system).toContain('recentMistakes');
-		// Every type states its own gradient.
-		expect(system).toContain('Difficulty scales tile count');
-		expect(system).toContain('recognize-mc: difficulty scales');
-		// The slot rule replaced the paragraph of type-selection rules.
-		expect(system).toContain('one challenge object per slot');
-		expect(system).toContain('"bank": true');
+		expect(system).not.toContain('recentMistakes');
+		expect(system).not.toContain('(skipped)');
+		// What replaces it: this type's own keys, named and explained.
+		expect(system).toContain('words: how many words');
+		expect(system).toContain('Treat every size as a target to hit');
+		// And one rule tying the brief to the reply.
+		expect(system).toContain('items is the exact lesson to write');
 		expect(system).not.toContain('Match type to maturity');
 		expect(system).not.toContain('Mix recognition and production');
-		expect(system).not.toContain('(skipped)');
 	});
 
 	it('derives two challenges per word, and caps the count', () => {
@@ -438,7 +615,7 @@ describe('buildChunkPrompt', () => {
 	});
 
 	it('threads the session topic into the user message, ahead of interests', () => {
-		const withTopic = firstChunkPrompt({ ...args, topic: 'ordering in a restaurant' });
+		const withTopic = requestPrompt({ ...args, topic: 'ordering in a restaurant' });
 		const raw = withTopic[1].content;
 		expect(raw).toContain('ordering in a restaurant');
 
@@ -449,7 +626,7 @@ describe('buildChunkPrompt', () => {
 	});
 
 	it("sends the learner's self-description when they wrote one", () => {
-		const withAbout = firstChunkPrompt({
+		const withAbout = requestPrompt({
 			...args,
 			profile: { ...args.profile, about: 'Nurse in Valencia, two kids, I climb on weekends.' }
 		});
@@ -459,14 +636,14 @@ describe('buildChunkPrompt', () => {
 
 	it('omits about when it is absent or blank', () => {
 		expect(JSON.parse(messages[1].content)).not.toHaveProperty('about');
-		const blank = firstChunkPrompt({ ...args, profile: { ...args.profile, about: '  \n ' } });
+		const blank = requestPrompt({ ...args, profile: { ...args.profile, about: '  \n ' } });
 		expect(JSON.parse(blank[1].content)).not.toHaveProperty('about');
 	});
 
 	it('caps about, so the token budget never depends on how much they typed', () => {
 		const essay = 'x'.repeat(1000);
 		const payload = JSON.parse(
-			firstChunkPrompt({ ...args, profile: { ...args.profile, about: essay } })[1].content
+			requestPrompt({ ...args, profile: { ...args.profile, about: essay } })[1].content
 		) as Record<string, unknown>;
 		expect(payload.about).toHaveLength(MAX_ABOUT_CHARS);
 		expect(payload.about).toBe('x'.repeat(MAX_ABOUT_CHARS));
@@ -478,7 +655,7 @@ describe('buildChunkPrompt', () => {
 
 	it('omits the topic key entirely when there is none', () => {
 		expect(JSON.parse(messages[1].content)).not.toHaveProperty('topic');
-		const blank = firstChunkPrompt({ ...args, topic: '   ' });
+		const blank = requestPrompt({ ...args, topic: '   ' });
 		expect(JSON.parse(blank[1].content)).not.toHaveProperty('topic');
 	});
 
@@ -491,12 +668,13 @@ describe('buildChunkPrompt', () => {
 		expect(system).toContain('TargetText');
 		expect(system).toContain('pinyin');
 		expect(system).toContain('"reading" is ALWAYS null when the target language');
-		// The rule that keeps grading local and free for non-Latin scripts.
-		expect(system).toContain('the app derives those from "reading"');
+		// The rule that keeps grading local and free for non-Latin scripts lives
+		// with the one type that would otherwise spend tokens on the variants.
+		expect(promptForType('translate-to-target')).toContain('the app derives those from "reading"');
 	});
 
 	it('explains that the app, not the model, places the cloze blank', () => {
-		const system = messages[0].content;
+		const system = promptForType('cloze');
 		expect(system).toContain('the app puts the blank between them');
 		expect(system).toContain('before and after carry their own spacing and punctuation');
 		// Shown, not just told.
@@ -511,24 +689,31 @@ describe('buildChunkPrompt', () => {
 		expect(system).toContain('uniquely determine the answer');
 		expect(system).toMatch(/facts you never state/i);
 		expect(system).toContain("Say: 'the fish stall is to the right'");
-		expect(system).toContain('Exactly one of the four may be correct');
+		// The one-right-answer rule is generic now; the count of options is the
+		// multiple-choice types' own business.
+		expect(system).toContain('never a second right answer');
+		expect(promptForType('recognize-mc')).toContain('exactly one of the four options');
 	});
 
-	it('lets the model choose the multiple-choice instruction heading', () => {
-		const system = messages[0].content;
-		expect(system).toContain('instruction');
-		expect(system).toContain('Pick the best reply');
-		expect(system).toContain('default meaning-question heading fits');
+	it('is composed once per type and handed back the same string', () => {
+		// Static per type is what keeps prompt caching paying: every request of one
+		// kind, in this lesson and the next, quotes a byte-identical prefix.
+		expect(promptForType('cloze')).toBe(promptForType('cloze'));
+		expect(promptForType('cloze')).not.toBe(promptForType('spot-error'));
 	});
 });
 
 describe('generateBatch', () => {
 	it('assigns ids and returns challenges only, never vocabulary', async () => {
-		const scripted = scriptedFetch([JSON.stringify(plannedReply)]);
-		const result = await generateBatch(args, callOpts(scripted.fetchFn));
+		const fake = modelFetch(requests);
+		const result = await generateBatch(args, callOpts(fake.fetchFn));
 
 		expect(result.challenges).toHaveLength(plan.length);
-		expect(result.usage).toEqual({ promptTokens: 600, completionTokens: 900 });
+		expect(fake.calls).toBe(requests.length);
+		expect(result.usage).toEqual({
+			promptTokens: 600 * requests.length,
+			completionTokens: 900 * requests.length
+		});
 		// The learner's collection is not this layer's to grow — there is nothing
 		// in the result for a caller to persist but the pool.
 		expect(result).not.toHaveProperty('newItems');
@@ -543,52 +728,58 @@ describe('generateBatch', () => {
 		expect(result.challenges[0].itemIds).toEqual(['i1']);
 	});
 
+	it('asks each request for one type, and gets that type back', async () => {
+		const fake = modelFetch(requests);
+		await generateBatch(args, callOpts(fake.fetchFn));
+
+		expect(new Set(fake.seen.map((seen) => seen.type)).size).toBe(requests.length);
+		for (const seen of fake.seen) {
+			expect(seen.itemIds.length).toBeGreaterThan(0);
+			expect(seen.itemIds.length).toBeLessThanOrEqual(REQUEST_ITEMS);
+			for (const params of seen.params) expect(Object.keys(params).length).toBeGreaterThan(0);
+		}
+	});
+
 	it('derives direction from the challenge type', async () => {
-		const scripted = scriptedFetch([JSON.stringify(plannedReply)]);
-		const result = await generateBatch(args, callOpts(scripted.fetchFn));
-		// The plan for `args`, in chunk order: both of i1's slots, then both of
-		// i2's — each resolving into the direction its wire def declares, never
-		// one the model chose.
+		const fake = modelFetch(requests);
+		const result = await generateBatch(args, callOpts(fake.fetchFn));
+		// The plan for `args`, in plan order — each resolving into the direction
+		// its wire def declares, never one the model chose.
 		expect(plan.map((s) => s.type)).toEqual([
 			'spot-error',
-			'translate-to-native',
 			'cloze',
+			'translate-to-native',
 			'translate-to-target'
 		]);
 		expect(result.challenges.map((c) => c.direction)).toEqual([
 			'toNative',
-			'toNative',
 			'toTarget',
+			'toNative',
 			'toTarget'
 		]);
 	});
 
 	it('strips markdown fences around the JSON', async () => {
-		const scripted = scriptedFetch(['```json\n' + JSON.stringify(plannedReply) + '\n```']);
-		const result = await generateBatch(args, callOpts(scripted.fetchFn));
+		const fake = modelFetch(requests, { fenced: true });
+		const result = await generateBatch(args, callOpts(fake.fetchFn));
 		expect(result.challenges).toHaveLength(plan.length);
 	});
 
 	it('salvages the batch when a single challenge is malformed', async () => {
-		const damaged = {
-			challenges: [
-				...plannedReply.challenges,
-				{ type: 'recognize-mc', shown: { text: 'x' }, distractors: ['a', 'b'] }
-			]
-		};
-		const scripted = scriptedFetch([JSON.stringify(damaged)]);
-		const result = await generateBatch(args, callOpts(scripted.fetchFn));
+		const fake = modelFetch(requests, {
+			extras: [{ type: 'recognize-mc', shown: { text: 'x' }, distractors: ['a', 'b'] }]
+		});
+		const result = await generateBatch(args, callOpts(fake.fetchFn));
 
 		expect(result.challenges).toHaveLength(plan.length);
-		expect(scripted.calls).toBe(1);
+		expect(fake.calls).toBe(requests.length);
 	});
 
 	it('drops challenges that reference an id the model invented', async () => {
-		const hallucinated = {
-			challenges: [...plannedReply.challenges, recognize('i-does-not-exist', 'ghost')]
-		};
-		const scripted = scriptedFetch([JSON.stringify(hallucinated)]);
-		const result = await generateBatch(args, callOpts(scripted.fetchFn));
+		const fake = modelFetch(requests, {
+			extras: [recognize('i-does-not-exist', 'ghost')]
+		});
+		const result = await generateBatch(args, callOpts(fake.fetchFn));
 		expect(result.challenges).toHaveLength(plan.length);
 	});
 
@@ -596,26 +787,20 @@ describe('generateBatch', () => {
 		// Known words travel to the model as bare terms with no ids at all, so a
 		// challenge built on one can only cite the word itself. Dropping those as
 		// "hallucinated" is what made whole batches come back unusable.
-		const first = slotAbout('i1');
-		const second = slotAbout('i2');
-		const byTermCitation = {
-			challenges: plannedReply.challenges.map((challenge, i) =>
-				i === first
+		const fake = modelFetch(requests, {
+			rewrite: (challenge, itemId) =>
+				itemId === 'i1'
 					? { ...challenge, itemIds: [' El Perro '] } // a review item, cited sloppily by term
-					: i === second
-						? { ...challenge, itemIds: ['i2', '做饭'] } // plus a known word, the only way it can be cited
-						: challenge
-			)
-		};
-		const scripted = scriptedFetch([JSON.stringify(byTermCitation)]);
+					: { ...challenge, itemIds: ['i2', '做饭'] } // plus a known word, the only way it can be cited
+		});
 		const result = await generateBatch(
 			{ ...args, knownItems: [{ id: 'k9', term: '做饭' }] },
-			callOpts(scripted.fetchFn)
+			callOpts(fake.fetchFn)
 		);
 
 		expect(result.challenges).toHaveLength(plan.length);
-		expect(result.challenges[first].itemIds).toEqual(['i1']);
-		expect(result.challenges[second].itemIds).toEqual(['i2', 'k9']);
+		expect(result.challenges[slotAbout('i1')].itemIds).toEqual(['i1']);
+		expect(result.challenges[slotAbout('i2')].itemIds).toEqual(['i2', 'k9']);
 	});
 
 	it('resolves a homograph cited with its reading onto that card, not its sibling', async () => {
@@ -625,77 +810,51 @@ describe('generateBatch', () => {
 			{ id: 'chang', term: '长', romanization: 'cháng' },
 			{ id: 'zhang', term: '长', romanization: 'zhǎng' }
 		];
-		const first = slotAbout('i1');
-		const second = slotAbout('i2');
-		const cited = {
-			challenges: plannedReply.challenges.map((challenge, i) =>
-				i === first
+		const fake = modelFetch(requests, {
+			rewrite: (challenge, itemId) =>
+				itemId === 'i1'
 					? { ...challenge, itemIds: ['i1', '长 (zhǎng)'] }
-					: i === second
-						? { ...challenge, itemIds: ['i2', '长'] } // Bare: a coin the app does not flip.
-						: challenge
-			)
-		};
-		const scripted = scriptedFetch([JSON.stringify(cited)]);
-		const result = await generateBatch({ ...args, knownItems }, callOpts(scripted.fetchFn));
+					: { ...challenge, itemIds: ['i2', '长'] } // Bare: a coin the app does not flip.
+		});
+		const result = await generateBatch({ ...args, knownItems }, callOpts(fake.fetchFn));
 
-		expect(result.challenges[first].itemIds).toEqual(['i1', 'zhang']);
-		expect(result.challenges[second].itemIds).toEqual(['i2', 'chang']);
+		expect(result.challenges[slotAbout('i1')].itemIds).toEqual(['i1', 'zhang']);
+		expect(result.challenges[slotAbout('i2')].itemIds).toEqual(['i2', 'chang']);
 	});
 
 	it('retries once with a corrective instruction, then succeeds', async () => {
-		const thin = { challenges: [recognize('i1', 'el perro')] };
-		const scripted = scriptedFetch([JSON.stringify(thin), JSON.stringify(plannedReply)]);
-		const result = await generateBatch(args, callOpts(scripted.fetchFn));
+		const fake = modelFetch(requests, { failFirst: new Set([0]) });
+		const result = await generateBatch(args, callOpts(fake.fetchFn));
 
-		expect(scripted.calls).toBe(2);
+		expect(fake.calls).toBe(requests.length + 1);
+		// The retry restates only the type it is about, never the other six.
+		const retry = fake.seen.filter((seen) => seen.retry);
+		expect(retry).toHaveLength(1);
+		expect(retry[0].type).toBe(requests[0].kind.type);
 		expect(result.challenges).toHaveLength(plan.length);
-		// Usage is summed across both attempts.
-		expect(result.usage).toEqual({ promptTokens: 1200, completionTokens: 1800 });
-	});
-
-	it('re-asks a chunk that answered in types nobody asked for', async () => {
-		// A reply of the right *length* that is the wrong lesson: four
-		// recognize-mc challenges where the plan asked for a spot-error, a cloze
-		// and two translations. Counting could not tell the difference; the slot
-		// check can, and the retry gets the lesson that was planned.
-		const wrongTypes = {
-			challenges: plan.map((slot) => recognize(slot.itemId, 'el perro'))
-		};
-		const scripted = scriptedFetch([JSON.stringify(wrongTypes), JSON.stringify(plannedReply)]);
-		const result = await generateBatch(args, callOpts(scripted.fetchFn));
-
-		expect(scripted.calls).toBe(2);
-		expect(result.challenges.map((c) => c.type)).toEqual([
-			'spot-error',
-			'typed-translation',
-			'cloze',
-			'typed-translation'
-		]);
 	});
 
 	it('throws bad-response after the retry also fails', async () => {
 		const scripted = scriptedFetch(['not json at all', 'still not json']);
 		const error = await generateBatch(args, callOpts(scripted.fetchFn)).catch((e: unknown) => e);
 
-		expect(scripted.calls).toBe(2);
+		expect(scripted.calls).toBe(requests.length * 2);
 		expect(error).toBeInstanceOf(LlmError);
 		expect((error as LlmError).kind).toBe('bad-response');
 	});
 
 	it('throws bad-response when too few challenges survive twice', async () => {
-		const thin = JSON.stringify({ challenges: [recognize('i1', 'el perro')] });
-		const scripted = scriptedFetch([thin, thin]);
-		await expect(generateBatch(args, callOpts(scripted.fetchFn))).rejects.toMatchObject({
+		const fake = modelFetch(requests, { failAlways: new Set(requests.map((_, i) => i)) });
+		await expect(generateBatch(args, callOpts(fake.fetchFn))).rejects.toMatchObject({
 			kind: 'bad-response'
 		});
-		expect(scripted.calls).toBe(2);
+		expect(fake.calls).toBe(requests.length * 2);
 	});
 
 	it('reports its progress steps in order, naming the model it waits on', async () => {
-		const scripted = scriptedFetch([JSON.stringify(plannedReply)]);
+		const fake = modelFetch(requests);
 		const steps: ProgressStep[] = [];
-		await generateBatch(args, { ...callOpts(scripted.fetchFn), onProgress: (s) => steps.push(s) });
+		await generateBatch(args, { ...callOpts(fake.fetchFn), onProgress: (s) => steps.push(s) });
 
 		expect(steps.map((s) => s.id)).toEqual(['build-prompt', 'request', 'validate']);
 		expect(steps[1].label).toContain('test/model');
@@ -703,12 +862,11 @@ describe('generateBatch', () => {
 	});
 
 	it('reports the retry step only when a corrective retry fires', async () => {
-		const thin = { challenges: [recognize('i1', 'el perro')] };
-		const scripted = scriptedFetch([JSON.stringify(thin), JSON.stringify(plannedReply)]);
+		const fake = modelFetch(requests, { failFirst: new Set([1]) });
 		const steps: ProgressStep[] = [];
-		await generateBatch(args, { ...callOpts(scripted.fetchFn), onProgress: (s) => steps.push(s) });
+		await generateBatch(args, { ...callOpts(fake.fetchFn), onProgress: (s) => steps.push(s) });
 
-		// One step per id, whatever the chunks do: `request` covers every call in
+		// One step per id, whatever the requests do: `request` covers every call in
 		// flight, `retry` fires the first time any of them is re-asked, `validate`
 		// once they have all settled.
 		expect(steps.map((s) => s.id)).toEqual(['build-prompt', 'request', 'retry', 'validate']);
@@ -718,9 +876,9 @@ describe('generateBatch', () => {
 		// The step log is the caller's UI. Inside the pool a throw would surface as
 		// an unhandled rejection in a sibling worker, which is a lost lesson and an
 		// unreadable stack for a cosmetic listener.
-		const scripted = scriptedFetch([JSON.stringify(plannedReply)]);
+		const fake = modelFetch(requests);
 		const result = await generateBatch(args, {
-			...callOpts(scripted.fetchFn),
+			...callOpts(fake.fetchFn),
 			onProgress: () => {
 				throw new Error('the UI blew up');
 			}
@@ -731,34 +889,34 @@ describe('generateBatch', () => {
 	it('says so when there is no vocabulary to write about, instead of blaming the model', async () => {
 		// No call is made, so no step is announced and nothing is the model's
 		// fault — the old path reported "the model returned something unusable".
-		const scripted = scriptedFetch([JSON.stringify(plannedReply)]);
+		const fake = modelFetch(requests);
 		const steps: ProgressStep[] = [];
 		const error = await generateBatch(
 			{ ...args, reviewItems: [] },
-			{ ...callOpts(scripted.fetchFn), onProgress: (s) => steps.push(s) }
+			{ ...callOpts(fake.fetchFn), onProgress: (s) => steps.push(s) }
 		).catch((e: unknown) => e);
 
 		expect(error).toBeInstanceOf(LlmError);
 		expect((error as LlmError).message).toContain('at least one word');
-		expect(scripted.calls).toBe(0);
+		expect(fake.calls).toBe(0);
 		expect(steps).toEqual([]);
 	});
 
 	it('does not demand five challenges from a two-challenge batch', async () => {
 		const tinyArgs = { ...args, reviewItems: args.reviewItems.slice(0, 1), count: 1 };
-		const tiny = fillPlan(planSlots(tinyArgs, IDENTITY_RNG));
-		const scripted = scriptedFetch([JSON.stringify(tiny)]);
-		const result = await generateBatch(tinyArgs, callOpts(scripted.fetchFn));
-		expect(scripted.calls).toBe(1);
+		const tiny = groupIntoRequests(planSlots(tinyArgs, IDENTITY_RNG));
+		const fake = modelFetch(tiny);
+		const result = await generateBatch(tinyArgs, callOpts(fake.fetchFn));
+		expect(fake.calls).toBe(1);
 		expect(result.challenges).toHaveLength(1);
 	});
 });
 
 /* -------------------------------------------------------------------------- */
-/* Chunked, concurrent generation                                              */
+/* Concurrent, one-type-at-a-time generation                                   */
 /* -------------------------------------------------------------------------- */
 
-/** Twelve review items — a full lesson, and therefore several chunks. */
+/** Twelve review items — a full lesson, and therefore several requests. */
 const bigArgs: BatchArgs = {
 	...args,
 	reviewItems: Array.from({ length: 12 }, (_, i) => ({
@@ -770,138 +928,75 @@ const bigArgs: BatchArgs = {
 	count: 20
 };
 
-/** The lesson `bigArgs` plans, as the chunker cuts it. `IDENTITY_RNG` is what `callOpts` passes. */
-const bigChunks = chunkSlots(planSlots(bigArgs, IDENTITY_RNG), bigArgs.reviewItems);
+/** The lesson `bigArgs` plans. `IDENTITY_RNG` is what `callOpts` passes. */
+const bigPlan = planSlots(bigArgs, IDENTITY_RNG);
+const bigRequests = groupIntoRequests(bigPlan);
 
-/** A chunk's identity, so a fake reply can be scripted per chunk. */
-const chunkKey = (slots: readonly { item?: string; itemId?: string; type: string }[]): string =>
-	slots.map((s) => `${s.item ?? s.itemId}:${s.type}`).join('|');
+/** How the merged lesson must read: plan order, which is no request's order. */
+const bigStamps = bigPlan.map((slot) => `${slot.itemId}-${slot.type}`);
 
-/**
- * A fake that answers each request according to the *slots* it was asked for —
- * one challenge per slot, of that slot's own type, taken from that wire type's
- * fixture and stamped with the slot it fills — so a chunked reply is the brief
- * it was given, and "did the merge keep lesson order?" is a question with an
- * answer.
- *
- * Every reply resolves on a macrotask, which is what makes the fan-out real:
- * the pool can only have as many requests open at once as it is allowed to, and
- * `maxInFlight` records how many that was.
- */
-function chunkFetch(
-	options: {
-		/** Chunk indices (into {@link bigChunks}) whose *first* reply is unusable. */
-		failFirst?: Set<number>;
-		/** Chunk indices that fail both times, and so must be dropped. */
-		failAlways?: Set<number>;
-		/** Chunk indices that answer every slot with a type nobody asked for. */
-		wrongTypes?: Set<number>;
-		/** Chunk indices that answer their brief and then keep writing. */
-		overproduce?: Set<number>;
-		/** Chunk indices that answer every cloze slot on the wrong side of `bank`. */
-		flipBank?: Set<number>;
-	} = {}
-) {
-	const index = new Map(bigChunks.map((chunk, i) => [chunkKey(chunk.slots), i] as const));
-	const state = {
-		calls: 0,
-		inFlight: 0,
-		maxInFlight: 0,
-		seen: [] as number[],
-		fetchFn: null as unknown as FetchLike
-	};
+/** The stamps a request contributes, so a dropped one can be subtracted. */
+const stampsOf = (request: TypeRequest): string[] =>
+	request.items.map((entry) => bigStamps[entry.index]);
 
-	state.fetchFn = async (_input, init) => {
-		const body = JSON.parse(String(init?.body)) as { messages: { content: string }[] };
-		const payload = JSON.parse(body.messages[1].content) as {
-			slots: { item: string; type: string; bank?: boolean }[];
-		};
-		const which = index.get(chunkKey(payload.slots)) ?? -1;
-		const isRetry = body.messages.length > 2;
-		const flip = options.flipBank?.has(which) ?? false;
-		const slots: SlotLike[] = payload.slots.map((slot) => ({
-			itemId: slot.item,
-			type: slot.type,
-			...(slot.bank === undefined ? {} : { bank: flip ? !slot.bank : slot.bank })
-		}));
-
-		state.calls++;
-		state.seen.push(payload.slots.length);
-		state.inFlight++;
-		state.maxInFlight = Math.max(state.maxInFlight, state.inFlight);
-		await new Promise((resolve) => setTimeout(resolve, 0));
-		state.inFlight--;
-
-		const bad = options.failAlways?.has(which) || (!isRetry && options.failFirst?.has(which));
-		const wrong = !isRetry && options.wrongTypes?.has(which);
-		const challenges = bad
-			? []
-			: wrong
-				? slots.map((slot) => recognize(slot.itemId, 'el perro'))
-				: [
-						...fillPlan(slots).challenges,
-						// Three more about the chunk's first word, unasked for.
-						...(options.overproduce?.has(which)
-							? fillPlan([slots[0], slots[0], slots[0]]).challenges
-							: [])
-					];
-
-		return new Response(
-			JSON.stringify({
-				model: 'test/model',
-				choices: [{ message: { content: JSON.stringify({ challenges }) } }],
-				usage: { prompt_tokens: 100, completion_tokens: 200 }
-			}),
-			{ status: 200, headers: { 'Content-Type': 'application/json' } }
-		);
-	};
-	return state;
-}
-
-describe('generateBatch, chunked', () => {
-	it('fans a lesson out into one short request per chunk', async () => {
-		const fake = chunkFetch();
+describe('generateBatch, one request per type', () => {
+	it('fans a lesson out into one request per kind, each a handful of words', async () => {
+		const fake = modelFetch(bigRequests);
 		const result = await generateBatch(bigArgs, callOpts(fake.fetchFn));
 
-		expect(bigChunks.length).toBeGreaterThan(1);
-		expect(fake.calls).toBe(bigChunks.length);
-		// Each request is short: a handful of slots about at most three words.
-		for (const slots of fake.seen) expect(slots).toBeLessThanOrEqual(CHUNK_SLOTS);
-		for (const chunk of bigChunks)
-			expect(chunk.reviewItems.length).toBeLessThanOrEqual(CHUNK_ITEMS);
+		expect(bigRequests.length).toBeGreaterThan(1);
+		expect(fake.calls).toBe(bigRequests.length);
+		// Grouping by type is what makes the requests few and long: twenty
+		// challenges used to cost seven or eight calls of two or three.
+		expect(bigRequests.length).toBeLessThanOrEqual(6);
+		for (const seen of fake.seen) expect(seen.itemIds.length).toBeLessThanOrEqual(REQUEST_ITEMS);
 		expect(result.challenges).toHaveLength(20);
 	});
 
-	it('sums usage across every chunk and every retry', async () => {
-		const fake = chunkFetch({ failFirst: new Set([0]) });
+	it('never asks one request about the same word twice', async () => {
+		const fake = modelFetch(bigRequests);
+		await generateBatch(bigArgs, callOpts(fake.fetchFn));
+		for (const seen of fake.seen) {
+			expect(new Set(seen.itemIds).size).toBe(seen.itemIds.length);
+		}
+	});
+
+	it('sums usage across every request and every retry', async () => {
+		const fake = modelFetch(bigRequests, { failFirst: new Set([0]) });
 		const result = await generateBatch(bigArgs, callOpts(fake.fetchFn));
 
-		expect(fake.calls).toBe(bigChunks.length + 1);
+		expect(fake.calls).toBe(bigRequests.length + 1);
 		expect(result.usage).toEqual({
-			promptTokens: 100 * fake.calls,
-			completionTokens: 200 * fake.calls
+			promptTokens: 600 * fake.calls,
+			completionTokens: 900 * fake.calls
 		});
 	});
 
-	it('retries only the chunk that came back bad', async () => {
-		const fake = chunkFetch({ failFirst: new Set([1]) });
+	it('retries only the request that came back bad', async () => {
+		const fake = modelFetch(bigRequests, { failFirst: new Set([1]) });
 		const result = await generateBatch(bigArgs, callOpts(fake.fetchFn));
 
-		expect(fake.calls).toBe(bigChunks.length + 1);
+		expect(fake.calls).toBe(bigRequests.length + 1);
 		expect(result.challenges).toHaveLength(20);
 	});
 
-	it('drops a chunk that fails twice instead of sinking the lesson', async () => {
-		const fake = chunkFetch({ failAlways: new Set([0]) });
+	it('drops a request that fails twice instead of sinking the lesson', async () => {
+		const fake = modelFetch(bigRequests, { failAlways: new Set([0]) });
 		const result = await generateBatch(bigArgs, callOpts(fake.fetchFn));
 
-		expect(result.challenges).toHaveLength(20 - bigChunks[0].slots.length);
-		// The failed chunk cost two calls, every other chunk one.
-		expect(fake.calls).toBe(bigChunks.length + 1);
+		expect(result.challenges).toHaveLength(20 - bigRequests[0].items.length);
+		// The failed request cost two calls, every other one call.
+		expect(fake.calls).toBe(bigRequests.length + 1);
+		// And what survives is still the rest of the plan, in plan order — the
+		// hole the dropped request leaves does not reshuffle anything.
+		const lost = new Set(stampsOf(bigRequests[0]));
+		expect(result.challenges.map((c) => c.explanation)).toEqual(
+			bigStamps.filter((stamp) => !lost.has(stamp))
+		);
 	});
 
 	it('throws bad-response only when the merged total misses the minimum', async () => {
-		const fake = chunkFetch({ failAlways: new Set(bigChunks.map((_, i) => i)) });
+		const fake = modelFetch(bigRequests, { failAlways: new Set(bigRequests.map((_, i) => i)) });
 		const error = await generateBatch(bigArgs, callOpts(fake.fetchFn)).catch((e: unknown) => e);
 
 		expect(error).toBeInstanceOf(LlmError);
@@ -909,78 +1004,102 @@ describe('generateBatch, chunked', () => {
 		// Informative: how much survived, and how many requests failed.
 		expect((error as LlmError).message).toContain('Only 0 usable');
 		expect((error as LlmError).message).toContain(
-			`${bigChunks.length} of ${bigChunks.length} requests failed`
+			`${bigRequests.length} of ${bigRequests.length} requests failed`
 		);
 	});
 
-	it('merges in lesson order, not completion order', async () => {
-		const fake = chunkFetch();
+	it('merges in plan order, not request order and not completion order', async () => {
+		const fake = modelFetch(bigRequests);
 		const result = await generateBatch(bigArgs, callOpts(fake.fetchFn));
 
-		// The fake stamps every challenge with the slot it filled, so the merged
-		// lesson can be read back and compared with the plan it came from.
-		const planned = bigChunks.flatMap((chunk) => chunk.slots.map((s) => `${s.itemId}-${s.type}`));
-		expect(result.challenges.map((c) => c.explanation)).toEqual(planned);
+		// The fake stamps every challenge with the entry it filled, so the merged
+		// lesson can be read back and compared with the plan it came from. This is
+		// the guarantee grouping by type puts at risk: a lesson is a round-robin
+		// over words, and request order would serve every cloze in a row.
+		expect(result.challenges.map((c) => c.explanation)).toEqual(bigStamps);
+		expect(bigStamps).not.toEqual(bigRequests.flatMap(stampsOf));
 	});
 
-	it('trims a chunk that over-produces, and the chunks after it survive', async () => {
-		// A chunk that answers its four slots and then writes three more used to
+	it('trims a request that over-produces, and the ones after it survive', async () => {
+		// A request that answers its six entries and then writes three more used to
 		// push the lesson past MAX_BATCH_CHALLENGES, and the merge sliced the tail
-		// off — so a well-behaved later chunk paid for an earlier one's enthusiasm.
-		const fake = chunkFetch({ overproduce: new Set([0]) });
+		// off — so a well-behaved later request paid for an earlier one's enthusiasm.
+		const fake = modelFetch(bigRequests, { overproduce: new Set([0]) });
 		const result = await generateBatch(bigArgs, callOpts(fake.fetchFn));
 
 		expect(result.challenges).toHaveLength(20);
-		const planned = bigChunks.flatMap((chunk) => chunk.slots.map((s) => `${s.itemId}-${s.type}`));
-		expect(result.challenges.map((c) => c.explanation)).toEqual(planned);
+		expect(result.challenges.map((c) => c.explanation)).toEqual(bigStamps);
 	});
 
-	it('drops a cloze answered on the wrong side of its word bank', async () => {
-		// `bank` is the difference between two exercises for two stages of a word,
-		// not a cosmetic detail — so a banked cloze does not fill a bankless slot.
-		// One of four is ordinary salvage, so the chunk is not re-asked for it.
-		const fake = chunkFetch({ flipBank: new Set([0]) });
+	it('holds a typed cloze to its brief even when the model sends a bank anyway', async () => {
+		// `bank: 0` is a parameter the resolver can enforce, so a word bank nobody
+		// asked for is discarded rather than quietly turning a retrieval exercise
+		// into the easier one. No retry: the challenge that comes out *is* the
+		// challenge that was asked for.
+		const clozeAt = bigRequests.findIndex((request) => request.kind.type === 'cloze');
+		expect(bigRequests[clozeAt]?.kind.bank).toBe(false);
+		const fake = modelFetch(bigRequests, { flipBank: new Set([clozeAt]) });
 		const result = await generateBatch(bigArgs, callOpts(fake.fetchFn));
 
-		const clozeSlots = bigChunks[0].slots.filter((s) => s.type === 'cloze').length;
-		expect(clozeSlots).toBeGreaterThan(0);
-		expect(fake.calls).toBe(bigChunks.length);
-		expect(result.challenges).toHaveLength(20 - clozeSlots);
-		expect(result.challenges.map((c) => c.explanation)).not.toContain(
-			`${bigChunks[0].slots.find((s) => s.type === 'cloze')?.itemId}-cloze`
+		expect(fake.calls).toBe(bigRequests.length);
+		expect(result.challenges.map((c) => c.explanation)).toEqual(bigStamps);
+		for (const challenge of result.challenges) {
+			if (challenge.type === 'cloze') expect(challenge).not.toHaveProperty('wordBank');
+		}
+	});
+
+	it('drops a banked cloze answered without its word bank', async () => {
+		// The direction the resolver cannot rescue: a bank was asked for and none
+		// came back, which is the harder exercise, not the one this word is ready
+		// for. So the request is re-asked and then dropped.
+		const zeroPlan = planSlots(bigArgs, ZERO_RNG);
+		const zeroRequests = groupIntoRequests(zeroPlan);
+		const zeroStamps = zeroPlan.map((slot) => `${slot.itemId}-${slot.type}`);
+		const clozeAt = zeroRequests.findIndex((request) => request.kind.bank === true);
+		expect(clozeAt).toBeGreaterThanOrEqual(0);
+
+		const fake = modelFetch(zeroRequests, { flipBank: new Set([clozeAt]) });
+		const result = await generateBatch(bigArgs, {
+			...callOpts(fake.fetchFn),
+			rng: ZERO_RNG
+		});
+
+		expect(fake.calls).toBe(zeroRequests.length + 1);
+		const lost = new Set(zeroRequests[clozeAt].items.map((entry) => zeroStamps[entry.index]));
+		expect(result.challenges.map((c) => c.explanation)).toEqual(
+			zeroStamps.filter((stamp) => !lost.has(stamp))
 		);
 	});
 
-	it('re-asks a chunk that answered in the wrong types, then merges it in place', async () => {
-		const fake = chunkFetch({ wrongTypes: new Set([2]) });
+	it('re-asks a request that answered in the wrong type, then merges it in place', async () => {
+		const fake = modelFetch(bigRequests, { wrongTypes: new Set([2]) });
 		const result = await generateBatch(bigArgs, callOpts(fake.fetchFn));
 
-		expect(fake.calls).toBe(bigChunks.length + 1);
+		expect(fake.calls).toBe(bigRequests.length + 1);
 		expect(result.challenges).toHaveLength(20);
-		const planned = bigChunks.flatMap((chunk) => chunk.slots.map((s) => `${s.itemId}-${s.type}`));
-		expect(result.challenges.map((c) => c.explanation)).toEqual(planned);
+		expect(result.challenges.map((c) => c.explanation)).toEqual(bigStamps);
 	});
 
-	it('runs at most CHUNK_CONCURRENCY requests at once', async () => {
-		expect(bigChunks.length).toBeGreaterThan(CHUNK_CONCURRENCY);
-		const fake = chunkFetch();
+	it('runs at most REQUEST_CONCURRENCY requests at once', async () => {
+		expect(bigRequests.length).toBeGreaterThan(REQUEST_CONCURRENCY);
+		const fake = modelFetch(bigRequests);
 		await generateBatch(bigArgs, callOpts(fake.fetchFn));
 
-		expect(fake.maxInFlight).toBe(CHUNK_CONCURRENCY);
+		expect(fake.maxInFlight).toBe(REQUEST_CONCURRENCY);
 	});
 
 	it('says how many requests it is waiting on, in one step', async () => {
-		const fake = chunkFetch();
+		const fake = modelFetch(bigRequests);
 		const steps: ProgressStep[] = [];
 		await generateBatch(bigArgs, { ...callOpts(fake.fetchFn), onProgress: (s) => steps.push(s) });
 
 		expect(steps.map((s) => s.id)).toEqual(['build-prompt', 'request', 'validate']);
-		expect(steps[1].label).toContain(`${bigChunks.length} requests`);
+		expect(steps[1].label).toContain(`${bigRequests.length} requests`);
 	});
 
 	it('propagates an abort rather than reporting an unusable lesson', async () => {
 		const controller = new AbortController();
-		const fake = chunkFetch();
+		const fake = modelFetch(bigRequests);
 		controller.abort();
 
 		const error = await generateBatch(bigArgs, {
@@ -993,9 +1112,9 @@ describe('generateBatch, chunked', () => {
 	});
 
 	it('lets a key or rate-limit failure sink the lesson immediately', async () => {
-		// Unlike a bad reply, this would meet every other chunk too — so "sink the
-		// lesson" has to mean *now*, not after the remaining chunks have each
-		// bought their own 429. The pool opens CHUNK_CONCURRENCY requests before
+		// Unlike a bad reply, this would meet every other request too — so "sink the
+		// lesson" has to mean *now*, not after the remaining requests have each
+		// bought their own 429. The pool opens REQUEST_CONCURRENCY requests before
 		// any of them can answer; nothing beyond those is ever dispatched.
 		let calls = 0;
 		const fetchFn: FetchLike = async () => {
@@ -1006,12 +1125,12 @@ describe('generateBatch, chunked', () => {
 			kind: 'rate-limit'
 		});
 
-		expect(bigChunks.length).toBeGreaterThan(CHUNK_CONCURRENCY);
-		expect(calls).toBe(CHUNK_CONCURRENCY);
+		expect(bigRequests.length).toBeGreaterThan(REQUEST_CONCURRENCY);
+		expect(calls).toBe(REQUEST_CONCURRENCY);
 	});
 
-	it('cancels the requests still in flight when one chunk sinks the lesson', async () => {
-		// The first chunk to fail fatally aborts its siblings rather than letting
+	it('cancels the requests still in flight when one of them sinks the lesson', async () => {
+		// The first request to fail fatally aborts its siblings rather than letting
 		// them finish a lesson that is already lost.
 		const aborted: boolean[] = [];
 		let calls = 0;
@@ -1028,7 +1147,7 @@ describe('generateBatch, chunked', () => {
 		await expect(generateBatch(bigArgs, callOpts(fetchFn))).rejects.toMatchObject({
 			kind: 'auth'
 		});
-		expect(aborted.filter(Boolean).length).toBe(CHUNK_CONCURRENCY - 1);
+		expect(aborted.filter(Boolean).length).toBe(REQUEST_CONCURRENCY - 1);
 	});
 });
 
@@ -1362,6 +1481,37 @@ describe('resolveBatch', () => {
 			expect(challenge?.wordBank).toContain('菜单');
 		});
 
+		it('trims the bank to the size the challenge was planned at', () => {
+			// A parameter the resolver can hold the model to: the bank is how much
+			// support a word at this rung gets, so a generous one is cut back rather
+			// than making the challenge quietly easier than the plan asked for.
+			const challenge = resolveCloze(
+				{
+					distractorWords: ['筷子', '茶', '水', '碗', '杯子'].map((text) => ({
+						text,
+						reading: null
+					}))
+				},
+				{ paramsByItem: new Map([['i1', { words: 7, bank: 3 }]]) }
+			);
+			expect(challenge?.wordBank).toHaveLength(3);
+			expect(challenge?.wordBank).toContain('菜单');
+		});
+
+		it('drops a bank the plan did not ask for at all', () => {
+			// `bank: 0` was a request for a typed cloze. Distractors sent anyway are
+			// discarded: the two are different exercises for different stages.
+			const challenge = resolveCloze({}, { paramsByItem: new Map([['i1', { bank: 0 }]]) });
+			expect('wordBank' in (challenge ?? {})).toBe(false);
+			expect(challenge?.acceptedAnswers).toContain('菜单');
+		});
+
+		it('leaves the bank alone when no parameters travelled with it', () => {
+			// The mock and a bare `resolveBatch` pass none, and must behave exactly
+			// as they did before.
+			expect(resolveCloze()?.wordBank).toHaveLength(4);
+		});
+
 		it('has no word bank at all when the model sent no distractors', () => {
 			const challenge = resolveCloze({ distractorWords: null });
 			expect('wordBank' in (challenge ?? {})).toBe(false);
@@ -1554,6 +1704,25 @@ describe('resolveBatch', () => {
 			expect(challenge).toBeDefined();
 			expect(challenge).not.toHaveProperty('tilesRomanization');
 			expect(challenge).not.toHaveProperty('answerRomanization');
+		});
+
+		it('caps the distractors at the count the challenge was planned with', () => {
+			// Extra tiles are the second half of this type's difficulty, so a tray
+			// padded past the plan is trimmed rather than left as a harder puzzle.
+			const challenge = resolveWordOrder(
+				{
+					distractorWords: ['bebo', 'como', 'corro'].map((text) => ({ text, reading: null }))
+				},
+				{ paramsByItem: new Map([['i1', { tiles: 4, distractors: 1 }]]) }
+			);
+			expect(challenge?.tiles).toHaveLength(5);
+
+			// Nothing at all at the bottom of the ladder.
+			const bare = resolveWordOrder(
+				{ distractorWords: [{ text: 'bebo', reading: null }] },
+				{ paramsByItem: new Map([['i1', { tiles: 3, distractors: 0 }]]) }
+			);
+			expect(bare?.tiles).toHaveLength(4);
 		});
 
 		it('caps an oversized distractor list instead of dropping the challenge', () => {
@@ -1879,6 +2048,82 @@ describe('makeMatchPairsChallenge', () => {
 				{ ...items[3], id: 'k9', term: 'temprano', meaning: 'meaning-0' }
 			];
 			expect(makeMatchPairsChallenge(four, () => 0.5)).toBeUndefined();
+		});
+	});
+
+	/**
+	 * The free round is sized off the same 1-5 ladder every paid type is written
+	 * to. These pin the ladder itself, its bounds against the stored side's
+	 * `FEWEST_PAIRS`/`MOST_PAIRS` scale, and the two ways a short vocabulary can
+	 * land.
+	 */
+	describe('ladder sizing', () => {
+		const rungs = [1, 2, 3, 4, 5] as const;
+
+		/** Twelve collision-free words, so every rung can be satisfied outright. */
+		const plenty: KnowledgeItem[] = Array.from({ length: 12 }, (_, i) => ({
+			id: `p${i}`,
+			kind: 'vocab',
+			term: `term-${i}`,
+			meaning: `meaning-${i}`,
+			fsrsCard: null,
+			introducedAt: 0,
+			history: []
+		}));
+
+		const pairCount = (challenge: Challenge | undefined) =>
+			challenge?.type === 'match-pairs' ? challenge.pairs.length : undefined;
+
+		it('never falls as the rung rises, and stays inside the stored 2..6 scale', () => {
+			const counts = rungs.map((rung) =>
+				pairCount(makeMatchPairsChallenge(plenty, () => 0.5, { difficulty: rung }))
+			);
+
+			expect(counts).toEqual([...counts].sort((a, b) => (a ?? 0) - (b ?? 0)));
+			for (const count of counts) {
+				expect(count).toBeGreaterThanOrEqual(2);
+				expect(count).toBeLessThanOrEqual(6);
+			}
+			// The whole ladder is exercised: the top rung asks for more than the
+			// bottom one, or sizing would be a no-op that still typechecked.
+			expect(counts.at(-1)).toBeGreaterThan(counts[0] ?? 0);
+		});
+
+		it('honours each rung exactly when there are words enough', () => {
+			const counts = rungs.map((rung) =>
+				pairCount(makeMatchPairsChallenge(plenty, () => 0.5, { difficulty: rung }))
+			);
+			expect(counts).toEqual([3, 4, 5, 6, 6]);
+		});
+
+		it('builds the smaller round rather than declining when words run short', () => {
+			// Rung 5 wants six; three collision-free words is still a playable round
+			// and still above the ladder's own floor.
+			const three = plenty.slice(0, 3);
+			expect(pairCount(makeMatchPairsChallenge(three, () => 0.5, { difficulty: 5 }))).toBe(3);
+			expect(
+				pairCount(makeMatchPairsChallenge(plenty.slice(0, 5), () => 0.5, { difficulty: 4 }))
+			).toBe(5);
+		});
+
+		it('declines below the smallest round the ladder can ask for', () => {
+			expect(
+				makeMatchPairsChallenge(plenty.slice(0, 2), () => 0.5, { difficulty: 1 })
+			).toBeUndefined();
+			// Collisions are resolved before the floor is applied, exactly as they
+			// are for an unsized round.
+			const clashing = [...plenty.slice(0, 2), { ...plenty[2], meaning: plenty[0].meaning }];
+			expect(makeMatchPairsChallenge(clashing, () => 0.5, { difficulty: 3 })).toBeUndefined();
+		});
+
+		it('leaves an unsized round exactly as it was', () => {
+			// No `difficulty`: the four-or-five draw, and the old four-item floor.
+			for (let seed = 0; seed < 20; seed++) {
+				const count = pairCount(makeMatchPairsChallenge(plenty, () => seed / 20));
+				expect(count).toBeGreaterThanOrEqual(4);
+				expect(count).toBeLessThanOrEqual(5);
+			}
+			expect(makeMatchPairsChallenge(plenty.slice(0, 3), () => 0.5)).toBeUndefined();
 		});
 	});
 });

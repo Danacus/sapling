@@ -194,7 +194,7 @@ describe('interleaveMatchRounds', () => {
 	}
 
 	it('slots a round in after every Nth challenge', () => {
-		const queue = interleaveMatchRounds(generated(9), known(6));
+		const queue = interleaveMatchRounds(generated(9), known(6), NOW);
 
 		expect(queue).toHaveLength(11);
 		expect(types(queue).map((type) => type === 'match-pairs')).toEqual([
@@ -218,7 +218,7 @@ describe('interleaveMatchRounds', () => {
 
 	it('never ends a session on free filler', () => {
 		// An exact multiple of N: the last splice point is the last challenge.
-		const queue = interleaveMatchRounds(generated(2 * MATCH_PAIRS_EVERY), known(6));
+		const queue = interleaveMatchRounds(generated(2 * MATCH_PAIRS_EVERY), known(6), NOW);
 
 		expect(queue).toHaveLength(2 * MATCH_PAIRS_EVERY + 1);
 		expect(queue.at(-1)?.type).not.toBe('match-pairs');
@@ -226,18 +226,19 @@ describe('interleaveMatchRounds', () => {
 	});
 
 	it('returns an empty queue for an empty plan', () => {
-		expect(interleaveMatchRounds([], known(6))).toEqual([]);
+		expect(interleaveMatchRounds([], known(6), NOW)).toEqual([]);
 	});
 
 	it('leaves the plan alone when a round cannot be built', () => {
-		// Fewer than four usable items: `makeMatchPairsChallenge` declines, and
-		// with static items that means no round anywhere.
+		// Below the ladder's own floor of three usable items:
+		// `makeMatchPairsChallenge` declines, and with static items that means no
+		// round anywhere.
 		const plan = generated(9);
-		expect(interleaveMatchRounds(plan, known(3))).toEqual(plan);
+		expect(interleaveMatchRounds(plan, known(2), NOW)).toEqual(plan);
 	});
 
 	it('builds each round independently, and deterministically from its rng', () => {
-		const queue = interleaveMatchRounds(generated(9), known(8), lcg(1));
+		const queue = interleaveMatchRounds(generated(9), known(8), NOW, lcg(1));
 		const rounds = queue.filter((challenge) => challenge.type === 'match-pairs');
 
 		expect(rounds).toHaveLength(2);
@@ -245,12 +246,60 @@ describe('interleaveMatchRounds', () => {
 		// Fresh shuffle per splice point: the second round is not a copy of the first.
 		expect(rounds[0].itemIds).not.toEqual(rounds[1].itemIds);
 
-		const again = interleaveMatchRounds(generated(9), known(8), lcg(1));
+		const again = interleaveMatchRounds(generated(9), known(8), NOW, lcg(1));
 		expect(
 			again
 				.filter((challenge) => challenge.type === 'match-pairs')
 				.map((challenge) => challenge.itemIds)
 		).toEqual(rounds.map((challenge) => challenge.itemIds));
+	});
+
+	/**
+	 * The rounds are the one part of a session nobody pays for, and they used to
+	 * be the one part that ignored how far along the learner was. These pin the
+	 * ladder reaching them, and — more importantly — pin *which* rung a round of
+	 * mixed vocabulary is written at.
+	 */
+	describe('sizing off the ladder', () => {
+		const pairsOf = (queue: Challenge[]) =>
+			queue
+				.filter((challenge) => challenge.type === 'match-pairs')
+				.map((challenge) => (challenge.type === 'match-pairs' ? challenge.pairs.length : 0));
+
+		it('gives new words a three-pair breather', () => {
+			// `item`'s card is `newCardState`: strength 0, so every word is rung 1.
+			expect(pairsOf(interleaveMatchRounds(generated(9), known(8), NOW))).toEqual([3, 3]);
+		});
+
+		it('gives a vocabulary the learner owns the full six', () => {
+			const strong = Array.from({ length: 8 }, (_, i) => strongItem(`k${i}`, -DAY));
+			expect(pairsOf(interleaveMatchRounds(generated(9), strong, NOW))).toEqual([6, 6]);
+		});
+
+		it('takes the median rung, so one mature word cannot size the round', () => {
+			// Seven brand-new words and one the learner owns outright: the median is
+			// still rung 1, and the round is still the three-pair breather.
+			const mixed = [
+				...Array.from({ length: 7 }, (_, i) => item(`k${i}`, -DAY)),
+				strongItem('k7', -DAY)
+			];
+			expect(pairsOf(interleaveMatchRounds(generated(5), mixed, NOW))).toEqual([3]);
+		});
+
+		it('follows the median up when most of the vocabulary is strong', () => {
+			// The mirror image: one new word among seven strong ones moves nothing.
+			const mixed = [
+				...Array.from({ length: 7 }, (_, i) => strongItem(`k${i}`, -DAY)),
+				item('k7', -DAY)
+			];
+			expect(pairsOf(interleaveMatchRounds(generated(5), mixed, NOW))).toEqual([6]);
+		});
+
+		it('builds a smaller round rather than none when the vocabulary is short', () => {
+			// Rung 5 asks for six pairs and there are four words to make them from.
+			const strong = Array.from({ length: 4 }, (_, i) => strongItem(`k${i}`, -DAY));
+			expect(pairsOf(interleaveMatchRounds(generated(5), strong, NOW))).toEqual([4]);
+		});
 	});
 });
 
@@ -1468,7 +1517,7 @@ describe('session walkthrough (mock batch, no database)', () => {
 		// The session is planned once, up front — no database read mid-play — and
 		// the free rounds are spliced in there too, so play is one walk.
 		const planned = planSession(pool, items, NOW);
-		const queue = interleaveMatchRounds(planned, items);
+		const queue = interleaveMatchRounds(planned, items, NOW);
 
 		const answers: SessionAnswer[] = [];
 		let llmAnswered = 0;

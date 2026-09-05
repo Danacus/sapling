@@ -12,31 +12,44 @@
  * concurrent calls; grading happens locally for free (`$lib/validate`,
  * `$lib/srs`) and only an explicit "explain this" escalates to a second call
  * (`./escalation`). `match-pairs` never costs a token at all — see
- * {@link makeMatchPairsChallenge}.
+ * {@link makeMatchPairsChallenge}, which reads the same 1-5 ladder the paid
+ * types are sized by and spends nothing to do it.
  *
- * **A lesson is many short requests, not one long one.** Asking for twenty
- * challenges about twelve words in a single completion produced visibly worse
- * output towards the end: the model loses track of the rules and of what it has
- * already written, one bad reply costs the whole lesson a corrective retry, and
- * the wall clock is one long serial completion. So {@link planSlots} decides
- * locally *which* challenges the lesson is made of, {@link chunkSlots} cuts that
- * plan into requests of a few slots about a few words, and {@link generateBatch}
- * runs them concurrently against the *same static* `SYSTEM_PROMPT` — static
- * because that is what keeps prompt caching paying for itself across chunks and
- * across sessions. Each chunk carries its own corrective retry, and a chunk that
- * still fails is **dropped, not fatal**: the lesson is whatever came back, and
- * only a merged total below {@link MIN_BATCH_CHALLENGES} is an error.
+ * **A lesson is many short requests, and each one is about exactly one type.**
+ * Asking for twenty challenges about twelve words in a single completion
+ * produced visibly worse output towards the end: the model loses track of the
+ * rules and of what it has already written, one bad reply costs the whole lesson
+ * a corrective retry, and the wall clock is one long serial completion. Asking
+ * for a *mixed* handful was better but still a puzzle — every request carried all
+ * seven types' field lists and rules, plus a list of slots to match them up
+ * against, plus an abstract difficulty number to interpret.
+ *
+ * So {@link planSlots} decides locally *which* challenges the lesson is made of,
+ * {@link groupIntoRequests} cuts that plan by **kind**, and {@link generateBatch}
+ * runs the requests concurrently. One request is one wire type: its system
+ * prompt ({@link systemPromptFor}) explains that type and no other, its JSON
+ * schema admits that type and no other, and its payload is a list of words each
+ * carrying the **countable parameters** that type is sized by — a sentence
+ * length, a word-bank size, a tile count, computed here from the word's ladder
+ * rung by the def's own `params`. The model never sees the word "slot", a
+ * difficulty from 1 to 5, or the six types it is not writing. The prompt stays
+ * static *per type*, which is what keeps prompt caching paying across the
+ * lesson's requests and across sessions.
+ *
+ * Each request carries its own corrective retry, and a request that still fails
+ * is **dropped, not fatal**: the lesson is whatever came back, and only a merged
+ * total below {@link MIN_BATCH_CHALLENGES} is an error.
  *
  * Everything here is stateless with respect to the database: data in, data out.
  * The caller persists the result.
  *
  * What it deliberately does *not* know is the challenge types. Each wire type
- * owns its schema, its prompt line, its corrective line and its resolver in
- * `./challenge-types/<type>.ts`; this module composes the prompt out of the
- * registry and dispatches to it, and even `generatedChallengeSchema` — imported
- * below from `./schemas` — is a projection of that same registry. The pipeline
- * it keeps for itself is the part
- * that is the same for every type: the calls and their corrective retries,
+ * owns its schema, its prompt line, its parameter ladder, its corrective line
+ * and its resolver in `./challenge-types/<type>.ts`; this module wraps whichever
+ * def a request is for in a shared preamble and dispatches to it, and even
+ * `generatedChallengeSchema` — imported below from `./schemas` — is a projection
+ * of that same registry. The pipeline it keeps for itself is the part that is
+ * the same for every type: the calls and their corrective retries,
  * salvage-parsing, id minting, term-citation resolution, and counting what had
  * to be dropped.
  */
@@ -44,30 +57,26 @@
 import { getModel } from '$lib/db/settings';
 import { termKey } from '$lib/text';
 import type { Challenge, KnowledgeItem, Profile } from '$lib/types';
-import {
-	WIRE_TYPE_DEFS,
-	byType,
-	clozeDef,
-	produceMcDef,
-	recognizeMcDef,
-	spotErrorDef,
-	translateToNativeDef,
-	translateToTargetDef,
-	wordOrderDef
+import { byType } from './challenge-types';
+import type {
+	AnyWireTypeDef,
+	ChallengeBase,
+	ChallengeParams,
+	DifficultyRung,
+	ResolveContext
 } from './challenge-types';
-import type { ChallengeBase, ResolveContext } from './challenge-types';
 import { chatCompletion, LlmError } from './client';
 import type { ChatMessage, FetchLike, TokenUsage } from './client';
 import { labelKey, optionalString, shuffled, undefinedIfBlank } from './resolve-helpers';
 import {
-	BATCH_SCHEMA_NAME,
-	batchJsonSchema,
+	batchJsonSchemaFor,
+	batchSchemaNameFor,
 	generatedChallengeSchema,
 	looseBatchSchema
 } from './schemas';
 import type { GeneratedChallenge } from './schemas';
-import { CHUNK_CONCURRENCY, MAX_BATCH_CHALLENGES, chunkSlots, planSlots } from './slots';
-import type { Slot, SlotChunk } from './slots';
+import { MAX_BATCH_CHALLENGES, REQUEST_CONCURRENCY, groupIntoRequests, planSlots } from './slots';
+import type { TypeRequest } from './slots';
 
 /**
  * Re-exported for callers (and tests) that knew them as part of this module
@@ -82,7 +91,7 @@ export { MAX_WORD_ORDER_DISTRACTORS, MAX_WORD_ORDER_TILES } from './resolve-help
  */
 export { MAX_BATCH_CHALLENGES, defaultChallengeCount } from './slots';
 
-/** Below this many salvaged challenges across all chunks a lesson is not worth playing. */
+/** Below this many salvaged challenges across every request a lesson is not worth playing. */
 export const MIN_BATCH_CHALLENGES = 5;
 
 /** One word the batch is to be written about: the id, the word, its meaning. */
@@ -132,7 +141,7 @@ export interface RecentMistake {
  * id** regardless: `request` fires once and says how many calls are in flight,
  * `retry` fires once the first time any of them has to be re-asked, and
  * `validate` fires once when they have all settled. The learn screen times each
- * step from its event to the next, so a step per chunk would turn a truthful
+ * step from its event to the next, so a step per request would turn a truthful
  * timeline into a flickering list of near-zero durations.
  */
 export type ProgressStepId =
@@ -177,6 +186,14 @@ export interface BatchArgs {
 	 * no other source of vocabulary.
 	 */
 	reviewItems: ReviewItemRef[];
+	/**
+	 * What the learner just got wrong — a **local** dial like `recentAccuracy`,
+	 * and no longer part of any prompt. `./slots` reads it twice: a missed word
+	 * earns an extra slot in a format it has not had, and every slot about it is
+	 * planned a rung easier. Sending "write this one easier" on top of a
+	 * parameter that already says how long to write it was two instructions for
+	 * one decision, and the model could only guess how the two combined.
+	 */
 	recentMistakes?: RecentMistake[];
 	/**
 	 * Share of recent reviews the learner got right, 0..1 — a difficulty dial, but
@@ -250,24 +267,36 @@ export interface BatchResult {
 // --------------------------------------------------------------------------
 
 /**
- * The system prompt. Written for tokens, not for looks: no pleasantries, one
- * inline example per challenge type, rules as bare imperatives. Unchanged across
- * every call — and now across every *chunk* of every call, which is what makes
- * the chunked design cheap: a lesson's four or five requests all quote the same
- * cached prefix and differ only in a short user message. It buys back more than
- * it costs: better challenges mean fewer regenerated batches, and the
- * content-only wire format keeps grading local.
+ * True when this wire type has an `instruction` field, read off its own schema.
  *
- * It no longer says which type to write, or how hard by way of an accuracy
- * threshold. Type selection — level floors, the recognition/production mix, the
- * extra go a just-failed word earns — and difficulty selection — the ladder
- * level itself, shifted by accuracy and by a recent miss — are both decided
- * locally in `./slots` and arrive as an explicit `slots` list, each entry
- * carrying its own `type` and `difficulty`, so those rules cost nothing per call
- * and are testable. What stays here is calibration of *content* given a slot's
- * `difficulty`: how long an answer should be, how hard a sentence should read —
- * and, per type, exactly which observable knob to turn (`./challenge-types`'
- * own gradient line for each).
+ * The heading rule is worth a line only where there is a field to write it into,
+ * and a def that grows one should get the rule without anyone remembering to add
+ * it here. The cast is the price: `WireTypeDef.schema` is declared as the
+ * general `z.ZodType`, which has no `shape` — every def's is in fact a
+ * `z.ZodObject`, and asking for a key it may not have is the narrowest possible
+ * way to depend on that.
+ */
+function hasInstructionField(def: AnyWireTypeDef): boolean {
+	const shape = (def.schema as { shape?: Record<string, unknown> }).shape;
+	return !!shape && 'instruction' in shape;
+}
+
+/**
+ * The system prompt for **one wire type**. Written for tokens, not for looks: no
+ * pleasantries, one inline example, rules as bare imperatives.
+ *
+ * Static per type and memoised, which is what keeps prompt caching paying: a
+ * lesson's requests of the same kind quote a byte-identical prefix, and so does
+ * every lesson after this one. Splitting the prompt per type made it *cheaper*
+ * rather than dearer — a request used to carry all seven types' field lists,
+ * examples and rules to ask for four challenges of one of them.
+ *
+ * What it says is only ever about this one type. The shared preamble names no
+ * type at all, then `promptSpec` gives this type's fields and example,
+ * `paramsSpec` explains the counts each item carries, and `rulesSpec` adds
+ * whatever else this type needs — including rules a second type also needs
+ * (segmentation is spelled out in both tile types), because a duplicated line is
+ * only ever paid on its own type's calls.
  *
  * Three blocks earn their keep beyond the bare schema:
  *
@@ -279,7 +308,11 @@ export interface BatchResult {
  * - **Voice.** Left to itself the model writes flashcard prose — "I like to
  *   cook", "Cooking is fun" — one bland declarative per interest. The voice
  *   rules force dialogue turns, questions and situational phrases instead, and
- *   name the bland patterns explicitly so they can be refused.
+ *   name the bland patterns explicitly so they can be refused. The
+ *   no-repeated-frame rule matters more here than it did: a reply is now six
+ *   challenges of the *same* type, which is exactly where a model starts
+ *   producing variations on one sentence.
+ *
  * - **Romanization.** Non-Latin scripts are unreadable and untypeable for a
  *   beginner, so every target-language string travels as a `TargetText`: the
  *   text and its Latin reading together, in one object. That is the whole rule —
@@ -290,59 +323,62 @@ export interface BatchResult {
  *   listing "nǐ hǎo" and "ni hao" side by side. Latin-script targets send
  *   `"reading": null` everywhere and pay nothing.
  *
- * The `Types:` block is composed from the wire-type registry
- * (`./challenge-types`), so a type's field list and example live in the same
- * module as the zod schema they describe and the resolver that consumes it, and
- * the three cannot drift apart — describing a field the schema will reject is
- * one edit away from impossible. In `Rules:`, every def's `rulesSpec` — its
- * structural rule where it has one (cloze's vocabulary-level rule, word-order's
- * one-natural-order rule, ...) *and* now its own difficulty gradient, the same
- * bullet where the two coexist — is spliced in beside it; only the rules that
- * name no single type stay hand-written here (segmentation covers word-order
- * *and* spot-error; the never-swap-sides rule enumerates six fields across five
- * types) and splitting those up would cost tokens to say the same thing several
- * times.
+ * There is no difficulty ladder here at all any more, and no "difficulty" key
+ * for the model to interpret. Difficulty *is* the parameters on each item — a
+ * word count, a bank size, a tile count — which each def computes from the
+ * planned rung and explains in its own `paramsSpec`. A number the model can
+ * count is a number it can hit.
  */
-const SYSTEM_PROMPT = [
-	'You are an expert language-course author. Output one JSON object and nothing else: no prose, no markdown fences.',
-	'Shape: {"challenges":[Challenge]}',
-	'Every Challenge has: type, itemIds, explanation (one short sentence or null). The rest of its fields depend on the type.',
-	'TargetText, written {"text":..,"reading":..}, is one string of the TARGET language plus its Latin reading: pinyin with tone marks for Mandarin, romaji for Japanese, revised romanization for Korean, the standard scheme otherwise. "reading" is ALWAYS null when the target language is written in the Latin script. Every field that is not a TargetText is plain text in the NATIVE language.',
-	'Types:',
-	...WIRE_TYPE_DEFS.map((def) => def.promptSpec),
-	'Rules:',
-	'- itemIds: the id of a reviewItem, or — for a challenge built on a word from known — that word exactly as it appears in known, its parenthesised reading included. Never invent anything else.',
-	'- A known entry written "word (reading)" is one of two same-spelled words told apart by how it is read; cite it with the parenthesis, but write only the word itself into a sentence.',
-	'- slots is the exact lesson to write: produce one challenge object per slot, in the same order, of that slot\'s "type", about the reviewItem its "item" names. Never a type that is not asked for, never an extra challenge, never a slot left unwritten.',
-	'- A "cloze" slot with "bank": true has distractorWords; with "bank": false it has none.',
-	'- Distractors must be plausible: same part of speech and register, never synonyms of the correct answer, never obviously absurd. Exactly one of the four may be correct given the prompt; if two would both answer it, rewrite the prompt.',
-	'- Sides never swap: correctMeaning, recognize-mc distractors, promptNative, hintNative, meaningNative, answersNative and instruction are NATIVE-language text and never contain target-language words or script. A challenge whose prompt and options are in the same language is invalid — one side is always the native language.',
-	recognizeMcDef.rulesSpec,
-	produceMcDef.rulesSpec,
-	translateToTargetDef.rulesSpec,
-	translateToNativeDef.rulesSpec,
-	'- Answerable from what is shown alone: the prompt, plus the challenge type, must uniquely determine the answer. Never an open question whose answer depends on facts you never state — directions, prices, names, times, opinions, anything from an imagined scene the learner cannot see.',
-	'- In a situational dialogue either give the exact line to produce ("Say: \'the fish stall is to the right\'") or make answers cover every plausible alternative reply.',
-	'- instruction: a short heading, in the NATIVE language, matched to what the challenge actually asks — "What does this mean?" for a plain meaning question, "Pick the best reply" or "How would you answer?" for a conversational turn; null when the default meaning-question heading fits.',
-	clozeDef.rulesSpec,
-	'- Segmentation (word-order, spot-error): one tile per WORD, never per character or syllable, and punctuation rides on the tile it touches — never a tile of its own ("吗？" is one tile, "？" alone is not a tile). For Chinese and Japanese split on word boundaries — 菜单 is one tile, not 菜 + 单. Each tile is a TargetText and carries its own reading under the usual rule.',
-	wordOrderDef.rulesSpec,
-	spotErrorDef.rulesSpec,
-	"- known is the learner's whole vocabulary and it is what you build with: every challenge is about a reviewItem, and the words around it come from known, so the learner mostly reads what they can already read. Teach nothing new — a word outside known may appear as glue when a sentence needs it, never as the thing being tested.",
-	'Difficulty calibration:',
-	'- Each slot carries "difficulty" 1-5, 1 easiest: scale sentence length, glue vocabulary and scaffolding to it — never correctness. Each type above states its own gradient.',
-	'- A term in recentMistakes is one the learner just got wrong; write it EASIER than last time, with more of the sentence given.',
-	'Voice:',
-	'- Conversation, not flashcards: every prompt, sentence and translation is a line someone would really say — a dialogue turn, a question put to the learner, a request, a reaction, an opinion. Never an isolated textbook statement.',
-	'- With a "topic", EVERY challenge happens inside that scenario: cloze sentences are turns of that dialogue, translations are things you would really say there, and the reviewItems are worked into it. "interests" then only colour word choice, never the sentence frame.',
-	'- "about" is the learner in their own words. Set scenarios in their life — their city, work, people, tastes — and let it colour word choice and examples. Never recite it back to them, never contradict it, and "topic" still outranks it.',
-	'- Banned: "I like <interest>", "<interest> is fun", any sentence whose only content is that the learner likes their interest, and reusing a sentence frame twice in one reply. Vary speaker, question vs statement, and register for the level.',
-	'- explanation: one line of usage or culture (register, politeness, word order) when non-obvious, written in the NATIVE language (target-language words may be quoted inside it); null when it would only restate the answer.'
-]
-	// `rulesSpec` is optional — a wire type with no rule of its own contributes
-	// no line, rather than a blank one the model would have to read past.
-	.filter((line): line is string => line !== undefined)
-	.join('\n');
+function composeSystemPrompt(def: AnyWireTypeDef): string {
+	return (
+		[
+			'You are an expert language-course author. Output one JSON object and nothing else: no prose, no markdown fences.',
+			'Shape: {"challenges":[Challenge]}',
+			`Every Challenge has: type (always "${def.type}"), itemIds, explanation (one short sentence or null), plus the fields below.`,
+			'TargetText, written {"text":..,"reading":..}, is one string of the TARGET language plus its Latin reading: pinyin with tone marks for Mandarin, romaji for Japanese, revised romanization for Korean, the standard scheme otherwise. "reading" is ALWAYS null when the target language is written in the Latin script. Every field that is not a TargetText is plain text in the NATIVE language.',
+			'Type:',
+			def.promptSpec,
+			'Each entry in items also carries the size to write it at:',
+			def.paramsSpec,
+			'Rules:',
+			`- items is the exact lesson to write: exactly one "${def.type}" challenge per entry, in the same order, about the word that entry names, at the size that entry gives. Never another type, never an extra challenge, never an entry left unwritten.`,
+			'- Treat every size as a target to hit, not a maximum: one or two either side is fine, half or double is not.',
+			'- itemIds: the id of an item, or — for a challenge built on a word from known — that word exactly as it appears in known, its parenthesised reading included. Never invent anything else.',
+			'- A known entry written "word (reading)" is one of two same-spelled words told apart by how it is read; cite it with the parenthesis, but write only the word itself into a sentence.',
+			'- Sides never swap: a field described as native-language text is always in the NATIVE language and never contains target-language words or script, and every TargetText is always the target language. A challenge whose question and answers are in the same language is invalid.',
+			'- Wrong options must be plausible: same part of speech and register, never a synonym of the right answer, never obviously absurd — and never a second right answer. If two would both fit, rewrite the question.',
+			'- Answerable from what is shown alone: the prompt, plus the challenge type, must uniquely determine the answer. Never an open question whose answer depends on facts you never state — directions, prices, names, times, opinions, anything from an imagined scene the learner cannot see.',
+			'- In a situational dialogue either give the exact line to produce ("Say: \'the fish stall is to the right\'") or make answers cover every plausible alternative reply.',
+			hasInstructionField(def)
+				? '- instruction: a short heading, in the NATIVE language, matched to what the challenge actually asks — "What does this mean?" for a plain meaning question, "Pick the best reply" or "How would you answer?" for a conversational turn; null when the default meaning-question heading fits.'
+				: undefined,
+			"- known is the learner's whole vocabulary and it is what you build with: every challenge is about one of the items, and the words around it come from known, so the learner mostly reads what they can already read. Teach nothing new — a word outside known may appear as glue when a sentence needs it, never as the thing being tested.",
+			def.rulesSpec,
+			'Voice:',
+			'- Conversation, not flashcards: every prompt, sentence and translation is a line someone would really say — a dialogue turn, a question put to the learner, a request, a reaction, an opinion. Never an isolated textbook statement.',
+			'- With a "topic", EVERY challenge happens inside that scenario: sentences are turns of that dialogue, translations are things you would really say there, and the words in items are worked into it. "interests" then only colour word choice, never the sentence frame.',
+			'- "about" is the learner in their own words. Set scenarios in their life — their city, work, people, tastes — and let it colour word choice and examples. Never recite it back to them, never contradict it, and "topic" still outranks it.',
+			'- Banned: "I like <interest>", "<interest> is fun", any sentence whose only content is that the learner likes their interest, and reusing a sentence frame twice in one reply. Vary speaker, question vs statement, and register for the level.',
+			'- explanation: one line of usage or culture (register, politeness, word order) when non-obvious, written in the NATIVE language (target-language words may be quoted inside it); null when it would only restate the answer.'
+		]
+			// `rulesSpec` is optional, and the instruction rule is conditional — a line
+			// that does not apply is absent rather than blank.
+			.filter((line): line is string => line !== undefined)
+			.join('\n')
+	);
+}
+
+/** Composed once per type and kept: see {@link composeSystemPrompt}. */
+const systemPrompts = new Map<string, string>();
+
+/** This type's system prompt — the same string for every request of this kind. */
+export function systemPromptFor(def: AnyWireTypeDef): string {
+	const cached = systemPrompts.get(def.type);
+	if (cached !== undefined) return cached;
+	const prompt = composeSystemPrompt(def);
+	systemPrompts.set(def.type, prompt);
+	return prompt;
+}
 
 /**
  * How each known word is written into the prompt: bare, or `term (reading)`.
@@ -377,38 +413,40 @@ export function knownTermLabels(known: readonly KnownItemRef[]): string[] {
 }
 
 /**
- * Builds the two messages for **one chunk** of a lesson. The user message is
- * compact JSON — no field labels in prose, no restating of the rules.
+ * Builds the two messages for **one request**. The user message is compact JSON
+ * — no field labels in prose, no restating of the rules.
  *
- * The system half is the same static string for every chunk, so a lesson's four
- * or five requests share one cached prefix and only the short user half differs.
- * That user half is now genuinely short: the `slots` list replaces the paragraph
- * of type-selection *and* difficulty-cliff rules the prompt used to carry —
- * `level` no longer travels at all (it decided the type, and the type is
- * decided; `./slots` folds it into each slot's own `difficulty` instead) and
- * neither does `recentAccuracy` (it only ever fed those same cliffs, and the
- * shift it now applies is entirely local) — and `recentMistakes` is narrowed to
- * the words this chunk is actually about.
+ * The system half is this type's own static string, so a lesson's requests of
+ * one kind share a cached prefix and every lesson after this one shares it too.
+ * The user half is genuinely short. `type` does not travel — it is the whole
+ * subject of the system prompt. Neither does `difficulty`: each item carries the
+ * *parameters* that rung means for this type instead, which is a number the
+ * model can count rather than a scale it has to interpret. Nor does `level` (it
+ * chose the type, and the type is chosen), nor `recentAccuracy` (it only ever
+ * fed local decisions), nor `recentMistakes` — a just-missed word already earns
+ * an extra slot and a rung off in `./slots`, and telling the model "write this
+ * one easier" on top of a parameter that already says how long to write it is
+ * two instructions for one decision.
  *
- * `known` is *not* narrowed. It is the vocabulary every sentence is built out
- * of, whichever words the chunk is testing, and it is the citation vocabulary
- * the resolver indexes — so it rides along whole, in the same order, on every
- * chunk. That repetition is the price of the split; against the static prompt it
- * is the smaller half.
+ * `known` is *not* narrowed to the request's words. It is the vocabulary every
+ * sentence is built out of, whichever words are being tested, and it is the
+ * citation vocabulary the resolver indexes — so it rides along whole, in the
+ * same order, on every request. That repetition is the price of the split;
+ * against the static prompt it is the smaller half.
  *
- * **Key order is load-bearing.** Everything identical across a lesson's chunks —
- * profile, `topic`, `about` and the whole `known` list, which is by far the
- * largest block — is written first, and the per-chunk keys (`reviewItems`,
- * `slots`, `recentMistakes`) last. A prefix cache pays up to the first byte that
- * differs, so putting `known` after the slots, as this used to, threw away the
- * cache on exactly the block worth caching.
+ * **Key order is load-bearing.** Everything identical across a lesson's requests
+ * — profile, `topic`, `about` and the whole `known` list, which is by far the
+ * largest block — is written first, and only `items` last. A prefix cache pays
+ * up to the first byte that differs, so putting `known` after the items would
+ * throw away the cache on exactly the block worth caching.
  */
-export function buildChunkPrompt(args: BatchArgs, chunk: SlotChunk): ChatMessage[] {
+export function buildRequestPrompt(args: BatchArgs, request: TypeRequest): ChatMessage[] {
 	const { profile } = args;
+	const def = defFor(request);
 
 	const topic = args.topic?.trim();
 	const about = profile.about?.trim().slice(0, MAX_ABOUT_CHARS);
-	const chunkTerms = new Set(chunk.reviewItems.map((i) => termKey(i.term)));
+	const meanings = new Map(args.reviewItems.map((item) => [item.id, item.meaning] as const));
 
 	const payload: Record<string, unknown> = {
 		native: profile.nativeLanguage,
@@ -424,29 +462,25 @@ export function buildChunkPrompt(args: BatchArgs, chunk: SlotChunk): ChatMessage
 		...(about ? { about } : {}),
 		// Terms only — the ids stay local (see `knownItems` and `knownTermIndex`).
 		// Last of the shared block and first of the big ones: everything above it
-		// is byte-identical across a lesson's chunks, and a prefix cache pays only
-		// up to the first byte that differs, so every per-chunk key comes after.
+		// is byte-identical across a lesson's requests, and a prefix cache pays
+		// only up to the first byte that differs, so `items` comes after.
 		...(args.knownItems?.length ? { known: knownTermLabels(args.knownItems) } : {}),
-		reviewItems: chunk.reviewItems.map((i) => ({ id: i.id, t: i.term, m: i.meaning })),
-		// The lesson this chunk is: one entry per challenge to write. The term
-		// rides beside the id so the model reads the word it is writing about
-		// without looking it up in `reviewItems` first; `bank` rides only on cloze
-		// slots, where it is the difference between two exercises.
-		slots: chunk.slots.map((slot) => ({
-			item: slot.itemId,
-			t: slot.term,
-			type: slot.type,
-			difficulty: slot.difficulty,
-			...(slot.bank === undefined ? {} : { bank: slot.bank })
-		}))
+		// The brief: one entry per challenge to write. The term and meaning ride
+		// beside the id so the entry reads without a lookup, and this type's own
+		// parameters — however many keys that is — spread in beside them.
+		items: request.items.map((item) => {
+			const meaning = meanings.get(item.itemId);
+			return {
+				id: item.itemId,
+				t: item.term,
+				...(meaning ? { m: meaning } : {}),
+				...def.params(item.difficulty, request.kind)
+			};
+		})
 	};
-	const mistakes = (args.recentMistakes ?? []).filter((m) => chunkTerms.has(termKey(m.term)));
-	if (mistakes.length) {
-		payload.recentMistakes = mistakes.map((m) => ({ t: m.term, gave: m.gave }));
-	}
 
 	return [
-		{ role: 'system', content: SYSTEM_PROMPT },
+		{ role: 'system', content: systemPromptFor(def) },
 		{ role: 'user', content: JSON.stringify(payload) }
 	];
 }
@@ -454,15 +488,18 @@ export function buildChunkPrompt(args: BatchArgs, chunk: SlotChunk): ChatMessage
 /**
  * Appended verbatim when a first attempt came back mostly unusable.
  *
- * A second, much terser pass at the same field lists: by the time this is sent
+ * A second, much terser pass at the same field list: by the time this is sent
  * the model has already ignored the schema once, so it restates only the
- * *required* fields — no examples, no optional keys. The per-type fragments come
- * from the registry in the same order as the prompt's `Types:` block.
+ * *required* fields of the one type this request is about — no examples, no
+ * optional keys, and nothing about the six types it was never asked for.
  */
-export const CORRECTIVE_INSTRUCTION =
-	'Your previous reply was rejected. Return ONLY a raw JSON object {"challenges":[...]}, no fences, no commentary. Every challenge needs type, itemIds and its own fields: ' +
-	WIRE_TYPE_DEFS.map((def) => def.correctiveSpec).join(', ') +
-	'. Every target-language slot is a TargetText object {"text","reading"}, reading null for Latin scripts; distractors is exactly 3 entries.';
+export function correctiveInstructionFor(def: AnyWireTypeDef): string {
+	return (
+		'Your previous reply was rejected. Return ONLY a raw JSON object {"challenges":[...]}, no fences, no commentary. Every challenge needs type, itemIds and its own fields: ' +
+		def.correctiveSpec +
+		'. Every target-language slot is a TargetText object {"text","reading"}, reading null for Latin scripts. Keep to the sizes each item asked for.'
+	);
+}
 
 // --------------------------------------------------------------------------
 // Parsing
@@ -492,12 +529,31 @@ export interface ParsedBatch {
 }
 
 /**
+ * The least a schema must be to validate one entry — every def's `schema` and
+ * the whole `generatedChallengeSchema` union both satisfy it. Structural rather
+ * than `z.ZodType<GeneratedChallenge>` because a def's schema is typed to its
+ * own narrow payload, and zod's parameterised type is not assignable up to the
+ * union it belongs to.
+ */
+export interface ChallengeMemberSchema {
+	safeParse(value: unknown): { success: boolean; data?: GeneratedChallenge };
+}
+
+/**
  * Parses a completion into validated entries, salvaging what it can: a single
  * malformed challenge costs us that challenge, not the batch we already paid
  * for. Throws `LlmError('bad-response')` only when the envelope itself is
  * unusable.
+ *
+ * `member` is the schema each entry is validated against. A request asks for one
+ * wire type, so it passes that type's own schema and a challenge of any other
+ * type is simply not an entry — the union default is for the mock, which emits
+ * every type at once on purpose.
  */
-export function parseBatch(raw: string): ParsedBatch {
+export function parseBatch(
+	raw: string,
+	member: ChallengeMemberSchema = generatedChallengeSchema
+): ParsedBatch {
 	let json: unknown;
 	try {
 		json = JSON.parse(stripFences(raw));
@@ -516,8 +572,8 @@ export function parseBatch(raw: string): ParsedBatch {
 	let dropped = 0;
 	const challenges: GeneratedChallenge[] = [];
 	for (const entry of envelope.data.challenges ?? []) {
-		const parsed = generatedChallengeSchema.safeParse(entry);
-		if (parsed.success) challenges.push(parsed.data);
+		const parsed = member.safeParse(entry);
+		if (parsed.success && parsed.data) challenges.push(parsed.data);
 		else dropped++;
 	}
 
@@ -584,6 +640,19 @@ export interface ResolveOptions {
 	termToId?: ReadonlyMap<string, string>;
 	/** Injectable `[0,1)` source for the shuffles; defaults to `Math.random`. */
 	rng?: () => number;
+	/**
+	 * The parameters each word's challenge was asked for, by item id — what the
+	 * resolver holds the model to where it can (a cloze's bank size, a
+	 * word-order's distractor count; see {@link ResolveContext.params}).
+	 *
+	 * Keyed by item because that is the only handle available at resolve time: a
+	 * challenge has not been matched to its planned entry yet, and cannot be
+	 * until it *is* a challenge. Within one request a word appears exactly once,
+	 * so the first of a challenge's resolved ids that this map knows is
+	 * unambiguously the entry it answers. Omitted by the mock and by tests, and
+	 * then every resolver behaves exactly as it did before.
+	 */
+	paramsByItem?: ReadonlyMap<string, ChallengeParams>;
 }
 
 export interface ResolvedBatch {
@@ -671,7 +740,14 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
 			...(explanation ? { explanation } : {})
 		};
 
-		const resolved = resolveOne(generated, { base, rng });
+		// The entry this challenge answers, as far as its citations reveal it.
+		const params = options.paramsByItem
+			? unique
+					.map((itemId) => options.paramsByItem?.get(itemId))
+					.find((found) => found !== undefined)
+			: undefined;
+
+		const resolved = resolveOne(generated, { base, rng, ...(params ? { params } : {}) });
 		if (!resolved) {
 			dropped++;
 			continue;
@@ -687,68 +763,95 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
 // --------------------------------------------------------------------------
 
 /**
- * How many of its slots one chunk has to fill before its reply is accepted
+ * How many of its items one request has to fill before its reply is accepted
  * without a corrective retry.
  *
- * Half of them, rounded up. A chunk is short enough that "it dropped one" is
- * ordinary salvage and not worth a second call, while "it filled two of five"
+ * Half of them, rounded up. A request is short enough that "it dropped one" is
+ * ordinary salvage and not worth a second call, while "it filled two of six"
  * means the brief was misunderstood and re-asking is cheap.
  */
-function chunkMinimum(slots: number): number {
-	return Math.max(1, Math.ceil(slots / 2));
+function requestMinimum(items: number): number {
+	return Math.max(1, Math.ceil(items / 2));
 }
 
 /**
- * Does this resolved challenge answer that slot?
+ * The def a request is for.
  *
- * A chunk asks for an exact list — five slots, each with a type, a word and (for
- * cloze) a word bank — and a reply that comes back the right *length* has told
- * us nothing about whether it is the lesson we asked for. The model does
- * substitute: five banked clozes come back as five multiple-choice questions,
- * or one word gets all five challenges. Counting cannot see either.
+ * Total by construction — a `SlotKind` names a registered wire type, and
+ * `_registryParity` in `./challenge-types` fails `pnpm check` if the registry
+ * and the union ever disagree — so the throw is an assertion, not a path.
+ */
+function defFor(request: TypeRequest): AnyWireTypeDef {
+	const def = byType.get(request.kind.type);
+	if (!def) throw new Error(`No wire type def for ${request.kind.type}.`);
+	return def;
+}
+
+/**
+ * Does this resolved challenge answer that entry?
+ *
+ * A request asks for an exact list — six challenges of one type, one per word,
+ * banked or not — and a reply that comes back the right *length* has told us
+ * nothing about whether it is the lesson we asked for. The model does
+ * substitute: six banked clozes come back as six multiple-choice questions, or
+ * one word gets all six challenges. Counting cannot see either.
  *
  * The comparison is on the **stored** shape, because that is what `resolveBatch`
  * hands back: each wire def declares the `{type, direction}` its resolver always
  * writes (`StoredShape`), which is also what tells the two multiple-choice wire
  * types and the two translate wire types apart. `bank` is checked against the
  * word bank that actually survived resolution — a banked cloze whose distractors
- * all duplicated the answer is not the exercise the slot asked for, and the
+ * all duplicated the answer is not the exercise that was asked for, and the
  * retry is the cheaper fix.
  */
-function matchesSlot(challenge: Challenge, slot: Slot): boolean {
-	const shape = byType.get(slot.type)?.stored;
-	if (!shape || challenge.type !== shape.type || challenge.direction !== shape.direction) {
+function matchesRequest(challenge: Challenge, request: TypeRequest, def: AnyWireTypeDef): boolean {
+	if (challenge.type !== def.stored.type || challenge.direction !== def.stored.direction) {
 		return false;
 	}
-	if (slot.bank !== undefined) {
+	if (request.kind.bank !== undefined) {
 		const banked = 'wordBank' in challenge && (challenge.wordBank?.length ?? 0) > 0;
-		if (banked !== slot.bank) return false;
+		if (banked !== request.kind.bank) return false;
 	}
-	// And it has to be about the word the slot named. A challenge that cites only
-	// some other word is a challenge this chunk never asked for.
-	return challenge.itemIds.includes(slot.itemId);
+	return true;
+}
+
+/** One filled entry: the challenge, and where in the plan it belongs. */
+interface FilledItem {
+	index: number;
+	challenge: Challenge;
 }
 
 /**
- * The challenges from one reply that fill this chunk's brief, **in slot order**.
+ * The challenges from one reply that fill this request's brief, each tagged with
+ * its **plan index** so the merge can put the lesson back in the order it was
+ * planned rather than the order the network answered.
  *
- * Each slot is filled at most once, so a chunk can never return more than it was
- * asked for — which is what keeps an over-producing chunk from pushing the
- * chunks after it out of the merged lesson. Anything that matches no unfilled
- * slot is dropped rather than kept as a bonus: it is a challenge about the wrong
- * word or in the wrong format, the corrective retry re-asks for the real one,
- * and a lesson padded with the questions the model felt like writing is the
- * thing this whole design exists to stop.
+ * Each entry is filled at most once, so a request can never return more than it
+ * was asked for — which is what keeps an over-producing request from pushing
+ * later ones out of the merged lesson. Anything that matches no unfilled entry
+ * is dropped rather than kept as a bonus: it is a challenge about the wrong word
+ * or in the wrong format, the corrective retry re-asks for the real one, and a
+ * lesson padded with the questions the model felt like writing is the thing this
+ * whole design exists to stop.
  */
-function fillSlots(challenges: readonly Challenge[], slots: readonly Slot[]): Challenge[] {
-	const filled = new Array<Challenge | undefined>(slots.length).fill(undefined);
+function fillRequest(
+	challenges: readonly Challenge[],
+	request: TypeRequest,
+	def: AnyWireTypeDef
+): FilledItem[] {
+	const filled = new Array<Challenge | undefined>(request.items.length).fill(undefined);
 	for (const challenge of challenges) {
-		const at = slots.findIndex(
-			(slot, i) => filled[i] === undefined && matchesSlot(challenge, slot)
+		if (!matchesRequest(challenge, request, def)) continue;
+		// And it has to be about the word the entry named. A challenge that cites
+		// only some other word is one this request never asked for.
+		const at = request.items.findIndex(
+			(item, i) => filled[i] === undefined && challenge.itemIds.includes(item.itemId)
 		);
 		if (at >= 0) filled[at] = challenge;
 	}
-	return filled.filter((challenge): challenge is Challenge => challenge !== undefined);
+	return filled.flatMap((challenge, i) =>
+		challenge ? [{ index: request.items[i].index, challenge }] : []
+	);
 }
 
 /**
@@ -764,75 +867,79 @@ function abortError(signal: AbortSignal): Error {
 	return error;
 }
 
-/** Cancels the chunks still in flight once one of them has sunk the lesson. */
+/** Cancels the requests still in flight once one of them has sunk the lesson. */
 function siblingAbort(): Error {
 	const error = new Error('Another request ended the lesson.');
 	error.name = 'AbortError';
 	return error;
 }
 
-/** What one chunk came back with; `error` is set only when it failed outright. */
-interface ChunkOutcome {
-	challenges: Challenge[];
+/** What one request came back with; `error` is set only when it failed outright. */
+interface RequestOutcome {
+	filled: FilledItem[];
 	usage: TokenUsage;
-	/** Set when the chunk produced nothing usable even after its retry. */
+	/** Set when the request produced nothing usable even after its retry. */
 	error?: LlmError;
 	retried: boolean;
 }
 
 /**
- * Runs `worker` over `chunks` with at most `limit` in flight, returning results
- * in **chunk order** whatever order they finish in.
+ * Runs `worker` over `jobs` with at most `limit` in flight, returning results in
+ * **job order** whatever order they finish in.
  *
- * A plain `Promise.all` would fire every chunk at once, which for a twelve-word
- * lesson is eight simultaneous completions on a key that may well be rate
+ * A plain `Promise.all` would fire every request at once, which for a twelve-word
+ * lesson is several simultaneous completions on a key that may well be rate
  * limited. This is the smallest thing that isn't that: `limit` workers pulling
  * from a shared cursor.
  *
  * There is deliberately no cancellation here: a worker that decides the run is
  * over returns its own (empty) result, so the pool always resolves and the
- * caller's accounting sees every chunk. See `generateBatch`'s `stop` controller.
+ * caller's accounting sees every job. See `generateBatch`'s `stop` controller.
  */
 async function runPooled<T, R>(
-	chunks: readonly T[],
+	jobs: readonly T[],
 	limit: number,
-	worker: (chunk: T, index: number) => Promise<R>
+	worker: (job: T, index: number) => Promise<R>
 ): Promise<R[]> {
-	const results = new Array<R>(chunks.length);
+	const results = new Array<R>(jobs.length);
 	let cursor = 0;
 
 	const run = async (): Promise<void> => {
 		for (;;) {
 			const index = cursor++;
-			if (index >= chunks.length) return;
-			results[index] = await worker(chunks[index], index);
+			if (index >= jobs.length) return;
+			results[index] = await worker(jobs[index], index);
 		}
 	};
 
-	await Promise.all(Array.from({ length: Math.min(limit, chunks.length) }, run));
+	await Promise.all(Array.from({ length: Math.min(limit, jobs.length) }, run));
 	return results;
 }
 
 /**
  * Generates one lesson.
  *
- * The plan is made locally ({@link planSlots}), cut into short requests
- * ({@link chunkSlots}) and run concurrently. Each reply is parsed leniently
- * (fences stripped, bad entries dropped) and gets one corrective retry if too
- * little of it survives.
+ * The plan is made locally ({@link planSlots}), cut by kind into single-type
+ * requests ({@link groupIntoRequests}) and run concurrently. Each reply is
+ * parsed leniently (fences stripped, bad entries dropped) and gets one
+ * corrective retry if too little of it survives.
  *
- * **A chunk that fails is dropped, not fatal.** Four fifths of a lesson is a
+ * **A request that fails is dropped, not fatal.** Four fifths of a lesson is a
  * lesson; it is the merged total that has to clear {@link MIN_BATCH_CHALLENGES},
  * and only then does this throw `LlmError('bad-response')` — with a message that
  * says how many requests failed and how much survived, because "the model
  * returned something unusable" is not a thing anyone can act on. Failures that
- * are not the chunk's fault — a bad key, a rate limit, an abort — sink the whole
- * lesson **immediately and literally**: the first one cancels the requests still
- * in flight and every chunk still queued returns without spending a call, since
- * they would all only hit the same wall.
+ * are not one request's fault — a bad key, a rate limit, an abort — sink the
+ * whole lesson **immediately and literally**: the first one cancels the requests
+ * still in flight and every one still queued returns without spending a call,
+ * since they would all only hit the same wall.
  *
- * Each reply is then checked against the slots it was asked for, not merely
- * counted ({@link fillSlots}) — a chunk is worth what it filled.
+ * Each reply is then checked against the entries it was asked for, not merely
+ * counted ({@link fillRequest}) — a request is worth what it filled — and the
+ * survivors are merged in **plan order**, which is not the order the requests
+ * were made in and certainly not the order they finished in: a lesson is a
+ * round-robin over words, and grouping the calls by type must not turn it into
+ * five clozes followed by five translations.
  *
  * It returns challenges and nothing else: the caller pools them, and no part of
  * the learner's vocabulary is touched by generating a lesson.
@@ -869,10 +976,10 @@ export async function generateBatch(
 	if (slots.length === 0) {
 		throw new LlmError('bad-response', 'No challenges could be planned for these words.');
 	}
-	const chunks = chunkSlots(slots, args.reviewItems);
+	const requests = groupIntoRequests(slots);
 	report({
 		id: 'build-prompt',
-		label: chunks.length > 1 ? `Planning ${slots.length} challenges` : 'Building the prompt'
+		label: requests.length > 1 ? `Planning ${slots.length} challenges` : 'Building the prompt'
 	});
 
 	// A two-challenge lesson can never reach five; do not demand the impossible.
@@ -880,11 +987,7 @@ export async function generateBatch(
 	const knownItemIds = args.reviewItems.map((i) => i.id);
 	const termToId = knownTermIndex(args);
 
-	// Built once, not per chunk or per attempt: it is a pure function of a static
-	// registry, and every retry sends the very same schema back.
-	const responseFormat = { name: BATCH_SCHEMA_NAME, schema: batchJsonSchema() };
-
-	// Fired at most once each, however many chunks retry — see ProgressStepId.
+	// Fired at most once each, however many requests retry — see ProgressStepId.
 	let retryAnnounced = false;
 	const announceRetry = (): void => {
 		if (retryAnnounced) return;
@@ -892,11 +995,11 @@ export async function generateBatch(
 		report({ id: 'retry', label: 'Retrying part of the lesson' });
 	};
 
-	// The lesson's own stop switch. A failure that is not one chunk's fault would
-	// meet every chunk, so the first one to see it records the error here and
-	// aborts `stop`: the siblings already in flight unwind at their `fetch`, and
-	// every chunk the pool has not dispatched yet returns without a call. The
-	// caller's own signal is chained into it, reason and all, so a cancelled
+	// The lesson's own stop switch. A failure that is not one request's fault
+	// would meet every request, so the first one to see it records the error here
+	// and aborts `stop`: the siblings already in flight unwind at their `fetch`,
+	// and every request the pool has not dispatched yet returns without a call.
+	// The caller's own signal is chained into it, reason and all, so a cancelled
 	// refill still fails as the cancellation it was.
 	let fatal: LlmError | Error | undefined;
 	const stop = new AbortController();
@@ -912,22 +1015,35 @@ export async function generateBatch(
 	report({
 		id: 'request',
 		label:
-			chunks.length > 1
-				? `Waiting for ${model} (${chunks.length} requests)`
+			requests.length > 1
+				? `Waiting for ${model} (${requests.length} requests)`
 				: `Waiting for ${model}`
 	});
 
-	const outcomes = await runPooled(chunks, CHUNK_CONCURRENCY, async (chunk) => {
-		const outcome: ChunkOutcome = {
-			challenges: [],
+	const outcomes = await runPooled(requests, REQUEST_CONCURRENCY, async (request) => {
+		const outcome: RequestOutcome = {
+			filled: [],
 			usage: { promptTokens: 0, completionTokens: 0 },
 			retried: false
 		};
-		const messages = buildChunkPrompt(args, chunk);
-		const wanted = chunkMinimum(chunk.slots.length);
+		const def = defFor(request);
+		const messages = buildRequestPrompt(args, request);
+		const wanted = requestMinimum(request.items.length);
+		// One type per request means one schema per request — the model cannot
+		// return a shape this brief did not ask for. Built once per request, since
+		// a retry sends the very same schema back.
+		const responseFormat = {
+			name: batchSchemaNameFor(def),
+			schema: batchJsonSchemaFor(def)
+		};
+		// A word appears at most once in a request, so its parameters are the ones
+		// any challenge citing it was asked for. See `ResolveOptions.paramsByItem`.
+		const paramsByItem = new Map(
+			request.items.map((item) => [item.itemId, def.params(item.difficulty, request.kind)] as const)
+		);
 
 		for (let attempt = 0; attempt < 2; attempt++) {
-			// An abort between chunks: stop dispatching rather than spending a call
+			// An abort between requests: stop dispatching rather than spending a call
 			// nobody is waiting for, and report it the way an in-flight `fetch` on
 			// the same signal would, so a cancelled refill never looks like a model
 			// that returned nothing usable.
@@ -935,11 +1051,13 @@ export async function generateBatch(
 				sink(abortError(opts.signal));
 				return outcome;
 			}
-			// A sibling has already sunk the lesson; this chunk is not worth a call.
+			// A sibling has already sunk the lesson; this one is not worth a call.
 			if (stop.signal.aborted) return outcome;
 
 			const attemptMessages: ChatMessage[] =
-				attempt === 0 ? messages : [...messages, { role: 'user', content: CORRECTIVE_INSTRUCTION }];
+				attempt === 0
+					? messages
+					: [...messages, { role: 'user', content: correctiveInstructionFor(def) }];
 			if (attempt > 0) {
 				outcome.retried = true;
 				announceRetry();
@@ -959,9 +1077,9 @@ export async function generateBatch(
 					temperature: 0.7
 				});
 			} catch (error) {
-				// `bad-response` is this chunk's problem and costs this chunk only;
+				// `bad-response` is this request's problem and costs this request only;
 				// anything else (auth, rate limit, network, abort) would meet every
-				// other chunk too, so it ends the lesson — for every chunk at once.
+				// other request too, so it ends the lesson — for all of them at once.
 				if (error instanceof LlmError && error.kind === 'bad-response') {
 					outcome.error = error;
 					continue;
@@ -975,11 +1093,14 @@ export async function generateBatch(
 
 			let resolved: ResolvedBatch;
 			try {
-				resolved = resolveBatch(parseBatch(completion.content), {
+				// Validated against this request's own member schema: a challenge of
+				// another type is not a challenge this reply was allowed to contain.
+				resolved = resolveBatch(parseBatch(completion.content, def.schema), {
 					newId: opts.newId,
 					knownItemIds,
 					termToId,
-					rng: opts.rng
+					rng: opts.rng,
+					paramsByItem
 				});
 			} catch (error) {
 				if (error instanceof LlmError && error.kind === 'bad-response') {
@@ -990,21 +1111,21 @@ export async function generateBatch(
 				return outcome;
 			}
 
-			// What the chunk is worth is what it *filled*, not what it returned.
-			const filled = fillSlots(resolved.challenges, chunk.slots);
+			// What the request is worth is what it *filled*, not what it returned.
+			const filled = fillRequest(resolved.challenges, request, def);
 			if (filled.length >= wanted) {
-				outcome.challenges = filled;
+				outcome.filled = filled;
 				outcome.error = undefined;
 				return outcome;
 			}
 			// Keep the best partial reply: if the retry also comes back thin, these
 			// are still real challenges the learner paid for.
-			if (filled.length > outcome.challenges.length) {
-				outcome.challenges = filled;
+			if (filled.length > outcome.filled.length) {
+				outcome.filled = filled;
 			}
 			outcome.error = new LlmError(
 				'bad-response',
-				`One request filled ${filled.length} of its ${chunk.slots.length} slots.`
+				`One request filled ${filled.length} of its ${request.items.length} ${def.type} challenges.`
 			);
 		}
 		return outcome;
@@ -1017,7 +1138,7 @@ export async function generateBatch(
 	report({ id: 'validate', label: 'Validating challenges' });
 
 	const usage: TokenUsage = { promptTokens: 0, completionTokens: 0 };
-	const challenges: Challenge[] = [];
+	const filled: FilledItem[] = [];
 	let failed = 0;
 	let lastError: LlmError | undefined;
 
@@ -1025,24 +1146,29 @@ export async function generateBatch(
 		usage.promptTokens += outcome.usage.promptTokens;
 		usage.completionTokens += outcome.usage.completionTokens;
 		if (outcome.error) {
-			// A chunk whose best partial reply was kept is not a failed request: its
-			// challenges are in the lesson. Only one that contributed nothing counts.
-			if (outcome.challenges.length === 0) failed++;
+			// A request whose best partial reply was kept is not a failed request:
+			// its challenges are in the lesson. Only one that contributed nothing.
+			if (outcome.filled.length === 0) failed++;
 			lastError = outcome.error;
 		}
-		challenges.push(...outcome.challenges);
+		filled.push(...outcome.filled);
 	}
 
-	// Chunk order, then slot order within a chunk — the lesson as it was planned,
-	// not as the network happened to answer it. The slice is belt and braces now
-	// that no chunk can return more slots than it was given.
-	const merged = challenges.slice(0, MAX_BATCH_CHALLENGES);
+	// **Plan order**, which is neither request order nor completion order. The plan
+	// is a round-robin over the lesson's words; grouping the calls by type is a
+	// transport decision, and letting it reach the learner would serve them every
+	// cloze in a row. The slice is belt and braces now that no request can return
+	// more entries than it was given.
+	const merged = filled
+		.sort((a, b) => a.index - b.index)
+		.map((entry) => entry.challenge)
+		.slice(0, MAX_BATCH_CHALLENGES);
 	if (merged.length >= minimum) return { challenges: merged, usage };
 
 	throw new LlmError(
 		'bad-response',
 		`Only ${merged.length} usable challenge(s) came back` +
-			(chunks.length > 1 ? ` — ${failed} of ${chunks.length} requests failed` : '') +
+			(requests.length > 1 ? ` — ${failed} of ${requests.length} requests failed` : '') +
 			'. Try again.' +
 			(lastError ? ` (${lastError.message})` : '')
 	);
@@ -1052,9 +1178,41 @@ export async function generateBatch(
 // Zero-token local generation
 // --------------------------------------------------------------------------
 
-/** Smallest and largest pair count for a locally built match-pairs round. */
+/**
+ * Smallest and largest pair count for an *unsized* round — one built without a
+ * ladder rung, which is what every caller that has no vocabulary strength to
+ * read gets. Kept exactly where it has always been, so nothing that never asked
+ * for a difficulty sees a different round than it did before.
+ */
 const MATCH_MIN = 4;
 const MATCH_MAX = 5;
+
+/**
+ * Pairs per round at each rung of the ladder — the free round's answer to the
+ * `params` ladders every paid type now has. A new word's round is three pairs
+ * because the point of it is a breather; a word the learner owns gets six,
+ * which is about as tall a column as a phone screen holds — the learn route's
+ * stage grows rather than clips, so a taller round only costs a scroll, but six
+ * is where the round stops being one glance.
+ *
+ * Bounded by the stored side's own scale on purpose: `$lib/challenges/types/match-pairs`
+ * measures a round's difficulty over `FEWEST_PAIRS` (2) to `MOST_PAIRS` (6), so
+ * a ladder reaching past six would peg every top rung at the same stored
+ * difficulty and the planner's fit preference would stop being able to tell them
+ * apart.
+ */
+const MATCH_PAIRS_LADDER = [3, 4, 5, 6, 6] as const;
+
+/** The fewest pairs any rung asks for — the floor a sized round declines below. */
+const LADDER_MIN = Math.min(...MATCH_PAIRS_LADDER);
+
+export interface MatchPairsOptions {
+	/**
+	 * The ladder rung to size the round for. Omitted means "unsized": four or
+	 * five pairs, drawn from `rng`, exactly as this function has always behaved.
+	 */
+	difficulty?: DifficultyRung;
+}
 
 /**
  * Builds a `match-pairs` challenge locally, for free — no model call, no
@@ -1067,16 +1225,30 @@ const MATCH_MAX = 5;
  * The first item of a colliding group is kept and the rest are skipped, matched
  * case-insensitively on trimmed text.
  *
- * Returns `undefined` when fewer than four collision-free items remain.
+ * **Size comes from the same ladder everything else is written to.** Given a
+ * rung, the round asks for {@link MATCH_PAIRS_LADDER} pairs — the zero-cost
+ * type's version of a def's `params`, so the one challenge nobody pays for is no
+ * longer the one challenge that ignores how far along the learner is. Given
+ * none, it is the four-or-five it always was.
+ *
+ * Returns `undefined` when fewer collision-free items remain than the smallest
+ * round that mode can ask for: four unsized, {@link LADDER_MIN} with a rung.
+ * Between that floor and the rung's own count it builds the *smaller* round
+ * rather than declining — a slightly short round is still a breather, and the
+ * alternative is no round at all for a learner with a dozen words.
  *
  * @param rng Injectable `[0,1)` source so tests (and replays) are deterministic.
  */
 export function makeMatchPairsChallenge(
 	items: KnowledgeItem[],
-	rng: () => number = Math.random
+	rng: () => number = Math.random,
+	options: MatchPairsOptions = {}
 ): Challenge | undefined {
+	const rung = options.difficulty;
+	const smallest = rung === undefined ? MATCH_MIN : LADDER_MIN;
+
 	const usable = items.filter((i) => i.term?.trim() && i.meaning?.trim());
-	if (usable.length < MATCH_MIN) return undefined;
+	if (usable.length < smallest) return undefined;
 
 	const pool = shuffled(usable, rng);
 
@@ -1093,11 +1265,19 @@ export function makeMatchPairsChallenge(
 		seenMeanings.add(meaning);
 		distinct.push(item);
 	}
-	if (distinct.length < MATCH_MIN) return undefined;
+	if (distinct.length < smallest) return undefined;
 
-	const max = Math.min(MATCH_MAX, distinct.length);
-	const size = max > MATCH_MIN ? MATCH_MIN + Math.floor(rng() * (max - MATCH_MIN + 1)) : MATCH_MIN;
-	const chosen = distinct.slice(0, Math.min(size, max));
+	// Sized: the rung names the count outright and no draw is spent on it, so a
+	// round is a pure function of the rung once the shuffle has happened.
+	// Unsized: the old four-or-five draw, untouched.
+	let wanted: number;
+	if (rung === undefined) {
+		const max = Math.min(MATCH_MAX, distinct.length);
+		wanted = max > MATCH_MIN ? MATCH_MIN + Math.floor(rng() * (max - MATCH_MIN + 1)) : MATCH_MIN;
+	} else {
+		wanted = MATCH_PAIRS_LADDER[rung - 1];
+	}
+	const chosen = distinct.slice(0, Math.min(wanted, distinct.length));
 
 	return {
 		id: makeId(),

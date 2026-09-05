@@ -2,11 +2,11 @@
  * The wire-type registry: the one place that knows how many challenge types
  * there are.
  *
- * {@link WIRE_TYPE_DEFS} is ordered, and the order is load-bearing three times
- * over — it is the order the types are listed in for the model (both in the
- * prompt's `Types:` block and in the corrective retry), the order the
- * escalation prompt glosses the tile-based shapes in, and the order of
- * {@link generatedChallengeSchema}'s union, which is *built* from it.
+ * {@link WIRE_TYPE_DEFS} is ordered, and the order is load-bearing twice over —
+ * it is the order the escalation prompt glosses the tile-based shapes in, and
+ * the order of {@link generatedChallengeSchema}'s union, which is *built* from
+ * it. It is no longer prompt order: a generation request is about exactly one
+ * type now, so each def composes its own system prompt and never shares one.
  *
  * That last one is the point of this module: a def that is not registered here
  * is not a wire type at all — the model is never told about it, no completion
@@ -14,13 +14,13 @@
  * the union ever disagree on membership.
  *
  * **Adding a wire type**: write `./<type>.ts` — schema, `stored`, `promptSpec`,
- * `correctiveSpec`, `resolve`, `fixtures`, plus `rulesSpec`/`escalationSpec` if
- * it needs them — and list it twice below: in {@link WIRE_TYPE_DEFS} and in
- * {@link generatedChallengeSchema}'s member list. Everything downstream (the
- * prompt, the JSON schema sent to OpenRouter, the resolver dispatch, the
- * escalation gloss, the mock lesson) follows from those edits. The only
- * hand-written mentions left are the cross-type rules in `../generate`'s
- * `Rules:` block, which by definition name more than one type.
+ * `params`, `paramsSpec`, `correctiveSpec`, `resolve`, `fixtures`, plus
+ * `rulesSpec`/`escalationSpec` if it needs them — and list it twice below: in
+ * {@link WIRE_TYPE_DEFS} and in {@link generatedChallengeSchema}'s member list.
+ * Everything downstream (that type's own system prompt and JSON schema, the
+ * resolver dispatch, the escalation gloss, the mock lesson) follows from those
+ * edits. The only prose left in `../generate` is the preamble every type's
+ * prompt shares, which by definition names no type at all.
  */
 
 import { z } from 'zod';
@@ -36,10 +36,13 @@ import type { WithOptionalSpecs } from './def';
 
 export type {
 	ChallengeBase,
+	ChallengeParams,
+	DifficultyRung,
 	Fixture,
 	FixtureScenario,
 	OptionalSpecs,
 	ResolveContext,
+	SizingKind,
 	StoredShape,
 	WirePayload,
 	WithOptionalSpecs,

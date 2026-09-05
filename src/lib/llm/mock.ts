@@ -28,13 +28,15 @@
  * and it is why each scenario's own two-word vocabulary, which belongs to the
  * scene rather than to any one challenge, is the only fixture data left below.
  *
- * The mock ignores the slot plan, deliberately, exactly as it has always ignored
+ * The mock ignores the plan, deliberately, exactly as it has always ignored
  * `maturity`. Its job is to show every wire type and every romanization case at
- * once so the UI can be built against them; a mock that honoured `slots` would
- * serve whichever handful of types the plan happened to pick and would stop
- * being a fixture. It also stays *one* assembly rather than a fan-out — nothing
- * is being timed or rate-limited here — so `mockBatch` is still synchronous and
- * byte-identical across runs.
+ * once so the UI can be built against them; a mock that honoured the plan would
+ * serve whichever handful of types it happened to pick and would stop being a
+ * fixture. That is also why it hands `parseBatch` the *union* schema rather than
+ * one type's member — the paid path validates each reply against the one type
+ * that request asked for. It stays *one* assembly rather than a fan-out —
+ * nothing is being timed or rate-limited here — so `mockBatch` is still
+ * synchronous and byte-identical across runs.
  *
  * That vocabulary is **borrowed, never introduced**: generation adds no words
  * to a collection, so the mock cannot either. Each scenario word is bound to

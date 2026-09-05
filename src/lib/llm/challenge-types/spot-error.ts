@@ -30,6 +30,13 @@ export const generatedSpotErrorSchema = z.object({
 
 export type GeneratedSpotError = z.infer<typeof generatedSpotErrorSchema>;
 
+/**
+ * Sentence length at each rung, on the shared prose scale — three words is the
+ * shortest sentence with somewhere to hide an error, and the stored side reads
+ * this length straight off `tokens`.
+ */
+const SENTENCE_WORDS = [3, 5, 7, 9, 11] as const;
+
 export const spotErrorDef = {
 	type: 'spot-error',
 	schema: generatedSpotErrorSchema,
@@ -37,8 +44,10 @@ export const spotErrorDef = {
 	promptSpec:
 		'spot-error — one wrong word in a target sentence. {words:[3+ TargetText — the CORRECT sentence split into tiles, in order], wrongWord:TargetText, wrongPosition:int, meaningNative} e.g. {"type":"spot-error","words":[{"text":"我们","reading":"wǒmen"},{"text":"想","reading":"xiǎng"},{"text":"买单","reading":"mǎidān"}],"wrongWord":{"text":"菜单","reading":"càidān"},"wrongPosition":2,"meaningNative":"We would like to pay the bill.","itemIds":["i7"],"explanation":null} — the app replaces words[wrongPosition] with wrongWord and asks the learner to tap it.',
 	rulesSpec:
-		'- spot-error: wrongWord must be a real target-language word that is unambiguously wrong in that slot given meaningNative — same part of speech, wrong meaning — never a synonym, a spelling slip or a stylistic quibble. wrongPosition is a 0-based index into words, and wrongWord must differ from the word it replaces. Difficulty scales sentence length and how subtle the swap is — obvious at 1, subtle at 5.',
+		'- spot-error: wrongWord must be a real target-language word that is unambiguously wrong in that slot given meaningNative — same part of speech, wrong meaning — never a synonym, a spelling slip or a stylistic quibble. wrongPosition is a 0-based index into words, and wrongWord must differ from the word it replaces. The nearer wrongWord sits to the word it replaces while still being plainly wrong, the better the challenge.\n- Segmentation: one tile per WORD, never per character or syllable, and punctuation rides on the tile it touches — never a tile of its own ("吗？" is one tile, "？" alone is not a tile). For Chinese and Japanese split on word boundaries — 菜单 is one tile, not 菜 + 单. Each tile is a TargetText and carries its own reading under the usual rule.',
 	correctiveSpec: 'spot-error {words,wrongWord,wrongPosition,meaningNative}',
+	paramsSpec: '- words: how many words the sentence should be cut into in "words".',
+	params: (difficulty) => ({ words: SENTENCE_WORDS[difficulty - 1] }),
 	escalationSpec:
 		'"spot-error": "tokens" is the sentence as the learner saw it, "correctIndex" is the position of the WRONG word they had to tap, "intendedWord" is what belongs there and "meaning" is what the sentence was supposed to say.',
 

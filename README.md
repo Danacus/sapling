@@ -200,15 +200,20 @@ locally.
 
 - **Batched generation.** One `getBatch` call produces a whole lesson — up to
   20 challenges, written about vocabulary you already have. Underneath it is a
-  handful of small requests run concurrently: the app decides locally *which*
-  challenges the lesson is made of (which word, which exercise type) and asks
-  the model only to write four or five of them at a time, about two or three
-  words, against the same static system prompt (so it caches well) and a
-  compact JSON user message. Short briefs come back better and faster than one
-  long one, and a request that fails costs its own few challenges rather than
-  the lesson. Still a fraction of a cent on a small model, and spent only when
-  you press *Generate new lesson*; the start card nudges you when the pool runs
-  low, but nothing generates behind your back.
+  handful of small requests run concurrently, **one per exercise type**: the app
+  decides locally *which* challenges the lesson is made of (which word, which
+  type, how hard) and then asks the model to write half a dozen of one type at a
+  time. Each request's system prompt explains that one type and nothing else,
+  its JSON schema admits that one type and nothing else, and its payload is a
+  list of words each carrying the concrete sizes to write it at — how many words
+  the sentence should have, how many tiles to cut it into, how big the word bank
+  should be. Counts are easier to hit than a difficulty scale, and a short brief
+  about one kind of question comes back better and faster than one long mixed
+  one; a request that fails costs its own few challenges rather than the lesson.
+  Every prompt is static per type, so it caches well. Still a fraction of a cent
+  on a small model, and spent only when you press *Generate new lesson*; the
+  start card nudges you when the pool runs low, but nothing generates behind
+  your back.
 - **Local grading.** Every answer is graded in the browser by
   `$lib/validate` — no judge call, no latency, no cost. The three-way verdict is
   what lets "café" typed as "cafe" be accepted *and* corrected.

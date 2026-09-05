@@ -67,7 +67,7 @@ export function assistantToolByName(name: string): AssistantToolDef | undefined 
 /**
  * The `tools` payload sent with every chat request.
  *
- * Note what is *not* done to these schemas, unlike `batchJsonSchema` in
+ * Note what is *not* done to these schemas, unlike `batchJsonSchemaFor` in
  * `$lib/llm/schemas`: no `required`-everything tightening. That rewrite exists
  * to satisfy strict structured outputs, where the model must emit every key;
  * here an optional argument has to stay optional, or a model would be forced to

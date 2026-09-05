@@ -57,7 +57,8 @@ import {
 	itemsById,
 	levelBandCentre,
 	levelForStrength,
-	weakestWordStrength
+	weakestWordStrength,
+	type DifficultyLevel
 } from './progression';
 
 /* -------------------------------------------------------------------------- */
@@ -109,12 +110,13 @@ export const MATCH_PAIRS_EVERY = 4;
  *
  * It is a `wrong` answer in every respect, FSRS `Again` included —
  * "I could not produce it" is exactly what `Again` encodes. The literal string
- * also travels into the next batch prompt as a `recentMistakes.gave` value,
- * where it means "that format was too demanding for this word".
+ * also travels into the next batch's *plan* as a `recentMistakes.gave` value,
+ * where `planSlots` reads it as "that format was too demanding for this word"
+ * and answers with a recognition slot rather than an easier one.
  */
 export const SKIP_ANSWER = '(skipped)';
 
-/** How many trouble words are worth carrying into the next batch prompt. */
+/** How many trouble words are worth carrying into the next batch's plan. */
 export const MAX_RECENT_MISTAKES = 8;
 
 /** How far back {@link generateChallenges} reads the result log for those. */
@@ -228,18 +230,33 @@ export function sessionSummary(answers: SessionAnswer[]): SessionSummary {
  * One round goes in after every {@link MATCH_PAIRS_EVERY}th challenge, **never
  * after the last one** — a session must not end on free filler. Each splice
  * point builds its own round, so every one is an independent shuffle and pick.
- * A point where {@link makeMatchPairsChallenge} declines (fewer than four
- * collision-free items) simply gets no round; with static items that means none
- * anywhere.
+ * A point where {@link makeMatchPairsChallenge} declines (too few collision-free
+ * items to fill even the smallest round) simply gets no round; with static items
+ * that means none anywhere.
  *
+ * **The rounds are sized off the ladder, like everything else in a lesson.**
+ * `makeMatchPairsChallenge` takes a rung and turns it into a pair count, and the
+ * rung comes from {@link medianRoundRung} over the very words the round is drawn
+ * from — so a beginner gets three pairs to breathe and someone who owns their
+ * vocabulary gets six. The **median**, because a round is one screen shared by
+ * several words: one mature word among a dozen new ones must not size the round
+ * for all of them, and an average would let it drag the count up by a fraction
+ * of a rung anyway.
+ *
+ * Still pure given `rng` and `now`: the rung is computed once, from the frozen
+ * session vocabulary, and every splice point is handed the same one.
+ *
+ * @param now Epoch ms, for reading each word's place on the ladder.
  * @param rng Injectable `[0,1)` source, forwarded to every round it builds.
  */
 export function interleaveMatchRounds(
 	challenges: Challenge[],
 	items: KnowledgeItem[],
+	now: number,
 	rng: () => number = Math.random
 ): Challenge[] {
 	const queue: Challenge[] = [];
+	const difficulty = medianRoundRung(items, now);
 
 	for (const [index, challenge] of challenges.entries()) {
 		queue.push(challenge);
@@ -247,11 +264,37 @@ export function interleaveMatchRounds(
 		const position = index + 1;
 		if (position === challenges.length || position % MATCH_PAIRS_EVERY !== 0) continue;
 
-		const round = makeMatchPairsChallenge(items, rng);
+		const round = makeMatchPairsChallenge(items, rng, { difficulty });
 		if (round) queue.push(round);
 	}
 
 	return queue;
+}
+
+/**
+ * The ladder rung a match round over this vocabulary should be written at: the
+ * median rung of the words that could actually end up in one.
+ *
+ * "Could end up in one" is the same filter `makeMatchPairsChallenge` applies
+ * first — a word needs both a term and a meaning to make a pair — and no more
+ * than that: which words survive the label-collision pass depends on the shuffle,
+ * so consulting it here would make the size depend on a draw the caller has not
+ * made yet.
+ *
+ * The median rather than the mean, and the **lower** median on an even count.
+ * A round is a recognition breather shared by several words at once, so the size
+ * should follow the body of the vocabulary and not its strongest member; where
+ * the two middles disagree, the easier of them is the one that keeps a round
+ * from outrunning half the words in it. Falls back to rung 1 for an empty
+ * vocabulary, where the round is declined anyway.
+ */
+function medianRoundRung(items: KnowledgeItem[], now: number): DifficultyLevel {
+	const rungs = items
+		.filter((item) => item.term?.trim() && item.meaning?.trim())
+		.map((item) => difficultyLevelOf(item, now))
+		.sort((a, b) => a - b);
+
+	return rungs.length === 0 ? 1 : rungs[Math.floor((rungs.length - 1) / 2)];
 }
 
 /**
@@ -897,10 +940,12 @@ export function planRefill(
 					}))
 				}
 			: {}),
-		// Both are difficulty dials, but not the same kind: `recentAccuracy` is read
-		// only by `planSlots` and never travels to the model, while `recentMistakes`
-		// both shapes the plan and reaches the prompt as "write these easier".
-		// Omitted when there is nothing to say, so a day-one batch pays no tokens.
+		// Two difficulty dials, both of them purely local: `planSlots` reads
+		// `recentAccuracy` to shift every slot a rung and move the production mix,
+		// and `recentMistakes` to give a just-missed word an extra go in a format
+		// it has not had and to write every slot about it a rung easier. Neither
+		// reaches the model — what it is told is the size that rung works out to
+		// for the type it is writing. Omitted when there is nothing to say.
 		...(recentAccuracy === undefined
 			? {}
 			: { recentAccuracy: Math.round(recentAccuracy * 100) / 100 }),

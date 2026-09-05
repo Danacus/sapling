@@ -3,7 +3,9 @@
  *
  * The LLM is untrusted input: nothing from a completion reaches the rest of the
  * app without passing through a schema here. These schemas are also the source
- * of truth for the JSON schema handed to OpenRouter, via {@link batchJsonSchema}.
+ * of truth for the JSON schema handed to OpenRouter, via
+ * {@link batchJsonSchemaFor} — one per wire type, since one request asks for
+ * one type.
  *
  * Two shapes meet here, and they are deliberately *not* the same shape:
  *
@@ -181,15 +183,24 @@ function tighten(node: unknown): void {
 }
 
 /**
- * The JSON schema sent as `response_format.json_schema.schema`: the shared
- * `toJsonSchema` conversion (which is where the ref-inlining lives, and why)
- * plus the `required`-everything pass strict structured outputs want.
+ * The JSON schema sent as `response_format.json_schema.schema` for **one
+ * request**: the shared `toJsonSchema` conversion (which is where the
+ * ref-inlining lives, and why) plus the `required`-everything pass strict
+ * structured outputs want.
+ *
+ * It admits one wire type, not the union. A request asks for six clozes, so the
+ * schema that comes with it should make a `recognize-mc` unrepresentable rather
+ * than merely unwanted — structured outputs are the cheapest enforcement there
+ * is, and the six types this request is not about cost tokens on every call
+ * while making the one wrong answer expressible.
  */
-export function batchJsonSchema(): JsonObject {
-	const schema = toJsonSchema(generatedBatchSchema) as JsonObject;
+export function batchJsonSchemaFor(def: { schema: z.ZodType }): JsonObject {
+	const schema = toJsonSchema(z.object({ challenges: z.array(def.schema) })) as JsonObject;
 	tighten(schema);
 	return schema;
 }
 
-/** Name used for the structured-output schema. */
-export const BATCH_SCHEMA_NAME = 'lesson_batch';
+/** Name used for one request's structured-output schema. */
+export function batchSchemaNameFor(def: { type: string }): string {
+	return `lesson_${def.type}`;
+}

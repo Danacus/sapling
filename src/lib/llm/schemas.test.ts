@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-	batchJsonSchema,
+	batchJsonSchemaFor,
+	batchSchemaNameFor,
 	challengeSchema,
 	clozeChallengeSchema,
 	generatedBatchSchema,
@@ -10,8 +11,18 @@ import {
 	targetTextSchema,
 	wordOrderChallengeSchema
 } from './schemas';
+import { WIRE_TYPE_DEFS } from './challenge-types';
 
 type JsonNode = Record<string, unknown>;
+
+/**
+ * Every request's schema, serialized together — one per wire type, since a
+ * request asks for one type. What used to be a single union schema is now this
+ * set, and a claim about "the schema the model is sent" has to hold of all of
+ * them.
+ */
+const allRequestSchemas = (): string =>
+	WIRE_TYPE_DEFS.map((def) => JSON.stringify(batchJsonSchemaFor(def))).join('\n');
 
 /** A Latin-script batch: every `reading` is null and nothing is lost by it. */
 const validBatch = {
@@ -133,7 +144,7 @@ describe('generatedBatchSchema', () => {
 	});
 
 	it('has no correctIndex to get wrong: position is not part of the wire format', () => {
-		const serialized = JSON.stringify(batchJsonSchema());
+		const serialized = allRequestSchemas();
 		expect(serialized).not.toContain('correctIndex');
 		expect(serialized).not.toContain('direction');
 	});
@@ -299,7 +310,7 @@ describe('generatedBatchSchema', () => {
 		});
 
 		it('carries no order field of its own: order is the array', () => {
-			const serialized = JSON.stringify(batchJsonSchema());
+			const serialized = allRequestSchemas();
 			expect(serialized).not.toContain('correctOrder');
 			expect(serialized).not.toContain('answerTokens');
 		});
@@ -392,9 +403,8 @@ describe('generatedBatchSchema', () => {
 	});
 });
 
-describe('batchJsonSchema', () => {
-	const schema = batchJsonSchema();
-	const serialized = JSON.stringify(schema);
+describe('batchJsonSchemaFor', () => {
+	const serialized = allRequestSchemas();
 
 	it('contains no unresolved $refs or $defs', () => {
 		// TargetText appears in almost every wire type; it must still be inlined.
@@ -403,11 +413,9 @@ describe('batchJsonSchema', () => {
 		expect(serialized).not.toContain('definitions');
 	});
 
-	it('uses anyOf rather than the unsupported oneOf/prefixItems', () => {
+	it('avoids the unsupported oneOf/prefixItems', () => {
 		expect(serialized).not.toContain('oneOf');
 		expect(serialized).not.toContain('prefixItems');
-		const challenges = schema.properties as Record<string, Record<string, never>>;
-		expect(JSON.stringify(challenges.challenges)).toContain('anyOf');
 	});
 
 	it('is strict-mode ready: every object seals and requires all properties', () => {
@@ -425,27 +433,36 @@ describe('batchJsonSchema', () => {
 			}
 			Object.values(obj).forEach(visit);
 		};
-		visit(schema);
+		for (const def of WIRE_TYPE_DEFS) visit(batchJsonSchemaFor(def));
 	});
 
 	it('offers the model one envelope array and no way to introduce vocabulary', () => {
-		expect(schema.type).toBe('object');
-		expect(Object.keys(schema.properties as object)).toEqual(['challenges']);
+		for (const def of WIRE_TYPE_DEFS) {
+			const schema = batchJsonSchemaFor(def);
+			expect(schema.type, def.type).toBe('object');
+			expect(Object.keys(schema.properties as object), def.type).toEqual(['challenges']);
+		}
 	});
 
-	it('offers every wire type and the reading slot to the model', () => {
-		for (const type of [
-			'recognize-mc',
-			'produce-mc',
-			'cloze',
-			'translate-to-target',
-			'translate-to-native',
-			'word-order',
-			'spot-error'
-		]) {
-			expect(serialized).toContain(type);
+	it('admits exactly the one wire type its request is about', () => {
+		// The cheapest enforcement there is: a request for six clozes cannot come
+		// back as six multiple-choice questions, because the shape is not
+		// expressible. The union schema used to make every wrong answer legal.
+		for (const def of WIRE_TYPE_DEFS) {
+			const only = JSON.stringify(batchJsonSchemaFor(def));
+			expect(only, def.type).toContain(def.type);
+			expect(only, def.type).toContain('reading');
+			for (const other of WIRE_TYPE_DEFS) {
+				if (other.type === def.type) continue;
+				expect(only, `${def.type}'s schema admits ${other.type}`).not.toContain(other.type);
+			}
 		}
-		expect(serialized).toContain('reading');
+	});
+
+	it('names each request’s schema after the type it asks for', () => {
+		for (const def of WIRE_TYPE_DEFS) {
+			expect(batchSchemaNameFor(def)).toBe(`lesson_${def.type}`);
+		}
 	});
 
 	it('leaves match-pairs out of the generation schema entirely', () => {

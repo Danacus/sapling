@@ -3,7 +3,8 @@
  *
  * A `WireTypeDef` is the whole of what the generation side knows about a
  * challenge type: its zod schema, how it is described to the model
- * (`promptSpec`, `rulesSpec`), how it is re-described when a reply has to be
+ * (`promptSpec`, `rulesSpec`), how hard a copy of it is written (`params`,
+ * `paramsSpec`), how it is re-described when a reply has to be
  * rejected (`correctiveSpec`), what a disputing learner's escalation needs told
  * about its stored shape (`escalationSpec`), how it becomes a stored `Challenge`
  * (`resolve`), and the canned examples practice mode plays (`fixtures`). Adding
@@ -27,9 +28,9 @@ import type { Challenge, ChallengeType, Direction } from '$lib/types';
  * both `multiple-choice`, the two translate types are both `typed-translation` —
  * and the direction is what tells them apart, which is why both fields are here
  * and neither is optional. Declared rather than inferred because the generator
- * has to check a *reply* against the plan it asked for (`matchesSlot` in
- * `../generate`): a chunk that answered five `cloze` slots with five
- * `recognize-mc` challenges is not a chunk that came back usable, and counting
+ * has to check a *reply* against the brief it asked for (`fillRequest` in
+ * `../generate`): a request for six `cloze` challenges answered with six
+ * `recognize-mc` ones is not a request that came back usable, and counting
  * challenges alone could never see that.
  */
 export interface StoredShape {
@@ -61,11 +62,48 @@ export interface ChallengeBase {
 	explanation?: string;
 }
 
+/**
+ * The five-rung ladder a lesson is planned on — the same one `../slots` writes
+ * onto every planned challenge and `$lib/session/progression` gates serving on.
+ *
+ * Declared here rather than imported from `../slots` so the arrow keeps pointing
+ * one way: `../slots` names wire types, so a def that named a slot type would
+ * close the loop. `../slots` aliases this back as `SlotDifficulty`.
+ */
+export type DifficultyRung = 1 | 2 | 3 | 4 | 5;
+
+/**
+ * The one planning fact besides the rung a def may size itself by: whether a
+ * cloze was planned with a word bank. Structurally a `SlotKind` minus its
+ * `type`, which the def already knows about itself.
+ */
+export interface SizingKind {
+	readonly bank?: boolean;
+}
+
+/**
+ * The observable knobs one challenge is written to, as plain counts.
+ *
+ * This is what difficulty *is* on the wire now. The model is never told a rung
+ * or an abstract 1-5: it is told how many words the sentence should have, how
+ * many words the bank should hold, how many tiles to cut. A number it can count
+ * is a number it can hit, and the resolver can check some of them afterwards
+ * (see {@link ResolveContext.params}).
+ */
+export type ChallengeParams = Record<string, number>;
+
 /** Everything a resolver is allowed to depend on beyond its own payload. */
 export interface ResolveContext {
 	base: ChallengeBase;
 	/** Injectable `[0,1)` source, so option order and tile order are replayable. */
 	rng: () => number;
+	/**
+	 * The parameters this challenge was asked for, where the pipeline could work
+	 * out which planned entry it answers. Absent for the mock's fixtures and for
+	 * a bare `resolveBatch` call, and a resolver must behave exactly as it did
+	 * before when it is — enforcement is a bonus, never a precondition.
+	 */
+	params?: ChallengeParams;
 }
 
 /**
@@ -126,11 +164,34 @@ export interface WireTypeDef<T extends WirePayload = WirePayload> {
 	 */
 	readonly promptSpec: string;
 	/**
-	 * This type's line in the `Rules:` block, when it has one that mentions no
-	 * other type. Rules that span types (segmentation, the never-swap-sides rule)
-	 * stay global in `../generate` and are absent here.
+	 * This type's line in the `Rules:` block, when it has one.
+	 *
+	 * A request is about one type now, so this is where *any* rule that applies
+	 * to this type lives — including one another type also needs (segmentation is
+	 * spelled out in both `word-order` and `spot-error`). Duplicated prose costs
+	 * nothing it did not already cost: each copy is only ever sent on its own
+	 * type's calls. Only rules that name no type at all stay in `../generate`'s
+	 * shared preamble.
+	 *
+	 * It states no difficulty gradient. Difficulty is {@link WireTypeDef.params}
+	 * now — countable, per challenge, and in the payload. What stays here is the
+	 * judgement no number can express: how close a distractor should sit, how
+	 * subtle a planted error should be.
 	 */
 	readonly rulesSpec?: string;
+	/**
+	 * The knobs this type is sized by at one rung — pure, total, and monotone in
+	 * `difficulty` for every key it returns (lengths never fall, a word bank
+	 * never grows). The keys travel verbatim on each `items` entry, so a key
+	 * added here must be explained in {@link WireTypeDef.paramsSpec}.
+	 */
+	params(difficulty: DifficultyRung, kind: SizingKind): ChallengeParams;
+	/**
+	 * The one prompt line explaining exactly the keys {@link WireTypeDef.params}
+	 * returns, in the model's terms. Paid only on this type's own calls, which is
+	 * what makes a per-type parameter vocabulary affordable at all.
+	 */
+	readonly paramsSpec: string;
 	/** This type's field list in the retry instruction, e.g. `cloze {before,…}`. */
 	readonly correctiveSpec: string;
 	/**

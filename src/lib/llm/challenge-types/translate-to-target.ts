@@ -23,6 +23,9 @@ export const generatedTranslateToTargetSchema = z.object({
 
 export type GeneratedTranslateToTarget = z.infer<typeof generatedTranslateToTargetSchema>;
 
+/** Mirror of `translate-to-native`'s ladder, read off the native prompt. */
+const PROMPT_WORDS = [2, 4, 6, 8, 11] as const;
+
 export const translateToTargetDef = {
 	type: 'translate-to-target',
 	schema: generatedTranslateToTargetSchema,
@@ -30,8 +33,10 @@ export const translateToTargetDef = {
 	promptSpec:
 		'translate-to-target — type the target language. {promptNative, answers:[TargetText, 1 or more]} e.g. {"type":"translate-to-target","promptNative":"Excuse me, the bill please.","answers":[{"text":"服务员，买单","reading":"fúwùyuán, mǎidān"},{"text":"买单","reading":"mǎidān"}],"itemIds":["i4"],"explanation":null}',
 	rulesSpec:
-		'- translate-to-target answers must be exhaustive, one entry per genuinely different way to say it: with and without the article, contractions, common synonyms and word orders. Do NOT list tone- or accent-stripped spellings — the app derives those from "reading". Difficulty scales promptNative\'s length in words.',
+		'- translate-to-target answers must be exhaustive, one entry per genuinely different way to say it: with and without the article, contractions, common synonyms and word orders. Do NOT list tone- or accent-stripped spellings — the app derives those from "reading".',
 	correctiveSpec: 'translate-to-target {promptNative,answers}',
+	paramsSpec: '- words: how many words the native prompt in "promptNative" should have.',
+	params: (difficulty) => ({ words: PROMPT_WORDS[difficulty - 1] }),
 
 	fixtures: {
 		spanish: [

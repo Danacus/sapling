@@ -452,7 +452,7 @@
 		// The free rounds are spliced in here, before anything walks the session —
 		// `warmSession` below is the reason: a round that only came into existence
 		// mid-play could never have its tile audio pre-rendered.
-		queue = interleaveMatchRounds(ready.challenges, items);
+		queue = interleaveMatchRounds(ready.challenges, items, Date.now());
 		nextIndex = 0;
 		plannedLlm = ready.challenges.length;
 		plannedSteps = queue.length;

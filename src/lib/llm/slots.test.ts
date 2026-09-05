@@ -14,12 +14,12 @@
 import { describe, expect, it } from 'vitest';
 import type { BatchArgs, ReviewItemRef } from './generate';
 import {
-	CHUNK_ITEMS,
-	CHUNK_SLOTS,
 	MAX_BATCH_CHALLENGES,
+	MAX_LESSON_KINDS,
+	REQUEST_ITEMS,
 	allowedKinds,
-	chunkSlots,
 	defaultChallengeCount,
+	groupIntoRequests,
 	planSlots,
 	productionShare
 } from './slots';
@@ -34,6 +34,11 @@ const PRODUCTION_TYPES = new Set(['translate-to-target', 'word-order', 'cloze'])
 
 function isProduction(slot: Slot): boolean {
 	return PRODUCTION_TYPES.has(slot.type);
+}
+
+/** The identity a lesson counts distinct kinds by — and a request is cut on. */
+function kindOf(slot: { type: string; bank?: boolean }): string {
+	return `${slot.type}:${slot.bank ?? ''}`;
 }
 
 function item(id: string, level?: ReviewItemRef['level']): ReviewItemRef {
@@ -128,7 +133,7 @@ describe('planSlots', () => {
 
 	it('gives one item different types rather than the same one twice', () => {
 		const slots = planSlots(argsFor([item('a', 5)], { count: 4 }), cyclingRng());
-		const keys = slots.map((s) => `${s.type}:${s.bank ?? ''}`);
+		const keys = slots.map(kindOf);
 		expect(new Set(keys).size).toBe(keys.length);
 	});
 
@@ -189,7 +194,7 @@ describe('planSlots', () => {
 		);
 		const forB = slots.filter((s) => s.itemId === 'b');
 		expect(forB.length).toBeGreaterThan(slots.filter((s) => s.itemId === 'c').length);
-		const keys = forB.map((s) => `${s.type}:${s.bank ?? ''}`);
+		const keys = forB.map(kindOf);
 		expect(new Set(keys).size).toBe(keys.length);
 	});
 
@@ -225,10 +230,11 @@ describe('planSlots', () => {
 		// format the learner had already answered in the same lesson.
 		const solo = planSlots(argsFor([item('solo', 5)], { count: 14 }), cyclingRng());
 		expect(solo).toHaveLength(8); // four recognition kinds plus four production
-		// The cap counts the kinds a word may be asked in, not the kinds it ends up
-		// with: the recognition/production mix can still empty one group and repeat
-		// inside it. What it rules out is the second lap over everything.
-		expect(new Set(solo.map((s) => `${s.type}:${s.bank ?? ''}`)).size).toBeGreaterThanOrEqual(7);
+		// And all eight are different: freshness for the word is absolute, so a
+		// word whose production group is exhausted takes a recognition kind rather
+		// than answering the same format twice. That is what lets a request hold
+		// one entry per word with no duplicates in it.
+		expect(new Set(solo.map(kindOf)).size).toBe(8);
 
 		// A level-1 word has fewer kinds open to it, so its ceiling is lower.
 		const shallow = planSlots(argsFor([item('new', 1)], { count: 14 }), cyclingRng());
@@ -333,62 +339,129 @@ describe('planSlots', () => {
 	});
 });
 
-describe('chunkSlots', () => {
+describe('groupIntoRequests', () => {
 	const many = Array.from({ length: 12 }, (_, i) => item(`w${i + 1}`, 5));
+	const fullLesson = (): Slot[] =>
+		planSlots(argsFor(many, { count: MAX_BATCH_CHALLENGES }), cyclingRng());
 
-	it('cuts a full lesson into short requests about few words each', () => {
-		const args = argsFor(many, { count: MAX_BATCH_CHALLENGES });
-		const chunks = chunkSlots(planSlots(args, cyclingRng()), many);
+	it('cuts a lesson into one request per kind', () => {
+		const requests = groupIntoRequests(fullLesson());
 
-		expect(chunks.length).toBeGreaterThan(1);
-		for (const chunk of chunks) {
-			expect(chunk.slots.length).toBeLessThanOrEqual(CHUNK_SLOTS);
-			expect(chunk.reviewItems.length).toBeLessThanOrEqual(CHUNK_ITEMS);
-			expect(chunk.slots.length).toBeGreaterThan(0);
+		expect(requests.length).toBeGreaterThan(1);
+		for (const request of requests) {
+			expect(request.items.length).toBeGreaterThan(0);
+			expect(request.items.length).toBeLessThanOrEqual(REQUEST_ITEMS);
 		}
 	});
 
-	it('loses no slot and keeps every one in a chunk that names its word', () => {
-		const args = argsFor(many, { count: MAX_BATCH_CHALLENGES });
-		const slots = planSlots(args, cyclingRng());
-		const chunks = chunkSlots(slots, many);
+	it('puts every challenge of one kind in that kind’s own request', () => {
+		const slots = fullLesson();
+		const requests = groupIntoRequests(slots);
 
-		expect(chunks.flatMap((c) => c.slots)).toHaveLength(slots.length);
-		for (const chunk of chunks) {
-			for (const slot of chunk.slots) {
-				expect(chunk.reviewItems.map((i) => i.id)).toContain(slot.itemId);
+		for (const request of requests) {
+			for (const entry of request.items) {
+				const slot = slots[entry.index];
+				expect(kindOf(slot)).toBe(kindOf(request.kind));
+				expect(entry.itemId).toBe(slot.itemId);
+				expect(entry.term).toBe(slot.term);
+				expect(entry.difficulty).toBe(slot.difficulty);
 			}
 		}
 	});
 
-	it("keeps a word's slots together in one request", () => {
-		const args = argsFor(many.slice(0, 6), { count: 12 });
-		const chunks = chunkSlots(planSlots(args, cyclingRng()), many.slice(0, 6));
+	it('loses nothing and numbers every entry by its place in the plan', () => {
+		const slots = fullLesson();
+		const indices = groupIntoRequests(slots)
+			.flatMap((request) => request.items.map((entry) => entry.index))
+			.sort((a, b) => a - b);
+		expect(indices).toEqual(slots.map((_, i) => i));
+	});
 
-		const seen = new Map<string, number>();
-		for (const [index, chunk] of chunks.entries()) {
-			for (const slot of chunk.slots) {
-				const at = seen.get(slot.itemId);
-				if (at !== undefined) expect(at).toBe(index);
-				seen.set(slot.itemId, index);
-			}
+	it('never asks one request about the same word twice', () => {
+		// What lets a request be a flat list of words: a word never gets the same
+		// kind twice in one lesson, so a request has one entry per word and the
+		// reply can be matched back by the word it cites.
+		for (const request of groupIntoRequests(fullLesson())) {
+			const words = request.items.map((entry) => entry.itemId);
+			expect(new Set(words).size).toBe(words.length);
 		}
 	});
 
-	it('splits only a word that alone outgrows a chunk', () => {
-		const one = [item('solo', 5)];
-		const chunks = chunkSlots(planSlots(argsFor(one, { count: 8 }), cyclingRng()), one);
-		expect(chunks).toHaveLength(2);
-		expect(chunks[0].slots).toHaveLength(CHUNK_SLOTS);
-		expect(chunks[1].slots).toHaveLength(3);
+	it('spills a kind with more than REQUEST_ITEMS challenges into a second request', () => {
+		const wide = Array.from({ length: 8 }, (_, i) => item(`n${i + 1}`, 1));
+		// Eight level-1 words, one slot each: four recognition kinds shared out, so
+		// at least one of them is asked for more than REQUEST_ITEMS times only if
+		// the cap forces it — force it directly instead, with a single kind.
+		const slots = planSlots(argsFor(wide, { count: 8 }), FIRST);
+		const requests = groupIntoRequests(slots);
+
+		// `FIRST` always draws the first fresh candidate, so every word gets
+		// recognize-mc: one kind, eight challenges, two requests.
+		expect(new Set(slots.map(kindOf)).size).toBe(1);
+		expect(requests).toHaveLength(2);
+		expect(requests[0].items).toHaveLength(REQUEST_ITEMS);
+		expect(requests[1].items).toHaveLength(8 - REQUEST_ITEMS);
+		expect(kindOf(requests[1].kind)).toBe(kindOf(requests[0].kind));
 	});
 
-	it('is one chunk for a small lesson', () => {
-		const few = many.slice(0, 2);
-		expect(chunkSlots(planSlots(argsFor(few), cyclingRng()), few)).toHaveLength(1);
+	it('carries the cloze bank on the request, where it belongs to the whole brief', () => {
+		const slots = fullLesson();
+		const clozes = groupIntoRequests(slots).filter((r) => r.kind.type === 'cloze');
+		expect(clozes.length).toBeGreaterThan(0);
+		for (const request of clozes) expect(typeof request.kind.bank).toBe('boolean');
+		// Nothing else carries one: it is the difference between two exercises for
+		// cloze and meaningless anywhere else.
+		for (const request of groupIntoRequests(slots)) {
+			if (request.kind.type !== 'cloze') expect(request.kind.bank).toBeUndefined();
+		}
+	});
+
+	it('is one request for a small lesson', () => {
+		const few = [item('a', 1)];
+		expect(groupIntoRequests(planSlots(argsFor(few, { count: 1 }), FIRST))).toHaveLength(1);
 	});
 
 	it('has nothing to cut when there are no slots', () => {
-		expect(chunkSlots([], many)).toEqual([]);
+		expect(groupIntoRequests([])).toEqual([]);
+	});
+});
+
+describe('the lesson-wide kind cap', () => {
+	const many = Array.from({ length: 12 }, (_, i) => item(`w${i + 1}`, 5));
+
+	it('keeps a full lesson to a handful of requests instead of one per type', () => {
+		// Before the cap a twenty-challenge lesson touched every kind its words
+		// allowed — eight prompts to ask two or three questions each.
+		const slots = planSlots(argsFor(many, { count: MAX_BATCH_CHALLENGES }), cyclingRng());
+		const requests = groupIntoRequests(slots);
+
+		expect(slots).toHaveLength(MAX_BATCH_CHALLENGES);
+		expect(requests.length).toBeLessThanOrEqual(6);
+		// Requests are long, not short: twenty challenges over this few briefs.
+		expect(Math.max(...requests.map((r) => r.items.length))).toBeGreaterThan(3);
+	});
+
+	it('still varies which kinds a lesson opens, from one rng to another', () => {
+		const kindsUnder = (rng: () => number): Set<string> =>
+			new Set(planSlots(argsFor(many, { count: MAX_BATCH_CHALLENGES }), rng).map(kindOf));
+
+		const cycling = kindsUnder(cyclingRng());
+		const reversed = kindsUnder(() => 0.99);
+		expect([...cycling].sort()).not.toEqual([...reversed].sort());
+	});
+
+	it('leaves a lesson below the cap exactly as it was', () => {
+		// Under MAX_LESSON_KINDS the picker is the old one: fresh for the word,
+		// drawn at random, with no preference for what the lesson already has.
+		const slots = planSlots(argsFor(many.slice(0, 4), { count: 4 }), cyclingRng());
+		expect(new Set(slots.map(kindOf)).size).toBe(MAX_LESSON_KINDS);
+	});
+
+	it('opens a new kind rather than repeating a format for one word', () => {
+		// The cap yields to freshness: a lesson about one word runs through every
+		// kind that word allows, cap or no cap, because reusing an open kind would
+		// mean asking the same question twice.
+		const solo = planSlots(argsFor([item('solo', 5)], { count: 8 }), cyclingRng());
+		expect(new Set(solo.map(kindOf)).size).toBe(8);
 	});
 });

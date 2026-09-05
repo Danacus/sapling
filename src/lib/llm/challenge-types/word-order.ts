@@ -44,6 +44,16 @@ export const generatedWordOrderSchema = z.object({
 
 export type GeneratedWordOrder = z.infer<typeof generatedWordOrderSchema>;
 
+/**
+ * Tiles the sentence itself is cut into at each rung, and extra wrong ones to
+ * sift through. Eight is the top because the tray is capped at
+ * {@link MAX_WORD_ORDER_TILES} including distractors — past that the exercise
+ * stops being about word order and becomes a search — and the resolver's own
+ * allowance still has the last word when a sentence overshoots.
+ */
+const SENTENCE_TILES = [3, 4, 5, 7, 8] as const;
+const EXTRA_TILES = [0, 0, 1, 2, 3] as const;
+
 export const wordOrderDef = {
 	type: 'word-order',
 	schema: generatedWordOrderSchema,
@@ -51,8 +61,14 @@ export const wordOrderDef = {
 	promptSpec:
 		'word-order — build a target sentence out of tiles. {promptNative, words:[2+ TargetText — the sentence split into tiles, IN THE CORRECT ORDER], distractorWords:[0-3 TargetText] or null, instruction} e.g. {"type":"word-order","promptNative":"Could you bring us the bill, please?","words":[{"text":"¿Nos","reading":null},{"text":"trae","reading":null},{"text":"la","reading":null},{"text":"cuenta,","reading":null},{"text":"por","reading":null},{"text":"favor?","reading":null}],"distractorWords":[{"text":"carta","reading":null}],"instruction":null,"itemIds":["i6"],"explanation":null} — the app shuffles the tiles, so never state an order anywhere else.',
 	rulesSpec:
-		'- word-order sentences must have exactly one natural order: if the same tiles could be rearranged into a second correct sentence, rewrite it. Keep them to 4-8 tiles — 8 is a hard limit; past it, shorten the sentence. distractorWords are plausible words that fit nowhere in the sentence, never a form of a word already in it. Difficulty scales tile count — 3-4 at 1-2, up to 7-8 at 5 — and distractorWords count, 0 at low difficulty to 2-3 at high.',
+		'- word-order sentences must have exactly one natural order: if the same tiles could be rearranged into a second correct sentence, rewrite it. 8 tiles is a hard limit; past it, shorten the sentence. distractorWords are plausible words that fit nowhere in the sentence, never a form of a word already in it.\n- Segmentation: one tile per WORD, never per character or syllable, and punctuation rides on the tile it touches — never a tile of its own ("吗？" is one tile, "？" alone is not a tile). For Chinese and Japanese split on word boundaries — 菜单 is one tile, not 菜 + 单. Each tile is a TargetText and carries its own reading under the usual rule.',
 	correctiveSpec: 'word-order {promptNative,words}',
+	paramsSpec:
+		'- tiles: how many tiles the sentence itself should be cut into. distractors: how many extra wrong tiles to add in distractorWords, 0 meaning none.',
+	params: (difficulty) => ({
+		tiles: SENTENCE_TILES[difficulty - 1],
+		distractors: EXTRA_TILES[difficulty - 1]
+	}),
 	escalationSpec:
 		'"word-order": the learner arranged the shuffled "tiles" into a sentence, and "answerTokens" in that order (printed as "answer") is the only accepted arrangement.',
 
@@ -109,7 +125,7 @@ export const wordOrderDef = {
 		]
 	},
 
-	resolve(generated, { base, rng }) {
+	resolve(generated, { base, rng, params }) {
 		// Structural: fewer than two real tiles is not a sentence to build,
 		// and a blank tile is a tile that cannot be tapped. Punctuation-only
 		// tiles ("？" as its own tile) are merged into their neighbour first —
@@ -124,10 +140,13 @@ export const wordOrderDef = {
 		// place of its twin, which grades correct anyway (text sequence, not
 		// indices), so it is a tile that does nothing. The allowance shrinks
 		// as the sentence grows, so an overshot sentence is not padded past
-		// MAX_WORD_ORDER_TILES into a search puzzle.
+		// MAX_WORD_ORDER_TILES into a search puzzle — and where the challenge
+		// was planned with a distractor count, that count binds too: extra
+		// tiles are the second half of this type's difficulty, not a garnish.
 		const allowance = Math.min(
 			MAX_WORD_ORDER_DISTRACTORS,
-			Math.max(0, MAX_WORD_ORDER_TILES - words.length)
+			Math.max(0, MAX_WORD_ORDER_TILES - words.length),
+			params?.distractors ?? Infinity
 		);
 		const seen = new Set(words.map((word) => labelKey(word.text)));
 		const distractors: Token[] = [];

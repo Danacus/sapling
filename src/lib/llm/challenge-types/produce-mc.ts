@@ -30,15 +30,20 @@ export const generatedProduceMcSchema = z.object({
 
 export type GeneratedProduceMc = z.infer<typeof generatedProduceMcSchema>;
 
+/** Mirror of `recognize-mc`'s ladder, read off the native prompt instead. */
+const PROMPT_WORDS = [1, 3, 5, 8, 11] as const;
+
 export const produceMcDef = {
 	type: 'produce-mc',
 	schema: generatedProduceMcSchema,
 	stored: { type: 'multiple-choice', direction: 'toTarget' },
 	promptSpec:
 		'produce-mc — native prompt shown, target text picked. {promptNative, correct:TargetText, distractors:[3 TargetText], instruction} e.g. {"type":"produce-mc","promptNative":"to order (food in a restaurant)","correct":{"text":"pedir","reading":null},"distractors":[{"text":"pagar","reading":null},{"text":"probar","reading":null},{"text":"servir","reading":null}],"instruction":null,"itemIds":["i2"],"explanation":null}',
-	correctiveSpec: 'produce-mc {promptNative,correct,distractors}',
+	correctiveSpec: 'produce-mc {promptNative,correct,distractors: exactly 3}',
+	paramsSpec: '- words: how many words the native prompt in "promptNative" should have.',
+	params: (difficulty) => ({ words: PROMPT_WORDS[difficulty - 1] }),
 	rulesSpec:
-		"- produce-mc: difficulty scales promptNative's length the same way — a word or short phrase at 1-2, a clause at 3, a full sentence at 4-5 — and distractor closeness.",
+		'- produce-mc: exactly one of the four options may answer promptNative; if two would both do, rewrite the prompt. The closer the distractors sit to the correct target text without being a second right answer, the better the challenge.',
 
 	fixtures: {
 		spanish: [

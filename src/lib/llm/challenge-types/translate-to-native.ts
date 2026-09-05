@@ -22,6 +22,13 @@ export const generatedTranslateToNativeSchema = z.object({
 
 export type GeneratedTranslateToNative = z.infer<typeof generatedTranslateToNativeSchema>;
 
+/**
+ * How long the prompt runs at each rung. It starts at two words rather than
+ * one: a single-word translation typed out is a flashcard, and the type earns
+ * its keep on phrases.
+ */
+const PROMPT_WORDS = [2, 4, 6, 8, 11] as const;
+
 export const translateToNativeDef = {
 	type: 'translate-to-native',
 	schema: generatedTranslateToNativeSchema,
@@ -29,7 +36,10 @@ export const translateToNativeDef = {
 	promptSpec:
 		'translate-to-native — type the native language. {prompt:TargetText, answersNative:[1 or more]} e.g. {"type":"translate-to-native","prompt":{"text":"la cuenta","reading":null},"answersNative":["the bill","the check"],"itemIds":["i5"],"explanation":null}',
 	correctiveSpec: 'translate-to-native {prompt,answersNative}',
-	rulesSpec: "- translate-to-native: difficulty scales prompt's length in words, 1 shortest.",
+	paramsSpec: '- words: how many words the target-language text in "prompt" should have.',
+	params: (difficulty) => ({ words: PROMPT_WORDS[difficulty - 1] }),
+	rulesSpec:
+		'- translate-to-native: answersNative must cover every natural way to render the prompt in the native language, so a learner who understood it is never marked wrong over a synonym.',
 
 	fixtures: {
 		spanish: [
