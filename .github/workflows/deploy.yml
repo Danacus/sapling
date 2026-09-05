@@ -1,0 +1,88 @@
+# Build and deploy the static app.
+#
+# One job, every gate, then a deploy step that only runs for a push to `main`.
+# Everything executes inside the flake's devShell, so CI uses the exact node,
+# pnpm, cargo, lld and wasm-bindgen the checkout pins — Cloudflare Pages' own
+# build image has no Rust, which is why the build lives here and the Pages git
+# integration is switched off (see .claude/rules/deploy.md).
+#
+# Needs, set once in the repository settings:
+#   secrets  CLOUDFLARE_API_TOKEN     token with Cloudflare Pages: Edit
+#            CLOUDFLARE_ACCOUNT_ID
+#   vars     CLOUDFLARE_PAGES_PROJECT the Pages project name (defaults to `sapling`)
+#            VITE_SYNC_URL            the sync Worker's URL; unset builds without sync
+name: Build and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  # A superseded PR run is wasted work; a superseded main run is a deploy
+  # that must be allowed to finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: cachix/install-nix-action@v31
+
+      - name: Cache the nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 4G
+
+      - name: Cache the pnpm store
+        uses: actions/cache@v6
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Install
+        run: nix develop -c pnpm install --frozen-lockfile
+
+      - name: Rust gates
+        run: |
+          nix develop -c pnpm core:check
+          nix develop -c pnpm core:test
+
+      - name: TypeScript gates
+        run: |
+          nix develop -c pnpm check
+          nix develop -c pnpm test
+          nix develop -c pnpm format:check
+
+      - name: Build
+        env:
+          VITE_SYNC_URL: ${{ vars.VITE_SYNC_URL }}
+        run: nix develop -c pnpm build
+
+      - name: Deploy to Cloudflare Pages
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'sapling' }}
+        run: nix develop -c pnpm exec wrangler pages deploy build --project-name "$PROJECT" --branch main
