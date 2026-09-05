@@ -7,22 +7,38 @@
  *
  * Two engines, picked per call:
  *
- * - **Kokoro** (Kokoro v1.1-zh under the sherpa-onnx WASM runtime, in a Web
- *   Worker) for Mandarin and English. Real Mandarin, including mixed zh/en
- *   sentences — see the note in `languages.ts` for exactly what it covers and
- *   `sherpa.worker.ts` for how the runtime is assembled.
+ * - **Kokoro** (Kokoro v1.1-zh) for Mandarin and English. Real Mandarin,
+ *   including mixed zh/en sentences — see the note in `languages.ts` for
+ *   exactly what it covers.
  * - **Web Speech API** for every other language, and as the fallback whenever
  *   Kokoro is unavailable, still downloading, or fails.
+ *
+ * ## Kokoro comes from the host, and there are two hosts
+ *
+ * The `'kokoro'` preference has never named a *runtime* — it names the good,
+ * downloaded, neural voice — and there are now two implementations of it
+ * behind one shape (`KokoroProvider`): `sherpa.ts`, the sherpa-onnx WASM build
+ * in a Web Worker, and `native.ts`, the same model running natively in the
+ * Tauri desktop host, which is the only way it can run there at all. The
+ * speaker ids, the sample rate and the WAV framing are identical because it is
+ * the same model, so everything below this line — the caches, the warm-up, the
+ * fallback — is host-blind. {@link inTauri} decides, once.
  *
  * Synthesized clips are cached twice over — an in-memory LRU for this session,
  * then Cache Storage (`ll-tts-audio`) so a word drilled yesterday still plays
  * instantly today; the runtime's two big downloads live in their own bucket
- * (`ll-tts-models`), written by the worker.
+ * (`ll-tts-models`), written by the worker. **On the desktop only the memory
+ * tier is used**: native synthesis is roughly four times real time against the
+ * browser's one-to-two seconds a phrase, so a clip is cheaper to re-make than
+ * to keep, and the model already sits on disk as ordinary files.
  */
+
+import { inTauri } from '$lib/platform';
 
 import { readClip, writeClip } from './audio-store';
 import { audioCacheKey, audioCacheUrl, LruCache } from './cache';
 import { bcp47For, kokoroSpeakerFor, kokoroSupports } from './languages';
+import { RUNTIME_DOWNLOAD_BYTES } from './models';
 import { initSherpa, onSherpaProgress, synthesize, type TtsProgress } from './sherpa';
 import {
 	getTtsEngine,
@@ -36,13 +52,6 @@ import { cancelWebSpeech, speakWithWebSpeech, webSpeechAvailable } from './websp
 
 export type { TtsEngine, TtsVoice } from './prefs';
 export type { TtsProgress } from './sherpa';
-/**
- * Subscribes to Kokoro's model-download progress (see `preloadKokoro`, which
- * uses the same hook). Exposed directly for callers — such as the TTS
- * test-bench — that want live progress during an ordinary {@link speak} call
- * rather than a separate explicit preload.
- */
-export { onSherpaProgress } from './sherpa';
 export type { KokoroSpeaker } from './languages';
 export { getTtsEngine, getTtsVoice, DEFAULT_TTS_ENGINE, DEFAULT_TTS_VOICE } from './prefs';
 export {
@@ -71,6 +80,93 @@ const KOKORO_SPEED = 1;
 
 /** The clip currently playing, so a new request can cut it off. */
 let playing: HTMLAudioElement | null = null;
+
+// -- Which Kokoro ------------------------------------------------------------
+
+/**
+ * What a host has to offer for its `'kokoro'` to be usable here. Both
+ * providers already had this shape; naming it is what lets the rest of the
+ * module stop caring which one it got.
+ */
+export interface KokoroProvider {
+	/** Downloads whatever is missing and resolves when the voice can speak. */
+	init(): Promise<void>;
+	/** Subscribes to download progress; the return value unsubscribes. */
+	onProgress(listener: (progress: TtsProgress) => void): () => void;
+	/** One phrase, as a WAV blob. */
+	synthesize(text: string, speakerId: number, speed?: number): Promise<Blob>;
+}
+
+/** The browser's: sherpa-onnx compiled to WASM, in a Web Worker. */
+const sherpaProvider: KokoroProvider = {
+	init: initSherpa,
+	onProgress: onSherpaProgress,
+	synthesize
+};
+
+let provider: Promise<KokoroProvider> | undefined;
+
+/**
+ * The host's Kokoro, resolved once.
+ *
+ * The desktop module is reached through a dynamic import so a browser never
+ * fetches it (and never sees a reference to `@tauri-apps/api`); the browser
+ * branch is already loaded, so on the web this is a resolved promise and adds
+ * a microtask, not a round trip.
+ */
+function kokoro(): Promise<KokoroProvider> {
+	provider ??= inTauri()
+		? import('./native').then((module) => module.nativeKokoro)
+		: Promise.resolve(sherpaProvider);
+	return provider;
+}
+
+/**
+ * Whether stored clips are worth keeping on this host.
+ *
+ * The browser pays one to two seconds of WASM inference per phrase, which is
+ * exactly what Cache Storage is there to avoid. The native engine runs at
+ * several times real time, so re-synthesizing costs less than the reads,
+ * writes and eviction sweeps of a hundred-megabyte on-disk cache — and the
+ * memory LRU still absorbs the replays a learner actually fires off.
+ */
+function clipsWorthStoring(): boolean {
+	return !inTauri();
+}
+
+/**
+ * Subscribes to Kokoro's model-download progress on whichever host is
+ * providing it (see `preloadKokoro`, which uses the same hook). Exposed
+ * directly for callers — such as the TTS test-bench — that want live progress
+ * during an ordinary {@link speak} call rather than a separate explicit
+ * preload.
+ *
+ * Returns synchronously even though the provider does not: the unsubscribe it
+ * hands back is honoured whether or not the provider has arrived yet.
+ */
+export function onVoiceProgress(listener: (progress: TtsProgress) => void): () => void {
+	let cancelled = false;
+	let unsubscribe: (() => void) | undefined;
+	void kokoro().then((engine) => {
+		if (cancelled) return;
+		unsubscribe = engine.onProgress(listener);
+	});
+	return () => {
+		cancelled = true;
+		unsubscribe?.();
+	};
+}
+
+/**
+ * First-run download for the voice, in bytes — two files from a mirror in the
+ * browser, one release archive on the desktop. Asked rather than imported
+ * because only the host knows what it will fetch.
+ */
+export async function voiceDownloadBytes(): Promise<number> {
+	if (!inTauri()) return RUNTIME_DOWNLOAD_BYTES;
+	const { nativeVoiceStatus } = await import('./native');
+	return (await nativeVoiceStatus()).downloadBytes;
+}
 
 /**
  * Persists the engine choice. Changing it drops the in-memory audio: clips are
@@ -131,9 +227,10 @@ export function ttsAvailable(language: string | undefined): boolean {
  * show an error — `speak()` itself never surfaces this.
  */
 export async function preloadKokoro(onProgress?: (progress: TtsProgress) => void): Promise<void> {
-	const unsubscribe = onProgress ? onSherpaProgress(onProgress) : undefined;
+	const engine = await kokoro();
+	const unsubscribe = onProgress ? engine.onProgress(onProgress) : undefined;
 	try {
-		await initSherpa();
+		await engine.init();
 	} finally {
 		unsubscribe?.();
 	}
@@ -151,6 +248,10 @@ const inflight = new Map<string, Promise<Blob>>();
  * One clip, wherever it is cheapest: memory LRU → Cache Storage → synthesis,
  * writing through to both on a miss and deduplicating concurrent requests for
  * the same phrase. Throws only when synthesis itself fails.
+ *
+ * The stored tier is skipped where it does not pay for itself — see
+ * {@link clipsWorthStoring} — leaving the memory LRU and the dedupe, which
+ * both hosts want.
  */
 async function obtainClip(phrase: string, speaker: { id: number; name: string }): Promise<Blob> {
 	const key = audioCacheKey(phrase, speaker.name);
@@ -162,10 +263,12 @@ async function obtainClip(phrase: string, speaker: { id: number; name: string })
 	if (pending) return pending;
 
 	const work = (async () => {
-		let blob = await readClip(audioCacheUrl(phrase, speaker.name, KOKORO_SPEED));
+		const url = audioCacheUrl(phrase, speaker.name, KOKORO_SPEED);
+		const stored = clipsWorthStoring();
+		let blob = stored ? await readClip(url) : undefined;
 		if (!blob) {
-			blob = await synthesize(phrase, speaker.id, KOKORO_SPEED);
-			void writeClip(audioCacheUrl(phrase, speaker.name, KOKORO_SPEED), blob);
+			blob = await (await kokoro()).synthesize(phrase, speaker.id, KOKORO_SPEED);
+			if (stored) void writeClip(url, blob);
 		}
 		audioCache.set(key, blob);
 		return blob;
@@ -189,6 +292,10 @@ async function obtainClip(phrase: string, speaker: { id: number; name: string })
  * click's user-activation window instead of arriving after it. Fire-and-forget
  * safe: every failure is swallowed, warming is only ever an optimization.
  * Web Speech has nothing to warm (the OS synthesizes at play time).
+ *
+ * On the desktop this is also where the engine's one-off load lands — the
+ * native host has no separate warm-up command, and the seconds it takes are
+ * spent while the challenge is being read rather than after an answer.
  */
 export async function warmSpeech(text: string, language: string): Promise<void> {
 	const phrase = text?.trim();
@@ -249,8 +356,9 @@ export async function speak(text: string, language: string): Promise<void> {
 		if (speaker) {
 			try {
 				// Memory → disk → synthesize (see `obtainClip`); the disk layer never
-				// throws, so a broken or absent Cache Storage costs a re-synthesis
-				// and nothing else.
+				// throws, and is skipped entirely on a host where it does not pay,
+				// so a broken, absent or bypassed Cache Storage costs a
+				// re-synthesis and nothing else.
 				await playBlob(await obtainClip(phrase, speaker));
 				return;
 			} catch (cause) {

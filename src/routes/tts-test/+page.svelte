@@ -15,7 +15,7 @@
 		getTtsVoice,
 		kokoroSupports,
 		MANDARIN_SPEAKERS,
-		onSherpaProgress,
+		onVoiceProgress,
 		setTtsVoice,
 		speak,
 		stopSpeaking,
@@ -123,7 +123,7 @@
 		// Fires only while Kokoro's model is actually downloading; a warm engine
 		// (or a call that never touches Kokoro) never triggers this, and the
 		// status line just stays on "Synthesizing…" until the promise settles.
-		const unsubscribe = onSherpaProgress((progress) => {
+		const unsubscribe = onVoiceProgress((progress) => {
 			status = 'loading';
 			loadingPercent = Math.round(progress.progress);
 		});

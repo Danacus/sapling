@@ -9,23 +9,14 @@
  * node — both transports are reached through a dynamic import, and tests
  * install a backend built over an in-memory database instead.
  */
+import { inTauri } from '$lib/platform';
+
 import type { Backend } from './protocol';
 
 /** Shown when the OPFS VFS refuses to open because another tab holds it. */
 export const BUSY_MESSAGE = 'Sapling is already open in another tab.';
 
 let pending: Promise<Backend> | undefined;
-
-/**
- * True inside the Tauri desktop shell: it injects this before any app code runs.
- *
- * Kept here rather than in `./tauri` so that the browser never loads that
- * module — and so the web bundle never carries a reference to
- * `@tauri-apps/api` outside a dynamic import that is not taken.
- */
-function inTauri(): boolean {
-	return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
-}
 
 /**
  * Opens the backend, once.

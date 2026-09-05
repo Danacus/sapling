@@ -1,14 +1,17 @@
 # Desktop (Tauri v2) — a spike
 
 Contracts: `.claude/rules/desktop.md`, `.claude/rules/core.md`.
-Code: `crates/sapling-desktop/`, `src/lib/db/tauri.ts`.
+Code: `crates/sapling-desktop/`, `src/lib/db/tauri.ts`, `src/lib/tts/native.ts`,
+`src/lib/platform.ts`.
 
 **This is a spike, not a product.** It exists to answer one question — can the
 Rust persistence core run natively over a SQLite file behind the *existing*
 domain protocol, with the same SvelteKit app on top? It can, and the app boots
-to onboarding through it. Nothing in the web build, the gates or CI depends on
-any of it: the desktop crate is a workspace member but not a *default* member,
-and its toolchain lives in a second devShell.
+to onboarding through it. Since then it has grown a second native capability,
+the voice (see [Speech](#speech)), for the same reason: the webview cannot run
+the browser's implementation at all. Nothing in the web build, the gates or CI
+depends on any of it: the desktop crate is a workspace member but not a
+*default* member, and its toolchain lives in a second devShell.
 
 ## Running it
 
@@ -50,23 +53,29 @@ not a row because it is half of a review's identity and has to survive
 caches and local storage in the same directory, which is also where the API key
 and prefs end up — they are `localStorage` on both hosts, never in the store.
 
+Also inside it, once the voice has been downloaded: `tts/kokoro-multi-lang-v1_1/`,
+about 407 MB of ordinary files (see [Speech](#speech)).
+
 Deleting the directory is a factory reset.
 
 ## What is native and what still goes through the webview
 
-**Native.** Persistence, and only persistence. `crates/sapling-desktop` opens
-the file, lends `sapling-core` the four runtime facts (`deviceId`, the system
-clock, `localDay` from the system time zone, UUID v4 ids) and exposes exactly
-the three commands `WasmCore` exposes to the database Worker — `dispatch`,
-`commit_all`, `derived_schema_version`. `src/lib/db/tauri.ts` is one `invoke`
-per `Backend` call, chosen by `backend.ts` when `__TAURI_INTERNALS__` is on the
-window; every argument still goes through `toPlain()`, because `client.ts` owns
-the proxy for both transports.
+**Native: persistence and synthesis.** `crates/sapling-desktop` opens the file,
+lends `sapling-core` the four runtime facts (`deviceId`, the system clock,
+`localDay` from the system time zone, UUID v4 ids) and exposes exactly the three
+commands `WasmCore` exposes to the database Worker — `dispatch`, `commit_all`,
+`derived_schema_version`. `src/lib/db/tauri.ts` is one `invoke` per `Backend`
+call, chosen by `backend.ts` when `inTauri()`; every argument still goes through
+`toPlain()`, because `client.ts` owns the proxy for both transports. The voice
+adds three more commands and is the section below.
+
+Both are host capabilities in the same narrow sense — a file, and text-in
+audio-out. Neither carries a merge rule, a lesson, or a language.
 
 **Everything else is the same web app in a webview**: the UI, the LLM call to
-OpenRouter, TTS, ASR, the reading and conversation layers, the romanizer. There
-is no native menu, no tray, no auto-update, no file dialog and no deep-link
-handling. The window is one `main` window loading `/`.
+OpenRouter, audio *playback*, ASR, the reading and conversation layers, the
+romanizer. There is no native menu, no tray, no auto-update, no file dialog and
+no deep-link handling. The window is one `main` window loading `/`.
 
 **No CSP.** `app.security.csp` is `null`, matching the web deploy, which sets
 none either and for a load-bearing reason (`deploy.md`: the YouTube iframe API
@@ -78,6 +87,122 @@ names those two origins rather than inherit this.
 over the custom protocol, which does *not* fall back to `index.html` the way
 `static/_redirects` does. Starting at `/` works and client-side navigation
 works; a reload on a deep route would not. Untested, because nothing reloads.
+
+## Speech
+
+**Why any of this is native.** The browser runs Kokoro as sherpa-onnx compiled
+to WASM in a Worker, and that path cannot exist here: the engine is a 439 MB
+Emscripten *file package* whose byte offsets are baked into vendored glue, and
+this webview has no `SharedArrayBuffer`. So synthesis moved to Rust — and only
+synthesis. Playback stays in the webview, because `<audio>` over a blob works
+there (given the GStreamer plugins the shell carries) and one player for both
+hosts is worth more than a native audio stack.
+
+Nothing above the seam moved with it. `speak(text, lang)` is unchanged, the
+`ll.ttsEngine` preference still reads `'kokoro' | 'webspeech' | 'off'`, and
+`'kokoro'` still means the good downloaded neural voice — now from whichever
+host provides it. The speaker ids in `languages.ts` are the same numbers
+because it is the same model.
+
+**The model.** `kokoro-multi-lang-v1_1`, fp32, taken from k2-fsa's own release
+assets rather than the third-party mirror the browser needs — native
+sherpa-onnx reads ordinary files, so there is no repackaged bundle in the trust
+path:
+
+```
+https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_1.tar.bz2
+364,816,464 B   sha256 a3f4c73d043860e3fd2e5b06f36795eb81de0fc8e8de6df703245edddd87dbad
+```
+
+URL, size and hash are one constant, `KOKORO` in `src/tts/model.rs`. The
+archive is streamed to `<app-data>/tts/*.part`, hashed as it lands, verified
+against both numbers, and only then unpacked — into `<app-data>/tts/`, where
+its own top-level directory becomes `kokoro-multi-lang-v1_1/` (about 407 MB).
+Any failure removes the part file and the directory, so "installed" is never
+half true. Download and unpack each report progress, so the bar covers the
+whole minute rather than sitting at 100% through bzip2.
+
+**The commands**, and there are only three:
+
+| command | answers |
+|---|---|
+| `tts_status()` | model name, installed, bytes on disk, bytes a fresh download costs, whether the engine is warm |
+| `tts_download()` | nothing; idempotent, verifies, emits `tts://model-progress` |
+| `tts_synthesize(text, sid, speed)` | a complete WAV file as a binary IPC payload |
+
+`tts_synthesize` returns `tauri::ipc::Response`, not a `Vec<u8>`: the latter
+crosses as a JSON array of numbers, which for one sentence is megabytes of text
+parsed on the window thread for audio already in the right format. Both long
+commands are `async` and run their work on `spawn_blocking` — a synchronous
+Tauri command runs on the main thread, and a second of inference there is a
+frozen window. The engine is built on the first phrase and kept for the life of
+the process, behind a `Mutex` because sherpa-onnx promises nothing about
+concurrent generation.
+
+**Two deliberate differences from the browser**, both visible in Settings:
+
+- **No warm-up command.** `preloadKokoro` downloads the model and stops there;
+  the engine's ~2 s load happens on the first synthesis. That is not a hole:
+  the session screen calls `warmSpeech` the moment a challenge is shown, so the
+  load lands while the learner is reading the question rather than after they
+  answer.
+- **No stored clip cache.** Cache Storage (`ll-tts-audio`) is skipped here. It
+  exists to avoid the browser's one-to-two seconds of WASM inference per
+  phrase; natively synthesis runs at several times real time, so a clip is
+  cheaper to re-make than to keep, and the memory LRU still absorbs replays.
+  The Settings "Audio cache" row is hidden unless something actually did write
+  clips.
+
+**Measured** on this machine (16 threads, the model on an SSD), from
+`tests/voice.rs`:
+
+| | |
+|---|---|
+| download + verify + unpack | 60 s |
+| engine load (once per launch) | ~2.1 s |
+| Mandarin, 3.78 s of audio | 0.96–1.02 s (≈3.8× real time) |
+| English, 1.76 s of audio | 0.47–0.51 s (≈3.5× real time) |
+| mixed zh/en, 2.48 s of audio | ~3.0 s (first call, includes the load) |
+
+Synthesis is **not** bit-reproducible: ONNX reduces in whatever order its
+threads finish, so the same phrase twice differs in the low bits and by a few
+samples of length. Harmless — clips key on text, speaker and speed, so a
+learner hears one rendering — but do not write a test that expects equal bytes.
+
+**The int8 question, answered.** `models.ts` records that every published int8
+Kokoro WASM build returns all-`NaN` samples (sherpa-onnx#2236), which is why
+the browser pays for fp32. Natively it does not reproduce:
+`kokoro-int8-multi-lang-v1_1` (147 MB) synthesized six clips across both
+languages with zero NaN samples and normal peaks. So that bug belongs to the
+WASM build, not to the quantized weights. fp32 still ships on both hosts — one
+model, one sound, and no reason to introduce a second answer to "what does this
+word sound like" for 218 MB.
+
+**How sherpa-onnx is linked.** `sherpa-rs-sys` with `download-binaries`: it
+vendors sherpa-onnx's headers for one exact tag (v1.12.9) and its build script
+downloads k2-fsa's prebuilt shared libraries for that same tag into
+`~/.cache/sherpa-rs`. Two things fall out of that and both cost time to find:
+
+- **Do not point it at nixpkgs' `sherpa-onnx` instead.** That package is 1.12.38,
+  whose `SherpaOnnxOfflineTtsModelConfig` has three members the 1.12.9 headers
+  do not, so every field after it sits at a different offset — the bindings and
+  the library would silently disagree about the config being passed.
+- **v1.12.9 is before the change that made `dict_dir` optional**, so the
+  multi-lang Kokoro frontend refuses to start without the archive's jieba
+  dictionaries. The browser worker leaves `dictDir` empty (correctly, for
+  v1.12.15+); this host passes `dict/`.
+
+`build.rs` adds `-Wl,-rpath,$ORIGIN` so the binaries find the two `.so` files
+the build script drops beside them, and the devShell puts libstdc++ on
+`LD_LIBRARY_PATH` because a shared library's own dependencies are not resolved
+through the executable's `DT_RUNPATH`.
+
+`tts::kokoro` is the crate's only `unsafe` — the root denies rather than
+forbids it — because `sherpa-rs`, the safe wrapper, frees the rule-FST path
+string before sherpa-onnx reads it (`Option::map` consumes the `CString`).
+Dropping the FSTs instead would mean "2026" read as English digits inside a
+Chinese sentence on this host only, so the twenty lines the wrapper would have
+contributed live here instead, with the strings kept alive across the call.
 
 ## What actually happens in WebKitGTK
 
@@ -128,12 +253,14 @@ Item by item, against the things the brief asked about:
   this session), so "the API is reachable" is what was proven, not "a video
   plays".
 
-- **The sherpa TTS wasm was not exercised**, because it means downloading ~439
-  MB of Kokoro fp32 artifacts. Every prerequisite is there: `WebAssembly` with
-  streaming instantiation, `Worker`, `AudioContext`, `AudioWorklet`, and a
-  working cross-origin `fetch` to the mirror's host. `SharedArrayBuffer` is
-  absent, so a threaded build would not run; the vendored sherpa glue is
-  single-threaded, so that is expected to be fine and is untested.
+- **The sherpa TTS wasm was never exercised, and now never will be.** Every
+  prerequisite was there — `WebAssembly` with streaming instantiation,
+  `Worker`, `AudioContext`, `AudioWorklet`, a working cross-origin `fetch` to
+  the mirror — except `SharedArrayBuffer`, and the vendored glue is
+  single-threaded, so it was *expected* to work under 439 MB of Emscripten file
+  package. It was never worth finding out: the same model runs natively at
+  several times real time with no file package at all, which is what the
+  [Speech](#speech) section describes. The web build's path is untouched.
 
 - **Audio needs GStreamer, and without it WebKit does not degrade — it
   crashes.** This is the one that cost real time. In a shell without the
@@ -164,6 +291,14 @@ the build: `glib-networking` (`GIO_MODULE_DIR`), without which every `https://`
 request inside the webview fails, and GStreamer (`GST_PLUGIN_SYSTEM_PATH_1_0`),
 whose absence is the crash described above.
 
+The voice adds two more: `rustPlatform.bindgenHook`, because `sherpa-rs-sys`
+generates its FFI with bindgen and needs a libclang (`LIBCLANG_PATH`), and
+`stdenv.cc.cc.lib` on `LD_LIBRARY_PATH`, because the prebuilt sherpa-onnx and
+onnxruntime libraries are linked against an ordinary distribution's libstdc++.
+The second is a third runtime-only trap of exactly the shape of the other two:
+no build error, and every desktop binary dies at startup with
+`libstdc++.so.6: cannot open shared object file`.
+
 ## What a shipped version would still need
 
 Not done, and each is real work: bundling (icons, `.deb`/`.AppImage`/`.dmg`,
@@ -172,3 +307,10 @@ returns `Err` and the app simply fails to start), SPA fallback for deep routes,
 a native menu and window-state persistence, auto-update, and a decision about
 whether the desktop build syncs at all — it uses the same `VITE_SYNC_URL` the
 web build does, and nothing about that was exercised.
+
+For the voice specifically: shipping sherpa-onnx and onnxruntime as bundled
+libraries rather than as a build-time download into `~/.cache` (today
+`cargo build` needs the network once per machine), a `cancellable: true` for
+the `tts-model` task (the download does not watch for an abort, so the tray
+still says "Stop watching"), and macOS/Windows, where none of the linking above
+has been tried.
