@@ -224,7 +224,10 @@ fn concurrent_calls_are_serialised_and_none_is_lost() {
     known.sort();
     let mut expected = terms.clone();
     expected.sort();
-    assert_eq!(known, expected, "every concurrent write landed exactly once");
+    assert_eq!(
+        known, expected,
+        "every concurrent write landed exactly once"
+    );
 
     // Back to back on one thread: the sequential guarantee the window's queue
     // restores on top of the pool.

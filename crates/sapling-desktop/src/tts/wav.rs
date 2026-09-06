@@ -1,12 +1,14 @@
-//! Float32 PCM → RIFF/WAVE, so the webview has something `<audio>` can play.
+//! Float32 PCM → RIFF/WAVE, the container a clip travels and is cached in.
 //!
-//! The webview still *plays* the audio — only synthesis moved native (see
-//! `mod.rs`) — and the thing it plays is an `<audio>` element over a blob. So
-//! the command hands back a complete WAV file rather than samples: the
-//! TypeScript side never sees a float, never allocates a 24 kHz array, and the
-//! byte layout is decided in exactly one place per host. Mono, 16-bit signed:
-//! 16 bits is indistinguishable at speech bandwidth and halves what the
-//! in-memory clip cache holds.
+//! Playback is this host's too now (`play.rs`), so the file is no longer for a
+//! `<audio>` element — but the caches between the two commands are the window's
+//! (`tts.ts`), so a clip still crosses the IPC twice and needs a shape both
+//! sides can hold. A complete WAV file rather than samples: the TypeScript side
+//! never sees a float, never allocates a 24 kHz array, and the byte layout is
+//! decided in exactly one place per host. Mono, 16-bit signed: 16 bits is
+//! indistinguishable at speech bandwidth and halves what the in-memory clip
+//! cache holds — and it is what `play.rs` accepts, which is the one place the
+//! two ends of the round trip have to agree.
 //!
 //! ## The container is `hound`'s, and the samples are ours
 //!
@@ -42,8 +44,9 @@ pub const HEADER_BYTES: usize = 44;
 pub fn encode_wav(samples: &[f32], sample_rate: u32) -> Vec<u8> {
     let spec = hound::WavSpec {
         channels: 1,
-        // A rate of 0 makes the file undecodable and `<audio>` fails silently,
-        // which is the one failure mode speech may not have.
+        // A rate of 0 makes the file undecodable, and a decoder that refuses it
+        // (`play.rs` does, the browser's `<audio>` fails silently) is speech
+        // that never happens.
         sample_rate: sample_rate.max(1),
         bits_per_sample: 16,
         sample_format: hound::SampleFormat::Int,
@@ -157,8 +160,8 @@ mod tests {
 
     #[test]
     fn a_zero_sample_rate_is_never_written_to_the_header() {
-        // A rate of 0 would make the file undecodable; `<audio>` would refuse
-        // it silently, which is the one failure mode speech may not have.
+        // A rate of 0 would make the file undecodable, and a clip that will not
+        // decode is speech that never happens.
         let wav = encode_wav(&[0.25], 0);
 
         assert_eq!(u32_at(&wav, 24), 1);

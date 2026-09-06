@@ -9,11 +9,15 @@
  * voice — is the same code the web build runs, because it is the same model
  * with the same speaker ids and the engine is the only thing that moved.
  *
- * **Only synthesis is native.** The clip comes back as bytes and is played by
- * the webview's `<audio>`, exactly as in a browser. WebKitGTK plays a WAV
- * happily (given the GStreamer plugins the desktop shell carries); what it
- * cannot do is run the browser path's engine, which needs a 439 MB Emscripten
- * file package and a `SharedArrayBuffer` this webview does not have.
+ * **Playing the clip is native here too**, which is the one thing this module
+ * offers that `sherpa.ts` does not (`playOnHost`, `stopOnHost`). The webview's
+ * audio stack cannot do it: `<audio>` over a blob builds a fresh GStreamer
+ * pipeline per clip and starts about a second late, and Web Audio — the way to
+ * keep one pipeline — plays noise or silence in this webview. The measurements
+ * are in `crates/sapling-desktop/src/tts/play.rs` and `docs/desktop.md`. So the
+ * bytes go back across the IPC and the host makes the sound; `tts.ts` keeps the
+ * caches and the decision, and falls back to the element path when the host
+ * says it has no output device.
  *
  * `@tauri-apps/api` is imported dynamically and this whole module is imported
  * dynamically by `tts.ts`, gated on `inTauri()` — so a browser fetches neither.
@@ -23,6 +27,23 @@ import type { TtsProgress } from './sherpa';
 
 /** Where the Rust host announces model-download progress. Named there too. */
 const PROGRESS_EVENT = 'tts://model-progress';
+
+/**
+ * How the host begins the one playback failure worth remembering. Named in
+ * `crates/sapling-desktop/src/tts/play.rs` too, and the two must agree: every
+ * other error from `tts_play` is about the clip that was handed over, and only
+ * this one says the machine will never play anything.
+ */
+const NO_OUTPUT_DEVICE = 'no audio output device';
+
+/**
+ * The host has no audio output at all — not that this clip was bad.
+ *
+ * A distinct type because the two failures deserve opposite reactions: this one
+ * is permanent for the session and `tts.ts` latches its fallback on it, while a
+ * clip the host refuses is one clip.
+ */
+export class NoAudioOutput extends Error {}
 
 /** One progress tick as the host emits it; `TtsProgress` minus the percentage. */
 interface NativeProgress {
@@ -51,9 +72,24 @@ let api: Promise<{
 	listen: typeof import('@tauri-apps/api/event').listen;
 }>;
 
+/**
+ * `invoke` once the import above has landed, kept beside the promise as a plain
+ * value so {@link stopOnHost} can send without an `await`.
+ *
+ * That is not a micro-optimization, it is the ordering: `tts_stop` and
+ * `tts_play` are two messages, and a stop that overtakes the play it was meant
+ * to precede silences the *new* word instead of the old one. Before the module
+ * has loaded this is `undefined`, and a stop is then correctly a no-op —
+ * nothing can be playing on a host that has not been spoken to yet.
+ */
+let ready: Awaited<typeof api> | undefined;
+
 function tauri(): typeof api {
 	api ??= Promise.all([import('@tauri-apps/api/core'), import('@tauri-apps/api/event')]).then(
-		([core, event]) => ({ invoke: core.invoke, listen: event.listen })
+		([core, event]) => {
+			ready = { invoke: core.invoke, listen: event.listen };
+			return ready;
+		}
 	);
 	return api;
 }
@@ -133,3 +169,51 @@ export const nativeKokoro = {
 		return new Blob([wav], { type: 'audio/wav' });
 	}
 };
+
+// -- Playback ---------------------------------------------------------------
+
+/**
+ * Plays one WAV clip on the host, resolving when it finishes or is stopped.
+ *
+ * That resolve-when-finished contract is `speak()`'s and always has been, and
+ * it is why there is no event to subscribe to: the command *is* the clip. A
+ * second call cuts the first off, on the host, so it holds whether or not
+ * {@link stopOnHost} was called in between.
+ *
+ * The bytes cross as a **raw** IPC body — `invoke` treats a `Uint8Array`
+ * payload as one — because a clip is ~150 KB and a JSON array of numbers is
+ * megabytes of digits to serialize on the window thread and parse on the other
+ * side. It is the same reason `tts_synthesize` answers with a binary payload,
+ * pointing the other way.
+ *
+ * Throws {@link NoAudioOutput} when the machine has no output device, and an
+ * ordinary `Error` when the host would not play *this* clip.
+ */
+export async function playOnHost(clip: Blob): Promise<void> {
+	const { invoke } = await tauri();
+	const bytes = new Uint8Array(await clip.arrayBuffer());
+	try {
+		await invoke<void>('tts_play', bytes);
+	} catch (cause) {
+		const message = typeof cause === 'string' ? cause : String(cause);
+		if (message.startsWith(NO_OUTPUT_DEVICE)) throw new NoAudioOutput(message);
+		throw cause instanceof Error ? cause : new Error(message);
+	}
+}
+
+/**
+ * Cuts off whatever the host is playing, which is also what makes the pending
+ * {@link playOnHost} resolve.
+ *
+ * Deliberately not `async` and deliberately not awaited: `stopSpeaking()` is
+ * synchronous and sits on the path to every new phrase, so the message is sent
+ * and the caller moves on. A failure here is not worth a fallback — the worst
+ * case is a word that finishes when it should have been cut short.
+ */
+export function stopOnHost(): void {
+	// `undefined` means the host has never been asked to play anything, so
+	// there is nothing to stop. See `ready`.
+	void ready?.invoke<void>('tts_stop').catch((cause: unknown) => {
+		console.warn('[tts] Could not stop the clip playing on the host.', cause);
+	});
+}

@@ -69,6 +69,23 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   `gst-libav` and exports `GST_PLUGIN_SYSTEM_PATH_1_0` for this reason.
   `glib-networking` (`GIO_MODULE_DIR`) is the same shape of trap one step
   earlier: runtime-only, no build error, every `https://` request fails.
+- **2026-09-06, the sequel: with the plugins present, WebKitGTK's audio output
+  is still not usable for speech.** Nothing crashes and nothing logs. `<audio>`
+  over a blob plays the right sound about a second late, every time, because a
+  fresh GStreamer pipeline is built per clip. Web Audio, which would build one
+  pipeline and keep it, is worse: a bare oscillator alternates between clean and
+  noise across runs and an `AudioBufferSourceNode` plays silence, while
+  `decodeAudioData` on the same page is provably correct. Two commits went into
+  that (e273058, reverted by f78eff6) before playback moved to the Rust host
+  (`tts_play`/`tts_stop`, `crates/sapling-desktop/src/tts/play.rs`). **Do not
+  re-attempt Web Audio here**, and do not "simplify" the desktop back to
+  `<audio>` — it is the fallback on purpose. The GStreamer plugins above are
+  still required, for the reader's `<video>` and the YouTube frame.
+- **rodio's output stream is `!Send`** (it holds a `cpal::Stream`), so it takes
+  the same one-owning-thread-and-a-channel shape `Core` does — and cpal's ALSA
+  backend needs `alsa-lib` in the devShell at *build* time. That one fails
+  loudly, unlike the three runtime-only traps above; at runtime on NixOS the
+  ALSA default device reaches PipeWire through its plugin and needs nothing.
 - **WebKitGTK has no OPFS** (`navigator.storage.getDirectory` is `undefined`)
   and no `SpeechRecognition`. The first is why the desktop build must run the
   native core — the sqlite-wasm/OPFS Worker cannot boot there at all. Both were

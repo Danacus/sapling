@@ -5,13 +5,18 @@
 //! whole engine is an Emscripten *file package* whose 427 MB in-memory
 //! filesystem is byte-offset-addressed by vendored glue, and WebKitGTK has no
 //! `SharedArrayBuffer` to spare it any of that. So on this host synthesis moves
-//! to Rust — and only synthesis. **Playback stays in the webview**, because
-//! `<audio>` over a blob works there (measured; `docs/desktop.md`), and one
-//! player for both hosts is worth more than a native audio stack.
+//! to Rust.
 //!
-//! The seam is therefore small and boring: three commands in, a complete WAV
-//! file out. `src/lib/tts/native.ts` offers `tts.ts` exactly the shape
-//! `sherpa.ts` offers it, and `speak()` cannot tell which host it is on.
+//! **And so does playback**, which was not the plan. `<audio>` over a blob does
+//! work in this webview, but it builds a fresh GStreamer pipeline per clip and
+//! starts about a second late, and Web Audio — the way to keep one pipeline —
+//! is unusable here altogether. [`play`] is the measurement and the answer;
+//! the short version is that speech no longer touches the webview's audio
+//! stack at all, while everything else in the app still does.
+//!
+//! The seam is still small and boring: five commands, and none of them knows a
+//! word of any language. `src/lib/tts/native.ts` offers `tts.ts` exactly the
+//! shape `sherpa.ts` offers it, and `speak()` cannot tell which host it is on.
 //!
 //! ## The engine is loaded once and kept
 //!
@@ -25,9 +30,9 @@
 //! so the load happens while the learner is reading the question.
 //!
 //! Nothing here runs on the main thread. Tauri executes a synchronous command
-//! there, and a second of inference on the main thread is a frozen window, so
-//! both long commands are `async` and hand their work to `spawn_blocking`
-//! (`lib.rs`).
+//! there, and a second of inference on the main thread is a frozen window — as
+//! is a clip's whole playing time — so every long command is `async` and hands
+//! its work to `spawn_blocking` (`lib.rs`).
 //!
 //! ## fp32, natively too
 //!
@@ -42,6 +47,7 @@
 
 pub mod kokoro;
 pub mod model;
+pub mod play;
 pub mod wav;
 
 use std::path::{Path, PathBuf};

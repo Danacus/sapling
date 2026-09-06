@@ -1,14 +1,18 @@
 /**
- * Which Kokoro speaks, and what the choice costs.
+ * Which Kokoro speaks, which player plays it, and what those choices cost.
  *
- * `tts.ts` is mostly DOM — playback, `Audio`, blob URLs — but the one decision
- * that now differs per host is pure: given a window that looks like Tauri's,
- * does the module reach for `native.ts` instead of `sherpa.ts`, and does it
- * stop writing to the persistent clip cache? Both are answerable in node, and
- * both are the kind of thing that silently reverts.
+ * `tts.ts` is mostly DOM, but the decisions that differ per host are pure:
+ * given a window that looks like Tauri's, does the module reach for `native.ts`
+ * instead of `sherpa.ts`, does it stop writing to the persistent clip cache,
+ * and does it send the finished clip *back* to the host to be played instead of
+ * building an `<audio>` element? All three are answerable in node, and all
+ * three are the kind of thing that silently reverts.
  *
- * `warmSpeech` is the entry point under test rather than `speak`, because it
- * takes the same path down to synthesis and stops short of playing anything.
+ * `warmSpeech` is the entry point for the synthesis half, because it takes the
+ * same path down to synthesis and stops short of playing anything. The playback
+ * half needs `speak`, and therefore needs a stand-in for the one browser API
+ * that path touches — see {@link FakeAudio}, which is the assertion "an element
+ * was built" as much as it is a stub.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -18,6 +22,9 @@ const sherpa = {
 	onSherpaProgress: vi.fn(() => () => {}),
 	synthesize: vi.fn(async () => new Blob(['browser']))
 };
+
+/** The host's "no output device at all", as `native.ts` defines it. */
+class NoAudioOutput extends Error {}
 
 const native = {
 	nativeKokoro: {
@@ -31,7 +38,10 @@ const native = {
 		bytes: 426654376,
 		downloadBytes: 364816464,
 		loaded: false
-	}))
+	})),
+	playOnHost: vi.fn(async (_clip: Blob) => {}),
+	stopOnHost: vi.fn(() => {}),
+	NoAudioOutput
 };
 
 const store = {
@@ -49,6 +59,35 @@ vi.mock('./audio-store', () => store);
 const MANDARIN = 'Mandarin Chinese';
 /** `zf_001`, the default Mandarin speaker — see `languages.ts`. */
 const ZF_001 = 3;
+
+/**
+ * The webview player, enough of it to tell whether one was built. Every clip
+ * ends by itself on the next microtask, so `speak` resolves the way it does in
+ * a browser; `pause()` fires `onpause`, which is the path a cut-off clip takes.
+ */
+class FakeAudio {
+	static built: FakeAudio[] = [];
+	onended: (() => void) | null = null;
+	onerror: (() => void) | null = null;
+	onpause: (() => void) | null = null;
+	paused = false;
+
+	constructor(public readonly src: string) {
+		FakeAudio.built.push(this);
+	}
+
+	play(): Promise<void> {
+		queueMicrotask(() => {
+			if (!this.paused) this.onended?.();
+		});
+		return Promise.resolve();
+	}
+
+	pause(): void {
+		this.paused = true;
+		this.onpause?.();
+	}
+}
 
 /**
  * A window with Tauri's marker on it, which is the only thing `inTauri()`
@@ -70,11 +109,23 @@ async function loadTts(): Promise<typeof import('./tts')> {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	// `clearAllMocks` forgets the calls but keeps the implementations, and a
+	// test that makes the host refuse a clip must not leak that into the next.
+	native.playOnHost.mockReset();
+	native.playOnHost.mockImplementation(async () => {});
+	FakeAudio.built = [];
+	Object.defineProperty(globalThis, 'Audio', {
+		value: FakeAudio,
+		configurable: true,
+		writable: true
+	});
 });
 
 afterEach(() => {
 	// Leave node as node, or the next file inherits a fake window.
 	Reflect.deleteProperty(globalThis, 'window');
+	Reflect.deleteProperty(globalThis, 'Audio');
+	vi.restoreAllMocks();
 });
 
 describe('choosing the host that speaks Kokoro', () => {
@@ -160,5 +211,131 @@ describe('the stored clip cache', () => {
 		await warmSpeech('你好', MANDARIN);
 
 		expect(native.nativeKokoro.synthesize).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('choosing the player', () => {
+	it('builds an audio element in a browser', async () => {
+		const { speak } = await loadTts();
+
+		await speak('你好', MANDARIN);
+
+		expect(FakeAudio.built).toHaveLength(1);
+		expect(native.playOnHost).not.toHaveBeenCalled();
+	});
+
+	it('plays through the host inside Tauri, and builds no element at all', async () => {
+		pretendTauri();
+		const { speak } = await loadTts();
+
+		await speak('你好', MANDARIN);
+
+		expect(native.playOnHost).toHaveBeenCalledTimes(1);
+		// The whole point: WebKitGTK's element path is a second of latency per
+		// clip, so nothing may quietly build one alongside the host call.
+		expect(FakeAudio.built).toHaveLength(0);
+	});
+
+	it('sends the host the clip that was synthesized', async () => {
+		pretendTauri();
+		const { speak } = await loadTts();
+
+		await speak('你好', MANDARIN);
+
+		const [clip] = native.playOnHost.mock.calls[0];
+		expect(await clip.text()).toBe('native');
+	});
+
+	it('resolves only once the host says the clip has finished', async () => {
+		pretendTauri();
+		let finish = (): void => {};
+		native.playOnHost.mockImplementationOnce(
+			() =>
+				new Promise<void>((resolve) => {
+					finish = resolve;
+				})
+		);
+		const { speak } = await loadTts();
+
+		let spoken = false;
+		const speaking = speak('你好', MANDARIN).then(() => {
+			spoken = true;
+		});
+		await vi.waitFor(() => expect(native.playOnHost).toHaveBeenCalledTimes(1));
+		expect(spoken).toBe(false);
+
+		finish();
+		await speaking;
+		expect(spoken).toBe(true);
+	});
+});
+
+describe('when the host cannot play', () => {
+	it('falls back to the element path and warns once, not once per word', async () => {
+		pretendTauri();
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		native.playOnHost.mockRejectedValue(new NoAudioOutput('no audio output device: none found'));
+		const { speak } = await loadTts();
+
+		await speak('你好', MANDARIN);
+		await speak('再见', MANDARIN);
+
+		// Latched: the second word never asks the host again.
+		expect(native.playOnHost).toHaveBeenCalledTimes(1);
+		expect(FakeAudio.built).toHaveLength(2);
+		expect(warn).toHaveBeenCalledTimes(1);
+	});
+
+	it('treats a refused clip as one clip, and keeps asking the host', async () => {
+		pretendTauri();
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		native.playOnHost.mockRejectedValueOnce(new Error('that clip is not a WAV file'));
+		const { speak } = await loadTts();
+
+		await speak('你好', MANDARIN);
+		await speak('再见', MANDARIN);
+
+		expect(native.playOnHost).toHaveBeenCalledTimes(2);
+		// One element for the refused clip, none for the one that played.
+		expect(FakeAudio.built).toHaveLength(1);
+		expect(warn).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('cutting off what is playing', () => {
+	it('stops the host clip when a second phrase is spoken', async () => {
+		pretendTauri();
+		native.playOnHost.mockImplementationOnce(() => new Promise<void>(() => {}));
+		const { speak } = await loadTts();
+
+		void speak('你好', MANDARIN);
+		// Let the first clip reach the host before the second one starts.
+		await vi.waitFor(() => expect(native.playOnHost).toHaveBeenCalledTimes(1));
+		await speak('再见', MANDARIN);
+
+		expect(native.stopOnHost).toHaveBeenCalledTimes(1);
+		expect(native.playOnHost).toHaveBeenCalledTimes(2);
+	});
+
+	it('stops the host clip on an explicit stopSpeaking', async () => {
+		pretendTauri();
+		native.playOnHost.mockImplementationOnce(() => new Promise<void>(() => {}));
+		const { speak, stopSpeaking } = await loadTts();
+
+		void speak('你好', MANDARIN);
+		await vi.waitFor(() => expect(native.playOnHost).toHaveBeenCalledTimes(1));
+		stopSpeaking();
+
+		expect(native.stopOnHost).toHaveBeenCalledTimes(1);
+	});
+
+	it('never reaches for the host in a browser', async () => {
+		const { speak, stopSpeaking } = await loadTts();
+
+		await speak('你好', MANDARIN);
+		stopSpeaking();
+
+		expect(native.stopOnHost).not.toHaveBeenCalled();
+		expect(FakeAudio.built[0].paused).toBe(false);
 	});
 });

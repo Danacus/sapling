@@ -22,7 +22,15 @@ path = "src/main.rs"
 # feature only so `cargo check -p sapling-desktop --no-default-features` can
 # still typecheck the host on a machine with no sherpa toolchain.
 default = ["tts"]
-tts = ["dep:sherpa-rs-sys", "dep:ureq", "dep:tar", "dep:bzip2", "dep:sha2", "dep:hound"]
+tts = [
+	"dep:sherpa-rs-sys",
+	"dep:ureq",
+	"dep:tar",
+	"dep:bzip2",
+	"dep:sha2",
+	"dep:hound",
+	"dep:rodio",
+]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -65,7 +73,18 @@ ureq = { version = "3", optional = true, default-features = false, features = [
 tar = { version = "0.4", optional = true }
 bzip2 = { version = "0.6", optional = true }
 sha2 = { version = "0.10", optional = true }
-# The RIFF/WAVE container `tts_synthesize` answers with. Pure Rust, no unsafe,
-# no dependencies of its own, and it writes into an in-memory `Cursor` — so the
-# byte layout is a library's problem rather than ours (`src/tts/wav.rs`).
+# The RIFF/WAVE container the voice writes and the player reads back. Pure Rust,
+# no unsafe, no dependencies of its own, and it works over an in-memory `Cursor`
+# either way — so the byte layout is a library's problem rather than ours
+# (`src/tts/wav.rs` encodes, `src/tts/play.rs` decodes).
 hound = { version = "3.5", optional = true }
+# Playback, because the webview's audio stack cannot do it here (`src/tts/play.rs`
+# and `docs/desktop.md` say what was measured). `default-features = false` keeps
+# out everything but the device: `playback` is the only feature that is wanted,
+# and it pulls exactly cpal. The decoders (`wav`, `mp3`, `flac`, `mp4`,
+# `vorbis` — symphonia, MPL-2.0) are all off because the clip is decoded here
+# with the `hound` above and handed over as samples; `recording` is off because
+# dictation is the webview's job and stays there.
+rodio = { version = "0.22", optional = true, default-features = false, features = [
+	"playback",
+] }

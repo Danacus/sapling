@@ -8,8 +8,9 @@ Code: `crates/sapling-desktop/`, `src/lib/db/tauri.ts`, `src/lib/tts/native.ts`,
 Rust persistence core run natively over a SQLite file behind the *existing*
 domain protocol, with the same SvelteKit app on top? It can, and the app boots
 to onboarding through it. Since then it has grown a second native capability,
-the voice (see [Speech](#speech)), for the same reason: the webview cannot run
-the browser's implementation at all. Nothing in the web build or its gates
+the voice — both synthesizing a clip and playing it (see [Speech](#speech)) —
+for the same reason both times: the webview cannot run the browser's
+implementation at all. Nothing in the web build or its gates
 depends on any of it: the desktop crate is a workspace member but not a
 *default* member, and its toolchain lives in a second devShell. CI does check
 it — a `desktop` job in `.github/workflows/deploy.yml` runs `pnpm desktop:check`
@@ -74,17 +75,17 @@ printed to stderr for the terminal that launched the binary.
 
 ## What is native and what still goes through the webview
 
-**Native: persistence and synthesis.** `crates/sapling-desktop` opens the file,
-lends `sapling-core` the four runtime facts (`deviceId`, the system clock,
-`localDay` from the system time zone, UUID v4 ids) and exposes exactly the three
-commands `WasmCore` exposes to the database Worker — `dispatch`, `commit_all`,
-`derived_schema_version`. `src/lib/db/tauri.ts` is one `invoke` per `Backend`
-call, chosen by `backend.ts` when `inTauri()`; every argument still goes through
-`toPlain()`, because `client.ts` owns the proxy for both transports. The voice
-adds three more commands and is the section below.
+**Native: persistence, synthesis and playback.** `crates/sapling-desktop` opens
+the file, lends `sapling-core` the four runtime facts (`deviceId`, the system
+clock, `localDay` from the system time zone, UUID v4 ids) and exposes exactly
+the three commands `WasmCore` exposes to the database Worker — `dispatch`,
+`commit_all`, `derived_schema_version`. `src/lib/db/tauri.ts` is one `invoke`
+per `Backend` call, chosen by `backend.ts` when `inTauri()`; every argument
+still goes through `toPlain()`, because `client.ts` owns the proxy for both
+transports. The voice adds five more commands and is the section below.
 
 `dispatch` and `commit_all` are `async` and wait on `spawn_blocking`, like the
-two long voice commands: a synchronous Tauri command runs on the main thread,
+three long voice commands: a synchronous Tauri command runs on the main thread,
 and `applyResult` makes three or more persistence calls on every Check. Because
 that puts them on a thread pool, `tauri.ts` chains each `invoke` behind the
 previous one so calls reach the core in the order the window made them — the
@@ -92,13 +93,16 @@ Worker's message queue gives that for free and the pool does not. Symptom if it
 is ever removed: a read that follows an un-awaited write occasionally misses it,
 on the desktop only.
 
-Both are host capabilities in the same narrow sense — a file, and text-in
-audio-out. Neither carries a merge rule, a lesson, or a language.
+All of them are host capabilities in the same narrow sense — a file, text-in
+audio-out, and audio-in sound-out. None carries a merge rule, a lesson, or a
+language.
 
 **Everything else is the same web app in a webview**: the UI, the LLM call to
-OpenRouter, audio *playback*, ASR, the reading and conversation layers, the
-romanizer. There is no native menu, no tray, no auto-update, no file dialog and
-no deep-link handling. The window is one `main` window loading `/`.
+OpenRouter, ASR, the reading and conversation layers, the romanizer, and every
+sound that is not speech — the reader's `<video>` and the YouTube frame still
+play through WebKitGTK's GStreamer pipeline. There is no native menu, no tray,
+no auto-update, no file dialog and no deep-link handling. The window is one
+`main` window loading `/`.
 
 **No CSP.** `app.security.csp` is `null`, matching the web deploy, which sets
 none either and for a load-bearing reason (`deploy.md`: the YouTube iframe API
@@ -177,10 +181,22 @@ custom scheme no allowlist can name).
 **Why any of this is native.** The browser runs Kokoro as sherpa-onnx compiled
 to WASM in a Worker, and that path cannot exist here: the engine is a 439 MB
 Emscripten *file package* whose byte offsets are baked into vendored glue, and
-this webview has no `SharedArrayBuffer`. So synthesis moved to Rust — and only
-synthesis. Playback stays in the webview, because `<audio>` over a blob works
-there (given the GStreamer plugins the shell carries) and one player for both
-hosts is worth more than a native audio stack.
+this webview has no `SharedArrayBuffer`. So synthesis moved to Rust.
+
+**And so did playback**, for a separate reason found later and measured
+separately (WebKitGTK 2.52.6, GStreamer 1.28.5). `<audio>` over a blob does play
+correctly here, but it builds a fresh GStreamer pipeline per clip: the first
+sample lands about a second after `play()` and the window stalls while the
+pipeline is built, on every spoken word. Web Audio is the obvious way to keep
+one pipeline for the session, and in this webview it is unusable — a bare
+oscillator on a fresh `AudioContext` alternates between clean and noise across
+runs, and an `AudioBufferSourceNode` fed a sine at the context's own sample rate
+plays silence. (The decoder was not at fault: fed a WAV written by Python's
+`wave` module it returns the sine within one sample step. Commit f78eff6
+reverted that attempt.) So the clip goes back over the IPC and rodio plays it on
+one output stream the host holds open. **Only speech moved** — the reader's
+`<video>` and the YouTube frame still go through GStreamer, and `src/lib/tts/`'s
+`<audio>` path is still what the web build runs and still this host's fallback.
 
 Nothing above the seam moved with it. `speak(text, lang)` is unchanged, the
 `ll.ttsEngine` preference still reads `'kokoro' | 'webspeech' | 'off'`, and
@@ -206,23 +222,44 @@ Any failure removes the part file and the directory, so "installed" is never
 half true. Download and unpack each report progress, so the bar covers the
 whole minute rather than sitting at 100% through bzip2.
 
-**The commands**, and there are only three:
+**The commands**, and there are only five:
 
 | command | answers |
 |---|---|
 | `tts_status()` | model name, installed, bytes on disk, bytes a fresh download costs, whether the engine is warm |
 | `tts_download()` | nothing; idempotent, verifies, emits `tts://model-progress` |
 | `tts_synthesize(text, sid, speed)` | a complete WAV file as a binary IPC payload |
+| `tts_play(<raw body>)` | nothing, once the clip has finished playing or been stopped |
+| `tts_stop()` | nothing; cuts the clip off, which is what makes the pending `tts_play` return |
 
-`tts_synthesize` returns `tauri::ipc::Response`, not a `Vec<u8>`: the latter
-crosses as a JSON array of numbers, which for one sentence is megabytes of text
-parsed on the window thread for audio already in the right format. Both long
-commands are `async` and run their work on `spawn_blocking`, for the reason the
-persistence commands are — a synchronous Tauri command runs on the main thread,
-and a second of inference there is a frozen window. The engine is built on the
-first phrase and kept for the life of
-the process, behind a `Mutex` because sherpa-onnx promises nothing about
-concurrent generation.
+A clip crosses as bytes in both directions and never as JSON. `tts_synthesize`
+returns `tauri::ipc::Response`, not a `Vec<u8>`, and `tts_play` takes a raw body
+(`tauri::ipc::Request` matched against `InvokeBody::Raw`; `native.ts` invokes it
+with a `Uint8Array`) rather than a field: ~150 KB of PCM as an array of decimal
+digits is megabytes of text to serialize on the window thread and to parse on
+the other side, for audio already in the right format. It takes bytes rather
+than text because the clip caches are the window's; if they ever move to the
+host this becomes `tts_speak(text, sid, speed)` and nothing else changes shape.
+
+`tts_download`, `tts_synthesize` and `tts_play` are `async` and run their work
+on `spawn_blocking`, for the reason the persistence commands do — a synchronous
+Tauri command runs on the main thread, and a second of inference there is a
+frozen window, as is a whole clip's playing time. `tts_stop` stays synchronous:
+it posts one message and waits for nothing, and it is on the path to every new
+phrase.
+
+The engine is built on the first phrase and kept for the life of the process,
+behind a `Mutex` because sherpa-onnx promises nothing about concurrent
+generation. The **output stream** is the same idea one layer down: opening a
+device per clip would put back exactly the latency this replaced, so the process
+opens one and keeps it — on the first clip, not at boot, so a learner who never
+taps 🔊 never holds a device open. It lives on a thread of its own because
+rodio's `MixerDeviceSink` holds a `cpal::Stream`, which is `!Send` on ALSA, the
+same shape of problem `Core` has and the same answer (`host.rs`). `tts_play`
+does not wait *on* that thread — it waits on a channel the thread drops when
+the clip ends, is stopped, or is replaced by a newer clip — because a thread
+blocked on a clip could not answer `tts_stop`. A second `tts_play` cuts the
+first off, which is what makes a second tap on 🔊 interrupt the first word.
 
 **Two deliberate differences from the browser**, both visible in Settings:
 
@@ -237,9 +274,16 @@ concurrent generation.
   cheaper to re-make than to keep, and the memory LRU still absorbs replays.
   The Settings "Audio cache" row is hidden unless something actually did write
   clips.
+- **A different player, and a fallback for it.** Nothing above the seam changed
+  — `speak()` still resolves when the clip finishes — but `playClip` sends the
+  bytes to `tts_play` instead of building an `<audio>`. If the host answers that
+  it has **no output device**, that is latched for the session and warned about
+  once, and every clip after it goes through the element path, which works and
+  is merely slow; if the host refuses one *clip*, only that clip falls back.
+  Neither is visible in Settings, because neither is a choice a learner makes.
 
 **Measured** on this machine (16 threads, the model on an SSD), from
-`tests/voice.rs`:
+`tests/voice.rs` and `tests/playback.rs`:
 
 | | |
 |---|---|
@@ -248,6 +292,8 @@ concurrent generation.
 | Mandarin, 3.78 s of audio | 0.96–1.02 s (≈3.8× real time) |
 | English, 1.76 s of audio | 0.47–0.51 s (≈3.5× real time) |
 | mixed zh/en, 2.48 s of audio | ~3.0 s (first call, includes the load) |
+| `tts_play` of a 100 ms clip | 163 ms end to end, device already open |
+| `tts_stop` during a 3 s clip | the pending `tts_play` returns in ~0.3 ms |
 
 Synthesis is **not** bit-reproducible: ONNX reduces in whatever order its
 threads finish, so the same phrase twice differs in the low bits and by a few
@@ -353,12 +399,23 @@ Item by item, against the things the brief asked about:
   appsink not found`, and then the *first* `new AudioContext()` kills the whole
   WebKit web process: the page vanishes, with only `GStreamer-CRITICAL`
   assertions on stderr and nothing in the app to catch. WebKitGTK routes Web
-  Audio through GStreamer, so this is every spoken word in the app, not just
-  `<video>`. `flake.nix`'s `desktop` shell therefore carries
-  `gstreamer` + `gst-plugins-{base,good,bad}` + `gst-libav` and exports
-  `GST_PLUGIN_SYSTEM_PATH_1_0`; with them, `AudioContext` runs (its clock
+  Audio through GStreamer, so at the time this was found it was every spoken
+  word in the app, not just `<video>`. `flake.nix`'s `desktop` shell therefore
+  carries `gstreamer` + `gst-plugins-{base,good,bad}` + `gst-libav` and exports
+  `GST_PLUGIN_SYSTEM_PATH_1_0`; with them, `AudioContext` constructs (its clock
   advances), `<audio>` plays a generated WAV, and the criticals are gone. A
-  packaged build would have to ship or depend on these.
+  packaged build would have to ship or depend on these — speech no longer needs
+  them, but the reader's `<video>` and the YouTube frame still do.
+
+- **With the plugins present, WebKitGTK's audio *output* is still not usable for
+  speech.** This is the sequel to the entry above and it is a different fact:
+  nothing crashes, nothing logs. `<audio>` over a blob plays the right sound but
+  a second late, every time, because a fresh GStreamer pipeline is built per
+  clip. Web Audio, which would build one pipeline and keep it, produces a bare
+  oscillator that is clean on some runs and noise on others, and plays silence
+  from an `AudioBufferSourceNode` — while `decodeAudioData` is provably correct
+  on the same page. Two commits went into that (e273058, reverted by f78eff6)
+  before playback moved to the host. Do not re-attempt Web Audio here.
 
 - **YouTube pauses a second or two late, and that is the engine.** Pressing
   pause — the app's button or a click on the picture — stops the video only
@@ -385,13 +442,17 @@ the build: `glib-networking` (`GIO_MODULE_DIR`), without which every `https://`
 request inside the webview fails, and GStreamer (`GST_PLUGIN_SYSTEM_PATH_1_0`),
 whose absence is the crash described above.
 
-The voice adds two more: `rustPlatform.bindgenHook`, because `sherpa-rs-sys`
-generates its FFI with bindgen and needs a libclang (`LIBCLANG_PATH`), and
+The voice adds three more: `rustPlatform.bindgenHook`, because `sherpa-rs-sys`
+generates its FFI with bindgen and needs a libclang (`LIBCLANG_PATH`);
 `stdenv.cc.cc.lib` on `LD_LIBRARY_PATH`, because the prebuilt sherpa-onnx and
-onnxruntime libraries are linked against an ordinary distribution's libstdc++.
+onnxruntime libraries are linked against an ordinary distribution's libstdc++;
+and `alsa-lib`, which rodio's cpal backend runs pkg-config for at build time.
 The second is a third runtime-only trap of exactly the shape of the other two:
 no build error, and every desktop binary dies at startup with
-`libstdc++.so.6: cannot open shared object file`.
+`libstdc++.so.6: cannot open shared object file`. `alsa-lib` is the opposite and
+therefore the easy one — it fails loudly at build time, and at *runtime* on
+NixOS nothing further is needed, because the ALSA default device reaches
+PipeWire through its ALSA plugin.
 
 ## What a shipped version would still need
 

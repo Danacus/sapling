@@ -57,8 +57,9 @@
         # routes *all* audio through it, Web Audio included, and without the
         # plugins `new AudioContext()` does not degrade — it takes the whole
         # WebKit web process down with it (measured 2026-09-05, see
-        # `docs/desktop.md`). The TTS player builds one on the first spoken
-        # word, so these are not optional.
+        # `docs/desktop.md`). Speech no longer goes through the webview's audio
+        # stack at all — it plays on the Rust host — but the reader's `<video>`
+        # and YouTube still do, so these stay.
         #
         # Named `gst` and not `gstreamer`: a `let` binding shadows a `with`, so
         # `with pkgs.gst_all_1; [ gstreamer ]` would refer to this list itself
@@ -90,6 +91,14 @@
             pkgs.pango
             pkgs.atk
             pkgs.glib
+            # Spoken clips play on the host through rodio, whose cpal backend on
+            # Linux is ALSA: `alsa-sys` runs pkg-config for `alsa` at build time
+            # and fails the desktop build without this. At *runtime* nothing
+            # more is needed on NixOS — the ALSA default device reaches PipeWire
+            # through its ALSA plugin — so unlike GStreamer and glib-networking
+            # this one is a build input and shows up as a build error, not as
+            # silence.
+            pkgs.alsa-lib
           ] ++ gst;
           packages = [ pkgs.cargo-tauri ];
           shellHook = ''

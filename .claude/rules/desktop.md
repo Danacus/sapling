@@ -31,13 +31,43 @@ someone to run the check by hand.
 
 - **A host may lend a *capability* the webview cannot run, and speech is the
   second one.** The test is whether the thing is a platform primitive with no
-  domain knowledge in it: persistence is a file, TTS is text in and a WAV out.
-  Neither may grow an opinion. So the voice lives here (`src/tts/`, feature
-  `tts`, on by default) because WebKitGTK cannot run the browser's engine at
-  all, while `src/lib/tts/` keeps every decision — which language routes to
-  Kokoro, which speaker, when to fall back to the browser voice, what to cache
-  — and is the same code the web build runs. The line that does not move: a
-  host still contains no merge rule and no SQL against the read tables.
+  domain knowledge in it: persistence is a file, TTS is text in and a WAV out,
+  playback is a WAV in and a sound out. None of them may grow an opinion. So
+  the voice lives here (`src/tts/`, feature `tts`, on by default) because
+  WebKitGTK cannot run the browser's engine at all, while `src/lib/tts/` keeps
+  every decision — which language routes to Kokoro, which speaker, when to fall
+  back to the browser voice, what to cache — and is the same code the web build
+  runs. The line that does not move: a host still contains no merge rule and no
+  SQL against the read tables.
+
+- **Speech does not touch the webview's audio stack, and that was measured, not
+  assumed.** On WebKitGTK 2.52.6 / GStreamer 1.28.5 an `<audio>` element over a
+  blob plays correctly but builds a fresh GStreamer pipeline per clip: the first
+  sample lands about a second late and the window stalls while it is built, on
+  every spoken word. Web Audio, the obvious way to keep one pipeline for the
+  session, is worse than slow — a bare oscillator alternates between clean and
+  noise across runs and an `AudioBufferSourceNode` plays silence (commit
+  f78eff6 reverted that attempt and its message carries the detail). So the clip
+  goes back across the IPC and rodio plays it: `src/tts/play.rs`, `tts_play` and
+  `tts_stop`. **Only speech moved.** The reader's `<video>` and the YouTube
+  frame still go through GStreamer, which is why the shell still carries the
+  plugins, and `src/lib/tts/`'s element path is still the code the web build
+  runs *and* this host's fallback.
+
+- **One output stream for the process, owned by one thread**, for the reason
+  `host.rs` gives about the core: rodio's `MixerDeviceSink` holds a
+  `cpal::Stream`, which is `!Send` on ALSA, so it cannot be Tauri managed state
+  and gets a thread and a channel instead. Opening a device per clip would put
+  back the start latency this whole slice exists to remove, so it is opened
+  once — on the *first* clip, not at boot, and the outcome is memoised either
+  way, so a learner who never taps 🔊 never holds an audio device open. The
+  waiting is the caller's, never the thread's: `tts_play` resolves when the clip
+  ends because that is the promise `speak()` has always made, and the owning
+  thread signals that by *dropping* the caller's channel — a thread that blocked
+  on the clip could not answer `tts_stop`. A new clip cuts off the one playing,
+  which is what makes a second tap on 🔊 interrupt the first word. `alsa-lib` is
+  in the `desktop` devShell for cpal's build; at runtime the ALSA default device
+  reaches PipeWire through its own plugin and nothing further is needed.
 
 - **A database that will not open is a screen, not a crash.** `setup` never
   returns `Err` for it: `host::Database` is the managed state, holding either
@@ -53,18 +83,27 @@ someone to run the check by hand.
   `derived_schema_version`. No fourth one, and no new `Backend` method that the
   browser does not also have — the protocol is `src/lib/db/protocol.ts` and
   `dispatch.rs`, and adding to it is still the three edits `core.md` names.
-  **The voice adds exactly three more** — `tts_status`, `tts_download`,
-  `tts_synthesize` — and they are not part of that protocol and never touch it.
-  `tts_synthesize` answers a `tauri::ipc::Response` carrying a whole WAV file,
-  because a `Vec<u8>` would cross as a JSON array of numbers.
+  **The voice adds exactly five more** — `tts_status`, `tts_download`,
+  `tts_synthesize`, `tts_play`, `tts_stop` — and they are not part of that
+  protocol and never touch it. A clip crosses as bytes in both directions and
+  never as JSON: `tts_synthesize` answers a `tauri::ipc::Response`, and
+  `tts_play` takes a raw body (`tauri::ipc::Request` with `InvokeBody::Raw`,
+  invoked from JavaScript with a `Uint8Array`), because ~150 KB of PCM as an
+  array of decimal digits is megabytes of text to serialize and to parse.
+  `tts_play` takes bytes rather than text because the clip caches are the
+  window's; if they ever move to the host, `tts_speak(text, sid, speed)`
+  replaces `tts_play(bytes)` and nothing in `play.rs` changes shape.
 
 - **Every command that waits for anything is `async` and hands its work to
   `spawn_blocking`.** A synchronous Tauri command runs on the main thread — the
   GTK loop that composites the webview — so a second of ONNX inference there is
   a frozen window, and so is a commit's fsync: `dispatch` blocks until the core
   thread has answered, and `applyResult` makes three or more such calls on every
-  Check. That is `dispatch`, `commit_all`, `tts_download` and `tts_synthesize`;
-  `derived_schema_version` stays synchronous because it reads a constant. The
+  Check. That is `dispatch`, `commit_all`, `tts_download`, `tts_synthesize` and
+  `tts_play`, which waits for the whole clip. `derived_schema_version` stays
+  synchronous because it reads a constant, and `tts_stop` because it posts one
+  message and waits for nothing — and it is on the path to every new phrase,
+  where a round trip through the pool would be pure latency. The
   database is therefore managed as `Arc<Database>` — `spawn_blocking` needs
   something owned and `'static`, exactly as `TtsHandle` does. **The price is
   ordering**, and it is paid on the JavaScript side: see the transport bullet.
@@ -139,10 +178,20 @@ someone to run the check by hand.
   throughput, since the core is one thread either way. The fix belongs here and
   not in the host, which has no way to know what order the window meant.
 
-- **`src/lib/tts/native.ts` is the same kind of thing for the voice**: three
+- **`src/lib/tts/native.ts` is the same kind of thing for the voice**: five
   `invoke`s and one Tauri event listener behind the shape `sherpa.ts` already
   offered `tts.ts` (`init`, `onProgress`, `synthesize` → a WAV `Blob`), which is
-  what makes the router a one-line choice. The `TtsEngine` preference values do
+  what makes the router a one-line choice, plus the two `sherpa.ts` has no
+  answer for (`playOnHost`, `stopOnHost`). Those two are ordered against each
+  other and it matters: a `tts_stop` that overtakes the `tts_play` it was meant
+  to precede silences the *new* word, so `native.ts` keeps `invoke` as a plain
+  value once the dynamic import has landed and `stopOnHost` sends without an
+  `await` — and is correctly a no-op before then, since a host that has never
+  been spoken to has nothing to stop. `tts.ts` holds the fallback decision, not
+  this module: **no output device** is latched for the session and warned about
+  once (the element path still works there, slowly, which beats silence), while
+  a clip the host merely refuses falls back alone. The `TtsEngine` preference
+  values do
   **not** change — `'kokoro'` has always named the good downloaded neural voice,
   and it now means Kokoro from whichever host provides it, with identical
   speaker ids because it is identical model. Two differences are deliberate and
@@ -158,11 +207,16 @@ someone to run the check by hand.
   keep it rustfmt-clean — `cargo fmt --check` walks every member, default or
   not. New source files must be `git add`ed before nix can see them.
 
-- **The voice's own test is skip-if-absent, and that is the contract.**
+- **The voice's two tests are skip-if-absent, and that is the contract.**
   `tests/voice.rs` synthesizes Mandarin, English and a mixed sentence against
   the *real* 365 MB model and asserts finite, audible samples of a plausible
   length; with no model installed it prints why and passes, because a checkout
   without one is normal and `pnpm desktop:check` must be green in it. The
   `#[ignore]`d `installs_the_model` is how a machine gets one, into the same
-  directory the app uses. Nothing here may become a mock: what is worth testing
-  is that sherpa-onnx, this config and that archive actually make sound.
+  directory the app uses. `tests/playback.rs` is the same shape one layer down:
+  it opens the *real* default device and plays generated tones, asserting that a
+  100 ms clip returns in roughly 100 ms and that a stop and a second clip both
+  cut a long one short — and it skips itself with a printed reason on a machine
+  with no output device, because a headless runner is a normal place to run the
+  check. Neither may become a mock: what is worth testing is that sherpa-onnx,
+  this config and that archive make sound, and that the sound comes out.

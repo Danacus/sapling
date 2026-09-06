@@ -16,7 +16,7 @@
 //! `spawn_blocking`, because a synchronous Tauri command runs on the main
 //! thread — the GTK loop that composites the webview — and anything it waits
 //! for is a frozen window. That is the two persistence commands as much as the
-//! two long TTS ones: `dispatch` blocks until the core thread has committed,
+//! three long TTS ones: `dispatch` blocks until the core thread has committed,
 //! and one Check makes three or more of those calls. The price is that the pool
 //! decides which of two overlapping calls reaches the core first, so the window
 //! keeps its own order (`src/lib/db/tauri.ts`); see `host.rs`'s header.
@@ -24,9 +24,12 @@
 //! Persistence is not the only thing a host can lend, though. The `tts` module
 //! (feature `tts`, on by default) is the second: Kokoro speech, which the
 //! browser runs as sherpa-onnx compiled to WASM and this host runs natively,
-//! because WebKitGTK cannot run that WASM path at all. It is still a *host*
-//! capability — text in, a WAV file out, no domain knowledge whatsoever — and
-//! `src/lib/tts/native.ts` is the other end of it.
+//! because WebKitGTK cannot run that WASM path at all — and, for a separate
+//! reason measured separately, the *playing* of the clip too, because this
+//! webview's audio stack starts a second late per clip and its Web Audio
+//! output does not work at all (`tts/play.rs`). Both are still *host*
+//! capabilities — text in, a WAV file out; a WAV file in, a sound out — with no
+//! domain knowledge whatsoever, and `src/lib/tts/native.ts` is the other end.
 
 //! The crate denies `unsafe_code` rather than forbidding it, for exactly one
 //! module: `tts::kokoro`, which is the FFI call into sherpa-onnx and says at
@@ -47,7 +50,7 @@ use tauri::{Manager, State};
 
 use crate::host::Database;
 #[cfg(feature = "tts")]
-use crate::tts::TtsHandle;
+use crate::tts::{play::PlayerHandle, TtsHandle};
 
 /// One `Backend` call. The answer is `None` — JavaScript's `undefined` — for a
 /// `void` method and for a read of a row that is not there. When the database
@@ -95,10 +98,10 @@ fn derived_schema_version() -> u32 {
 
 // -- The native voice -------------------------------------------------------
 //
-// Three commands, and deliberately no more: is it here, put it here, say this.
-// Everything about *what* to speak — the language mapping, the speaker table,
-// the caches, the fallback to the browser voice — stays in `src/lib/tts/`,
-// which is the same code the web build runs.
+// Five commands, and deliberately no more: is it here, put it here, say this,
+// make this sound, be quiet. Everything about *what* to speak — the language
+// mapping, the speaker table, the caches, the fallback to the browser voice —
+// stays in `src/lib/tts/`, which is the same code the web build runs.
 
 /// Event carrying one file's download progress to the window. Its three fields
 /// are `TtsProgress`'s, so `native.ts` can feed the existing progress listener.
@@ -169,6 +172,51 @@ async fn tts_synthesize(
     Ok(tauri::ipc::Response::new(wav))
 }
 
+/// Plays one clip, resolving when it ends or is stopped.
+///
+/// The clip arrives as a **raw** IPC body rather than as a JSON field: it is
+/// ~150 KB of PCM, and a `Vec<u8>` in either direction crosses as an array of
+/// decimal digits. `native.ts` invokes this with a `Uint8Array`, which is what
+/// makes the body `InvokeBody::Raw`; anything else is a caller bug and says so.
+///
+/// `async` for the reason every waiting command here is — a synchronous Tauri
+/// command runs on the main GTK loop, and this one waits for the whole clip,
+/// which would be a window frozen for exactly as long as the app is speaking.
+///
+/// Resolving when playback *ends* is the contract `speak()` already had, and it
+/// is why there is no event and no second command to poll: the promise is the
+/// clip. A clip arriving while another plays cuts that one off, so a second tap
+/// on 🔊 interrupts the first word, as it always has.
+#[cfg(feature = "tts")]
+#[tauri::command]
+async fn tts_play(
+    player: State<'_, Arc<PlayerHandle>>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<(), String> {
+    let tauri::ipc::InvokeBody::Raw(clip) = request.body() else {
+        return Err("tts_play takes the clip as a raw body, not as JSON".to_owned());
+    };
+    let clip = clip.clone();
+    let handle = player.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || handle.play(&clip))
+        .await
+        .map_err(|cause| format!("the clip could not be played: {cause}"))?
+}
+
+/// Cuts off whatever is playing, which is also what makes the pending
+/// [`tts_play`] return.
+///
+/// Synchronous, like `derived_schema_version` and for the same reason: it posts
+/// one message to the audio thread and waits for nothing, so the main thread is
+/// the cheapest place to answer it from — and `stopSpeaking()` is called on the
+/// path to every new phrase, where a round trip through the pool would be pure
+/// latency.
+#[cfg(feature = "tts")]
+#[tauri::command]
+fn tts_stop(player: State<'_, Arc<PlayerHandle>>) {
+    player.stop();
+}
+
 /// The command list, which the `tts` feature extends rather than replaces.
 #[cfg(feature = "tts")]
 macro_rules! commands {
@@ -179,7 +227,9 @@ macro_rules! commands {
             derived_schema_version,
             tts_status,
             tts_download,
-            tts_synthesize
+            tts_synthesize,
+            tts_play,
+            tts_stop
         ]
     };
 }
@@ -210,10 +260,13 @@ pub fn run() {
             // `async`: `spawn_blocking` needs something owned and `'static`,
             // and a `State` borrow is neither. Same shape as `TtsHandle`.
             app.manage(Arc::new(database));
-            // Nothing is downloaded or loaded here — the handle only knows
-            // where the model would be. The first tap on 🔊 pays for the rest.
+            // Nothing is downloaded, loaded or opened here — the voice handle
+            // only knows where the model would be, and the player has not
+            // touched an audio device. The first tap on 🔊 pays for both.
             #[cfg(feature = "tts")]
             app.manage(Arc::new(TtsHandle::new(&dir)));
+            #[cfg(feature = "tts")]
+            app.manage(Arc::new(PlayerHandle::new()));
             Ok(())
         })
         .invoke_handler(commands!())

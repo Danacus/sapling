@@ -24,6 +24,15 @@
  * the same model, so everything below this line — the caches, the warm-up, the
  * fallback — is host-blind. {@link inTauri} decides, once.
  *
+ * ## And so does the *player*, on the desktop
+ *
+ * A clip is an `<audio>` element over a blob everywhere except inside Tauri,
+ * where the webview's audio stack cannot do the job: `<audio>` starts about a
+ * second late per clip because WebKitGTK builds a fresh GStreamer pipeline for
+ * each one, and Web Audio plays noise or silence there. So `playClip` sends the
+ * bytes back to the host, which owns one output stream for the process. The
+ * element path stays as that host's fallback, because a slow word beats none.
+ *
  * Synthesized clips are cached twice over — an in-memory LRU for this session,
  * then Cache Storage (`ll-tts-audio`) so a word drilled yesterday still plays
  * instantly today; the runtime's two big downloads live in their own bucket
@@ -78,8 +87,25 @@ const audioCache = new LruCache<Blob>(AUDIO_CACHE_SIZE);
  */
 const KOKORO_SPEED = 1;
 
-/** The clip currently playing, so a new request can cut it off. */
-let playing: HTMLAudioElement | null = null;
+/**
+ * The clip currently playing and how to cut it off, or `null` for none.
+ *
+ * A token rather than the player itself, because there are two players now —
+ * an `<audio>` element in a browser, the Rust host on the desktop — and the
+ * only thing this module wants from either is "stop". Identity is what tells
+ * two clips apart: a finishing clip clears this slot only if it is still the
+ * one in it.
+ */
+let playing: { stop: () => void } | null = null;
+
+/**
+ * Whether the desktop host can play anything. Latched to `false` the first time
+ * it answers that it has no output device — a machine does not grow a sound
+ * card mid-session, and retrying per clip would mean the same warning on every
+ * spoken word. A clip the host merely *refuses* does not latch this; that is
+ * one clip's problem. See {@link playClip}.
+ */
+let hostPlayback = true;
 
 // -- Which Kokoro ------------------------------------------------------------
 
@@ -196,15 +222,16 @@ export function setTtsVoice(voice: TtsVoice): void {
 	audioCache.clear();
 }
 
-/** Cuts off whatever is playing, on either engine. */
+/** Cuts off whatever is playing, on either engine and on either player. */
 export function stopSpeaking(): void {
-	if (playing) {
+	const current = playing;
+	playing = null;
+	if (current) {
 		try {
-			playing.pause();
+			current.stop();
 		} catch {
 			/* ignore */
 		}
-		playing = null;
 	}
 	cancelWebSpeech();
 }
@@ -309,15 +336,21 @@ export async function warmSpeech(text: string, language: string): Promise<void> 
 	}
 }
 
-/** Plays a WAV blob to completion. Resolves (never rejects) on playback errors. */
+/**
+ * Plays a WAV blob through an `<audio>` element, to completion. Resolves (never
+ * rejects) on playback errors.
+ *
+ * The browser's player, and the desktop's fallback — see {@link playClip}.
+ */
 function playBlob(blob: Blob): Promise<void> {
 	const url = URL.createObjectURL(blob);
 	const audio = new Audio(url);
-	playing = audio;
+	const current = { stop: () => audio.pause() };
+	playing = current;
 
 	return new Promise<void>((resolve) => {
 		const finish = (): void => {
-			if (playing === audio) playing = null;
+			if (playing === current) playing = null;
 			URL.revokeObjectURL(url);
 			resolve();
 		};
@@ -333,6 +366,52 @@ function playBlob(blob: Blob): Promise<void> {
 			finish();
 		});
 	});
+}
+
+/**
+ * Plays a WAV blob wherever this host can actually play one, resolving when it
+ * finishes. Never rejects.
+ *
+ * In a browser that is an `<audio>` element and always has been. **On the
+ * desktop it is the Rust host**, and the element path is only the fallback:
+ * WebKitGTK builds a fresh GStreamer pipeline per clip, so `<audio>` starts
+ * about a second late and stalls the window on every spoken word, and Web Audio
+ * — the way to keep one pipeline for the session — plays noise or silence
+ * there. So the clip goes back across the IPC and rodio plays it over one
+ * output stream the host holds open (`crates/sapling-desktop/src/tts/play.rs`,
+ * `docs/desktop.md`). This is the same {@link inTauri} decision as the engine
+ * above, made in the same place for the same reason.
+ *
+ * The two failures are not the same failure. A host with **no output device**
+ * will not have one later, so it is latched for the session and warned about
+ * once; the element path still works there, slowly, which is better than
+ * silence. A clip the host **refuses** is one bad clip and falls back alone.
+ */
+async function playClip(blob: Blob): Promise<void> {
+	if (inTauri() && hostPlayback) {
+		const host = await import('./native');
+		const current = { stop: host.stopOnHost };
+		try {
+			const finished = host.playOnHost(blob);
+			playing = current;
+			await finished;
+			return;
+		} catch (cause) {
+			if (cause instanceof host.NoAudioOutput) {
+				hostPlayback = false;
+				console.warn(
+					'[tts] The desktop host has no audio output; falling back to the webview player.',
+					cause
+				);
+			} else {
+				console.warn('[tts] The host would not play that clip; playing it in the webview.', cause);
+			}
+		} finally {
+			if (playing === current) playing = null;
+		}
+	}
+
+	return playBlob(blob);
 }
 
 /**
@@ -359,7 +438,7 @@ export async function speak(text: string, language: string): Promise<void> {
 				// throws, and is skipped entirely on a host where it does not pay,
 				// so a broken, absent or bypassed Cache Storage costs a
 				// re-synthesis and nothing else.
-				await playBlob(await obtainClip(phrase, speaker));
+				await playClip(await obtainClip(phrase, speaker));
 				return;
 			} catch (cause) {
 				console.warn('[tts] Kokoro failed; falling back to the browser voice.', cause);
