@@ -49,6 +49,18 @@ const HOSTS = new Set([
 const PATH_KINDS = new Set(['shorts', 'embed', 'live', 'v']);
 
 /**
+ * Whether `text` is a video id and nothing else.
+ *
+ * Exported because the id rule has a second reader: the hosted embed page
+ * (`embed/youtube.ts`) takes its id from a query parameter, which is the one
+ * place in the app where an id arrives from outside without having been parsed
+ * out of a link first. There is one rule for what an id is, and this is it.
+ */
+export function isVideoId(text: string): boolean {
+	return VIDEO_ID.test(text);
+}
+
+/**
  * The video id in `text`, or `undefined` if it does not name one.
  *
  * `undefined` rather than an error: this runs on every keystroke in the

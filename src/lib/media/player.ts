@@ -45,3 +45,37 @@ export interface Player {
 	/** Drops every listener and whatever the implementation is holding. */
 	destroy(): void;
 }
+
+/**
+ * A player that never plays: the honest answer when there is nothing to build.
+ *
+ * There is one caller shape for it — a YouTube text in a host that has no way to
+ * reach YouTube (`youtube-host.ts`, `youtube-framed.ts`) — and it exists so that
+ * failure is reported in *one* way rather than two. The reader builds a player
+ * inside an effect, subscribes to it and tears it down in the cleanup; a factory
+ * that returned `undefined` instead would put a branch in that effect for a case
+ * `onFail` already covers, and the learner would see the same line either way.
+ *
+ * `paused()` is `true` and the clock is 0 forever, which is exactly what a
+ * transport that cannot start should say.
+ */
+export function deadPlayer(): Player {
+	const listeners = new Set<(ms: number) => void>();
+	return {
+		currentTime: () => 0,
+		seek: () => {},
+		play: () => {},
+		pause: () => {},
+		paused: () => true,
+		onTime(cb) {
+			listeners.add(cb);
+			// Once on subscribe, like every other implementation — a subscriber never
+			// renders a frame against a position it has not been told.
+			cb(0);
+			return () => listeners.delete(cb);
+		},
+		destroy() {
+			listeners.clear();
+		}
+	};
+}

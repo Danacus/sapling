@@ -79,7 +79,7 @@
 		startOf,
 		takeFile,
 		videoPlayer,
-		youtubePlayer
+		youtubePlayerForHost
 	} from '$lib/media';
 	import type { Player } from '$lib/media';
 	import {
@@ -185,7 +185,8 @@
 	 * The box YouTube's iframe is built inside — a plain `<div>`, because the API
 	 * replaces whatever element it is handed and a Svelte-owned node swapped out
 	 * from underneath Svelte is a bug waiting for the next re-render.
-	 * `$lib/media`'s `youtubePlayer` puts its own child in here and owns it.
+	 * `$lib/media` puts its own child in here — YouTube's iframe, or the frame
+	 * holding the hosted player the desktop shell needs — and owns it.
 	 */
 	let frameEl = $state<HTMLDivElement | null>(null);
 	/**
@@ -574,11 +575,16 @@
 		const built = el
 			? videoPlayer(el)
 			: frame && id
-				? // The failure is asynchronous (a script that never lands) and lands
-					// in `mediaError`, which unmounts this very element — so the effect
-					// re-runs, finds nothing to build on, and stops. No loop, because
-					// the error branch has no element in it.
-					youtubePlayer(frame, id, { onFail: (message) => (mediaError = message) })
+				? // Which YouTube player this is — the direct one, or the hosted page
+					// the desktop shell has to frame — is `$lib/media`'s decision and
+					// not this page's; all that is asked for here is a `Player`.
+					//
+					// The failure is asynchronous (a script that never lands, a page
+					// that never answers, a video its owner will not have embedded) and
+					// lands in `mediaError`, which unmounts this very element — so the
+					// effect re-runs, finds nothing to build on, and stops. No loop,
+					// because the error branch has no element in it.
+					youtubePlayerForHost(frame, id, { onFail: (message) => (mediaError = message) })
 				: undefined;
 		if (!built) return;
 

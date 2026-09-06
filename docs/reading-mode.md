@@ -587,6 +587,21 @@ policy stands in the way (`static/_headers` sets neither), and the service worke
 passes every cross-origin request straight through; the one thing that *would*
 break the embed is turning on COEP, which `_headers` now says.
 
+**Two repairs since (2026-09-06), both from one bug report.** The `YT.Player`
+construction wired `onReady` and `onStateChange` but not `onError`, so a player
+that *errored* — an embed the owner disallows, a video that is gone, a
+configuration YouTube refuses — left a black rectangle rather than a line. Every
+code now becomes a sentence (`youtube-error.ts`, pure and tested) and takes the
+road a failed load already took. And the error that exposed it, **153**, turned
+out to be structural rather than incidental: YouTube will not configure a player
+for a document with no HTTP(S) referer, which is every document the desktop shell
+serves from `tauri://localhost`. The seam paid for itself a second time — the
+fix is a *third* `Player`, `youtube-framed.ts`, which drives a hosted copy of
+`youtube.ts` (`embed/`, on its own origin) over `postMessage`, and the reader
+changed by one identifier: it now asks `youtubePlayerForHost` for a player
+instead of `youtubePlayer`, and is as host-blind as it was already player-blind.
+`.claude/rules/media.md` and `docs/desktop.md` carry it.
+
 ## 7. Not in this slice
 
 - Questions about the text (LLM, chat-style).

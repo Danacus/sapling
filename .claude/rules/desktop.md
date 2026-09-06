@@ -63,10 +63,32 @@ someone to run the check by hand.
   bindings and the prebuilt libraries must come from the same sherpa-onnx tag
   or the TTS config structs disagree about their own layout.
 
-- **`src/lib/platform.ts` is where "am I in Tauri?" is asked**, once, by both
-  `db/backend.ts` and `tts/tts.ts`. Everything host-specific stays behind a
-  dynamic import gated on it (`db/tauri.ts`, `tts/native.ts`), so a browser
-  fetches neither those modules nor `@tauri-apps/api`.
+- **`src/lib/platform.ts` is where "am I in Tauri?" is asked**, once, by
+  `db/backend.ts`, `tts/tts.ts` and `media/youtube-host.ts`. Everything
+  host-specific stays behind a dynamic import gated on it (`db/tauri.ts`,
+  `tts/native.ts`), so a browser fetches neither those modules nor
+  `@tauri-apps/api`. `media/youtube-host.ts` is the documented exception and
+  imports statically: it pulls in no host SDK — a few hundred bytes of DOM and a
+  message listener — and a dynamic import would make the player factory `async`,
+  which is exactly what `youtube.ts` refuses to be, because the reader builds its
+  player synchronously inside an effect.
+
+- **This host cannot play YouTube by itself, and the workaround is a hosted
+  page.** The IFrame API will not configure a player for a document with no
+  valid HTTP(S) referer, and a browser sends none for a custom scheme — so every
+  embed served from `tauri://localhost` fails with error 153 and a frame that
+  never fills (upstream: tauri-apps/tauri#14422). No configuration fixes it:
+  `useHttpsScheme` is Windows and Android only, and `tauri-plugin-localhost`
+  would serve the app over real HTTP at the cost of the IPC every persistence
+  command rides on. So the *one document* that talks to YouTube is deployed to a
+  real HTTPS origin (`embed/`, `deploy.md`) and framed, with `Player` bridged
+  over `postMessage` — `media.md` is the contract and `src/lib/media/` holds all
+  of it. **The crate is untouched by this**: it is a web-layer workaround for a
+  webview limitation, not a capability a host lends, and nothing about it may
+  grow into the Rust side. The build-time `VITE_YOUTUBE_EMBED_URL` is what points
+  the app at the page; unset, a YouTube text says so in the video's place and the
+  text is still readable, and `pnpm desktop:dev` takes the same path as a release
+  build on purpose — the path that ships is the path that gets tested.
 
 - **One thread owns the core, and this is not a style choice.** `Core` is
   `!Send` — its `Sql`, clock, ids and calendar are plain boxed trait objects,

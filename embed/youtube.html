@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Sapling · YouTube</title>
+		<!--
+			Deliberately frameable, deliberately empty of everything else.
+
+			This page exists so that one document — the one that talks to YouTube —
+			is fetched over a real HTTPS connection to a real host. Sapling's desktop
+			shell serves itself from `tauri://localhost`, a custom scheme for which a
+			browser sends no referer, and YouTube's IFrame API refuses to configure a
+			player without one (error 153). See `src/lib/media/embed-protocol.ts`.
+
+			It is on its own origin, not the app's, and that is not an accident: a
+			page whose whole purpose is to be framed by anything must not sit beside
+			the learner's OPFS database and local storage.
+		-->
+		<style>
+			html,
+			body {
+				margin: 0;
+				height: 100%;
+				background: #000;
+				overflow: hidden;
+			}
+
+			/* The player fills the frame; the app decides how big the frame is. */
+			#player,
+			#player iframe {
+				display: block;
+				width: 100%;
+				height: 100%;
+				border: 0;
+			}
+
+			/* Only ever seen by somebody who opened this URL directly, or when the
+			   query names no video. Nothing here is for a learner in the app: in the
+			   app a failure travels back over `postMessage` and the reader prints it
+			   in the picture's place. */
+			#note {
+				margin: 0;
+				padding: 1rem;
+				color: #fff;
+				font:
+					1rem/1.5 system-ui,
+					sans-serif;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="player"></div>
+		<p id="note" hidden></p>
+		<script type="module" src="./youtube.ts"></script>
+	</body>
+</html>

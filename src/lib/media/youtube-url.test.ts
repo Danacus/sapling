@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { videoIdFrom } from './youtube-url';
+import { isVideoId, videoIdFrom } from './youtube-url';
 
 /** One real-shaped id, reused, so a failure is about the parse and not the value. */
 const ID = 'dQw4w9WgXcQ';
@@ -82,5 +82,28 @@ describe('videoIdFrom', () => {
 		expect(videoIdFrom('https://example.com/watch?v=' + ID)).toBeUndefined();
 		expect(videoIdFrom('a sentence about a video')).toBeUndefined();
 		expect(videoIdFrom(`javascript:alert(1)//youtu.be/${ID}`)).toBeUndefined();
+	});
+});
+
+/**
+ * The same rule with nothing around it, for the caller that has no link to parse:
+ * the hosted embed page takes its id straight from `?v=`, which is a query
+ * string anyone on the internet can write.
+ */
+describe('isVideoId', () => {
+	it('takes exactly eleven characters of the id alphabet', () => {
+		expect(isVideoId(ID)).toBe(true);
+		expect(isVideoId('_-aBcDeFgHi')).toBe(true);
+	});
+
+	it('refuses everything else, and refuses it whole', () => {
+		expect(isVideoId('')).toBe(false);
+		expect(isVideoId('dQw4w9WgXc')).toBe(false);
+		expect(isVideoId('dQw4w9WgXcQQ')).toBe(false);
+		// Untrimmed and unanchored are the two ways an id check goes wrong, and
+		// both would put something else into a player.
+		expect(isVideoId(` ${ID} `)).toBe(false);
+		expect(isVideoId(`${ID}"></iframe>`)).toBe(false);
+		expect(isVideoId(`watch?v=${ID}`)).toBe(false);
 	});
 });

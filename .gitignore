@@ -8,6 +8,10 @@ node_modules
 /.svelte-kit
 /build
 
+# The hosted YouTube page's build (`pnpm embed:build`), uploaded to its own
+# Pages project by the deploy workflow. Never part of the app's build.
+/embed/dist
+
 # OS
 .DS_Store
 Thumbs.db

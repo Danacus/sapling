@@ -18,6 +18,8 @@ pnpm core:test                          # cargo test — the Rust core, golden f
 pnpm core:check                         # cargo clippy -D warnings + cargo fmt --check
 pnpm sync:dev                           # sync Worker locally (localhost:8787)
 pnpm sync:deploy                        # deploy the sync Worker (wrangler)
+pnpm embed:dev                          # the hosted YouTube page alone (embed/)
+pnpm embed:build                        # embed/ -> embed/dist/, its own Pages project
 # The Tauri spike. All three need the second devShell: `nix develop .#desktop -c ...`
 pnpm desktop:dev                        # vite dev + the desktop window
 pnpm desktop:build                      # pnpm build + target/release/sapling-desktop
@@ -68,7 +70,8 @@ Every area is a registry with one module per member; forgetting a registration f
 | `src/lib/assistant/` | Every mutation goes through the injectable `ToolContext`, never the store directly — that's the seam the tests and the conversation layer both hang on. | `assistant.md` |
 | `src/lib/conversation/` | Role-play on the assistant's seam: **never imports `$lib/db`**, and exposes exactly one tool — `add_words`, reused verbatim. Corrections travel beside the spoken line, never inside it — and `heard` puts the target script under a learner bubble that needed no correction. | `assistant.md` |
 | `src/lib/reading/` | Stateless too — **never imports `$lib/db`**; a text is immutable and every colour, reading and status is derived at render time, so the adaptive roll is memoised in a `Map` the *page* owns. | `reading.md` |
-| `src/lib/media/` | The player is a **seam** — a `<video>` or YouTube's iframe behind one interface, and the reader never learns which. Only a *reference* is stored: a video id, or a file's name. | `media.md` |
+| `src/lib/media/` | The player is a **seam** — a `<video>`, YouTube's iframe, or (in Tauri) a hosted page framed over `postMessage`, behind one interface, and the reader never learns which. Only a *reference* is stored: a video id, or a file's name. | `media.md` |
+| `embed/` | One hosted page, **on its own origin and never in `static/`**: YouTube refuses a player to `tauri://localhost` (no referer, error 153), so the desktop app frames this. It imports the *real* `youtubePlayer` — one IFrame-API implementation, not two — and bridges `Player`, not the API. | `media.md`, `deploy.md` |
 | `src/lib/db/` | Repositories are the **only** store access, and **the window thread never speaks SQL**: `protocol.ts`'s `Backend` is the boundary, and the Rust core implements it beside SQLite (in the Worker, or in-process in tests, via `host.ts`). The `events` table is the facts log; everything else is an aggregate read model the materializer maintains, and UI reads never touch `events`. `events.ts` is types only. | `data.md` |
 | `crates/sapling-core/` | **The** persistence core — merge rules, SRS, every `Backend` method — over a four-line `Sql` trait: **it never opens a database**. `crates/sapling-wasm` wraps it for the browser; `pnpm core:wasm` builds it into `src/lib/db/wasm/` (generated, never committed) and every `pnpm` gate runs that first. What JavaScript would print is the contract: `js.rs` formats numbers and JSON as `JSON.stringify` does, and the SRS is ts-fsrs ported operation for operation. `dispatch.rs` must list exactly `BACKEND_METHODS`; `cargo test` checks. | `core.md` |
 | `src/lib/sync/`, `worker/` | The backend **orders and relays; it never merges**. A learner is a pairing phrase; the *Worker* hashes it to pick the room. | `data.md`, `deploy.md` |

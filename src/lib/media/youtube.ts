@@ -40,10 +40,20 @@
  *
  * Thin like `video.ts` and untested for the same reason: node has no iframe, and
  * everything about *following* a subtitle track is in `follow.ts`, which is
- * pure. `youtube-url.ts` holds the one piece of logic here worth a test.
+ * pure. The two pieces of logic here worth a test were moved out to where a test
+ * can reach them — `youtube-url.ts` (a link becomes an id) and
+ * `youtube-error.ts` (a failure code becomes a sentence).
+ *
+ * **This is the direct player, and the desktop shell cannot use it.** YouTube
+ * refuses to configure a player for a document with no HTTP(S) referer, which is
+ * every document served from `tauri://localhost`; `youtube-framed.ts` is the
+ * same five verbs over a hosted copy of *this* file, and `youtube-host.ts`
+ * chooses between them. Nothing in here knows that, and it is imported unchanged
+ * by both the app and the embed page.
  */
 
 import type { Player } from './player';
+import { playerErrorMessage } from './youtube-error';
 
 /* -------------------------------------------------------------------------- */
 /* The slice of the IFrame API this file uses                                  */
@@ -152,9 +162,12 @@ function loadApi(): Promise<YTApi> {
 /** What the caller needs beyond the {@link Player} itself. */
 export interface YouTubeOptions {
 	/**
-	 * Called if the API never arrives — offline, blocked, or simply slow past
-	 * {@link LOAD_TIMEOUT_MS}. The reader puts one line in the video's place; the
-	 * text is still readable, which is the whole point of telling it.
+	 * Called if there is no picture, whatever the reason: the API never arrived
+	 * (offline, blocked, or simply slow past {@link LOAD_TIMEOUT_MS}), or it
+	 * arrived and the *player* failed — an embed the owner disallows, a video
+	 * that is gone, a configuration YouTube refuses (`youtube-error.ts`). The
+	 * reader puts one line in the video's place; the text is still readable,
+	 * which is the whole point of telling it.
 	 */
 	onFail?: (message: string) => void;
 }
@@ -261,6 +274,16 @@ export function youtubePlayer(
 						if (playing) startPolling();
 						else stopPolling();
 						announce();
+					},
+					// A player that errors stops and shows nothing — no state change, no
+					// exception, just a black rectangle that never fills. So the code
+					// becomes a sentence and takes the same road a failed load takes,
+					// which the reader already renders in the picture's place. The poll
+					// is stopped because there is no longer a clock to read.
+					onError: (event) => {
+						if (destroyed) return;
+						stopPolling();
+						options.onFail?.(playerErrorMessage(event.data));
 					}
 				}
 			});
