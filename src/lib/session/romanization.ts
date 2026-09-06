@@ -8,8 +8,9 @@
  * so the decision is made per challenge, from how well that challenge's own
  * words are known.
  *
- * Pure and deterministic like `$lib/srs`: `now` is always passed in, the coin
- * flip is an injectable `rng`, and nothing here reads the clock or the DB. The
+ * Pure and deterministic: the coin flip is an injectable `rng`, and nothing here
+ * reads the clock or the DB — a word's strength was derived by the core when the
+ * item was read, so the instant it belongs to is already chosen. The
  * caller rolls **once, when the challenge is served**, and keeps the answer for
  * that challenge's lifetime — a reading that blinked in and out mid-challenge
  * would read as a bug, and re-rolling per token would show half a sentence.
@@ -33,7 +34,7 @@
  */
 
 import type { RomanizedToken } from '$lib/romanize';
-import { wordStrength, type FsrsCardState } from '$lib/srs';
+import { strengthOf } from '$lib/srs';
 import type { Challenge, KnowledgeItem } from '$lib/types';
 import type { RomanizationMode } from '$lib/ui/prefs';
 import { weakestWordStrength } from './progression';
@@ -104,12 +105,11 @@ export function shouldShowReading(
 	mode: RomanizationMode,
 	challenge: Challenge,
 	items: KnowledgeItem[],
-	now: number,
 	rng: () => number = Math.random
 ): boolean {
 	if (mode === 'on') return true;
 	if (mode === 'off') return false;
-	return rollShow(challengeReadingStrength(challenge, items, now), rng);
+	return rollShow(challengeReadingStrength(challenge, items), rng);
 }
 
 /** Which readings a served challenge shows — one answer for the whole, one per word. */
@@ -153,7 +153,6 @@ export function planReadings(
 	mode: RomanizationMode,
 	challenge: Challenge,
 	items: KnowledgeItem[],
-	now: number,
 	rng: () => number = Math.random
 ): ReadingPlan {
 	if (mode === 'on') return { sentence: true, byTerm: NO_TERMS };
@@ -161,15 +160,14 @@ export function planReadings(
 
 	// The whole-challenge roll first, so it draws the same number from an
 	// injected `rng` that `shouldShowReading` would have on its own.
-	const sentence = shouldShowReading(mode, challenge, items, now, rng);
+	const sentence = shouldShowReading(mode, challenge, items, rng);
 
 	const byId = new Map(items.map((item) => [item.id, item]));
 	const byTerm = new Map<string, boolean>();
 	for (const id of challenge.itemIds) {
 		const item = byId.get(id);
 		if (!item) continue;
-		const card = item.fsrsCard as FsrsCardState | null | undefined;
-		byTerm.set(item.term, rollShow(card ? wordStrength(card, now) : 0, rng));
+		byTerm.set(item.term, rollShow(strengthOf(item), rng));
 	}
 
 	return { sentence, byTerm };

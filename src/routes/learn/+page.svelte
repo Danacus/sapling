@@ -43,7 +43,7 @@
 	} from '$lib/session/engine';
 	import { motionMs } from '$lib/session/motion';
 	import { planReadings, type ReadingPlan } from '$lib/session/romanization';
-	import type { FsrsCardState, Grade } from '$lib/srs';
+	import type { Grade } from '$lib/srs';
 	import { runSync } from '$lib/sync';
 	import { startTask } from '$lib/tasks';
 	import { taskStore } from '$lib/tasks/store.svelte';
@@ -315,13 +315,13 @@
 	let pendingWrite: Promise<void> = Promise.resolve();
 
 	/**
-	 * The same write, kept for its value: the card state each item on the current
-	 * challenge had *before* it was graded. {@link assessCurrent} needs it to
-	 * recompute the review rather than stack a second one on top. Never rejects —
-	 * a failed write yields an empty map, and amending nothing is the right
-	 * outcome there.
+	 * The same write, kept for its value: which items on the current challenge
+	 * actually got a review. {@link assessCurrent} needs it so a re-grade replaces
+	 * one of *those* rather than appending a fresh review to a word the answer
+	 * skipped. Never rejects — a failed write yields an empty set, and amending
+	 * nothing is the right outcome there.
 	 */
-	let pendingPriors: Promise<Map<string, FsrsCardState | null>> = Promise.resolve(new Map());
+	let pendingReviewed: Promise<Set<string>> = Promise.resolve(new Set());
 
 	/* ---------------------------------------------------------------------- */
 	/* Boot                                                                    */
@@ -442,7 +442,7 @@
 		// The free rounds are spliced in here, before anything walks the session —
 		// `warmSession` below is the reason: a round that only came into existence
 		// mid-play could never have its tile audio pre-rendered.
-		queue = interleaveMatchRounds(ready.challenges, items, Date.now());
+		queue = interleaveMatchRounds(ready.challenges, items);
 		nextIndex = 0;
 		plannedLlm = ready.challenges.length;
 		plannedSteps = queue.length;
@@ -584,7 +584,7 @@
 	function show(challenge: Challenge): void {
 		const at = Date.now();
 		challengeShownAt = at;
-		currentReadings = planReadings(romanizationMode, challenge, items, at);
+		currentReadings = planReadings(romanizationMode, challenge, items);
 		current = challenge;
 		// Warm this challenge's own audio while the learner is still reading it.
 		// The queue loop covers the whole session now, so it has usually got there
@@ -621,20 +621,20 @@
 		};
 
 		// Fire-and-follow: the banner animates now, the write lands underneath it.
-		// The one promise is held twice — as `pendingPriors` for its value (the
-		// pre-answer cards a self-assessment would re-grade from) and as
-		// `pendingWrite` for its completion, which is what the session awaits before
-		// touching the queue again. Neither is ever dropped.
-		pendingPriors = applyResult(challenge, {
+		// The one promise is held twice — as `pendingReviewed` for its value (the
+		// items a self-assessment may re-grade) and as `pendingWrite` for its
+		// completion, which is what the session awaits before touching the queue
+		// again. Neither is ever dropped.
+		pendingReviewed = applyResult(challenge, {
 			verdict: event.verdict,
 			answerGiven: event.answerGiven,
 			responseMs: event.responseMs,
 			now: Date.now()
 		}).catch(() => {
 			// A failed write must not eat the session; the answer is already logged.
-			return new Map<string, FsrsCardState | null>();
+			return new Set<string>();
 		});
-		pendingWrite = pendingPriors.then(() => undefined);
+		pendingWrite = pendingReviewed.then(() => undefined);
 	}
 
 	/**
@@ -642,9 +642,9 @@
 	 *
 	 * Explicit self-assessment is the only route to an FSRS `Easy` (see
 	 * `gradeFromResult`), so this is the learner steering their own schedule
-	 * rather than a guess made from response time. `amendResult` recomputes the
-	 * review from the captured pre-answer cards and replaces the history entry,
-	 * so switching between grades stays exact however often it happens.
+	 * rather than a guess made from response time. `amendResult` *replaces* the
+	 * history entry and the core refolds the word's log from scratch, so
+	 * switching between grades stays exact however often it happens.
 	 *
 	 * Chained onto `pendingWrite` for the usual reason: the original review must
 	 * be on the card (and its history entry appended) before the amend rewrites
@@ -657,10 +657,10 @@
 	function assessCurrent(grade: Grade): void {
 		const fb = feedback;
 		if (!fb) return;
-		const priors = pendingPriors;
+		const reviewed = pendingReviewed;
 		pendingWrite = pendingWrite
 			.then(async () => {
-				await amendResult(fb.challenge, grade, await priors, Date.now());
+				await amendResult(fb.challenge, grade, await reviewed, Date.now());
 			})
 			.catch(() => {
 				// A failed write must not eat the session; the answer is already logged.

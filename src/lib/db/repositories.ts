@@ -34,25 +34,17 @@ export const getAllItems = forward('getAllItems');
 export const getItem = forward('getItem');
 export const upsertItems = forward('upsertItems');
 export const deleteItem = forward('deleteItem');
-const reviewItem = forward('reviewItem');
-
 /**
- * Folds a review into an item — see {@link Backend.reviewItem}.
+ * Folds a review into an item — {@link Backend.reviewItem} under the name its
+ * callers have always used.
  *
- * `nextCard` is **not consulted**. It survives in the signature because every
- * caller is written around it and because it documents, at the call site, what
- * the review is supposed to do to the card — but the card the materializer
- * folds is the one source of truth. It is dropped here rather than sent: a
- * function cannot cross to the backend, and the backend has no use for it.
+ * It used to take a `nextCard` callback that computed the resulting card with
+ * ts-fsrs; the backend never consulted it, because the card the materializer
+ * folds is the one source of truth. It is gone along with ts-fsrs itself: a
+ * review is `{at, grade}`, and a caller that wants the resulting card reads it
+ * off the answer.
  */
-export function updateItemAfterReview(
-	id: string,
-	_nextCard: (prior: unknown) => unknown,
-	historyEntry: { at: number; grade: number },
-	opts: { replaceLast?: boolean } = {}
-): Promise<{ existed: boolean; prior: unknown }> {
-	return reviewItem(id, historyEntry, opts);
-}
+export const updateItemAfterReview = forward('reviewItem');
 
 export const addToPool = forward('addToPool');
 export const getPool = forward('getPool');

@@ -10,12 +10,20 @@ import {
 	CardState,
 	Grade,
 	isDue,
-	retrievability,
-	wordStrength,
+	retrievabilityOf,
+	strengthOf,
 	type FsrsCardState
 } from '$lib/srs';
 
-/** One word with everything the ledger shows about it, derived once per render. */
+/**
+ * One word with everything the ledger shows about it, derived once per render.
+ *
+ * This is the one screen that opens the stored card: `stability`, `difficulty`,
+ * `lapses` and `reps` are columns here and nowhere else in the app. The three
+ * numbers that need the model rather than the record — `due`, `strength`,
+ * `retrievability` — come off `item.srs`, computed by the core when the row was
+ * read, so this page shows the schedule as of its last fetch.
+ */
 export interface WordRow {
 	item: KnowledgeItem;
 	card: FsrsCardState;
@@ -42,9 +50,9 @@ export function toWordRow(item: KnowledgeItem, now: number): WordRow {
 		item,
 		card,
 		state: card.state,
-		due: isDue(card, now),
-		strength: wordStrength(card, now),
-		retrievability: retrievability(card, now),
+		due: isDue(item, now),
+		strength: strengthOf(item),
+		retrievability: retrievabilityOf(item),
 		accuracy,
 		lastReviewAt: card.last_review
 	};
@@ -151,8 +159,8 @@ function matchesSearch(row: WordRow, needle: string): boolean {
  * Filter + search + sort over rows that have already been derived.
  *
  * Split from {@link queryWords} because the page needs the *unfiltered* rows
- * anyway for its summary tiles, and `toWordRow` folds FSRS retrievability and
- * strength per word — deriving them once for the tiles and again for the table
+ * anyway for its summary tiles, and `toWordRow` folds the counters and the
+ * accuracy per word — deriving them once for the tiles and again for the table
  * meant doing that work twice over the whole collection on every render.
  */
 export function filterWords(rows: WordRow[], query: WordQuery): WordRow[] {

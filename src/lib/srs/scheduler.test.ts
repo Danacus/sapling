@@ -1,111 +1,41 @@
 import { describe, expect, it } from 'vitest';
 import type { KnowledgeItem } from '$lib/types';
 import {
-	CardState,
 	Grade,
+	dueAt,
 	gradeFromResult,
 	isDue,
-	newCardState,
-	retrievability,
-	reviewCard,
+	retrievabilityOf,
 	selectSessionItems,
-	wordStrength,
-	type FsrsCardState
+	strengthOf
 } from './scheduler';
 
 /** Fixed instant: 2026-01-01T00:00:00.000Z. Every test computes off this. */
 const NOW = Date.UTC(2026, 0, 1, 0, 0, 0);
 const DAY = 24 * 60 * 60 * 1000;
 
-function item(overrides: Partial<KnowledgeItem> & { fsrsCard: FsrsCardState }): KnowledgeItem {
+/**
+ * An item as a `Backend` read returns it: the derived schedule attached, the
+ * card left opaque. Nothing here builds a card — the core owns that shape, and
+ * the numbers under test are the ones it hands down.
+ */
+function item(overrides: Partial<KnowledgeItem> = {}): KnowledgeItem {
 	return {
 		id: 'id',
 		kind: 'vocab',
 		term: 'term',
 		meaning: 'meaning',
+		fsrsCard: null,
 		introducedAt: NOW,
 		history: [],
 		...overrides
 	};
 }
 
-describe('newCardState', () => {
-	it('is due immediately', () => {
-		const state = newCardState(NOW);
-		expect(isDue(state, NOW)).toBe(true);
-		expect(state.due).toBeLessThanOrEqual(NOW);
-	});
-
-	it('starts in the New state with no reps', () => {
-		const state = newCardState(NOW);
-		expect(state.state).toBe(0);
-		expect(state.reps).toBe(0);
-		expect(state.last_review).toBeNull();
-	});
-});
-
-describe('reviewCard', () => {
-	it('Again re-dues the card sooner than Good, which re-dues sooner than Easy', () => {
-		const base = newCardState(NOW);
-		const again = reviewCard(base, Grade.Again, NOW);
-		const good = reviewCard(base, Grade.Good, NOW);
-		const easy = reviewCard(base, Grade.Easy, NOW);
-
-		// Again/Good land in short (~minutes) learning steps; Easy graduates
-		// straight to the Review state with a multi-day interval.
-		expect(again.due).toBeLessThan(good.due);
-		expect(good.due).toBeLessThan(easy.due);
-		expect(again.due - NOW).toBeLessThan(DAY);
-		expect(good.due - NOW).toBeLessThan(DAY);
-		expect(easy.due - NOW).toBeGreaterThanOrEqual(DAY);
-	});
-
-	it('increments reps and sets last_review', () => {
-		const base = newCardState(NOW);
-		const next = reviewCard(base, Grade.Good, NOW);
-		expect(next.reps).toBe(1);
-		expect(next.last_review).toBe(NOW);
-	});
-
-	it('accumulates lapses when a card in Review state is forgotten', () => {
-		const base = newCardState(NOW);
-		// Easy graduates a new card straight to the Review state.
-		const graduated = reviewCard(base, Grade.Easy, NOW);
-		expect(graduated.state).toBe(CardState.Review);
-		const afterLapse = reviewCard(graduated, Grade.Again, graduated.due);
-		expect(afterLapse.lapses).toBe(1);
-		expect(afterLapse.state).toBe(CardState.Relearning);
-	});
-
-	it('is deterministic: same inputs produce the same outputs', () => {
-		const base = newCardState(NOW);
-		const a = reviewCard(base, Grade.Good, NOW);
-		const b = reviewCard(base, Grade.Good, NOW);
-		expect(a).toEqual(b);
-	});
-});
-
-describe('JSON round trip', () => {
-	it('state survives JSON.stringify/parse and keeps scheduling deterministic', () => {
-		const base = newCardState(NOW);
-		const reviewed = reviewCard(base, Grade.Good, NOW);
-		const roundTripped = JSON.parse(JSON.stringify(reviewed)) as FsrsCardState;
-
-		expect(roundTripped).toEqual(reviewed);
-
-		const laterNow = reviewed.due;
-		const fromOriginal = reviewCard(reviewed, Grade.Good, laterNow);
-		const fromRoundTripped = reviewCard(roundTripped, Grade.Good, laterNow);
-		expect(fromRoundTripped).toEqual(fromOriginal);
-	});
-
-	it('round-trips a never-reviewed (last_review: null) card', () => {
-		const base = newCardState(NOW);
-		const roundTripped = JSON.parse(JSON.stringify(base)) as FsrsCardState;
-		expect(roundTripped).toEqual(base);
-		expect(roundTripped.last_review).toBeNull();
-	});
-});
+/** An item due at `due`, as read back. */
+function dueItem(id: string, due: number): KnowledgeItem {
+	return item({ id, srs: { due, retrievability: 1, strength: 0.5 } });
+}
 
 describe('gradeFromResult', () => {
 	it('maps wrong to Again', () => {
@@ -126,78 +56,39 @@ describe('gradeFromResult', () => {
 	});
 });
 
-describe('retrievability', () => {
-	it('decreases as now advances past the review', () => {
-		const base = newCardState(NOW);
-		const reviewed = reviewCard(base, Grade.Good, NOW);
-
-		const soon = retrievability(reviewed, reviewed.last_review! + DAY);
-		const later = retrievability(reviewed, reviewed.last_review! + 30 * DAY);
-
-		expect(soon).toBeGreaterThan(0);
-		expect(soon).toBeLessThanOrEqual(1);
-		expect(later).toBeLessThan(soon);
+describe('reading the derived schedule', () => {
+	it('isDue is a plain comparison against the caller’s now', () => {
+		expect(isDue(dueItem('a', NOW - 1), NOW)).toBe(true);
+		expect(isDue(dueItem('a', NOW), NOW)).toBe(true);
+		expect(isDue(dueItem('a', NOW + 1), NOW)).toBe(false);
 	});
 
-	it('is at its maximum right at the moment of review', () => {
-		const base = newCardState(NOW);
-		const reviewed = reviewCard(base, Grade.Good, NOW);
-		const atReview = retrievability(reviewed, reviewed.last_review!);
-		const muchLater = retrievability(reviewed, reviewed.last_review! + 100 * DAY);
-		expect(atReview).toBeGreaterThan(muchLater);
-	});
-});
-
-describe('wordStrength', () => {
-	/** A card of a given stability, reviewed at `reviewedAt`. */
-	function mature(stability: number, reviewedAt: number): FsrsCardState {
-		return {
-			...newCardState(NOW),
-			stability,
-			difficulty: 5,
-			state: CardState.Review,
-			reps: 4,
-			last_review: reviewedAt,
-			due: reviewedAt + stability * DAY
-		};
-	}
-
-	it('scores a freshly created card low', () => {
-		expect(wordStrength(newCardState(NOW), NOW)).toBeLessThan(0.35);
+	it('answers against this instant, not the one the row was read at', () => {
+		// The whole reason `isDue` stayed on this side: a session holds one `now`
+		// and every question it asks has to be answered against that one.
+		const word = dueItem('a', NOW + DAY);
+		expect(isDue(word, NOW)).toBe(false);
+		expect(isDue(word, NOW + 2 * DAY)).toBe(true);
 	});
 
-	it('scores a mature card just reviewed at (nearly) full strength', () => {
-		expect(wordStrength(mature(30, NOW), NOW)).toBeCloseTo(1, 2);
-		expect(wordStrength(mature(90, NOW), NOW)).toBeCloseTo(1, 2);
+	it('treats an item with no derived schedule as owed now', () => {
+		// A word the assistant just minted, or one restored from an import: it was
+		// introduced and never scheduled, which is the bottom of the queue.
+		const fresh = item({ id: 'fresh' });
+		expect(dueAt(fresh, NOW)).toBe(NOW);
+		expect(isDue(fresh, NOW)).toBe(true);
+		expect(strengthOf(fresh)).toBe(0);
+		expect(retrievabilityOf(fresh)).toBe(0);
 	});
 
-	it('sags for an overdue card at the same stability', () => {
-		const stability = 20;
-		const fresh = wordStrength(mature(stability, NOW), NOW);
-		const overdue = wordStrength(mature(stability, NOW - 120 * DAY), NOW);
-		expect(overdue).toBeLessThan(fresh);
-	});
-
-	it('separates a young card from a mature one, where retrievability would not', () => {
-		const young = wordStrength(mature(1, NOW), NOW);
-		const old = wordStrength(mature(30, NOW), NOW);
-		expect(young).toBeLessThan(old);
-		// The point of the change: both are perfectly recallable right now.
-		expect(retrievability(mature(1, NOW), NOW)).toBeCloseTo(
-			retrievability(mature(30, NOW), NOW),
-			3
-		);
+	it('reads strength and retrievability straight off the item', () => {
+		const word = item({ srs: { due: NOW, retrievability: 0.82, strength: 0.41 } });
+		expect(strengthOf(word)).toBe(0.41);
+		expect(retrievabilityOf(word)).toBe(0.82);
 	});
 });
 
 describe('selectSessionItems', () => {
-	function dueItem(id: string, due: number): KnowledgeItem {
-		return item({
-			id,
-			fsrsCard: { ...newCardState(NOW), due }
-		});
-	}
-
 	it('orders due items most-overdue-first', () => {
 		const items = [
 			dueItem('a', NOW - 1 * DAY),
@@ -226,9 +117,9 @@ describe('selectSessionItems', () => {
 		expect(reviewItems.map((i) => i.id)).toEqual(['owed', 'soon']);
 	});
 
-	it('builds a lesson out of never-reviewed words alone', () => {
-		// A word added yesterday by the assistant: card due now, no history.
-		const items = [item({ id: 'fresh', fsrsCard: newCardState(NOW), history: [] })];
+	it('builds a lesson out of never-scheduled words alone', () => {
+		// A word added yesterday by the assistant: no derived schedule, so due now.
+		const items = [item({ id: 'fresh' })];
 		const { reviewItems } = selectSessionItems(items, { now: NOW });
 		expect(reviewItems.map((i) => i.id)).toEqual(['fresh']);
 	});

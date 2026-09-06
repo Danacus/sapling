@@ -31,7 +31,6 @@ import {
 	upsertItems,
 	type ExportEnvelope
 } from '$lib/db';
-import { newCardState } from '$lib/srs';
 import type { Challenge, KnowledgeItem, Profile, ReadingText } from '$lib/types';
 import { setBackendForTesting } from './backend';
 import { makeTestBackend, type TestBackend } from './backend.testing';
@@ -69,7 +68,9 @@ function item(id: string, term: string, introducedAt: number): KnowledgeItem {
 		term,
 		meaning: 'book',
 		introducedAt,
-		fsrsCard: newCardState(introducedAt),
+		// Ignored on the way in: the core folds the card from `introducedAt` and
+		// the review log. Nothing on this side of the boundary can compute one.
+		fsrsCard: null,
 		history: []
 	};
 }
@@ -88,7 +89,7 @@ const text: ReadingText = {
 async function seedOneOfEach(): Promise<void> {
 	await saveProfile(profile);
 	await upsertItems([item('i1', '书', 1000), item('i2', '旧', 1500)]);
-	await updateItemAfterReview('i1', (card) => card, { at: 2000, grade: 3 });
+	await updateItemAfterReview('i1', { at: 2000, grade: 3 });
 	await deleteItem('i2');
 	await addToPool([challenge], 3000);
 	await recordServe('c1', 4000);
@@ -181,7 +182,7 @@ describe('legacy import', () => {
 		// The old build stored a card alongside history. The new one folds the card
 		// from the reviews, so the stored one is ignored rather than trusted — this
 		// one is nonsense, and what comes back is the fold of `history`.
-		const nonsense = { ...newCardState(1000), stability: 999, difficulty: 9, reps: 42 };
+		const nonsense = { due: 1000, stability: 999, difficulty: 9, reps: 42, state: 2 };
 		const legacy = JSON.stringify({
 			version: 2,
 			exportedAt: 9999,
@@ -206,11 +207,11 @@ describe('legacy import', () => {
 		expect(restored).toMatchObject({ reviewCount: 1, correctCount: 1 });
 
 		// The same word and the same one review, arriving the ordinary way. The
-		// expectation comes from the store rather than from `$lib/srs`, which runs
-		// ts-fsrs while the core runs the `fsrs` crate.
+		// expectation comes from the store because that is the only place an FSRS
+		// card is ever computed.
 		setBackendForTesting(await makeTestBackend());
 		await upsertItems([item('i1', '书', 1000)]);
-		await updateItemAfterReview('i1', (card) => card, { at: 2000, grade: 3 });
+		await updateItemAfterReview('i1', { at: 2000, grade: 3 });
 		expect(restored?.fsrsCard).toEqual((await getItem('i1'))?.fsrsCard);
 	});
 

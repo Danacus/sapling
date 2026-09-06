@@ -69,6 +69,13 @@ export interface ExportEnvelope {
  * they are what lets one item be refolded exactly when a review arrives out of
  * order, and {@link getItem} attaches them for the one word being looked at.
  *
+ * ## Items carry their derived schedule
+ *
+ * Every read that returns items attaches `srs` — due, retrievability, strength —
+ * computed by the core against its clock as the row is fetched. The window
+ * thread has no FSRS to derive them with, which is the point; the cost is that
+ * they are a snapshot, so a view must refetch to see the schedule move.
+ *
  * Every argument is plain JSON-shaped data: it crosses `postMessage` in the
  * browser, so there is no place for a function or a `$state` proxy here.
  */
@@ -114,13 +121,16 @@ export interface Backend {
 	/**
 	 * Folds a review into an item: appends one history entry.
 	 *
-	 * The card the materializer folds is the one source of truth; `prior` is the
-	 * card as it stood before this review, read straight off the row, and is what
-	 * `amendResult` rewinds to.
+	 * A review is `{at, grade}` and nothing else — the caller has no FSRS to
+	 * compute a card with, and does not need one. `card` is what the review
+	 * folded to, read back after the commit; `prior` is the card as it stood
+	 * before it. Both are opaque, and both are `null` when the item is gone.
 	 *
 	 * With `replaceLast`, the entry supersedes the newest one instead of being
 	 * appended — for a review being *recomputed* rather than added (the learner
-	 * re-graded the answer they just gave). An empty history simply appends.
+	 * re-graded the answer they just gave). The rewind is the core's: it refolds
+	 * the whole log from the introduction, so nothing has to be handed back to
+	 * it. An empty history simply appends.
 	 *
 	 * `existed` is `false` when the item no longer exists.
 	 */
@@ -128,7 +138,7 @@ export interface Backend {
 		id: string,
 		historyEntry: { at: number; grade: number },
 		opts?: { replaceLast?: boolean }
-	): Promise<{ existed: boolean; prior: unknown }>;
+	): Promise<{ existed: boolean; prior: unknown; card: unknown }>;
 
 	/* ---- Challenge pool -------------------------------------------------- */
 

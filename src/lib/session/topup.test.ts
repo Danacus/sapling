@@ -10,7 +10,6 @@ import { describe, expect, it } from 'vitest';
 import type { ChallengeRow } from '$lib/db';
 import { PLANNABLE_KINDS, kindKey } from '$lib/llm';
 import type { ChallengeKind, Want } from '$lib/llm';
-import { CardState, newCardState } from '$lib/srs';
 import type { KnowledgeItem } from '$lib/types';
 import { RESERVE_GAP } from './pool';
 import { MAX_TOPUP_WANTS, WANT_PER_WORD, planTopUp, topUpCoverage } from './topup';
@@ -25,7 +24,8 @@ function item(id: string, dueOffset = -DAY): KnowledgeItem {
 		kind: 'vocab',
 		term: `term-${id}`,
 		meaning: `meaning-${id}`,
-		fsrsCard: { ...newCardState(NOW), due: NOW + dueOffset },
+		fsrsCard: null,
+		srs: { due: NOW + dueOffset, retrievability: 0, strength: 0 },
 		introducedAt: NOW - 10 * DAY,
 		history: []
 	};
@@ -35,15 +35,7 @@ function item(id: string, dueOffset = -DAY): KnowledgeItem {
 function strong(id: string, dueOffset = -DAY): KnowledgeItem {
 	return {
 		...item(id, dueOffset),
-		fsrsCard: {
-			...newCardState(NOW),
-			due: NOW + dueOffset,
-			stability: 10,
-			scheduled_days: 10,
-			reps: 5,
-			state: CardState.Review,
-			last_review: NOW
-		}
+		srs: { due: NOW + dueOffset, retrievability: 1, strength: 0.9 }
 	};
 }
 

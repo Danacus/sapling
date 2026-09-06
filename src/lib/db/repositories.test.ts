@@ -28,7 +28,6 @@ import {
 } from '$lib/db';
 import { setBackendForTesting } from './backend';
 import { makeTestBackend, type TestBackend } from './backend.testing';
-import { newCardState } from '$lib/srs';
 import type {
 	Challenge,
 	Conversation,
@@ -51,7 +50,9 @@ function item(id: string, term: string, introducedAt: number): KnowledgeItem {
 		term,
 		meaning: 'book',
 		introducedAt,
-		fsrsCard: newCardState(introducedAt),
+		// Ignored on the way in: the core folds the card from `introducedAt` and
+		// the review log. Nothing on this side of the boundary can compute one.
+		fsrsCard: null,
 		history: []
 	};
 }

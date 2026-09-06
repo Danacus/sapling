@@ -24,6 +24,7 @@ use crate::js;
 use crate::materialize::{event_from_row, open_schema, Materializer, LOG_ORDER};
 use crate::schema::{DERIVED_TABLES, PROFILE_ID};
 use crate::sql::{Error, Param, Result, Row, Sql};
+use crate::srs::{item_srs, FsrsCardState};
 use crate::types::{
     ChallengeResult, Conversation, ConversationDetail, ConversationExchange,
     ConversationLearnerTurn, ConversationSummary, ConversationTeacherTurn, DailyActivity,
@@ -42,11 +43,17 @@ const PULL_CURSOR_KEY: &str = "pullCursor";
 const ITEM_COLUMNS_LEAN: &str =
     "id, kind, term, meaning, romanization, notes, introducedAt, fsrsCard, reviewCount, correctCount";
 
-/// `reviewItem`'s answer: whether the item was there, and the card as it stood.
+/// `reviewItem`'s answer: whether the item was there, the card as it stood, and
+/// the card this review folded to.
+///
+/// `card` is read back after the commit rather than predicted, because
+/// predicting it is exactly what the frontend no longer can: there is one FSRS
+/// and it lives in `srs.rs`. Both are `null` for an item that is not there.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ReviewOutcome {
     pub existed: bool,
     pub prior: Value,
+    pub card: Value,
 }
 
 /// Shape of the JSON `export_data` produces.
@@ -75,7 +82,17 @@ fn parse_json<T: for<'de> serde::Deserialize<'de>>(text: &str) -> Result<T> {
     Ok(serde_json::from_str(text)?)
 }
 
-fn item_from(row: &Row, history: Vec<HistoryEntry>) -> Result<KnowledgeItem> {
+/// One item row, with the derived schedule numbers attached as of `now`.
+///
+/// `srs` is computed here rather than in the browser because the browser has no
+/// FSRS: it holds grades, opaque cards and timestamps. A card too old or too
+/// malformed to parse simply carries no `srs` — a read must not fail over a
+/// display number, and every consumer already falls back to "brand new".
+fn item_from(row: &Row, history: Vec<HistoryEntry>, now: f64) -> Result<KnowledgeItem> {
+    let fsrs_card: Value = parse_json(row.text("fsrsCard")?)?;
+    let srs = serde_json::from_value::<FsrsCardState>(fsrs_card.clone())
+        .ok()
+        .map(|card| item_srs(&card, now));
     Ok(KnowledgeItem {
         id: row.text("id")?.to_owned(),
         kind: parse_json(&js::stringify(&Value::String(row.text("kind")?.to_owned())))?,
@@ -84,7 +101,8 @@ fn item_from(row: &Row, history: Vec<HistoryEntry>) -> Result<KnowledgeItem> {
         romanization: row.opt_text("romanization")?.map(str::to_owned),
         notes: row.opt_text("notes")?.map(str::to_owned),
         introduced_at: row.f64("introducedAt")?,
-        fsrs_card: parse_json(row.text("fsrsCard")?)?,
+        fsrs_card,
+        srs,
         review_count: Some(row.f64("reviewCount")?),
         correct_count: Some(row.f64("correctCount")?),
         recent_grades: if row.has("recentGrades") {
@@ -325,16 +343,21 @@ impl Core {
     /* ---- Knowledge items --------------------------------------------- */
 
     /// Every item, with an empty `history`; `recentGrades` only when asked for.
+    ///
+    /// The clock is read once for the whole batch, so every row's `srs` is taken
+    /// at the same instant — a collection where one word is due and the next is
+    /// not because the millisecond turned over mid-`SELECT` would be nonsense.
     pub fn get_all_items(&self, with_recent_grades: bool) -> Result<Vec<KnowledgeItem>> {
         let columns = if with_recent_grades {
             "*"
         } else {
             ITEM_COLUMNS_LEAN
         };
+        let now = (self.clock)();
         self.sql
             .query(&format!("SELECT {columns} FROM items"), &[])?
             .iter()
-            .map(|row| item_from(row, Vec::new()))
+            .map(|row| item_from(row, Vec::new(), now))
             .collect()
     }
 
@@ -350,7 +373,11 @@ impl Core {
             "SELECT itemId, at, grade, device FROM reviews WHERE itemId = ? ORDER BY at, device",
             &[Param::text(id)],
         )?;
-        Ok(Some(item_from(row, history_from(&history)?)?))
+        Ok(Some(item_from(
+            row,
+            history_from(&history)?,
+            (self.clock)(),
+        )?))
     }
 
     /// Inserts or replaces items by id: a new id emits `itemAdded`, a known one `itemUpdated`.
@@ -414,6 +441,7 @@ impl Core {
             return Ok(ReviewOutcome {
                 existed: false,
                 prior: Value::Null,
+                card: Value::Null,
             });
         };
         let prior: Value = parse_json(row.text("fsrsCard")?)?;
@@ -446,9 +474,23 @@ impl Core {
                 grade,
             }))?,
         }
+        // The materializer has folded by now — including the full refold a
+        // `reviewAmended` triggers — so this is the stored card, not a guess at it.
+        let card: Value = self
+            .sql
+            .query(
+                "SELECT fsrsCard FROM items WHERE id = ?",
+                &[Param::text(id)],
+            )?
+            .first()
+            .map(|row| parse_json(row.text("fsrsCard")?))
+            .transpose()?
+            .unwrap_or(Value::Null);
+
         Ok(ReviewOutcome {
             existed: true,
             prior,
+            card,
         })
     }
 

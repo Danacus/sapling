@@ -157,10 +157,10 @@ src/lib/db/           Repositories: the only sanctioned way to touch storage,
 crates/sapling-core/  That materializer, the SRS and every backend method, in
                       Rust over a SQLite seam; compiled to wasm by
                       `pnpm core:wasm` and run inside the database Worker.
-src/lib/srs/          The reading side of spaced repetition (ts-fsrs): due,
-                      retrievability, strength. The card itself is folded by
-                      the core. Pure and deterministic: `now` is always a
-                      parameter. The one place `fsrsCard` is cast.
+src/lib/srs/          Spaced repetition as the frontend sees it: grades, opaque
+                      cards, timestamps. No FSRS — the core folds the card and
+                      derives due/retrievability/strength onto every item it
+                      returns; this reads those numbers and compares dates.
 src/lib/validate/     Fuzzy answer grading. Unicode-aware normalization plus
                       Damerau-Levenshtein, producing correct/almost/wrong.
 src/lib/challenges/   The stored side of the challenge union: one module per

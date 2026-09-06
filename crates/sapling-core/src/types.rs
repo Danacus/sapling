@@ -15,6 +15,8 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
+use crate::srs::ItemSrs;
+
 /// zod's `.optional()`: missing is `None`, present must parse, `null` does not.
 ///
 /// Pair with `#[serde(default)]` so a missing key becomes `None` without ever
@@ -191,6 +193,15 @@ pub struct KnowledgeItem {
     /// The FSRS card, opaque here as it is in `types.ts`; `srs` knows its shape.
     #[serde(default)]
     pub fsrs_card: Value,
+    /// What the card *says*, derived at read time — the frontend runs no FSRS,
+    /// so this is the only way a screen gets a strength or a forgetting curve.
+    /// Absent on an item built by hand (an argument, an import) rather than read.
+    #[serde(
+        default,
+        deserialize_with = "absent_or",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub srs: Option<ItemSrs>,
     #[serde(
         default,
         deserialize_with = "absent_or",

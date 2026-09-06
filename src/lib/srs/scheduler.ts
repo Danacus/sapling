@@ -1,29 +1,32 @@
 /**
- * Spaced repetition, backed by ts-fsrs.
+ * Spaced repetition, as the frontend sees it.
  *
- * The rest of the app never imports ts-fsrs directly: it goes through this
- * module so the `fsrsCard: unknown` field on `KnowledgeItem` is cast in exactly
- * one place. Every function here is pure and deterministic: callers always
- * pass `now` (epoch ms) explicitly, nothing reads the system clock.
+ * **There is no FSRS here.** The one implementation lives in
+ * `crates/sapling-core/src/srs.rs`, which runs the `fsrs` crate beside SQLite:
+ * it folds the review log into the stored card, and it derives the numbers a
+ * screen reads — `due`, `retrievability`, `strength` — attaching them to every
+ * item a `Backend` read returns as {@link KnowledgeItem.srs}. What is left on
+ * this side is the vocabulary a caller needs to *speak* to it (grades and the
+ * verdict mapping), the accessors that read those derived numbers off an item,
+ * and one selection over them.
  *
- * **This is not what schedules a card.** The stored card is folded from the
- * review log by `crates/sapling-core/src/srs.rs`, which runs the `fsrs` crate
- * inside the same scheduler shape ts-fsrs gave this app — the same FSRS-6
- * weights and the same learning steps, but an independent implementation in
- * `f32`, so the two agree in behaviour and not in the last decimal. What lives
- * here is therefore the *reading* side — `isDue`, `retrievability`,
- * `wordStrength`, `selectSessionItems` — plus {@link reviewCard}, which is only
- * ever an optimistic preview: `updateItemAfterReview` drops the card its
- * callers compute and the core's fold is what comes back. Never compare a card
- * from here against one the store returned.
+ * That is the whole point of the split: a review is filed as `{at, grade}` and
+ * the card comes back from the store. Nothing here predicts one, so nothing here
+ * can disagree with what was written.
+ *
+ * Every function is pure and deterministic. Where a comparison needs the clock,
+ * callers pass `now` (epoch ms) explicitly — that stays true for {@link isDue},
+ * which is a date comparison and nothing more. The numbers it compares against
+ * were computed when the row was fetched, so a view held open across a due date
+ * needs a refetch to notice, not a re-render.
  */
 
-import { createEmptyCard, fsrs, type Card, type Grade as FsrsGrade } from 'ts-fsrs';
 import type { KnowledgeItem, Verdict } from '$lib/types';
 
+export type { ItemSrs } from '$lib/types';
+
 /**
- * ts-fsrs `Rating` values (minus `Manual`). Mirrored here so callers don't
- * need to import ts-fsrs directly.
+ * FSRS `Rating` values (minus `Manual`) — the grades a review is filed under.
  */
 export const Grade = {
 	Again: 1,
@@ -35,7 +38,8 @@ export const Grade = {
 export type Grade = (typeof Grade)[keyof typeof Grade];
 
 /**
- * ts-fsrs `State` values, mirrored for the same reason as `Grade`.
+ * FSRS `State` values. Read only by the words ledger, which shows a word's
+ * state as a tag and filters on it.
  */
 export const CardState = {
 	New: 0,
@@ -47,19 +51,20 @@ export const CardState = {
 export type CardState = (typeof CardState)[keyof typeof CardState];
 
 /**
- * A JSON-serializable representation of a ts-fsrs `Card`.
+ * The stored card's shape — **owned by the core**, mirrored here only so the
+ * words ledger can name the fields it puts in columns.
  *
- * ts-fsrs' own `Card` type stores dates as `Date` objects, which don't
- * round-trip through `structuredClone` or `JSON.stringify` cleanly across all
- * storage backends. This type stores the same fields with dates
- * as epoch-ms numbers (`null` in place of `undefined` for `last_review`, so
- * the shape stays plain-JSON-safe).
+ * Nothing in the app computes one, and nothing but that ledger should read one:
+ * the derived numbers every other screen wants are on
+ * {@link KnowledgeItem.srs}. Dates are epoch-ms numbers (`null` in place of
+ * `undefined` for `last_review`) so the whole thing stays plain-JSON-safe across
+ * `postMessage`, the export file and the sync log.
  */
 export interface FsrsCardState {
 	due: number;
 	stability: number;
 	difficulty: number;
-	/** @deprecated kept only because ts-fsrs' `Card` still has it. */
+	/** @deprecated kept only because the FSRS `Card` shape still has it. */
 	elapsed_days: number;
 	scheduled_days: number;
 	learning_steps: number;
@@ -67,43 +72,6 @@ export interface FsrsCardState {
 	lapses: number;
 	state: CardState;
 	last_review: number | null;
-}
-
-/** Converts our serializable state to a ts-fsrs `Card`. */
-export function toFsrsCard(state: FsrsCardState): Card {
-	return {
-		due: new Date(state.due),
-		stability: state.stability,
-		difficulty: state.difficulty,
-		elapsed_days: state.elapsed_days,
-		scheduled_days: state.scheduled_days,
-		learning_steps: state.learning_steps,
-		reps: state.reps,
-		lapses: state.lapses,
-		state: state.state,
-		last_review: state.last_review === null ? undefined : new Date(state.last_review)
-	};
-}
-
-/** Converts a ts-fsrs `Card` to our serializable state. */
-export function fromFsrsCard(card: Card): FsrsCardState {
-	return {
-		due: card.due.getTime(),
-		stability: card.stability,
-		difficulty: card.difficulty,
-		elapsed_days: card.elapsed_days,
-		scheduled_days: card.scheduled_days,
-		learning_steps: card.learning_steps,
-		reps: card.reps,
-		lapses: card.lapses,
-		state: card.state,
-		last_review: card.last_review ? card.last_review.getTime() : null
-	};
-}
-
-/** State for a freshly introduced item, due immediately. */
-export function newCardState(now: number): FsrsCardState {
-	return fromFsrsCard(createEmptyCard(new Date(now)));
 }
 
 /**
@@ -134,59 +102,43 @@ export function gradeFromResult(verdict: Verdict): Grade {
 }
 
 /**
- * Runs ts-fsrs scheduling for a review and returns the new serializable state —
- * an *approximation* of the card the core will fold, for a caller that wants to
- * show the effect of an answer before the store answers. See the module note.
+ * When the schedule next owes this word.
+ *
+ * An item with no derived schedule was built by hand rather than read back —
+ * the assistant's freshly minted word, an import — and it is owed *now*: it was
+ * introduced and never scheduled, which is exactly what the bottom of the queue
+ * means. Hence `now` as the fallback rather than an epoch.
  */
-export function reviewCard(state: FsrsCardState, grade: Grade, now: number): FsrsCardState {
-	const scheduler = fsrs();
-	const card = toFsrsCard(state);
-	const { card: nextCard } = scheduler.next(card, new Date(now), grade as FsrsGrade);
-	return fromFsrsCard(nextCard);
-}
-
-/** True when the card is due at (or before) `now`. */
-export function isDue(state: FsrsCardState, now: number): boolean {
-	return state.due <= now;
+export function dueAt(item: KnowledgeItem, now: number): number {
+	return item.srs?.due ?? now;
 }
 
 /**
- * Probability of recall (0..1) at `now`, for UI strength bars. Backed by
- * ts-fsrs' own forgetting-curve calculation (`get_retrievability`), which
- * derives it from stability and elapsed time since the last review.
+ * True when the card is due at (or before) `now`.
+ *
+ * A date comparison, not a scheduling decision — which is why it stayed on this
+ * side when everything else went into the core: the session's `now` is explicit
+ * and this has to answer against *that* instant, not against whatever the clock
+ * said when the row was fetched.
  */
-export function retrievability(state: FsrsCardState, now: number): number {
-	const scheduler = fsrs();
-	const card = toFsrsCard(state);
-	return scheduler.get_retrievability(card, new Date(now), false);
+export function isDue(item: KnowledgeItem, now: number): boolean {
+	return dueAt(item, now) <= now;
 }
 
-/** Stability (in days) treated as "this word is mature" by {@link wordStrength}. */
-const MATURE_STABILITY_DAYS = 30;
-
 /**
- * How well a word is known, 0..1 — the number behind the dashboard's strength
- * bars.
+ * How well a word is known, 0..1 — the number behind the strength bars, and the
+ * axis `$lib/session/progression` slices into demand tiers and difficulty rungs.
  *
- * {@link retrievability} alone is the wrong axis, tempting as it looks: the
- * scheduler's whole job is to keep it pinned in 0.9–1.0, so a learner who is on
- * schedule sees every bar full and the display tells them nothing. Stability —
- * the days it takes recall to decay to 90% — is the quantity that actually
- * spans their range: a word met this morning sits under a day, a word they own
- * sits at weeks. {@link MATURE_STABILITY_DAYS} is taken as the top of that
- * range, and the log scale spends the bar's width where the movement is (the
- * first fortnight) instead of squashing it against zero.
- *
- * Multiplying by retrievability is what keeps the bar honest about *now*: a
- * mature word left unreviewed for a month visibly sags below the same word
- * reviewed yesterday, which is exactly the word the learner should go find.
+ * Zero for a word with nothing derived, for the same reason {@link dueAt} answers
+ * `now`: never scheduled is the bottom of the range.
  */
-export function wordStrength(state: FsrsCardState, now: number): number {
-	const maturity = Math.min(
-		1,
-		Math.log1p(Math.max(0, state.stability)) / Math.log1p(MATURE_STABILITY_DAYS)
-	);
-	return maturity * retrievability(state, now);
+export function strengthOf(item: KnowledgeItem): number {
+	return item.srs?.strength ?? 0;
+}
+
+/** Probability of recall (0..1), as of the read. Zero for a word never scheduled. */
+export function retrievabilityOf(item: KnowledgeItem): number {
+	return item.srs?.retrievability ?? 0;
 }
 
 /**
@@ -206,15 +158,17 @@ export function wordStrength(state: FsrsCardState, now: number): number {
  * nothing — applied one step earlier, to what gets *written* rather than to
  * what gets served. Early review is native to FSRS: a review is graded whenever
  * it happens, it simply banks a smaller stability gain.
+ *
+ * Pure selection over `srs.due` and `now`: no model, no weights, no clock of
+ * its own.
  */
 export function selectSessionItems(
 	items: KnowledgeItem[],
 	opts: { now: number; maxItems?: number }
 ): { reviewItems: KnowledgeItem[] } {
 	const maxItems = opts.maxItems ?? 12;
-	const byDue = (a: KnowledgeItem, b: KnowledgeItem) =>
-		(a.fsrsCard as FsrsCardState).due - (b.fsrsCard as FsrsCardState).due;
-	const dueNow = (item: KnowledgeItem) => isDue(item.fsrsCard as FsrsCardState, opts.now);
+	const byDue = (a: KnowledgeItem, b: KnowledgeItem) => dueAt(a, opts.now) - dueAt(b, opts.now);
+	const dueNow = (item: KnowledgeItem) => isDue(item, opts.now);
 
 	const owed = items.filter(dueNow).sort(byDue);
 	const ahead = items.filter((item) => !dueNow(item)).sort(byDue);

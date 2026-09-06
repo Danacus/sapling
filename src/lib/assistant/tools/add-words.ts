@@ -1,13 +1,15 @@
 /**
  * `add_words` — put new vocabulary into the learner's list.
  *
- * The only tool that mints `KnowledgeItem`s, so it is the only one that has to
- * know two things the rest of the app takes for granted: a new word needs a
- * real, due-now FSRS card before it is persisted (`$lib/llm` leaves `fsrsCard`
- * null for exactly the same reason, and `generateChallenges` fills it in the
- * same way), and a term the learner already has must never be added twice — a
- * duplicate forks one word's review history into two entries that each get
- * scheduled half as often.
+ * The only tool that mints `KnowledgeItem`s, so it is the one that has to know
+ * the thing the rest of the app takes for granted: a term the learner already
+ * has must never be added twice — a duplicate forks one word's review history
+ * into two entries that each get scheduled half as often.
+ *
+ * It mints no card. `fsrsCard` goes over as `null` because the store does not
+ * read it: the core folds a card from the item's own `introducedAt` when the
+ * `itemAdded` event materializes, and there is no FSRS on this side of the
+ * boundary to compute one with.
  *
  * Dedupe therefore runs against the stored list *and* within the batch itself:
  * a model asked to add ten words from a chat message will happily repeat one.
@@ -29,7 +31,6 @@
  */
 
 import { z } from 'zod';
-import { newCardState } from '$lib/srs';
 import type { KnowledgeItem } from '$lib/types';
 import type { AssistantToolDef } from './def';
 import {
@@ -101,7 +102,8 @@ export const addWordsTool = {
 				meaning: word.meaning.trim(),
 				...optionalField('romanization', romanization),
 				...optionalField('notes', trimmedOrUndefined(word.notes)),
-				fsrsCard: newCardState(at),
+				// The core folds the card from `introducedAt`; see the module note.
+				fsrsCard: null,
 				introducedAt: at,
 				history: []
 			});

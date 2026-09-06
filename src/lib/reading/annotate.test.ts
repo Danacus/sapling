@@ -2,13 +2,14 @@
  * Render-time annotation: the status of every word, and whether it keeps its
  * reading.
  *
- * Pure and deterministic, so the coin flip is injected and the clock is passed
- * in — the same contract `$lib/srs` and `$lib/session/romanization` keep.
+ * Pure and deterministic, so the coin flip is injected — the same contract
+ * `$lib/session/romanization` keeps. There is no clock here any more: a word's
+ * strength is derived by the core when the item is read, and this module reads
+ * the number.
  */
 
 import { describe, expect, it } from 'vitest';
 
-import { CardState, type FsrsCardState } from '$lib/srs';
 import type { GlossEntry, KnowledgeItem } from '$lib/types';
 import { annotateSentence, showSentenceReading, termsFor } from './annotate';
 import type { AnnotateContext, ReadingWord } from './annotate';
@@ -16,32 +17,20 @@ import { tokenizeByTerms } from './tokenize';
 
 /** Fixed instant: 2026-01-01T00:00:00.000Z. */
 const NOW = Date.UTC(2026, 0, 1);
-const DAY = 24 * 60 * 60 * 1000;
 
-/** A reviewed card of the given stability, last seen just now. */
-function card(stabilityDays: number): FsrsCardState {
-	return {
-		due: NOW + stabilityDays * DAY,
-		stability: stabilityDays,
-		difficulty: 5,
-		elapsed_days: 0,
-		scheduled_days: stabilityDays,
-		learning_steps: 0,
-		reps: 5,
-		lapses: 0,
-		state: CardState.Review,
-		last_review: NOW
-	};
-}
-
-function item(term: string, stabilityDays = 0, romanization?: string): KnowledgeItem {
+/**
+ * One word as a read returns it. `strength` 0 is a word never scheduled — no
+ * derived schedule at all, which is what an item built by hand carries.
+ */
+function item(term: string, strength = 0, romanization?: string): KnowledgeItem {
 	return {
 		id: `id-${term}`,
 		kind: 'vocab',
 		term,
 		meaning: `meaning of ${term}`,
 		...(romanization ? { romanization } : {}),
-		fsrsCard: stabilityDays > 0 ? card(stabilityDays) : null,
+		fsrsCard: null,
+		...(strength > 0 ? { srs: { due: NOW, retrievability: 1, strength } } : {}),
 		introducedAt: NOW,
 		history: []
 	};
@@ -65,7 +54,6 @@ function ctx(overrides: Partial<AnnotateContext> = {}): AnnotateContext {
 		knownTerms: [],
 		glossary: [],
 		mode: 'on',
-		now: NOW,
 		rolls: new Map(),
 		...overrides
 	};
@@ -142,7 +130,7 @@ describe('annotateSentence', () => {
 		const words = annotateSentence(
 			'mesa sopa',
 			tokenizeByTerms,
-			ctx({ items: [item('mesa', 30), item('sopa')] })
+			ctx({ items: [item('mesa', 1), item('sopa')] })
 		);
 		expect(statusOf(words, 'mesa')?.maturity).toBe('solid');
 		expect(statusOf(words, 'sopa')?.maturity).toBe('new');
@@ -166,7 +154,7 @@ describe('annotateSentence', () => {
 			const words = annotateSentence(
 				'mesa silla',
 				withReadings,
-				ctx({ mode: 'on', items: [item('mesa', 90)], knownTerms: ['silla'] })
+				ctx({ mode: 'on', items: [item('mesa', 1)], knownTerms: ['silla'] })
 			);
 			expect(words.map((word) => word.reading)).toEqual(['«mesa»', null, '«silla»']);
 		});
@@ -197,7 +185,7 @@ describe('annotateSentence', () => {
 				rolls++;
 				return 0.99;
 			};
-			const shared = ctx({ mode: 'adaptive', items: [item('mesa', 365)], rng });
+			const shared = ctx({ mode: 'adaptive', items: [item('mesa', 1)], rng });
 
 			// Strength is past the ceiling, so the hide probability is 1 and 0.99
 			// loses: the reading goes, in this sentence and in the next.
@@ -231,7 +219,7 @@ describe('showSentenceReading', () => {
 	});
 
 	it('shows while any word still deserves the crutch', () => {
-		const some = words('adaptive', { items: [item('mesa', 365)], rng: () => 0.99 });
+		const some = words('adaptive', { items: [item('mesa', 1)], rng: () => 0.99 });
 		expect(showSentenceReading(some, 'adaptive')).toBe(true);
 	});
 
@@ -322,7 +310,7 @@ describe('homographs', () => {
 	it('fades the two cards independently, on their own strengths', () => {
 		// `cháng` is past the ceiling (hide probability 1) and `zhǎng` is below the
 		// floor (0), so one roll can never speak for both.
-		const owned = item('长', 365, 'cháng');
+		const owned = item('长', 1, 'cháng');
 		const shared = ctx({
 			mode: 'adaptive',
 			items: [owned, zhang],

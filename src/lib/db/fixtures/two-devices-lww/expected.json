@@ -31,6 +31,11 @@
 					"state": 2,
 					"last_review": 1710154800000
 				},
+				"srs": {
+					"due": 1710414000000,
+					"retrievability": 0.95822644,
+					"strength": 0.39202253
+				},
 				"reviewCount": 3,
 				"correctCount": 2,
 				"history": []
@@ -53,6 +58,11 @@
 					"lapses": 0,
 					"state": 0,
 					"last_review": null
+				},
+				"srs": {
+					"due": 1710061320000,
+					"retrievability": 0,
+					"strength": 0
 				},
 				"reviewCount": 0,
 				"correctCount": 0,
@@ -78,6 +88,11 @@
 					"lapses": 0,
 					"state": 2,
 					"last_review": 1710154800000
+				},
+				"srs": {
+					"due": 1710414000000,
+					"retrievability": 0.95822644,
+					"strength": 0.39202253
 				},
 				"reviewCount": 3,
 				"correctCount": 2,
@@ -116,6 +131,11 @@
 					"state": 0,
 					"last_review": null
 				},
+				"srs": {
+					"due": 1710061320000,
+					"retrievability": 0,
+					"strength": 0
+				},
 				"reviewCount": 0,
 				"correctCount": 0,
 				"recentGrades": [],
@@ -142,6 +162,11 @@
 				"lapses": 0,
 				"state": 2,
 				"last_review": 1710154800000
+			},
+			"srs": {
+				"due": 1710414000000,
+				"retrievability": 0.95822644,
+				"strength": 0.39202253
 			},
 			"reviewCount": 3,
 			"correctCount": 2,
@@ -195,6 +220,11 @@
 				"lapses": 0,
 				"state": 0,
 				"last_review": null
+			},
+			"srs": {
+				"due": 1710061320000,
+				"retrievability": 0,
+				"strength": 0
 			},
 			"reviewCount": 0,
 			"correctCount": 0,

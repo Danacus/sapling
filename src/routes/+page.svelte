@@ -11,7 +11,7 @@
 		streakFrom
 	} from '$lib/db';
 	import { maturityOf, type Maturity } from '$lib/session/progression';
-	import { isDue, type FsrsCardState } from '$lib/srs';
+	import { isDue } from '$lib/srs';
 	import type { KnowledgeItem, Profile } from '$lib/types';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
@@ -59,18 +59,10 @@
 		};
 	});
 
-	/** `fsrsCard` is `unknown` on the domain type; a missing card means "brand new". */
-	function cardState(item: KnowledgeItem): FsrsCardState | null {
-		return (item.fsrsCard as FsrsCardState | null | undefined) ?? null;
-	}
-
 	const targetLanguage = $derived(profile?.targetLanguage?.trim() || 'your new language');
-	const dueCount = $derived(
-		items.filter((item) => {
-			const card = cardState(item);
-			return !card || isDue(card, now);
-		}).length
-	);
+	// `isDue` compares the schedule the *read* derived against this tick's `now`,
+	// so the count moves with the clock and snaps on the next load.
+	const dueCount = $derived(items.filter((item) => isDue(item, now)).length);
 
 	const today = $derived(localDay(now));
 	const reviewsToday = $derived(activity.find((entry) => entry.day === today)?.count ?? 0);
@@ -144,7 +136,7 @@
 
 	const garden = $derived.by(() => {
 		const counts: Record<Maturity, number> = { new: 0, young: 0, solid: 0 };
-		for (const item of items) counts[maturityOf(item, now)]++;
+		for (const item of items) counts[maturityOf(item)]++;
 		return BEDS.map((bed) => ({ ...bed, count: counts[bed.maturity] }));
 	});
 

@@ -8,8 +8,9 @@
 //! canonicalised through `js::stringify` and re-parsed before comparing, which
 //! is what `JSON.parse(JSON.stringify(...))` does on the TypeScript side.
 //!
-//! One value in a fixture is not compared exactly, and only here: a card's
-//! `stability` and `difficulty`. `expected.json` is blessed from the wasm build
+//! A few values in a fixture are not compared exactly, and only here: a card's
+//! `stability` and `difficulty`, and the `srs.retrievability` and `srs.strength`
+//! read off them. `expected.json` is blessed from the wasm build
 //! (`pnpm golden:update`), and the FSRS model computes in `f32`, where `exp`
 //! and `powf` come from the host's libm natively and from Rust's `libm` port on
 //! wasm32. Those disagree by an ulp or two, which a chain of them turns into a
@@ -244,10 +245,20 @@ fn data_only(mut reads: Value) -> Value {
 /// magnitude tighter than the smallest real mistake.
 const MODEL_TOLERANCE: f64 = 1e-5;
 
+/// The four numbers that come out of the `f32` model: the two the card stores,
+/// and the two `srs` derives from them at read time. `srs.due` is not one — it
+/// is the card's own `due`, a whole minute, and it still has to match exactly.
+const MODEL_FLOATS: [&str; 4] = [
+    ".fsrsCard.stability",
+    ".fsrsCard.difficulty",
+    ".srs.retrievability",
+    ".srs.strength",
+];
+
 /// Whether `path` names a number this file compares loosely, and whether these
 /// two are close enough — see the module note.
 fn model_floats_agree(path: &str, a: &Value, b: &Value) -> bool {
-    if !(path.ends_with(".fsrsCard.stability") || path.ends_with(".fsrsCard.difficulty")) {
+    if !MODEL_FLOATS.iter().any(|field| path.ends_with(field)) {
         return false;
     }
     match (a.as_f64(), b.as_f64()) {

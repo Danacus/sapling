@@ -1,17 +1,20 @@
 /**
  * The database-touching engine functions worth a test, because each one decides
  * what happens to a learner's SRS card and getting any of them wrong corrupts
- * scheduling silently: `applyResult` (the grade, and the pre-review snapshot it
- * hands back), `amendResult` (the learner re-rated a correct answer) and
- * `applyOverturn` (a dispute was won).
+ * scheduling silently: `applyResult` (the grade, and which items it filed one
+ * for), `amendResult` (the learner re-rated a correct answer) and
+ * `applyOverturn` (a dispute was won) — plus `updateItemAfterReview` itself,
+ * which is the one call all three go through.
  *
  * They run against a **real store** — the same WASM SQLite and the same merge
  * rules the browser runs, in memory. So what is asserted below is the behaviour
- * the app actually has, not a second implementation's impression of it.
+ * the app actually has, not a second implementation's impression of it. That is
+ * the only way left to assert a card at all: the frontend runs no FSRS, so
+ * every card in this file came out of the core.
  *
  * A card that has never been reviewed is a fresh card rather than `null`, and a
- * re-grade moves it by rewriting one review rather than by overwriting a stored
- * card with an arithmetic result.
+ * re-grade moves it by rewriting one review and letting the core refold, never
+ * by overwriting a stored card with an arithmetic result.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -19,7 +22,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { getItem, updateItemAfterReview } from '$lib/db';
 import { setBackendForTesting } from '$lib/db/backend';
 import { makeTestBackend, type TestBackend } from '$lib/db/backend.testing';
-import { Grade, newCardState } from '$lib/srs';
+import { CardState, Grade } from '$lib/srs';
 import type { FsrsCardState } from '$lib/srs';
 import type { Challenge } from '$lib/types';
 
@@ -132,45 +135,72 @@ describe('applyResult', () => {
 		expect((await historyOf('i1')).at(-1)?.grade).toBe(Grade.Again);
 	});
 
-	it('returns each reviewed item as it was before the review', async () => {
+	it('returns the items it actually filed a review for', async () => {
 		await seed('i1');
-		const before = await cardOf('i1');
+		await seed('i2');
 
-		const priors = await applyResult(single, { verdict: 'correct', answerGiven: 'leo', now: NOW });
+		const reviewed = await applyResult(cloze, {
+			verdict: 'correct',
+			answerGiven: 'leo',
+			now: NOW
+		});
 
-		expect(priors.get('i1')).toEqual(before);
-		// The snapshot is of the *old* card; the derived one has moved on.
-		expect(await cardOf('i1')).not.toEqual(before);
-	});
-
-	it('hands back a fresh card for an item that has never been reviewed', async () => {
-		await seed('i1');
-
-		const priors = await applyResult(single, { verdict: 'correct', answerGiven: 'leo', now: NOW });
-
-		// The mock this replaces could return `null` here, because a card was a
-		// stored column that might be unset. A derived card cannot be unset: an
-		// empty history folds to a new card at the item's `introducedAt`.
-		expect(priors.get('i1')).toEqual(newCardState(NOW));
+		expect([...reviewed].sort()).toEqual(['i1', 'i2']);
 	});
 
 	it('omits items that no longer exist, and returns nothing for match-pairs', async () => {
 		await seed('i1');
 
-		const priors = await applyResult(
+		const reviewed = await applyResult(
 			{ ...cloze, itemIds: ['i1', 'gone'] },
 			{ verdict: 'correct', answerGiven: 'leo', now: NOW }
 		);
-		expect([...priors.keys()]).toEqual(['i1']);
+		expect([...reviewed]).toEqual(['i1']);
 
 		const none = await applyResult(match, { verdict: 'correct', answerGiven: '', now: NOW });
 		expect(none.size).toBe(0);
 	});
 });
 
+describe('updateItemAfterReview', () => {
+	it('answers with the card before the review and the card the core folded', async () => {
+		await seed('i1');
+		const before = await cardOf('i1');
+
+		const { existed, prior, card } = await updateItemAfterReview('i1', {
+			at: NOW,
+			grade: Grade.Good
+		});
+
+		expect(existed).toBe(true);
+		expect(prior).toEqual(before);
+		// Read back, not predicted: it is exactly what the store now holds.
+		expect(card).toEqual(await cardOf('i1'));
+		expect(card).not.toEqual(before);
+	});
+
+	it('holds a fresh card for an item that has never been reviewed', async () => {
+		await seed('i1');
+
+		const { prior } = await updateItemAfterReview('i1', { at: NOW, grade: Grade.Good });
+
+		// A card is derived, so it cannot be unset the way a stored column could:
+		// an empty history folds to a new card at the item's `introducedAt`.
+		expect(prior).toMatchObject({ state: CardState.New, reps: 0, due: NOW, last_review: null });
+	});
+
+	it('says an item is gone rather than throwing, with no cards either side', async () => {
+		expect(await updateItemAfterReview('gone', { at: NOW, grade: Grade.Good })).toEqual({
+			existed: false,
+			prior: null,
+			card: null
+		});
+	});
+});
+
 describe('amendResult', () => {
 	/** Plays a correct answer through `applyResult`, as the session would. */
-	async function answeredCorrectly(): Promise<Map<string, FsrsCardState | null>> {
+	async function answeredCorrectly(): Promise<Set<string>> {
 		await seed('i1');
 		return applyResult(single, { verdict: 'correct', answerGiven: 'leo', now: NOW });
 	}
@@ -179,21 +209,22 @@ describe('amendResult', () => {
 	 * The card a fresh item lands on after a single review of `grade` at
 	 * {@link NOW} — the same store, folding the same one-review history.
 	 *
-	 * The expectation is drawn from the core rather than computed here on
-	 * purpose: `$lib/srs` runs ts-fsrs and the core runs the `fsrs` crate, so a
-	 * card the two agree on to the last decimal is not a thing to assert.
+	 * The expectation is drawn from the core because there is nowhere else to
+	 * draw it from: an FSRS card is the core's to compute, and this file's job is
+	 * to check that a re-grade *lands* on the single-review card rather than on
+	 * a stack of two.
 	 */
 	async function foldedAlone(id: string, grade: Grade): Promise<FsrsCardState | undefined> {
 		await seed(id);
-		await updateItemAfterReview(id, (card) => card, { at: NOW, grade });
+		await updateItemAfterReview(id, { at: NOW, grade });
 		return cardOf(id);
 	}
 
 	it('rewrites the review instead of stacking a second one', async () => {
-		const priors = await answeredCorrectly();
+		const reviewed = await answeredCorrectly();
 		expect(await historyOf('i1')).toHaveLength(1);
 
-		await amendResult(single, Grade.Easy, priors, NOW);
+		await amendResult(single, Grade.Easy, reviewed, NOW);
 
 		expect(await historyOf('i1')).toEqual([{ at: NOW, grade: Grade.Easy }]);
 		// The card follows the rewritten history: one Easy review, not a Good
@@ -202,24 +233,24 @@ describe('amendResult', () => {
 	});
 
 	it('amending twice equals amending once with the last grade', async () => {
-		const priors = await answeredCorrectly();
+		const reviewed = await answeredCorrectly();
 
-		await amendResult(single, Grade.Easy, priors, NOW);
-		await amendResult(single, Grade.Hard, priors, NOW);
+		await amendResult(single, Grade.Easy, reviewed, NOW);
+		await amendResult(single, Grade.Hard, reviewed, NOW);
 
 		expect(await historyOf('i1')).toEqual([{ at: NOW, grade: Grade.Hard }]);
 		expect(await cardOf('i1')).toEqual(await foldedAlone('ref', Grade.Hard));
 	});
 
 	it('leaves items the review skipped, and match-pairs rounds, untouched', async () => {
-		const priors = await answeredCorrectly();
-		// Present on the challenge but absent from the priors: never reviewed.
+		const reviewed = await answeredCorrectly();
+		// Present on the challenge but absent from the set: never reviewed.
 		await seed('i2');
 
-		await amendResult({ ...cloze, itemIds: ['i1', 'i2'] }, Grade.Easy, priors, NOW);
+		await amendResult({ ...cloze, itemIds: ['i1', 'i2'] }, Grade.Easy, reviewed, NOW);
 		expect(await historyOf('i2')).toEqual([]);
 
-		await amendResult(match, Grade.Easy, priors, NOW);
+		await amendResult(match, Grade.Easy, reviewed, NOW);
 		expect(await historyOf('i1')).toHaveLength(1);
 	});
 });

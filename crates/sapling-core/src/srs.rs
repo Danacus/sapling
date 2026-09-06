@@ -11,11 +11,13 @@
 //! `FsrsCardState` JSON the materializer stores. `fsrs::FSRS::next_states`
 //! knows nothing about any of that.
 //!
-//! It is not a port any more, so it is not bit-comparable with ts-fsrs.
-//! `src/lib/srs/scheduler.ts` still runs ts-fsrs for what the UI reads and for
-//! the optimistic preview the session engine throws away — same algorithm and
-//! the same 21 weights, but an approximation of what this module writes, never
-//! a second source of truth for it.
+//! It is not a port any more, so it is not bit-comparable with ts-fsrs — and it
+//! does not have to be, because **there is no other FSRS anywhere**. The
+//! frontend dropped ts-fsrs entirely: it holds grades, opaque cards and
+//! timestamps, and the numbers it draws off a card — [`ItemSrs`], attached to
+//! every item a read returns — are computed here, from the same model that
+//! wrote the card. One implementation, so there is nothing left to keep
+//! agreeing.
 //!
 //! **A card is not bit-comparable across hosts either, and cannot be made so.**
 //! The crate computes in `f32`, and `f32`'s `exp` and `powf` come from the
@@ -26,16 +28,17 @@
 //! at `f32` no rounding can both keep the value and hide the gap. So a card is
 //! widened to `f64` and cut to eight decimals — about all the precision an
 //! `f32` carries, and enough to keep the JSON short and stable *per host* — and
-//! `tests/golden.rs` is where the tolerance lives instead. Nothing downstream
-//! reads a card that closely: `due` and `scheduled_days` are whole minutes and
-//! days, and `wordStrength` is a log.
+//! `tests/golden.rs` is where the tolerance lives instead. It covers
+//! [`ItemSrs`]'s two floats for the same reason, since they are read off that
+//! same `f32` model. Nothing downstream reads any of it that closely: `due` and
+//! `scheduled_days` are whole minutes and days, and [`word_strength`] is a log.
 //!
 //! Nothing here reads a clock or an RNG: `next_states` takes the elapsed days
 //! explicitly and the crate's randomness lives only in its optimizer.
 
 use std::sync::OnceLock;
 
-use fsrs::{ItemState, MemoryState, NextStates, FSRS};
+use fsrs::{ItemState, MemoryState, NextStates, FSRS, FSRS6_DEFAULT_DECAY};
 use serde::{Deserialize, Serialize};
 
 use crate::js::{round, round_to};
@@ -369,6 +372,88 @@ pub fn review_card(state: &FsrsCardState, grade: Grade, now: f64) -> Result<Fsrs
     Scheduler::new(state, now).review(grade)
 }
 
+/* ---- The reading side ------------------------------------------------------- */
+
+/// What a screen reads off a card, attached to every item a read returns.
+///
+/// The frontend has no FSRS, so it cannot derive any of this: it gets the three
+/// numbers and does arithmetic on them. `due` is the card's own due timestamp,
+/// passed straight through and *not* turned into a boolean here — whether it has
+/// arrived is a comparison against the caller's own `now`, and the session's
+/// `now` is explicit for a reason. The other two are the forgetting curve and
+/// the strength bar, which do need the model and the weights.
+///
+/// **These are computed when the row is fetched**, not when it is looked at. A
+/// page left open across a due date shows the schedule as of its last read until
+/// something refetches; the word list and the home page refetch on navigation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItemSrs {
+    pub due: f64,
+    pub retrievability: f64,
+    pub strength: f64,
+}
+
+/// FSRS-6's decay, which is `DEFAULT_PARAMETERS[20]` under its own name.
+const DECAY: f32 = FSRS6_DEFAULT_DECAY;
+
+/// Stability (in days) treated as "this word is mature" by [`word_strength`].
+const MATURE_STABILITY_DAYS: f64 = 30.0;
+
+/// `date_diff(now, last, 'days')`: whole elapsed 24-hour periods, floored, never
+/// negative. Not the calendar-day difference [`date_diff_in_days`] takes — this
+/// is the axis the forgetting curve is drawn on, and ts-fsrs reads it the same
+/// way in `get_retrievability`.
+fn elapsed_since(last_review: f64, now: f64) -> f64 {
+    (((now - last_review) / DAY).floor()).max(0.0)
+}
+
+/// Probability of recall (0..1) at `now` — ts-fsrs's `get_retrievability`.
+///
+/// A card the model has never seen has no curve: ts-fsrs answers 0 for a `New`
+/// card rather than dividing by a stability of zero, and so does this.
+pub fn current_retrievability(card: &FsrsCardState, now: f64) -> f64 {
+    let Some(last_review) = card.last_review else {
+        return 0.0;
+    };
+    if card.state == NEW || card.stability <= 0.0 {
+        return 0.0;
+    }
+    let state = MemoryState {
+        stability: card.stability as f32,
+        difficulty: card.difficulty as f32,
+    };
+    let r = fsrs::current_retrievability(state, elapsed_since(last_review, now) as f32, DECAY);
+    round_to(r as f64, 8)
+}
+
+/// How well a word is known, 0..1 — the number behind the strength bars.
+///
+/// [`current_retrievability`] alone is the wrong axis, tempting as it looks: the
+/// scheduler's whole job is to keep it pinned in 0.9–1.0, so a learner who is on
+/// schedule sees every bar full and the display tells them nothing. Stability —
+/// the days it takes recall to decay to 90% — is the quantity that actually
+/// spans their range: a word met this morning sits under a day, a word they own
+/// sits at weeks. [`MATURE_STABILITY_DAYS`] is taken as the top of that range,
+/// and the log scale spends the bar's width where the movement is (the first
+/// fortnight) instead of squashing it against zero.
+///
+/// Multiplying by retrievability is what keeps the bar honest about *now*: a
+/// mature word left unreviewed for a month visibly sags below the same word
+/// reviewed yesterday, which is exactly the word the learner should go find.
+pub fn word_strength(card: &FsrsCardState, now: f64) -> f64 {
+    let maturity = (card.stability.max(0.0).ln_1p() / MATURE_STABILITY_DAYS.ln_1p()).min(1.0);
+    round_to(maturity * current_retrievability(card, now), 8)
+}
+
+/// The three derived numbers for one card, as of `now`.
+pub fn item_srs(card: &FsrsCardState, now: f64) -> ItemSrs {
+    ItemSrs {
+        due: card.due,
+        retrievability: current_retrievability(card, now),
+        strength: word_strength(card, now),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -529,5 +614,97 @@ mod tests {
         let mut card = new_card_state(T0);
         card.state = 9;
         assert!(review_card(&card, Grade::Good, T0).is_err());
+    }
+
+    /* ---- The reading side ------------------------------------------------ */
+    //
+    // These moved off `scheduler.test.ts` when the frontend stopped running
+    // ts-fsrs. They are shaped as properties rather than as pinned decimals on
+    // purpose: the numbers are the crate's, so an upstream refit of the model
+    // may move every one of them, and what the app actually depends on is the
+    // shape of the two curves — retrievability falls with time, strength
+    // separates a young card from a mature one where retrievability cannot.
+
+    /// A card of a given stability, reviewed at `reviewed_at`.
+    fn mature(stability: f64, reviewed_at: f64) -> FsrsCardState {
+        FsrsCardState {
+            due: reviewed_at + stability * DAY,
+            stability,
+            difficulty: 5.0,
+            state: REVIEW,
+            reps: 4,
+            last_review: Some(reviewed_at),
+            ..new_card_state(T0)
+        }
+    }
+
+    #[test]
+    fn retrievability_decreases_as_now_advances_past_the_review() {
+        let card = review_card(&new_card_state(T0), Grade::Good, T0).unwrap();
+        let reviewed = card.last_review.unwrap();
+        let soon = current_retrievability(&card, reviewed + DAY);
+        let later = current_retrievability(&card, reviewed + 30.0 * DAY);
+        assert!(soon > 0.0 && soon <= 1.0, "retrievability {soon}");
+        assert!(later < soon);
+    }
+
+    #[test]
+    fn retrievability_is_at_its_maximum_at_the_moment_of_review() {
+        let card = review_card(&new_card_state(T0), Grade::Good, T0).unwrap();
+        let reviewed = card.last_review.unwrap();
+        assert!(
+            current_retrievability(&card, reviewed)
+                > current_retrievability(&card, reviewed + 100.0 * DAY)
+        );
+    }
+
+    #[test]
+    fn a_card_the_model_has_never_seen_has_no_curve() {
+        // ts-fsrs answers 0 for a New card rather than dividing by a stability
+        // of zero, and the strength bar reads 0 for the same word.
+        let fresh = new_card_state(T0);
+        assert_eq!(current_retrievability(&fresh, T0), 0.0);
+        assert_eq!(word_strength(&fresh, T0), 0.0);
+        assert_eq!(item_srs(&fresh, T0).due, T0);
+    }
+
+    #[test]
+    fn strength_scores_a_mature_card_just_reviewed_at_nearly_full() {
+        for stability in [30.0, 90.0] {
+            let strength = word_strength(&mature(stability, T0), T0);
+            assert!(strength > 0.99, "stability {stability}: {strength}");
+            assert!(strength <= 1.0);
+        }
+    }
+
+    #[test]
+    fn strength_sags_for_an_overdue_card_at_the_same_stability() {
+        let fresh = word_strength(&mature(20.0, T0), T0);
+        let overdue = word_strength(&mature(20.0, T0 - 120.0 * DAY), T0);
+        assert!(overdue < fresh);
+    }
+
+    #[test]
+    fn strength_separates_a_young_card_from_a_mature_one_where_retrievability_would_not() {
+        let young = mature(1.0, T0);
+        let old = mature(30.0, T0);
+        assert!(word_strength(&young, T0) < word_strength(&old, T0));
+        // The point of the formula: both are perfectly recallable right now.
+        let gap = current_retrievability(&young, T0) - current_retrievability(&old, T0);
+        assert!(gap.abs() < 1e-3, "retrievability gap {gap}");
+    }
+
+    #[test]
+    fn the_curve_reads_whole_elapsed_days_never_a_negative_one() {
+        // A clock that went backwards, and the hours inside a day: both read as
+        // "reviewed today", which is where ts-fsrs's floor-and-clamp puts them.
+        let card = mature(10.0, T0);
+        let at_review = current_retrievability(&card, T0);
+        assert_eq!(current_retrievability(&card, T0 - 3.0 * DAY), at_review);
+        assert_eq!(
+            current_retrievability(&card, T0 + 23.0 * 60.0 * MINUTE),
+            at_review
+        );
+        assert!(current_retrievability(&card, T0 + DAY) < at_review);
     }
 }

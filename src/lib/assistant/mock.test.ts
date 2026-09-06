@@ -85,7 +85,9 @@ describe('mockChat', () => {
 			meaning: 'hello',
 			kind: 'vocab'
 		});
-		expect(store.items[0].fsrsCard).not.toBeNull();
+		// No card is minted here — the core folds one from `introducedAt` — so the
+		// introduction time is the fact the offline path has to get right.
+		expect(store.items[0].introducedAt).toBe(NOW);
 		expect(turn.actions).toEqual([{ tool: 'add_words', summary: 'Added 1 word: hola', ok: true }]);
 		expect(turn.text).toContain('Added 1 word: hola');
 	});

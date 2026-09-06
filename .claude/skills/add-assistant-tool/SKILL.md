@@ -28,7 +28,9 @@ are kebab-case (`add-words.ts`). Follow the existing four.
   `tools/context.ts` — the only module here that may import the DB. Going
   through the repositories is what captures sync events for free; a direct store
   call silently breaks multi-device sync.
-- Anything creating vocabulary must initialise FSRS cards via `$lib/srs` and
+- Anything creating vocabulary passes `fsrsCard: null` and a correct
+  `introducedAt` — the core folds the card from it, and there is no FSRS on this
+  side to mint one with — and must
   dedupe with `sameCard` (`$lib/text`) — same spelling *and* a reading that
   fails to tell two cards apart — exactly as `add_words` does. **`add_words` is the only
   way words enter the collection** — lesson generation writes challenges and

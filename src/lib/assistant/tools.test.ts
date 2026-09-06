@@ -104,7 +104,7 @@ describe('the tool registry', () => {
 });
 
 describe('add_words', () => {
-	it('adds new words with an initialized card', async () => {
+	it('adds new words stamped with the introduction time the card folds from', async () => {
 		const store = fake();
 		const outcome = await addWordsTool.run(
 			{
@@ -135,7 +135,7 @@ describe('add_words', () => {
 		const added = store.upserts[0];
 		expect(added.map((row) => row.term)).toEqual(['hola', 'adiós']);
 		for (const row of added) {
-			expect(row.fsrsCard).not.toBeNull();
+			// No card is minted: the core folds one from `introducedAt`, asserted below.
 			expect(row.kind).toBe('vocab');
 			expect(row.introducedAt).toBe(NOW);
 			expect(row.history).toEqual([]);

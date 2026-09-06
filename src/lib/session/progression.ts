@@ -27,12 +27,14 @@
  * computation, and lives here because it is neutral between them —
  * `challengeReadingStrength` over there is now this function under its own name.
  *
- * Pure and deterministic like `$lib/srs`: `now` is always passed in, nothing
- * reads the clock or the database.
+ * Pure and deterministic: nothing here reads the clock or the database. It does
+ * not take `now` either, and that is not an oversight — a word's strength is
+ * derived by the core when the item is read (`KnowledgeItem.srs`), so the
+ * instant it belongs to was chosen before these functions were called.
  *
  * ## Calibration
  *
- * `wordStrength` is log-stability × retrievability, so real ts-fsrs numbers put
+ * `strength` is log-stability × retrievability, so real FSRS numbers put
  * a word answered Good at each due date at ~0 before its first review, ~0.35
  * after one, ~0.32 after two (the second review lands with stability unchanged
  * and a day of decay behind it) and ~0.65 after three. The floors sit under
@@ -62,7 +64,7 @@
  */
 
 import { demandOf, type Demand } from '$lib/challenges/demand';
-import { wordStrength, type FsrsCardState } from '$lib/srs';
+import { strengthOf } from '$lib/srs';
 import type { Challenge, KnowledgeItem } from '$lib/types';
 
 /**
@@ -128,15 +130,14 @@ export function itemsById(items: KnowledgeItem[]): ReadonlyMap<string, Knowledge
 export function weakestWordStrength(
 	challenge: Challenge,
 	items: KnowledgeItem[],
-	now: number,
 	byId: ReadonlyMap<string, KnowledgeItem> = itemsById(items)
 ): number {
 	if (challenge.itemIds.length === 0) return 0;
 
 	let weakest = 1;
 	for (const id of challenge.itemIds) {
-		const card = byId.get(id)?.fsrsCard as FsrsCardState | null | undefined;
-		const strength = card ? wordStrength(card, now) : 0;
+		const item = byId.get(id);
+		const strength = item ? strengthOf(item) : 0;
 		if (strength < weakest) weakest = strength;
 	}
 	return weakest;
@@ -160,10 +161,9 @@ function demandForStrength(strength: number): Demand {
 export function bearableDemand(
 	challenge: Challenge,
 	items: KnowledgeItem[],
-	now: number,
 	byId?: ReadonlyMap<string, KnowledgeItem>
 ): Demand {
-	return demandForStrength(weakestWordStrength(challenge, items, now, byId ?? itemsById(items)));
+	return demandForStrength(weakestWordStrength(challenge, items, byId ?? itemsById(items)));
 }
 
 /**
@@ -178,10 +178,9 @@ export function bearableDemand(
 export function bearable(
 	challenge: Challenge,
 	items: KnowledgeItem[],
-	now: number,
 	byId?: ReadonlyMap<string, KnowledgeItem>
 ): boolean {
-	return demandOf(challenge) <= bearableDemand(challenge, items, now, byId);
+	return demandOf(challenge) <= bearableDemand(challenge, items, byId);
 }
 
 /** How far along a word is, in three coarse steps — what the screens that colour a word by it read. */
@@ -197,7 +196,7 @@ export type Maturity = 'new' | 'young' | 'solid';
 export type DifficultyLevel = 1 | 2 | 3 | 4 | 5;
 
 /**
- * The `[start, end)` (closed at 1) span of `wordStrength` each rung owns.
+ * The `[start, end)` (closed at 1) span of word strength each rung owns.
  *
  * The single source for the ladder's geometry: {@link levelForStrength} reads
  * it downwards to place a word, {@link levelBandCentre} reads it sideways for
@@ -213,7 +212,7 @@ export const LEVEL_BANDS: Record<DifficultyLevel, readonly [number, number]> = {
 };
 
 /**
- * The rung a bare `wordStrength` sits on. Inclusive at each floor, like
+ * The rung a bare strength sits on. Inclusive at each floor, like
  * {@link bearableDemand}.
  */
 export function levelForStrength(strength: number): DifficultyLevel {
@@ -243,7 +242,7 @@ export function levelBandCentre(level: DifficultyLevel): number {
 }
 
 /**
- * A word's place on the five-rung ladder, from `wordStrength`.
+ * A word's place on the five-rung ladder, from {@link strengthOf}.
  *
  * Anchored on the same two floors {@link bearableDemand} gates *serving* on
  * (`CONSTRAINED_PRODUCTION_FLOOR`, `FREE_PRODUCTION_FLOOR`) plus
@@ -254,9 +253,8 @@ export function levelBandCentre(level: DifficultyLevel): number {
  * with no card at all is level 1 — introduced but never scheduled is exactly
  * what the bottom rung means.
  */
-export function difficultyLevelOf(item: KnowledgeItem, now: number): DifficultyLevel {
-	const card = (item.fsrsCard as FsrsCardState | null | undefined) ?? null;
-	return levelForStrength(card ? wordStrength(card, now) : 0);
+export function difficultyLevelOf(item: KnowledgeItem): DifficultyLevel {
+	return levelForStrength(strengthOf(item));
 }
 
 /**
@@ -266,8 +264,8 @@ export function difficultyLevelOf(item: KnowledgeItem, now: number): DifficultyL
  * {@link bearableDemand}: `'new'` bears recognition, `'solid'` free production,
  * `'young'` sits between.
  */
-export function maturityOf(item: KnowledgeItem, now: number): Maturity {
-	const level = difficultyLevelOf(item, now);
+export function maturityOf(item: KnowledgeItem): Maturity {
+	const level = difficultyLevelOf(item);
 	return level >= 4 ? 'solid' : level >= 2 ? 'young' : 'new';
 }
 

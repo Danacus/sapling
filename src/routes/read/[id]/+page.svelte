@@ -93,7 +93,7 @@
 	import type { AnnotateContext, ReadingWord, TokenizeFn } from '$lib/reading';
 	import { hasLocalRomanizer, loadRomanizer } from '$lib/romanize';
 	import type { Maturity } from '$lib/session/progression';
-	import { Grade, newCardState, reviewCard, type FsrsCardState } from '$lib/srs';
+	import { Grade } from '$lib/srs';
 	import { cardKey, joinTokens, usesInterWordSpaces } from '$lib/text';
 	import { speak, stopSpeaking, ttsAvailable, warmSpeech } from '$lib/tts';
 	import type { GlossEntry, KnowledgeItem, Profile, ReadingText } from '$lib/types';
@@ -264,7 +264,6 @@
 		// is `new` exactly like a glossed one, everywhere it appears.
 		glossary: [...(text?.glossary ?? []), ...extraGlossary],
 		mode,
-		now,
 		rolls
 	});
 
@@ -819,13 +818,7 @@
 
 	/** One graded review, exactly as the session engine files one. */
 	function review(itemId: string, grade: Grade): Promise<unknown> {
-		const at = Date.now();
-		return updateItemAfterReview(
-			itemId,
-			(stored) =>
-				reviewCard((stored as FsrsCardState | null | undefined) ?? newCardState(at), grade, at),
-			{ at, grade }
-		);
+		return updateItemAfterReview(itemId, { at: Date.now(), grade });
 	}
 
 	/**

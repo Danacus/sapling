@@ -18,7 +18,7 @@ import { describe, expect, it } from 'vitest';
 import type { ChallengeRow } from '$lib/db';
 import { getBatch, isMockMode, kindKey } from '$lib/llm';
 import type { ProgressStep } from '$lib/llm';
-import { CardState, gradeFromResult, newCardState, reviewCard, Grade } from '$lib/srs';
+import { gradeFromResult, Grade } from '$lib/srs';
 import type {
 	Challenge,
 	KnowledgeItem,
@@ -56,22 +56,30 @@ function profile(overrides: Partial<Profile> = {}): Profile {
 	};
 }
 
-/** An item whose card is due `dueOffset` ms from `NOW` (negative = overdue). */
+/**
+ * An item due `dueOffset` ms from `NOW` (negative = overdue), at strength 0 —
+ * a word the learner has met and never got right, so every rung is 1.
+ */
 function item(
 	id: string,
 	dueOffset: number,
 	history: KnowledgeItem['history'] = []
 ): KnowledgeItem {
-	const card = newCardState(NOW);
 	return {
 		id,
 		kind: 'vocab',
 		term: `term-${id}`,
 		meaning: `meaning-${id}`,
-		fsrsCard: { ...card, due: NOW + dueOffset },
+		fsrsCard: null,
+		srs: { due: NOW + dueOffset, retrievability: 0, strength: 0 },
 		introducedAt: NOW - 10 * DAY,
 		history
 	};
+}
+
+/** The same word at a given strength — what decides its rung and its tier. */
+function atStrength(word: KnowledgeItem, strength: number): KnowledgeItem {
+	return { ...word, srs: { ...word.srs!, retrievability: 1, strength } };
 }
 
 /** A pooled challenge; defaults to freshly generated and never served. */
@@ -124,47 +132,23 @@ function recognition(
 }
 
 /**
- * A word the learner owns: ten days of stability, reviewed just now, so
- * `wordStrength` clears `FREE_PRODUCTION_FLOOR` and every demand tier is
- * bearable. {@link item}'s card is `newCardState`, which sits at strength 0.
+ * A word the learner owns: strength well clear of `FREE_PRODUCTION_FLOOR`, so
+ * every demand tier is bearable and the rung is 5. About what ten days of
+ * stability folds to. {@link item} sits at strength 0.
  */
 function strongItem(id: string, dueOffset: number): KnowledgeItem {
-	return {
-		...item(id, dueOffset),
-		fsrsCard: {
-			...newCardState(NOW),
-			due: NOW + dueOffset,
-			stability: 10,
-			scheduled_days: 10,
-			reps: 5,
-			state: CardState.Review,
-			last_review: NOW
-		}
-	};
+	return atStrength(item(id, dueOffset), 0.9);
 }
 
 /**
- * A word partway up level 1: `wordStrength` ≈ 0.10, which is above the band's
- * centre (0.075) and below its ceiling (`CONSTRAINED_PRODUCTION_FLOOR`, 0.15).
- * Exactly where matching a challenge against the word's *raw* strength used to
- * degenerate — every tier-0 row sits below 0.10, so the tier's hardest was
- * always the nearest.
+ * A word partway up level 1: strength 0.10, above the band's centre (0.075) and
+ * below its ceiling (`CONSTRAINED_PRODUCTION_FLOOR`, 0.15). Exactly where
+ * matching a challenge against the word's *raw* strength used to degenerate —
+ * every tier-0 row sits below 0.10, so the tier's hardest was always the
+ * nearest.
  */
 function midLevelOneItem(id: string, dueOffset: number): KnowledgeItem {
-	return {
-		...item(id, dueOffset),
-		fsrsCard: {
-			...newCardState(NOW),
-			due: NOW + dueOffset,
-			// log1p(0.41) / log1p(30) ≈ 0.10, and retrievability is 1 the moment of
-			// a review — see `wordStrength`.
-			stability: 0.41,
-			scheduled_days: 1,
-			reps: 1,
-			state: CardState.Review,
-			last_review: NOW
-		}
-	};
+	return atStrength(item(id, dueOffset), 0.1);
 }
 
 const ids = (challenges: Challenge[]) => challenges.map((challenge) => challenge.id);
@@ -190,7 +174,7 @@ describe('interleaveMatchRounds', () => {
 	}
 
 	it('slots a round in after every Nth challenge', () => {
-		const queue = interleaveMatchRounds(generated(9), known(6), NOW);
+		const queue = interleaveMatchRounds(generated(9), known(6));
 
 		expect(queue).toHaveLength(11);
 		expect(types(queue).map((type) => type === 'match-pairs')).toEqual([
@@ -214,7 +198,7 @@ describe('interleaveMatchRounds', () => {
 
 	it('never ends a session on free filler', () => {
 		// An exact multiple of N: the last splice point is the last challenge.
-		const queue = interleaveMatchRounds(generated(2 * MATCH_PAIRS_EVERY), known(6), NOW);
+		const queue = interleaveMatchRounds(generated(2 * MATCH_PAIRS_EVERY), known(6));
 
 		expect(queue).toHaveLength(2 * MATCH_PAIRS_EVERY + 1);
 		expect(queue.at(-1)?.type).not.toBe('match-pairs');
@@ -222,7 +206,7 @@ describe('interleaveMatchRounds', () => {
 	});
 
 	it('returns an empty queue for an empty plan', () => {
-		expect(interleaveMatchRounds([], known(6), NOW)).toEqual([]);
+		expect(interleaveMatchRounds([], known(6))).toEqual([]);
 	});
 
 	it('leaves the plan alone when a round cannot be built', () => {
@@ -230,11 +214,11 @@ describe('interleaveMatchRounds', () => {
 		// `makeMatchPairsChallenge` declines, and with static items that means no
 		// round anywhere.
 		const plan = generated(9);
-		expect(interleaveMatchRounds(plan, known(2), NOW)).toEqual(plan);
+		expect(interleaveMatchRounds(plan, known(2))).toEqual(plan);
 	});
 
 	it('builds each round independently, and deterministically from its rng', () => {
-		const queue = interleaveMatchRounds(generated(9), known(8), NOW, lcg(1));
+		const queue = interleaveMatchRounds(generated(9), known(8), lcg(1));
 		const rounds = queue.filter((challenge) => challenge.type === 'match-pairs');
 
 		expect(rounds).toHaveLength(2);
@@ -242,7 +226,7 @@ describe('interleaveMatchRounds', () => {
 		// Fresh shuffle per splice point: the second round is not a copy of the first.
 		expect(rounds[0].itemIds).not.toEqual(rounds[1].itemIds);
 
-		const again = interleaveMatchRounds(generated(9), known(8), NOW, lcg(1));
+		const again = interleaveMatchRounds(generated(9), known(8), lcg(1));
 		expect(
 			again
 				.filter((challenge) => challenge.type === 'match-pairs')
@@ -262,13 +246,13 @@ describe('interleaveMatchRounds', () => {
 				.map((challenge) => (challenge.type === 'match-pairs' ? challenge.pairs.length : 0));
 
 		it('gives new words a three-pair breather', () => {
-			// `item`'s card is `newCardState`: strength 0, so every word is rung 1.
-			expect(pairsOf(interleaveMatchRounds(generated(9), known(8), NOW))).toEqual([3, 3]);
+			// `item` sits at strength 0, so every word is rung 1.
+			expect(pairsOf(interleaveMatchRounds(generated(9), known(8)))).toEqual([3, 3]);
 		});
 
 		it('gives a vocabulary the learner owns the full six', () => {
 			const strong = Array.from({ length: 8 }, (_, i) => strongItem(`k${i}`, -DAY));
-			expect(pairsOf(interleaveMatchRounds(generated(9), strong, NOW))).toEqual([6, 6]);
+			expect(pairsOf(interleaveMatchRounds(generated(9), strong))).toEqual([6, 6]);
 		});
 
 		it('takes the median rung, so one mature word cannot size the round', () => {
@@ -278,7 +262,7 @@ describe('interleaveMatchRounds', () => {
 				...Array.from({ length: 7 }, (_, i) => item(`k${i}`, -DAY)),
 				strongItem('k7', -DAY)
 			];
-			expect(pairsOf(interleaveMatchRounds(generated(5), mixed, NOW))).toEqual([3]);
+			expect(pairsOf(interleaveMatchRounds(generated(5), mixed))).toEqual([3]);
 		});
 
 		it('follows the median up when most of the vocabulary is strong', () => {
@@ -287,13 +271,13 @@ describe('interleaveMatchRounds', () => {
 				...Array.from({ length: 7 }, (_, i) => strongItem(`k${i}`, -DAY)),
 				item('k7', -DAY)
 			];
-			expect(pairsOf(interleaveMatchRounds(generated(5), mixed, NOW))).toEqual([6]);
+			expect(pairsOf(interleaveMatchRounds(generated(5), mixed))).toEqual([6]);
 		});
 
 		it('builds a smaller round rather than none when the vocabulary is short', () => {
 			// Rung 5 asks for six pairs and there are four words to make them from.
 			const strong = Array.from({ length: 4 }, (_, i) => strongItem(`k${i}`, -DAY));
-			expect(pairsOf(interleaveMatchRounds(generated(5), strong, NOW))).toEqual([4]);
+			expect(pairsOf(interleaveMatchRounds(generated(5), strong))).toEqual([4]);
 		});
 	});
 });
@@ -1210,11 +1194,7 @@ describe('planRefill', () => {
 
 	it('writes a reviewed word at a higher rung than a brand-new one', () => {
 		const fresh = item('a', -DAY);
-		const card = reviewCard(newCardState(NOW - 5 * DAY), Grade.Good, NOW - 5 * DAY);
-		const reviewed: KnowledgeItem = {
-			...item('b', -DAY),
-			fsrsCard: { ...card, due: NOW - DAY }
-		};
+		const reviewed = atStrength(item('b', -DAY), 0.32);
 
 		const rungs = new Map(
 			planRefill([], [fresh, reviewed], profile(), NOW).wants.map((w) => [w.item.id, w.difficulty])
@@ -1268,17 +1248,11 @@ describe('planRefill', () => {
 		expect({ items, pool }).toEqual(snapshot);
 	});
 
-	it('still writes about a card that was just reviewed, as review-ahead', () => {
+	it('still writes about a word that was just reviewed, as review-ahead', () => {
 		// It is no longer due, and it is the only word there is. Excluding it would
 		// hand the model an empty brief; a challenge about it is graded normally
 		// when it is played, just for a smaller stability gain.
-		const reviewed = item('a', -DAY);
-		const plan = planRefill(
-			[],
-			[{ ...reviewed, fsrsCard: reviewCard(reviewed.fsrsCard as never, Grade.Easy, NOW) }],
-			profile(),
-			NOW
-		);
+		const plan = planRefill([], [strongItem('a', +5 * DAY)], profile(), NOW);
 		expect(wordsOf(plan)).toEqual(['a']);
 		expect(plan.wants.length).toBeGreaterThan(0);
 	});
@@ -1385,7 +1359,7 @@ describe('session walkthrough (mock batch, no database)', () => {
 		// The session is planned once, up front — no database read mid-play — and
 		// the free rounds are spliced in there too, so play is one walk.
 		const planned = planSession(pool, items, NOW);
-		const queue = interleaveMatchRounds(planned, items, NOW);
+		const queue = interleaveMatchRounds(planned, items);
 
 		const answers: SessionAnswer[] = [];
 		let llmAnswered = 0;

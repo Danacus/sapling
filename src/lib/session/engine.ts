@@ -38,14 +38,7 @@ import type { ChallengeRow } from '$lib/db';
 import { challengeOf } from '$lib/db';
 import { getBatch, isMockMode, makeMatchPairsChallenge } from '$lib/llm';
 import type { BatchArgs, OnProgress, TokenUsage } from '$lib/llm';
-import {
-	Grade,
-	gradeFromResult,
-	isDue,
-	newCardState,
-	reviewCard,
-	type FsrsCardState
-} from '$lib/srs';
+import { Grade, dueAt, gradeFromResult, isDue } from '$lib/srs';
 import { RESERVE_GAP, isPlayable, isRested, knownItemIds } from './pool';
 import { planTopUp, topUpCoverage } from './topup';
 import type { PlanTopUpOptions, TopUpCoverage } from './topup';
@@ -217,20 +210,19 @@ export function sessionSummary(answers: SessionAnswer[]): SessionSummary {
  * for all of them, and an average would let it drag the count up by a fraction
  * of a rung anyway.
  *
- * Still pure given `rng` and `now`: the rung is computed once, from the frozen
- * session vocabulary, and every splice point is handed the same one.
+ * Still pure given `rng`: the rung is computed once, from the frozen session
+ * vocabulary, and every splice point is handed the same one. It takes no clock —
+ * a word's strength was derived by the core when the items were read.
  *
- * @param now Epoch ms, for reading each word's place on the ladder.
  * @param rng Injectable `[0,1)` source, forwarded to every round it builds.
  */
 export function interleaveMatchRounds(
 	challenges: Challenge[],
 	items: KnowledgeItem[],
-	now: number,
 	rng: () => number = Math.random
 ): Challenge[] {
 	const queue: Challenge[] = [];
-	const difficulty = medianRoundRung(items, now);
+	const difficulty = medianRoundRung(items);
 
 	for (const [index, challenge] of challenges.entries()) {
 		queue.push(challenge);
@@ -262,10 +254,10 @@ export function interleaveMatchRounds(
  * from outrunning half the words in it. Falls back to rung 1 for an empty
  * vocabulary, where the round is declined anyway.
  */
-function medianRoundRung(items: KnowledgeItem[], now: number): DifficultyLevel {
+function medianRoundRung(items: KnowledgeItem[]): DifficultyLevel {
 	const rungs = items
 		.filter((item) => item.term?.trim() && item.meaning?.trim())
-		.map((item) => difficultyLevelOf(item, now))
+		.map((item) => difficultyLevelOf(item))
 		.sort((a, b) => a - b);
 
 	return rungs.length === 0 ? 1 : rungs[Math.floor((rungs.length - 1) / 2)];
@@ -340,15 +332,6 @@ export interface PlanSessionOptions {
 	target?: number;
 	/** Hard ceiling, whatever `target` says. Defaults to {@link SESSION_LENGTH}. */
 	limit?: number;
-}
-
-/** `fsrsCard` is `unknown` on the domain type; a missing card means "brand new". */
-function asCard(fsrsCard: unknown): FsrsCardState | null {
-	return (fsrsCard as FsrsCardState | null | undefined) ?? null;
-}
-
-function cardOf(item: KnowledgeItem): FsrsCardState | null {
-	return asCard(item.fsrsCard);
 }
 
 /*
@@ -454,7 +437,7 @@ function planBoard(
 	const bearableRow = (row: ChallengeRow): boolean => {
 		const cached = memo.get(row.id);
 		if (cached !== undefined) return cached;
-		const answer = bearable(row, items, now, byId);
+		const answer = bearable(row, items, byId);
 		memo.set(row.id, answer);
 		return answer;
 	};
@@ -463,7 +446,7 @@ function planBoard(
 	const fitRank = (row: ChallengeRow): number => {
 		const cached = fitMemo.get(row.id);
 		if (cached !== undefined) return cached;
-		const target = levelBandCentre(levelForStrength(weakestWordStrength(row, items, now, byId)));
+		const target = levelBandCentre(levelForStrength(weakestWordStrength(row, items, byId)));
 		const rank = Math.abs(difficultyOf(row) - target);
 		fitMemo.set(row.id, rank);
 		return rank;
@@ -577,22 +560,20 @@ function targetSlots(opts: PlanSessionOptions): number {
 	return Math.min(Math.max(0, opts.target ?? BATCH_TARGET), limit);
 }
 
-/**
- * True while the schedule actually owes this word a review.
+/*
+ * Whether the schedule owes a word a review is {@link isDue} — a comparison of
+ * the word's derived `due` against this session's `now`, and nothing more.
  *
- * A card-less item counts: it was introduced but never scheduled, so it belongs
- * in this session — just not ahead of words the learner is genuinely late on,
- * which {@link byDueDate} takes care of. The one thing this gates is whether a
- * word may spend the rest gap; everything else in a plan walks every word.
+ * A word with nothing derived counts as owed: it was introduced but never
+ * scheduled, so it belongs in this session — just not ahead of words the learner
+ * is genuinely late on, which {@link byDueDate} takes care of. The one thing the
+ * answer gates is whether a word may spend the rest gap; everything else in a
+ * plan walks every word.
  */
-function owesReview(item: KnowledgeItem, now: number): boolean {
-	const card = cardOf(item);
-	return card === null || isDue(card, now);
-}
 
 /** Soonest-due first, id as tiebreak; a card-less item counts as due now. */
 function byDueDate(now: number): (a: KnowledgeItem, b: KnowledgeItem) => number {
-	return (a, b) => (cardOf(a)?.due ?? now) - (cardOf(b)?.due ?? now) || (a.id < b.id ? -1 : 1);
+	return (a, b) => dueAt(a, now) - dueAt(b, now) || (a.id < b.id ? -1 : 1);
 }
 
 /**
@@ -626,7 +607,7 @@ function byDueDate(now: number): (a: KnowledgeItem, b: KnowledgeItem) => number 
  * Two gates decide what any of that may draw on, and only one of them is firm.
  * *Playable* ({@link isPlayable}) is absolute. *Rested* ({@link isRested}) is a
  * preference, and it is spent in two places, in this order. A word that owes a
- * review ({@link owesReview}) spends it on its very first challenge: when it has
+ * review ({@link isDue}) spends it on its very first challenge: when it has
  * nothing rested left it takes its longest-resting one instead, because a
  * learner who played hard for two days — serve-stamping the whole pool while
  * their young cards come due within hours — would otherwise be shown words due
@@ -667,8 +648,8 @@ export function planSession(
 	const known = knownItemIds(items);
 	const board = planBoard(pool, items, known, now);
 	const walk = [...items].sort(byDueDate(now));
-	const owed = walk.filter((item) => owesReview(item, now));
-	const ahead = walk.filter((item) => !owesReview(item, now));
+	const owed = walk.filter((item) => isDue(item, now));
+	const ahead = walk.filter((item) => !isDue(item, now));
 
 	const chosen: ChallengeRow[] = [];
 	const taken = new Set<string>();
@@ -962,7 +943,7 @@ export async function startSession(opts: StartSessionOptions = {}): Promise<Sess
 
 	const [pool, items] = await Promise.all([getPool(), getAllItems()]);
 	const challenges = planSession(pool, items, now, planOpts);
-	const dueCount = items.filter((item) => owesReview(item, now)).length;
+	const dueCount = items.filter((item) => isDue(item, now)).length;
 
 	return {
 		challenges,
@@ -1028,28 +1009,24 @@ export interface AnswerOutcome {
  * Missing items are skipped rather than treated as an error: a challenge can
  * outlive its item if the learner reset their data mid-session.
  *
- * Returns, per item it actually reviewed, that item's card state **as it was
- * before** this review (`null` when the item had no card yet). FSRS has no
- * inverse, so that snapshot is the only way {@link amendResult} can re-grade
- * this same answer without stacking a second review on top of it. Match-pairs
- * returns an empty map; callers with nothing to amend can ignore the value.
+ * Returns the ids it actually filed a review for — the challenge's items minus
+ * any that no longer exist. That set is what {@link amendResult} needs to know
+ * *which* reviews it may re-grade; the cards themselves it does not need, because
+ * the rewind is the core's. Match-pairs returns an empty set; callers with
+ * nothing to amend can ignore the value.
  */
 export async function applyResult(
 	challenge: Challenge,
 	outcome: AnswerOutcome
-): Promise<Map<string, FsrsCardState | null>> {
+): Promise<Set<string>> {
 	const now = outcome.now ?? Date.now();
-	const priorCards = new Map<string, FsrsCardState | null>();
+	const reviewed = new Set<string>();
 
 	if (challenge.type !== 'match-pairs') {
 		const grade = gradeFromResult(outcome.verdict);
 		for (const itemId of challenge.itemIds) {
-			const { existed, prior } = await updateItemAfterReview(
-				itemId,
-				(stored) => reviewCard(asCard(stored) ?? newCardState(now), grade, now),
-				{ at: now, grade }
-			);
-			if (existed) priorCards.set(itemId, asCard(prior));
+			const { existed } = await updateItemAfterReview(itemId, { at: now, grade });
+			if (existed) reviewed.add(itemId);
 		}
 	}
 
@@ -1064,7 +1041,7 @@ export async function applyResult(
 	// missing id, so this stays a single unconditional call.
 	await recordServe(challenge.id, now);
 
-	return priorCards;
+	return reviewed;
 }
 
 /**
@@ -1072,19 +1049,19 @@ export async function applyResult(
  * so: after a correct answer the banner offers Hard / Good / Easy, and touching
  * it means "that was not a plain Good".
  *
- * The rewind is exact rather than compensating. FSRS has no inverse, so the
- * card is not nudged from where the Good left it — it is recomputed from
- * `priorCards`, the pre-review snapshot {@link applyResult} handed back, and the
- * history entry *replaces* the one that review appended instead of adding to
- * it. A second appended review would inflate `reps` and double-count the answer
- * in the item's recent grades. Recomputing from the same priors every time
- * is also what makes repeated calls safe: assessing Easy and then Hard lands
- * exactly where assessing Hard once would, because neither reads the card it is
- * about to overwrite.
+ * The rewind is exact rather than compensating, and it is the core's: `replaceLast`
+ * makes the new entry *supersede* the one that review appended, and the
+ * materializer then refolds the item's whole log from its introduction. So the
+ * card lands where a single review at this grade would have left it, not where
+ * a nudge from the Good would. A second *appended* review would instead inflate
+ * `reps` and double-count the answer in the item's recent grades. Refolding is
+ * also what makes repeated calls safe: assessing Easy and then Hard lands exactly
+ * where assessing Hard once would, because neither builds on the card it is
+ * about to replace.
  *
  * Match-pairs is a no-op, for the reason given in {@link applyResult}, and so
  * is any item the challenge names but that review skipped (deleted mid-session)
- * — absence from `priorCards` is the signal.
+ * — absence from `reviewed` is the signal.
  *
  * No interaction with {@link applyOverturn}: an overturn only ever fires on a
  * `wrong` verdict and a self-assessment only on a `correct` one, so the two
@@ -1093,22 +1070,14 @@ export async function applyResult(
 export async function amendResult(
 	challenge: Challenge,
 	grade: Grade,
-	priorCards: Map<string, FsrsCardState | null>,
+	reviewed: ReadonlySet<string>,
 	now: number = Date.now()
 ): Promise<void> {
 	if (challenge.type === 'match-pairs') return;
 
 	for (const itemId of challenge.itemIds) {
-		if (!priorCards.has(itemId)) continue;
-		const prior = priorCards.get(itemId) ?? newCardState(now);
-		// Deliberately ignores the stored card: what this re-grade must build on
-		// is where the card stood *before* the review it is replacing.
-		await updateItemAfterReview(
-			itemId,
-			() => reviewCard(prior, grade, now),
-			{ at: now, grade },
-			{ replaceLast: true }
-		);
+		if (!reviewed.has(itemId)) continue;
+		await updateItemAfterReview(itemId, { at: now, grade }, { replaceLast: true });
 	}
 }
 
@@ -1134,10 +1103,6 @@ export async function applyOverturn(challenge: Challenge, now: number = Date.now
 	if (challenge.type === 'match-pairs') return;
 
 	for (const itemId of challenge.itemIds) {
-		await updateItemAfterReview(
-			itemId,
-			(stored) => reviewCard(asCard(stored) ?? newCardState(now), Grade.Good, now),
-			{ at: now, grade: Grade.Good }
-		);
+		await updateItemAfterReview(itemId, { at: now, grade: Grade.Good });
 	}
 }

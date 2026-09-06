@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { KnowledgeItem } from '$lib/types';
-import { CardState, Grade, newCardState, reviewCard, type FsrsCardState } from '$lib/srs';
+import type { ItemSrs, KnowledgeItem } from '$lib/types';
+import { CardState, Grade, type FsrsCardState } from '$lib/srs';
 import {
 	STATE_LABELS,
 	formatDays,
@@ -16,7 +16,46 @@ const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
-function item(overrides: Partial<KnowledgeItem> & { fsrsCard: FsrsCardState }): KnowledgeItem {
+/**
+ * A stored card as the core writes one. Built by hand rather than scheduled:
+ * this page is the one place that opens the card, and what it opens is a plain
+ * record of fields — nothing here computes an FSRS anything.
+ */
+function newCard(due = NOW): FsrsCardState {
+	return {
+		due,
+		stability: 0,
+		difficulty: 0,
+		elapsed_days: 0,
+		scheduled_days: 0,
+		learning_steps: 0,
+		reps: 0,
+		lapses: 0,
+		state: CardState.New,
+		last_review: null
+	};
+}
+
+/** A mature, reviewed card at a given stability. */
+function mature(stability: number, reviewedAt: number): FsrsCardState {
+	return {
+		...newCard(reviewedAt + stability * DAY),
+		stability,
+		difficulty: 5,
+		scheduled_days: stability,
+		state: CardState.Review,
+		reps: 4,
+		last_review: reviewedAt
+	};
+}
+
+/**
+ * One word as a read returns it. `srs` defaults to the card's own `due` with
+ * nothing recalled, so a test that cares about strength or the curve says so.
+ */
+function item(
+	overrides: Partial<KnowledgeItem> & { fsrsCard: FsrsCardState; srs?: ItemSrs }
+): KnowledgeItem {
 	return {
 		id: 'id',
 		kind: 'vocab',
@@ -24,48 +63,37 @@ function item(overrides: Partial<KnowledgeItem> & { fsrsCard: FsrsCardState }): 
 		meaning: 'meaning',
 		introducedAt: NOW,
 		history: [],
+		srs: { due: overrides.fsrsCard.due, retrievability: 0, strength: 0 },
 		...overrides
-	};
-}
-
-/** A mature, reviewed card at a given stability. */
-function mature(stability: number, reviewedAt: number): FsrsCardState {
-	return {
-		...newCardState(NOW),
-		stability,
-		difficulty: 5,
-		state: CardState.Review,
-		reps: 4,
-		last_review: reviewedAt,
-		due: reviewedAt + stability * DAY
 	};
 }
 
 const baseQuery: WordQuery = { search: '', sort: 'alpha', dir: 'asc', filter: 'all' };
 
 describe('toWordRow', () => {
-	it('derives state, due, strength and retrievability from the fsrsCard', () => {
+	it('takes state and lastReviewAt off the card, strength and the curve off srs', () => {
 		const card = mature(30, NOW - DAY);
-		const row = toWordRow(item({ fsrsCard: card }), NOW);
+		const row = toWordRow(
+			item({ fsrsCard: card, srs: { due: card.due, retrievability: 0.94, strength: 0.87 } }),
+			NOW
+		);
 		expect(row.card).toBe(card);
 		expect(row.state).toBe(CardState.Review);
 		expect(row.due).toBe(card.due <= NOW);
-		expect(row.strength).toBeGreaterThan(0);
-		expect(row.strength).toBeLessThanOrEqual(1);
-		expect(row.retrievability).toBeGreaterThan(0);
-		expect(row.retrievability).toBeLessThanOrEqual(1);
+		expect(row.strength).toBe(0.87);
+		expect(row.retrievability).toBe(0.94);
 		expect(row.lastReviewAt).toBe(card.last_review);
 	});
 
 	it('reports accuracy as null when history is empty', () => {
-		const row = toWordRow(item({ fsrsCard: newCardState(NOW), history: [] }), NOW);
+		const row = toWordRow(item({ fsrsCard: newCard(), history: [] }), NOW);
 		expect(row.accuracy).toBeNull();
 	});
 
 	it('computes accuracy as the fraction of Good-or-better entries', () => {
 		const row = toWordRow(
 			item({
-				fsrsCard: newCardState(NOW),
+				fsrsCard: newCard(),
 				history: [
 					{ at: NOW - DAY, grade: Grade.Good },
 					{ at: NOW - DAY, grade: Grade.Easy },
@@ -79,11 +107,8 @@ describe('toWordRow', () => {
 	});
 
 	it('is due exactly when isDue would say so', () => {
-		const dueRow = toWordRow(item({ fsrsCard: { ...newCardState(NOW), due: NOW - MINUTE } }), NOW);
-		const notDueRow = toWordRow(
-			item({ fsrsCard: { ...newCardState(NOW), due: NOW + MINUTE } }),
-			NOW
-		);
+		const dueRow = toWordRow(item({ fsrsCard: newCard(NOW - MINUTE) }), NOW);
+		const notDueRow = toWordRow(item({ fsrsCard: newCard(NOW + MINUTE) }), NOW);
 		expect(dueRow.due).toBe(true);
 		expect(notDueRow.due).toBe(false);
 	});
@@ -92,9 +117,7 @@ describe('toWordRow', () => {
 describe('queryWords: filter', () => {
 	function stateItem(id: string, state: CardState, due: number): KnowledgeItem {
 		const fsrsCard: FsrsCardState =
-			state === CardState.New
-				? { ...newCardState(NOW), due }
-				: { ...mature(1, NOW - DAY), state, due };
+			state === CardState.New ? newCard(due) : { ...mature(1, NOW - DAY), state, due };
 		return item({ id, term: id, fsrsCard });
 	}
 
@@ -128,16 +151,16 @@ describe('queryWords: search', () => {
 			term: 'Katze',
 			meaning: 'cat',
 			romanization: undefined,
-			fsrsCard: newCardState(NOW)
+			fsrsCard: newCard()
 		}),
 		item({
 			id: 'b',
 			term: '猫',
 			meaning: 'cat (jp)',
 			romanization: 'neko',
-			fsrsCard: newCardState(NOW)
+			fsrsCard: newCard()
 		}),
-		item({ id: 'c', term: 'Hund', meaning: 'dog', fsrsCard: newCardState(NOW) })
+		item({ id: 'c', term: 'Hund', meaning: 'dog', fsrsCard: newCard() })
 	];
 
 	it('empty search matches everything', () => {
@@ -179,8 +202,13 @@ describe('queryWords: search', () => {
 describe('queryWords: sort', () => {
 	it('sorts by strength, flipping with dir', () => {
 		const items = [
-			item({ id: 'weak', term: 'weak', fsrsCard: newCardState(NOW) }),
-			item({ id: 'strong', term: 'strong', fsrsCard: mature(30, NOW) })
+			item({ id: 'weak', term: 'weak', fsrsCard: newCard() }),
+			item({
+				id: 'strong',
+				term: 'strong',
+				fsrsCard: mature(30, NOW),
+				srs: { due: NOW + 30 * DAY, retrievability: 1, strength: 1 }
+			})
 		];
 		const asc = queryWords(items, { ...baseQuery, sort: 'strength', dir: 'asc' }, NOW);
 		expect(asc.map((r) => r.item.id)).toEqual(['weak', 'strong']);
@@ -190,8 +218,8 @@ describe('queryWords: sort', () => {
 
 	it('sorts by due timestamp', () => {
 		const items = [
-			item({ id: 'later', term: 'later', fsrsCard: { ...newCardState(NOW), due: NOW + DAY } }),
-			item({ id: 'sooner', term: 'sooner', fsrsCard: { ...newCardState(NOW), due: NOW - DAY } })
+			item({ id: 'later', term: 'later', fsrsCard: newCard(NOW + DAY) }),
+			item({ id: 'sooner', term: 'sooner', fsrsCard: newCard(NOW - DAY) })
 		];
 		const asc = queryWords(items, { ...baseQuery, sort: 'due', dir: 'asc' }, NOW);
 		expect(asc.map((r) => r.item.id)).toEqual(['sooner', 'later']);
@@ -201,17 +229,17 @@ describe('queryWords: sort', () => {
 
 	it('sorts accuracy with null (never reviewed) always last, in either direction', () => {
 		const items = [
-			item({ id: 'never', term: 'never', fsrsCard: newCardState(NOW), history: [] }),
+			item({ id: 'never', term: 'never', fsrsCard: newCard(), history: [] }),
 			item({
 				id: 'high',
 				term: 'high',
-				fsrsCard: newCardState(NOW),
+				fsrsCard: newCard(),
 				history: [{ at: NOW - DAY, grade: Grade.Good }]
 			}),
 			item({
 				id: 'low',
 				term: 'low',
-				fsrsCard: newCardState(NOW),
+				fsrsCard: newCard(),
 				history: [{ at: NOW - DAY, grade: Grade.Again }]
 			})
 		];
@@ -223,9 +251,9 @@ describe('queryWords: sort', () => {
 
 	it('sorts alpha by term via localeCompare, flipping with dir', () => {
 		const items = [
-			item({ id: 'z', term: 'zebra', fsrsCard: newCardState(NOW) }),
-			item({ id: 'a', term: 'apple', fsrsCard: newCardState(NOW) }),
-			item({ id: 'm', term: 'mango', fsrsCard: newCardState(NOW) })
+			item({ id: 'z', term: 'zebra', fsrsCard: newCard() }),
+			item({ id: 'a', term: 'apple', fsrsCard: newCard() }),
+			item({ id: 'm', term: 'mango', fsrsCard: newCard() })
 		];
 		const asc = queryWords(items, { ...baseQuery, sort: 'alpha', dir: 'asc' }, NOW);
 		expect(asc.map((r) => r.item.id)).toEqual(['a', 'm', 'z']);
@@ -235,8 +263,8 @@ describe('queryWords: sort', () => {
 
 	it('breaks ties deterministically by term then id, regardless of dir', () => {
 		const items = [
-			item({ id: 'b', term: 'same', fsrsCard: newCardState(NOW) }),
-			item({ id: 'a', term: 'same', fsrsCard: newCardState(NOW) })
+			item({ id: 'b', term: 'same', fsrsCard: newCard() }),
+			item({ id: 'a', term: 'same', fsrsCard: newCard() })
 		];
 		const asc = queryWords(items, { ...baseQuery, sort: 'strength', dir: 'asc' }, NOW);
 		expect(asc.map((r) => r.item.id)).toEqual(['a', 'b']);

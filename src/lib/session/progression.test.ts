@@ -3,14 +3,20 @@
  *
  * Two halves, and they are tested separately on purpose: *what a challenge
  * asks* (the demand tier, a fact about the row) and *what a word can bear* (the
- * floors, a fact about the card). The first is exhaustive over `ChallengeType`
- * via a mapped-type table, so a seventh member of the union fails here as well
- * as at the registry; the second is a boundary test on two numbers.
+ * floors, a fact about the word's strength). The first is exhaustive over
+ * `ChallengeType` via a mapped-type table, so a seventh member of the union
+ * fails here as well as at the registry; the second is a boundary test on two
+ * numbers.
+ *
+ * The strengths are set on the items directly, because that is how they arrive:
+ * the core derives `srs.strength` when the row is read, and this module does
+ * arithmetic on the number rather than on a card. What produces the number —
+ * log-stability × retrievability, and how it sags as a word is left alone — is
+ * pinned in `crates/sapling-core/src/srs.rs`.
  */
 
 import { describe, expect, it } from 'vitest';
 import { demandOf } from '$lib/challenges/demand';
-import { CardState, newCardState, wordStrength, type FsrsCardState } from '$lib/srs';
 import type { Challenge, ChallengeType, KnowledgeItem } from '$lib/types';
 import {
 	CONSTRAINED_PRODUCTION_FLOOR,
@@ -31,49 +37,34 @@ import {
 
 /** Fixed instant: 2026-01-01T00:00:00.000Z. */
 const NOW = Date.UTC(2026, 0, 1, 0, 0, 0);
-const DAY = 24 * 60 * 60 * 1000;
 
 /**
- * A reviewed card of the given stability, last seen just now — with elapsed time
- * at zero, retrievability is 1 and `wordStrength` collapses to the log-stability
- * term, which is the only knob these tests need to turn.
+ * One word as a read returns it. `strength` of `null` is a word with no derived
+ * schedule at all — built by hand, never scheduled.
  */
-function reviewedCard(stabilityDays: number): FsrsCardState {
-	return {
-		due: NOW + stabilityDays * DAY,
-		stability: stabilityDays,
-		difficulty: 5,
-		elapsed_days: 0,
-		scheduled_days: stabilityDays,
-		learning_steps: 0,
-		reps: 5,
-		lapses: 0,
-		state: CardState.Review,
-		last_review: NOW
-	};
-}
-
-function item(id: string, fsrsCard: FsrsCardState | null): KnowledgeItem {
+function item(id: string, strength: number | null): KnowledgeItem {
 	return {
 		id,
 		kind: 'vocab',
 		term: id,
 		meaning: `meaning of ${id}`,
-		fsrsCard,
+		fsrsCard: null,
+		...(strength === null ? {} : { srs: { due: NOW, retrievability: 1, strength } }),
 		introducedAt: NOW,
 		history: []
 	};
 }
 
-/* Cards either side of each floor, verified against `wordStrength` below. */
-/** Never reviewed: strength 0, the weakest word there is. */
-const BRAND_NEW = newCardState(NOW);
-/** Under {@link CONSTRAINED_PRODUCTION_FLOOR}: recognition only. */
-const SHAKY = reviewedCard(0.5);
-/** Over the first floor, under the second: tiles and word banks, no free recall. */
-const LEARNED = reviewedCard(2);
-/** Over {@link FREE_PRODUCTION_FLOOR}: anything the app can ask. */
-const OWNED = reviewedCard(10);
+/* Strengths either side of each floor. The stabilities in brackets are what the
+ * core's `word_strength` folds to these numbers on a card reviewed just now. */
+/** Never reviewed: the weakest word there is. */
+const BRAND_NEW = 0;
+/** Under {@link CONSTRAINED_PRODUCTION_FLOOR} (~half a day): recognition only. */
+const SHAKY = 0.118;
+/** Over the first floor, under the second (~two days): tiles and word banks. */
+const LEARNED = 0.32;
+/** Over {@link FREE_PRODUCTION_FLOOR} (~ten days): anything the app can ask. */
+const OWNED = 0.698;
 
 const items = [
 	item('brand-new', BRAND_NEW),
@@ -168,21 +159,20 @@ describe('demandOf', () => {
 
 describe('weakestWordStrength', () => {
 	it('takes the minimum, not the average', () => {
-		const weakest = weakestWordStrength(challenge(mcToNative, ['owned', 'shaky']), items, NOW);
-		expect(weakest).toBeCloseTo(wordStrength(SHAKY, NOW), 10);
+		expect(weakestWordStrength(challenge(mcToNative, ['owned', 'shaky']), items)).toBe(SHAKY);
 	});
 
 	it('counts an id that no longer resolves as the weakest word there is', () => {
-		expect(weakestWordStrength(challenge(mcToNative, ['owned', 'gone']), items, NOW)).toBe(0);
+		expect(weakestWordStrength(challenge(mcToNative, ['owned', 'gone']), items)).toBe(0);
 	});
 
-	it('counts a word with no card at all as zero', () => {
+	it('counts a word with no derived schedule at all as zero', () => {
 		const cardless = [item('cardless', null)];
-		expect(weakestWordStrength(challenge(mcToNative, ['cardless']), cardless, NOW)).toBe(0);
+		expect(weakestWordStrength(challenge(mcToNative, ['cardless']), cardless)).toBe(0);
 	});
 
 	it('is zero for a challenge that exercises nothing', () => {
-		expect(weakestWordStrength(challenge(mcToNative, []), items, NOW)).toBe(0);
+		expect(weakestWordStrength(challenge(mcToNative, []), items)).toBe(0);
 	});
 });
 
@@ -190,35 +180,24 @@ describe('weakestWordStrength', () => {
 
 describe('bearableDemand', () => {
 	it('gives a never-reviewed word recognition and nothing else', () => {
-		expect(bearableDemand(challenge(mcToNative, ['brand-new']), items, NOW)).toBe(0);
+		expect(bearableDemand(challenge(mcToNative, ['brand-new']), items)).toBe(0);
 	});
 
 	it('climbs a tier at each floor', () => {
-		expect(bearableDemand(challenge(mcToNative, ['shaky']), items, NOW)).toBe(0);
-		expect(bearableDemand(challenge(mcToNative, ['learned']), items, NOW)).toBe(1);
-		expect(bearableDemand(challenge(mcToNative, ['owned']), items, NOW)).toBe(2);
+		expect(bearableDemand(challenge(mcToNative, ['shaky']), items)).toBe(0);
+		expect(bearableDemand(challenge(mcToNative, ['learned']), items)).toBe(1);
+		expect(bearableDemand(challenge(mcToNative, ['owned']), items)).toBe(2);
 	});
 
 	it('includes the floors themselves', () => {
-		// `>=`, so a word sitting exactly on a floor has already cleared it. The
-		// cards are solved backwards from `wordStrength` so the boundary is exact
-		// rather than approached.
-		const at = (strength: number) => reviewedCard(Math.expm1(strength * Math.log1p(30)));
-		const onFloors = [
-			item('c1', at(CONSTRAINED_PRODUCTION_FLOOR)),
-			item('f1', at(FREE_PRODUCTION_FLOOR))
-		];
-		expect(wordStrength(onFloors[0].fsrsCard as FsrsCardState, NOW)).toBeCloseTo(
-			CONSTRAINED_PRODUCTION_FLOOR,
-			10
-		);
-
-		expect(bearableDemand(challenge(mcToNative, ['c1']), onFloors, NOW)).toBe(1);
-		expect(bearableDemand(challenge(mcToNative, ['f1']), onFloors, NOW)).toBe(2);
+		// `>=`, so a word sitting exactly on a floor has already cleared it.
+		const onFloors = [item('c1', CONSTRAINED_PRODUCTION_FLOOR), item('f1', FREE_PRODUCTION_FLOOR)];
+		expect(bearableDemand(challenge(mcToNative, ['c1']), onFloors)).toBe(1);
+		expect(bearableDemand(challenge(mcToNative, ['f1']), onFloors)).toBe(2);
 	});
 
 	it('is decided by the weakest word, however strong the rest are', () => {
-		expect(bearableDemand(challenge(mcToNative, ['owned', 'brand-new']), items, NOW)).toBe(0);
+		expect(bearableDemand(challenge(mcToNative, ['owned', 'brand-new']), items)).toBe(0);
 	});
 });
 
@@ -226,7 +205,7 @@ describe('bearableDemand', () => {
 
 describe('bearable', () => {
 	it('lets a brand-new word have recognition only', () => {
-		const on = (sample: object) => bearable(challenge(sample, ['brand-new']), items, NOW);
+		const on = (sample: object) => bearable(challenge(sample, ['brand-new']), items);
 		expect(on(mcToTarget)).toBe(true);
 		expect(on(typedToNative)).toBe(true);
 		expect(on(samples['word-order'][0])).toBe(false);
@@ -235,7 +214,7 @@ describe('bearable', () => {
 	});
 
 	it('opens constrained production once a word has been recalled', () => {
-		const on = (sample: object) => bearable(challenge(sample, ['learned']), items, NOW);
+		const on = (sample: object) => bearable(challenge(sample, ['learned']), items);
 		expect(on(samples['word-order'][0])).toBe(true);
 		expect(on(clozeBanked)).toBe(true);
 		// Still not free production.
@@ -244,7 +223,7 @@ describe('bearable', () => {
 	});
 
 	it('opens everything for a word the learner owns', () => {
-		const on = (sample: object) => bearable(challenge(sample, ['owned']), items, NOW);
+		const on = (sample: object) => bearable(challenge(sample, ['owned']), items);
 		expect(on(typedToTarget)).toBe(true);
 		expect(on(clozeBankless)).toBe(true);
 		expect(on(samples['word-order'][0])).toBe(true);
@@ -254,24 +233,21 @@ describe('bearable', () => {
 	it('refuses production for a challenge whose words are gone', () => {
 		// An unresolvable id is tier 0, so only recognition fits — the same answer
 		// the reading ramp gives, for the same reason.
-		expect(bearable(challenge(typedToTarget, ['gone']), items, NOW)).toBe(false);
-		expect(bearable(challenge(mcToTarget, ['gone']), items, NOW)).toBe(true);
+		expect(bearable(challenge(typedToTarget, ['gone']), items)).toBe(false);
+		expect(bearable(challenge(mcToTarget, ['gone']), items)).toBe(true);
 	});
 });
 
 /* -------------------------------------------------------------------------- */
 
 describe('difficultyLevelOf', () => {
-	/** A card solved backwards from `wordStrength` so a boundary is exact rather than approached. */
-	const at = (strength: number) => reviewedCard(Math.expm1(strength * Math.log1p(30)));
-
 	it('is level 1 below the first floor', () => {
-		expect(difficultyLevelOf(item('a', BRAND_NEW), NOW)).toBe(1);
-		expect(difficultyLevelOf(item('a', SHAKY), NOW)).toBe(1);
+		expect(difficultyLevelOf(item('a', BRAND_NEW))).toBe(1);
+		expect(difficultyLevelOf(item('a', SHAKY))).toBe(1);
 	});
 
-	it('calls a word with no card at all level 1', () => {
-		expect(difficultyLevelOf(item('a', null), NOW)).toBe(1);
+	it('calls a word with no derived schedule at all level 1', () => {
+		expect(difficultyLevelOf(item('a', null))).toBe(1);
 	});
 
 	it('climbs one rung at each of the four floors, inclusive', () => {
@@ -282,9 +258,7 @@ describe('difficultyLevelOf', () => {
 			[LEVEL_5_FLOOR, 5]
 		];
 		for (const [floor, level] of boundaries) {
-			const onFloor = item('x', at(floor));
-			expect(wordStrength(onFloor.fsrsCard as FsrsCardState, NOW)).toBeCloseTo(floor, 10);
-			expect(difficultyLevelOf(onFloor, NOW)).toBe(level);
+			expect(difficultyLevelOf(item('x', floor))).toBe(level);
 		}
 	});
 
@@ -292,10 +266,10 @@ describe('difficultyLevelOf', () => {
 		// Levels 2-3 are exactly tier 1 (CONSTRAINED_PRODUCTION_FLOOR..FREE_PRODUCTION_FLOOR)
 		// and 4-5 exactly tier 2 (FREE_PRODUCTION_FLOOR..1) — the whole point of
 		// anchoring the ladder on the same two floors.
-		expect(difficultyLevelOf(item('a', SHAKY), NOW)).toBe(1);
-		expect(difficultyLevelOf(item('a', LEARNED), NOW)).toBeGreaterThanOrEqual(2);
-		expect(difficultyLevelOf(item('a', LEARNED), NOW)).toBeLessThanOrEqual(3);
-		expect(difficultyLevelOf(item('a', OWNED), NOW)).toBeGreaterThanOrEqual(4);
+		expect(difficultyLevelOf(item('a', SHAKY))).toBe(1);
+		expect(difficultyLevelOf(item('a', LEARNED))).toBeGreaterThanOrEqual(2);
+		expect(difficultyLevelOf(item('a', LEARNED))).toBeLessThanOrEqual(3);
+		expect(difficultyLevelOf(item('a', OWNED))).toBeGreaterThanOrEqual(4);
 	});
 });
 
@@ -338,14 +312,14 @@ describe('LEVEL_BANDS', () => {
 
 describe('maturityOf', () => {
 	it('buckets on the same floors the planner gates on', () => {
-		expect(maturityOf(item('a', BRAND_NEW), NOW)).toBe('new');
-		expect(maturityOf(item('a', SHAKY), NOW)).toBe('new');
-		expect(maturityOf(item('a', LEARNED), NOW)).toBe('young');
-		expect(maturityOf(item('a', OWNED), NOW)).toBe('solid');
+		expect(maturityOf(item('a', BRAND_NEW))).toBe('new');
+		expect(maturityOf(item('a', SHAKY))).toBe('new');
+		expect(maturityOf(item('a', LEARNED))).toBe('young');
+		expect(maturityOf(item('a', OWNED))).toBe('solid');
 	});
 
-	it('calls a word with no card at all new', () => {
-		expect(maturityOf(item('a', null), NOW)).toBe('new');
+	it('calls a word with no derived schedule at all new', () => {
+		expect(maturityOf(item('a', null))).toBe('new');
 	});
 
 	it('agrees with difficultyLevelOf at every level', () => {
@@ -356,19 +330,20 @@ describe('maturityOf', () => {
 			4: 'solid',
 			5: 'solid'
 		};
-		for (const card of [BRAND_NEW, SHAKY, LEARNED, OWNED]) {
-			const sample = item('a', card);
-			expect(maturityOf(sample, NOW)).toBe(expected[difficultyLevelOf(sample, NOW)]);
+		for (const strength of [BRAND_NEW, SHAKY, LEARNED, OWNED]) {
+			const sample = item('a', strength);
+			expect(maturityOf(sample)).toBe(expected[difficultyLevelOf(sample)]);
 		}
 	});
 
-	it('sags as a word is left unreviewed', () => {
-		// Retrievability is the other half of `wordStrength`: a word left alone
-		// long enough stops being solid, and the prompt should stop asking for it
-		// to be produced from nothing. Slowly, though — a ten-day-stability word
-		// takes about a year to fall back to 'young', which is the forgetting curve
-		// being honest rather than this module being lenient.
-		expect(maturityOf(item('a', OWNED), NOW)).toBe('solid');
-		expect(maturityOf(item('a', OWNED), NOW + 365 * DAY)).toBe('young');
+	it('sags with the strength, so a word left unreviewed stops being solid', () => {
+		// Retrievability is the other half of the strength the core derives: a word
+		// left alone long enough falls back a bucket, and the planner should stop
+		// asking for it to be produced from nothing. What makes the number fall is
+		// the forgetting curve, pinned in the core; what this asserts is that the
+		// bucket follows it. A ten-day-stability word takes about a year to get
+		// here.
+		expect(maturityOf(item('a', OWNED))).toBe('solid');
+		expect(maturityOf(item('a', OWNED / 2))).toBe('young');
 	});
 });

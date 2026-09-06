@@ -204,7 +204,7 @@ function collectWants(
 		const term = word.term.trim();
 		const meaning = word.meaning.trim();
 
-		const level = difficultyLevelOf(word, now);
+		const level = difficultyLevelOf(word);
 		const bearable = demandForLevel(level);
 		const allowed = PLANNABLE_KINDS.filter((kind) => kind.demand <= bearable);
 		const recognition = allowed.filter((kind) => kind.demand === 0);

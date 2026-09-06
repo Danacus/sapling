@@ -115,8 +115,10 @@ describe('mockTurn', () => {
 		]);
 		expect(store.items).toHaveLength(1);
 		expect(store.items[0]).toMatchObject({ term: 'helado', meaning: 'ice cream', kind: 'vocab' });
-		// A real card, not a placeholder: the offline path is the production path.
-		expect(store.items[0].fsrsCard).toBeTruthy();
+		// No card is minted here — the core folds one from `introducedAt` — so the
+		// introduction time is what the offline path has to get right. It is the
+		// production path, so getting it wrong would schedule a real word wrong.
+		expect(store.items[0].introducedAt).toBe(NOW);
 	});
 
 	it('writes nothing when the message names no words', async () => {

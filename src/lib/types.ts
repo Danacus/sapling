@@ -38,10 +38,31 @@ export interface Profile {
 }
 
 /**
+ * What the schedule says about one word, derived when the row was read.
+ *
+ * The frontend runs no FSRS — the core does, and hands these three numbers down
+ * with every item it returns. `due` is a plain timestamp, so "is it due" stays a
+ * comparison the caller makes against its own `now`; `retrievability` (0..1) is
+ * the forgetting curve and `strength` (0..1) the number behind the strength
+ * bars, and both need the model and its weights, which is why they are computed
+ * over there.
+ *
+ * **Taken at fetch time.** A page left open across a due date shows the
+ * schedule as of its last read until something refetches it.
+ */
+export interface ItemSrs {
+	due: number;
+	retrievability: number;
+	strength: number;
+}
+
+/**
  * One learnable atom (a word, phrase or grammar point) tracked by the SRS.
  *
- * `fsrsCard` holds the `Card` object owned by ts-fsrs; it is typed as `unknown`
- * here so this module stays dependency-free. Cast it in `src/lib/srs/`.
+ * `fsrsCard` holds the FSRS card the core stores; it is typed as `unknown` here
+ * so this module stays dependency-free, and the frontend treats it as opaque —
+ * the shape is `FsrsCardState` in `src/lib/srs/`, and nothing outside the words
+ * ledger reads a field of it. What screens read is {@link srs}.
  */
 export interface KnowledgeItem {
 	id: string;
@@ -60,12 +81,20 @@ export interface KnowledgeItem {
 	romanization?: string;
 	/** Optional usage notes, gender, conjugation hints, etc. */
 	notes?: string;
-	/** ts-fsrs `Card`. */
+	/** The stored FSRS card. Opaque: only the core reads inside it. */
 	fsrsCard: unknown;
+	/**
+	 * The schedule as of the moment this item was read — see {@link ItemSrs}.
+	 *
+	 * Every `Backend` read that returns items attaches it. Absent on an item
+	 * built by hand (an argument to `upsertItems`, an import), so every reader
+	 * falls back to "brand new".
+	 */
+	srs?: ItemSrs;
 	/** Epoch milliseconds. */
 	introducedAt: number;
 	/**
-	 * Review log, newest last. `grade` is the ts-fsrs `Rating`.
+	 * Review log, newest last. `grade` is the FSRS `Rating`.
 	 *
 	 * `device` is stamped by `$lib/device`'s stable per-browser id, and it is
 	 * what makes a merged history dedupe exactly: an entry's identity is

@@ -19,6 +19,11 @@
 					"state": 1,
 					"last_review": 1710063000000
 				},
+				"srs": {
+					"due": 1710063600000,
+					"retrievability": 0.71325302,
+					"strength": 0.04579695
+				},
 				"reviewCount": 3,
 				"correctCount": 1,
 				"history": []
@@ -42,6 +47,11 @@
 					"lapses": 0,
 					"state": 1,
 					"last_review": 1710063000000
+				},
+				"srs": {
+					"due": 1710063600000,
+					"retrievability": 0.71325302,
+					"strength": 0.04579695
 				},
 				"reviewCount": 3,
 				"correctCount": 1,
@@ -82,6 +92,11 @@
 				"lapses": 0,
 				"state": 1,
 				"last_review": 1710063000000
+			},
+			"srs": {
+				"due": 1710063600000,
+				"retrievability": 0.71325302,
+				"strength": 0.04579695
 			},
 			"reviewCount": 3,
 			"correctCount": 1,

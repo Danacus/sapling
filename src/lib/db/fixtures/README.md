@@ -25,7 +25,9 @@ replace this one.
 Reads are always taken under `TZ=UTC` (`daily` buckets by local day).
 
 - No-argument reads are recorded as returned.
-- `getAllItems` is recorded twice, as `lean` and `withRecentGrades`.
+- `getAllItems` is recorded twice, as `lean` and `withRecentGrades`. Both — and
+  `getItem` — carry `srs`, the schedule the core derives from the card at read
+  time, taken against `meta.now`.
 - `getItem`, `getText`, `getConversation` are called once per id the log
   mentions for that kind (added, reviewed, updated, deleted, looked up, turned),
   and recorded as a map from id to result; a missing row is `null`.
@@ -73,8 +75,11 @@ deliberate change to the merge rules or a read; the diff is the review.
 
 The file is written by the **wasm** build, the one the browser loads. Every
 value in it is then matched character for character by both runners, with one
-exception: `tests/golden.rs` compares a card's `stability` and `difficulty`
-with a relative tolerance of `1e-5`, because the FSRS model computes in `f32`
-and `exp`/`powf` differ by an ulp or two between the host's libm and the one
-wasm links. That is a difference around the seventh significant digit; anything
-larger, and anything at all in another field, is a finding about the core.
+exception: `tests/golden.rs` compares the four numbers that come out of the
+`f32` model — a card's `stability` and `difficulty`, and the
+`srs.retrievability` and `srs.strength` read off them — with a relative
+tolerance of `1e-5`, because the FSRS model computes in `f32` and `exp`/`powf`
+differ by an ulp or two between the host's libm and the one wasm links. That is
+a difference around the seventh significant digit; anything larger, and
+anything at all in another field (`srs.due` included — it is the card's own
+`due`, a whole minute), is a finding about the core.

@@ -9,9 +9,11 @@
  * text but a fact the app already holds — in the garden with an FSRS strength,
  * marked known, or not yet met.
  *
- * Pure and deterministic in the house style: `now` is passed in, the coin flip
- * is an injectable `rng`, and nothing here reads the clock, the database or a
- * preference store. It does not tokenize either — the caller hands in a
+ * Pure and deterministic in the house style: the coin flip is an injectable
+ * `rng`, and nothing here reads the clock, the database or a preference store —
+ * a word's strength is derived by the core when the item is read, so the instant
+ * it belongs to was chosen before the context was built. It does not tokenize
+ * either — the caller hands in a
  * `tokenize(text, terms)`, either a local romanizer's (which brings real
  * readings) or `tokenizeByTerms` (which brings none) — so this module never
  * needs to know whether the language has a romanizer.
@@ -42,8 +44,7 @@ import { hideReadingProbability } from '$lib/session/romanization';
 import { maturityOf } from '$lib/session/progression';
 import type { Maturity } from '$lib/session/progression';
 import type { RomanizedToken } from '$lib/romanize';
-import { wordStrength } from '$lib/srs';
-import type { FsrsCardState } from '$lib/srs';
+import { strengthOf } from '$lib/srs';
 import { cardKey, isPunctuationOnly, readingKey } from '$lib/text';
 import type { GlossEntry, KnowledgeItem } from '$lib/types';
 import type { RomanizationMode } from '$lib/ui/prefs';
@@ -99,8 +100,6 @@ export interface AnnotateContext {
 	/** The text's own glossary — the `new` words. */
 	glossary: GlossEntry[];
 	mode: RomanizationMode;
-	/** Epoch milliseconds. */
-	now: number;
 	/**
 	 * Per-card adaptive decisions, memoised across the whole text — keyed by
 	 * `cardKey`, so two cards sharing a spelling fade independently. The caller
@@ -209,9 +208,7 @@ function showsReading(item: KnowledgeItem, ctx: AnnotateContext): boolean {
 	const cached = ctx.rolls.get(key);
 	if (cached !== undefined) return cached;
 
-	const card = item.fsrsCard as FsrsCardState | null | undefined;
-	const strength = card ? wordStrength(card, ctx.now) : 0;
-	const show = (ctx.rng ?? Math.random)() >= hideReadingProbability(strength);
+	const show = (ctx.rng ?? Math.random)() >= hideReadingProbability(strengthOf(item));
 	ctx.rolls.set(key, show);
 	return show;
 }
@@ -288,7 +285,7 @@ export function annotateSentence(
 			reading: hidden ? null : token.reading,
 			key,
 			status,
-			...(item ? { itemId: item.id, maturity: maturityOf(item, ctx.now) } : {}),
+			...(item ? { itemId: item.id, maturity: maturityOf(item) } : {}),
 			...(gloss ? { gloss } : {}),
 			...(hidden ? { readingHidden: true } : {})
 		} satisfies ReadingWord;

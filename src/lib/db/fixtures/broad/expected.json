@@ -31,6 +31,11 @@
 					"state": 0,
 					"last_review": null
 				},
+				"srs": {
+					"due": 1710061262000,
+					"retrievability": 0,
+					"strength": 0
+				},
 				"reviewCount": 0,
 				"correctCount": 0,
 				"history": []
@@ -53,6 +58,11 @@
 					"lapses": 0,
 					"state": 1,
 					"last_review": 1710061890000
+				},
+				"srs": {
+					"due": 1710062250000,
+					"retrievability": 0.90949321,
+					"strength": 0.31673212
 				},
 				"reviewCount": 2,
 				"correctCount": 1,
@@ -78,6 +88,11 @@
 					"state": 1,
 					"last_review": 1710061920000
 				},
+				"srs": {
+					"due": 1710062520000,
+					"retrievability": 0.90949321,
+					"strength": 0.31673212
+				},
 				"reviewCount": 1,
 				"correctCount": 1,
 				"history": []
@@ -102,6 +117,11 @@
 					"state": 0,
 					"last_review": null
 				},
+				"srs": {
+					"due": 1710061262000,
+					"retrievability": 0,
+					"strength": 0
+				},
 				"reviewCount": 0,
 				"correctCount": 0,
 				"recentGrades": [],
@@ -125,6 +145,11 @@
 					"lapses": 0,
 					"state": 1,
 					"last_review": 1710061890000
+				},
+				"srs": {
+					"due": 1710062250000,
+					"retrievability": 0.90949321,
+					"strength": 0.31673212
 				},
 				"reviewCount": 2,
 				"correctCount": 1,
@@ -160,6 +185,11 @@
 					"state": 1,
 					"last_review": 1710061920000
 				},
+				"srs": {
+					"due": 1710062520000,
+					"retrievability": 0.90949321,
+					"strength": 0.31673212
+				},
 				"reviewCount": 1,
 				"correctCount": 1,
 				"recentGrades": [
@@ -192,6 +222,11 @@
 				"state": 0,
 				"last_review": null
 			},
+			"srs": {
+				"due": 1710061262000,
+				"retrievability": 0,
+				"strength": 0
+			},
 			"reviewCount": 0,
 			"correctCount": 0,
 			"recentGrades": [],
@@ -215,6 +250,11 @@
 				"lapses": 0,
 				"state": 1,
 				"last_review": 1710061890000
+			},
+			"srs": {
+				"due": 1710062250000,
+				"retrievability": 0.90949321,
+				"strength": 0.31673212
 			},
 			"reviewCount": 2,
 			"correctCount": 1,
@@ -260,6 +300,11 @@
 				"lapses": 0,
 				"state": 1,
 				"last_review": 1710061920000
+			},
+			"srs": {
+				"due": 1710062520000,
+				"retrievability": 0.90949321,
+				"strength": 0.31673212
 			},
 			"reviewCount": 1,
 			"correctCount": 1,

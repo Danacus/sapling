@@ -79,7 +79,7 @@
 		CardState.Relearning
 	];
 
-	/** ts-fsrs `Rating` names, for the review-history tooltips. */
+	/** FSRS `Rating` names, for the review-history tooltips. */
 	const GRADE_LABELS: Record<number, string> = { 1: 'Again', 2: 'Hard', 3: 'Good', 4: 'Easy' };
 
 	let loading = $state(true);

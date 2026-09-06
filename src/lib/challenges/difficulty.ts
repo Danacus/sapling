@@ -1,5 +1,5 @@
 /**
- * How hard a challenge actually is, 0..1, on the same axis as `wordStrength` and
+ * How hard a challenge actually is, 0..1, on the same axis as word strength and
  * `$lib/session/progression`'s ladder — so the planner can ask "which of these
  * bearable challenges best matches how strong this word already is" instead of
  * only "which of these can this word bear at all".
@@ -26,7 +26,7 @@
  *
  * What the caller compares this against is the *centre of the word's level
  * band* (`$lib/session/progression`'s `levelBandCentre`), not the word's raw
- * `wordStrength`: a raw target sits above the middle of its own band for half
+ * strength: a raw target sits above the middle of its own band for half
  * of every band, and a target above the middle of a tier always selects the
  * tier's hardest row.
  *
@@ -41,7 +41,7 @@ import { demandOf } from './demand';
 import { storedDefFor } from './types';
 
 /**
- * The `[start, end)` (closed at 1) span of `wordStrength` each demand tier
+ * The `[start, end)` (closed at 1) span of word strength each demand tier
  * owns. Identical to the floors `$lib/session/progression` gates *serving* on
  * (`CONSTRAINED_PRODUCTION_FLOOR` = 0.15, `FREE_PRODUCTION_FLOOR` = 0.45): tier
  * 0 is exactly level 1 of the five-rung ladder, tier 1 is levels 2-3, tier 2 is
