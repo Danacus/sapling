@@ -9,13 +9,11 @@
  * voice — is the same code the web build runs, because it is the same model
  * with the same speaker ids and the engine is the only thing that moved.
  *
- * **Only synthesis is native.** The clip comes back as bytes and the webview
- * plays it — through Web Audio rather than an `<audio>` element, because here
- * an element costs a fresh GStreamer pipeline per clip (`tts.ts`'s header has
- * the detail), but on the web side either way. WebKitGTK makes sound happily,
- * given the GStreamer plugins the desktop shell carries; what it cannot do is
- * run the browser path's *engine*, which needs a 439 MB Emscripten file package
- * and a `SharedArrayBuffer` this webview does not have.
+ * **Only synthesis is native.** The clip comes back as bytes and is played by
+ * the webview's `<audio>`, exactly as in a browser. WebKitGTK plays a WAV
+ * happily (given the GStreamer plugins the desktop shell carries); what it
+ * cannot do is run the browser path's engine, which needs a 439 MB Emscripten
+ * file package and a `SharedArrayBuffer` this webview does not have.
  *
  * `@tauri-apps/api` is imported dynamically and this whole module is imported
  * dynamically by `tts.ts`, gated on `inTauri()` — so a browser fetches neither.

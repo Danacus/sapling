@@ -35,17 +35,9 @@ someone to run the check by hand.
   Neither may grow an opinion. So the voice lives here (`src/tts/`, feature
   `tts`, on by default) because WebKitGTK cannot run the browser's engine at
   all, while `src/lib/tts/` keeps every decision — which language routes to
-  Kokoro, which speaker, when to fall back to the browser voice, what to cache,
-  and how to play the result — and is the same code the web build runs. The line
-  that does not move: a host still contains no merge rule and no SQL against the
-  read tables. **Playing is not the second capability**, and was considered:
-  the host holds the samples and could open the sink itself, but it would then
-  owe the window an `ended`, a stop that races it and a second home for the clip
-  caches, all over IPC, to save an `AudioBuffer` the webview plays fine. What it
-  cannot do cheaply is an `<audio>` element per clip (a GStreamer pipeline each
-  time), so `tts.ts` plays through one long-lived `AudioContext` here instead —
-  `content.md` is the contract, and the graph is built on first play, never at
-  import, because a plugin-less WebKitGTK dies on `new AudioContext()`.
+  Kokoro, which speaker, when to fall back to the browser voice, what to cache
+  — and is the same code the web build runs. The line that does not move: a
+  host still contains no merge rule and no SQL against the read tables.
 
 - **A database that will not open is a screen, not a crash.** `setup` never
   returns `Err` for it: `host::Database` is the managed state, holding either

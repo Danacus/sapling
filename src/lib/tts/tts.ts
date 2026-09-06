@@ -31,39 +31,6 @@
  * tier is used**: native synthesis is roughly four times real time against the
  * browser's one-to-two seconds a phrase, so a clip is cheaper to re-make than
  * to keep, and the model already sits on disk as ordinary files.
- *
- * ## And two ways of playing it, for the same reason
- *
- * In a browser a clip is an `<audio>` element over a blob URL, which is the
- * cheapest correct thing there is. On WebKitGTK it is nothing of the sort: the
- * webview builds a whole GStreamer pipeline per element — load the blob, wire
- * up playbin, preroll, open a fresh sink stream on PulseAudio/PipeWire — with
- * parts of that on the web process's main thread. So every spoken word arrived
- * late and stalled the window, *including* the ones already in the LRU, where
- * the cache had only ever saved the synthesis.
- *
- * The desktop therefore plays through one long-lived `AudioContext`: the WAV is
- * parsed here (`wav.ts` — not `decodeAudioData`, which is that pipeline again),
- * copied into an `AudioBuffer` and started on a source node, and the graph
- * stays open for the session. {@link inTauri} decides this too. The browser
- * keeps the element deliberately: it is already instant there, and a phone's
- * `AudioContext` starts suspended and wants a user gesture that a warmed-up
- * auto-play does not have.
- *
- * The context is built on the **first play, never at import time**: on a
- * WebKitGTK without the GStreamer plugins `new AudioContext()` takes the whole
- * web process down with it — not an exception, the page simply vanishes — so it
- * must not be able to happen to someone who never asks for sound. If it cannot
- * be built or resumed, playback falls back to the element path and says so
- * once, because a host with a broken audio stack should degrade to what it did
- * before this existed rather than to silence.
- *
- * **Why not play it natively?** The host already holds the samples and could
- * open the sink itself. It would then owe the window an `ended` event, a stop
- * that races it, and a second home for the clip caches, all marshalled over
- * IPC — to save an `AudioBuffer` that this webview plays perfectly well once it
- * is no longer asked to build a pipeline per clip. The capability a host lends
- * is synthesis (`desktop.md`); the playing stays here.
  */
 
 import { inTauri } from '$lib/platform';
@@ -82,7 +49,6 @@ import {
 	type TtsVoice
 } from './prefs';
 import { cancelWebSpeech, speakWithWebSpeech, webSpeechAvailable } from './webspeech';
-import { decodeWav, type PcmClip } from './wav';
 
 export type { TtsEngine, TtsVoice } from './prefs';
 export type { TtsProgress } from './sherpa';
@@ -112,18 +78,8 @@ const audioCache = new LruCache<Blob>(AUDIO_CACHE_SIZE);
  */
 const KOKORO_SPEED = 1;
 
-/**
- * Whatever is making sound right now, and how to cut it off — an element on one
- * path, a source node on the other. Both stop the same way from out here, and
- * both raise the event their `finish` is waiting on when stopped, so a promise
- * handed to a caller always settles.
- */
-interface Playing {
-	stop(): void;
-}
-
 /** The clip currently playing, so a new request can cut it off. */
-let playing: Playing | null = null;
+let playing: HTMLAudioElement | null = null;
 
 // -- Which Kokoro ------------------------------------------------------------
 
@@ -176,16 +132,6 @@ function kokoro(): Promise<KokoroProvider> {
  */
 function clipsWorthStoring(): boolean {
 	return !inTauri();
-}
-
-/**
- * Whether to play through the Web Audio graph rather than an `<audio>` element
- * — the header explains what it costs where. Kept beside
- * {@link clipsWorthStoring} on purpose: both are the same question ("what does
- * this host make expensive?"), and the answers should be read together.
- */
-function playsThroughGraph(): boolean {
-	return inTauri();
 }
 
 /**
@@ -252,14 +198,13 @@ export function setTtsVoice(voice: TtsVoice): void {
 
 /** Cuts off whatever is playing, on either engine. */
 export function stopSpeaking(): void {
-	const current = playing;
-	playing = null;
-	if (current) {
+	if (playing) {
 		try {
-			current.stop();
+			playing.pause();
 		} catch {
-			/* ignore: it had already finished */
+			/* ignore */
 		}
+		playing = null;
 	}
 	cancelWebSpeech();
 }
@@ -364,76 +309,15 @@ export async function warmSpeech(text: string, language: string): Promise<void> 
 	}
 }
 
-// -- Playing it --------------------------------------------------------------
-
-/**
- * The session's one `AudioContext`: `undefined` until the first clip asks for
- * it, `null` once it is known not to be available. Never built at import time
- * — see the header; on a WebKitGTK missing its GStreamer plugins that call ends
- * the web process.
- */
-let graph: AudioContext | null | undefined;
-
-/** The graph, opened on demand and resumed, or `null` if this host has none. */
-async function audioGraph(): Promise<AudioContext | null> {
-	if (graph === null) return null;
-	try {
-		graph ??= new AudioContext();
-		// Autoplay policies park a context created outside a gesture; on the
-		// desktop nothing parks it, but resuming a running one is free.
-		if (graph.state === 'suspended') await graph.resume();
-		return graph;
-	} catch (cause) {
-		// Once for the session, not once per clip: an audio stack that cannot
-		// give us an output is not going to start, and the element path below is
-		// a complete answer, so repeating this would be noise.
-		console.warn('[tts] Web Audio is unavailable; playing through <audio> instead.', cause);
-		graph = null;
-		return null;
-	}
-}
-
-/** Plays raw samples through the graph. Resolves when they stop sounding. */
-function playSamples(context: AudioContext, clip: PcmClip): Promise<void> {
-	// `createBuffer` rejects a zero length, and there is nothing to hear anyway.
-	if (clip.samples.length === 0) return Promise.resolve();
-
-	const buffer = context.createBuffer(1, clip.samples.length, clip.sampleRate);
-	buffer.copyToChannel(clip.samples, 0);
-
-	const source = context.createBufferSource();
-	source.buffer = buffer;
-	source.connect(context.destination);
-
-	return new Promise<void>((resolve) => {
-		const handle: Playing = { stop: () => source.stop() };
-		const finish = (): void => {
-			if (playing === handle) playing = null;
-			resolve();
-		};
-		// `stop()` raises `ended` as well, so a clip cut off by the next tap
-		// leaves through the same door as one that ran out.
-		source.onended = finish;
-		playing = handle;
-		try {
-			source.start();
-		} catch (cause) {
-			console.warn('[tts] Could not start playback.', cause);
-			finish();
-		}
-	});
-}
-
-/** Plays a WAV blob through an element and a blob URL — the browser's path. */
-function playElement(blob: Blob): Promise<void> {
+/** Plays a WAV blob to completion. Resolves (never rejects) on playback errors. */
+function playBlob(blob: Blob): Promise<void> {
 	const url = URL.createObjectURL(blob);
 	const audio = new Audio(url);
-	const handle: Playing = { stop: () => audio.pause() };
-	playing = handle;
+	playing = audio;
 
 	return new Promise<void>((resolve) => {
 		const finish = (): void => {
-			if (playing === handle) playing = null;
+			if (playing === audio) playing = null;
 			URL.revokeObjectURL(url);
 			resolve();
 		};
@@ -449,25 +333,6 @@ function playElement(blob: Blob): Promise<void> {
 			finish();
 		});
 	});
-}
-
-/** Plays a WAV blob to completion. Resolves (never rejects) on playback errors. */
-async function playClip(blob: Blob): Promise<void> {
-	if (playsThroughGraph()) {
-		const context = await audioGraph();
-		if (context) {
-			try {
-				await playSamples(context, decodeWav(await blob.arrayBuffer()));
-				return;
-			} catch (cause) {
-				// These are our own bytes, so this is close to impossible — but the
-				// element path is right there and silence is the one outcome we do
-				// not accept.
-				console.warn('[tts] Could not play that clip through Web Audio.', cause);
-			}
-		}
-	}
-	await playElement(blob);
 }
 
 /**
@@ -494,7 +359,7 @@ export async function speak(text: string, language: string): Promise<void> {
 				// throws, and is skipped entirely on a host where it does not pay,
 				// so a broken, absent or bypassed Cache Storage costs a
 				// re-synthesis and nothing else.
-				await playClip(await obtainClip(phrase, speaker));
+				await playBlob(await obtainClip(phrase, speaker));
 				return;
 			} catch (cause) {
 				console.warn('[tts] Kokoro failed; falling back to the browser voice.', cause);

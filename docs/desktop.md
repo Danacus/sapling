@@ -178,11 +178,9 @@ custom scheme no allowlist can name).
 to WASM in a Worker, and that path cannot exist here: the engine is a 439 MB
 Emscripten *file package* whose byte offsets are baked into vendored glue, and
 this webview has no `SharedArrayBuffer`. So synthesis moved to Rust — and only
-synthesis. Playback stays in the webview: it can make sound perfectly well given
-the GStreamer plugins the shell carries, and one player for both hosts is worth
-more than a native audio stack, which would owe the window an `ended` event, a
-stop that races it and a second home for the clip caches, all over IPC. What it
-cannot afford is an `<audio>` element per clip — see the third difference below.
+synthesis. Playback stays in the webview, because `<audio>` over a blob works
+there (given the GStreamer plugins the shell carries) and one player for both
+hosts is worth more than a native audio stack.
 
 Nothing above the seam moved with it. `speak(text, lang)` is unchanged, the
 `ll.ttsEngine` preference still reads `'kokoro' | 'webspeech' | 'off'`, and
@@ -226,8 +224,7 @@ first phrase and kept for the life of
 the process, behind a `Mutex` because sherpa-onnx promises nothing about
 concurrent generation.
 
-**Three deliberate differences from the browser**, the first two visible in
-Settings:
+**Two deliberate differences from the browser**, both visible in Settings:
 
 - **No warm-up command.** `preloadKokoro` downloads the model and stops there;
   the engine's ~2 s load happens on the first synthesis. That is not a hole:
@@ -240,20 +237,6 @@ Settings:
   cheaper to re-make than to keep, and the memory LRU still absorbs replays.
   The Settings "Audio cache" row is hidden unless something actually did write
   clips.
-- **One Web Audio graph instead of an element per clip.** WebKitGTK builds a
-  fresh GStreamer pipeline for every `<audio>` — blob load, playbin, preroll, a
-  new sink stream on PulseAudio/PipeWire, part of it on the web process's main
-  thread — so every spoken word started late and stalled the window, *including*
-  the ones already in the memory LRU, where the cache had only ever saved the
-  synthesis. `tts.ts` therefore keeps one `AudioContext` for the session here
-  and plays each clip as an `AudioBuffer` on a source node. The WAV is parsed by
-  `wav.ts`'s `decodeWav` rather than `decodeAudioData`, which is that same
-  pipeline again; both hosts' clips are mono 16-bit PCM written by this repo.
-  The context is created on the **first play and never at import time** — on a
-  WebKitGTK without those plugins `new AudioContext()` ends the web process
-  rather than throwing — and a context that cannot be created or resumed falls
-  back to the element path with one warning, so a broken audio stack degrades to
-  the old behaviour instead of to silence.
 
 **Measured** on this machine (16 threads, the model on an SSD), from
 `tests/voice.rs`:
