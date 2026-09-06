@@ -173,18 +173,21 @@ pub struct ItemFields {
     pub notes: Option<String>,
 }
 
+/// The item columns a patch can touch, in application order. `refold_patches`
+/// in `materialize.rs` rewrites the same columns from a fresh `itemAdded`, so
+/// this is the one place the list lives rather than two that can drift apart.
+pub const PATCHABLE_COLUMNS: [&str; 4] = ["term", "meaning", "romanization", "notes"];
+
 impl ItemFields {
-    /// `(column, value)` for every field the patch names, in `PATCHABLE` order.
+    /// `(column, value)` for every field the patch names, in `PATCHABLE_COLUMNS` order.
     pub fn set(&self) -> Vec<(&'static str, &str)> {
-        [
-            ("term", &self.term),
-            ("meaning", &self.meaning),
-            ("romanization", &self.romanization),
-            ("notes", &self.notes),
-        ]
-        .into_iter()
-        .filter_map(|(column, value)| value.as_deref().map(|v| (column, v)))
-        .collect()
+        let values: [&Option<String>; 4] =
+            [&self.term, &self.meaning, &self.romanization, &self.notes];
+        PATCHABLE_COLUMNS
+            .into_iter()
+            .zip(values)
+            .filter_map(|(column, value)| value.as_deref().map(|v| (column, v)))
+            .collect()
     }
 }
 

@@ -15,7 +15,7 @@ use crate::day::LocalDay;
 use crate::events::{
     ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted, EventType, ItemAdded,
     ItemDeleted, ItemReviewed, ItemUpdated, Payload, ReviewAmended, SyncEvent, TextDeleted,
-    WordLookedUp, WordMarked,
+    WordLookedUp, WordMarked, PATCHABLE_COLUMNS,
 };
 use crate::js;
 use crate::schema::{
@@ -297,15 +297,25 @@ impl<'a> Materializer<'a> {
             return Ok(());
         };
         let added: ItemAdded = serde_json::from_str(base.text("payload")?)?;
+        // Same columns `ItemFields::set` patches, in the same order — see `PATCHABLE_COLUMNS`.
+        let values: [Option<&str>; 4] = [
+            Some(added.term.as_str()),
+            Some(added.meaning.as_str()),
+            added.romanization.as_deref(),
+            added.notes.as_deref(),
+        ];
+        let assignments: Vec<String> = PATCHABLE_COLUMNS
+            .iter()
+            .map(|column| format!("{column} = ?"))
+            .collect();
+        let mut params: Vec<Param> = values.into_iter().map(Param::opt_text).collect();
+        params.push(Param::text(item_id));
         self.sql.exec(
-            "UPDATE items SET term = ?, meaning = ?, romanization = ?, notes = ?, updatedAt = 0 WHERE id = ?",
-            &[
-                Param::text(&added.term),
-                Param::text(&added.meaning),
-                Param::opt_text(added.romanization.as_deref()),
-                Param::opt_text(added.notes.as_deref()),
-                Param::text(item_id),
-            ],
+            &format!(
+                "UPDATE items SET {}, updatedAt = 0 WHERE id = ?",
+                assignments.join(", ")
+            ),
+            &params,
         )?;
         for (at, patch) in self.patches_of(item_id)? {
             self.apply_patch(at, &patch)?;

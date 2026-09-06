@@ -11,6 +11,14 @@ CREATE TABLE IF NOT EXISTS events (
   device TEXT NOT NULL, payload TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS events_seq ON events(seq);
 CREATE INDEX IF NOT EXISTS events_type ON events(type);
+-- `patches_of` and `refold_patches` look an item's patches and its `itemAdded`
+-- up by an id folded into the JSON payload; these partial expression indexes
+-- must textually match those queries' `WHERE` clauses or SQLite won't use
+-- them, and `IF NOT EXISTS` is what brings an already-open database along.
+CREATE INDEX IF NOT EXISTS events_item_updated_item_id
+  ON events(json_extract(payload, '$.itemId')) WHERE type = 'itemUpdated';
+CREATE INDEX IF NOT EXISTS events_item_added_id
+  ON events(json_extract(payload, '$.id')) WHERE type = 'itemAdded';
 
 CREATE TABLE IF NOT EXISTS items (
   id TEXT PRIMARY KEY, kind TEXT, term TEXT, meaning TEXT, romanization TEXT, notes TEXT,
