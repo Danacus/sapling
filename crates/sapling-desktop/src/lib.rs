@@ -37,26 +37,28 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tauri::{Manager, State};
 
-use crate::host::CoreHandle;
+use crate::host::Database;
 #[cfg(feature = "tts")]
 use crate::tts::TtsHandle;
 
 /// One `Backend` call. The answer is `None` — JavaScript's `undefined` — for a
-/// `void` method and for a read of a row that is not there.
+/// `void` method and for a read of a row that is not there. When the database
+/// did not open, every call answers `Err` with the reason, and the first one
+/// (`openTauriBackend`'s probe) is what puts it on the boot-error screen.
 #[tauri::command]
 fn dispatch(
-    core: State<'_, CoreHandle>,
+    db: State<'_, Database>,
     method: String,
     args: String,
 ) -> Result<Option<String>, String> {
-    core.dispatch(method, args)
+    db.dispatch(method, args)
 }
 
 /// Appends local facts in one transaction. Here for parity with `WasmCore`;
 /// only a test rig seeds a store this way.
 #[tauri::command]
-fn commit_all(core: State<'_, CoreHandle>, facts: String) -> Result<(), String> {
-    core.commit_all(facts)
+fn commit_all(db: State<'_, Database>, facts: String) -> Result<(), String> {
+    db.commit_all(facts)
 }
 
 /// The read-table shape this build expects — the version `meta` records.
@@ -171,7 +173,14 @@ pub fn run() {
             // Linux, `~/Library/Application Support/<identifier>` on macOS,
             // `%APPDATA%\<identifier>` on Windows.
             let dir = app.path().app_data_dir()?;
-            app.manage(CoreHandle::open(&dir)?);
+            // A file that will not open is not a reason to have no window: the
+            // failure is managed alongside the core and answered to the first
+            // call, and the layout shows it (see `host::Database`).
+            let database = Database::open(&dir);
+            if let Some(error) = database.error() {
+                eprintln!("{error}");
+            }
+            app.manage(database);
             // Nothing is downloaded or loaded here — the handle only knows
             // where the model would be. The first tap on 🔊 pays for the rest.
             #[cfg(feature = "tts")]

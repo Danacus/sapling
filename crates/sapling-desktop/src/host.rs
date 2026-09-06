@@ -19,6 +19,17 @@
 //! `Connection` is gone before [`CoreHandle::open`] can be called again on the
 //! same file.
 //!
+//! ## A database that will not open is a screen, not a crash
+//!
+//! The browser's Worker answers its boot with `ready` or `bootError`, and the
+//! layout turns the latter into a message the learner can read (`+layout.svelte`).
+//! This host has no boot message — the window's first `dispatch` is its first
+//! word — so the failure is kept instead: [`Database`] is what Tauri manages,
+//! and it holds either the open core or the reason there is none. Every
+//! command answers that reason as its `Err`, so the same layout shows the same
+//! screen, and `setup` never returns an error that would end the process
+//! before a window exists to say why.
+//!
 //! ## The device id is a file, not a row
 //!
 //! It is half of a review's identity (`reviews` is keyed `(itemId, at,
@@ -198,5 +209,42 @@ impl Drop for CoreHandle {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+    }
+}
+
+/// What the window can reach: the core, or the reason it could not be opened.
+///
+/// This is the state Tauri manages. Holding the failure rather than
+/// propagating it out of `setup` is what turns "the app does not start" into
+/// the boot-error screen every host shows; see the module header.
+pub struct Database(Result<CoreHandle, String>);
+
+impl Database {
+    /// Opens the database under `dir`; a failure is kept, not returned.
+    pub fn open(dir: &Path) -> Database {
+        Database(
+            CoreHandle::open(dir)
+                .map_err(|error| format!("The database could not be opened: {error}")),
+        )
+    }
+
+    /// The core, or the message every call answers when there is none.
+    fn core(&self) -> Result<&CoreHandle, String> {
+        self.0.as_ref().map_err(Clone::clone)
+    }
+
+    /// Why the database is not open — `None` when it is.
+    pub fn error(&self) -> Option<&str> {
+        self.0.as_ref().err().map(String::as_str)
+    }
+
+    /// See [`CoreHandle::dispatch`].
+    pub fn dispatch(&self, method: String, args: String) -> Result<Option<String>, String> {
+        self.core()?.dispatch(method, args)
+    }
+
+    /// See [`CoreHandle::commit_all`].
+    pub fn commit_all(&self, facts: String) -> Result<(), String> {
+        self.core()?.commit_all(facts)
     }
 }

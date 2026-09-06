@@ -1,10 +1,16 @@
-# Build and deploy the static app.
+# Build and deploy the static app; check the desktop host beside it.
 #
-# One job, every gate, then a deploy step that only runs for a push to `main`.
-# Everything executes inside the flake's devShell, so CI uses the exact node,
-# pnpm, cargo, lld and wasm-bindgen the checkout pins — Cloudflare Pages' own
-# build image has no Rust, which is why the build lives here and the Pages git
-# integration is switched off (see .claude/rules/deploy.md).
+# `build`: one job, every web gate, then a deploy step that only runs for a
+# push to `main`. Everything executes inside the flake's devShell, so CI uses
+# the exact node, pnpm, cargo, lld and wasm-bindgen the checkout pins —
+# Cloudflare Pages' own build image has no Rust, which is why the build lives
+# here and the Pages git integration is switched off (see .claude/rules/deploy.md).
+#
+# `desktop`: `pnpm desktop:check` (clippy + the crate's tests) in the second
+# devShell, which is the only one that provides WebKitGTK. It runs alongside
+# `build` and does not gate the deploy: the web artifact has no dependency on
+# the crate, so a red desktop check says a protocol change broke the host, not
+# that the site is wrong — it fails the commit, not the deploy.
 #
 # Needs, set once in the repository settings:
 #   secrets  CLOUDFLARE_API_TOKEN     token with Cloudflare Pages: Edit
@@ -86,3 +92,47 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'sapling' }}
         run: nix develop -c pnpm exec wrangler pages deploy build --project-name "$PROJECT" --branch main
+
+  desktop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: cachix/install-nix-action@v31
+
+      # Its own key: the desktop shell adds WebKitGTK, GTK and GStreamer to the
+      # store, which the web job's cache never holds.
+      - name: Cache the nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-desktop-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-desktop-${{ runner.os }}-
+          gc-max-store-size-linux: 6G
+
+      # Its own `target` too: the crate links a different set of libraries.
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-desktop-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          restore-keys: cargo-desktop-${{ runner.os }}-
+
+      # `sherpa-rs-sys`'s build script downloads k2-fsa's prebuilt sherpa-onnx
+      # and onnxruntime for its pinned tag into `~/.cache/sherpa-rs` (see
+      # docs/desktop.md); Cargo.lock carries that pin, so its hash keys the
+      # cache and a bump refetches.
+      - name: Cache the sherpa-onnx libraries
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/sherpa-rs
+          key: sherpa-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: sherpa-${{ runner.os }}-
+
+      # No `pnpm install` and no site build: `desktop:check` is cargo only, and
+      # `tauri::generate_context!` accepts a missing `frontendDist` (verified:
+      # the crate checks with no `build/` at all).
+      - name: Desktop gates
+        run: nix develop .#desktop -c pnpm desktop:check
