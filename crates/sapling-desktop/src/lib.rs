@@ -12,6 +12,15 @@
 //! neither side can grow a method the other lacks; every merge rule, every read
 //! and every line of SQL against the read tables stays in `sapling-core`.
 //!
+//! Every command that waits for anything is `async` and hands its work to
+//! `spawn_blocking`, because a synchronous Tauri command runs on the main
+//! thread — the GTK loop that composites the webview — and anything it waits
+//! for is a frozen window. That is the two persistence commands as much as the
+//! two long TTS ones: `dispatch` blocks until the core thread has committed,
+//! and one Check makes three or more of those calls. The price is that the pool
+//! decides which of two overlapping calls reaches the core first, so the window
+//! keeps its own order (`src/lib/db/tauri.ts`); see `host.rs`'s header.
+//!
 //! Persistence is not the only thing a host can lend, though. The `tts` module
 //! (feature `tts`, on by default) is the second: Kokoro speech, which the
 //! browser runs as sherpa-onnx compiled to WASM and this host runs natively,
@@ -30,7 +39,6 @@ pub mod host;
 #[cfg(feature = "tts")]
 pub mod tts;
 
-#[cfg(feature = "tts")]
 use std::sync::Arc;
 
 #[cfg(feature = "tts")]
@@ -45,23 +53,41 @@ use crate::tts::TtsHandle;
 /// `void` method and for a read of a row that is not there. When the database
 /// did not open, every call answers `Err` with the reason, and the first one
 /// (`openTauriBackend`'s probe) is what puts it on the boot-error screen.
+///
+/// `async` on purpose: a synchronous Tauri command runs on the main thread, and
+/// this one waits on the core thread's answer — an fsync, or a whole
+/// `importData`. A Check writes three or more of these back to back, and on the
+/// main thread that is a frozen window.
 #[tauri::command]
-fn dispatch(
-    db: State<'_, Database>,
+async fn dispatch(
+    db: State<'_, Arc<Database>>,
     method: String,
     args: String,
 ) -> Result<Option<String>, String> {
-    db.dispatch(method, args)
+    let db = db.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || db.dispatch(method, args))
+        .await
+        .map_err(|cause| format!("the database call could not run: {cause}"))?
 }
 
 /// Appends local facts in one transaction. Here for parity with `WasmCore`;
 /// only a test rig seeds a store this way.
+///
+/// `async` for the same reason as [`dispatch`], and it is the heavier of the
+/// two: one transaction over a whole batch of facts.
 #[tauri::command]
-fn commit_all(db: State<'_, Database>, facts: String) -> Result<(), String> {
-    db.commit_all(facts)
+async fn commit_all(db: State<'_, Arc<Database>>, facts: String) -> Result<(), String> {
+    let db = db.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || db.commit_all(facts))
+        .await
+        .map_err(|cause| format!("the database call could not run: {cause}"))?
 }
 
 /// The read-table shape this build expects — the version `meta` records.
+///
+/// The one persistence command that stays synchronous: it reads a constant and
+/// touches neither the database nor the core thread, so the main thread is the
+/// cheapest place to answer it from.
 #[tauri::command]
 fn derived_schema_version() -> u32 {
     sapling_core::schema::DERIVED_SCHEMA_VERSION
@@ -180,7 +206,10 @@ pub fn run() {
             if let Some(error) = database.error() {
                 eprintln!("{error}");
             }
-            app.manage(database);
+            // Managed behind an `Arc` because the persistence commands are
+            // `async`: `spawn_blocking` needs something owned and `'static`,
+            // and a `State` borrow is neither. Same shape as `TtsHandle`.
+            app.manage(Arc::new(database));
             // Nothing is downloaded or loaded here — the handle only knows
             // where the model would be. The first tap on 🔊 pays for the rest.
             #[cfg(feature = "tts")]

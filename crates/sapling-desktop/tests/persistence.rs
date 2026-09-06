@@ -8,7 +8,11 @@
 //! file*, and read the same answers back.
 //!
 //! Everything goes through `CoreHandle::dispatch`, which is what the Tauri
-//! command calls, so the path under test is the one the app uses.
+//! command calls, so the path under test is the one the app uses. There is no
+//! webview here and there does not need to be: the command is two lines around
+//! this call, and what it adds — `spawn_blocking`, so the main thread is not
+//! the one waiting — is what the second test covers, since it means several
+//! pool threads can now be inside the handle at once.
 //!
 //! One field of an item cannot be compared against `expected.json` here and is
 //! stripped: `srs`, the schedule the core derives from the card **at read
@@ -156,6 +160,83 @@ fn the_database_outlives_the_process() {
         fs::read_to_string(dir.join(DEVICE_ID_FILE)).expect("the device id is still there"),
         device_id,
         "the device id is minted once and kept — it is half of a review's identity"
+    );
+
+    drop(core);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// The persistence commands are `async` and wait on `spawn_blocking`, so calls
+/// no longer arrive one at a time from the main thread: several pool threads
+/// can be inside the handle at once. Two things have to hold for that to be
+/// safe, and neither is visible from a single-threaded test.
+///
+/// The first is that the handle can be shared at all — `Arc<Database>` is what
+/// Tauri manages and what the command clones into its blocking closure, which
+/// needs `Send + Sync`. The second is that concurrent callers are *serialised*
+/// rather than racing: one thread owns the core, so sixteen writes issued at
+/// once must all land, none lost to a half-applied transaction.
+///
+/// What is deliberately not asserted is which of two concurrent calls wins.
+/// Nothing here decides that — the pool does — and it is the window that keeps
+/// the order it meant, by chaining its `invoke`s (`src/lib/db/tauri.ts`). The
+/// host's own guarantee is the weaker, sequential one, and it is checked at the
+/// end: a read issued after a write sees it.
+#[test]
+fn concurrent_calls_are_serialised_and_none_is_lost() {
+    use std::sync::Arc;
+
+    fn shareable<T: Send + Sync + 'static>() {}
+    shareable::<CoreHandle>();
+    shareable::<sapling_desktop::host::Database>();
+
+    let dir = std::env::temp_dir().join(format!(
+        "sapling-desktop-concurrent-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+
+    let core = Arc::new(CoreHandle::open(&dir).expect("the core opens on a fresh directory"));
+    let terms: Vec<String> = (0..16).map(|n| format!("word-{n}")).collect();
+
+    let writers: Vec<_> = terms
+        .iter()
+        .map(|term| {
+            let core = Arc::clone(&core);
+            let term = term.clone();
+            std::thread::spawn(move || {
+                read(&core, "markWord", json!([term, true]));
+            })
+        })
+        .collect();
+    for writer in writers {
+        writer.join().expect("a writer finishes");
+    }
+
+    let mut known: Vec<String> = read(&core, "getKnownTerms", json!([]))
+        .expect("getKnownTerms answers")
+        .as_array()
+        .expect("an array of terms")
+        .iter()
+        .map(|term| term.as_str().unwrap_or_default().to_owned())
+        .collect();
+    known.sort();
+    let mut expected = terms.clone();
+    expected.sort();
+    assert_eq!(known, expected, "every concurrent write landed exactly once");
+
+    // Back to back on one thread: the sequential guarantee the window's queue
+    // restores on top of the pool.
+    read(&core, "markWord", json!(["written-then-read", true]));
+    let after = read(&core, "getKnownTerms", json!([])).expect("getKnownTerms answers");
+    assert!(
+        after
+            .as_array()
+            .expect("an array of terms")
+            .iter()
+            .any(|term| term == "written-then-read"),
+        "a read issued after a write sees it"
     );
 
     drop(core);

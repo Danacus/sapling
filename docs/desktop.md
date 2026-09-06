@@ -49,8 +49,11 @@ Tauri's per-app data directory, named by the config's `identifier`
 | macOS | `~/Library/Application Support/app.sapling.desktop/` |
 | Windows | `%APPDATA%\app.sapling.desktop\` |
 
-Inside it: `sapling.db` (plus `-wal`/`-shm` — the file is opened in WAL mode)
-and `device-id`, one UUID v4 minted on first run. The device id is a *file* and
+Inside it: `sapling.db` (plus `-wal`/`-shm` — the file is opened in WAL mode,
+with `synchronous=NORMAL` beside it, so a commit does not fsync the WAL; an
+application crash still loses nothing, a power cut or kernel panic can lose the
+last transaction, which is one answered challenge) and `device-id`, one UUID v4
+minted on first run. The device id is a *file* and
 not a row because it is half of a review's identity and has to survive
 `resetData`, which empties the database including `meta`. WebKit puts its own
 caches and local storage in the same directory, which is also where the API key
@@ -79,6 +82,15 @@ commands `WasmCore` exposes to the database Worker — `dispatch`, `commit_all`,
 call, chosen by `backend.ts` when `inTauri()`; every argument still goes through
 `toPlain()`, because `client.ts` owns the proxy for both transports. The voice
 adds three more commands and is the section below.
+
+`dispatch` and `commit_all` are `async` and wait on `spawn_blocking`, like the
+two long voice commands: a synchronous Tauri command runs on the main thread,
+and `applyResult` makes three or more persistence calls on every Check. Because
+that puts them on a thread pool, `tauri.ts` chains each `invoke` behind the
+previous one so calls reach the core in the order the window made them — the
+Worker's message queue gives that for free and the pool does not. Symptom if it
+is ever removed: a read that follows an un-awaited write occasionally misses it,
+on the desktop only.
 
 Both are host capabilities in the same narrow sense — a file, and text-in
 audio-out. Neither carries a merge rule, a lesson, or a language.
@@ -205,9 +217,10 @@ whole minute rather than sitting at 100% through bzip2.
 `tts_synthesize` returns `tauri::ipc::Response`, not a `Vec<u8>`: the latter
 crosses as a JSON array of numbers, which for one sentence is megabytes of text
 parsed on the window thread for audio already in the right format. Both long
-commands are `async` and run their work on `spawn_blocking` — a synchronous
-Tauri command runs on the main thread, and a second of inference there is a
-frozen window. The engine is built on the first phrase and kept for the life of
+commands are `async` and run their work on `spawn_blocking`, for the reason the
+persistence commands are — a synchronous Tauri command runs on the main thread,
+and a second of inference there is a frozen window. The engine is built on the
+first phrase and kept for the life of
 the process, behind a `Mutex` because sherpa-onnx promises nothing about
 concurrent generation.
 

@@ -19,6 +19,15 @@
 //! `Connection` is gone before [`CoreHandle::open`] can be called again on the
 //! same file.
 //!
+//! What this thread does *not* decide is the order two calls arrive in. The
+//! persistence commands are `async` and wait on `spawn_blocking` (see the crate
+//! root), so several pool threads can be inside [`CoreHandle::run`] at once and
+//! whichever reaches the channel first is served first. The core thread then
+//! runs them one at a time in that arrival order. Ordering a window cares about
+//! — a read that must see the write before it — is the window's to keep, and
+//! `src/lib/db/tauri.ts` keeps it by chaining every `invoke` behind the
+//! previous one.
+//!
 //! ## A database that will not open is a screen, not a crash
 //!
 //! The browser's Worker answers its boot with `ready` or `bootError`, and the
@@ -111,6 +120,27 @@ fn open_core(dir: &Path) -> Result<Core, String> {
     sql.connection()
         .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get::<_, String>(0))
         .map_err(|e| format!("could not switch the database to WAL: {e}"))?;
+    // NORMAL beside it, which is what makes WAL worth having: at FULL — SQLite's
+    // default — every commit fsyncs the WAL, and a session's Check writes three
+    // or more of them back to back while the window waits. Under WAL, NORMAL is
+    // still durable against an application crash (the WAL is a file, not a
+    // buffer); what it gives up is the last transaction on a power cut or a
+    // kernel panic, which is one answered challenge. Unlike `journal_mode` this
+    // is a property of the *connection*, so it is set on every open.
+    sql.connection()
+        .pragma_update(None, "synchronous", "NORMAL")
+        .map_err(|e| format!("could not set the database to synchronous=NORMAL: {e}"))?;
+    // `PRAGMA synchronous = ...` answers nothing, so unlike `journal_mode` the
+    // value has to be read back to know it took. 1 is NORMAL.
+    let synchronous: i32 = sql
+        .connection()
+        .pragma_query_value(None, "synchronous", |row| row.get(0))
+        .map_err(|e| format!("could not read back the database's synchronous mode: {e}"))?;
+    if synchronous != 1 {
+        return Err(format!(
+            "the database stayed at synchronous={synchronous}, not NORMAL"
+        ));
+    }
     Core::open(
         Box::new(sql),
         device_id,

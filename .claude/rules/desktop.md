@@ -18,10 +18,16 @@ someone to run the check by hand.
   (`sapling.db` in Tauri's app-data directory), a device id, the system clock
   and the system time zone, and it hands all four to `sapling-core` through the
   `Sql`/`LocalDay` seams `core.md` describes. It contains **no merge rule, no
-  read, and no SQL against the read tables** — the one statement it issues is
-  `PRAGMA journal_mode = WAL`, which is a property of the file and not of the
-  data. A behaviour that differs between the browser and the desktop is a bug
-  in one of the two hosts; there is only one implementation of the rules.
+  read, and no SQL against the read tables** — the only statements it issues are
+  two pragmas, `journal_mode = WAL` and `synchronous = NORMAL`, which are
+  properties of the file and the connection and not of the data. NORMAL is what
+  makes WAL worth having: at SQLite's default FULL every commit fsyncs the WAL,
+  and one Check writes three or more back to back. Under WAL, NORMAL is still
+  durable against an application crash and gives up only the last transaction on
+  a power cut. `PRAGMA synchronous = …` answers nothing, so unlike `journal_mode`
+  it is read back to know it took. A behaviour that differs between the browser
+  and the desktop is a bug in one of the two hosts; there is only one
+  implementation of the rules.
 
 - **A host may lend a *capability* the webview cannot run, and speech is the
   second one.** The test is whether the thing is a platform primitive with no
@@ -50,10 +56,18 @@ someone to run the check by hand.
   **The voice adds exactly three more** — `tts_status`, `tts_download`,
   `tts_synthesize` — and they are not part of that protocol and never touch it.
   `tts_synthesize` answers a `tauri::ipc::Response` carrying a whole WAV file,
-  because a `Vec<u8>` would cross as a JSON array of numbers. Both long
-  commands are `async` and hand their work to `spawn_blocking`: a synchronous
-  Tauri command runs on the main thread, and a second of ONNX inference there
-  is a frozen window.
+  because a `Vec<u8>` would cross as a JSON array of numbers.
+
+- **Every command that waits for anything is `async` and hands its work to
+  `spawn_blocking`.** A synchronous Tauri command runs on the main thread — the
+  GTK loop that composites the webview — so a second of ONNX inference there is
+  a frozen window, and so is a commit's fsync: `dispatch` blocks until the core
+  thread has answered, and `applyResult` makes three or more such calls on every
+  Check. That is `dispatch`, `commit_all`, `tts_download` and `tts_synthesize`;
+  `derived_schema_version` stays synchronous because it reads a constant. The
+  database is therefore managed as `Arc<Database>` — `spawn_blocking` needs
+  something owned and `'static`, exactly as `TtsHandle` does. **The price is
+  ordering**, and it is paid on the JavaScript side: see the transport bullet.
 
 - **`tts::kokoro` is the only `unsafe` in the crate**, which is why the root
   says `deny(unsafe_code)` rather than `forbid`. It exists because
@@ -98,7 +112,9 @@ someone to run the check by hand.
   the core for its whole life and posts closures to it; that serialises calls
   arriving from Tauri's command pool, and dropping `CoreHandle` closes the
   channel and joins, so "the database is closed" is true by the time the drop
-  returns.
+  returns. It serialises them; it does not *order* them — with the commands
+  `async`, several pool threads can be inside `CoreHandle::run` at once and
+  whichever reaches the channel first is served first.
 
 - **The device id is a file, `device-id`, beside the database.** It is half of a
   review's identity (`reviews` is keyed `(itemId, at, device)`), so it must
@@ -113,7 +129,15 @@ someone to run the check by hand.
   does — `null` back from the command is `undefined`, because JSON cannot say
   it. `backend.ts` decides which transport by `inTauri()`, and imports this
   module only when that is true, so a browser loads neither it nor
-  `@tauri-apps/api`.
+  `@tauri-apps/api`. **It carries one thing the Worker transport gets for
+  free: the order.** A Worker's message queue is first-in-first-out, so two
+  calls issued without awaiting run in the order they were made; async commands
+  on a thread pool promise nothing of the sort, and a caller that fires a write
+  and then reads could see the state before it. So every `invoke` is chained
+  behind the previous one — behind its *settling*, so a rejected call does not
+  wedge the queue — which restores exactly the Worker's guarantee and costs no
+  throughput, since the core is one thread either way. The fix belongs here and
+  not in the host, which has no way to know what order the window meant.
 
 - **`src/lib/tts/native.ts` is the same kind of thing for the voice**: three
   `invoke`s and one Tauri event listener behind the shape `sherpa.ts` already
