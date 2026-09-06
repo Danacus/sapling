@@ -1,70 +1,86 @@
-//! Float32 PCM → RIFF/WAVE, the Rust half of `src/lib/tts/wav.ts`.
+//! Float32 PCM → RIFF/WAVE, so the webview has something `<audio>` can play.
 //!
 //! The webview still *plays* the audio — only synthesis moved native (see
 //! `mod.rs`) — and the thing it plays is an `<audio>` element over a blob. So
 //! the command hands back a complete WAV file rather than samples: the
 //! TypeScript side never sees a float, never allocates a 24 kHz array, and the
-//! byte layout is decided in exactly one place per host.
+//! byte layout is decided in exactly one place per host. Mono, 16-bit signed:
+//! 16 bits is indistinguishable at speech bandwidth and halves what the
+//! in-memory clip cache holds.
 //!
-//! Kept byte-identical to the TypeScript encoder on purpose — mono, 16-bit
-//! signed, the same asymmetric scaling — so a clip synthesized in the browser
-//! and the same clip synthesized here are the same file. 16-bit is
-//! indistinguishable at speech bandwidth and halves what the in-memory clip
-//! cache holds.
+//! ## The container is `hound`'s, and the samples are ours
+//!
+//! Writing RIFF by hand is thirty lines of offsets to get subtly wrong, so
+//! `hound` writes the header and patches its sizes; all this module still owns
+//! is the f32 → i16 conversion, which is a decision about audio rather than
+//! about a file format.
+//!
+//! ## This is *not* kept byte-identical to `src/lib/tts/wav.ts`
+//!
+//! It used to be, and the parity cost a `f64` widening and a hand-rolled
+//! `Math.round` tie-break. Nothing enforced it — there is no fixture and no
+//! cross-host test comparing the two encoders — and nothing depends on it: a
+//! synthesized clip is never synced, never replayed and never diffed, only
+//! played once and cached in memory on the host that made it. A one-LSB
+//! difference between the two encoders is inaudible and reaches nothing.
+//!
+//! The load-bearing JavaScript parity lives in `crates/sapling-core/src/js.rs`,
+//! where number formatting really is the contract, because every device
+//! replays the same event log and must derive the same bytes. That is a
+//! different problem and this file is not part of it.
+
+use std::io::Cursor;
 
 /// Bytes of RIFF + fmt + data headers before the samples start.
+///
+/// `hound` writes the plain 16-byte PCM `fmt ` chunk for this spec, so the
+/// figure is the classic 44; `writes_a_riff_header_that_describes_the_samples`
+/// is what holds it to that rather than an assumption.
 pub const HEADER_BYTES: usize = 44;
 
 /// Encodes mono `samples` as a 16-bit PCM WAV file.
+pub fn encode_wav(samples: &[f32], sample_rate: u32) -> Vec<u8> {
+    let spec = hound::WavSpec {
+        channels: 1,
+        // A rate of 0 makes the file undecodable and `<audio>` fails silently,
+        // which is the one failure mode speech may not have.
+        sample_rate: sample_rate.max(1),
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+
+    let mut out = Vec::with_capacity(HEADER_BYTES + samples.len() * 2);
+    // Every one of these can only fail on I/O or on a spec `hound` rejects, and
+    // the destination is a `Vec` and the spec is the constant above — so an
+    // error here is this file being wrong, not the audio.
+    let mut writer = hound::WavWriter::new(Cursor::new(&mut out), spec)
+        .expect("a mono 16-bit PCM spec is one hound accepts");
+    for &sample in samples {
+        writer
+            .write_sample(to_i16(sample))
+            .expect("writing to a Vec cannot fail");
+    }
+    writer.finalize().expect("writing to a Vec cannot fail");
+
+    out
+}
+
+/// Scales one float sample into the 16-bit range.
 ///
 /// Values outside [-1, 1] are clamped rather than wrapped: a clipped peak is
 /// ugly, an integer overflow is a burst of noise. A non-finite sample (the
-/// shape the int8 Kokoro bug takes — see `mod.rs`) clamps to silence rather
-/// than to a random integer, but it is `synthesize` that refuses to return
-/// such a clip at all.
-pub fn encode_wav(samples: &[f32], sample_rate: u32) -> Vec<u8> {
-    let rate = sample_rate.max(1);
-    let data_bytes = samples.len() * 2;
-    let mut out = Vec::with_capacity(HEADER_BYTES + data_bytes);
-
-    out.extend_from_slice(b"RIFF");
-    out.extend_from_slice(&(36 + data_bytes as u32).to_le_bytes()); // file size - 8
-    out.extend_from_slice(b"WAVE");
-
-    out.extend_from_slice(b"fmt ");
-    out.extend_from_slice(&16u32.to_le_bytes()); // PCM fmt chunk length
-    out.extend_from_slice(&1u16.to_le_bytes()); // format 1 = PCM
-    out.extend_from_slice(&1u16.to_le_bytes()); // mono
-    out.extend_from_slice(&rate.to_le_bytes());
-    out.extend_from_slice(&(rate * 2).to_le_bytes()); // byte rate = rate * channels * 2
-    out.extend_from_slice(&2u16.to_le_bytes()); // block align
-    out.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
-
-    out.extend_from_slice(b"data");
-    out.extend_from_slice(&(data_bytes as u32).to_le_bytes());
-
-    for sample in samples {
-        // `clamp` would panic on a NaN; this ordering maps NaN to 0.0.
-        let value = if *sample > 1.0 {
-            1.0
-        } else if *sample > -1.0 {
-            *sample
-        } else if *sample <= -1.0 {
-            -1.0
-        } else {
-            0.0
-        };
-        // Asymmetric scaling, matching `wav.ts`: -1 maps to -32768, +1 to 32767.
-        // The arithmetic is `f64` because the TypeScript's is: a `Float32Array`
-        // element widens to a double before it is multiplied, and doing it in
-        // `f32` here would round a handful of samples the other way.
-        let scale = if value < 0.0 { 32768.0 } else { 32767.0 };
-        // JavaScript's `Math.round`: halves go towards +∞, not away from zero.
-        let rounded = (value as f64 * scale + 0.5).floor() as i32;
-        out.extend_from_slice(&(rounded.clamp(-32768, 32767) as i16).to_le_bytes());
+/// shape the int8 Kokoro bug takes — see `mod.rs`) becomes silence rather than
+/// a random integer, but it is `synthesize` that refuses to return such a clip
+/// at all.
+///
+/// The scaling is symmetric — ±1 maps to ±32767 — which is one multiply and no
+/// branch on the sign. Reaching -32768 as well would buy a thirty-thousandth of
+/// a dB of headroom and cost a conditional on every sample.
+fn to_i16(sample: f32) -> i16 {
+    if sample.is_nan() {
+        return 0;
     }
-
-    out
+    (sample.clamp(-1.0, 1.0) * 32767.0).round() as i16
 }
 
 #[cfg(test)]
@@ -88,6 +104,8 @@ mod tests {
     fn writes_a_riff_header_that_describes_the_samples() {
         let wav = encode_wav(&[0.0; 10], 24000);
 
+        // This is also what pins `HEADER_BYTES`: the `data` chunk starting at
+        // 36 means hound wrote the plain 16-byte `fmt ` chunk and no other.
         assert_eq!(wav.len(), HEADER_BYTES + 20);
         assert_eq!(&wav[0..4], b"RIFF");
         assert_eq!(&wav[8..12], b"WAVE");
@@ -105,14 +123,17 @@ mod tests {
     }
 
     #[test]
-    fn scales_the_full_range_asymmetrically() {
-        let wav = encode_wav(&[0.0, 1.0, -1.0, 0.5], 24000);
+    fn scales_the_full_range_symmetrically() {
+        let wav = encode_wav(&[0.0, 1.0, -1.0, 0.5, -0.5], 24000);
 
         assert_eq!(i16_at(&wav, 0), 0);
         assert_eq!(i16_at(&wav, 1), 32767);
-        assert_eq!(i16_at(&wav, 2), -32768);
-        // 0.5 * 32767 = 16383.5, and JavaScript rounds a half towards +∞.
+        assert_eq!(i16_at(&wav, 2), -32767);
+        // 0.5 * 32767 = 16383.5, and Rust's `round` takes a half away from
+        // zero — so this pair is symmetric where JavaScript's `Math.round`
+        // would have sent both towards +∞.
         assert_eq!(i16_at(&wav, 3), 16384);
+        assert_eq!(i16_at(&wav, 4), -16384);
     }
 
     #[test]
@@ -120,7 +141,7 @@ mod tests {
         let wav = encode_wav(&[9.0, -9.0, f32::NAN, f32::INFINITY], 24000);
 
         assert_eq!(i16_at(&wav, 0), 32767);
-        assert_eq!(i16_at(&wav, 1), -32768);
+        assert_eq!(i16_at(&wav, 1), -32767);
         assert_eq!(i16_at(&wav, 2), 0, "NaN is silence, never a random integer");
         assert_eq!(i16_at(&wav, 3), 32767);
     }

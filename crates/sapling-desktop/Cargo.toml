@@ -22,7 +22,7 @@ path = "src/main.rs"
 # feature only so `cargo check -p sapling-desktop --no-default-features` can
 # still typecheck the host on a machine with no sherpa toolchain.
 default = ["tts"]
-tts = ["dep:sherpa-rs-sys", "dep:ureq", "dep:tar", "dep:bzip2", "dep:sha2"]
+tts = ["dep:sherpa-rs-sys", "dep:ureq", "dep:tar", "dep:bzip2", "dep:sha2", "dep:hound"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -65,3 +65,7 @@ ureq = { version = "3", optional = true, default-features = false, features = [
 tar = { version = "0.4", optional = true }
 bzip2 = { version = "0.6", optional = true }
 sha2 = { version = "0.10", optional = true }
+# The RIFF/WAVE container `tts_synthesize` answers with. Pure Rust, no unsafe,
+# no dependencies of its own, and it writes into an in-memory `Cursor` — so the
+# byte layout is a library's problem rather than ours (`src/tts/wav.rs`).
+hound = { version = "3.5", optional = true }
