@@ -99,6 +99,67 @@ over the custom protocol, which does *not* fall back to `index.html` the way
 `static/_redirects` does. Starting at `/` works and client-side navigation
 works; a reload on a deep route would not. Untested, because nothing reloads.
 
+## YouTube, and the page that has to be hosted
+
+**The symptom.** A YouTube-backed reading text plays under `pnpm desktop:dev`
+and fails in a release build with YouTube's error 153, "video player
+configuration error". Before the fix it failed *silently* — a frame that never
+filled — because `youtube.ts` wired `onReady` and `onStateChange` but not
+`onError`.
+
+**The cause is the scheme, not the code.** In dev the app is Vite's
+`http://localhost:5173`, which YouTube accepts. A release build serves the app
+from `tauri://localhost`, and a browser sends no `Referer` for a document on a
+custom scheme; YouTube's IFrame API will not configure a player without one.
+This is [tauri-apps/tauri#14422](https://github.com/tauri-apps/tauri/issues/14422),
+open upstream, and no configuration closes it: `useHttpsScheme` applies to
+Windows and Android only, and `tauri-plugin-localhost` (which would serve the
+app over a real `http://` origin) makes Tauri treat the page as untrusted and
+drops the IPC every persistence command rides on.
+
+**The fix is one hosted document.** `embed/youtube.html` runs the app's *own*
+`youtubePlayer` — imported from `src/lib/media/youtube.ts`, not copied — on a
+real HTTPS origin, and the desktop app frames it and drives it over
+`postMessage`:
+
+```
+tauri://localhost/                          the app, unchanged — IPC intact
+ └─ iframe → https://<embed host>/youtube.html?v=ID     a real network fetch
+     └─ iframe → https://www.youtube-nocookie.com/…     a referer YouTube takes
+```
+
+`Player`'s five verbs and a clock are what crosses (`play`, `pause`,
+`seek {ms}` down; `ready`, `time {ms, playing}`, `fail {message}` up), so the
+reader and the subtitle-following logic are untouched and never learn which
+player they got — `src/lib/media/youtube-host.ts` chooses, gated on
+`inTauri()`. `.claude/rules/media.md` is the contract; `embed-protocol.ts`
+carries the reasoning in full.
+
+**It is deliberately not in `static/`.** Anything there is precached by the
+service worker and copied into the desktop bundle, so it would ship inside the
+app and be served over `tauri://localhost` — the exact scheme the page exists to
+escape — from the origin that holds the learner's database. The page is meant to
+be framed by anything, so it lives on a throwaway origin of its own.
+
+**Configuring it.** `VITE_YOUTUBE_EMBED_URL` is the page's full URL, read at
+build time (`src/lib/media/embed-url.ts`, the same shape as `VITE_SYNC_URL`):
+
+```sh
+pnpm embed:dev      # the page alone, on Vite's next free port
+pnpm embed:build    # -> embed/dist/, which the deploy workflow uploads
+```
+
+A desktop build with it unset is a supported configuration: a YouTube text says
+that the embed page is not configured, in the video's place, and the text stays
+readable — the same degradation every other player failure has. `pnpm
+desktop:dev` takes the framed path too, so put the variable in your `.env` to
+work on it; testing the path that ships is the point.
+
+Deploying it is a second Cloudflare Pages project — see `.claude/rules/deploy.md`
+for the workflow step, the repository variables, and why the page must stay
+frameable (no `X-Frame-Options`, no `frame-ancestors`: the framer's origin is a
+custom scheme no allowlist can name).
+
 ## Speech
 
 **Why any of this is native.** The browser runs Kokoro as sherpa-onnx compiled
@@ -316,7 +377,9 @@ Not done, and each is real work: bundling (icons, `.deb`/`.AppImage`/`.dmg`,
 signing), a CSP, SPA fallback for deep routes,
 a native menu and window-state persistence, auto-update, and a decision about
 whether the desktop build syncs at all — it uses the same `VITE_SYNC_URL` the
-web build does, and nothing about that was exercised.
+web build does, and nothing about that was exercised. A CSP here would have to
+allow framing the embed host as well as the two YouTube origins, since a shipped
+desktop build reaches YouTube only through that frame.
 
 For the voice specifically: shipping sherpa-onnx and onnxruntime as bundled
 libraries rather than as a build-time download into `~/.cache` (today

@@ -12,11 +12,25 @@
 # the crate, so a red desktop check says a protocol change broke the host, not
 # that the site is wrong — it fails the commit, not the deploy.
 #
+# The embed page (`embed/`) is a *third* artifact and its own Pages project. It
+# is the one document that talks to YouTube's IFrame API on behalf of the
+# desktop shell, which serves the app from `tauri://localhost` and therefore has
+# no referer YouTube will accept (error 153, .claude/rules/media.md). It must be
+# on an origin of its own — it is deliberately frameable — so it is built here
+# and uploaded separately, and the step is skipped entirely when no project is
+# configured for it. Its build runs on every PR regardless, so a page that no
+# longer compiles fails the commit.
+#
 # Needs, set once in the repository settings:
 #   secrets  CLOUDFLARE_API_TOKEN     token with Cloudflare Pages: Edit
 #            CLOUDFLARE_ACCOUNT_ID
 #   vars     CLOUDFLARE_PAGES_PROJECT the Pages project name (defaults to `sapling`)
 #            VITE_SYNC_URL            the sync Worker's URL; unset builds without sync
+#            CLOUDFLARE_PAGES_EMBED_PROJECT  the embed page's own Pages project;
+#                                     unset means it is never deployed
+#            VITE_YOUTUBE_EMBED_URL   the deployed embed page's full URL, e.g.
+#                                     https://embed.example.org/youtube.html;
+#                                     read by desktop builds only
 name: Build and deploy
 
 on:
@@ -83,7 +97,10 @@ jobs:
       - name: Build
         env:
           VITE_SYNC_URL: ${{ vars.VITE_SYNC_URL }}
-        run: nix develop -c pnpm build
+          VITE_YOUTUBE_EMBED_URL: ${{ vars.VITE_YOUTUBE_EMBED_URL }}
+        run: |
+          nix develop -c pnpm build
+          nix develop -c pnpm embed:build
 
       - name: Deploy to Cloudflare Pages
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -92,6 +109,18 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'sapling' }}
         run: nix develop -c pnpm exec wrangler pages deploy build --project-name "$PROJECT" --branch main
+
+      # A separate origin, so a separate project — there is no default name to
+      # fall back to, and no reason to invent one: a repository that has not
+      # configured this simply does not have an embed page, and the desktop
+      # build says so in the video's place.
+      - name: Deploy the embed page to Cloudflare Pages
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.CLOUDFLARE_PAGES_EMBED_PROJECT != ''
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          EMBED_PROJECT: ${{ vars.CLOUDFLARE_PAGES_EMBED_PROJECT }}
+        run: nix develop -c pnpm exec wrangler pages deploy embed/dist --project-name "$EMBED_PROJECT" --branch main
 
   desktop:
     runs-on: ubuntu-latest

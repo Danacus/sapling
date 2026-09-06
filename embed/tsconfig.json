@@ -1,0 +1,26 @@
+{
+	// The embed page's own typecheck. `svelte-check`'s project covers `src/**`
+	// only (see `.svelte-kit/tsconfig.json`), so this directory would otherwise
+	// be typechecked by nothing at all — and it imports straight out of
+	// `src/lib/media/`, where a signature change would break it silently.
+	// `pnpm check` runs `tsc -p embed/tsconfig.json` for exactly that.
+	//
+	// The two entries below seed the program; everything they import — the app's
+	// player, the protocol, the id check — is pulled in and checked with them.
+	// Colocated `*.test.ts` files are not imported and so are not in scope, which
+	// is why no vitest types are needed here.
+	"compilerOptions": {
+		"target": "esnext",
+		"module": "esnext",
+		"moduleResolution": "bundler",
+		"lib": ["esnext", "DOM", "DOM.Iterable"],
+		"types": ["vite/client"],
+		"paths": { "$lib/*": ["../src/lib/*"] },
+		"verbatimModuleSyntax": true,
+		"isolatedModules": true,
+		"strict": true,
+		"skipLibCheck": true,
+		"noEmit": true
+	},
+	"include": ["youtube.ts", "vite.config.ts"]
+}

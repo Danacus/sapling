@@ -1,0 +1,30 @@
+# Cloudflare Pages response headers for the embed origin. Copied verbatim into
+# embed/dist/ by Vite (this is the project's publicDir).
+#
+# **This page must stay frameable.** It is framed by Sapling's desktop shell,
+# whose document lives at `tauri://localhost` — a custom scheme, and therefore
+# an origin no `frame-ancestors` list can name. So there is no
+# `X-Frame-Options` here and no `frame-ancestors` anywhere: a policy that tried
+# to allowlist the framer would block it instead, which is the failure this
+# whole page exists to fix. Cloudflare Pages sets neither header by default;
+# this file is the record that the omission is deliberate.
+#
+# **And no CSP**, for the reason `static/_headers` gives about the app: the page
+# loads https://www.youtube.com/iframe_api and frames
+# https://www.youtube-nocookie.com, so any policy added later has to name both
+# in script-src and frame-src or the player fails with nothing in the console to
+# say why. If one is ever added, `frame-ancestors *` has to be part of it.
+#
+# Being on its own origin is what makes that acceptable: nothing of the
+# learner's is here. The page stores nothing, reads nothing, and its whole input
+# is an eleven-character video id in the query string.
+
+# Hashed by Vite, so they can be cached forever — same bargain as the app's
+# /_app/immutable/*.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# The page itself is one small document and changes with the app it serves;
+# revalidating it every time costs a round trip and buys a fix landing at once.
+/youtube.html
+  Cache-Control: no-cache
