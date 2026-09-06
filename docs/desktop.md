@@ -347,6 +347,15 @@ Item by item, against the things the brief asked about:
   advances), `<audio>` plays a generated WAV, and the criticals are gone. A
   packaged build would have to ship or depend on these.
 
+- **YouTube pauses a second or two late, and that is the engine.** Pressing
+  pause — the app's button or a click on the picture — stops the video only
+  after a one-to-two-second lag. The click case never touches Sapling's code
+  (it lands inside YouTube's own iframe), and the same lag reproduces in GNOME
+  Web on the embed page opened directly, so it is WebKitGTK's GStreamer Media
+  Source Extensions pipeline and not the `postMessage` bridge (verified
+  2026-09-06). Firefox on the same page pauses instantly. There is no knob for
+  it in the app; do not re-investigate the bridge for this symptom.
+
 - **Console noise seen at launch**, none of it fatal: `VM 0x… received
   NeedDebuggerBreak trap` from JavaScriptCore's remote inspector on the first
   dev run. No compositing or dmabuf errors appeared, so
