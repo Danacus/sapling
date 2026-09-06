@@ -70,3 +70,11 @@ pnpm golden:update
 
 rewrites every `expected.json` from the current core. Only do it after a
 deliberate change to the merge rules or a read; the diff is the review.
+
+The file is written by the **wasm** build, the one the browser loads. Every
+value in it is then matched character for character by both runners, with one
+exception: `tests/golden.rs` compares a card's `stability` and `difficulty`
+with a relative tolerance of `1e-5`, because the FSRS model computes in `f32`
+and `exp`/`powf` differ by an ulp or two between the host's libm and the one
+wasm links. That is a difference around the seventh significant digit; anything
+larger, and anything at all in another field, is a finding about the core.

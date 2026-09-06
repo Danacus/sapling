@@ -31,7 +31,7 @@ import {
 	upsertItems,
 	type ExportEnvelope
 } from '$lib/db';
-import { newCardState, reviewCard } from '$lib/srs';
+import { newCardState } from '$lib/srs';
 import type { Challenge, KnowledgeItem, Profile, ReadingText } from '$lib/types';
 import { setBackendForTesting } from './backend';
 import { makeTestBackend, type TestBackend } from './backend.testing';
@@ -179,9 +179,9 @@ describe('export', () => {
 describe('legacy import', () => {
 	it('accepts a v2 envelope written by the old Dexie build', async () => {
 		// The old build stored a card alongside history. The new one folds the card
-		// from the reviews, so the stored one is ignored rather than trusted — and
-		// the result must still be the card the old build had.
-		const stored = reviewCard(newCardState(1000), 3, 2000);
+		// from the reviews, so the stored one is ignored rather than trusted — this
+		// one is nonsense, and what comes back is the fold of `history`.
+		const nonsense = { ...newCardState(1000), stability: 999, difficulty: 9, reps: 42 };
 		const legacy = JSON.stringify({
 			version: 2,
 			exportedAt: 9999,
@@ -192,7 +192,7 @@ describe('legacy import', () => {
 					kind: 'vocab',
 					term: '书',
 					meaning: 'book',
-					fsrsCard: stored,
+					fsrsCard: nonsense,
 					introducedAt: 1000,
 					history: [{ at: 2000, grade: 3 }]
 				}
@@ -203,8 +203,15 @@ describe('legacy import', () => {
 
 		const restored = await getItem('i1');
 		expect(restored?.history.map((entry) => [entry.at, entry.grade])).toEqual([[2000, 3]]);
-		expect(restored?.fsrsCard).toEqual(stored);
 		expect(restored).toMatchObject({ reviewCount: 1, correctCount: 1 });
+
+		// The same word and the same one review, arriving the ordinary way. The
+		// expectation comes from the store rather than from `$lib/srs`, which runs
+		// ts-fsrs while the core runs the `fsrs` crate.
+		setBackendForTesting(await makeTestBackend());
+		await upsertItems([item('i1', '书', 1000)]);
+		await updateItemAfterReview('i1', (card) => card, { at: 2000, grade: 3 });
+		expect(restored?.fsrsCard).toEqual((await getItem('i1'))?.fsrsCard);
 	});
 
 	it('replaces existing items rather than merging into them', async () => {

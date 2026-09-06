@@ -16,6 +16,15 @@ serde = { version = "1", features = ["derive"] }
 # `preserve_order` so an object round-trips with its keys where JavaScript put them.
 serde_json = { version = "1", features = ["preserve_order"] }
 rusqlite = { version = "0.40", features = ["bundled"], optional = true }
+# FSRS itself, from the team that also writes ts-fsrs. `default-features = false`
+# is not worth spelling: the only default feature is the experimental cost model,
+# and turning it off still leaves `rand`/`rayon` in the tree (neither is reachable
+# from `next_states`).
+fsrs = "6.6.2"
+# Never called: `fsrs` pulls `rand` in for its optimizer, `rand` pulls `getrandom`,
+# and `getrandom` refuses to compile for wasm32 until something turns this feature
+# on. A direct dependency is how a leaf crate's feature gets unified in.
+getrandom = { version = "0.4", features = ["wasm_js"] }
 
 [dev-dependencies]
 # The crate's tests need the adapter; this is how a crate turns on its own feature.

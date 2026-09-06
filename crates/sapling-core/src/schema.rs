@@ -90,7 +90,12 @@ pub fn review_key(item_id: &str, at: f64, device: &str) -> String {
 }
 
 /// The shape of the read tables, as a number to bump. Must match the TypeScript.
-pub const DERIVED_SCHEMA_VERSION: u32 = 3;
+///
+/// Bumped for 4 when the SRS moved from the ts-fsrs port to the `fsrs` crate:
+/// the numbers a review folds to changed, and a device that kept its stored
+/// cards would carry old ones beside new ones, item by item, forever. Rebuilding
+/// from the log is what makes every device agree again.
+pub const DERIVED_SCHEMA_VERSION: u32 = 4;
 
 /// Every read table the materializer owns; `events` and `meta` survive a rebuild.
 pub const DERIVED_TABLES: [&str; 14] = [

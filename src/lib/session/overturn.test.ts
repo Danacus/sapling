@@ -16,10 +16,10 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { getItem } from '$lib/db';
+import { getItem, updateItemAfterReview } from '$lib/db';
 import { setBackendForTesting } from '$lib/db/backend';
 import { makeTestBackend, type TestBackend } from '$lib/db/backend.testing';
-import { Grade, newCardState, reviewCard } from '$lib/srs';
+import { Grade, newCardState } from '$lib/srs';
 import type { FsrsCardState } from '$lib/srs';
 import type { Challenge } from '$lib/types';
 
@@ -170,40 +170,49 @@ describe('applyResult', () => {
 
 describe('amendResult', () => {
 	/** Plays a correct answer through `applyResult`, as the session would. */
-	async function answeredCorrectly(): Promise<{
-		prior: FsrsCardState;
-		priors: Map<string, FsrsCardState | null>;
-	}> {
+	async function answeredCorrectly(): Promise<Map<string, FsrsCardState | null>> {
 		await seed('i1');
-		const prior = (await cardOf('i1')) as FsrsCardState;
-		const priors = await applyResult(single, { verdict: 'correct', answerGiven: 'leo', now: NOW });
-		return { prior, priors };
+		return applyResult(single, { verdict: 'correct', answerGiven: 'leo', now: NOW });
+	}
+
+	/**
+	 * The card a fresh item lands on after a single review of `grade` at
+	 * {@link NOW} — the same store, folding the same one-review history.
+	 *
+	 * The expectation is drawn from the core rather than computed here on
+	 * purpose: `$lib/srs` runs ts-fsrs and the core runs the `fsrs` crate, so a
+	 * card the two agree on to the last decimal is not a thing to assert.
+	 */
+	async function foldedAlone(id: string, grade: Grade): Promise<FsrsCardState | undefined> {
+		await seed(id);
+		await updateItemAfterReview(id, (card) => card, { at: NOW, grade });
+		return cardOf(id);
 	}
 
 	it('rewrites the review instead of stacking a second one', async () => {
-		const { prior, priors } = await answeredCorrectly();
+		const priors = await answeredCorrectly();
 		expect(await historyOf('i1')).toHaveLength(1);
 
 		await amendResult(single, Grade.Easy, priors, NOW);
 
 		expect(await historyOf('i1')).toEqual([{ at: NOW, grade: Grade.Easy }]);
-		// The card follows the rewritten history, which lands in the same place
-		// the old "recompute from the captured prior" arithmetic did.
-		expect(await cardOf('i1')).toEqual(reviewCard(prior, Grade.Easy, NOW));
+		// The card follows the rewritten history: one Easy review, not a Good
+		// with an Easy stacked on top of it.
+		expect(await cardOf('i1')).toEqual(await foldedAlone('ref', Grade.Easy));
 	});
 
 	it('amending twice equals amending once with the last grade', async () => {
-		const { prior, priors } = await answeredCorrectly();
+		const priors = await answeredCorrectly();
 
 		await amendResult(single, Grade.Easy, priors, NOW);
 		await amendResult(single, Grade.Hard, priors, NOW);
 
 		expect(await historyOf('i1')).toEqual([{ at: NOW, grade: Grade.Hard }]);
-		expect(await cardOf('i1')).toEqual(reviewCard(prior, Grade.Hard, NOW));
+		expect(await cardOf('i1')).toEqual(await foldedAlone('ref', Grade.Hard));
 	});
 
 	it('leaves items the review skipped, and match-pairs rounds, untouched', async () => {
-		const { priors } = await answeredCorrectly();
+		const priors = await answeredCorrectly();
 		// Present on the challenge but absent from the priors: never reviewed.
 		await seed('i2');
 

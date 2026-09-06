@@ -5,6 +5,17 @@
  * module so the `fsrsCard: unknown` field on `KnowledgeItem` is cast in exactly
  * one place. Every function here is pure and deterministic: callers always
  * pass `now` (epoch ms) explicitly, nothing reads the system clock.
+ *
+ * **This is not what schedules a card.** The stored card is folded from the
+ * review log by `crates/sapling-core/src/srs.rs`, which runs the `fsrs` crate
+ * inside the same scheduler shape ts-fsrs gave this app — the same FSRS-6
+ * weights and the same learning steps, but an independent implementation in
+ * `f32`, so the two agree in behaviour and not in the last decimal. What lives
+ * here is therefore the *reading* side — `isDue`, `retrievability`,
+ * `wordStrength`, `selectSessionItems` — plus {@link reviewCard}, which is only
+ * ever an optimistic preview: `updateItemAfterReview` drops the card its
+ * callers compute and the core's fold is what comes back. Never compare a card
+ * from here against one the store returned.
  */
 
 import { createEmptyCard, fsrs, type Card, type Grade as FsrsGrade } from 'ts-fsrs';
@@ -122,7 +133,11 @@ export function gradeFromResult(verdict: Verdict): Grade {
 	}
 }
 
-/** Runs ts-fsrs scheduling for a review and returns the new serializable state. */
+/**
+ * Runs ts-fsrs scheduling for a review and returns the new serializable state —
+ * an *approximation* of the card the core will fold, for a caller that wants to
+ * show the effect of an answer before the store answers. See the module note.
+ */
 export function reviewCard(state: FsrsCardState, grade: Grade, now: number): FsrsCardState {
 	const scheduler = fsrs();
 	const card = toFsrsCard(state);

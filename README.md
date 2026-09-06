@@ -80,7 +80,7 @@ browser to [OpenRouter](https://openrouter.ai) with your own API key.
   targeted answer. This is the only thing that spends tokens mid-session, and
   only when you ask.
 - **FSRS scheduling.** Real spaced repetition via
-  [ts-fsrs](https://github.com/open-spaced-repetition/ts-fsrs), not a
+  [fsrs-rs](https://github.com/open-spaced-repetition/fsrs-rs), not a
   homegrown interval table.
 - **The Garden.** `/words` is the full vocabulary ledger with the FSRS state
   made legible — what each word's stability and due date actually are, and a way
@@ -157,9 +157,10 @@ src/lib/db/           Repositories: the only sanctioned way to touch storage,
 crates/sapling-core/  That materializer, the SRS and every backend method, in
                       Rust over a SQLite seam; compiled to wasm by
                       `pnpm core:wasm` and run inside the database Worker.
-src/lib/srs/          Spaced repetition (ts-fsrs). Pure and deterministic:
-                      `now` is always a parameter, never `Date.now()`.
-                      The single place `KnowledgeItem.fsrsCard` is cast.
+src/lib/srs/          The reading side of spaced repetition (ts-fsrs): due,
+                      retrievability, strength. The card itself is folded by
+                      the core. Pure and deterministic: `now` is always a
+                      parameter. The one place `fsrsCard` is cast.
 src/lib/validate/     Fuzzy answer grading. Unicode-aware normalization plus
                       Damerau-Levenshtein, producing correct/almost/wrong.
 src/lib/challenges/   The stored side of the challenge union: one module per

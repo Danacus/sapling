@@ -7,6 +7,17 @@
 //! order where the fixture says its rules are order-free. Every read is
 //! canonicalised through `js::stringify` and re-parsed before comparing, which
 //! is what `JSON.parse(JSON.stringify(...))` does on the TypeScript side.
+//!
+//! One value in a fixture is not compared exactly, and only here: a card's
+//! `stability` and `difficulty`. `expected.json` is blessed from the wasm build
+//! (`pnpm golden:update`), and the FSRS model computes in `f32`, where `exp`
+//! and `powf` come from the host's libm natively and from Rust's `libm` port on
+//! wasm32. Those disagree by an ulp or two, which a chain of them turns into a
+//! difference around the seventh significant digit — far below anything a merge
+//! rule or a scheduler decision could be wrong by, and far above `f64` noise.
+//! Everything else, `due` and `scheduled_days` included, still has to match
+//! character for character; those are whole days and minutes, and a model
+//! difference this small cannot move one.
 
 use std::cell::Cell;
 use std::collections::BTreeSet;
@@ -228,8 +239,28 @@ fn data_only(mut reads: Value) -> Value {
     reads
 }
 
+/// How far apart the model's own two floats may be, relative to their
+/// magnitude. Ten times the largest `f32` libm gap observed, and five orders of
+/// magnitude tighter than the smallest real mistake.
+const MODEL_TOLERANCE: f64 = 1e-5;
+
+/// Whether `path` names a number this file compares loosely, and whether these
+/// two are close enough — see the module note.
+fn model_floats_agree(path: &str, a: &Value, b: &Value) -> bool {
+    if !(path.ends_with(".fsrsCard.stability") || path.ends_with(".fsrsCard.difficulty")) {
+        return false;
+    }
+    match (a.as_f64(), b.as_f64()) {
+        (Some(x), Some(y)) => (x - y).abs() <= MODEL_TOLERANCE * x.abs().max(y.abs()),
+        _ => false,
+    }
+}
+
 /// The first path where two JSON values differ, for a failure message that says where to look.
 fn first_difference(a: &Value, b: &Value, path: &str) -> Option<String> {
+    if model_floats_agree(path, a, b) {
+        return None;
+    }
     match (a, b) {
         (Value::Object(x), Value::Object(y)) => {
             let keys: BTreeSet<&String> = x.keys().chain(y.keys()).collect();

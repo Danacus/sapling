@@ -21,8 +21,8 @@
 				"introducedAt": 1710061260000,
 				"fsrsCard": {
 					"due": 1710414000000,
-					"stability": 3.07506611,
-					"difficulty": 5.19004872,
+					"stability": 3.07506824,
+					"difficulty": 5.19004869,
 					"elapsed_days": 1,
 					"scheduled_days": 3,
 					"learning_steps": 0,
@@ -69,8 +69,8 @@
 				"introducedAt": 1710061260000,
 				"fsrsCard": {
 					"due": 1710414000000,
-					"stability": 3.07506611,
-					"difficulty": 5.19004872,
+					"stability": 3.07506824,
+					"difficulty": 5.19004869,
 					"elapsed_days": 1,
 					"scheduled_days": 3,
 					"learning_steps": 0,
@@ -133,8 +133,8 @@
 			"introducedAt": 1710061260000,
 			"fsrsCard": {
 				"due": 1710414000000,
-				"stability": 3.07506611,
-				"difficulty": 5.19004872,
+				"stability": 3.07506824,
+				"difficulty": 5.19004869,
 				"elapsed_days": 1,
 				"scheduled_days": 3,
 				"learning_steps": 0,
