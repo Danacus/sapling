@@ -19,7 +19,7 @@
  * else, so importing this module does not start one.
  */
 import SqliteWorker from './sqlite.worker?worker';
-import { BUSY_MESSAGE } from './backend';
+import { BUSY_MESSAGE, isSahPoolBusy } from './backend';
 import { toPlain } from './plain';
 import {
 	BACKEND_METHODS,
@@ -66,9 +66,19 @@ export async function openWorkerBackend(deviceId: string): Promise<Backend> {
 				resolve();
 			} else if ('bootError' in message) {
 				worker.removeEventListener('message', onBoot);
-				// The SAH pool refuses to install while another tab holds its files,
-				// which is the only boot failure a learner can act on.
-				reject(new Error(BUSY_MESSAGE));
+				// The SAH pool refusing to install while another tab holds its files
+				// is the only boot failure a learner can act on (close the other
+				// tab), so it gets its own wording; anything else — a wasm
+				// fetch/instantiate failure after a deploy, a missing OPFS API — is
+				// worded with the Worker's own reason instead of being folded into
+				// "another tab", which would send the learner to fix the wrong thing.
+				reject(
+					new Error(
+						isSahPoolBusy(message.bootError)
+							? BUSY_MESSAGE
+							: `The database could not be opened: ${message.bootError}`
+					)
+				);
 			}
 		};
 		worker.addEventListener('message', onBoot);
