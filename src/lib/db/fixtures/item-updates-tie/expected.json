@@ -1,0 +1,141 @@
+{
+	"getAllItems": {
+		"lean": [
+			{
+				"id": "item-1",
+				"kind": "vocab",
+				"term": "さようなら",
+				"meaning": "goodbye (b)",
+				"romanization": "sayounara",
+				"notes": "from b",
+				"introducedAt": 1710061260000,
+				"fsrsCard": {
+					"due": 1710061260000,
+					"stability": 0,
+					"difficulty": 0,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 0,
+					"reps": 0,
+					"lapses": 0,
+					"state": 0,
+					"last_review": null
+				},
+				"reviewCount": 0,
+				"correctCount": 0,
+				"history": []
+			}
+		],
+		"withRecentGrades": [
+			{
+				"id": "item-1",
+				"kind": "vocab",
+				"term": "さようなら",
+				"meaning": "goodbye (b)",
+				"romanization": "sayounara",
+				"notes": "from b",
+				"introducedAt": 1710061260000,
+				"fsrsCard": {
+					"due": 1710061260000,
+					"stability": 0,
+					"difficulty": 0,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 0,
+					"reps": 0,
+					"lapses": 0,
+					"state": 0,
+					"last_review": null
+				},
+				"reviewCount": 0,
+				"correctCount": 0,
+				"recentGrades": [],
+				"history": []
+			}
+		]
+	},
+	"getItem": {
+		"item-1": {
+			"id": "item-1",
+			"kind": "vocab",
+			"term": "さようなら",
+			"meaning": "goodbye (b)",
+			"romanization": "sayounara",
+			"notes": "from b",
+			"introducedAt": 1710061260000,
+			"fsrsCard": {
+				"due": 1710061260000,
+				"stability": 0,
+				"difficulty": 0,
+				"elapsed_days": 0,
+				"scheduled_days": 0,
+				"learning_steps": 0,
+				"reps": 0,
+				"lapses": 0,
+				"state": 0,
+				"last_review": null
+			},
+			"reviewCount": 0,
+			"correctCount": 0,
+			"recentGrades": [],
+			"history": []
+		}
+	},
+	"getPool": [],
+	"poolSize": 0,
+	"getChallengesByIds": [],
+	"recentResults": [],
+	"getDailyActivity": [],
+	"getTexts": [],
+	"getText": {},
+	"getKnownTerms": [],
+	"getConversations": [],
+	"getConversation": {},
+	"exportData": {
+		"version": 3,
+		"exportedAt": 1710244800000,
+		"events": [
+			{
+				"id": "ev-add-1",
+				"type": "itemAdded",
+				"at": 1710061260000,
+				"device": "dev-a",
+				"payload": {
+					"id": "item-1",
+					"kind": "vocab",
+					"term": "さようなら",
+					"meaning": "goodbye",
+					"romanization": "sayounara",
+					"introducedAt": 1710061260000
+				}
+			},
+			{
+				"id": "ev-update-1-b",
+				"type": "itemUpdated",
+				"at": 1710063600000,
+				"device": "dev-b",
+				"payload": {
+					"itemId": "item-1",
+					"fields": {
+						"meaning": "goodbye (b)",
+						"notes": "from b"
+					}
+				}
+			},
+			{
+				"id": "ev-update-1-a",
+				"type": "itemUpdated",
+				"at": 1710063600000,
+				"device": "dev-a",
+				"payload": {
+					"itemId": "item-1",
+					"fields": {
+						"meaning": "goodbye (a)"
+					}
+				}
+			}
+		]
+	},
+	"pendingEvents": [],
+	"getPullCursor": 0
+}

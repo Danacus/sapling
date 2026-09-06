@@ -1,0 +1,52 @@
+{
+	"meta": {
+		"deviceId": "fixture-device",
+		"now": 1710244800000,
+		"orderFree": true,
+		"note": "dev-a and dev-b patch item-1's `meaning` at the exact same `at`. The tiebreak is deterministic by device id, not by which patch happens to arrive (or replay) last: `patches_of` orders dev-a before dev-b, so a refold applies dev-a's patch then dev-b's, and dev-b's value must win however the two events are delivered. dev-b's patch also sets `notes`, which dev-a's patch does not name, so `notes` must survive the tie."
+	},
+	"events": [
+		{
+			"seq": 1,
+			"id": "ev-add-1",
+			"type": "itemAdded",
+			"at": 1710061260000,
+			"device": "dev-a",
+			"payload": {
+				"id": "item-1",
+				"kind": "vocab",
+				"term": "さようなら",
+				"meaning": "goodbye",
+				"romanization": "sayounara",
+				"introducedAt": 1710061260000
+			}
+		},
+		{
+			"seq": 2,
+			"id": "ev-update-1-b",
+			"type": "itemUpdated",
+			"at": 1710063600000,
+			"device": "dev-b",
+			"payload": {
+				"itemId": "item-1",
+				"fields": {
+					"meaning": "goodbye (b)",
+					"notes": "from b"
+				}
+			}
+		},
+		{
+			"seq": 3,
+			"id": "ev-update-1-a",
+			"type": "itemUpdated",
+			"at": 1710063600000,
+			"device": "dev-a",
+			"payload": {
+				"itemId": "item-1",
+				"fields": {
+					"meaning": "goodbye (a)"
+				}
+			}
+		}
+	]
+}

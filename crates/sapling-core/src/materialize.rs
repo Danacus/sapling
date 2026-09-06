@@ -332,9 +332,10 @@ impl<'a> Materializer<'a> {
         let Some(row) = row.first() else {
             return Ok(());
         };
-        // The newest patch applies straight onto the row; an older one arriving
-        // late refolds from the add, because the fields it names may have moved on.
-        if at >= row.f64("updatedAt")? {
+        // Strictly newest patches apply straight onto the row; a tie refolds,
+        // because two devices patching in the same millisecond order by
+        // device, not arrival — matching `patches_of`'s `(at, device)` order.
+        if at > row.f64("updatedAt")? {
             self.apply_patch(at, p)
         } else {
             self.refold_patches(&p.item_id)
