@@ -28,6 +28,7 @@
 	import { newUuid } from '$lib/device';
 	import { isMockMode } from '$lib/llm';
 	import type { Conversation, Profile } from '$lib/types';
+	import BackLink from '$lib/ui/BackLink.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	/** Nudges, not choices — the same shape `/read` offers over its topic box. */
@@ -158,17 +159,18 @@
 			<Spinner />
 		</div>
 	{:else if loadError}
+		<!-- The way home comes with the error: a failed read is a screen the
+		     learner can be stuck on, and the desktop shell has no back arrow. -->
+		<header class="topbar">
+			<BackLink href="/" label="Back to home" />
+		</header>
 		<div class="card">
 			<p class="error" role="alert">{loadError}</p>
 		</div>
 	{:else}
 		<div class="spread">
 			<header class="topbar spread-full ll-rise">
-				<a class="back" href="/" aria-label="Back to home">
-					<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-						<path d="m14.2 5.4-6.4 6.6 6.4 6.6" />
-					</svg>
-				</a>
+				<BackLink href="/" label="Back to home" />
 				<div class="identity">
 					<p class="eyebrow">Sapling</p>
 					<h1>Conversation</h1>
@@ -351,35 +353,6 @@
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
-	}
-
-	.back {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		flex: 0 0 auto;
-		width: 2.25rem;
-		height: 2.25rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		background: var(--surface);
-		color: var(--text-muted);
-		text-decoration: none;
-		transition:
-			border-color 0.15s ease,
-			background 0.15s ease,
-			color 0.15s ease;
-	}
-
-	.back:hover {
-		border-color: var(--border-strong);
-		background: var(--surface-alt);
-		color: var(--text);
-	}
-
-	.back:focus-visible {
-		outline: none;
-		box-shadow: var(--ring);
 	}
 
 	.identity {

@@ -26,6 +26,7 @@
 	import type { Romanizer } from '$lib/romanize';
 	import { CardState } from '$lib/srs';
 	import type { KnowledgeItem, Profile } from '$lib/types';
+	import BackLink from '$lib/ui/BackLink.svelte';
 	import ProgressBar from '$lib/ui/ProgressBar.svelte';
 	import RubyText from '$lib/ui/RubyText.svelte';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
@@ -373,11 +374,7 @@
 
 <main class="shell shell-full">
 	<header class="topbar ll-rise">
-		<a class="back" href="/" aria-label="Back to home">
-			<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-				<path d="m14.2 5.4-6.4 6.6 6.4 6.6" />
-			</svg>
-		</a>
+		<BackLink href="/" label="Back to home" />
 		<div class="identity">
 			<p class="eyebrow">Sapling</p>
 			<h1>Garden</h1>
@@ -837,35 +834,6 @@
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
-	}
-
-	.back {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		flex: 0 0 auto;
-		width: 2.25rem;
-		height: 2.25rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		background: var(--surface);
-		color: var(--text-muted);
-		text-decoration: none;
-		transition:
-			border-color 0.15s ease,
-			background 0.15s ease,
-			color 0.15s ease;
-	}
-
-	.back:hover {
-		border-color: var(--border-strong);
-		background: var(--surface-alt);
-		color: var(--text);
-	}
-
-	.back:focus-visible {
-		outline: none;
-		box-shadow: var(--ring);
 	}
 
 	.identity {

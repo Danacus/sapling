@@ -24,6 +24,7 @@
 		type TtsVoice
 	} from '$lib/tts';
 	import type { Profile } from '$lib/types';
+	import BackLink from '$lib/ui/BackLink.svelte';
 
 	const CHINESE_SAMPLE = '你好，我想买三个苹果。';
 	const ENGLISH_SAMPLE = "Hello, I'd like three apples, please.";
@@ -159,12 +160,9 @@
 
 <main class="shell">
 	<section class="card">
-		<a class="back" href="/settings">
-			<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-				<path d="m14.2 5.4-6.4 6.6 6.4 6.6" />
-			</svg>
-			Back to Settings
-		</a>
+		<div class="back-row">
+			<BackLink href="/settings" label="Back to settings" />
+		</div>
 		<h1>Speech test bench</h1>
 		<hr class="stitch" />
 
@@ -273,31 +271,11 @@
 		text-align: left;
 	}
 
-	/* Same hand as the rest of the app: 24-unit box, hairline stroke. */
-	.ico {
-		width: 0.95rem;
-		height: 0.95rem;
-		flex: 0 0 auto;
-		fill: none;
-		stroke: currentColor;
-		stroke-width: 1.6;
-		stroke-linecap: round;
-		stroke-linejoin: round;
-	}
-
-	.back {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.3rem;
+	/* The bench used to say "‹ Back to Settings" in words. It wears the app's
+	   own square control now, like every other secondary screen — the label it
+	   used to show is the link's accessible name. */
+	.back-row {
 		margin-bottom: 0.6rem;
-		color: var(--text-muted);
-		text-decoration: none;
-		font-weight: 700;
-		font-size: 0.88rem;
-	}
-
-	.back:hover {
-		color: var(--text);
 	}
 
 	h1 {

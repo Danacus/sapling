@@ -81,7 +81,7 @@ Every area is a registry with one module per member; forgetting a registration f
 | `src/lib/romanize/` | Never romanize a term in isolation — context resolves polyphones. | `content.md` |
 | `src/lib/tts/` | Audio failures degrade silently; sound never blocks gameplay. | `content.md` |
 | `src/lib/asr/` | Dictation is an **input method, not a grader**: the transcript lands in the composer for the learner to send. Recognition isn't universal — the fallback is typing. | `content.md` |
-| `src/app.css`, every `+page.svelte` | **Mobile-first with exactly two breakpoints** (48rem, 72rem, always `min-width`). Width buys a second column, a wider gutter or more density — **never a longer line of prose**. | `layout.md` |
+| `src/app.css`, every `+page.svelte` | **Mobile-first with exactly two breakpoints** (48rem, 72rem, always `min-width`). Width buys a second column, a wider gutter or more density — **never a longer line of prose**. Every route but `/` and `/onboarding` renders `$lib/ui/BackLink` to its parent (never `history.back()`); the desktop shell has no back arrow, and `src/routes/back-link.test.ts` fails when a page forgets. | `layout.md` |
 | `static/`, deploy | A missing `/_app/immutable/*` chunk must **404**, never fall through to the SPA shell. | `deploy.md` |
 
 ### Testing

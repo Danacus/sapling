@@ -54,6 +54,7 @@
 		type TtsVoice
 	} from '$lib/tts';
 	import type { KnowledgeItem, Profile } from '$lib/types';
+	import BackLink from '$lib/ui/BackLink.svelte';
 	import InlineStatus from '$lib/ui/InlineStatus.svelte';
 	import {
 		getListeningMode,
@@ -636,11 +637,7 @@
 
 <main class="shell shell-broad">
 	<header class="topbar ll-rise">
-		<a class="back" href="/" aria-label="Back to home">
-			<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-				<path d="m14.2 5.4-6.4 6.6 6.4 6.6" />
-			</svg>
-		</a>
+		<BackLink href="/" label="Back to home" />
 		<div class="identity">
 			<p class="eyebrow">Sapling</p>
 			<h1>Settings</h1>
@@ -1297,35 +1294,6 @@
 
 	/* The same 2.25rem squircle the dashboard's topbar controls wear, so the
 	   way back looks like the way out rather than a stray link. */
-	.back {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		flex: 0 0 auto;
-		width: 2.25rem;
-		height: 2.25rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		background: var(--surface);
-		color: var(--text-muted);
-		text-decoration: none;
-		transition:
-			border-color 0.15s ease,
-			background 0.15s ease,
-			color 0.15s ease;
-	}
-
-	.back:hover {
-		border-color: var(--border-strong);
-		background: var(--surface-alt);
-		color: var(--text);
-	}
-
-	.back:focus-visible {
-		outline: none;
-		box-shadow: var(--ring);
-	}
-
 	.identity {
 		min-width: 0;
 	}

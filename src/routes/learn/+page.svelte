@@ -49,6 +49,7 @@
 	import { taskStore } from '$lib/tasks/store.svelte';
 	import { getTtsEngine, kokoroSupports, preloadKokoro, warmSpeech } from '$lib/tts';
 	import type { Challenge, KnowledgeItem, Profile, Verdict } from '$lib/types';
+	import BackLink from '$lib/ui/BackLink.svelte';
 	import { addRecentTopic, getRecentTopics, getRomanizationMode } from '$lib/ui/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
@@ -866,7 +867,23 @@
 </svelte:head>
 
 <main class="shell">
+	<!--
+	  Every phase of this screen carries its own way out, because each is a
+	  different kind of leaving: before a session it is the plain back link the
+	  rest of the app uses, during one it is the quit ✕ with its confirm (there
+	  is unsaved progress to warn about), and after one the summary's own button
+	  home. Never two at once. The link is here rather than one level up because
+	  the playing phase has to be able to replace it.
+
+	  Leaving while a top-up is generating is safe and needs no guard: the task
+	  runner owns the job, its status and its cancel (see `.claude/rules/tasks.md`),
+	  the pool is written when it lands, and the tray follows the learner to
+	  whatever page they went to.
+	-->
 	{#if phase === 'loading'}
+		<header class="topbar">
+			<BackLink href="/" label="Back to home" />
+		</header>
 		<div class="centered"><Spinner /></div>
 	{:else if phase === 'start'}
 		<!--
@@ -879,6 +896,9 @@
 		  and the generator is folded away until it is asked for or genuinely
 		  needed.
 		-->
+		<header class="topbar">
+			<BackLink href="/" label="Back to home" />
+		</header>
 		<div class="centered">
 			<div class="card start-card ll-rise">
 				<h1>Ready when you are</h1>

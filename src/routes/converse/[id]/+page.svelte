@@ -36,6 +36,7 @@
 	import { isMockMode } from '$lib/llm';
 	import { stopSpeaking } from '$lib/tts';
 	import type { Profile } from '$lib/types';
+	import BackLink from '$lib/ui/BackLink.svelte';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
@@ -294,6 +295,11 @@
 			<Spinner />
 		</div>
 	{:else if loadError}
+		<!-- The way back comes with the error: a failed read is a screen the
+		     learner can be stuck on, and the desktop shell has no back arrow. -->
+		<header class="topbar">
+			<BackLink href="/converse" label="Back to your conversations" />
+		</header>
 		<div class="card">
 			<p class="error" role="alert">{loadError}</p>
 		</div>
@@ -305,11 +311,7 @@
 		</div>
 	{:else}
 		<header class="topbar ll-rise">
-			<a class="back" href="/converse" aria-label="Back to your conversations">
-				<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-					<path d="m14.2 5.4-6.4 6.6 6.4 6.6" />
-				</svg>
-			</a>
+			<BackLink href="/converse" label="Back to your conversations" />
 			<div class="identity">
 				<p class="eyebrow">Sapling</p>
 				<h1>Conversation</h1>
@@ -535,35 +537,6 @@
 		align-items: center;
 		gap: 0.75rem;
 		flex: 0 0 auto;
-	}
-
-	.back {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		flex: 0 0 auto;
-		width: 2.25rem;
-		height: 2.25rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		background: var(--surface);
-		color: var(--text-muted);
-		text-decoration: none;
-		transition:
-			border-color 0.15s ease,
-			background 0.15s ease,
-			color 0.15s ease;
-	}
-
-	.back:hover {
-		border-color: var(--border-strong);
-		background: var(--surface-alt);
-		color: var(--text);
-	}
-
-	.back:focus-visible {
-		outline: none;
-		box-shadow: var(--ring);
 	}
 
 	.identity {
