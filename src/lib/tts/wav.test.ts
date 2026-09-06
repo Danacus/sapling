@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { encodeWav, WAV_HEADER_BYTES } from './wav';
+import { decodeWav, encodeWav, WAV_HEADER_BYTES } from './wav';
 
 function chunkId(view: DataView, offset: number): string {
 	return String.fromCharCode(
@@ -59,5 +59,80 @@ describe('encodeWav', () => {
 		expect(wav.byteLength).toBe(WAV_HEADER_BYTES);
 		expect(view.getUint32(24, true)).toBe(22050);
 		expect(view.getUint32(40, true)).toBe(0);
+	});
+});
+
+/** One quantization step: what a 16-bit round trip is allowed to cost. */
+const ONE_LSB = 1 / 32767;
+
+/** A little of everything — the rails, silence, and a signal that moves. */
+const CLIP = Float32Array.from({ length: 64 }, (_, i) =>
+	i < 4 ? [0, 1, -1, 0.5][i] : Math.sin(i / 5)
+);
+
+/** Copies `wav`, inserting `id` as an extra chunk just before `data`. */
+function withExtraChunk(wav: ArrayBuffer, id: string, payload: number): ArrayBuffer {
+	const inserted = 8 + payload;
+	const out = new ArrayBuffer(wav.byteLength + inserted);
+	const bytes = new Uint8Array(out);
+	const source = new Uint8Array(wav);
+
+	bytes.set(source.subarray(0, 36), 0); // RIFF + WAVE + the fmt chunk
+	for (let i = 0; i < 4; i++) bytes[36 + i] = id.charCodeAt(i);
+	new DataView(out).setUint32(40, payload, true);
+	bytes.set(source.subarray(36), 36 + inserted); // the data chunk, pushed along
+
+	new DataView(out).setUint32(4, out.byteLength - 8, true);
+	return out;
+}
+
+describe('decodeWav', () => {
+	it('round-trips encodeWav to within one LSB', () => {
+		const clip = decodeWav(encodeWav(CLIP, 24000));
+
+		expect(clip.sampleRate).toBe(24000);
+		expect(clip.samples).toHaveLength(CLIP.length);
+		for (let i = 0; i < CLIP.length; i++) {
+			expect(Math.abs(clip.samples[i] - CLIP[i])).toBeLessThanOrEqual(ONE_LSB);
+		}
+	});
+
+	it('reports the rate the file declares, not the one Kokoro happens to use', () => {
+		expect(decodeWav(encodeWav(CLIP, 16000)).sampleRate).toBe(16000);
+	});
+
+	it('finds the data chunk behind a chunk it does not know', () => {
+		const wav = withExtraChunk(encodeWav(CLIP, 24000), 'LIST', 6);
+
+		const clip = decodeWav(wav);
+
+		expect(clip.sampleRate).toBe(24000);
+		expect(clip.samples).toHaveLength(CLIP.length);
+		expect(clip.samples[1]).toBeCloseTo(1, 4);
+	});
+
+	it('decodes an empty clip as no samples rather than as an error', () => {
+		expect(decodeWav(encodeWav(new Float32Array(0), 24000)).samples).toHaveLength(0);
+	});
+
+	it('reads a truncated data chunk as far as the bytes go', () => {
+		const full = encodeWav(CLIP, 24000);
+		// The header still claims 64 samples; only 62 of them arrived.
+		const clip = decodeWav(full.slice(0, full.byteLength - 4));
+
+		expect(clip.samples).toHaveLength(CLIP.length - 2);
+	});
+
+	it('refuses a buffer that is not a WAV file', () => {
+		const buffer = new TextEncoder().encode('this is not audio, it is a sentence').buffer;
+
+		expect(() => decodeWav(buffer as ArrayBuffer)).toThrow(/RIFF/);
+	});
+
+	it('refuses a shape it would have to guess about', () => {
+		const stereo = encodeWav(CLIP, 24000);
+		new DataView(stereo).setUint16(22, 2, true); // channels
+
+		expect(() => decodeWav(stereo)).toThrow(/mono/);
 	});
 });
