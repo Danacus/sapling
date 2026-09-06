@@ -16,6 +16,20 @@ import type { Backend } from './protocol';
 /** Shown when the OPFS VFS refuses to open because another tab holds it. */
 export const BUSY_MESSAGE = 'Sapling is already open in another tab.';
 
+/**
+ * True when a boot failure is the SAH pool's own signal that another tab
+ * holds the database file, rather than some other reason the Worker never
+ * got as far as opening one (a wasm fetch/instantiate failure, a missing OPFS
+ * API, …). Per the File System Access spec, `createSyncAccessHandle` rejects
+ * with `NoModificationAllowedError` when its lock cannot be acquired — that
+ * name is the one thing every browser's wording of this failure has in
+ * common, so it is what `client.ts` matches on rather than guessing from the
+ * rest of the message.
+ */
+export function isSahPoolBusy(reason: string): boolean {
+	return reason.includes('NoModificationAllowedError');
+}
+
 let pending: Promise<Backend> | undefined;
 
 /**
