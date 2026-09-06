@@ -110,3 +110,38 @@ fn the_database_outlives_the_process() {
     drop(core);
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// A file that will not open is a message, not a crash: `Database` keeps the
+/// reason and answers it to every call, which is what the window turns into
+/// the boot-error screen.
+#[test]
+fn a_database_that_will_not_open_answers_why() {
+    use sapling_desktop::host::Database;
+
+    // A data directory *under a regular file* cannot be created on any OS.
+    let file = std::env::temp_dir().join(format!(
+        "sapling-desktop-not-a-directory-{}",
+        std::process::id()
+    ));
+    fs::write(&file, b"").expect("the blocking file is written");
+    let dir = file.join("data");
+
+    let db = Database::open(&dir);
+    let error = db.error().expect("the open failed").to_owned();
+    assert!(
+        error.starts_with("The database could not be opened: "),
+        "the message is readable as-is: {error}"
+    );
+    assert_eq!(
+        db.dispatch("poolSize".to_owned(), "[]".to_owned()),
+        Err(error.clone()),
+        "the probe answers the reason"
+    );
+    assert_eq!(
+        db.commit_all("[]".to_owned()),
+        Err(error),
+        "so does every other command"
+    );
+
+    let _ = fs::remove_file(&file);
+}

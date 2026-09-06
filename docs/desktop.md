@@ -9,9 +9,12 @@ Rust persistence core run natively over a SQLite file behind the *existing*
 domain protocol, with the same SvelteKit app on top? It can, and the app boots
 to onboarding through it. Since then it has grown a second native capability,
 the voice (see [Speech](#speech)), for the same reason: the webview cannot run
-the browser's implementation at all. Nothing in the web build, the gates or CI
+the browser's implementation at all. Nothing in the web build or its gates
 depends on any of it: the desktop crate is a workspace member but not a
-*default* member, and its toolchain lives in a second devShell.
+*default* member, and its toolchain lives in a second devShell. CI does check
+it — a `desktop` job in `.github/workflows/deploy.yml` runs `pnpm desktop:check`
+beside the web job, so a protocol change that breaks the host fails the commit.
+It does not gate the deploy: the site has no dependency on the crate.
 
 ## Running it
 
@@ -57,6 +60,14 @@ Also inside it, once the voice has been downloaded: `tts/kokoro-multi-lang-v1_1/
 about 407 MB of ordinary files (see [Speech](#speech)).
 
 Deleting the directory is a factory reset.
+
+If the directory cannot be created or `sapling.db` will not open — a permission
+problem, a file where the directory should be, a corrupt header — the app still
+starts, and the window shows the same boot-error screen the browser shows when
+another tab holds OPFS. The host keeps the reason (`host::Database`), every
+persistence command answers it as its `Err`, and `openTauriBackend`'s one probe
+read (`poolSize`) is what carries it to `+layout.svelte`. The reason is also
+printed to stderr for the terminal that launched the binary.
 
 ## What is native and what still goes through the webview
 
@@ -302,8 +313,7 @@ no build error, and every desktop binary dies at startup with
 ## What a shipped version would still need
 
 Not done, and each is real work: bundling (icons, `.deb`/`.AppImage`/`.dmg`,
-signing), a CSP, an error path when the database will not open (today `setup`
-returns `Err` and the app simply fails to start), SPA fallback for deep routes,
+signing), a CSP, SPA fallback for deep routes,
 a native menu and window-state persistence, auto-update, and a decision about
 whether the desktop build syncs at all — it uses the same `VITE_SYNC_URL` the
 web build does, and nothing about that was exercised.

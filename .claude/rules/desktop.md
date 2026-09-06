@@ -9,7 +9,10 @@ paths:
 # The desktop shell
 
 Runbook: `docs/desktop.md`. **Status: a spike.** It runs, it persists, and it is
-not shipped — nothing in the web build, the gates or CI depends on it.
+not shipped — nothing in the web build or its gates depends on it. CI does run
+`pnpm desktop:check` in its own `desktop` job (non-gating for the deploy), so
+a protocol change that breaks the host fails the commit rather than waiting for
+someone to run the check by hand.
 
 - **`crates/sapling-desktop` is a host, and that is all it is.** It owns a file
   (`sapling.db` in Tauri's app-data directory), a device id, the system clock
@@ -29,6 +32,15 @@ not shipped — nothing in the web build, the gates or CI depends on it.
   Kokoro, which speaker, when to fall back to the browser voice, what to cache
   — and is the same code the web build runs. The line that does not move: a
   host still contains no merge rule and no SQL against the read tables.
+
+- **A database that will not open is a screen, not a crash.** `setup` never
+  returns `Err` for it: `host::Database` is the managed state, holding either
+  the `CoreHandle` or the reason there is none, and every persistence command
+  answers that reason as its `Err`. There is no boot message on this host (the
+  browser's `ready`/`bootError` exists because a Worker has no other way to
+  speak first), so `openTauriBackend` makes one probe read (`poolSize`) before
+  it resolves, and its rejection is what `+layout.svelte` shows. The message
+  is prefixed `The database could not be opened:` and is shown verbatim.
 
 - **The persistence commands are exactly `WasmCore`'s surface**, name for name:
   `dispatch(method, args) -> Result<Option<String>, String>`, `commit_all`,
