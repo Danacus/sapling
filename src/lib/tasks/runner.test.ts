@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { LlmError } from '$lib/llm';
-import { MAX_KEPT_TASKS, createRunner } from './runner';
+import { MAX_KEPT_TASKS, createRunner, rootOf } from './runner';
 import type { TaskContext, TaskKindDef } from './types';
 
 /** A job the test finishes by hand. */
@@ -255,6 +255,54 @@ describe('createRunner: retry, dismiss, cap, subscribe', () => {
 		expect(runner.list().map((task) => task.status)).toEqual(['failed', 'running']);
 	});
 
+	it('stamps a retry with the task it came from', async () => {
+		const slow = gated(false);
+		const runner = createRunner({ slow: slow.def }, { newId: ids() });
+		runner.start('slow', 'a');
+		slow.gates[0].reject(new Error('boom'));
+		await flush();
+
+		runner.retry('t1');
+		expect(runner.list()[0].retryOf).toBeUndefined();
+		expect(runner.list()[1].retryOf).toBe('t1');
+	});
+
+	it('chains a retry of a retry onto its immediate predecessor', async () => {
+		const slow = gated(false);
+		const runner = createRunner({ slow: slow.def }, { newId: ids() });
+		runner.start('slow', 'a');
+		slow.gates[0].reject(new Error('boom'));
+		await flush();
+		runner.retry('t1');
+		slow.gates[1].reject(new Error('boom again'));
+		await flush();
+		runner.retry('t2');
+
+		expect(runner.list().map((task) => task.retryOf)).toEqual([undefined, 't1', 't2']);
+	});
+
+	it('hands the outcome of a retry to whoever holds its id', async () => {
+		const slow = gated(false);
+		const runner = createRunner({ slow: slow.def }, { newId: ids() });
+		runner.start('slow', 'a');
+		slow.gates[0].reject(new Error('boom'));
+		await flush();
+
+		// The tray discards what `retry` returns, so this is the only way back to
+		// the value — and the page that started 't1' has only ever held that id.
+		const again = runner.retry('t1');
+		slow.gates[1].resolve('ok');
+		await flush();
+		await expect(runner.outcomeOf('slow', again?.id as string)).resolves.toEqual({
+			status: 'done',
+			result: 'ok'
+		});
+
+		expect(runner.outcomeOf('slow', 'nope')).toBeUndefined();
+		runner.dismiss('t2');
+		expect(runner.outcomeOf('slow', 't2')).toBeUndefined();
+	});
+
 	it('refuses to retry a running, done, unknown or non-retryable task', async () => {
 		const slow = gated(false);
 		const fixed = gated(false, { retryable: false });
@@ -322,5 +370,58 @@ describe('createRunner: retry, dismiss, cap, subscribe', () => {
 		const runner = createRunner({ stuck: stuck.def }, { newId: ids() });
 		runner.start('stuck', 'a');
 		expect(runner.list()[0].cancellable).toBe(false);
+	});
+});
+
+describe('rootOf', () => {
+	/** A runner whose 't1' has been retried twice, and one unrelated task beside it. */
+	async function chained() {
+		const slow = gated(false);
+		const runner = createRunner({ slow: slow.def }, { newId: ids() });
+		runner.start('slow', 'a');
+		slow.gates[0].reject(new Error('boom'));
+		await flush();
+		runner.retry('t1');
+		slow.gates[1].reject(new Error('boom'));
+		await flush();
+		runner.retry('t2');
+		runner.start('slow', 'someone else');
+		return runner;
+	}
+
+	it('follows a two-step chain back to the id the page started', async () => {
+		const runner = await chained();
+		expect(rootOf(runner.list(), 't3')).toBe('t1');
+		expect(rootOf(runner.list(), 't2')).toBe('t1');
+	});
+
+	it('is its own id for a task nobody retried, and for one nobody has heard of', async () => {
+		const runner = await chained();
+		expect(rootOf(runner.list(), 't1')).toBe('t1');
+		expect(rootOf(runner.list(), 't4')).toBe('t4');
+		expect(rootOf(runner.list(), 'nope')).toBe('nope');
+	});
+
+	it('still answers the page after the failed original was dismissed', async () => {
+		const runner = await chained();
+		// The first thing a learner does with a failure they have retried.
+		runner.dismiss('t1');
+		expect(runner.list().map((task) => task.id)).toEqual(['t2', 't3', 't4']);
+
+		// 't2' still names 't1', so the id the page has been holding all along is
+		// still the answer — a dismissed record loses its row, not its name.
+		expect(rootOf(runner.list(), 't3')).toBe('t1');
+		expect(rootOf(runner.list(), 't2')).toBe('t1');
+	});
+
+	it('stops at the last id it can still read, which is where the walk ends', async () => {
+		const runner = await chained();
+		// Dismissing the *middle* of a chain is the one thing that shortens it:
+		// the link from 't2' to 't1' went with the record. A page therefore
+		// adopts each descendant's id as it appears rather than re-deriving the
+		// root from scratch — see `/read`'s effect.
+		runner.dismiss('t1');
+		runner.dismiss('t2');
+		expect(rootOf(runner.list(), 't3')).toBe('t2');
 	});
 });

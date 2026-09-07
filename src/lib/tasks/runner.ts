@@ -28,6 +28,14 @@
  * request that dies with the tab cannot be resumed, only re-run, and the
  * pool, the texts and the readings all land through their own repositories
  * the moment a job finishes, so nothing is lost but the ledger.
+ *
+ * **Retry is a new record, and it says where it came from.** Re-running a
+ * failed input mints a fresh task with a fresh outcome promise — the tray,
+ * which is where Retry is pressed, throws that promise away — so the record
+ * carries `retryOf` and `rootOf` walks the chain back. A page that must act on
+ * an outcome watches records descending from the id it started rather than
+ * awaiting the one promise it was handed, and reads the value out of
+ * `outcomeOf`, which is addressable by id for exactly that reason.
  */
 
 import type {
@@ -81,11 +89,23 @@ export interface TaskRunner<Defs extends TaskDefs> {
 	/** Settles the task as `cancelled` now and fires its signal. No-op once settled. */
 	cancel(id: string): void;
 	/**
-	 * Runs a failed or cancelled task's input again as a **new** task, and
-	 * returns it; `undefined` when the task is unknown, unsettled, still `done`,
-	 * or not retryable.
+	 * Runs a failed or cancelled task's input again as a **new** task whose
+	 * record names this one in `retryOf`, and returns it; `undefined` when the
+	 * task is unknown, unsettled, still `done`, or not retryable.
 	 */
 	retry(id: string): StartedTask<unknown> | undefined;
+	/**
+	 * How a listed task ended — the same promise `start` handed out, addressable
+	 * by id so a *retry*, whose `StartedTask` the tray discarded, can still be
+	 * read by the page that cares about it. `undefined` for an unknown id, a
+	 * record of another kind, or one already dismissed or trimmed away; the
+	 * `kind` is checked rather than trusted, which is what makes the result type
+	 * sound.
+	 */
+	outcomeOf<K extends keyof Defs & string>(
+		kind: K,
+		id: string
+	): Promise<TaskOutcome<ResultOf<Defs[K]>>> | undefined;
 	/** Drops a settled task from the list. No-op while it is queued or running. */
 	dismiss(id: string): void;
 	/** Every task the runner still lists, oldest first. */
@@ -117,6 +137,28 @@ function closeSteps(steps: readonly TaskStep[], at: number): TaskStep[] {
 	return steps.map((step) => (step.endedAt === undefined ? { ...step, endedAt: at } : step));
 }
 
+/**
+ * The id a chain of retries started from, so a page can ask "is this record
+ * mine?" without walking `retryOf` itself.
+ *
+ * The walk stops at whatever `retryOf` last named, **listed or not**: the
+ * failed original is usually the first thing dismissed from the tray, and its
+ * id is still the one the page is holding. So the root of a task that was never
+ * retried is its own id, and the root of an id the runner has never heard of is
+ * that id — a page comparing against its own set gets `false` either way.
+ */
+export function rootOf(tasks: readonly TaskRecord[], id: string): string {
+	let root = id;
+	// Bounded by the list, because a `retryOf` only ever names a task minted
+	// before it: the walk can go backwards through the list and nowhere else.
+	for (let step = 0; step < tasks.length; step++) {
+		const parent = tasks.find((task) => task.id === root)?.retryOf;
+		if (parent === undefined) break;
+		root = parent;
+	}
+	return root;
+}
+
 export function createRunner<Defs extends TaskDefs>(
 	defs: Defs,
 	options: RunnerOptions = {}
@@ -132,10 +174,13 @@ export function createRunner<Defs extends TaskDefs>(
 	const listeners = new Set<(tasks: Record_[]) => void>();
 
 	// Per task: what started it (kept for retry), its stop switch, and the
-	// outcome promise's resolver. Per serial kind: whether one is running, and
-	// who is waiting behind it.
+	// outcome promise with its resolver — the promise as well as the resolver,
+	// because `outcomeOf` hands it to whoever holds the id and a retry's was
+	// never handed to anyone. Per serial kind: whether one is running, and who
+	// is waiting behind it.
 	const inputs = new Map<string, unknown>();
 	const controllers = new Map<string, AbortController>();
+	const outcomes = new Map<string, Promise<TaskOutcome<unknown>>>();
 	const resolvers = new Map<string, (outcome: TaskOutcome<unknown>) => void>();
 	const busy = new Set<Kind>();
 	const waiting = new Map<Kind, string[]>();
@@ -172,6 +217,7 @@ export function createRunner<Defs extends TaskDefs>(
 	function forget(id: string): void {
 		inputs.delete(id);
 		controllers.delete(id);
+		outcomes.delete(id);
 		resolvers.delete(id);
 	}
 
@@ -263,7 +309,16 @@ export function createRunner<Defs extends TaskDefs>(
 		);
 	}
 
-	function start<K extends Kind>(kind: K, input: InputOf<Defs[K]>): StartedTask<ResultOf<Defs[K]>> {
+	/**
+	 * `retryOf` is the runner's own business — only {@link retry} passes it, and
+	 * the public `start` on {@link TaskRunner} does not offer it: a caller cannot
+	 * claim a lineage it did not come from.
+	 */
+	function start<K extends Kind>(
+		kind: K,
+		input: InputOf<Defs[K]>,
+		retryOf?: string
+	): StartedTask<ResultOf<Defs[K]>> {
 		const def = defs[kind];
 		const id = newId();
 		const record: Record_ = {
@@ -274,12 +329,14 @@ export function createRunner<Defs extends TaskDefs>(
 			steps: [],
 			queuedAt: now(),
 			retryable: def.retryable ?? true,
-			cancellable: def.cancellable ?? true
+			cancellable: def.cancellable ?? true,
+			...(retryOf === undefined ? {} : { retryOf })
 		};
 		tasks = [...tasks, record];
 		inputs.set(id, input);
 		controllers.set(id, new AbortController());
 		const done = new Promise<TaskOutcome<unknown>>((resolve) => resolvers.set(id, resolve));
+		outcomes.set(id, done);
 
 		if (def.serial && busy.has(kind)) {
 			const queue = waiting.get(kind) ?? [];
@@ -311,7 +368,17 @@ export function createRunner<Defs extends TaskDefs>(
 			return undefined;
 		}
 		if (!inputs.has(id)) return undefined;
-		return start(task.kind, inputs.get(id) as InputOf<Defs[Kind]>);
+		// The *immediate* predecessor, not the root: a chain of retries is a chain
+		// of records, and `rootOf` is what flattens it for whoever asks.
+		return start(task.kind, inputs.get(id) as InputOf<Defs[Kind]>, id);
+	}
+
+	function outcomeOf<K extends Kind>(
+		kind: K,
+		id: string
+	): Promise<TaskOutcome<ResultOf<Defs[K]>>> | undefined {
+		if (get(id)?.kind !== kind) return undefined;
+		return outcomes.get(id) as Promise<TaskOutcome<ResultOf<Defs[K]>>> | undefined;
 	}
 
 	function dismiss(id: string): void {
@@ -326,6 +393,7 @@ export function createRunner<Defs extends TaskDefs>(
 		start,
 		cancel,
 		retry,
+		outcomeOf,
 		dismiss,
 		list: () => tasks.slice(),
 		subscribe(listener) {

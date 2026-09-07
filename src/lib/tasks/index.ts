@@ -7,7 +7,7 @@
 
 export { TASK_KINDS } from './registry';
 export type { Task, TaskInput, TaskKind, TaskKinds, TaskResult } from './registry';
-export { MAX_KEPT_TASKS, createRunner } from './runner';
+export { MAX_KEPT_TASKS, createRunner, rootOf } from './runner';
 export type { InputOf, ResultOf, RunnerOptions, StartedTask, TaskDefs, TaskRunner } from './runner';
 export {
 	cancelTask,
@@ -15,7 +15,8 @@ export {
 	listTasks,
 	retryTask,
 	startTask,
-	subscribeTasks
+	subscribeTasks,
+	taskOutcome
 } from './singleton';
 export { SETTLED } from './types';
 export type {

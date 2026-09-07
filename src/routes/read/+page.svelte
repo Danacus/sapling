@@ -75,8 +75,8 @@
 	} from '$lib/reading';
 	import type { SubtitleFormat } from '$lib/reading';
 	import { selectSessionItems } from '$lib/srs';
-	import { startTask } from '$lib/tasks';
-	import type { TaskOutcome } from '$lib/tasks';
+	import { SETTLED, rootOf, startTask, taskOutcome } from '$lib/tasks';
+	import type { Task } from '$lib/tasks';
 	import { taskStore } from '$lib/tasks/store.svelte';
 	import type { KnowledgeItem, Profile, ReadingMedia, ReadingText } from '$lib/types';
 	import BackLink from '$lib/ui/BackLink.svelte';
@@ -189,6 +189,30 @@
 	onDestroy(() => {
 		left = true;
 	});
+
+	/**
+	 * The ids whose outcome is this page's business — **not task state**, only
+	 * "which of the runner's records are mine".
+	 *
+	 * The runner owns everything about the jobs themselves. What it cannot tell
+	 * the page is which of a dozen records the page is the one waiting for, and
+	 * the promise `startTask` hands back cannot say either: Retry in the tray
+	 * re-runs a failed input as a **new** task with a new id and a new promise,
+	 * so the one this page was given resolves once, with the failure, and never
+	 * again. So the page keeps ids and matches records against them.
+	 *
+	 * Deliberately *not* `$state`: it is only ever added to right after a
+	 * `startTask`, or from inside the effect below, and both of those already
+	 * change the records that effect is watching — so making it reactive would
+	 * buy nothing and cost the effect a dependency on something it writes. (A
+	 * `$state(new Set())` would not even be reactive: Svelte proxies objects and
+	 * arrays, not Sets.)
+	 */
+	const mine = new Set<string>();
+	/** Records already acted on, so a re-run effect never fires an outcome twice. */
+	const handled = new Set<string>();
+	/** One `goto` per page: two texts landing at once must not race each other. */
+	let navigating = false;
 
 	const dates = new Intl.DateTimeFormat(undefined, {
 		day: 'numeric',
@@ -334,15 +358,62 @@
 	}
 
 	/**
-	 * Opens the text a composer task produced, once it has — while this page is
-	 * still on screen. The task did the saving; this is only the navigation, and
-	 * a failure lands in the box as it always did (and in the tray besides).
+	 * Every outcome this page owes the learner a reaction to, watched as
+	 * **records** rather than awaited as promises.
+	 *
+	 * This is the whole reason the page keeps {@link mine}. Awaiting the promise
+	 * from `startTask` worked right up until the learner pressed Retry in the
+	 * tray: the retry is a new record with a new promise, the page was still
+	 * parked on the old one, and a text that had landed in the library never
+	 * opened and the failure never cleared. Records are what Retry produces more
+	 * of, so records are what this reads — oldest first, so that when several
+	 * land at once the newest is the one whose effect stands.
 	 */
-	async function open(done: Promise<TaskOutcome<{ id: string }>>): Promise<void> {
-		const outcome = await done;
-		if (left) return;
-		if (outcome.status === 'done') await goto(`/read/${outcome.result.id}`);
-		else if (outcome.status === 'failed') composeError = outcome.error;
+	$effect(() => {
+		const tasks = taskStore.tasks;
+		for (const task of tasks) {
+			if (handled.has(task.id) || !mine.has(rootOf(tasks, task.id))) continue;
+			// A retry of ours is ours, and adopting its id the moment it appears is
+			// what keeps the answer right after the records it descends from are
+			// dismissed — a dismissed record takes its link in the chain with it.
+			mine.add(task.id);
+			if (!SETTLED.has(task.status)) continue;
+			handled.add(task.id);
+			void react(task);
+		}
+	});
+
+	/**
+	 * What one settled record of ours means here. The record says *that* it
+	 * ended and how; the value it produced comes from `taskOutcome`, which is
+	 * addressable by id precisely so a retry nobody kept the promise of can
+	 * still be read. A `cancelled` task means nothing on this page — the learner
+	 * dropped it themselves — so only the two real endings are handled.
+	 */
+	async function react(task: Task): Promise<void> {
+		if (task.kind === 'captions') {
+			const outcome = await taskOutcome('captions', task.id);
+			if (!outcome || left) return;
+			if (outcome.status === 'done') {
+				composeError = '';
+				sourceFile = { name: outcome.result.name, text: outcome.result.text };
+			} else if (outcome.status === 'failed') captionsError = outcome.error;
+			return;
+		}
+
+		if (task.kind !== 'read-generate' && task.kind !== 'read-annotate') return;
+		const outcome = await taskOutcome(task.kind, task.id);
+		if (!outcome || left) return;
+		if (outcome.status === 'failed') {
+			// Replaces whatever was there, so a retry that fails again says so.
+			composeError = outcome.error;
+		} else if (outcome.status === 'done' && !navigating) {
+			// The shelf below is never refreshed for this: a text of ours that
+			// lands while the page is still here opens, and one that lands after
+			// the learner has gone is on the shelf the next time they arrive.
+			navigating = true;
+			await goto(`/read/${outcome.result.id}`);
+		}
 	}
 
 	/** Door one: a text written out of the learner's own words. */
@@ -366,13 +437,13 @@
 			maxItems: MAX_FOCUS_WORDS
 		});
 
-		const { done } = startTask('read-generate', {
+		const { id } = startTask('read-generate', {
 			profile,
 			vocabulary,
 			focus: reviewItems.map((item) => ({ term: item.term, meaning: item.meaning })),
 			...(chosen ? { topic: chosen } : {})
 		});
-		await open(done);
+		mine.add(id);
 	}
 
 	/**
@@ -503,20 +574,18 @@
 	 * through the one `plan` derivation and none of them learns where it came
 	 * from. The link stays in its field, so the video attaches as the recording
 	 * on the way out with no extra bookkeeping.
+	 *
+	 * Starting is all this does; what comes back arrives through the effect
+	 * above, along with every other outcome of ours.
 	 */
-	async function fetchTrack(track: CaptionTrack) {
+	function fetchTrack(track: CaptionTrack) {
 		if (!linkId || fetchingCaptions) return;
 
 		captionsError = '';
 		// The list has done its job; the tray carries the wait from here.
 		tracks = undefined;
-		const { done } = startTask('captions', { videoId: linkId, ...track });
-		const outcome = await done;
-		if (left) return;
-		if (outcome.status === 'done') {
-			composeError = '';
-			sourceFile = { name: outcome.result.name, text: outcome.result.text };
-		} else if (outcome.status === 'failed') captionsError = outcome.error;
+		const { id } = startTask('captions', { videoId: linkId, ...track });
+		mine.add(id);
 	}
 
 	/** Door two: a text the learner imported, cut here and annotated there. */
@@ -564,7 +633,7 @@
 
 		// The task zips the timings back on and does the saving; the recording
 		// rides along so it can be remembered against the id the task mints.
-		const { done } = startTask('read-annotate', {
+		const { id } = startTask('read-annotate', {
 			profile,
 			vocabulary,
 			sentences,
@@ -573,7 +642,7 @@
 			...(media ? { media } : {}),
 			...(media?.kind === 'file' && mediaFile ? { file: mediaFile } : {})
 		});
-		await open(done);
+		mine.add(id);
 	}
 </script>
 
@@ -899,7 +968,7 @@
 									<ul class="tracks">
 										{#each tracks as track (`${track.auto}:${track.lang}`)}
 											<li>
-												<button type="button" class="track" onclick={() => void fetchTrack(track)}>
+												<button type="button" class="track" onclick={() => fetchTrack(track)}>
 													<span class="track-name">{track.name}</span>
 													<span class="track-tags">
 														<span class="track-lang">{track.lang}</span>

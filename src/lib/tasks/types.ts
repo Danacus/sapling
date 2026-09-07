@@ -63,6 +63,17 @@ export interface TaskRecord<K extends string = string> {
 	/** Whether the tray may offer "Retry" once this has failed or been cancelled. */
 	retryable: boolean;
 	/**
+	 * The task this one is a retry of — the *immediate* predecessor, so a chain
+	 * of retries is a chain of records rather than a flat set.
+	 *
+	 * Retry re-runs a failed input as a new task with a new id and a new outcome
+	 * promise, which is why this is here: a page that must act on an outcome
+	 * cannot hold the promise it was handed at `start` (the tray's Retry throws
+	 * the new one away), so it keeps the id it started and asks whether a record
+	 * descends from it — see `rootOf` in `./runner`.
+	 */
+	retryOf?: string;
+	/**
 	 * Whether cancelling stops the work. Every task can be *cancelled* — the
 	 * tray drops it and its signal fires — but a kind whose underlying job
 	 * ignores the signal says so here, and the tray words the button

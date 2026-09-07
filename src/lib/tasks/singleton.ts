@@ -11,6 +11,7 @@ import { TASK_KINDS } from './registry';
 import type { Task, TaskInput, TaskKind, TaskResult } from './registry';
 import { createRunner } from './runner';
 import type { StartedTask } from './runner';
+import type { TaskOutcome } from './types';
 
 const runner = createRunner(TASK_KINDS);
 
@@ -20,6 +21,18 @@ export function startTask<K extends TaskKind>(
 	input: TaskInput<K>
 ): StartedTask<TaskResult<K>> {
 	return runner.start(kind, input);
+}
+
+/**
+ * How a listed task ended, for anyone holding its id — including a task the
+ * runner started itself for a Retry, whose promise the tray threw away. This
+ * is how a page reads the *value* of an outcome it learnt about from a record.
+ */
+export function taskOutcome<K extends TaskKind>(
+	kind: K,
+	id: string
+): Promise<TaskOutcome<TaskResult<K>>> | undefined {
+	return runner.outcomeOf(kind, id);
 }
 
 export const cancelTask: (id: string) => void = runner.cancel;

@@ -446,6 +446,17 @@
 	/**
 	 * Downloads and warms up the Kokoro runtime on demand, so the first word of
 	 * the first lesson is not the thing that waits on a few hundred megabytes.
+	 *
+	 * **The promise is enough here, unlike the composer's.** `startTask`'s
+	 * `done` resolves the *first* outcome and Retry in the tray is a new record
+	 * with a new promise, so a row like this one keeps the line it wrote when
+	 * the download first failed. What it does not keep is anything the learner
+	 * would be misled by: the button reads `preloading` off the runner, so a
+	 * retry visibly re-runs, and the download's real state — progress, failure,
+	 * success — is the tray's, once, where a retry is pressed. The stale line is
+	 * a confirmation of an action that has since been superseded, and the next
+	 * visit re-reads the host. Nothing here navigates or spends money on the
+	 * strength of it, which is what made the composer's copy a bug.
 	 */
 	async function preloadVoiceModel() {
 		if (preloading) return;
@@ -467,7 +478,8 @@
 	/**
 	 * Downloads the recognizer, so the first dictated sentence is not the thing
 	 * that waits on a hundred and sixty megabytes. Same shape as the voice's,
-	 * one row down.
+	 * one row down — including why awaiting the promise is enough here; see
+	 * {@link preloadVoiceModel}.
 	 */
 	async function preloadDictationModel() {
 		if (dictating) return;
@@ -568,6 +580,11 @@
 	 * batched model call for the rest (`$lib/tasks/kinds/readings`). This page
 	 * works out the two lists — it needs them for its own copy — and reports
 	 * how the task ended in the inline slot.
+	 *
+	 * Awaited rather than watched as a record, for the reason
+	 * {@link preloadVoiceModel} gives: the patched items are a local copy of
+	 * rows the task has already written, so a retry from the tray leaves this
+	 * page's count high until it is revisited and nothing else.
 	 */
 	async function backfillReadings() {
 		if (backfilling || !profile) return;
