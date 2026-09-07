@@ -227,10 +227,14 @@ https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-
 
 URL, size and hash are one constant, `KOKORO` in `src/tts/model.rs`. The
 archive is streamed to `<app-data>/tts/*.part`, hashed as it lands, verified
-against both numbers, and only then unpacked — into `<app-data>/tts/`, where
-its own top-level directory becomes `kokoro-multi-lang-v1_1/` (about 407 MB).
-Any failure removes the part file and the directory, so "installed" is never
-half true. Download and unpack each report progress, so the bar covers the
+against both numbers, and only then unpacked — into
+`<app-data>/tts/kokoro-multi-lang-v1_1.partial/`, whose contents are checked
+and then moved to `kokoro-multi-lang-v1_1/` (about 407 MB) by a single rename.
+**The live model path is therefore always absent or whole**, which is what lets
+a lesson opened mid-download load the engine safely: sherpa-onnx over a
+half-written `espeak-ng-data` does not fail, it calls `exit(-1)`. A failure or a
+crash leaves the part file and the `.partial` tree, both swept by the next
+install. Download and unpack each report progress, so the bar covers the
 whole minute rather than sitting at 100% through bzip2.
 
 **The commands**, and there are only five:
@@ -252,10 +256,12 @@ the other side, for audio already in the right format. It takes bytes rather
 than text because the clip caches are the window's; if they ever move to the
 host this becomes `tts_speak(text, sid, speed)` and nothing else changes shape.
 
-`tts_download`, `tts_synthesize` and `tts_play` are `async` and run their work
-on `spawn_blocking`, for the reason the persistence commands do — a synchronous
-Tauri command runs on the main thread, and a second of inference there is a
-frozen window, as is a whole clip's playing time. `tts_stop` stays synchronous:
+`tts_status`, `tts_download`, `tts_synthesize` and `tts_play` are `async` and
+run their work on `spawn_blocking`, for the reason the persistence commands do
+— a synchronous Tauri command runs on the main thread, and a second of
+inference there is a frozen window, as is a whole clip's playing time.
+`tts_status` waits for no lock at all, but it does read the disk, from a screen
+a learner opens mid-phrase. `tts_stop` stays synchronous:
 it posts one message and waits for nothing, and it is on the path to every new
 phrase.
 

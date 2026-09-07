@@ -16,6 +16,20 @@
 //! `kokoro-int8-multi-lang-v1_1.tar.bz2` at 147 MB against this one's 365 MB,
 //! and the temptation is obvious. See the note in `mod.rs` for what was
 //! measured.
+//!
+//! ## An install is staged, and one rename publishes it
+//!
+//! [`ModelSpec::unpack`] extracts into a `.partial` directory beside the model
+//! and [`ModelSpec::commit_staged`] moves it into place with a single
+//! `fs::rename`. That is not tidiness. A learner who opens a lesson while the
+//! download is unpacking makes the session screen call `warmSpeech`, which
+//! loads the engine over whatever is on disk — and sherpa-onnx handed a
+//! half-written `espeak-ng-data` does not return an error: espeak's own init
+//! calls `exit(-1)` and takes the process with it. A rename inside one
+//! directory is atomic, so the live path is only ever *absent* or a *whole*
+//! model, and no reader has to hold a lock to be safe from a writer. A crash
+//! or a cancel leaves the staging tree behind instead, which the next install
+//! removes before it starts.
 
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
@@ -34,9 +48,10 @@ pub struct ModelSpec {
     /// Sha256 of the archive, lowercase hex.
     pub sha256: &'static str,
     /// Files that must exist under `dir` for the model to be usable. Not the
-    /// whole archive — the ones the engine config actually names, so a
-    /// half-extracted directory reads as "not installed" rather than crashing
-    /// sherpa-onnx on the first phrase.
+    /// whole archive — the ones the engine config actually names. The staging
+    /// rename is what keeps a partial tree off the live path; this list is the
+    /// cheap sanity check either side of it, and the only thing that would
+    /// catch a tree an *older* build left half-extracted where the model goes.
     pub files: &'static [&'static str],
 }
 
@@ -84,6 +99,17 @@ impl ModelSpec {
         tts_dir.join(self.dir)
     }
 
+    /// Where an install assembles the model before it is published.
+    ///
+    /// A sibling of [`dir_in`](Self::dir_in), so the two are on one filesystem
+    /// and the move between them is a rename rather than a copy. One fixed
+    /// name, not one per run: the only thing that may be assembling a model is
+    /// the install holding `TtsHandle::installing`, and a fixed name is what
+    /// makes a crashed run's leftovers findable by the next one.
+    pub fn staging_in(&self, tts_dir: &Path) -> PathBuf {
+        tts_dir.join(format!("{}.partial", self.dir))
+    }
+
     /// Whether every file the engine config names is present.
     pub fn installed_in(&self, tts_dir: &Path) -> bool {
         let dir = self.dir_in(tts_dir);
@@ -103,10 +129,27 @@ impl ModelSpec {
     ///
     /// Idempotent: an installed model returns immediately, having reported one
     /// completed step so a caller watching progress does not hang on a bar that
-    /// never moves. The archive lands beside the model directory with a `.part`
-    /// suffix and is verified *before* a single entry is unpacked, so a failed
-    /// download can never leave a half-model that reads as installed.
+    /// never moves — but not before sweeping what the last run left behind,
+    /// which is the only place that sweep can happen. The archive lands beside
+    /// the model directory with a `.part` suffix and is verified *before* a
+    /// single entry is unpacked; the entries then land in a `.partial`
+    /// directory and reach the live path by one rename. So a failed download,
+    /// a cancelled unpack and a crash all leave the same thing behind — files
+    /// with a suffix nothing reads — and never a half-model where the engine
+    /// looks for a whole one.
     pub fn install(&self, tts_dir: &Path, on_progress: OnProgress<'_>) -> Result<(), String> {
+        let archive = tts_dir.join(format!("{}.tar.bz2.part", self.dir));
+        let staging = self.staging_in(tts_dir);
+        // Leftovers from an interrupted run, and neither is ever reused: a
+        // range request that half-worked is exactly the kind of thing the hash
+        // would catch one download too late, and a staging tree is by
+        // definition whatever the interruption stopped mid-write. Swept ahead
+        // of the "already installed" answer as well — hundreds of megabytes
+        // that nothing will ever read again are not worth keeping for the sake
+        // of returning two syscalls sooner.
+        let _ = fs::remove_file(&archive);
+        let _ = fs::remove_dir_all(&staging);
+
         if self.installed_in(tts_dir) {
             on_progress(DOWNLOAD_STEP, self.bytes, self.bytes);
             on_progress(EXTRACT_STEP, self.bytes, self.bytes);
@@ -116,31 +159,20 @@ impl ModelSpec {
         fs::create_dir_all(tts_dir)
             .map_err(|e| format!("could not create {}: {e}", tts_dir.display()))?;
 
-        let archive = tts_dir.join(format!("{}.tar.bz2.part", self.dir));
-        // A leftover from an interrupted run is not resumed: a range request
-        // that half-worked is exactly the kind of thing the hash would catch
-        // one download too late.
-        let _ = fs::remove_file(&archive);
-
         self.download(&archive, on_progress)
-            .and_then(|_| self.unpack(&archive, tts_dir, on_progress))
+            .and_then(|_| self.unpack(&archive, &staging, on_progress))
+            .and_then(|_| self.commit_staged(&staging, tts_dir))
             .inspect_err(|_| {
                 // Nothing half-finished survives a failure: the next attempt
-                // starts from an empty directory and a fresh request.
+                // starts from an empty directory and a fresh request. The live
+                // path is not touched, because nothing partial was ever put
+                // there to clean up.
                 let _ = fs::remove_file(&archive);
-                let _ = fs::remove_dir_all(self.dir_in(tts_dir));
+                let _ = fs::remove_dir_all(&staging);
             })?;
 
         fs::remove_file(&archive)
-            .map_err(|e| format!("could not remove {}: {e}", archive.display()))?;
-
-        if !self.installed_in(tts_dir) {
-            return Err(format!(
-                "{} unpacked but is missing files the voice needs",
-                self.dir
-            ));
-        }
-        Ok(())
+            .map_err(|e| format!("could not remove {}: {e}", archive.display()))
     }
 
     /// Streams the archive to `archive`, hashing as it goes.
@@ -210,18 +242,24 @@ impl ModelSpec {
         Ok(())
     }
 
-    /// Unpacks the verified archive into `tts_dir`, which is where its own
-    /// top-level directory becomes the model directory.
+    /// Unpacks the verified archive into `staging`, where the archive's own
+    /// top-level directory becomes the model directory awaiting its rename.
+    ///
+    /// Never into the live directory: for the whole of this call the tree is
+    /// growing, and a tree that is growing is one the engine must not be able
+    /// to find. [`commit_staged`](Self::commit_staged) is what publishes it.
     fn unpack(
         &self,
         archive: &Path,
-        tts_dir: &Path,
+        staging: &Path,
         on_progress: OnProgress<'_>,
     ) -> Result<(), String> {
         on_progress(EXTRACT_STEP, 0, self.bytes);
         // A previous attempt's remains would make `unpack` fail on a file it
         // cannot overwrite, and a stale entry would survive into the new model.
-        let _ = fs::remove_dir_all(self.dir_in(tts_dir));
+        let _ = fs::remove_dir_all(staging);
+        fs::create_dir_all(staging)
+            .map_err(|e| format!("could not create {}: {e}", staging.display()))?;
 
         let file = File::open(archive)
             .map_err(|e| format!("could not read {}: {e}", archive.display()))?;
@@ -236,9 +274,41 @@ impl ModelSpec {
         };
         let decoder = bzip2::read::BzDecoder::new(counted);
         tar::Archive::new(decoder)
-            .unpack(tts_dir)
+            .unpack(staging)
             .map_err(|e| format!("could not unpack {}: {e}", DOWNLOAD_STEP))?;
         on_progress(EXTRACT_STEP, self.bytes, self.bytes);
+        Ok(())
+    }
+
+    /// Publishes a finished staging tree: the one step an install is visible
+    /// from, and the reason nothing else has to defend against a partial one.
+    ///
+    /// Verifies the staged model first — an archive that unpacked without every
+    /// file the engine names is a failed install, and it fails here rather than
+    /// where it would kill the process. Then the live path changes in a single
+    /// `rename`, which within one directory is atomic: a reader sees the old
+    /// tree or the new one and never a mixture.
+    ///
+    /// Whatever was at the live path is removed immediately before that rename,
+    /// and it can only ever be junk: [`install`](Self::install) returns early
+    /// when a complete model is already there, so reaching this line means the
+    /// live path held nothing, or held something the engine could not have
+    /// loaded anyway.
+    pub(super) fn commit_staged(&self, staging: &Path, tts_dir: &Path) -> Result<(), String> {
+        if !self.installed_in(staging) {
+            return Err(format!(
+                "{} unpacked but is missing files the voice needs",
+                self.dir
+            ));
+        }
+
+        let live = self.dir_in(tts_dir);
+        let _ = fs::remove_dir_all(&live);
+        fs::rename(self.dir_in(staging), &live)
+            .map_err(|e| format!("could not move {} into place: {e}", live.display()))?;
+        // The archive's top-level directory has moved out; anything else it
+        // carried has not, and is not part of the model.
+        let _ = fs::remove_dir_all(staging);
         Ok(())
     }
 }

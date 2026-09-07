@@ -16,8 +16,10 @@
 //! `spawn_blocking`, because a synchronous Tauri command runs on the main
 //! thread — the GTK loop that composites the webview — and anything it waits
 //! for is a frozen window. That is the two persistence commands as much as the
-//! three long TTS ones: `dispatch` blocks until the core thread has committed,
-//! and one Check makes three or more of those calls. The price is that the pool
+//! three long TTS ones — and `tts_status`, which is short but reads the disk
+//! and is asked for *while* one of the long ones is running: `dispatch` blocks
+//! until the core thread has committed, and one Check makes three or more of
+//! those calls. The price is that the pool
 //! decides which of two overlapping calls reaches the core first, so the window
 //! keeps its own order (`src/lib/db/tauri.ts`); see `host.rs`'s header.
 //!
@@ -119,10 +121,23 @@ struct DownloadProgress {
 const TTS_PROGRESS_EVENT: &str = "tts://model-progress";
 
 /// Whether the voice model is on this machine, and what it costs.
+///
+/// `async` even though it is the short one: it reads the filesystem, and
+/// Settings asks for it while a phrase may be synthesizing. `TtsHandle::status`
+/// takes no lock — that is its own contract, and this command would otherwise
+/// have parked the main thread behind a whole model load — so the
+/// `spawn_blocking` here is only about keeping the `stat`s off the GTK loop.
+///
+/// A `Result` because Tauri requires one of an `async` command that borrows
+/// `State`; the only `Err` it can produce is the blocking task failing to run
+/// at all, which `native.ts` sees as a rejected `invoke` like any other.
 #[cfg(feature = "tts")]
 #[tauri::command]
-fn tts_status(tts: State<'_, Arc<TtsHandle>>) -> tts::TtsStatus {
-    tts.status()
+async fn tts_status(tts: State<'_, Arc<TtsHandle>>) -> Result<tts::TtsStatus, String> {
+    let handle = tts.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || handle.status())
+        .await
+        .map_err(|cause| format!("the voice status could not be read: {cause}"))
 }
 
 /// Downloads and unpacks the voice model, reporting progress as it goes.

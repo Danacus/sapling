@@ -100,7 +100,23 @@ someone to run the check by hand.
   a frozen window, and so is a commit's fsync: `dispatch` blocks until the core
   thread has answered, and `applyResult` makes three or more such calls on every
   Check. That is `dispatch`, `commit_all`, `tts_download`, `tts_synthesize` and
-  `tts_play`, which waits for the whole clip. `derived_schema_version` stays
+  `tts_play`, which waits for the whole clip — and `tts_status`, which waits for
+  no lock at all but does read the disk, from a screen a learner opens
+  mid-phrase. **`TtsHandle::status` may never take the engine mutex**: that
+  mutex is held across a model load plus a second of inference, and Settings
+  parking behind it is the bug this rule now forbids. `loaded` is an
+  `AtomicBool` beside the engine, and "installed" and the model's size on disk
+  are measured once and latched — an installed model does not uninstall itself
+  while the process runs, and the size is a walk of the whole 400 MB tree. Not
+  installed re-probes every call. Neither reader takes the install lock and
+  neither needs to: **an install is staged and renamed into place**, so the live
+  model path is always either absent or a whole model. `unpack` extracts into a
+  `.partial` sibling, one `fs::rename` publishes it, and the next install sweeps
+  what a crash left. That rename is what makes `load` safe to run mid-download
+  — sherpa-onnx handed a half-written `espeak-ng-data` calls `exit(-1)` and
+  takes the process with it — and `load` must stay lock-free, because taking
+  `installing` would park every phrase behind a 365 MB download.
+  `derived_schema_version` stays
   synchronous because it reads a constant, and `tts_stop` because it posts one
   message and waits for nothing — and it is on the path to every new phrase,
   where a round trip through the pool would be pure latency. The
