@@ -165,15 +165,22 @@ describe('export', () => {
 		expect(await lookupRows(store)).toEqual(before.lookups);
 	});
 
-	it('skips an event it cannot parse and keeps the rest', async () => {
+	// An import is a copy of a log, and a log a device cannot read is still a
+	// log: the row lands, materialises nothing, and leaves in the next export
+	// for a build that knows what to do with it.
+	it('keeps an event it cannot parse in the log, and materialises none of it', async () => {
 		await seedOneOfEach();
 		const envelope = JSON.parse(await exportData()) as ExportEnvelope;
-		envelope.events.push({ id: 'junk', type: 'itemAdded', at: 1, device: 'devA', payload: {} });
+		const junk = { id: 'junk', type: 'itemAdded', at: 1, device: 'devA', payload: {} };
+		envelope.events.push(junk);
 
 		setBackendForTesting(await makeTestBackend());
 		await importData(JSON.stringify(envelope));
 
 		expect((await getAllItems()).map((row) => row.id)).toEqual(['i1']);
+		const again = JSON.parse(await exportData()) as ExportEnvelope;
+		expect(again.events).toContainEqual(junk);
+		expect(again.events).toHaveLength(envelope.events.length);
 	});
 });
 

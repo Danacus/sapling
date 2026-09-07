@@ -20,12 +20,12 @@ use serde_json::{Map, Value};
 
 use crate::day::LocalDay;
 use crate::events::{
-    parse_event, ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted,
-    ItemAdded, ItemDeleted, ItemFields, ItemReviewed, ItemUpdated, Payload, ReviewAmended,
-    SyncEvent, TextDeleted, WordLookedUp, WordMarked,
+    parse_envelope, ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted,
+    ItemAdded, ItemDeleted, ItemFields, ItemReviewed, ItemUpdated, Payload, RawEvent,
+    ReviewAmended, SyncEvent, TextDeleted, WordLookedUp, WordMarked,
 };
 use crate::js;
-use crate::materialize::{event_from_row, open_schema, Materializer, LOG_ORDER};
+use crate::materialize::{open_schema, raw_from_row, Materializer, LOG_ORDER};
 use crate::schema::{DERIVED_TABLES, PROFILE_ID};
 use crate::sql::{Error, Param, Result, Row, Sql};
 use crate::srs::{item_srs, FsrsCardState};
@@ -66,7 +66,7 @@ pub struct ReviewOutcome {
 pub struct ExportEnvelope {
     pub version: f64,
     pub exported_at: f64,
-    pub events: Vec<SyncEvent>,
+    pub events: Vec<RawEvent>,
 }
 
 /// The backend over an open, schema-applied database.
@@ -772,15 +772,19 @@ impl Core {
         })
     }
 
-    fn log_events(&self, sql: &str, params: &[Param]) -> Result<Vec<SyncEvent>> {
-        let rows = self.sql.query(sql, params)?;
-        let mut events = Vec::with_capacity(rows.len());
-        for row in &rows {
-            if let Some(event) = event_from_row(row)? {
-                events.push(event);
-            }
-        }
-        Ok(events)
+    /// Log rows as the log holds them — every row the query returned, in its
+    /// order, payloads uninterpreted.
+    ///
+    /// Push and export both read through here, and neither may ask whether this
+    /// build understands a row: one it cannot type still has to reach the
+    /// server and still has to appear in a backup file, or a device that never
+    /// learned an event kind quietly becomes where those events go to die.
+    fn log_events(&self, sql: &str, params: &[Param]) -> Result<Vec<RawEvent>> {
+        self.sql
+            .query(sql, params)?
+            .iter()
+            .map(raw_from_row)
+            .collect()
     }
 
     /// The whole log as JSON, in log order — `JSON.stringify(envelope, null, 2)`.
@@ -810,7 +814,7 @@ impl Core {
             let Some(raw_events) = object.get("events").and_then(Value::as_array) else {
                 return Err(Error("Import failed: missing event list.".into()));
             };
-            let events: Vec<SyncEvent> = raw_events.iter().filter_map(parse_event).collect();
+            let events: Vec<RawEvent> = raw_events.iter().filter_map(parse_envelope).collect();
             return self.transaction(|| {
                 let m = self.materializer();
                 for event in &events {
@@ -880,7 +884,11 @@ impl Core {
     /* ---- Sync -------------------------------------------------------- */
 
     /// Up to `limit` events the server has not acknowledged, in log order.
-    pub fn pending_events(&self, limit: i64) -> Result<Vec<SyncEvent>> {
+    ///
+    /// Exactly the first `limit` unpushed rows, with no gaps: a row this build
+    /// cannot type is pushed like any other, so nothing behind it starves
+    /// behind a page that never empties.
+    pub fn pending_events(&self, limit: i64) -> Result<Vec<RawEvent>> {
         self.log_events(
             &format!(
                 "SELECT id, type, at, device, payload FROM events
@@ -904,16 +912,21 @@ impl Core {
     }
 
     /// Applies a page pulled from the server, in arrival order. Rows are raw:
-    /// one that will not parse or carries no `seq` is skipped. Returns how many applied.
+    /// one that is not an envelope at all, or carries no `seq`, is skipped.
+    /// Returns how many reached the log.
+    ///
+    /// A payload this build cannot read costs its merge rule and nothing else —
+    /// the row lands in the log, is pushed on and exported like the rest, and a
+    /// build that knows the kind materialises it on its next rebuild.
     pub fn apply_remote(&self, events: &[Value]) -> Result<usize> {
         self.transaction(|| {
             let m = self.materializer();
             let mut applied = 0;
             for raw in events {
-                let (Some(seq), Some(event)) = (seq_of(raw), parse_event(raw)) else {
+                let (Some(seq), Some(event)) = (seq_of(raw), parse_envelope(raw)) else {
                     continue;
                 };
-                m.ingest(&event, Some(seq))?;
+                m.ingest_raw(&event, Some(seq))?;
                 applied += 1;
             }
             Ok(applied)
@@ -980,5 +993,107 @@ mod tests {
         assert_eq!(seq_of(&serde_json::json!({ "seq": 1.5 })), None);
         assert_eq!(seq_of(&serde_json::json!({ "seq": "3" })), None);
         assert_eq!(seq_of(&serde_json::json!({})), None);
+    }
+
+    /// A log with a row this build cannot read sitting in the middle of it —
+    /// the version-skew shape: a kind only a newer build writes, and a payload
+    /// whose schema has since widened.
+    #[cfg(feature = "sqlite")]
+    mod pending {
+        use super::*;
+        use crate::rusqlite_sql::RusqliteSql;
+        use crate::Utc;
+        use serde_json::json;
+
+        const NOW: f64 = 1_710_000_000_000.0;
+
+        fn core() -> Core {
+            Core::open(
+                Box::new(RusqliteSql::in_memory().expect("in-memory sqlite")),
+                "dev-test",
+                || NOW,
+                || "local-1".to_owned(),
+                Utc,
+            )
+            .expect("schema applies")
+        }
+
+        /// Four unpushed rows, second and third unreadable. An import writes
+        /// the log without a `seq`, which is what makes them pending.
+        fn imported() -> Core {
+            let core = core();
+            let file = json!({
+                "version": EXPORT_VERSION,
+                "exportedAt": NOW,
+                "events": [
+                    { "id": "e1", "type": "itemAdded", "at": 1.0, "device": "devA",
+                      "payload": { "id": "i1", "kind": "vocab", "term": "书", "meaning": "book", "introducedAt": 1.0 } },
+                    { "id": "e2", "type": "wordShelved", "at": 2.0, "device": "devB",
+                      "payload": { "term": "水", "shelf": "later" } },
+                    { "id": "e3", "type": "itemAdded", "at": 3.0, "device": "devB",
+                      "payload": { "id": "i2", "kind": "vocab", "term": "水", "meaning": "water", "notes": null, "introducedAt": 3.0 } },
+                    { "id": "e4", "type": "itemDeleted", "at": 4.0, "device": "devA",
+                      "payload": { "itemId": "i1" } },
+                ]
+            });
+            core.import_data(&js::stringify(&file)).expect("import");
+            core
+        }
+
+        fn ids(events: &[RawEvent]) -> Vec<&str> {
+            events.iter().map(|e| e.id.as_str()).collect()
+        }
+
+        #[test]
+        fn a_page_is_the_first_limit_rows_with_no_gap() {
+            let core = imported();
+            // The old filter ran after `LIMIT`, so a page over a bad row came
+            // back short and `pushPending` stopped on it — the rows behind
+            // never left the device.
+            assert_eq!(ids(&core.pending_events(2).expect("page")), ["e1", "e2"]);
+            assert_eq!(
+                ids(&core.pending_events(100).expect("page")),
+                ["e1", "e2", "e3", "e4"]
+            );
+        }
+
+        #[test]
+        fn a_pushed_page_leaves_the_rows_behind_it_pending() {
+            let core = imported();
+            let page = core.pending_events(2).expect("page");
+            let seqs: Vec<(String, f64)> = page
+                .iter()
+                .enumerate()
+                .map(|(i, e)| (e.id.clone(), i as f64 + 1.0))
+                .collect();
+            core.mark_pushed(&seqs).expect("mark pushed");
+            assert_eq!(ids(&core.pending_events(2).expect("page")), ["e3", "e4"]);
+        }
+
+        #[test]
+        fn an_unreadable_row_is_pushed_and_exported_verbatim_and_materialises_nothing() {
+            let core = imported();
+            let exported: Value =
+                serde_json::from_str(&core.export_data().expect("export")).expect("export parses");
+            let kinds: Vec<&str> = exported["events"]
+                .as_array()
+                .expect("events is an array")
+                .iter()
+                .map(|e| e["type"].as_str().expect("a type"))
+                .collect();
+            assert_eq!(
+                kinds,
+                ["itemAdded", "wordShelved", "itemAdded", "itemDeleted"]
+            );
+            assert_eq!(
+                exported["events"][1]["payload"],
+                json!({ "term": "水", "shelf": "later" })
+            );
+            assert_eq!(exported["events"][2]["payload"]["notes"], Value::Null);
+
+            // `i1` was added and deleted; `i2`'s add is the row that will not
+            // parse, so the read model has neither.
+            assert!(core.get_all_items(false).expect("items").is_empty());
+        }
     }
 }

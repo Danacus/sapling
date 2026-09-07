@@ -59,6 +59,16 @@ Reads are always taken under `TZ=UTC` (`daily` buckets by local day).
 - `stale-and-duplicate-reviews` — a review older than one already folded (a
   refold), the same review under a fresh event id (a legacy import), the same
   event redelivered, and a review of an item the log never adds.
+- `version-skew` — rows this build cannot read: `wordShelved`, a kind only a
+  newer build writes, and two `itemAdded` payloads carrying `notes: null`,
+  which the schema rejects. All eight rows are in `exportData`, field for
+  field; none of them reaches the read model. `item-skewed` is never added, so
+  the patch naming it waits in the log; `item-shared` has its unreadable add
+  *ahead* of a readable one in log order, so the refold a tied patch triggers
+  has to take the base it can read. (`pendingEvents` is `[]` here as in every
+  fixture — the rows arrive through `applyRemote` already carrying a `seq`, so
+  none is unpushed. The pending side is covered by `core.rs`'s own tests and
+  by `sync/run.test.ts`.)
 
 Every fixture also checks that applying the log twice reads the same, that an
 export imported into a fresh backend reads the same, and that the exported log

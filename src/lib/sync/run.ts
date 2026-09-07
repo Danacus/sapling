@@ -88,6 +88,11 @@ async function syncCycle(fetchImpl: typeof fetch): Promise<SyncOutcome> {
  * Sends every unacknowledged event in log order and stamps the seqs that come
  * back. An event keeps its NULL `seq` until the server has answered for it, so
  * an interrupted push is simply re-sent.
+ *
+ * Stopping on a short page is safe only because `pendingEvents(limit)` answers
+ * with exactly the first `limit` unpushed rows: a row this build cannot read is
+ * pushed verbatim like any other, so a page shorter than asked for really does
+ * mean the queue is empty rather than that something was filtered out of it.
  */
 async function pushPending(
 	backend: Backend,

@@ -1,0 +1,307 @@
+{
+	"getAllItems": {
+		"lean": [
+			{
+				"id": "item-known",
+				"kind": "vocab",
+				"term": "本",
+				"meaning": "book",
+				"romanization": "hon",
+				"introducedAt": 1710061200000,
+				"fsrsCard": {
+					"due": 1710061200000,
+					"stability": 0,
+					"difficulty": 0,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 0,
+					"reps": 0,
+					"lapses": 0,
+					"state": 0,
+					"last_review": null
+				},
+				"srs": {
+					"due": 1710061200000,
+					"retrievability": 0,
+					"strength": 0
+				},
+				"reviewCount": 0,
+				"correctCount": 0,
+				"history": []
+			},
+			{
+				"id": "item-shared",
+				"kind": "vocab",
+				"term": "山",
+				"meaning": "mountain (b)",
+				"romanization": "yama",
+				"notes": "from b",
+				"introducedAt": 1710061500000,
+				"fsrsCard": {
+					"due": 1710061500000,
+					"stability": 0,
+					"difficulty": 0,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 0,
+					"reps": 0,
+					"lapses": 0,
+					"state": 0,
+					"last_review": null
+				},
+				"srs": {
+					"due": 1710061500000,
+					"retrievability": 0,
+					"strength": 0
+				},
+				"reviewCount": 0,
+				"correctCount": 0,
+				"history": []
+			}
+		],
+		"withRecentGrades": [
+			{
+				"id": "item-known",
+				"kind": "vocab",
+				"term": "本",
+				"meaning": "book",
+				"romanization": "hon",
+				"introducedAt": 1710061200000,
+				"fsrsCard": {
+					"due": 1710061200000,
+					"stability": 0,
+					"difficulty": 0,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 0,
+					"reps": 0,
+					"lapses": 0,
+					"state": 0,
+					"last_review": null
+				},
+				"srs": {
+					"due": 1710061200000,
+					"retrievability": 0,
+					"strength": 0
+				},
+				"reviewCount": 0,
+				"correctCount": 0,
+				"recentGrades": [],
+				"history": []
+			},
+			{
+				"id": "item-shared",
+				"kind": "vocab",
+				"term": "山",
+				"meaning": "mountain (b)",
+				"romanization": "yama",
+				"notes": "from b",
+				"introducedAt": 1710061500000,
+				"fsrsCard": {
+					"due": 1710061500000,
+					"stability": 0,
+					"difficulty": 0,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 0,
+					"reps": 0,
+					"lapses": 0,
+					"state": 0,
+					"last_review": null
+				},
+				"srs": {
+					"due": 1710061500000,
+					"retrievability": 0,
+					"strength": 0
+				},
+				"reviewCount": 0,
+				"correctCount": 0,
+				"recentGrades": [],
+				"history": []
+			}
+		]
+	},
+	"getItem": {
+		"item-known": {
+			"id": "item-known",
+			"kind": "vocab",
+			"term": "本",
+			"meaning": "book",
+			"romanization": "hon",
+			"introducedAt": 1710061200000,
+			"fsrsCard": {
+				"due": 1710061200000,
+				"stability": 0,
+				"difficulty": 0,
+				"elapsed_days": 0,
+				"scheduled_days": 0,
+				"learning_steps": 0,
+				"reps": 0,
+				"lapses": 0,
+				"state": 0,
+				"last_review": null
+			},
+			"srs": {
+				"due": 1710061200000,
+				"retrievability": 0,
+				"strength": 0
+			},
+			"reviewCount": 0,
+			"correctCount": 0,
+			"recentGrades": [],
+			"history": []
+		},
+		"item-shared": {
+			"id": "item-shared",
+			"kind": "vocab",
+			"term": "山",
+			"meaning": "mountain (b)",
+			"romanization": "yama",
+			"notes": "from b",
+			"introducedAt": 1710061500000,
+			"fsrsCard": {
+				"due": 1710061500000,
+				"stability": 0,
+				"difficulty": 0,
+				"elapsed_days": 0,
+				"scheduled_days": 0,
+				"learning_steps": 0,
+				"reps": 0,
+				"lapses": 0,
+				"state": 0,
+				"last_review": null
+			},
+			"srs": {
+				"due": 1710061500000,
+				"retrievability": 0,
+				"strength": 0
+			},
+			"reviewCount": 0,
+			"correctCount": 0,
+			"recentGrades": [],
+			"history": []
+		},
+		"item-skewed": null
+	},
+	"getPool": [],
+	"poolSize": 0,
+	"getChallengesByIds": [],
+	"recentResults": [],
+	"getDailyActivity": [],
+	"getTexts": [],
+	"getText": {},
+	"getKnownTerms": [],
+	"getConversations": [],
+	"getConversation": {},
+	"exportData": {
+		"version": 3,
+		"exportedAt": 1710244800000,
+		"events": [
+			{
+				"id": "ev-add-known",
+				"type": "itemAdded",
+				"at": 1710061200000,
+				"device": "dev-a",
+				"payload": {
+					"id": "item-known",
+					"kind": "vocab",
+					"term": "本",
+					"meaning": "book",
+					"romanization": "hon",
+					"introducedAt": 1710061200000
+				}
+			},
+			{
+				"id": "ev-shelved",
+				"type": "wordShelved",
+				"at": 1710061260000,
+				"device": "dev-b",
+				"payload": {
+					"term": "水",
+					"shelf": "later"
+				}
+			},
+			{
+				"id": "ev-add-skewed",
+				"type": "itemAdded",
+				"at": 1710061320000,
+				"device": "dev-b",
+				"payload": {
+					"id": "item-skewed",
+					"kind": "vocab",
+					"term": "水",
+					"meaning": "water",
+					"notes": null,
+					"introducedAt": 1710061320000
+				}
+			},
+			{
+				"id": "ev-update-skewed",
+				"type": "itemUpdated",
+				"at": 1710061380000,
+				"device": "dev-a",
+				"payload": {
+					"itemId": "item-skewed",
+					"fields": {
+						"meaning": "water (patched)"
+					}
+				}
+			},
+			{
+				"id": "ev-add-shared-skewed",
+				"type": "itemAdded",
+				"at": 1710061440000,
+				"device": "dev-b",
+				"payload": {
+					"id": "item-shared",
+					"kind": "vocab",
+					"term": "山",
+					"meaning": "mountain",
+					"notes": null,
+					"introducedAt": 1710061440000
+				}
+			},
+			{
+				"id": "ev-add-shared",
+				"type": "itemAdded",
+				"at": 1710061500000,
+				"device": "dev-a",
+				"payload": {
+					"id": "item-shared",
+					"kind": "vocab",
+					"term": "山",
+					"meaning": "mountain",
+					"romanization": "yama",
+					"introducedAt": 1710061500000
+				}
+			},
+			{
+				"id": "ev-update-shared-b",
+				"type": "itemUpdated",
+				"at": 1710063600000,
+				"device": "dev-b",
+				"payload": {
+					"itemId": "item-shared",
+					"fields": {
+						"meaning": "mountain (b)",
+						"notes": "from b"
+					}
+				}
+			},
+			{
+				"id": "ev-update-shared-a",
+				"type": "itemUpdated",
+				"at": 1710063600000,
+				"device": "dev-a",
+				"payload": {
+					"itemId": "item-shared",
+					"fields": {
+						"meaning": "mountain (a)"
+					}
+				}
+			}
+		]
+	},
+	"pendingEvents": [],
+	"getPullCursor": 0
+}

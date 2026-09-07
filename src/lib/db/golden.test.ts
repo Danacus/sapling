@@ -13,9 +13,11 @@
  * Four more checks ride on every fixture, because they are what the merge
  * rules promise: applying the log twice reads the same; exporting it and
  * importing the file into a fresh backend reads the same; the exported log
- * *is* the input log, field for field (`parse_event(raw)` equals `raw` — the
- * schema-strips-unknown-fields trap); and, where the fixture says its rules
- * are order-free, applying the rows in reverse arrival order reads the same.
+ * *is* the input log, field for field (`parse_event(raw)` equals `raw` for a
+ * row this build understands — the schema-strips-unknown-fields trap — and one
+ * it does not is carried through untouched); and, where the fixture says its
+ * rules are order-free, applying the rows in reverse arrival order reads the
+ * same.
  *
  * Rebless after a deliberate change with `pnpm golden:update` — the diff in
  * `expected.json` is then the review.
@@ -201,7 +203,10 @@ describe('golden fixtures', () => {
 
 	for (const fixture of fixtures) {
 		describe(fixture.name, () => {
-			it('applies every row — a row the gate rejects is a fixture bug, not a case', async () => {
+			// Every row reaches the log, including one this build cannot type —
+			// `applyRemote` turns away only something that is not an envelope at
+			// all, or carries no `seq`, and either is a fixture bug.
+			it('logs every row — a row the gate rejects is a fixture bug, not a case', async () => {
 				const { count } = await applied(fixture);
 				expect(count).toBe(fixture.events.length);
 			});

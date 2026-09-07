@@ -43,12 +43,28 @@ export type EventType =
 	| 'turnAdded'
 	| 'conversationDeleted';
 
-export interface SyncEvent {
+/**
+ * One row of the log, exactly as it is stored — and exactly what push and
+ * export ship.
+ *
+ * `type` is a plain string here, not an {@link EventType}, because neither of
+ * those two may require that *this* build understands the row: a kind a newer
+ * build wrote, or a payload whose schema has since widened, has to survive a
+ * round trip through an older device rather than be dropped. Only the
+ * materializer parses a payload, and a row it cannot read is skipped, never
+ * dropped from the log.
+ */
+export interface LogRow {
 	id: string;
-	type: EventType;
+	type: string;
 	at: number;
 	device: string;
 	payload: unknown;
+}
+
+/** A log row this build knows the type of — what a merge rule is written against. */
+export interface SyncEvent extends LogRow {
+	type: EventType;
 }
 
 /** A remote event, carrying the sequence number the backend assigned it. */

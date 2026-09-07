@@ -500,40 +500,51 @@ describe('reading texts and word marks', () => {
 
 describe('unknown events', () => {
 	/**
-	 * One raw row through the gate a pulled page passes: how many applied, and
-	 * what the log holds afterwards — the export is the log, field for field.
+	 * One raw row through the gate a pulled page passes: how many reached the
+	 * log, what the log holds afterwards — the export is the log, field for
+	 * field — and what the read model made of it.
 	 */
 	async function gate(raw: unknown) {
 		const store = await makeTestBackend();
 		const applied = await store.applyRemote([{ ...(raw as object), seq: ++seq }]);
 		const { events: kept } = JSON.parse(await store.exportData()) as { events: unknown[] };
-		return { applied, kept };
+		return { applied, kept, items: await store.getAllItems() };
 	}
 
-	it('skips an event type this build has never heard of', async () => {
+	// A row this build cannot read costs its merge rule and nothing else. The
+	// log is the facts, and push and export are copies of it: a device that
+	// stripped what it did not understand would be where a newer build's events
+	// go to die, and the learner would never see them again.
+	it('logs an event type this build has never heard of, and applies no rule', async () => {
 		// The retired `xp-banked` is the case: an old log carrying it must keep
-		// working, and the caller drops the event and keeps going.
-		const { applied, kept } = await gate({
-			id: 'x',
-			type: 'xpBanked',
-			at: 1,
-			device: 'devA',
-			payload: { amount: 5 }
-		});
-		expect(applied).toBe(0);
-		expect(kept).toEqual([]);
+		// working, and a newer build's kind arriving here must survive intact.
+		const raw = { id: 'x', type: 'xpBanked', at: 1, device: 'devA', payload: { amount: 5 } };
+		const { applied, kept } = await gate(raw);
+		expect(applied).toBe(1);
+		expect(kept).toEqual([raw]);
 	});
 
-	it('skips an event whose payload will not parse', async () => {
-		const { applied, kept } = await gate({
+	it('logs an event whose payload will not parse, and adds no item', async () => {
+		// `notes: null` is the shape: absent is fine, `null` is not, and a build
+		// whose schema accepts it must still get the row back off this one.
+		const raw = {
 			id: 'x',
 			type: 'itemAdded',
 			at: 1,
 			device: 'devA',
-			payload: { id: 'i1' }
-		});
-		expect(applied).toBe(0);
-		expect(kept).toEqual([]);
+			payload: {
+				id: 'i1',
+				kind: 'vocab',
+				term: '书',
+				meaning: 'book',
+				notes: null,
+				introducedAt: 1
+			}
+		};
+		const { applied, kept, items } = await gate(raw);
+		expect(applied).toBe(1);
+		expect(kept).toEqual([raw]);
+		expect(items).toEqual([]);
 	});
 
 	it('accepts a well-formed one', async () => {

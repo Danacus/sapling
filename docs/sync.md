@@ -8,6 +8,11 @@ Envelope: `{ id, type, at, device, payload }`. `id` is the set-union key — an
 id already in the log is never re-applied. `at` is when the learner did the
 thing, and doubles as the last-write-wins input for the two overwrite types.
 
+Push and export carry log rows verbatim; only materialization interprets a
+payload, and a row it cannot read is skipped, never dropped from the log. So a
+row a newer build wrote — an unknown `type`, or a payload whose schema has
+since widened — survives a round trip through an older device untouched.
+
 | type | payload is |
 |---|---|
 | `itemAdded` | a vocab/grammar item entering the library |

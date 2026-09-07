@@ -318,8 +318,11 @@ fn has_fixtures_to_run() {
     );
 }
 
+/// Every row reaches the log, including one this build cannot type:
+/// `apply_remote` turns away only something that is not an envelope at all, or
+/// carries no `seq`, and either is a fixture bug.
 #[test]
-fn applies_every_row() {
+fn logs_every_row() {
     for fixture in load_fixtures() {
         let (_, count) = applied(&fixture, &fixture.events);
         assert_eq!(

@@ -1,11 +1,17 @@
 //! The event model: seventeen immutable facts, and the only thing sync moves.
 //!
 //! `src/lib/db/events.ts`, with serde standing in for zod. The rules are the
-//! same: the envelope is `{ id, type, at, device, payload }`, an unknown type
-//! or a payload that will not parse rejects the row, unknown fields inside a
-//! payload are stripped, and an optional field that is present must have a
-//! value — `null` is not `undefined`. [`parse_event`] is the gate every row off
-//! sync or out of a backup file passes; a local commit never goes through it.
+//! same: the envelope is `{ id, type, at, device, payload }`, unknown fields
+//! inside a payload are stripped, and an optional field that is present must
+//! have a value — `null` is not `undefined`. [`parse_event`] is the gate every
+//! row off sync or out of a backup file passes *into the merge rules*; a local
+//! commit never goes through it.
+//!
+//! **An unknown type or a payload that will not parse costs the rule, not the
+//! row.** [`parse_envelope`] reads the envelope alone and keeps the payload as
+//! it arrived, so the log stores what a newer build wrote and push and export
+//! ship it back verbatim; [`typed_event`] is the second half, and only the
+//! materializer needs it.
 //!
 //! **A payload struct must name every optional field of the type it carries.**
 //! Serde drops what a struct does not declare exactly as zod does, and the
@@ -355,7 +361,27 @@ pub fn parse_payload(kind: EventType, raw: &Value) -> Option<Payload> {
 /* Envelope                                                                    */
 /* -------------------------------------------------------------------------- */
 
-/// One event as the log holds it and as an export file lists it.
+/// One row as the log holds it and as push and export ship it: the envelope
+/// read, the payload untouched.
+///
+/// Neither sync nor export may require that *this* build understands a row. A
+/// kind a newer build writes, or a payload whose schema has since widened, has
+/// to survive a round trip through an older device rather than be dropped on
+/// the floor — so `kind` is a plain string here and `payload` an opaque
+/// [`Value`]. Only [`typed_event`], and the merge rules behind it, ever
+/// interpret one.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RawEvent {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub at: f64,
+    pub device: String,
+    pub payload: Value,
+}
+
+/// One event this build understands: a known type and a payload its schema
+/// accepts, ready for a merge rule.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SyncEvent {
     pub id: String,
@@ -366,27 +392,46 @@ pub struct SyncEvent {
     pub payload: Payload,
 }
 
-/// Validates one event off the wire or out of an export file.
+/// Reads one row off the wire or out of an export file as far as the envelope,
+/// and no further.
 ///
-/// `None` for anything but a well-formed envelope carrying a known type and a
-/// payload its schema accepts — the caller skips it and keeps going, so one
-/// bad row never costs a whole import.
-pub fn parse_event(raw: &Value) -> Option<SyncEvent> {
+/// `None` only for something that is not an envelope at all — no `id`, a type
+/// that is not a string, an `at` that is not a number. The payload is carried
+/// exactly as it arrived, because a row this build cannot type is still a row
+/// the log has to keep and push.
+pub fn parse_envelope(raw: &Value) -> Option<RawEvent> {
     let outer = raw.as_object()?;
-    let id = outer.get("id")?.as_str()?;
-    let type_name = outer.get("type")?.as_str()?;
-    let at = outer.get("at")?.as_f64()?;
-    let device = outer.get("device")?.as_str()?;
-    let kind = EventType::from_name(type_name)?;
-    // `z.unknown()` lets the key be absent; the payload schema then rejects it.
-    let payload = parse_payload(kind, outer.get("payload").unwrap_or(&Value::Null))?;
-    Some(SyncEvent {
-        id: id.to_owned(),
-        kind,
-        at,
-        device: device.to_owned(),
-        payload,
+    Some(RawEvent {
+        id: outer.get("id")?.as_str()?.to_owned(),
+        kind: outer.get("type")?.as_str()?.to_owned(),
+        at: outer.get("at")?.as_f64()?,
+        device: outer.get("device")?.as_str()?.to_owned(),
+        // `z.unknown()` lets the key be absent; what stands in for it is `null`,
+        // which no payload schema accepts.
+        payload: outer.get("payload").cloned().unwrap_or(Value::Null),
     })
+}
+
+/// The typed event a merge rule can be applied from, or `None` for a row whose
+/// type or payload shape this build does not know — which is a row to skip,
+/// never one to drop from the log.
+pub fn typed_event(raw: &RawEvent) -> Option<SyncEvent> {
+    let kind = EventType::from_name(&raw.kind)?;
+    Some(SyncEvent {
+        id: raw.id.clone(),
+        kind,
+        at: raw.at,
+        device: raw.device.clone(),
+        payload: parse_payload(kind, &raw.payload)?,
+    })
+}
+
+/// Validates one event off the wire or out of an export file: the envelope and
+/// the schema its type names, in one step.
+///
+/// `None` for anything else — the caller skips the *rule*, not the row.
+pub fn parse_event(raw: &Value) -> Option<SyncEvent> {
+    typed_event(&parse_envelope(raw)?)
 }
 
 #[cfg(test)]

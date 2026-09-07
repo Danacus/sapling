@@ -25,7 +25,7 @@ import type {
 	ReadingText
 } from '$lib/types';
 import type { ChallengeRow } from './database';
-import type { SyncEvent } from './events';
+import type { LogRow } from './events';
 
 /**
  * One library row: the conversation, plus the two facts a shelf entry needs
@@ -49,7 +49,7 @@ export const EXPORT_VERSION = 3;
 export interface ExportEnvelope {
 	version: number;
 	exportedAt: number;
-	events: SyncEvent[];
+	events: LogRow[];
 }
 
 /**
@@ -245,16 +245,24 @@ export interface Backend {
 
 	/* ---- Sync ------------------------------------------------------------ */
 
-	/** Up to `limit` events the server has not acknowledged, in log order. */
-	pendingEvents(limit: number): Promise<SyncEvent[]>;
+	/**
+	 * Up to `limit` events the server has not acknowledged, in log order.
+	 *
+	 * Exactly the first `limit` unpushed rows, with no gaps — a row this build
+	 * cannot read is pushed verbatim like any other, so nothing behind it can
+	 * starve behind a page that never empties.
+	 */
+	pendingEvents(limit: number): Promise<LogRow[]>;
 	/** Stamps the `seq` the server assigned each id. Returns how many were stamped. */
 	markPushed(seqs: Record<string, number>): Promise<number>;
 	/**
 	 * Applies a page pulled from the server, in arrival order.
 	 *
-	 * Rows are raw: each is parsed at the gate here, and one that will not parse
-	 * or carries no `seq` is skipped. Returns how many were applied — this
-	 * device's own echoes included, which only stamp their `seq`.
+	 * Rows are raw: one that is not an envelope at all, or carries no `seq`, is
+	 * skipped. Returns how many reached the log — this device's own echoes
+	 * included, which only stamp their `seq`. A payload this build cannot read
+	 * costs its merge rule and nothing else: the row is logged, pushed on and
+	 * exported, and a build that knows the kind materialises it.
 	 */
 	applyRemote(events: unknown[]): Promise<number>;
 	/** The pull cursor: the highest `seq` whose page has been applied, `0` before the first. */

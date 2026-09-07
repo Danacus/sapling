@@ -1,0 +1,121 @@
+{
+	"meta": {
+		"deviceId": "fixture-device",
+		"now": 1710244800000,
+		"orderFree": true,
+		"note": "A log carrying rows this build cannot read: `wordShelved`, a kind only a newer build writes, and two `itemAdded` payloads with `notes: null`, which the schema rejects because absent is not null. Every one of them stays in the log — the export lists all eight rows, field for field — and none of them reaches the read model: item-skewed is never added, so the patch naming it waits forever. item-shared is the sharp case: its unreadable add sits ahead of a readable one in log order, so the refold a tied patch triggers has to take the base it can read rather than fail on the one it cannot."
+	},
+	"events": [
+		{
+			"seq": 1,
+			"id": "ev-add-known",
+			"type": "itemAdded",
+			"at": 1710061200000,
+			"device": "dev-a",
+			"payload": {
+				"id": "item-known",
+				"kind": "vocab",
+				"term": "本",
+				"meaning": "book",
+				"romanization": "hon",
+				"introducedAt": 1710061200000
+			}
+		},
+		{
+			"seq": 2,
+			"id": "ev-shelved",
+			"type": "wordShelved",
+			"at": 1710061260000,
+			"device": "dev-b",
+			"payload": {
+				"term": "水",
+				"shelf": "later"
+			}
+		},
+		{
+			"seq": 3,
+			"id": "ev-add-skewed",
+			"type": "itemAdded",
+			"at": 1710061320000,
+			"device": "dev-b",
+			"payload": {
+				"id": "item-skewed",
+				"kind": "vocab",
+				"term": "水",
+				"meaning": "water",
+				"notes": null,
+				"introducedAt": 1710061320000
+			}
+		},
+		{
+			"seq": 4,
+			"id": "ev-update-skewed",
+			"type": "itemUpdated",
+			"at": 1710061380000,
+			"device": "dev-a",
+			"payload": {
+				"itemId": "item-skewed",
+				"fields": {
+					"meaning": "water (patched)"
+				}
+			}
+		},
+		{
+			"seq": 5,
+			"id": "ev-add-shared-skewed",
+			"type": "itemAdded",
+			"at": 1710061440000,
+			"device": "dev-b",
+			"payload": {
+				"id": "item-shared",
+				"kind": "vocab",
+				"term": "山",
+				"meaning": "mountain",
+				"notes": null,
+				"introducedAt": 1710061440000
+			}
+		},
+		{
+			"seq": 6,
+			"id": "ev-add-shared",
+			"type": "itemAdded",
+			"at": 1710061500000,
+			"device": "dev-a",
+			"payload": {
+				"id": "item-shared",
+				"kind": "vocab",
+				"term": "山",
+				"meaning": "mountain",
+				"romanization": "yama",
+				"introducedAt": 1710061500000
+			}
+		},
+		{
+			"seq": 7,
+			"id": "ev-update-shared-b",
+			"type": "itemUpdated",
+			"at": 1710063600000,
+			"device": "dev-b",
+			"payload": {
+				"itemId": "item-shared",
+				"fields": {
+					"meaning": "mountain (b)",
+					"notes": "from b"
+				}
+			}
+		},
+		{
+			"seq": 8,
+			"id": "ev-update-shared-a",
+			"type": "itemUpdated",
+			"at": 1710063600000,
+			"device": "dev-a",
+			"payload": {
+				"itemId": "item-shared",
+				"fields": {
+					"meaning": "mountain (a)"
+				}
+			}
+		}
+	]
+}

@@ -13,9 +13,9 @@ use serde_json::{json, Value};
 
 use crate::day::LocalDay;
 use crate::events::{
-    ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted, EventType, ItemAdded,
-    ItemDeleted, ItemReviewed, ItemUpdated, Payload, ReviewAmended, SyncEvent, TextDeleted,
-    WordLookedUp, WordMarked, PATCHABLE_COLUMNS,
+    typed_event, ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted,
+    ItemAdded, ItemDeleted, ItemReviewed, ItemUpdated, Payload, RawEvent, ReviewAmended, SyncEvent,
+    TextDeleted, WordLookedUp, WordMarked, PATCHABLE_COLUMNS,
 };
 use crate::js;
 use crate::schema::{
@@ -249,6 +249,10 @@ impl<'a> Materializer<'a> {
     }
 
     /// The `itemUpdated` rows the log holds for one item, in fold order `(at, device)`.
+    ///
+    /// A row whose payload this build cannot read is passed over rather than
+    /// failing the fold: the log keeps rows a newer build wrote, and a rule
+    /// that cannot apply must return, never throw.
     fn patches_of(&self, item_id: &str) -> Result<Vec<(f64, ItemUpdated)>> {
         let rows = self.sql.query(
             "SELECT at, device, payload FROM events
@@ -256,9 +260,13 @@ impl<'a> Materializer<'a> {
 		 ORDER BY at, device",
             &[Param::text(item_id)],
         )?;
-        rows.iter()
-            .map(|row| Ok((row.f64("at")?, serde_json::from_str(row.text("payload")?)?)))
-            .collect()
+        Ok(rows
+            .iter()
+            .filter_map(|row| {
+                let at = row.f64("at").ok()?;
+                Some((at, serde_json::from_str(row.text("payload").ok()?).ok()?))
+            })
+            .collect())
     }
 
     /// Writes the fields one patch names; the others keep whatever they hold.
@@ -284,19 +292,25 @@ impl<'a> Materializer<'a> {
     }
 
     /// Replays an item's patches over the fields its `itemAdded` carried, per field.
+    ///
+    /// The base is the first `itemAdded` for the item *this build can read* —
+    /// the log may also hold one a newer build wrote, and a fold that cannot
+    /// start returns rather than failing the transaction.
     fn refold_patches(&self, item_id: &str) -> Result<()> {
         let base = self.sql.query(
             &format!(
                 "SELECT payload FROM events
 		 WHERE type = 'itemAdded' AND json_extract(payload, '$.id') = ?
-		 ORDER BY {LOG_ORDER} LIMIT 1"
+		 ORDER BY {LOG_ORDER}"
             ),
             &[Param::text(item_id)],
         )?;
-        let Some(base) = base.first() else {
+        let added: Option<ItemAdded> = base
+            .iter()
+            .find_map(|row| serde_json::from_str(row.text("payload").ok()?).ok());
+        let Some(added) = added else {
             return Ok(());
         };
-        let added: ItemAdded = serde_json::from_str(base.text("payload")?)?;
         // Same columns `ItemFields::set` patches, in the same order — see `PATCHABLE_COLUMNS`.
         let values: [Option<&str>; 4] = [
             Some(added.term.as_str()),
@@ -604,48 +618,98 @@ impl<'a> Materializer<'a> {
         }
     }
 
-    /// Writes one event to the log and materialises it, once.
+    /// Appends one row to the log, once. Answers whether it was new.
     ///
-    /// An id already present is not re-applied; a remote copy of an event this
-    /// device produced only stamps the `seq` the backend gave it.
-    pub fn ingest(&self, event: &SyncEvent, seq: Option<f64>) -> Result<()> {
-        let existing = self.sql.query(
-            "SELECT seq FROM events WHERE id = ?",
-            &[Param::text(&event.id)],
-        )?;
+    /// An id already present is not written again; a remote copy of an event
+    /// this device produced only stamps the `seq` the backend gave it.
+    fn append(
+        &self,
+        id: &str,
+        kind: &str,
+        at: f64,
+        device: &str,
+        payload: &str,
+        seq: Option<f64>,
+    ) -> Result<bool> {
+        let existing = self
+            .sql
+            .query("SELECT seq FROM events WHERE id = ?", &[Param::text(id)])?;
         if let Some(existing) = existing.first() {
             if let (Some(seq), None) = (seq, existing.opt_f64("seq")?) {
                 self.sql.exec(
                     "UPDATE events SET seq = ? WHERE id = ?",
-                    &[Param::number(seq), Param::text(&event.id)],
+                    &[Param::number(seq), Param::text(id)],
                 )?;
             }
-            return Ok(());
+            return Ok(false);
         }
         self.sql.exec(
             "INSERT INTO events (seq, id, type, at, device, payload) VALUES (?, ?, ?, ?, ?, ?)",
             &[
                 Param::opt_number(seq),
-                Param::text(&event.id),
-                Param::text(event.kind.as_str()),
-                Param::number(event.at),
-                Param::text(&event.device),
-                Param::text(event.payload.to_json()),
+                Param::text(id),
+                Param::text(kind),
+                Param::number(at),
+                Param::text(device),
+                Param::text(payload),
             ],
         )?;
-        self.apply_event(event)
+        Ok(true)
     }
 
-    /// Inserts an event without materialising it — [`Materializer::rebuild`] is what applies it.
-    pub fn insert_only(&self, event: &SyncEvent) -> Result<()> {
+    /// Writes one event to the log and materialises it, once.
+    pub fn ingest(&self, event: &SyncEvent, seq: Option<f64>) -> Result<()> {
+        let new = self.append(
+            &event.id,
+            event.kind.as_str(),
+            event.at,
+            &event.device,
+            &event.payload.to_json(),
+            seq,
+        )?;
+        if new {
+            self.apply_event(event)?;
+        }
+        Ok(())
+    }
+
+    /// Writes one row that arrived from outside, whatever this build makes of it.
+    ///
+    /// The row reaches the log either way — that is what keeps a newer build's
+    /// event from being lost on the older device it passes through. Only the
+    /// merge rule needs a type, so a payload that will not parse is stored as
+    /// it came and applied to nothing.
+    pub fn ingest_raw(&self, event: &RawEvent, seq: Option<f64>) -> Result<()> {
+        match typed_event(event) {
+            Some(typed) => self.ingest(&typed, seq),
+            None => {
+                self.append(
+                    &event.id,
+                    &event.kind,
+                    event.at,
+                    &event.device,
+                    &js::stringify(&event.payload),
+                    seq,
+                )?;
+                Ok(())
+            }
+        }
+    }
+
+    /// Inserts a row without materialising it — [`Materializer::rebuild`] is what applies it.
+    pub fn insert_only(&self, event: &RawEvent) -> Result<()> {
+        let payload = match typed_event(event) {
+            Some(typed) => typed.payload.to_json(),
+            None => js::stringify(&event.payload),
+        };
         self.sql.exec(
             "INSERT OR IGNORE INTO events (seq, id, type, at, device, payload) VALUES (NULL, ?, ?, ?, ?, ?)",
             &[
                 Param::text(&event.id),
-                Param::text(event.kind.as_str()),
+                Param::text(&event.kind),
                 Param::number(event.at),
                 Param::text(&event.device),
-                Param::text(event.payload.to_json()),
+                Param::text(payload),
             ],
         )
     }
@@ -663,7 +727,7 @@ impl<'a> Materializer<'a> {
             &[],
         )?;
         for row in &rows {
-            if let Some(event) = event_from_row(row)? {
+            if let Some(event) = typed_event(&raw_from_row(row)?) {
                 self.apply_event(&event)?;
             }
         }
@@ -671,23 +735,18 @@ impl<'a> Materializer<'a> {
     }
 }
 
-/// A log row back into an event, or `None` when this build does not know its
-/// type or shape.
-pub fn event_from_row(row: &Row) -> Result<Option<SyncEvent>> {
-    let Some(kind) = EventType::from_name(row.text("type")?) else {
-        return Ok(None);
-    };
-    let raw: Value = serde_json::from_str(row.text("payload")?)?;
-    let Some(payload) = crate::events::parse_payload(kind, &raw) else {
-        return Ok(None);
-    };
-    Ok(Some(SyncEvent {
+/// A log row back into the envelope the log stores, payload and all.
+///
+/// Nothing here interprets the payload — [`typed_event`] is what a caller that
+/// needs a merge rule asks next, and push and export never ask at all.
+pub fn raw_from_row(row: &Row) -> Result<RawEvent> {
+    Ok(RawEvent {
         id: row.text("id")?.to_owned(),
-        kind,
+        kind: row.text("type")?.to_owned(),
         at: row.f64("at")?,
         device: row.text("device")?.to_owned(),
-        payload,
-    }))
+        payload: serde_json::from_str(row.text("payload")?)?,
+    })
 }
 
 /// Applies the DDL and brings the read tables up to `DERIVED_SCHEMA_VERSION`.

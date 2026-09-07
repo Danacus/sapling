@@ -208,6 +208,29 @@ describe('runSync — push', () => {
 		expect(await cursor()).toBeUndefined();
 	});
 
+	it('sends a row this build cannot read, so nothing behind it starves', async () => {
+		// Version skew: a kind only a newer build writes, imported here ahead of
+		// an ordinary event. `pendingEvents` counts it like any other row, so the
+		// page is full length and the row behind it is not stuck for good.
+		await store.importData(
+			JSON.stringify({
+				version: 3,
+				exportedAt: T0,
+				events: [
+					{ id: 'e1', type: 'wordShelved', at: T0, device: OTHER, payload: { term: '水' } },
+					{ id: 'e2', type: 'itemAdded', at: T0 + 1, device: DEVICE, payload: word(1) }
+				]
+			})
+		);
+		const { impl, calls } = logServer();
+
+		const outcome = await runSync(impl);
+
+		expect(outcome).toMatchObject({ ok: true, pushed: 2 });
+		expect(posts(calls)[0].body?.events?.map((event) => event.id)).toEqual(['e1', 'e2']);
+		expect((await seqs()).map((row) => row.seq)).toEqual([1, 2]);
+	});
+
 	it('records the outcome so Settings can show it', async () => {
 		await store.commit('itemAdded', word(1));
 		const { impl } = logServer();
@@ -258,6 +281,21 @@ describe('runSync — pull', () => {
 		expect(await count('items')).toBe(1);
 		expect((await seqs())[0].seq).toBe(1);
 		expect(await cursor()).toBe(1);
+	});
+
+	it('keeps a pulled row it cannot read, and still advances the cursor', async () => {
+		// The other half of the skew: this device is the older one. Dropping the
+		// row would lose it for good — the cursor never comes back for it — so it
+		// lands in the log, materialises nothing, and waits for a build that
+		// knows the kind.
+		const { impl } = logServer([{ ...remote(1), type: 'wordShelved' }]);
+
+		const outcome = await runSync(impl);
+
+		expect(outcome).toMatchObject({ ok: true, pulled: 1 });
+		expect((await seqs()).map((row) => row.id)).toEqual(['remote-1']);
+		expect(await cursor()).toBe(1);
+		expect(await count('items')).toBe(0);
 	});
 
 	it('resumes from the stored cursor rather than re-reading the log', async () => {
