@@ -7,7 +7,7 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
-    <!-- `--bg` from src/app.css: what the page paints, so what the strip
+    <!-- the `bg` custom property from src/app.css: what the page paints, so what the strip
          behind the system bars should paint too. -->
     <color name="sapling_paper">#FFF4EFE4</color>
 </resources>
