@@ -143,6 +143,10 @@
 *::before,
 *::after {
 	box-sizing: border-box;
+	/* Android's WebView paints its own translucent blue over any tapped
+	   element unless told not to; the app's :hover/:active styles are the
+	   feedback here, on every host. */
+	-webkit-tap-highlight-color: transparent;
 }
 
 html,
