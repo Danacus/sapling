@@ -810,17 +810,6 @@
 							Three of the model's 100 Mandarin speakers. English always uses its own voice (Maple,
 							or Vale if your language is set to British English).
 						</p>
-						{#if nativeVoice}
-							<p class="hint">
-								Runs natively on your CPU — there is no GPU path, and none is needed for single
-								words and short sentences.
-							</p>
-						{:else}
-							<p class="hint">
-								Runs on your CPU (WASM + SIMD) in a background thread — there is no GPU path, and
-								none is needed for single words and short sentences.
-							</p>
-						{/if}
 					</div>
 
 					<div class="actions-row">
@@ -835,27 +824,18 @@
 						<InlineStatus status={preloadStatus} message={preloadMessage} />
 					</div>
 
+					<p class="hint">
+						{downloadSize}, downloaded once and kept on this device. Speech is generated here,
+						nothing is sent anywhere, and it works offline afterwards.
+					</p>
 					{#if nativeVoice}
 						<p class="hint">
-							{downloadSize} in one archive, unpacked into this app's own data folder. It happens once
-							per device, and everything works offline afterwards. The model is the full-precision build,
-							the same one the web app uses, so a phrase sounds the same wherever you study.
-						</p>
-						<p class="hint">
-							Clips are made fresh here rather than stored — only the ones you have just played are
-							kept, in memory.
+							Clips are made fresh each time; only the ones just played are kept, in memory.
 						</p>
 					{:else}
 						<p class="hint">
-							{downloadSize} in two files (the sherpa-onnx runtime and the Kokoro model), stored in your
-							browser's cache. It happens once per browser profile, and everything works offline afterwards.
-							The model is the full-precision build on purpose — the small quantized one is half the size
-							but produces silence in WebAssembly.
-						</p>
-						<p class="hint">
-							Synthesis takes roughly a second or two per phrase on a laptop CPU, in a background
-							thread. Each clip is then kept, so a word you have heard before plays back instantly —
-							including after a reload.
+							Each clip is kept, so a word you have heard before plays back instantly — including
+							after a reload.
 						</p>
 					{/if}
 				{/if}
