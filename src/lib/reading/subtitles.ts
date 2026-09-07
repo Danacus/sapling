@@ -1,20 +1,25 @@
 /**
- * Subtitles as an import format: a `.srt`/`.vtt` file, or the transcript panel
- * off a video page, turned into sentences that carry when they are spoken.
+ * Subtitles as an import format: a `.srt`/`.vtt`/`.json3` file, or the
+ * transcript panel off a video page, turned into sentences that carry when they
+ * are spoken.
  *
  * The learner's route to a text is usually a video they are already watching,
  * and the subtitle file is the one artefact of it they can actually get hold
- * of (`yt-dlp --write-subs --write-auto-subs --sub-format vtt`, or the "Show
- * transcript" panel, copied). What arrives is not prose: it is a hundred
- * fragments cut to fit a screen for two seconds each, and the cut has nothing
- * to do with where the sentences are. So this module does the opposite of what
- * a subtitle renderer does — it *undoes* the cueing, joins the text back into a
- * running one, hands it to `./sentences` to be split the way any pasted text
- * is, and then hands each sentence back the timings of the cues its characters
- * came from.
+ * of. **In the desktop app they no longer have to**: the shell runs yt-dlp
+ * itself, and a YouTube link becomes a track through this same door
+ * (`$lib/media/captions.ts`, `$lib/tasks/kinds/captions.ts`). Everywhere else
+ * they still bring one — `yt-dlp --write-subs --write-auto-subs --sub-format
+ * vtt` at a terminal, a yt-dlp app such as YTDLnis on a phone, or the "Show
+ * transcript" panel copied. What arrives is not prose either way: it is a
+ * hundred fragments cut to fit a screen for two seconds each, and the cut has
+ * nothing to do with where the sentences are. So this module does the opposite
+ * of what a subtitle renderer does — it *undoes* the cueing, joins the text
+ * back into a running one, hands it to `./sentences` to be split the way any
+ * pasted text is, and then hands each sentence back the timings of the cues its
+ * characters came from.
  *
- * Those timings are stored and, for now, unread: there is no player in this
- * slice. They are kept because this is the only moment they exist — the file
+ * Those timings are what the reader's follow view reads through `$lib/media`.
+ * They are recovered here because this is the only moment they exist — the file
  * is gone as soon as the import finishes, and re-deriving them later would mean
  * asking the learner for it again.
  *
@@ -25,8 +30,8 @@
 
 import { hasSentenceEnd, splitSentences } from './sentences';
 
-/** The three shapes a learner actually turns up with. */
-export type SubtitleFormat = 'srt' | 'vtt' | 'youtube-transcript';
+/** The four shapes a learner actually turns up with. */
+export type SubtitleFormat = 'srt' | 'vtt' | 'youtube-transcript' | 'json3';
 
 /** One subtitle cue: a span of the media, and what is said in it. */
 export interface Cue {
@@ -280,7 +285,94 @@ function parsePanelCues(text: string): RawCue[] {
 }
 
 /**
- * Which of the three shapes `text` is, or `undefined` for ordinary prose.
+ * One event of a `json3` file — YouTube's own caption format, and the one the
+ * desktop host fetches.
+ *
+ * It is the format to ask yt-dlp for and not merely one it offers: the offsets
+ * are already milliseconds rather than formatted timestamps, and there is no
+ * rolling window to undo, because a line appears once. Every field is optional
+ * here because a real file's leading event is a header (`wireMagic`) and it can
+ * carry pen and window definitions with no text of their own.
+ */
+interface Json3Event {
+	/** Milliseconds from the start of the media. */
+	tStartMs?: number;
+	/** How long the line is up for. Absent on the events that are separators. */
+	dDurationMs?: number;
+	/** The line, in word-level pieces that carry their own spacing. */
+	segs?: { utf8?: string }[];
+}
+
+/**
+ * The events of a `json3` document, or `undefined` for anything else.
+ *
+ * Detection has to be certain rather than eager, because this is the same
+ * function the paste box runs on every keystroke: a `{` is not enough, an
+ * `events` array is not enough, and what settles it is an event carrying both
+ * an offset and segments. Nothing a learner pastes as *prose* looks like that.
+ */
+function parseJson3(text: string): Json3Event[] | undefined {
+	const trimmed = normalizeNewlines(text).trim();
+	// Cheap gate first: `JSON.parse` on a novel is not free, and this runs per
+	// keystroke.
+	if (!trimmed.startsWith('{')) return undefined;
+
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(trimmed);
+	} catch {
+		return undefined;
+	}
+	if (typeof parsed !== 'object' || parsed === null) return undefined;
+
+	const events: unknown = (parsed as { events?: unknown }).events;
+	if (!Array.isArray(events)) return undefined;
+
+	const isEvent = (event: unknown): event is Json3Event =>
+		typeof event === 'object' && event !== null;
+	const carriesACue = events.some(
+		(event) => isEvent(event) && typeof event.tStartMs === 'number' && Array.isArray(event.segs)
+	);
+	return carriesACue ? events.filter(isEvent) : undefined;
+}
+
+/**
+ * `json3` events as cues.
+ *
+ * Two things are decided here and both come from what YouTube actually writes.
+ * A cue's `segs` are **joined with nothing** — they are word-level pieces of one
+ * line and carry their own spaces, so a separator would insert marks the source
+ * did not have. And an event with **no `dDurationMs`** takes the next event's
+ * start as its end: those are the separators between lines (their whole text is
+ * a newline) and the last line of a paragraph, and the next start is the honest
+ * answer for both. Only the final event has nothing after it, and gets
+ * {@link LAST_CUE_MS} for the reason the transcript panel's last line does.
+ *
+ * The events with nothing to say are dropped *after* the boundaries are worked
+ * out, not before, so a separator still marks where the line before it ended.
+ */
+function parseJson3Cues(events: readonly Json3Event[]): RawCue[] {
+	const timed = events.filter(
+		(event): event is Json3Event & { tStartMs: number } => typeof event.tStartMs === 'number'
+	);
+
+	const out: RawCue[] = [];
+	timed.forEach((event, i) => {
+		const text = cleanLine((event.segs ?? []).map((seg) => seg?.utf8 ?? '').join(''));
+		// An event whose text is empty, or was nothing but a newline, is a
+		// separator and not a line.
+		if (!text) return;
+		const end =
+			typeof event.dDurationMs === 'number'
+				? event.tStartMs + event.dDurationMs
+				: (timed[i + 1]?.tStartMs ?? event.tStartMs + LAST_CUE_MS);
+		out.push({ start: event.tStartMs, end: Math.max(end, event.tStartMs), lines: [text] });
+	});
+	return out;
+}
+
+/**
+ * Which of the four shapes `text` is, or `undefined` for ordinary prose.
  *
  * The point of returning `undefined` rather than guessing is that the plain
  * paste path is still the common one: a learner who pastes an article must not
@@ -290,6 +382,7 @@ function parsePanelCues(text: string): RawCue[] {
 export function detectSubtitleFormat(text: string): SubtitleFormat | undefined {
 	const normalized = normalizeNewlines(text).trimStart();
 	if (!normalized) return undefined;
+	if (parseJson3(normalized)) return 'json3';
 	if (/^WEBVTT/.test(normalized)) return 'vtt';
 	if (SRT_BLOCK.test('\n' + normalized)) return 'srt';
 
@@ -316,9 +409,10 @@ export function detectSubtitleFormat(text: string): SubtitleFormat | undefined {
  * keeps the timing of the cue it first appeared in, which is the cue in which
  * it was actually spoken.
  *
- * Applied to every block-format file, not only the auto-generated ones: two
- * consecutive cues carrying identical text are a subtitle held across a shot
- * change, and reading it twice is wrong there too.
+ * Applied to every file, not only the auto-generated ones: two consecutive cues
+ * carrying identical text are a subtitle held across a shot change, and reading
+ * it twice is wrong there too. `json3` does not roll — a line appears once —
+ * which is the main reason it is the format the desktop host asks yt-dlp for.
  */
 function dedupeRolling(cues: readonly RawCue[]): Cue[] {
 	const out: Cue[] = [];
@@ -347,7 +441,12 @@ function dedupeRolling(cues: readonly RawCue[]): Cue[] {
 export function parseSubtitles(text: string): Cue[] {
 	const format = detectSubtitleFormat(text);
 	if (!format) return [];
-	const raw = format === 'youtube-transcript' ? parsePanelCues(text) : parseBlockCues(text);
+	const raw =
+		format === 'json3'
+			? parseJson3Cues(parseJson3(text) ?? [])
+			: format === 'youtube-transcript'
+				? parsePanelCues(text)
+				: parseBlockCues(text);
 	return dedupeRolling(raw);
 }
 

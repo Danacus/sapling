@@ -26,12 +26,21 @@
  * seconds and a subtitle file's is milliseconds, and that conversion happens at
  * exactly one boundary.
  *
+ * `captions.ts` is the other host-shaped thing here, and it points the opposite
+ * way: not how a video is *played* but how its subtitle track is *obtained*. A
+ * browser cannot read a YouTube caption track at all, so the desktop shell runs
+ * yt-dlp and hands back the file, which then goes through `$lib/reading`'s
+ * ordinary subtitle door. It is the second module in this area to ask
+ * `inTauri()`, for the same reason `youtube-host.ts` does.
+ *
  * Stateless like `$lib/reading`: **nothing here imports `$lib/db`.** The one
  * piece of state is `files.ts`'s session cache of `File` handles, which is a
  * cache of something the OS owns, not a fact about the learner — a recording is
  * never stored, only its name (see `$lib/types`' `ReadingMedia`).
  */
 
+export { captionsAvailable, fetchCaptions, listCaptions } from './captions';
+export type { CaptionsListing, CaptionsTools, CaptionTrack } from './captions';
 export {
 	crossedEnd,
 	firstTimed,

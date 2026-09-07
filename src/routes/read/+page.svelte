@@ -42,6 +42,17 @@
   name and nothing else. The file handle itself goes into `$lib/media`'s session
   cache, so the reader opening a second later already has it and every later
   open asks for it again.
+
+  **On the desktop app the YouTube link is also a *source*, and that reorders the
+  three parts.** The shell can run yt-dlp, so a link alone can produce the text
+  (`$lib/media/captions.ts`) — which is why the recording group is live from the
+  start on a host that has it, instead of waiting for timings that the group is
+  now one of the ways to obtain. Only the *file* picker still waits, because a
+  recording with no subtitles to follow is still a reference nothing can use.
+  What the fetch produces is a `json3` file and it is handed to `sourceFile`
+  exactly as an upload is, so there is still one derivation behind the card, the
+  counter, the button and the import. Nothing about any of this renders in a
+  browser: the probe answers `undefined` there and every branch below is gone.
 -->
 <script lang="ts">
 	import { browser } from '$app/environment';
@@ -50,7 +61,8 @@
 
 	import { getAllItems, getKnownTerms, getProfile, getTexts } from '$lib/db';
 	import { isMockMode } from '$lib/llm';
-	import { videoIdFrom } from '$lib/media';
+	import { captionsAvailable, listCaptions, videoIdFrom } from '$lib/media';
+	import type { CaptionsTools, CaptionTrack } from '$lib/media';
 	import {
 		MAX_FOCUS_WORDS,
 		MAX_IMPORT_TOTAL_CHARS,
@@ -87,7 +99,8 @@
 	const FORMAT_NAMES: Record<SubtitleFormat, string> = {
 		srt: 'SRT subtitles',
 		vtt: 'WebVTT subtitles',
-		'youtube-transcript': 'YouTube transcript'
+		'youtube-transcript': 'YouTube transcript',
+		json3: 'YouTube captions'
 	};
 
 	let door = $state<Door>('write');
@@ -130,6 +143,22 @@
 	/** The file input, so choosing a link can visibly empty it. */
 	let mediaInput = $state<HTMLInputElement | null>(null);
 	/**
+	 * What the host can do about captions, once the probe has answered.
+	 *
+	 * Three states and they are all meaningful. `undefined` is "not asked yet, or
+	 * there is nobody to ask" — a browser, forever — and nothing about captions
+	 * renders. An object with no `ytdlp` is "this *is* the desktop app and the
+	 * program is missing", which earns one line naming it. An object with
+	 * `ytdlp` is the action.
+	 */
+	let captionTools = $state<CaptionsTools | undefined>(undefined);
+	/** The tracks the host found, while the learner is choosing one. */
+	let tracks = $state<CaptionTrack[] | undefined>(undefined);
+	/** The listing call in flight. Not a task: it is one question, not a job. */
+	let listingTracks = $state(false);
+	/** The captions door's own failure line, kept apart from the import's. */
+	let captionsError = $state('');
+	/**
 	 * The composer's job in flight, if any — read from the task runner rather
 	 * than kept here, so it is still right after the learner has left and come
 	 * back, and so the tray can show the same job elsewhere.
@@ -139,6 +168,15 @@
 	);
 	/** One flag for both doors — a page that is mid-call has nothing else to do. */
 	const busy = $derived(composing !== undefined);
+	/**
+	 * A captions fetch in flight, read from the runner for the reason
+	 * {@link composing} is. Kept separate from `busy` because it disables a
+	 * different set of things: the import is not running, but the source it would
+	 * import is about to be replaced.
+	 */
+	const fetchingCaptions = $derived(taskStore.running.some((task) => task.kind === 'captions'));
+	/** Whether this host can fetch a video's captions at all. */
+	const canFetchCaptions = $derived(captionTools?.ytdlp !== undefined);
 	let composeError = $state('');
 
 	/**
@@ -182,6 +220,24 @@
 				loadError = cause instanceof Error ? cause.message : 'Could not open your library.';
 				loading = false;
 			});
+
+		return () => {
+			cancelled = true;
+		};
+	});
+
+	/**
+	 * Asks the host whether it can fetch captions. Memoised one layer down, so
+	 * every visit to this page costs nothing after the first, and it never
+	 * rejects — a host with no such command is simply a host with none.
+	 */
+	$effect(() => {
+		if (!browser) return;
+
+		let cancelled = false;
+		void captionsAvailable().then((tools) => {
+			if (!cancelled) captionTools = tools;
+		});
 
 		return () => {
 			cancelled = true;
@@ -401,9 +457,66 @@
 	function enterLink(event: Event) {
 		const input = event.currentTarget as HTMLInputElement;
 		mediaLink = input.value;
+		// A track list belongs to the video it was asked about, so editing the link
+		// puts the question back rather than leaving last video's answer on screen.
+		tracks = undefined;
+		captionsError = '';
 		if (input.value.trim() === '') return;
 		mediaFile = undefined;
 		if (mediaInput) mediaInput.value = '';
+	}
+
+	/**
+	 * What captions the video has, asked of the host.
+	 *
+	 * Awaited here rather than run as a task, unlike the fetch: it is one
+	 * question whose whole answer is a list to choose from, and a list that
+	 * arrived in the tray after the learner had moved on would be no use to
+	 * anybody. It still takes seconds, so the control says so while it waits.
+	 */
+	async function askForTracks() {
+		if (!linkId) return;
+
+		tracks = undefined;
+		captionsError = '';
+		listingTracks = true;
+		try {
+			const listing = await listCaptions(linkId);
+			if (listing.tracks.length === 0) {
+				captionsError = 'That video has no caption tracks — nothing to fetch.';
+				return;
+			}
+			tracks = listing.tracks;
+		} catch (cause) {
+			captionsError =
+				cause instanceof Error ? cause.message : 'Could not ask yt-dlp about that video.';
+		} finally {
+			listingTracks = false;
+		}
+	}
+
+	/**
+	 * Fetches one track and makes it the text.
+	 *
+	 * What lands is the raw `json3` file, dropped into `sourceFile` exactly as an
+	 * upload is — so the card, the cost row, the button and `add()` all read it
+	 * through the one `plan` derivation and none of them learns where it came
+	 * from. The link stays in its field, so the video attaches as the recording
+	 * on the way out with no extra bookkeeping.
+	 */
+	async function fetchTrack(track: CaptionTrack) {
+		if (!linkId || fetchingCaptions) return;
+
+		captionsError = '';
+		// The list has done its job; the tray carries the wait from here.
+		tracks = undefined;
+		const { done } = startTask('captions', { videoId: linkId, ...track });
+		const outcome = await done;
+		if (left) return;
+		if (outcome.status === 'done') {
+			composeError = '';
+			sourceFile = { name: outcome.result.name, text: outcome.result.text };
+		} else if (outcome.status === 'failed') captionsError = outcome.error;
 	}
 
 	/** Door two: a text the learner imported, cut here and annotated there. */
@@ -662,7 +775,7 @@
 							<input
 								class="file-real"
 								type="file"
-								accept=".srt,.vtt,.txt"
+								accept=".srt,.vtt,.txt,.json3,.json"
 								disabled={busy}
 								onchange={(event) => void uploadFile(event)}
 							/>
@@ -717,8 +830,18 @@
 					  step with, so the group is disabled and says so — a `<fieldset>`,
 					  which makes every control inside it inert in one attribute and needs
 					  no per-input bookkeeping.
+
+					  **Except where the link is also the source.** On a host that can run
+					  yt-dlp the group is live from the start, because pasting a link there
+					  is how the timings are *obtained* and waiting for them first would be
+					  a door locked from the inside. The file picker still waits — a
+					  recording it cannot follow is a reference nothing can use — and says
+					  so by being the one control with a `disabled` of its own.
 					-->
-					<fieldset class="group" disabled={busy || !plan.format}>
+					<fieldset
+						class="group"
+						disabled={busy || fetchingCaptions || (!plan.format && !canFetchCaptions)}
+					>
 						<legend class="group-legend">
 							Recording <span class="group-note">optional</span>
 						</legend>
@@ -728,6 +851,7 @@
 								class="file-real"
 								type="file"
 								accept="video/*,audio/*"
+								disabled={!plan.format}
 								bind:this={mediaInput}
 								onchange={chooseRecording}
 							/>
@@ -755,8 +879,73 @@
 							/>
 						</label>
 
+						<!--
+						  Fetching the captions. Only ever on a host that answered the probe:
+						  in a browser `captionTools` stays `undefined` and this whole block,
+						  the note included, does not exist.
+
+						  An inline list rather than a sheet — it is three or four rows,
+						  chosen once, right under the link they are about, and a sheet would
+						  cover the field the learner might still want to correct.
+						-->
+						{#if captionTools}
+							<div class="captions">
+								{#if !canFetchCaptions}
+									<p class="hint captions-note">
+										Install <strong>yt-dlp</strong> and Sapling can fetch a video's captions for you.
+									</p>
+								{:else if tracks}
+									<p class="captions-head">Which captions?</p>
+									<ul class="tracks">
+										{#each tracks as track (`${track.auto}:${track.lang}`)}
+											<li>
+												<button type="button" class="track" onclick={() => void fetchTrack(track)}>
+													<span class="track-name">{track.name}</span>
+													<span class="track-tags">
+														<span class="track-lang">{track.lang}</span>
+														{#if track.auto}<span class="track-auto">auto</span>{/if}
+													</span>
+												</button>
+											</li>
+										{/each}
+									</ul>
+									<button type="button" class="captions-back" onclick={() => (tracks = undefined)}>
+										Never mind
+									</button>
+								{:else}
+									<button
+										type="button"
+										class="btn captions-go"
+										disabled={!linkId || listingTracks || fetchingCaptions}
+										onclick={() => void askForTracks()}
+									>
+										{#if listingTracks}
+											<Spinner />
+											Asking yt-dlp…
+										{:else if fetchingCaptions}
+											Fetching… details in the task tray
+										{:else}
+											Fetch captions
+										{/if}
+									</button>
+									{#if !captionTools.deno}
+										<p class="hint captions-note">
+											<strong>Deno</strong> is not installed either — yt-dlp wants a JavaScript runtime
+											for YouTube, and may find fewer tracks without one.
+										</p>
+									{/if}
+								{/if}
+								{#if captionsError}
+									<p class="error captions-error" role="alert">{captionsError}</p>
+								{/if}
+							</div>
+						{/if}
+
 						<p class="hint media-hint">
-							{#if !plan.format}
+							{#if !plan.format && canFetchCaptions}
+								Paste a YouTube link and fetch its captions — they become the text, and the video
+								plays beside it.
+							{:else if !plan.format}
 								Import subtitles and the text can follow its recording, line by line.
 							{:else if linkId}
 								Video <strong>{linkId}</strong> plays beside the text, from YouTube.
@@ -775,11 +964,13 @@
 					<button
 						type="button"
 						class="btn btn-primary btn-block go"
-						disabled={busy || overCap || plan.sentences.length === 0}
+						disabled={busy || fetchingCaptions || overCap || plan.sentences.length === 0}
 						onclick={() => void add()}
 					>
 						{#if busy}
 							Annotating… details in the task tray
+						{:else if fetchingCaptions}
+							Waiting for the captions…
 						{:else if composeError}
 							Try again
 						{:else}
@@ -1196,6 +1387,138 @@
 		font-size: 0.78rem;
 		font-weight: 700;
 		color: var(--text-muted);
+	}
+
+	/* Fetching the captions ------------------------------------------------ */
+
+	/*
+	  A block that lives under the link it is about, and is either one button or
+	  the short list that button produced — never both, because the question
+	  "which track?" replaces the question "is there one?".
+	*/
+	.captions {
+		margin-bottom: 0.75rem;
+	}
+
+	.captions-go {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem;
+		width: 100%;
+	}
+
+	.captions-head {
+		margin: 0 0 0.45rem;
+		font-size: 0.78rem;
+		font-weight: 700;
+		color: var(--text-muted);
+	}
+
+	/*
+	  Short by design — the machine translations are filtered out one layer down,
+	  so this is a handful of rows and not a language menu. The cap is there for
+	  the video that turns out to have twenty anyway: a list that scrolls inside
+	  itself keeps the button below it reachable on a phone.
+	*/
+	.tracks {
+		list-style: none;
+		margin: 0 0 0.5rem;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+		max-height: 13rem;
+		overflow-y: auto;
+	}
+
+	.track {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 0.6rem;
+		width: 100%;
+		padding: 0.55rem 0.7rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		background: var(--surface);
+		color: var(--text);
+		font: inherit;
+		font-size: 0.88rem;
+		text-align: left;
+		cursor: pointer;
+		transition:
+			border-color 0.15s ease,
+			background 0.15s ease;
+	}
+
+	.track:hover:not(:disabled) {
+		border-color: var(--border-strong);
+		background: var(--surface-alt);
+	}
+
+	.track:focus-visible {
+		outline: none;
+		box-shadow: var(--ring);
+	}
+
+	.track-name {
+		min-width: 0;
+		font-weight: 700;
+		overflow-wrap: anywhere;
+	}
+
+	.track-tags {
+		display: flex;
+		flex: 0 0 auto;
+		align-items: baseline;
+		gap: 0.35rem;
+	}
+
+	.track-lang {
+		font-size: 0.72rem;
+		font-variant-numeric: tabular-nums;
+		color: var(--text-muted);
+	}
+
+	/* Machine-written, and the quality difference is large enough to mark. */
+	.track-auto {
+		padding: 0.1rem 0.4rem;
+		border-radius: 999px;
+		background: var(--accent-soft);
+		color: var(--accent);
+		font-size: 0.65rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+	}
+
+	/* A way out of the list that is plainly not one of the choices in it. */
+	.captions-back {
+		padding: 0;
+		border: none;
+		background: none;
+		color: var(--text-muted);
+		font: inherit;
+		font-size: 0.8rem;
+		text-decoration: underline;
+		text-underline-offset: 0.2em;
+		cursor: pointer;
+	}
+
+	.captions-back:focus-visible {
+		outline: none;
+		box-shadow: var(--ring);
+	}
+
+	.captions-note {
+		margin: 0.5rem 0 0;
+		font-size: 0.8rem;
+	}
+
+	.captions-error {
+		margin-top: 0.6rem;
+		font-size: 0.82rem;
 	}
 
 	/*

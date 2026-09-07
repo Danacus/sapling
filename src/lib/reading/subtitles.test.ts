@@ -3,9 +3,9 @@
  * the reader wants sentences.
  *
  * The fixtures are written the way the real files arrive — CRLF, a BOM, cue
- * settings, inline timestamp tags, and the rolling repetition YouTube's
- * automatic captions carry — because every one of those is something that broke
- * a naive parser first.
+ * settings, inline timestamp tags, the rolling repetition YouTube's automatic
+ * captions carry, and json3's header event and newline separators — because
+ * every one of those is something that broke a naive parser first.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -78,11 +78,50 @@ const PANEL = `0:00
 1:02:33
 最后一句。`;
 
+/**
+ * What `yt-dlp --sub-format json3` writes, and therefore what the desktop
+ * host's `captions_fetch` hands back: YouTube's own caption format.
+ *
+ * Everything awkward about it is here. The document opens with a `wireMagic`
+ * header and sibling arrays that are not events at all; the first *event* is a
+ * window definition, timed but with nothing to read; a line's text arrives in
+ * word-level `segs` that carry their own spacing; the ten-millisecond event
+ * whose only text is a newline is the separator between two lines; and an event
+ * may carry no `dDurationMs`, in which case where it ends is the next event's
+ * business.
+ */
+const JSON3 = JSON.stringify({
+	wireMagic: 'pb3',
+	pens: [{}],
+	wpWinPositions: [{}],
+	events: [
+		{ tStartMs: 0, dDurationMs: 3270, wWinId: 1 },
+		{
+			tStartMs: 1000,
+			dDurationMs: 2000,
+			segs: [{ utf8: '我们去了饭馆' }, { utf8: '。', tOffsetMs: 600 }]
+		},
+		{ tStartMs: 3000, dDurationMs: 10, aAppend: 1, segs: [{ utf8: '\n' }] },
+		{ tStartMs: 3000, segs: [{ utf8: '我点了汤' }, { utf8: '。' }] },
+		{ tStartMs: 5000, dDurationMs: 1500, segs: [{ utf8: '她点了鱼和米饭' }, { utf8: '。' }] }
+	]
+});
+
 describe('detectSubtitleFormat', () => {
-	it('knows the three shapes a learner turns up with', () => {
+	it('knows the four shapes a learner turns up with', () => {
 		expect(detectSubtitleFormat(SRT)).toBe('srt');
 		expect(detectSubtitleFormat(VTT)).toBe('vtt');
 		expect(detectSubtitleFormat(PANEL)).toBe('youtube-transcript');
+		expect(detectSubtitleFormat(JSON3)).toBe('json3');
+	});
+
+	it('wants an event with an offset and segments before it calls something json3', () => {
+		// JSON, and even JSON with an `events` array, is not enough: this runs on
+		// every keystroke in the paste box.
+		expect(detectSubtitleFormat('{"hello": "world"}')).toBeUndefined();
+		expect(detectSubtitleFormat('{"events": []}')).toBeUndefined();
+		expect(detectSubtitleFormat('{"events": [{"note": "no offsets here"}]}')).toBeUndefined();
+		expect(detectSubtitleFormat('{ not valid json at all')).toBeUndefined();
 	});
 
 	it('sees through a BOM and CRLF line endings', () => {
@@ -140,6 +179,44 @@ Ben &amp; Jerry said &lt;hello&gt;&nbsp;there
 
 	it('returns nothing for a text that is not subtitles at all', () => {
 		expect(parseSubtitles('Fuimos al restaurante.')).toEqual([]);
+	});
+
+	describe('json3, as the desktop host fetches it', () => {
+		const cues = parseSubtitles(JSON3);
+
+		it('reads the events as cues, joining a line’s segs with nothing', () => {
+			expect(cues).toEqual([
+				{ start: 1000, end: 3000, text: '我们去了饭馆。' },
+				{ start: 3000, end: 5000, text: '我点了汤。' },
+				{ start: 5000, end: 6500, text: '她点了鱼和米饭。' }
+			]);
+		});
+
+		it('drops the header event and the newline separators', () => {
+			// Five events in, three cues out: the window definition has no text and
+			// the ten-millisecond event's only text is a newline.
+			expect(cues).toHaveLength(3);
+			expect(cues.every((cue) => cue.text.trim() !== '')).toBe(true);
+		});
+
+		it('gives an event with no duration the next event’s start as its end', () => {
+			expect(cues[1]).toEqual({ start: 3000, end: 5000, text: '我点了汤。' });
+		});
+
+		it('gives a final event with no duration a plausible last cue instead', () => {
+			const [last] = parseSubtitles(
+				JSON.stringify({ events: [{ tStartMs: 2000, segs: [{ utf8: '最后一句。' }] }] })
+			);
+			expect(last).toEqual({ start: 2000, end: 6000, text: '最后一句。' });
+		});
+
+		it('re-cuts json3 into sentences with their timings, like every other format', () => {
+			expect(cuesToSentences(cues)).toEqual([
+				{ text: '我们去了饭馆。', start: 1000, end: 3000 },
+				{ text: '我点了汤。', start: 3000, end: 5000 },
+				{ text: '她点了鱼和米饭。', start: 5000, end: 6500 }
+			]);
+		});
 	});
 
 	describe('rolling auto-generated captions', () => {

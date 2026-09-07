@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Profile } from '$lib/types';
 import { TASK_KINDS } from './registry';
 import type { TaskInput, TaskKind } from './registry';
+import { captionsTask } from './kinds/captions';
 import { readingsTask } from './kinds/readings';
 import { topUpTask } from './kinds/top-up';
 
@@ -19,6 +20,7 @@ const FAKE_INPUTS: { [K in TaskKind]: TaskInput<K> } = {
 	readings: { targetLanguage: 'Chinese', free: [], fromModel: [] },
 	'read-generate': { profile, vocabulary: [], focus: [] },
 	'read-annotate': { profile, vocabulary: [], sentences: ['Hola.'] },
+	captions: { videoId: 'abcdefghijk', lang: 'ja', name: 'Japanese', auto: false },
 	'tts-model': undefined,
 	'asr-model': undefined
 };
@@ -64,6 +66,29 @@ describe('top-up summary', () => {
 	it('titles by topic', () => {
 		expect(topUpTask.title({ profile })).toBe('New lesson');
 		expect(topUpTask.title({ profile, topic: 'hotels' })).toBe('New lesson · hotels');
+	});
+});
+
+describe('captions summary and title', () => {
+	const line = { text: '我们去了饭馆。', start: 0, end: 1000 };
+
+	it('counts the lines the track cut into', () => {
+		expect(captionsTask.summary({ name: 'Japanese', text: '{}', sentences: [line] })).toBe(
+			'1 line from Japanese'
+		);
+		expect(
+			captionsTask.summary({ name: 'Japanese', text: '{}', sentences: [line, line, line] })
+		).toBe('3 lines from Japanese');
+	});
+
+	it('titles by the track, which is what the learner picked', () => {
+		expect(
+			captionsTask.title({ videoId: 'abcdefghijk', lang: 'ja', name: 'Japanese', auto: true })
+		).toBe('Captions · Japanese');
+	});
+
+	it('cannot be cancelled, because a child process the host is waiting on cannot', () => {
+		expect(captionsTask.cancellable).toBe(false);
 	});
 });
 

@@ -44,6 +44,35 @@ someone to run the check by hand.
   build runs. The line that does not move: a host still contains no merge rule
   and no SQL against the read tables.
 
+- **A video's captions are the third capability, and the first that is
+  desktop-only outright** (`src/captions.rs`, `#[cfg(desktop)]`). It passes the
+  same test: a URL in, a caption file out, no domain knowledge. It exists
+  because a *page* cannot do it at all — YouTube's timedtext endpoints send no
+  CORS headers and the IFrame API exposes no track list, so a browser can never
+  turn a link into a transcript and `docs/reading-mode.md` §7 said so as a
+  permanent limitation. `captions_status` reports whether `yt-dlp` and `deno`
+  are on PATH, `captions_list` parses `--dump-single-json` into
+  `{ id, title, tracks }`, `captions_fetch` writes one `json3` track into a
+  swept `captions.partial` under the app-data directory and hands back **its raw
+  text**. Four things about it are the contract. **PATH, not a pin**: `models.rs`
+  pins a URL, a byte count and a sha256 because a model's bytes are a constant,
+  while yt-dlp ages against YouTube in weeks and its fix is always "update" — so
+  a pin here would be a pin on the breakage, and Deno (yt-dlp's JavaScript
+  runtime since late 2025) is reported rather than required for the same reason.
+  **No new dependency**: `std::process::Command` and the `serde_json` already in
+  the manifest, and deliberately not `tauri-plugin-shell` — three fixed argument
+  vectors need no scope file. **The host never parses a caption file**: the
+  window has one subtitle parser (`src/lib/reading/subtitles.ts`, where `json3`
+  is now a format beside SRT and VTT), and a second one here would be one that
+  silently disagrees. **Android never meets it** — no yt-dlp and no PATH to look
+  on — and it is a *target gate* rather than a Cargo feature because there is
+  nothing to link and nothing to make optional. That costs a phone nothing:
+  an import is an event, so a text fetched on the desktop syncs to every paired
+  device and the phone reads it like any other, and a learner on Android who
+  wants the file itself can get it from a yt-dlp app such as YTDLnis and hand it
+  to the existing picker, `json3` included. The two gates multiply out, so
+  `commands!` has **four** arms rather than three.
+
 - **One feature, `speech`, covers both directions**, on by default. It was `tts`
   until dictation arrived, and it is one feature because synthesis and
   recognition are the same dependency set — sherpa-onnx, plus the download,
@@ -112,9 +141,11 @@ someone to run the check by hand.
   `derived_schema_version`. No fourth one, and no new `Backend` method that the
   browser does not also have — the protocol is `src/lib/db/protocol.ts` and
   `dispatch.rs`, and adding to it is still the three edits `core.md` names.
-  **Speech adds exactly eight more** — `tts_status`, `tts_download`,
+  **Speech adds exactly eight more, and captions three** — `tts_status`, `tts_download`,
   `tts_synthesize`, `asr_status`, `asr_download`, `asr_transcribe` on every
-  target, and `tts_play`, `tts_stop` on desktop targets only — and they are not
+  target, `tts_play`, `tts_stop` on desktop targets only, and
+  `captions_status`, `captions_list`, `captions_fetch` on desktop targets only
+  — and they are not
   part of that protocol and never touch it. Audio crosses as bytes in every
   direction and never as JSON, wherever the IPC can carry bytes: `tts_synthesize`
   answers a `tauri::ipc::Response`, and `tts_play` and `asr_transcribe` take a
@@ -208,10 +239,12 @@ someone to run the check by hand.
   asks again wherever the host changes the answer — whether stored clips are
   worth keeping, what a first download costs, where a clip plays), the dictation
   router (`asr/index.ts`, once, to decide whether there is a host to probe at
-  all), the media player host (`media/youtube-host.ts`), and the settings
+  all), the media player host (`media/youtube-host.ts`), the caption fetcher
+  (`media/captions.ts`), and the settings
   screen's native-voice row. Nowhere else, and never a second implementation of
   the test. Everything host-specific stays behind a dynamic import gated on it
-  (`db/tauri.ts`, `tts/native.ts`, `asr/native.ts`), so a browser fetches
+  (`db/tauri.ts`, `tts/native.ts`, `asr/native.ts`, `media/captions.ts`), so a
+  browser fetches
   neither those modules nor `@tauri-apps/api`. `media/youtube-host.ts` is the documented exception and
   imports statically: it pulls in no host SDK — a few hundred bytes of DOM and a
   message listener — and a dynamic import would make the player factory `async`,

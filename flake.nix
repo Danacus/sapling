@@ -100,7 +100,23 @@
             # silence.
             pkgs.alsa-lib
           ] ++ gst;
-          packages = [ pkgs.cargo-tauri ];
+          packages = [
+            pkgs.cargo-tauri
+            # The captions capability (`crates/sapling-desktop/src/captions.rs`)
+            # shells out to these two, and it finds them on PATH rather than
+            # pinning them — yt-dlp ages against YouTube in weeks, so a pinned
+            # copy would be a pinned breakage. They are here so `pnpm
+            # desktop:dev` has the feature at all and so the crate's
+            # skip-if-absent tests actually run; a learner's machine gets them
+            # however that machine gets programs.
+            #
+            # Deno is the JavaScript runtime yt-dlp has wanted for full YouTube
+            # extraction since late 2025. Without one it warns and may drop
+            # formats — captions usually still come back, which is why
+            # `captions_status` reports it instead of requiring it.
+            pkgs.yt-dlp
+            pkgs.deno
+          ];
           shellHook = ''
             export GIO_MODULE_DIR=${pkgs.glib-networking}/lib/gio/modules/
             export GST_PLUGIN_SYSTEM_PATH_1_0="${pkgs.lib.makeSearchPathOutput "lib" "lib/gstreamer-1.0" gst}"

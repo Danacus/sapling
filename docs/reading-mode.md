@@ -163,10 +163,20 @@ anything. `ReadingOptions.onProgress(done, total)` fires once per chunk.
 
 **Subtitles** (`subtitles.ts`, pure, dependency-free, tested). The learner's
 route to a text is usually a video, and the subtitle file is the one artefact of
-it they can get: `yt-dlp --write-subs --write-auto-subs --sub-format vtt`, or
-the "Show transcript" panel copied. `detectSubtitleFormat` recognises SRT, VTT
-and the panel and returns `undefined` for prose, so the composer keeps **one
-door**. `parseSubtitles` cleans a file to `Cue { start, end, text }` — BOM,
+it they can get. **In the desktop app they no longer have to get it**: the shell
+runs yt-dlp itself and a YouTube link becomes a track through this same door
+(§7, `.claude/rules/desktop.md`). Everywhere else they still bring one —
+`yt-dlp --write-subs --write-auto-subs --sub-format vtt` at a terminal, a yt-dlp
+app such as YTDLnis on a phone, or the "Show transcript" panel copied.
+`detectSubtitleFormat` recognises SRT, VTT, `json3` and the panel and returns
+`undefined` for prose, so the composer keeps **one
+door**. **`json3` is YouTube's own format and the one the desktop host asks for**:
+its offsets are already milliseconds, and it does not roll, so there is no
+repetition to undo. Its events are read as cues — a cue's `segs` joined with
+nothing (they carry their own spacing), the header event and the newline-only
+separators dropped, and an event with no `dDurationMs` ending where the next one
+starts. A real auto-generated file is about half separators, which is what makes
+that last rule load-bearing rather than defensive. `parseSubtitles` cleans a file to `Cue { start, end, text }` — BOM,
 CRLF, `NOTE`/`STYLE`/`REGION`, cue identifiers and settings, every `<...>` tag
 (including the per-word `<00:00:01.240>` timestamps), the named entities — and
 de-duplicates YouTube's *rolling* auto-captions, where each cue repeats the line
@@ -607,13 +617,23 @@ instead of `youtubePlayer`, and is as host-blind as it was already player-blind.
 - Questions about the text (LLM, chat-style).
 - Target-language explanations on tap (immersion glosses).
 - Per-word timing (karaoke); audio-first presentation.
-- **Fetching a video's captions.** A YouTube text still starts with a subtitle
-  file the learner obtained themselves (`yt-dlp`, or the "Show transcript"
-  panel copied): the caption tracks are not readable from a browser page —
-  no CORS on the timedtext endpoints, and the player API exposes none of it —
-  so pasting a link alone can never produce the text. Closing that would take a
-  server or a browser extension, and this app has neither by design; the sync
-  Worker sequences events and reads no payload.
+- **Fetching a video's captions — *in a browser*.** The caption tracks are not
+  readable from a page: no CORS on the timedtext endpoints, and the player API
+  exposes none of it, so pasting a link alone can never produce the text there.
+  A web build still starts a YouTube text from a subtitle file the learner
+  obtained themselves (`yt-dlp` at a terminal, a yt-dlp app such as YTDLnis on
+  a phone, or the "Show transcript" panel copied). **The desktop app closes
+  it**: that host can run a program, so a link plus one tap fetches the track
+  and the composer imports it like any other subtitle file
+  (`crates/sapling-desktop/src/captions.rs`, `src/lib/media/captions.ts`, the
+  `captions` task, and `json3` as a fourth import format —
+  `.claude/rules/desktop.md`). Desktop-only is sufficient rather than a gap: an
+  import is an event, so a text fetched there syncs to every paired device and
+  the phone opens it like any other text, and an Android learner who wants the
+  file itself hands YTDLnis's output to the existing picker, `json3` included.
+  What is still out is a *browser* answer, which would take a server or an
+  extension — this app has neither by design, and the sync Worker sequences
+  events and reads no payload.
 - **Anything else about the embedded player**: the keyboard once the iframe has
   focus, a playlist rather than a video, a start offset from a `t=` parameter.
 - Editing a text, re-annotating, imports longer than `MAX_IMPORT_TOTAL_CHARS`.
