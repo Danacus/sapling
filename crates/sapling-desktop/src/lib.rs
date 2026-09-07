@@ -50,12 +50,14 @@
 //! a synthesis that failed, which is the rule audio has always had here. It
 //! degrades; it never blocks.
 
-//! The crate denies `unsafe_code` rather than forbidding it, for exactly one
-//! module: `tts::kokoro`, which is the FFI call into sherpa-onnx and says at
-//! its top why it could not be someone else's safe wrapper. Nothing else here
-//! may opt out.
+//! The crate **forbids** `unsafe_code`, and no module may opt out. It used to
+//! only deny it, for `tts::kokoro`, which hand-rolled the FFI call into
+//! sherpa-onnx because the third-party wrapper of the day freed a config string
+//! before the C library read it. That crate is gone: the voice now goes through
+//! k2-fsa's own `sherpa-onnx` wrapper, which keeps its `CString`s alive across
+//! the call, so there is no FFI here at all any more (`tts/kokoro.rs`).
 
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 pub mod host;
 #[cfg(all(feature = "tts", desktop))]

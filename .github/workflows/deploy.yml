@@ -162,6 +162,10 @@ jobs:
           gc-max-store-size-linux: 6G
 
       # Its own `target` too: the crate links a different set of libraries.
+      # This also carries the sherpa-onnx libraries — `sherpa-onnx-sys`'s build
+      # script downloads the prebuilt archive for its pinned tag into
+      # `target/sherpa-onnx-prebuilt/`, so no second cache step is needed and a
+      # `Cargo.lock` bump (which is where the tag lives) refetches it.
       - name: Cache cargo
         uses: actions/cache@v6
         with:
@@ -171,17 +175,6 @@ jobs:
             target
           key: cargo-desktop-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
           restore-keys: cargo-desktop-${{ runner.os }}-
-
-      # `sherpa-rs-sys`'s build script downloads k2-fsa's prebuilt sherpa-onnx
-      # and onnxruntime for its pinned tag into `~/.cache/sherpa-rs` (see
-      # docs/desktop.md); Cargo.lock carries that pin, so its hash keys the
-      # cache and a bump refetches.
-      - name: Cache the sherpa-onnx libraries
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/sherpa-rs
-          key: sherpa-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: sherpa-${{ runner.os }}-
 
       # No `pnpm install` and no site build: `desktop:check` is cargo only, and
       # `tauri::generate_context!` accepts a missing `frontendDist` (verified:

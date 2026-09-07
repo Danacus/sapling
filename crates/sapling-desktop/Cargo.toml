@@ -38,7 +38,7 @@ path = "src/main.rs"
 # where the target table applies and nothing where it does not.
 default = ["tts"]
 tts = [
-	"dep:sherpa-rs-sys",
+	"dep:sherpa-onnx",
 	"dep:ureq",
 	"dep:tar",
 	"dep:bzip2",
@@ -73,27 +73,31 @@ serde_json = { version = "1", features = ["preserve_order"] }
 # -- The native voice (`tts` feature) ----------------------------------------
 #
 # Scoped to desktop targets, which is the whole of what Android costs. Nothing
-# in here can be built for a phone: `sherpa-rs-sys` downloads prebuilt Linux,
-# macOS and Windows shared libraries, and rodio's cpal backend wants ALSA. The
-# `tts` feature stays on there and resolves to nothing — see the note above it —
-# and the code that would have used these is gated to match, so an Android build
-# is the same host minus one capability rather than a second configuration to
-# keep in step. `desktop` is Tauri's own cfg alias (`tauri_build::build()`
-# emits it) and means exactly this table's condition.
+# in here can be built for a phone: `sherpa-onnx`'s prebuilt libraries are only
+# fetched for desktop targets on this branch, and rodio's cpal backend wants
+# ALSA. The `tts` feature stays on there and resolves to nothing — see the note
+# above it — and the code that would have used these is gated to match, so an
+# Android build is the same host minus one capability rather than a second
+# configuration to keep in step. `desktop` is Tauri's own cfg alias
+# (`tauri_build::build()` emits it) and means exactly this table's condition.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-# The bindings, not the `sherpa-rs` wrapper over them: that wrapper's Kokoro
-# constructor frees the rule-FST path string before sherpa-onnx reads it, and
-# the FSTs are not optional here. `src/tts/kokoro.rs` says the whole story.
+# k2-fsa's **own** Rust API — the safe `sherpa-onnx` wrapper over its
+# `sherpa-onnx-sys` bindings, both published from the sherpa-onnx repository.
+# It replaces the third-party `sherpa-rs`/`sherpa-rs-sys`, whose README now
+# points at this crate, and it is better on every axis this host cares about:
+# the bindings are pregenerated (no bindgen, so no libclang anywhere in the
+# build), it links **statically** by default (no `.so` files to find at
+# runtime, no rpath, no `LD_LIBRARY_PATH`), and its `OfflineTts::create` keeps
+# every `CString` alive across the C call — which is the use-after-free that
+# forced `src/tts/kokoro.rs` to hand-roll the FFI against `sherpa-rs`.
 #
-# `download-binaries` fetches k2-fsa's own prebuilt shared libraries for the
-# exact sherpa-onnx tag whose headers this crate vendors. It is the only
-# combination whose ABI is guaranteed: nixpkgs ships a *newer* sherpa-onnx whose
-# `SherpaOnnxOfflineTtsModelConfig` has three more members, so linking the
-# nixpkgs library against these bindings would silently misread the config.
-sherpa-rs-sys = { version = "0.6.8", optional = true, features = [
-	"download-binaries",
-	"tts",
-] }
+# **Pinned exactly**, because the version *is* the sherpa-onnx tag: the build
+# script downloads `sherpa-onnx-v<this version>-…-lib.tar.bz2` from the release
+# of the same name, so the pregenerated bindings and the library they call
+# always come from one tag. A `^` requirement would let cargo move the tag
+# under a lockfile update, and a config struct that grew a member is a silent
+# ABI mismatch rather than a compile error.
+sherpa-onnx = { version = "=1.13.7", optional = true }
 # The model download. `default-features = false` drops ureq's transparent gzip:
 # the archive is pinned by byte size and sha256, and a decoding layer between
 # the socket and the hasher is exactly what must not exist. `rustls` brings

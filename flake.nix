@@ -74,11 +74,11 @@
 
         desktop = pkgs.mkShell {
           inputsFrom = [ default ];
-          # `bindgenHook` is for `sherpa-rs-sys`, which generates its FFI with
-          # bindgen at build time and therefore needs a libclang the hook points
-          # at (`LIBCLANG_PATH` plus the stdenv's own include paths). Without it
-          # the desktop crate fails to build with "Unable to find libclang".
-          nativeBuildInputs = [ pkgs.pkg-config pkgs.rustPlatform.bindgenHook ];
+          # No `bindgenHook` here any more. The voice used to bind sherpa-onnx
+          # through `sherpa-rs-sys`, which ran bindgen at build time and needed
+          # a libclang pointed at by that hook; k2-fsa's own `sherpa-onnx-sys`
+          # ships pregenerated bindings, so nothing in this tree runs bindgen.
+          nativeBuildInputs = [ pkgs.pkg-config ];
           buildInputs = [
             pkgs.webkitgtk_4_1
             pkgs.gtk3
@@ -105,16 +105,14 @@
             export GIO_MODULE_DIR=${pkgs.glib-networking}/lib/gio/modules/
             export GST_PLUGIN_SYSTEM_PATH_1_0="${pkgs.lib.makeSearchPathOutput "lib" "lib/gstreamer-1.0" gst}"
             export XDG_DATA_DIRS="${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:''${XDG_DATA_DIRS:-}"
-            # `sherpa-rs-sys` downloads k2-fsa's own prebuilt `.so` files rather
-            # than building sherpa-onnx from source (see `src/tts/mod.rs`), and
-            # those are linked against an ordinary distribution's libstdc++.
-            # `build.rs` gives the binaries an `$ORIGIN` rpath so they find
-            # sherpa and onnxruntime, but a *transitive* dependency of a shared
-            # library is not looked up through the executable's `DT_RUNPATH`, so
-            # libstdc++ has to be reachable the one way that always applies.
-            # Without it every desktop binary dies at startup with
-            # `libstdc++.so.6: cannot open shared object file`.
-            export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib''${LD_LIBRARY_PATH:+:}''${LD_LIBRARY_PATH:-}"
+            # There is no `LD_LIBRARY_PATH` for libstdc++ here any more. The old
+            # sherpa bindings linked prebuilt `.so` files built against an
+            # ordinary distribution's libstdc++, and a shared library's *own*
+            # dependencies are not resolved through the executable's
+            # `DT_RUNPATH` — so every desktop binary died at startup with
+            # `libstdc++.so.6: cannot open shared object file`. sherpa-onnx is
+            # linked statically now, so libstdc++ is a direct `NEEDED` of the
+            # binary and nix's own linker wrapper puts it on the RUNPATH.
           '';
         };
       in

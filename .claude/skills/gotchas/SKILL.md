@@ -109,38 +109,50 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
 - **`bundle.icon` paths resolve relative to `tauri.conf.json`, and a missing one
   fails inside `generate_context!()`** — a proc-macro panic pointing at
   `.run(...)`, not at the config.
-- **2026-09-05: `sherpa-rs` 0.6.8 frees the rule-FST path before sherpa-onnx
-  reads it.** `KokoroTts::new` does
-  `raw.rule_fsts.map(|v| v.as_ptr()).unwrap_or(null())`, and `Option::map`
-  *consumes* the `CString` — so the pointer dangles the moment the closure
-  returns. The symptom is `Rule fst '<mojibake>' does not exist`, then `Errors
-  in config`, then a null engine and a SIGSEGV on the next call. Present on the
-  crate's `main` too. Every other field in that constructor is fine, so it only
-  bites when `rule_fsts`/`rule_fars` are non-empty — which for Chinese they must
-  be, or digits fall through to espeak and "3" is read as English "three" inside
-  a Chinese sentence. The fix here was to depend on `sherpa-rs-sys` and write
-  the twenty lines ourselves (`crates/sapling-desktop/src/tts/kokoro.rs`).
-- **Do not link sherpa-rs-sys's bindings against nixpkgs' `sherpa-onnx`.** The
-  crate vendors headers for one exact tag (v1.12.9) and its `download-binaries`
-  feature fetches k2-fsa's prebuilt libraries for that same tag; nixpkgs ships
-  1.12.38, whose `SherpaOnnxOfflineTtsModelConfig` gained three members, so
-  every field after it moves and the two sides silently disagree about the
-  config being passed. `SHERPA_LIB_PATH` makes this trivially easy to do and
-  nothing warns.
-- **Kokoro v1.1 needs `dict_dir` on sherpa-onnx v1.12.9.** The browser worker
-  leaves it empty with a comment saying a dict dir "only logs a not-used
+- **Use k2-fsa's own `sherpa-onnx` crate, not the third-party `sherpa-rs`.**
+  `sherpa-rs` is deprecated and its README says so. The four entries below are
+  what it cost while it was the dependency (2026-09-05 → 2026-09-07); all four
+  are gone now, and every one of them is a reason not to go back.
+  - **`sherpa-rs` 0.6.8 frees the rule-FST path before sherpa-onnx reads it.**
+    `KokoroTts::new` does `raw.rule_fsts.map(|v| v.as_ptr()).unwrap_or(null())`,
+    and `Option::map` *consumes* the `CString` — so the pointer dangles the
+    moment the closure returns. The symptom is `Rule fst '<mojibake>' does not
+    exist`, then `Errors in config`, then a null engine and a SIGSEGV on the
+    next call. Present on the crate's `main` too. It only bites when
+    `rule_fsts`/`rule_fars` are non-empty — which for Chinese they must be, or
+    digits fall through to espeak and "3" is read as English "three" inside a
+    Chinese sentence. It forced twenty lines of hand-rolled FFI and the crate's
+    only `unsafe`. The official wrapper's `OfflineTts::create` keeps its
+    `CString`s in a `Vec` across the call and does not have the bug.
+  - **Its bindings must not be linked against nixpkgs' `sherpa-onnx`.** It
+    vendored headers for one exact tag (v1.12.9) and fetched k2-fsa's prebuilt
+    libraries for that tag; nixpkgs shipped 1.12.38, whose
+    `SherpaOnnxOfflineTtsModelConfig` gained three members, so every field after
+    it moves and the two sides silently disagree. `SHERPA_LIB_PATH` made that
+    trivially easy to do and nothing warned. The same hazard is why
+    `sherpa-onnx` is pinned `=` today: **the crate version is the sherpa-onnx
+    tag**, and a `^` requirement would let a lockfile update move the library
+    out from under the bindings.
+  - **It ran bindgen**, so the devShell needed `rustPlatform.bindgenHook` and a
+    libclang, and so would any CI job. `sherpa-onnx-sys`'s bindings are
+    pregenerated; nothing in this repo runs bindgen any more.
+  - **It linked dynamically and its `.so` files were not found at runtime.** It
+    copied sherpa-onnx and onnxruntime into `target/<profile>/` and
+    `target/<profile>/deps/` without an rpath, so the binary died with
+    `libsherpa-onnx-c-api.so: cannot open shared object file` and `build.rs`
+    needed `cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN`. Their own dependency on
+    libstdc++ was a second, separate trap: `DT_RUNPATH` on the executable is not
+    consulted for a shared library's dependencies, so the devShell also had to
+    put `stdenv.cc.cc.lib` on `LD_LIBRARY_PATH` — the same runtime-only shape as
+    `glib-networking` and GStreamer. `sherpa-onnx` links **statically** on
+    desktop targets and both went away.
+- **Kokoro v1.1 needs `dict_dir` on sherpa-onnx before v1.12.15.** The browser
+  worker leaves it empty with a comment saying a dict dir "only logs a not-used
   warning" — true from v1.12.15. Before that the multi-lingual frontend refuses
   to start: `please pass --kokoro-lexicon and --kokoro-dict-dir`, then
-  `exit(255)`. The archive's own `dict/` is what it wants.
-- **A prebuilt `.so` dropped next to a Rust binary is not found at runtime.**
-  `sherpa-rs-sys` copies sherpa-onnx and onnxruntime into `target/<profile>/`
-  and `target/<profile>/deps/` but adds no rpath, so the binary dies with
-  `libsherpa-onnx-c-api.so: cannot open shared object file`.
-  `cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN` in `build.rs` fixes it for binaries
-  *and* tests. Their own dependency on libstdc++ is a separate problem:
-  `DT_RUNPATH` on the executable is not consulted for a shared library's
-  dependencies, so the devShell has to put `stdenv.cc.cc.lib` on
-  `LD_LIBRARY_PATH`. Same runtime-only shape as `glib-networking` and GStreamer.
+  `exit(255)`. The archive's own `dict/` is what it wants, and the desktop host
+  still passes it even on a newer library, because the directory is one of the
+  files its "is the model installed" check names.
 - **Native Kokoro is not bit-reproducible.** ONNX reduces in whatever order its
   threads finish, so the same phrase twice differs in the low bits of some
   samples and by a few samples of length (measured: 181454 vs 181442 bytes).

@@ -267,11 +267,15 @@ impl TtsHandle {
             data_dir: path("espeak-ng-data"),
             // The browser worker leaves this empty, and the comment there
             // explains why: from sherpa-onnx v1.12.15 the Chinese frontend
-            // segments with a phrase matcher over the lexicon and a dict dir
-            // only logs "not used". The native build here is pinned to the
-            // v1.12.9 C API, which is *before* that change and refuses to start
-            // a multi-lingual Kokoro without one — so the same archive's
-            // jieba dictionaries are handed over.
+            // segments with a phrase matcher over the lexicon, and a dict dir
+            // only logs "not used". This host started on the v1.12.9 C API,
+            // which is *before* that change and refuses to start a
+            // multi-lingual Kokoro without one, so it passes the archive's own
+            // jieba dictionaries. It is on a newer library now and could stop —
+            // but the directory ships in the model archive either way, it is
+            // one of the files [`ModelSpec::installed_in`] already checks for,
+            // and an ignored argument is not worth a change to what "installed"
+            // means.
             dict_dir: path("dict"),
             lexicon: format!("{},{}", path("lexicon-us-en.txt"), path("lexicon-zh.txt")),
             rule_fsts: format!("{},{}", path("date-zh.fst"), path("number-zh.fst")),

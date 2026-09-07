@@ -335,31 +335,47 @@ the *WASM* build (`models.ts`, sherpa-onnx#2236) and do not reproduce natively,
 but one model means one sound on both hosts, and 218 MB is not reason enough for
 a second answer to "what does this word sound like".
 
-**How sherpa-onnx is linked.** `sherpa-rs-sys` with `download-binaries`: it
-vendors sherpa-onnx's headers for one exact tag (v1.12.9) and its build script
-downloads k2-fsa's prebuilt shared libraries for that same tag into
-`~/.cache/sherpa-rs`. Two things fall out of that and both cost time to find:
+**How sherpa-onnx is linked, and whose crate it is.** `sherpa-onnx` — the safe
+Rust wrapper k2-fsa publishes from the sherpa-onnx repository itself, over its
+own `sherpa-onnx-sys`. The version *is* the sherpa-onnx tag: `sherpa-onnx-sys`
+1.13.7's build script downloads `sherpa-onnx-v1.13.7-<platform>-lib.tar.bz2`
+from the release of that name into `target/sherpa-onnx-prebuilt/`, so the
+pregenerated bindings and the library they call can never come from two
+different tags. **The dependency is therefore pinned `=1.13.7`**, not `^`: a
+config struct that grew a member between tags is a silent ABI mismatch rather
+than a compile error, and a lockfile update must not be able to cause one. The
+same reason still rules out pointing it at nixpkgs' `sherpa-onnx`, which tracks
+its own version.
 
-- **Do not point it at nixpkgs' `sherpa-onnx` instead.** That package is 1.12.38,
-  whose `SherpaOnnxOfflineTtsModelConfig` has three members the 1.12.9 headers
-  do not, so every field after it sits at a different offset — the bindings and
-  the library would silently disagree about the config being passed.
-- **v1.12.9 is before the change that made `dict_dir` optional**, so the
-  multi-lang Kokoro frontend refuses to start without the archive's jieba
-  dictionaries. The browser worker leaves `dictDir` empty (correctly, for
-  v1.12.15+); this host passes `dict/`.
+Three consequences, and each of them removed something that used to be here:
 
-`build.rs` adds `-Wl,-rpath,$ORIGIN` so the binaries find the two `.so` files
-the build script drops beside them, and the devShell puts libstdc++ on
-`LD_LIBRARY_PATH` because a shared library's own dependencies are not resolved
-through the executable's `DT_RUNPATH`.
+- **Static by default on desktop** (the crate's `static` feature; `shared` is
+  the opt-out, and Android and iOS are forced to shared whatever the features
+  say). So there is no `.so` beside the binary, no `-Wl,-rpath,$ORIGIN` in
+  `build.rs`, and no libstdc++ on the devShell's `LD_LIBRARY_PATH` — libstdc++
+  is a direct `NEEDED` of the binary now, which nix's linker wrapper resolves
+  by itself. Verified by running the crate's test binaries with
+  `LD_LIBRARY_PATH` unset.
+- **Pregenerated bindings**, so nothing in this repository runs bindgen and no
+  shell or CI job needs a libclang. `rustPlatform.bindgenHook` is gone from the
+  `desktop` devShell.
+- **No `unsafe` anywhere in the crate** — `lib.rs` `forbid`s it. `tts::kokoro`
+  used to be the one exception: the third-party `sherpa-rs` wrapper built its
+  rule-FST path as `raw.rule_fsts.map(|v| v.as_ptr())`, and `Option::map`
+  *consumes* the `CString`, so sherpa-onnx read freed memory and returned a null
+  engine for every configuration with FSTs — which is every configuration we
+  want, since `date-zh.fst` and `number-zh.fst` are what keep "2026" from coming
+  out as English digits inside a Chinese sentence. The official wrapper's
+  `OfflineTts::create` keeps every `CString` in a `Vec` across the call, so the
+  twenty lines of hand-rolled FFI are gone.
 
-`tts::kokoro` is the crate's only `unsafe` — the root denies rather than
-forbids it — because `sherpa-rs`, the safe wrapper, frees the rule-FST path
-string before sherpa-onnx reads it (`Option::map` consumes the `CString`).
-Dropping the FSTs instead would mean "2026" read as English digits inside a
-Chinese sentence on this host only, so the twenty lines the wrapper would have
-contributed live here instead, with the strings kept alive across the call.
+`dict_dir` is still passed (`dict/` from the model archive), though from
+sherpa-onnx v1.12.15 the Chinese frontend segments with a phrase matcher over
+the lexicon and an unused dict dir only logs that it is unused. It was
+mandatory on the v1.12.9 C API this host started with; it stays because the
+directory ships in the archive anyway and is one of the files the installed
+check names, and re-deciding what "installed" means is not worth an argument
+the library ignores.
 
 ## Android
 
@@ -686,17 +702,20 @@ the build: `glib-networking` (`GIO_MODULE_DIR`), without which every `https://`
 request inside the webview fails, and GStreamer (`GST_PLUGIN_SYSTEM_PATH_1_0`),
 whose absence is the crash described above.
 
-The voice adds three more: `rustPlatform.bindgenHook`, because `sherpa-rs-sys`
-generates its FFI with bindgen and needs a libclang (`LIBCLANG_PATH`);
-`stdenv.cc.cc.lib` on `LD_LIBRARY_PATH`, because the prebuilt sherpa-onnx and
-onnxruntime libraries are linked against an ordinary distribution's libstdc++;
-and `alsa-lib`, which rodio's cpal backend runs pkg-config for at build time.
-The second is a third runtime-only trap of exactly the shape of the other two:
-no build error, and every desktop binary dies at startup with
-`libstdc++.so.6: cannot open shared object file`. `alsa-lib` is the opposite and
-therefore the easy one — it fails loudly at build time, and at *runtime* on
-NixOS nothing further is needed, because the ALSA default device reaches
-PipeWire through its ALSA plugin.
+The voice adds exactly one: `alsa-lib`, which rodio's cpal backend runs
+pkg-config for at build time. It is the easy kind — it fails loudly at build
+time, and at *runtime* on NixOS nothing further is needed, because the ALSA
+default device reaches PipeWire through its ALSA plugin.
+
+It used to add two more, and both came off when the voice moved to k2-fsa's own
+crate: `rustPlatform.bindgenHook`, for a bindings crate that no longer runs
+bindgen, and `stdenv.cc.cc.lib` on `LD_LIBRARY_PATH`, which was the third
+runtime-only trap of exactly the shape of the other two — no build error, and
+every desktop binary dying at startup with `libstdc++.so.6: cannot open shared
+object file`, because the prebuilt sherpa `.so` files were linked against an
+ordinary distribution's libstdc++ and a shared library's own dependencies are
+not resolved through the executable's `DT_RUNPATH`. Static linking made the
+question go away.
 
 ## What a shipped version would still need
 

@@ -124,13 +124,21 @@ someone to run the check by hand.
   something owned and `'static`, exactly as `TtsHandle` does. **The price is
   ordering**, and it is paid on the JavaScript side: see the transport bullet.
 
-- **`tts::kokoro` is the only `unsafe` in the crate**, which is why the root
-  says `deny(unsafe_code)` rather than `forbid`. It exists because
-  `sherpa-rs`'s safe wrapper frees the rule-FST path string before sherpa-onnx
-  reads it; the module's own header carries the detail. Nothing else may opt
-  out, and the dependency is `sherpa-rs-sys` with `download-binaries` — the
-  bindings and the prebuilt libraries must come from the same sherpa-onnx tag
-  or the TTS config structs disagree about their own layout.
+- **The crate `forbid`s `unsafe_code`, and the voice is k2-fsa's own crate.**
+  `tts::kokoro` used to be the one exception — hand-rolled FFI, because the
+  third-party `sherpa-rs` wrapper freed the rule-FST path string before
+  sherpa-onnx read it and the FSTs are not optional here. The dependency is
+  `sherpa-onnx` now (the safe wrapper published from the sherpa-onnx repository,
+  over its own `sherpa-onnx-sys`), whose `OfflineTts::create` keeps every
+  `CString` alive across the C call, so the FFI is gone and so is the `unsafe`.
+  Three things follow and each has cost time before: the version is pinned `=`
+  because **the version is the sherpa-onnx tag** — the build script downloads
+  the release archive of that exact name, so bindings and library can never
+  disagree about a struct's layout, and a `^` requirement would let a lockfile
+  update move the tag; linking is **static** on desktop targets, so there is no
+  `.so` to find, no `$ORIGIN` rpath in `build.rs` and no libstdc++ on
+  `LD_LIBRARY_PATH`; and the bindings are **pregenerated**, so nothing here runs
+  bindgen and no shell or CI job needs a libclang.
 
 - **`src/lib/platform.ts` is where "am I in Tauri?" is asked** — one test, and
   each area asks it at its own seam rather than once per process: the
