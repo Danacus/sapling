@@ -62,17 +62,18 @@
 //! ## A model on the live path is a whole model
 //!
 //! Nothing above would be safe if an install could be seen half-done, and none
-//! of it defends against that. [`model`] does, one layer down: an install
-//! unpacks into a `.partial` directory and reaches the live path by a single
-//! `rename`, so at every instant that path is either absent or a complete
-//! model. That is what lets [`TtsHandle::status`] latch a size without ever
-//! consulting the install lock, and it is what makes [`TtsHandle::load`] safe
-//! to run while a download is unpacking — the case that used to kill the
-//! process, because sherpa-onnx over a half-written `espeak-ng-data` does not
-//! fail, it calls `exit(-1)`. `load` deliberately does *not* take the install
-//! lock: taking it would park every phrase behind a 365 MB download for the
-//! sake of a tree it can no longer see. Loading with no model installed is an
-//! ordinary `Err`, as it always was.
+//! of it defends against that. [`crate::models`] does, one layer down — the
+//! module the recognizer shares with the voice: an install unpacks into a
+//! `.partial` directory and reaches the live path by a single `rename`, so at
+//! every instant that path is either absent or a complete model. That is what
+//! lets [`TtsHandle::status`] latch a size without ever consulting the install
+//! lock, and it is what makes [`TtsHandle::load`] safe to run while a download
+//! is unpacking — the case that used to kill the process, because sherpa-onnx
+//! over a half-written `espeak-ng-data` does not fail, it calls `exit(-1)`.
+//! `load` deliberately does *not* take the install lock: taking it would park
+//! every phrase behind a 365 MB download for the sake of a tree it can no
+//! longer see. Loading with no model installed is an ordinary `Err`, as it
+//! always was.
 //!
 //! ## fp32, natively too
 //!
@@ -86,7 +87,6 @@
 //! loudly here is what makes `tts.ts` fall back to the browser voice.
 
 pub mod kokoro;
-pub mod model;
 /// Desktop only, and it is the *only* part of the voice that is: rodio over an
 /// output device exists because WebKitGTK cannot play a clip, and Android's
 /// Chromium WebView can. See [`HOST_PLAYS_AUDIO`].
@@ -100,8 +100,8 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::Serialize;
 
+use crate::models::{self, available_threads, ModelSpec, KOKORO};
 use kokoro::{Kokoro, KokoroConfig};
-use model::{ModelSpec, KOKORO};
 
 /// Directory holding every voice model, inside Tauri's app-data directory.
 pub const TTS_DIR: &str = "tts";
@@ -137,18 +137,6 @@ const AUDIBLE_THRESHOLD: f32 = 1e-4;
 /// `tts_play`, so there is no per-clip failure to warn about and no
 /// "no output device" to latch.
 pub const HOST_PLAYS_AUDIO: bool = cfg!(desktop);
-
-/// Threads to give ONNX on a phone, whatever [`std::thread::available_parallelism`]
-/// says.
-///
-/// A desktop gets every core, because this is one interactive request at a time
-/// and nothing else is competing for the box. A phone's cores are not
-/// interchangeable: a big.LITTLE eight is four fast and four slow, and an ONNX
-/// session split evenly across them runs at the pace of the slow ones while
-/// spending the battery of all eight. Four is the usual size of the fast
-/// cluster and is the number to revisit if anyone ever measures this on a
-/// device — nobody here has.
-const MOBILE_MAX_THREADS: usize = 4;
 
 /// What `tts_status` answers. Serialized camelCase because it is read by
 /// TypeScript, and the field names are `native.ts`'s `NativeTtsStatus`.
@@ -248,7 +236,7 @@ impl TtsHandle {
     ///
     /// Idempotent and safe to call from two places at once — the second caller
     /// waits on the first and then finds the model installed.
-    pub fn install(&self, on_progress: model::OnProgress<'_>) -> Result<(), String> {
+    pub fn install(&self, on_progress: models::OnProgress<'_>) -> Result<(), String> {
         let _guard = self
             .installing
             .lock()
@@ -344,19 +332,6 @@ fn is_audible(samples: &[f32]) -> bool {
     samples.iter().any(|s| s.abs() > AUDIBLE_THRESHOLD)
 }
 
-/// Cores to give ONNX, never fewer than one and never more than a phone should
-/// spend (see [`MOBILE_MAX_THREADS`]).
-fn available_threads() -> i32 {
-    let ceiling = if cfg!(desktop) {
-        usize::MAX
-    } else {
-        MOBILE_MAX_THREADS
-    };
-    std::thread::available_parallelism()
-        .map(|cores| cores.get().min(ceiling).min(i32::MAX as usize) as i32)
-        .unwrap_or(1)
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -371,18 +346,6 @@ mod tests {
         assert!(!is_audible(&[1e-5, -1e-5]), "below the threshold");
         assert!(is_audible(&[0.0, 0.0, 0.2]));
         assert!(is_audible(&[-0.5]));
-    }
-
-    #[test]
-    fn there_is_always_at_least_one_thread_and_never_more_than_a_phone_should_spend() {
-        let threads = available_threads();
-        assert!(threads >= 1);
-        if !cfg!(desktop) {
-            assert!(
-                threads <= MOBILE_MAX_THREADS as i32,
-                "a phone's slow cluster is not worth an ONNX thread each: {threads}"
-            );
-        }
     }
 
     #[test]

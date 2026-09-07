@@ -24,23 +24,32 @@ name = "sapling-desktop"
 path = "src/main.rs"
 
 [features]
-# On by default: a desktop build without it has no neural voice at all, because
-# WebKitGTK cannot run the browser's sherpa-onnx WASM path (no
-# `SharedArrayBuffer`, and a 439 MB Emscripten file package on top). It is a
-# feature only so `cargo check -p sapling-desktop --no-default-features` can
-# still typecheck the host on a machine with no sherpa toolchain.
+# On by default: a desktop build without it has neither a neural voice nor
+# dictation, because WebKitGTK can run neither the browser's sherpa-onnx WASM
+# path (no `SharedArrayBuffer`, and a 439 MB Emscripten file package on top) nor
+# a `SpeechRecognition` it does not have. It is a feature only so `cargo check
+# -p sapling-desktop --no-default-features` can still typecheck the host on a
+# machine with no sherpa toolchain.
 #
-# **Enabling it does not mean the whole voice exists.** Six of its seven
-# dependencies build for every target, so Android gets synthesis; the seventh is
-# `rodio`, which is declared for desktop targets only (see the table below)
-# because there is nothing for it to do on a phone — the WebView there is
-# Chromium and plays a clip perfectly well. So `lib.rs` gates the module and the
-# three synthesis commands on `feature = "tts"` and only `tts::play` and its two
-# commands on `all(feature = "tts", desktop)`. A `dep:` entry is allowed to name
-# a target-scoped optional dependency: the feature enables it where the target
-# table applies and nothing where it does not.
-default = ["tts"]
-tts = [
+# **One feature for both directions**, not `tts` and `asr`. Synthesis and
+# recognition are the same dependency set — sherpa-onnx, and the download,
+# checksum and unpack of a pinned model archive — over the same `src/models.rs`;
+# splitting them would put `any(feature = …)` on that shared module and create a
+# matrix of four builds nobody would ever check. It was called `tts` until
+# dictation arrived.
+#
+# **Enabling it does not mean the whole of speech exists.** Six of its seven
+# dependencies build for every target, so Android gets synthesis *and*
+# dictation; the seventh is `rodio`, which is declared for desktop targets only
+# (see the table below) because there is nothing for it to do on a phone — the
+# WebView there is Chromium and plays a clip perfectly well. So `lib.rs` gates
+# the modules and the six synthesis/recognition commands on `feature = "speech"`
+# and only `tts::play` and its two commands on `all(feature = "speech",
+# desktop)`. A `dep:` entry is allowed to name a target-scoped optional
+# dependency: the feature enables it where the target table applies and nothing
+# where it does not.
+default = ["speech"]
+speech = [
 	"dep:sherpa-onnx",
 	"dep:ureq",
 	"dep:tar",
@@ -73,11 +82,13 @@ uuid = { version = "1", features = ["v4"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 
-# -- The native voice (`tts` feature) ----------------------------------------
+# -- Native speech, both directions (`speech` feature) ------------------------
 #
-# Every target, phones included: synthesis is the same code and the same model
-# wherever this crate runs. Only *playback* is a desktop capability, and only
-# `rodio` is therefore in the target table at the bottom of this file.
+# Every target, phones included: synthesis and recognition are the same code and
+# the same models wherever this crate runs. Only *playback* is a desktop
+# capability, and only `rodio` is therefore in the target table at the bottom of
+# this file. Recording is not here at all: the WebView captures the audio on
+# both hosts and hands it over as a raw IPC body.
 #
 # k2-fsa's **own** Rust API — the safe `sherpa-onnx` wrapper over its
 # `sherpa-onnx-sys` bindings, both published from the sherpa-onnx repository.
@@ -101,10 +112,11 @@ serde_json = { version = "1", features = ["preserve_order"] }
 # shared on Android and iOS), which is why `build.rs` has an Android half: the
 # two `.so` files have to reach the APK.
 sherpa-onnx = { version = "=1.13.7", optional = true }
-# The model download. `default-features = false` drops ureq's transparent gzip:
-# the archive is pinned by byte size and sha256, and a decoding layer between
-# the socket and the hasher is exactly what must not exist. `rustls` brings
-# webpki-roots with it, so there is no system certificate store to find.
+# The model downloads (`src/models.rs`, shared by both). `default-features =
+# false` drops ureq's transparent gzip: an archive is pinned by byte size and
+# sha256, and a decoding layer between the socket and the hasher is exactly what
+# must not exist. `rustls` brings webpki-roots with it, so there is no system
+# certificate store to find.
 ureq = { version = "3", optional = true, default-features = false, features = [
 	"rustls",
 ] }
@@ -126,7 +138,7 @@ hound = { version = "3.5", optional = true }
 # Android's WebView is Chromium, where `<audio>` over a blob is the ordinary
 # path and works, and rodio's cpal backend would want an ALSA that is not there
 # anyway. So the dependency is target-scoped, `tts::play` and the two commands
-# that reach it are gated `all(feature = "tts", desktop)`, and everything else
+# that reach it are gated `all(feature = "speech", desktop)`, and everything else
 # about the voice is one configuration on every target. `desktop` is Tauri's own
 # cfg alias (`tauri_build::build()` emits it) and means exactly this table's
 # condition.
@@ -135,8 +147,10 @@ hound = { version = "3.5", optional = true }
 # the only feature that is wanted,
 # and it pulls exactly cpal. The decoders (`wav`, `mp3`, `flac`, `mp4`,
 # `vorbis` — symphonia, MPL-2.0) are all off because the clip is decoded here
-# with the `hound` above and handed over as samples; `recording` is off because
-# dictation is the webview's job and stays there.
+# with the `hound` above and handed over as samples; `recording` is off and
+# stays off, dictation or no dictation — the microphone is the webview's
+# (`src/asr/mod.rs`), and this host only ever sees samples that have already
+# been captured.
 rodio = { version = "0.22", optional = true, default-features = false, features = [
 	"playback",
 ] }

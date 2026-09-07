@@ -74,8 +74,10 @@
 	// they fix, never a mistake the teacher corrects them for — and the whole
 	// correction pipeline goes on aligning against a message they endorsed.
 	//
-	// Recognition is not in every browser (see `$lib/asr`), so the control is
-	// rendered only where it works rather than degrading to a dead button.
+	// Recognition is not everywhere and not for every language (see `$lib/asr`:
+	// a Tauri host recognizes what its own model covers, a browser has Web
+	// Speech or has nothing), so the control is rendered only where it works
+	// rather than degrading to a dead button.
 
 	let micSupported = $state(false);
 	let recording = $state(false);
@@ -89,8 +91,6 @@
 
 	$effect(() => {
 		if (!browser) return;
-
-		micSupported = dictationAvailable();
 
 		const id = page.params.id ?? '';
 		let cancelled = false;
@@ -108,6 +108,15 @@
 				profile = loadedProfile;
 				mockMode = isMockMode();
 				loading = false;
+
+				// Asked once the language is known, because the answer depends on
+				// it: a Tauri host recognizes the languages its model covers and
+				// nothing else, and only the browser engine is language-blind.
+				// Unawaited — the composer works without a microphone, and this
+				// call is also what warms the probe `listen()` reads.
+				void dictationAvailable(loadedProfile.targetLanguage).then((available) => {
+					if (!cancelled) micSupported = available;
+				});
 
 				if (!loaded) {
 					missing = true;

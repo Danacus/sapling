@@ -358,15 +358,16 @@ jobs:
       - name: Build the release APK
         run: nix develop -c bash -c 'set -x; PATH="$RUSTUP_BIN:$PATH" pnpm desktop:android'
 
-      # The voice's own gate. `crates/sapling-desktop/build.rs` copies
-      # sherpa-onnx's two Android `.so` files into the project's `jniLibs/`
-      # during the cargo build, because nothing else does — Tauri's Gradle
-      # plugin packages exactly one library, the crate's own. Whether a build
-      # script ran is cargo's business, so what is checked here is the *APK*:
-      # a phone that installed a voiceless one would be a much later discovery.
-      # The `readelf` list is printed because it is the answer to "does this
-      # also need libc++_shared?" — it does not, and that is a fact about these
-      # binaries rather than a thing to assume.
+      # Speech's own gate, both directions — the voice and the recognizer run on
+      # these same two libraries, so the recognition model needed nothing added
+      # here. `crates/sapling-desktop/build.rs` copies sherpa-onnx's two Android
+      # `.so` files into the project's `jniLibs/` during the cargo build, because
+      # nothing else does — Tauri's Gradle plugin packages exactly one library,
+      # the crate's own. Whether a build script ran is cargo's business, so what
+      # is checked here is the *APK*: a phone that installed a speechless one
+      # would be a much later discovery. The `readelf` list is printed because it
+      # is the answer to "does this also need libc++_shared?" — it does not, and
+      # that is a fact about these binaries rather than a thing to assume.
       - name: Check sherpa-onnx reached the APK
         run: |
           set -eu
@@ -384,7 +385,7 @@ jobs:
           unzip -l "$apk" | grep 'lib/arm64-v8a/' || true
           for lib in libsapling_desktop.so libsherpa-onnx-c-api.so libonnxruntime.so; do
             unzip -l "$apk" | grep -q "lib/arm64-v8a/$lib" || {
-              echo "$lib is not in the APK — the voice would fail on the phone." >&2
+              echo "$lib is not in the APK — speech would fail on the phone." >&2
               echo "See crates/sapling-desktop/build.rs and docs/desktop.md." >&2
               exit 1
             }

@@ -52,7 +52,7 @@ pnpm desktop:android        # the release APK, over a `build/` that already exis
 
 **`gen/android` is committed, so the init is not part of anyone's loop** — it is
 how the tree was first written and how it would be rebuilt for a new Tauri
-version, and it *overwrites* the two edits [Android](#android) describes.
+version, and it *overwrites* the three edits [Android](#android) describes.
 
 New files must be `git add`ed before nix sees them (flakes read the index, not
 the working tree). This looks exactly like "the flake is broken".
@@ -94,17 +94,18 @@ printed to stderr for the terminal that launched the binary.
 
 ## What is native and what still goes through the webview
 
-**Native: persistence, synthesis and playback.** `crates/sapling-desktop` opens
-the file, lends `sapling-core` the four runtime facts (`deviceId`, the system
-clock, `localDay` from the system time zone, UUID v4 ids) and exposes exactly
-the three commands `WasmCore` exposes to the database Worker — `dispatch`,
-`commit_all`, `derived_schema_version`. `src/lib/db/tauri.ts` is one `invoke`
-per `Backend` call, chosen by `backend.ts` when `inTauri()`; every argument
-still goes through `toPlain()`, because `client.ts` owns the proxy for both
-transports. The voice adds five more commands and is the section below.
+**Native: persistence, synthesis, playback and recognition.**
+`crates/sapling-desktop` opens the file, lends `sapling-core` the four runtime
+facts (`deviceId`, the system clock, `localDay` from the system time zone, UUID
+v4 ids) and exposes exactly the three commands `WasmCore` exposes to the
+database Worker — `dispatch`, `commit_all`, `derived_schema_version`.
+`src/lib/db/tauri.ts` is one `invoke` per `Backend` call, chosen by
+`backend.ts` when `inTauri()`; every argument still goes through `toPlain()`,
+because `client.ts` owns the proxy for both transports. Speech adds eight more
+commands and is the section below.
 
 `dispatch` and `commit_all` are `async` and wait on `spawn_blocking`, like the
-three long voice commands: a synchronous Tauri command runs on the main thread,
+long speech commands: a synchronous Tauri command runs on the main thread,
 and `applyResult` makes three or more persistence calls on every Check. Because
 that puts them on a thread pool, `tauri.ts` chains each `invoke` behind the
 previous one so calls reach the core in the order the window made them — the
@@ -113,21 +114,17 @@ is ever removed: a read that follows an un-awaited write occasionally misses it,
 on the desktop only.
 
 All of them are host capabilities in the same narrow sense — a file, text-in
-audio-out, and audio-in sound-out. None carries a merge rule, a lesson, or a
-language.
+audio-out, audio-in sound-out, and samples-in sentence-out. None carries a merge
+rule, a lesson, or a language.
 
 **Everything else is the same web app in a webview**: the UI, the LLM call to
 OpenRouter, the reading and conversation layers, the romanizer, and every
 sound that is not speech — the reader's `<video>` and the YouTube frame still
-play through WebKitGTK's GStreamer pipeline. There is no native menu, no tray,
-no auto-update, no file dialog and no deep-link handling. The window is one
-`main` window loading `/`.
-
-Dictation is the exception: WebKitGTK exposes neither `SpeechRecognition`
-constructor, so `dictationAvailable()` is false and the control never renders.
-`content.md` already says the fallback is typing — on this host it is the only
-path. `getUserMedia` *is* present, so a recorder-plus-transcription route
-would not be blocked by the webview.
+play through WebKitGTK's GStreamer pipeline. **The microphone is in that list**:
+`getUserMedia` works in both webviews, so the audio for dictation is captured in
+the window and only the *recognition* is native. There is no native menu, no
+tray, no auto-update, no file dialog and no deep-link handling. The window is
+one `main` window loading `/`.
 
 **No CSP.** `app.security.csp` is `null`, matching the web deploy, which sets
 none either and for a load-bearing reason (`deploy.md`: the YouTube iframe API
@@ -209,6 +206,16 @@ re-investigate the bridge for this symptom.
 
 ## Speech
 
+Speech goes both ways on this host and it is **one feature**, `speech`, on by
+default. Synthesis and recognition are the same dependency set — sherpa-onnx,
+and the download, checksum and unpack of a pinned model archive — over the same
+`src/models.rs`, and the only thing either has to itself is the desktop's
+player. It was called `tts` until dictation arrived; splitting it back into two
+would put `any(feature = …)` on the shared module and make four build
+configurations nobody would ever check.
+
+### Synthesis
+
 **Why any of this is native.** The browser runs Kokoro as sherpa-onnx compiled
 to WASM in a Worker, and that path cannot exist here: the engine is a 439 MB
 Emscripten *file package* whose byte offsets are baked into vendored glue, and
@@ -241,20 +248,11 @@ https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-
 364,816,464 B   sha256 a3f4c73d043860e3fd2e5b06f36795eb81de0fc8e8de6df703245edddd87dbad
 ```
 
-URL, size and hash are one constant, `KOKORO` in `src/tts/model.rs`. The
-archive is streamed to `<app-data>/tts/*.part`, hashed as it lands, verified
-against both numbers, and only then unpacked — into
-`<app-data>/tts/kokoro-multi-lang-v1_1.partial/`, whose contents are checked
-and then moved to `kokoro-multi-lang-v1_1/` (about 407 MB) by a single rename.
-**The live model path is therefore always absent or whole**, which is what lets
-a lesson opened mid-download load the engine safely: sherpa-onnx over a
-half-written `espeak-ng-data` does not fail, it calls `exit(-1)`. A failure or a
-crash leaves the part file and the `.partial` tree, both swept by the next
-install. Download and unpack each report progress, so the bar covers the
-whole minute rather than sitting at 100% through bzip2.
+URL, size and hash are one constant, `KOKORO` in `src/models.rs` — the module
+both models share ([the model install](#the-model-install)).
 
-**The commands**, and there are only five — the first three on every target, the
-last two on desktop targets only ([the voice on Android](#the-voice-on-android)):
+**The commands**, and there are eight — six on every target, the two players on
+desktop targets only ([speech on Android](#speech-on-android)):
 
 | command | answers |
 |---|---|
@@ -263,24 +261,28 @@ last two on desktop targets only ([the voice on Android](#the-voice-on-android))
 | `tts_synthesize(text, sid, speed)` | a complete WAV file as a binary IPC payload |
 | `tts_play(<raw body>)` | nothing, once the clip has finished playing or been stopped |
 | `tts_stop()` | nothing; cuts the clip off, which is what makes the pending `tts_play` return |
+| `asr_status()` | model name, installed, bytes on disk, bytes a fresh download costs, whether the recognizer is warm, **which languages it covers** |
+| `asr_download()` | nothing; idempotent, verifies, emits `asr://model-progress` |
+| `asr_transcribe(<raw body>)` | one sentence, from one utterance of 16 kHz 16-bit mono PCM |
 
-A clip crosses as bytes in both directions and never as JSON. `tts_synthesize`
-returns `tauri::ipc::Response`, not a `Vec<u8>`, and `tts_play` takes a raw body
-(`tauri::ipc::Request` matched against `InvokeBody::Raw`; `native.ts` invokes it
-with a `Uint8Array`) rather than a field: ~150 KB of PCM as an array of decimal
-digits is megabytes of text to serialize on the window thread and to parse on
-the other side, for audio already in the right format. It takes bytes rather
-than text because the clip caches are the window's; if they ever move to the
-host this becomes `tts_speak(text, sid, speed)` and nothing else changes shape.
+Audio crosses as bytes in every direction and never as JSON. `tts_synthesize`
+returns `tauri::ipc::Response`, not a `Vec<u8>`, and `tts_play` and
+`asr_transcribe` take a raw body (`tauri::ipc::Request` matched against
+`InvokeBody::Raw`; `native.ts` invokes them with a `Uint8Array`) rather than a
+field: ~150 KB of a clip, or ~320 KB of a ten-second utterance, as an array of
+decimal digits is megabytes of text to serialize on the window thread and to
+parse on the other side, for audio already in the right format. `tts_play` takes
+bytes rather than text because the clip caches are the window's; if they ever
+move to the host this becomes `tts_speak(text, sid, speed)` and nothing else
+changes shape.
 
-`tts_status`, `tts_download`, `tts_synthesize` and `tts_play` are `async` and
-run their work on `spawn_blocking`, for the reason the persistence commands do
-— a synchronous Tauri command runs on the main thread, and a second of
-inference there is a frozen window, as is a whole clip's playing time.
-`tts_status` waits for no lock at all, but it does read the disk, from a screen
-a learner opens mid-phrase. `tts_stop` stays synchronous:
-it posts one message and waits for nothing, and it is on the path to every new
-phrase.
+Everything but `tts_stop` is `async` and runs its work on `spawn_blocking`, for
+the reason the persistence commands do — a synchronous Tauri command runs on the
+main thread, and a second of inference there is a frozen window, as is a whole
+clip's playing time. The two `_status` commands wait for no lock at all, but
+they do read the disk, from a screen a learner opens mid-phrase. `tts_stop`
+stays synchronous: it posts one message and waits for nothing, and it is on the
+path to every new phrase.
 
 The engine is built on the first phrase and kept for the life of the process,
 behind a `Mutex` because sherpa-onnx promises nothing about concurrent
@@ -337,6 +339,135 @@ fp32 ships on both hosts. The int8 Kokoro build's all-`NaN` samples are a bug in
 the *WASM* build (`models.ts`, sherpa-onnx#2236) and do not reproduce natively,
 but one model means one sound on both hosts, and 218 MB is not reason enough for
 a second answer to "what does this word sound like".
+
+### Dictation
+
+**Why this one is native too.** `src/lib/asr/` had exactly one backend, the Web
+Speech API, and neither of this crate's webviews has it: WebKitGTK exposes no
+`SpeechRecognition` constructor at all, and neither does Android's WebView. So
+on both hosts `dictationAvailable()` was simply `false` and the microphone
+button never rendered. Where the browser engine *does* exist it is also a round
+trip to a vendor, which a local-first app should not need for a sentence the
+learner is about to type anyway.
+
+**Nothing above the seam moved.** `listen(language, handlers)` is unchanged:
+`undefined` still means no handler will ever fire, a returned session still ends
+in exactly one `onEnd`, `no-speech` and abort are still silent, and the
+transcript still lands in the composer for the learner to read and send.
+`dictationAvailable` is the one signature that changed, and only to become
+asynchronous and to take the language — because the answer is now the host's,
+and the host recognizes some languages and not others.
+
+**The model.** SenseVoice small, int8, from k2-fsa's release assets:
+
+```
+https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
+163,002,883 B   sha256 7d1efa2138a65b0b488df37f8b89e3d91a60676e416f515b952358d83dfd347e
+```
+
+`SENSE_VOICE` in `src/models.rs`, and it unpacks to 240 MB in `<app-data>/asr/`.
+Two choices in that line are worth stating. **int8, where the voice ships fp32**
+— the voice's reason is that one model must sound the same on both hosts and the
+browser's fp32 is the one that works, and there is no browser recognizer for
+this to agree with, so what is left is 239 MB of weights against 938 MB for a
+difference nobody has been able to hear in a dictated sentence. And **the
+int8-*only* archive**, not the combined release asset: both unpack the same
+`model.int8.onnx`, but the combined one is 1,047,870,769 B because it carries
+the fp32 export as well — a gigabyte downloaded to keep a sixth of it.
+
+**Which languages route here** is the host's answer, not a list on the web side:
+`asr_status` carries `languages` (`zh`, `en`, `ja`, `ko`, `yue`), `src/lib/asr/`
+resolves the learner's free-text language through the same `bcp47For` the voice
+uses, takes the primary subtag, and asks whether it is in that list. Everything
+else keeps Web Speech where it exists and gets no button where it does not. So
+swapping the model is a `ModelSpec` change plus its `LANGUAGES` constant, and
+nothing at all in the window.
+
+The recognizer is created once, with `language: "auto"`. That field is fixed at
+create time, so telling it which language to expect would mean rebuilding a
+239 MB ONNX session every time a learner changed target language, in exchange
+for a hint on a model whose whole selling point is identifying those five
+itself. `use_itn` is on, which is what puts the punctuation in and writes "fifty"
+as `50`: the transcript goes into a composer to be read and sent, so it should
+look like something a person would type.
+
+**The audio is captured in the window**, on both hosts, and that is the one
+place this differs in shape from the voice. `getUserMedia` works in both
+webviews, permissions are the browser's, and the desktop's reason for taking
+*playback* over — a fresh GStreamer pipeline per `<audio>` clip — has no
+equivalent on the way in. So the graph is `getUserMedia` → `AudioWorkletNode`
+(`static/asr/pcm-worklet.js`, plain JS outside Vite for the reason
+`sherpa-worker.js` is) and it stops there: the node is built with
+`numberOfOutputs: 0`, so **nothing is connected to `AudioContext.destination`
+and no output device is ever opened**. That is deliberate rather than tidy —
+Web Audio *output* on this host plays noise or silence, and a recorder that had
+to reach the speakers to be pulled is the one shape that could make a sound
+while the learner is talking. The context is asked to open at 16 kHz so the
+browser's own resampler does the work; a browser that refuses the option gets
+resampled by `src/lib/asr/pcm.ts` instead, which averages the decimation window
+rather than dropping samples.
+
+**Phase one is button-stopped.** One utterance, one `onTranscript(text, true)`,
+one `onEnd()`. No streaming, no VAD, no partial transcripts. sherpa-onnx ships
+Silero VAD and streaming Zipformer transducers and either would live here; the
+handler shape already has room for partials, and the host would grow
+`asr_start` / `asr_feed` / `asr_stop` plus an event. Nothing in this slice is in
+its way.
+
+**Silence is not empty, and the gate for it is in the window.** Half a second of
+digital silence comes back from SenseVoice as `嗯。` — it fills a hole rather
+than declining to. The host stays honest and reports what the recognizer said;
+the contract that `no-speech` ends silently is `$lib/asr`'s, so `pcm.ts` refuses
+to send an utterance shorter than 0.2 s or one whose loudest sample is under
+about −46 dBFS. That catches a muted or unplugged microphone, which produces
+exact zeros. It deliberately does *not* try to catch a learner who said nothing
+into a live microphone: that capture contains real room noise, telling it from a
+quiet word is a VAD's job, and the result is a filler word in the composer —
+precisely the failure the composer exists to absorb.
+
+**Measured, on the model above, on an ordinary desktop CPU** (a debug build, and
+`tests/dictation.rs` prints these on the machine that runs it): 5.6 s of
+Mandarin transcribed in 0.98 s *including* the engine load, and 7 s of English
+and 5 s of Cantonese in about 0.2 s each once warm — 30-odd times real time. The
+load is fast enough that there is no warm-up command and no case for one. **On a
+phone these numbers are unknown**, like the voice's.
+
+`tests/dictation.rs` is `tests/voice.rs`'s shape and its contract: it transcribes
+the `test_wavs/` the model archive ships and asserts what came out, and it
+**skips itself** with a printed reason when there is no model, because a
+checkout without one is normal and `pnpm desktop:check` must be green in it. To
+give a machine one:
+
+```sh
+nix develop .#desktop -c cargo test -p sapling-desktop --test dictation -- --ignored --nocapture
+```
+
+which downloads it into the same place the app does, so the app has it too.
+
+### The model install
+
+Both models come down the same path, and it is `src/models.rs`: one `ModelSpec`
+per model pinning URL, exact byte size, sha256 and the files that have to exist
+for it to be usable, plus the install those constants describe. It used to be
+`tts/model.rs` and belonged to the voice; two callers is where copying it stops
+being cheaper than sharing it.
+
+An archive is streamed to `<app-data>/<tts|asr>/*.part`, hashed as it lands,
+verified against both numbers, and only then unpacked — into a `.partial`
+sibling of the model directory, whose contents are checked and then moved into
+place by a single rename. **The live model path is therefore always absent or
+whole**, which is what lets a lesson opened mid-download load the engine safely:
+sherpa-onnx over a half-written `espeak-ng-data` does not fail, it calls
+`exit(-1)`. A failure or a crash leaves the part file and the `.partial` tree,
+both swept by the next install. Download and unpack each report progress against
+the archive's own size, so the bar covers the whole minute rather than sitting
+at 100% through bzip2 — `$lib/tasks/kinds/model-download` folds those two passes
+into one line that never goes backwards, for `tts-model` and `asr-model` alike.
+
+Progress rides on **two channels**, `tts://model-progress` and
+`asr://model-progress`, rather than one carrying a model name: the two installs
+are separable at the source, so a shared channel would only mean every listener
+filtering a stream it never wanted.
 
 **How sherpa-onnx is linked, and whose crate it is.** `sherpa-onnx` — the safe
 Rust wrapper k2-fsa publishes from the sherpa-onnx repository itself, over its
@@ -538,7 +669,7 @@ ANDROID_HOME=/tmp/sdk NDK_HOME=/tmp/ndk PATH="/tmp/bin:$PATH" \
   pnpm desktop:android:init
 ```
 
-After a regeneration, **redo the two edits below** and re-check that nothing
+After a regeneration, **redo the three edits below** and re-check that nothing
 absolute leaked in: `grep -rn '/home/\|/nix/store' crates/sapling-desktop/gen`
 should be silent. `BuildTask.kt` is the file to watch, since it embeds the
 command Gradle calls the CLI back with.
@@ -550,7 +681,7 @@ per run is covered by the generated project's own nested `.gitignore` files:
 `generated/` Kotlin sources (`TauriActivity` among them), `build/`, `.gradle/`
 and `local.properties`.
 
-### The two edits
+### The three edits
 
 **The icons** are the app's, generated from the same 512px source the web build
 uses:
@@ -592,21 +723,55 @@ deliberately out of the mask — a keyboard that covers a focused input is the
 behaviour this host already had, and changing when the WebView resizes is a
 change that wants a device to check.
 
-### The voice on Android
+**The microphone permissions** are two `<uses-permission>` lines in
+`AndroidManifest.xml`, plus a `<uses-feature … required="false">` so a device
+without a microphone can still install. wry's own `WebChromeClient` does the
+runtime request and the grant; declaring them is the part it cannot do for
+itself, and an undeclared permission is denied with no prompt. The reasoning is
+under [Speech on Android](#speech-on-android), and the manifest carries it in a
+comment too, since that file is the one a regeneration overwrites.
 
-**Synthesis is native here too; playback is not.** The whole of
+### Speech on Android
+
+**Synthesis and dictation are native here too; playback is not.** The whole of
 [Speech](#speech) applies to the phone unchanged — the same sherpa-onnx, the
-same pinned 365 MB Kokoro archive, the same `app_data_dir()`, the same
-`tts_status` / `tts_download` / `tts_synthesize`. What is missing is
+same pinned 365 MB Kokoro archive, the same 163 MB SenseVoice archive, the same
+`app_data_dir()`, the same six status/download/work commands. What is missing is
 `tts_play`/`tts_stop`, and only because of *why* they exist: they were added to
 get around WebKitGTK, which builds a fresh GStreamer pipeline per `<audio>` clip
 and starts a spoken word about a second late. **Android's WebView is Chromium**,
 where an `<audio>` element over a blob is the ordinary path and works, so the
 clip stays in the window and rodio — whose cpal backend wants an ALSA that is
 not there anyway — is the one dependency still declared for desktop targets
-only. `tts::play` and its two commands are gated `all(feature = "tts", desktop)`;
-everything else about the voice is gated on the feature alone and builds
-everywhere. One configuration, not two.
+only. `tts::play` and its two commands are gated
+`all(feature = "speech", desktop)`; everything else about speech is gated on the
+feature alone and builds everywhere. One configuration, not two.
+`cargo tree -p sapling-desktop --target aarch64-linux-android` is how that is
+checked: the Android tree carries sherpa-onnx and the download crates and no
+`rodio` or `cpal` at all.
+
+**The microphone permission is the one Android-shaped piece of dictation**, and
+it turned out to be one line of manifest rather than a `MainActivity` override.
+wry 0.55.1's own `RustWebChromeClient.onPermissionRequest` (in the crate's
+`src/android/kotlin/`) already handles
+`android.webkit.resource.AUDIO_CAPTURE`: it launches a runtime request for
+`RECORD_AUDIO` **and** `MODIFY_AUDIO_SETTINGS` and grants the page only if every
+one comes back granted. wry installs that client itself
+(`main_pipe.rs`'s `setWebChromeClient`), so `TauriActivity` inherits it and
+nothing here has to hook anything. What it cannot do is declare the permissions:
+Android denies a runtime request for an undeclared permission with no prompt at
+all, and because that callback requires *all* of them, the normal-protection
+`MODIFY_AUDIO_SETTINGS` has to be declared beside the dangerous `RECORD_AUDIO`
+or the whole grant fails silently. Both are now in the committed
+`AndroidManifest.xml`, along with `<uses-feature android:name="android.hardware.microphone"
+android:required="false" />` so a device without one can still install — dictation
+degrades to typing there, which is what it does everywhere else.
+
+**None of that has been on a phone.** The permission flow, whether Chromium's
+WebView treats `http://tauri.localhost` as a secure context for `getUserMedia`
+(it should — Chromium counts `*.localhost` as potentially trustworthy), and how
+fast SenseVoice decodes on a mobile CPU are all unverified. They are the first
+things to check on the next APK.
 
 **The window is told, not left to guess.** `TtsStatus` carries a `playback`
 boolean (`tts::HOST_PLAYS_AUDIO`, which is `cfg!(desktop)`), `tts.ts` reads it
@@ -614,7 +779,7 @@ off the `tts_status` probe it already makes, and a host that answers `false`
 goes straight to the element path — no `tts_play` attempt per clip, no warning
 per word, and no "no output device" latch. `inTauri()` is still the only
 platform test on the web side; everything else about the host is asked of the
-host. A shell built with `--no-default-features` has no voice commands at all,
+host. A shell built with `--no-default-features` has no speech commands at all,
 and that still degrades the way a failed synthesis does.
 
 **Getting sherpa-onnx into the APK is the one real piece of work**, and it falls
@@ -664,9 +829,11 @@ the thing to revisit first if synthesis on a phone is disappointing.
 
 Persistence is untouched by any of it: `app_data_dir()` answers
 `Context.dataDir` on Android, so `sapling.db`, `device-id` and
-`tts/kokoro-multi-lang-v1_1/` sit in the app's own private directory and the
-host creates it exactly as it does anywhere else. That does mean the model is
-another 407 MB of app data on the phone.
+`tts/kokoro-multi-lang-v1_1/` and `asr/sherpa-onnx-sense-voice-…/` sit in the
+app's own private directory and the host creates it exactly as it does anywhere
+else. That does mean the two models are another 647 MB of app data on the phone
+if the learner downloads both — which is why each is a separate button in
+Settings rather than one "download speech" step.
 
 `bundle.active` being `false` does not get in the way: it is read by
 `tauri build` and `tauri info` only, and the APK comes out of Gradle either way.
@@ -676,6 +843,9 @@ right; two claims that were true of a desktop are not claims about a phone, so
 "on every core" and "several times faster than real time" are gone and the rest
 stands. `nativeVoice` is still `inTauri()`, and Settings still shows no sign of
 which player is in use — that has never been a choice a learner makes.
+Dictation added one row beside it, on the same pattern and gated the same way:
+it renders only where `asr_status` answered with a download size, so a browser
+never sees it.
 
 ### What the phone said
 
@@ -688,7 +858,7 @@ speed there is unknown, and so is what four ONNX threads do to a battery. Three
 things came back, and the state of each:
 
 - **The launcher icon was Tauri's**, and is now the app's — [the two
-  edits](#the-two-edits).
+  edits](#the-three-edits).
 - **The status bar sat on top of the app**, and no longer does — same section.
 - **The settings page reloaded in a loop.** The guard in `+layout.svelte` was
   not a guard: it cleared its own flag as the layout script ran, which is
@@ -728,8 +898,10 @@ behind them are in ffacf14, f78eff6 and 3f41c84.
 
 - **No OPFS and no `SpeechRecognition`**, the two absences the sections above
   are built around: persistence is native because the sqlite-wasm Worker cannot
-  boot here, and dictation has no input method. `SharedArrayBuffer` is absent
-  too, which is half of why the browser's sherpa TTS wasm has no path here.
+  boot here, and dictation had no input method at all until the host grew one —
+  which is what [Dictation](#dictation) is. `getUserMedia` *is* here, so only
+  the recognition had to move. `SharedArrayBuffer` is absent too, which is half
+  of why the browser's sherpa TTS wasm has no path here.
 
 - **Audio needs GStreamer, and without it WebKit does not degrade — it
   crashes.** In a shell without the GStreamer plugins the app starts and renders

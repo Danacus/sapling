@@ -15,32 +15,13 @@
 //! which downloads it into the same place the app does, so the app has it too.
 //! Then run the suite with `--nocapture` to see the load and synthesis timings.
 
-use std::path::PathBuf;
+mod common;
+
 use std::time::Instant;
 
-use sapling_desktop::tts::{model::KOKORO, TtsHandle, TTS_DIR};
-
-/// Tauri's app-data directory for `app.sapling.desktop` — the same path
-/// `lib.rs` gets from `app.path().app_data_dir()`, worked out by hand because a
-/// test has no `App` to ask. `SAPLING_APP_DATA` overrides it.
-fn app_data_dir() -> Option<PathBuf> {
-    const IDENTIFIER: &str = "app.sapling.desktop";
-
-    if let Some(overridden) = std::env::var_os("SAPLING_APP_DATA") {
-        return Some(PathBuf::from(overridden));
-    }
-    if cfg!(target_os = "windows") {
-        return std::env::var_os("APPDATA").map(|dir| PathBuf::from(dir).join(IDENTIFIER));
-    }
-    let home = PathBuf::from(std::env::var_os("HOME")?);
-    if cfg!(target_os = "macos") {
-        return Some(home.join("Library/Application Support").join(IDENTIFIER));
-    }
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".local/share"));
-    Some(data.join(IDENTIFIER))
-}
+use common::app_data_dir;
+use sapling_desktop::models::KOKORO;
+use sapling_desktop::tts::{TtsHandle, TTS_DIR};
 
 /// The handle, or `None` when there is no model to speak with.
 fn installed_handle() -> Option<TtsHandle> {

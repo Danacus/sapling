@@ -3,6 +3,7 @@ paths:
   - 'crates/sapling-desktop/**'
   - 'src/lib/db/tauri.ts'
   - 'src/lib/tts/native.ts'
+  - 'src/lib/asr/native.ts'
   - 'src/lib/platform.ts'
 ---
 
@@ -30,15 +31,33 @@ someone to run the check by hand.
   implementation of the rules.
 
 - **A host may lend a *capability* the webview cannot run, and speech is the
-  second one.** The test is whether the thing is a platform primitive with no
-  domain knowledge in it: persistence is a file, TTS is text in and a WAV out,
-  playback is a WAV in and a sound out. None of them may grow an opinion. So
-  the voice lives here (`src/tts/`, feature `tts`, on by default) because
-  WebKitGTK cannot run the browser's engine at all, while `src/lib/tts/` keeps
-  every decision — which language routes to Kokoro, which speaker, when to fall
-  back to the browser voice, what to cache — and is the same code the web build
-  runs. The line that does not move: a host still contains no merge rule and no
-  SQL against the read tables.
+  second one — in both directions.** The test is whether the thing is a platform
+  primitive with no domain knowledge in it: persistence is a file, TTS is text in
+  and a WAV out, playback is a WAV in and a sound out, recognition is samples in
+  and a sentence out. None of them may grow an opinion. So the voice lives here
+  (`src/tts/`) because WebKitGTK cannot run the browser's engine at all, and
+  dictation lives here (`src/asr/`) because neither this webview nor Android's
+  has a `SpeechRecognition` at all — while `src/lib/tts/` and `src/lib/asr/` keep
+  every decision (which language routes to Kokoro, which speaker, which languages
+  the recognizer is offered for, when to fall back, what to cache, and the rule
+  that a transcript lands in the composer unread) and are the same code the web
+  build runs. The line that does not move: a host still contains no merge rule
+  and no SQL against the read tables.
+
+- **One feature, `speech`, covers both directions**, on by default. It was `tts`
+  until dictation arrived, and it is one feature because synthesis and
+  recognition are the same dependency set — sherpa-onnx, plus the download,
+  checksum and unpack of a pinned archive — over the same `src/models.rs`;
+  splitting it would put `any(feature = …)` on that shared module and make four
+  build configurations nobody would check. **`src/models.rs` is that shared
+  floor**: one `ModelSpec` per model (`KOKORO`, `SENSE_VOICE`) pinning URL, exact
+  byte size, sha256 and the files that must exist, plus the one
+  download-verify-stage-rename install and the ONNX thread count both engines
+  want. A `ModelSpec` is the *only* place a model is described, so swapping one
+  is a constant change; the two progress keys are derived from `dir`
+  (`<dir>.tar.bz2` and `<dir> (unpacking)`), which is what
+  `$lib/tasks/kinds/model-download` sums, so renaming a spec renames what a
+  progress bar keys on.
 
 - **Speech does not touch *WebKitGTK's* audio stack, and that was measured, not
   assumed.** On WebKitGTK 2.52.6 / GStreamer 1.28.5 an `<audio>` element over a
@@ -93,40 +112,53 @@ someone to run the check by hand.
   `derived_schema_version`. No fourth one, and no new `Backend` method that the
   browser does not also have — the protocol is `src/lib/db/protocol.ts` and
   `dispatch.rs`, and adding to it is still the three edits `core.md` names.
-  **The voice adds exactly five more** — `tts_status`, `tts_download`,
-  `tts_synthesize` on every target, and `tts_play`, `tts_stop` on desktop
-  targets only — and they are not part of that
-  protocol and never touch it. A clip crosses as bytes in both directions and
-  never as JSON: `tts_synthesize` answers a `tauri::ipc::Response`, and
-  `tts_play` takes a raw body (`tauri::ipc::Request` with `InvokeBody::Raw`,
-  invoked from JavaScript with a `Uint8Array`), because ~150 KB of PCM as an
+  **Speech adds exactly eight more** — `tts_status`, `tts_download`,
+  `tts_synthesize`, `asr_status`, `asr_download`, `asr_transcribe` on every
+  target, and `tts_play`, `tts_stop` on desktop targets only — and they are not
+  part of that protocol and never touch it. Audio crosses as bytes in every
+  direction and never as JSON: `tts_synthesize` answers a
+  `tauri::ipc::Response`, and `tts_play` and `asr_transcribe` take a raw body
+  (`tauri::ipc::Request` with `InvokeBody::Raw`, invoked from JavaScript with a
+  `Uint8Array`), because ~150 KB of a clip or ~320 KB of an utterance as an
   array of decimal digits is megabytes of text to serialize and to parse.
   `tts_play` takes bytes rather than text because the clip caches are the
   window's; if they ever move to the host, `tts_speak(text, sid, speed)`
   replaces `tts_play(bytes)` and nothing in `play.rs` changes shape.
+  `asr_transcribe` takes no language, because the model identifies its own and
+  the *routing* — which languages reach this host at all — is `asr_status`'s
+  `languages`, answered one screen up.
+
+- **The microphone is not in this crate, and must not arrive in it.** Capture is
+  the window's on both hosts: `getUserMedia` works in both webviews, so
+  `src/lib/asr/native.ts` records 16 kHz mono PCM with an `AudioWorklet` and
+  hands the host samples that already exist. The desktop's reason for taking
+  *playback* over is a measured WebKitGTK stall on the way out and has no
+  counterpart on the way in, and `rodio`'s `recording` feature stays off. What
+  that buys is one code path, permissions that are the browser's, and a host
+  that cannot listen to anything nobody pressed a button for.
 
 - **Every command that waits for anything is `async` and hands its work to
   `spawn_blocking`.** A synchronous Tauri command runs on the main thread — the
   GTK loop that composites the webview — so a second of ONNX inference there is
   a frozen window, and so is a commit's fsync: `dispatch` blocks until the core
   thread has answered, and `applyResult` makes three or more such calls on every
-  Check. That is `dispatch`, `commit_all`, `tts_download`, `tts_synthesize` and
-  `tts_play`, which waits for the whole clip — and `tts_status`, which waits for
-  no lock at all but does read the disk, from a screen a learner opens
-  mid-phrase. **`TtsHandle::status` may never take the engine mutex**: that
-  mutex is held across a model load plus a second of inference, and Settings
-  parking behind it is the bug this rule now forbids. `loaded` is an
-  `AtomicBool` beside the engine, and "installed" and the model's size on disk
-  are measured once and latched — an installed model does not uninstall itself
-  while the process runs, and the size is a walk of the whole 400 MB tree. Not
-  installed re-probes every call. Neither reader takes the install lock and
-  neither needs to: **an install is staged and renamed into place**, so the live
-  model path is always either absent or a whole model. `unpack` extracts into a
-  `.partial` sibling, one `fs::rename` publishes it, and the next install sweeps
-  what a crash left. That rename is what makes `load` safe to run mid-download
-  — sherpa-onnx handed a half-written `espeak-ng-data` calls `exit(-1)` and
-  takes the process with it — and `load` must stay lock-free, because taking
-  `installing` would park every phrase behind a 365 MB download.
+  Check. That is every command but `derived_schema_version` and `tts_stop`,
+  including the two `_status` ones, which wait for no lock at all but do read the
+  disk, from a screen a learner opens mid-phrase. **Neither `TtsHandle::status`
+  nor `AsrHandle::status` may take its engine mutex**: that mutex is held across
+  a model load plus a second of inference, and Settings parking behind it is the
+  bug this rule forbids. `loaded` is an `AtomicBool` beside the engine, and
+  "installed" and the model's size on disk are measured once and latched — an
+  installed model does not uninstall itself while the process runs, and the size
+  is a walk of the whole tree. Not installed re-probes every call. Neither reader
+  takes the install lock and neither needs to: **an install is staged and renamed
+  into place** (`models.rs`, for both models), so the live model path is always
+  either absent or a whole model. `unpack` extracts into a `.partial` sibling,
+  one `fs::rename` publishes it, and the next install sweeps what a crash left.
+  That rename is what makes `load` safe to run mid-download — sherpa-onnx handed
+  a half-written `espeak-ng-data` calls `exit(-1)` and takes the process with it
+  — and `load` must stay lock-free, because taking `installing` would park every
+  phrase behind a 365 MB download.
   `derived_schema_version` stays
   synchronous because it reads a constant, and `tts_stop` because it posts one
   message and waits for nothing — and it is on the path to every new phrase,
@@ -134,6 +166,19 @@ someone to run the check by hand.
   database is therefore managed as `Arc<Database>` — `spawn_blocking` needs
   something owned and `'static`, exactly as `TtsHandle` does. **The price is
   ordering**, and it is paid on the JavaScript side: see the transport bullet.
+
+- **`src/lib/asr/native.ts` is `tts/native.ts`'s sibling plus the one thing the
+  voice does not need — the microphone.** Three `invoke`s and one event
+  listener, and a `dictateNatively` that has to turn an asynchronous capture into
+  `listen`'s synchronous contract: the synchronous half of "can this start" is
+  whether the window has `getUserMedia` and an `AudioContext` at all (that is the
+  only `undefined`), and everything after — a refused permission, a worklet that
+  would not load, a rejected `asr_transcribe` — is a session that ends, **exactly
+  once**, with a message only where the learner can act. `stop()` and `abort()`
+  arriving before the permission prompt resolves are the paths that make that
+  hard and are the ones the tests are mostly about. The router
+  (`src/lib/asr/index.ts`) holds every decision, not this module, exactly as
+  `tts.ts` does for the voice.
 
 - **The crate `forbid`s `unsafe_code`, and the voice is k2-fsa's own crate.**
   `tts::kokoro` used to be the one exception — hand-rolled FFI, because the
@@ -155,12 +200,13 @@ someone to run the check by hand.
   each area asks it at its own seam rather than once per process: the
   persistence transport (`db/backend.ts`), the TTS provider (`tts/tts.ts`, which
   asks again wherever the host changes the answer — whether stored clips are
-  worth keeping, what a first download costs, where a clip plays), the media
-  player host (`media/youtube-host.ts`), and the settings screen's native-voice
-  row. Nowhere else, and never a second implementation of the test. Everything
-  host-specific stays behind a dynamic import gated on it (`db/tauri.ts`,
-  `tts/native.ts`), so a browser fetches neither those modules nor
-  `@tauri-apps/api`. `media/youtube-host.ts` is the documented exception and
+  worth keeping, what a first download costs, where a clip plays), the dictation
+  router (`asr/index.ts`, once, to decide whether there is a host to probe at
+  all), the media player host (`media/youtube-host.ts`), and the settings
+  screen's native-voice row. Nowhere else, and never a second implementation of
+  the test. Everything host-specific stays behind a dynamic import gated on it
+  (`db/tauri.ts`, `tts/native.ts`, `asr/native.ts`), so a browser fetches
+  neither those modules nor `@tauri-apps/api`. `media/youtube-host.ts` is the documented exception and
   imports statically: it pulls in no host SDK — a few hundred bytes of DOM and a
   message listener — and a dynamic import would make the player factory `async`,
   which is exactly what `youtube.ts` refuses to be, because the reader builds its
@@ -245,16 +291,29 @@ someone to run the check by hand.
 - **The crate also builds for Android, in CI and nowhere else, and there it is
   this host minus the *player*.** `docs/desktop.md` has the job; the contract is
   that Android is not a second host. Persistence, the device id, the clock, the
-  calendar **and the voice** are the same code over the same app-data
+  calendar **and all of speech** are the same code over the same app-data
   directory — the same sherpa-onnx, the same 365 MB Kokoro archive, the same
-  `tts_status`/`tts_download`/`tts_synthesize`. Only `rodio` is target-scoped
+  163 MB SenseVoice archive, the same six status/download/work commands. Only
+  `rodio` is target-scoped
   (`[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]`),
   and only `tts::play`, `tts_play` and `tts_stop` are gated
-  `all(feature = "tts", desktop)` — `desktop` being Tauri's own cfg alias,
+  `all(feature = "speech", desktop)` — `desktop` being Tauri's own cfg alias,
   emitted by `tauri_build::build()`. **Widening one of those two gates to
-  `feature = "tts"` alone is a bug** that only Android's compiler sees; the
-  reverse — narrowing a synthesis gate back to `desktop` — is a bug nobody's
-  compiler sees, and costs the phone its voice.
+  `feature = "speech"` alone is a bug** that only Android's compiler sees; the
+  reverse — narrowing a synthesis or recognition gate back to `desktop` — is a
+  bug nobody's compiler sees, and costs the phone its voice or its ears.
+  `cargo tree -p sapling-desktop --target aarch64-linux-android` is how the
+  dependency half is checked: no `rodio`, no `cpal`, everything else identical.
+- **Android's microphone permission is a manifest edit and nothing more.** wry's
+  own `RustWebChromeClient.onPermissionRequest` already answers the WebView's
+  `AUDIO_CAPTURE` request by launching a runtime request for `RECORD_AUDIO` *and*
+  `MODIFY_AUDIO_SETTINGS` and granting the page only if **every** one comes back
+  granted, and wry installs that client itself — so no `MainActivity` override is
+  needed. But an undeclared permission is denied with no prompt, and that "every"
+  means the normal-protection `MODIFY_AUDIO_SETTINGS` has to be declared beside
+  the dangerous `RECORD_AUDIO` or the whole grant fails silently. Both are in the
+  committed `AndroidManifest.xml`, with a comment, because that is a file a
+  regeneration overwrites.
 - **The two sherpa `.so` files reach the APK from `build.rs`, and nothing else
   puts them there.** `sherpa-onnx-sys` links shared on Android and Tauri's
   Gradle plugin packages exactly one library, the crate's own — so `build.rs`
@@ -327,13 +386,18 @@ someone to run the check by hand.
   keep it rustfmt-clean — `cargo fmt --check` walks every member, default or
   not. New source files must be `git add`ed before nix can see them.
 
-- **The voice's two tests are skip-if-absent, and that is the contract.**
+- **The speech tests are skip-if-absent, and that is the contract.**
   `tests/voice.rs` synthesizes Mandarin, English and a mixed sentence against
   the *real* 365 MB model and asserts finite, audible samples of a plausible
-  length; with no model installed it prints why and passes, because a checkout
-  without one is normal and `pnpm desktop:check` must be green in it. The
-  `#[ignore]`d `installs_the_model` is how a machine gets one, into the same
-  directory the app uses. `tests/playback.rs` is the same shape one layer down,
+  length; `tests/dictation.rs` transcribes the `test_wavs/` that ship inside the
+  *real* 163 MB recognition model and asserts what the words were, in Mandarin,
+  English and Cantonese (the last by its particles — 唔, 嘅, 呢 — because what is
+  worth checking is that the model switched language rather than transcribing bad
+  Mandarin). With no model installed each prints why and passes, because a
+  checkout without one is normal and `pnpm desktop:check` must be green in it.
+  The `#[ignore]`d `installs_the_model` in each is how a machine gets one, into
+  the same directory the app uses; `tests/common/mod.rs` is the app-data path
+  both work out by hand. `tests/playback.rs` is the same shape one layer down,
   and is `#![cfg(desktop)]` in its entirety because the module it covers is:
   it opens the *real* default device and plays **silence** through it, asserting
   that a 100 ms clip returns in roughly 100 ms and that a stop and a second clip
@@ -343,6 +407,6 @@ someone to run the check by hand.
   samples: the stream and every wall-clock number are real, and running the
   check is not an event in the room. What silence cannot show is that the sound
   comes *out*, so one clip is audible and `#[ignore]`d for it, exactly like
-  `installs_the_model`. Neither file may become a mock: what is worth testing is
-  that sherpa-onnx, this config and that archive make sound, and that the sound
-  comes out.
+  `installs_the_model`. **None of the three may become a mock**: what is worth
+  testing is that sherpa-onnx, this config and that archive make sound, that the
+  sound comes out, and that real speech comes back as the right words.

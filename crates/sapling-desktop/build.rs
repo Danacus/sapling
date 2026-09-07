@@ -25,14 +25,15 @@ fn main() {
     // cross-compiles for a phone. `cfg!(feature = …)` is fine — a build script
     // does get its package's features.
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    if cfg!(feature = "tts") && target_os == "android" {
+    if cfg!(feature = "speech") && target_os == "android" {
         package_sherpa_into_the_apk();
     }
 
     tauri_build::build();
 }
 
-/// The two shared libraries the voice needs at runtime on a phone.
+/// The two shared libraries native speech needs at runtime on a phone — the
+/// voice and the recognizer are one library between them.
 ///
 /// Only these two. The archive also carries `libsherpa-onnx-jni.so` (4.8 MB)
 /// and `libsherpa-onnx-cxx-api.so`, which are the JNI and C++ front doors, and
@@ -72,7 +73,7 @@ fn package_sherpa_into_the_apk() {
         let to = destination.join(lib);
         let bytes = fs::copy(&from, &to).unwrap_or_else(|e| {
             panic!(
-                "the voice needs {} in the APK and it is not at {}: {e}\n\
+                "speech needs {} in the APK and it is not at {}: {e}\n\
                  sherpa-onnx-sys downloads the Android archive into \
                  <target>/sherpa-onnx-prebuilt/; see crates/sapling-desktop/build.rs.",
                 lib,

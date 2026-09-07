@@ -2,6 +2,29 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!--
+      Dictation. wry's own `RustWebChromeClient.onPermissionRequest` already
+      answers the WebView's `android.webkit.resource.AUDIO_CAPTURE` request by
+      launching a runtime request for exactly these two and granting the page
+      only if *both* come back — so no `MainActivity` override is needed, but
+      both must be declared here or the system denies them without a prompt and
+      `getUserMedia` fails with nothing shown to the learner. `RECORD_AUDIO` is
+      the dangerous one; `MODIFY_AUDIO_SETTINGS` is normal and granted at
+      install, but an undeclared normal permission is denied like any other and
+      wry's callback fails the whole request on it.
+
+      Nothing is recorded outside a press of the microphone button, and nothing
+      captured leaves the device: the samples go to the app's own recognizer
+      over the IPC (`crates/sapling-desktop/src/asr/`).
+    -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!--
+      So a device with no microphone can still install the app: dictation
+      degrades to typing, which is what `$lib/asr` does everywhere else too.
+    -->
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 

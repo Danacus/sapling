@@ -15,6 +15,11 @@
 		resetData,
 		setModel
 	} from '$lib/db';
+	import {
+		dictationCoversLanguage,
+		dictationDownloadBytes,
+		dictationModelInstalled
+	} from '$lib/asr';
 	import { isMockMode } from '$lib/llm';
 	import { inTauri } from '$lib/platform';
 	import { loadRomanizer, localReadings } from '$lib/romanize';
@@ -107,6 +112,24 @@
 	);
 	let preloadStatus = $state<Status>('idle');
 	let preloadMessage = $state('');
+
+	// Dictation ---------------------------------------------------------------
+	//
+	// Only a Tauri host has a recognizer to download: a browser dictates through
+	// Web Speech, which downloads nothing and is not a choice anyone makes here.
+	// So the whole row is hidden unless the host answers with a size.
+	/** Bytes a first install costs, or 0 where there is nothing to install. */
+	let dictationBytes = $state(0);
+	let dictationInstalled = $state(false);
+	/** Whether the host's model covers the learner's language, downloaded or not. */
+	let dictationCoversTarget = $state(true);
+	const dictationTask = $derived(taskStore.latestOf('asr-model'));
+	const dictating = $derived(
+		dictationTask?.status === 'queued' || dictationTask?.status === 'running'
+	);
+	let dictationStatus = $state<Status>('idle');
+	let dictationMessage = $state('');
+
 	/** Stored spoken clips, in bytes. 0 until the first read comes back. */
 	let audioBytes = $state(0);
 	let clearingAudio = $state(false);
@@ -216,6 +239,18 @@
 				// web — either way it is not worth waiting for.
 				void voiceDownloadBytes().then((bytes) => {
 					if (!cancelled) downloadSize = formatMb(bytes);
+				});
+
+				// The same, for the recognizer. Both answer 0 rather than
+				// rejecting on a host that has none, because neither is awaited.
+				void dictationDownloadBytes().then((bytes) => {
+					if (!cancelled) dictationBytes = bytes;
+				});
+				void dictationModelInstalled().then((installed) => {
+					if (!cancelled) dictationInstalled = installed;
+				});
+				void dictationCoversLanguage(loadedProfile?.targetLanguage).then((covers) => {
+					if (!cancelled) dictationCoversTarget = covers;
 				});
 
 				usagePromptTokens = readUsage('ll.usage.promptTokens');
@@ -426,6 +461,27 @@
 		} else if (outcome.status === 'failed') {
 			preloadMessage = outcome.error;
 			preloadStatus = 'error';
+		}
+	}
+
+	/**
+	 * Downloads the recognizer, so the first dictated sentence is not the thing
+	 * that waits on a hundred and sixty megabytes. Same shape as the voice's,
+	 * one row down.
+	 */
+	async function preloadDictationModel() {
+		if (dictating) return;
+		dictationStatus = 'idle';
+		dictationMessage = '';
+
+		const outcome = await startTask('asr-model', undefined).done;
+		if (outcome.status === 'done') {
+			dictationInstalled = true;
+			dictationMessage = 'Dictation model ready';
+			flash((value) => (dictationStatus = value), 3000);
+		} else if (outcome.status === 'failed') {
+			dictationMessage = outcome.error;
+			dictationStatus = 'error';
 		}
 	}
 
@@ -838,6 +894,51 @@
 							after a reload.
 						</p>
 					{/if}
+				{/if}
+
+				<!--
+			  Dictation, and only where there is something to download: a browser
+			  dictates through Web Speech, which costs nothing and is not a choice
+			  anyone makes here, so the row exists only on a host that answered
+			  `asr_status` with a size.
+			-->
+				{#if dictationBytes > 0}
+					<div class="field">
+						<span class="label">Dictation</span>
+						{#if dictationInstalled}
+							<p class="hint">
+								The microphone button in conversations transcribes on this device. Nothing is sent
+								anywhere.
+							</p>
+						{:else}
+							<p class="hint">
+								{formatMb(dictationBytes)}, downloaded once and kept on this device. It transcribes
+								what you say into the composer, where you read it before sending — nothing is sent
+								anywhere.
+							</p>
+						{/if}
+						{#if profile && !dictationCoversTarget}
+							<p class="hint">
+								Heads up: this model covers Mandarin, English, Cantonese, Japanese and Korean, so
+								{profile.targetLanguage} would not be transcribed and the microphone button stays hidden.
+							</p>
+						{/if}
+						<div class="actions-row">
+							<button
+								type="button"
+								class="btn btn-primary"
+								onclick={() => void preloadDictationModel()}
+								disabled={dictating || dictationInstalled}
+							>
+								{#if dictationInstalled}
+									Dictation model downloaded
+								{:else}
+									{dictating ? 'Downloading…' : 'Download dictation model'}
+								{/if}
+							</button>
+							<InlineStatus status={dictationStatus} message={dictationMessage} />
+						</div>
+					</div>
 				{/if}
 
 				<!--

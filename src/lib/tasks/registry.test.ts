@@ -19,7 +19,8 @@ const FAKE_INPUTS: { [K in TaskKind]: TaskInput<K> } = {
 	readings: { targetLanguage: 'Chinese', free: [], fromModel: [] },
 	'read-generate': { profile, vocabulary: [], focus: [] },
 	'read-annotate': { profile, vocabulary: [], sentences: ['Hola.'] },
-	'tts-model': undefined
+	'tts-model': undefined,
+	'asr-model': undefined
 };
 
 describe('TASK_KINDS', () => {

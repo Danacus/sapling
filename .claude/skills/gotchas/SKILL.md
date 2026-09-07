@@ -58,6 +58,37 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   artifact URLs and sizes.
 - Audio failures must degrade silently to fallback. Sound never blocks gameplay.
 
+## ASR
+
+- **SenseVoice does not decline to answer (2026-09-07).** Half a second of
+  digital silence transcribes as `嗯。` — it fills the hole. So a muted or
+  unplugged microphone would put a filler word in the composer of a learner who
+  said nothing, and Web Speech's silent `no-speech` would not be honoured. The
+  gate is `src/lib/asr/pcm.ts` (nothing shorter than 0.2 s, nothing quieter than
+  about −46 dBFS peak) and it is deliberately *not* in the host: the host
+  reports what the recognizer said, and the "no-speech is silent" contract is
+  `$lib/asr`'s. It is a gate and not a VAD — a live microphone in a quiet room
+  passes it, and that capture really can come back as a filler. That is the case
+  the composer exists to absorb.
+- **A capture graph must not be connected to `AudioContext.destination`.** Build
+  the `AudioWorkletNode` with `numberOfOutputs: 0`, which is what makes it a pure
+  sink. Connecting a recorder to the speakers — even through a zero-gain node —
+  opens an output device, and on the Tauri desktop Web Audio *output* plays noise
+  or silence (see the entry below), so the one way to make a noise while the
+  learner is dictating is to build the graph the tutorials build.
+- **`AudioWorklet.addModule` takes a URL**, so the processor is plain JS in
+  `static/asr/`, outside Vite, for the same reason `static/tts/sherpa-worker.js`
+  is: the worklet scope has no `window` and its globals (`registerProcessor`,
+  `AudioWorkletProcessor`) exist nowhere else, and a bundled one is a chunk graph
+  waiting to diverge between dev and build.
+- **Ask for the sample rate; do not assume you got it.** `new AudioContext({
+  sampleRate: 16000 })` is taken by both webviews and lets the browser's own
+  resampler do the work, but the option may throw, and a context that came back
+  at 48 kHz produces no error anywhere — just a transcript of the right words at
+  the wrong speed. `pcm.ts` reads `context.sampleRate` back and resamples,
+  averaging the decimation window rather than dropping samples (unfiltered 3:1
+  decimation folds everything above 8 kHz into the speech band).
+
 ## Desktop (Tauri)
 
 - **2026-09-05: in WebKitGTK without the GStreamer plugins, `new AudioContext()`
@@ -164,8 +195,8 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
 - **`gen/android` is committed now (2026-09-07), and CI must not regenerate it.**
   It was generated per run until the app's icons and the edge-to-edge fix turned
   out to have no home but that tree — `tauri android init` writes Tauri's
-  defaults back over both. The job checks the directory exists and fails if it
-  does not. What `tauri android build` rewrites per run is covered by the
+  defaults back over both, and over the microphone permissions that joined them.
+  The job checks the directory exists and fails if it does not. What `tauri android build` rewrites per run is covered by the
   generated project's own nested `.gitignore` files, so a build leaves the tree
   clean; the root `.gitignore` keeps only `gen/schemas/`.
 - **`tauri icon` has no "Android only" flag**, and a pnpm *script* runs it from
@@ -213,8 +244,21 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   not for the phone. `CARGO_CFG_TARGET_OS` is the question actually being asked;
   in this crate it decides whether to copy sherpa-onnx's `.so` files into the
   Android project's `jniLibs/`.
+- **wry already grants the WebView's microphone request; the manifest is what is
+  missing (2026-09-07).** wry 0.55.1's `RustWebChromeClient.onPermissionRequest`
+  handles `android.webkit.resource.AUDIO_CAPTURE` by launching a runtime request
+  for `RECORD_AUDIO` **and** `MODIFY_AUDIO_SETTINGS` and calling `request.grant`
+  only if *every* one comes back granted, and wry installs that client itself
+  (`main_pipe.rs`'s `setWebChromeClient`), so `TauriActivity` inherits it and no
+  `MainActivity` override is needed. What it cannot do is declare them: Android
+  denies a runtime request for an undeclared permission with **no prompt at
+  all**, and because the callback demands all of them, forgetting the
+  normal-protection `MODIFY_AUDIO_SETTINGS` fails the whole grant as surely as
+  forgetting the dangerous `RECORD_AUDIO` would. Both are in the committed
+  `AndroidManifest.xml` now — a file `tauri android init` overwrites, so it is
+  one of the three edits `docs/desktop.md` says to redo after a regeneration.
 - **A feature may name an optional dependency that only exists for some
-  targets.** `tts = ["dep:rodio", …]` with `rodio` declared under
+  targets.** `speech = ["dep:rodio", …]` with `rodio` declared under
   `[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]`
   resolves to nothing on Android and to the player everywhere else — one
   feature, no second configuration to keep in step. `cargo tree -p
