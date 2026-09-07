@@ -355,7 +355,10 @@ mod tests {
 
         let status = handle.status();
 
-        assert!(status.installed, "the live path is a model or it is nothing");
+        assert!(
+            status.installed,
+            "the live path is a model or it is nothing"
+        );
         assert_eq!(status.bytes, SENSE_VOICE.files.len() as u64);
 
         drop(installing);

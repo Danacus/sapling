@@ -112,7 +112,11 @@ fn transcribes_the_languages_the_model_claims() {
     // The first call loads the model, so it times the load plus one utterance;
     // the ones after it are decoding alone. Both numbers matter — the load is
     // what a learner waits for on their first dictated sentence.
-    let mandarin = heard(&handle, &utterance(&model, "zh"), "zh (cold, includes load)");
+    let mandarin = heard(
+        &handle,
+        &utterance(&model, "zh"),
+        "zh (cold, includes load)",
+    );
     assert_eq!(mandarin, "开饭时间早上9点至下午5点。");
 
     // Capitalized, punctuated, and "fifty" written as `50` — inverse text
