@@ -270,6 +270,31 @@ jobs:
           rustup target list --installed
           java -version
 
+      # `sherpa-onnx-sys`'s build script cannot use the Android archive it
+      # downloads: it unpacks the tarball and then looks for the libraries under
+      # a directory named after the archive, but k2-fsa's Android archive has
+      # `jniLibs/` at its root and no such directory, so the build script fails
+      # with "did not contain a lib directory" (1.13.7; verified by listing the
+      # tarball). It honours `SHERPA_ONNX_LIB_DIR`, so this fetches the same
+      # archive — the crate's version *is* the sherpa-onnx tag — and points both
+      # the crate and this crate's `build.rs` (which packages the libraries into
+      # the APK) at the arm64 directory. Cached by that version.
+      - name: Fetch sherpa-onnx's Android libraries
+        run: |
+          set -x
+          version=$(sed -n '/^name = "sherpa-onnx-sys"$/,/^version/p' Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p')
+          test -n "$version"
+          dir="$HOME/.cache/sherpa-onnx-android/$version"
+          if [ ! -f "$dir/jniLibs/arm64-v8a/libsherpa-onnx-c-api.so" ]; then
+            mkdir -p "$dir"
+            curl -fsSL -o "$dir/archive.tar.bz2" \
+              "https://github.com/k2-fsa/sherpa-onnx/releases/download/v$version/sherpa-onnx-v$version-android.tar.bz2"
+            tar xjf "$dir/archive.tar.bz2" -C "$dir" ./jniLibs/arm64-v8a
+            rm "$dir/archive.tar.bz2"
+          fi
+          ls -la "$dir/jniLibs/arm64-v8a"
+          echo "SHERPA_ONNX_LIB_DIR=$dir/jniLibs/arm64-v8a" >> "$GITHUB_ENV"
+
       - name: Install
         run: nix develop -c pnpm install --frozen-lockfile
 

@@ -621,8 +621,10 @@ and that still degrades the way a failed synthesis does.
 to `crates/sapling-desktop/build.rs`. `sherpa-onnx-sys` links *shared* on
 Android (the `static` feature is ignored there) and downloads
 `sherpa-onnx-v1.13.7-android.tar.bz2` into
-`target/sherpa-onnx-prebuilt/…/jniLibs/<abi>/`, but nothing packages what it
-downloads: Tauri's Gradle `RustPlugin` copies exactly one file, the crate's own
+`target/sherpa-onnx-prebuilt/…/jniLibs/<abi>/` — or is *told* where they are
+through `SHERPA_ONNX_LIB_DIR`, which is what CI does, because that crate's own
+unpacking of the Android archive is broken in 1.13.7 (see the gotchas) — but
+nothing packages what it finds: Tauri's Gradle `RustPlugin` copies exactly one file, the crate's own
 `libsapling_desktop.so`. So when `CARGO_CFG_TARGET_OS` is `android`, `build.rs`
 copies `libsherpa-onnx-c-api.so` (4.5 MB) and `libonnxruntime.so` (21.7 MB) into
 `gen/android/app/src/main/jniLibs/arm64-v8a/`, which the generated project's own

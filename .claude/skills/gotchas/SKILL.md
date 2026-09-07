@@ -241,6 +241,16 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   inside its own process. So the path has to be reconstructed, which is why
   `build.rs` reads the pinned version out of `Cargo.toml` rather than repeating
   it.
+- **`sherpa-onnx-sys` 1.13.7 cannot use the Android archive it downloads
+  (2026-09-07).** Its build script unpacks the tarball into
+  `target/sherpa-onnx-prebuilt/` and then looks for `<archive stem>/jniLibs/<abi>`,
+  but k2-fsa's Android archive has `./jniLibs/` at its *root* and no stem
+  directory, so it fails with "Downloaded archive did not contain a lib
+  directory" on every Android build. Verified by `tar tjf` on the 1.13.7
+  archive. The way through is `SHERPA_ONNX_LIB_DIR`, which both that crate and
+  our `build.rs` honour: the `android` job fetches the same archive itself,
+  extracts `jniLibs/arm64-v8a`, and exports the variable. Worth an upstream
+  report; drop the step once a release handles the root-level layout.
 - **The prebuilt sherpa Android libraries need no `libc++_shared.so`.** `readelf
   -d` lists `libandroid`, `liblog`, `libm`, `libdl`, `libc` and (for the c-api
   one) `libonnxruntime` — the C++ runtime is static inside them. Their `LOAD`
