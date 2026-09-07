@@ -147,6 +147,43 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   Fine in practice — clips key on text, speaker and speed — but a test that
   asserts equal bytes will flake.
 
+## Android (the same crate, built only in CI)
+
+- **`tauri android init` writes the Gradle → CLI callback out of `argv[0]`, and
+  gets it wrong unless a package manager is in the environment.** The generated
+  `gen/android/buildSrc/.../BuildTask.kt` runs the Tauri CLI once per ABI
+  (`android android-studio-script`), and `src/mobile/init.rs` picks that command
+  by looking at how *you* invoked it: argv[0] with a `node` stem sends it
+  looking for `PNPM_PACKAGE_NAME` or `npm_execpath`, and with neither set it
+  falls back to `node tauri …` — which is not a thing, because there is no file
+  called `tauri` in `crates/sapling-desktop`. `pnpm exec tauri android init`
+  produces exactly that, and it fails much later, inside Gradle. Run the init
+  through a **package.json script** (`pnpm desktop:android:init`) so
+  `PNPM_PACKAGE_NAME` is set and the callback comes out `pnpm tauri android
+  android-studio-script` — which is also why `"tauri": "tauri"` exists in
+  `package.json` and must stay: Gradle calls it by that name, from
+  `crates/sapling-desktop`, and pnpm walks up to the root manifest to find it.
+- **`tauri android init` needs the SDK, the NDK *and* rustup just to write
+  files.** It checks `ANDROID_HOME`, reads `$NDK_HOME/source.properties` for a
+  version, and shells out to `rustup target add` before it generates anything.
+  There is no "generate the project offline" mode, which is why `gen/android`
+  cannot be produced on a machine that only has nix.
+- **A build script's `#[cfg(target_os = …)]` is the *host's*.** `build.rs` runs
+  on the machine doing the building, so the attribute answers for the laptop and
+  not for the phone. `CARGO_CFG_TARGET_OS` is the question actually being asked;
+  in this crate it decides whether to emit the sherpa `$ORIGIN` rpath link arg.
+- **A feature may name an optional dependency that only exists for some
+  targets.** `tts = ["dep:rodio", …]` with those dependencies declared under
+  `[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]`
+  resolves to nothing on Android and to the voice everywhere else — one feature,
+  no second configuration to keep in step. `cargo tree -p sapling-desktop
+  --target aarch64-linux-android` is how to check what a target actually gets.
+- **Gradle builds the whole package, `[[bin]]` included** — cargo-mobile2 runs
+  `cargo build -p <crate> --target <triple>` with no `--lib`. On Android the app
+  is the cdylib (`TauriActivity` loads `libsapling_desktop.so` and calls
+  `start_app`), so `main.rs` is deliberately empty there rather than an
+  executable nothing can launch.
+
 ## Deploying / edge caching
 
 - **2026-08-24 incident:** `/_app/immutable/*` must serve a real 404

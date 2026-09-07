@@ -221,6 +221,27 @@ someone to run the check by hand.
   the session screen already fires), and the **Cache Storage clip tier is
   skipped** here because native synthesis runs at several times real time.
 
+- **The crate also builds for Android, in CI and nowhere else, and there it is
+  this host minus the voice.** `docs/desktop.md` has the job; the contract is
+  that Android is not a second host. Persistence, the device id, the clock and
+  the calendar are the same code over the same app-data directory. The voice is
+  not: `sherpa-rs-sys` fetches prebuilt desktop shared libraries and rodio's
+  cpal backend wants ALSA, so those dependencies are declared under a
+  `[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]`
+  table and the module, the five commands and their registration are gated on
+  `all(feature = "tts", desktop)` — Tauri's own cfg alias, emitted by
+  `tauri_build::build()`. The `tts` feature stays on and resolves to nothing
+  there, which is the point: one configuration, not two. **A gate that says
+  `feature = "tts"` alone is a bug** that only Android's compiler sees, and
+  `build.rs` must read `CARGO_CFG_TARGET_OS` rather than `cfg!(target_os)`,
+  which on a build script is the *host's*. Two consequences reach outside the
+  crate: `[lib] crate-type` carries `cdylib` because the app on that platform is
+  `libsapling_desktop.so` and there is no executable (`main.rs` is empty there,
+  and `run()` carries `#[cfg_attr(mobile, tauri::mobile_entry_point)]`); and
+  `src/lib/tts/tts.ts` asks the host whether it has a voice at all instead of
+  assuming Tauri means one — see `content.md`. `gen/android` is generated per CI
+  run and never committed.
+
 - **The crate is a workspace member but not a *default* member.** It links
   WebKitGTK, which only `nix develop .#desktop` provides, and `pnpm core:check`
   / `pnpm core:test` are a bare `cargo clippy`/`cargo test` in the *default*

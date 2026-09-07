@@ -24,6 +24,13 @@
  * the same model, so everything below this line — the caches, the warm-up, the
  * fallback — is host-blind. {@link inTauri} decides, once.
  *
+ * And a Tauri host may have **no** voice: the same shell built for Android
+ * compiles the native one out (`crates/sapling-desktop/Cargo.toml`), so its
+ * five commands are not there at all. That is a question about the host, not
+ * about the platform, so it is asked of the host — one `tts_status` probe,
+ * memoised — and a host that cannot answer gets a provider whose every call
+ * fails, which is the path `speak` has always taken to the browser voice.
+ *
  * ## And so does the *player*, on the desktop
  *
  * A clip is an `<audio>` element over a blob everywhere except inside Tauri,
@@ -48,6 +55,8 @@ import { readClip, writeClip } from './audio-store';
 import { audioCacheKey, audioCacheUrl, LruCache } from './cache';
 import { bcp47For, kokoroSpeakerFor, kokoroSupports } from './languages';
 import { RUNTIME_DOWNLOAD_BYTES } from './models';
+// Type-only, so the browser bundle still never references the desktop module.
+import type { NativeVoiceStatus } from './native';
 import { initSherpa, onSherpaProgress, synthesize, type TtsProgress } from './sherpa';
 import {
 	getTtsEngine,
@@ -130,19 +139,66 @@ const sherpaProvider: KokoroProvider = {
 	synthesize
 };
 
-let provider: Promise<KokoroProvider> | undefined;
+/** What a host with no voice at all answers, to `speak` and to Settings alike. */
+const NO_HOST_VOICE = 'this host has no built-in voice';
 
 /**
- * The host's Kokoro, resolved once.
+ * A host that lends no voice — the Android build of the desktop shell, whose
+ * five voice commands are compiled out.
+ *
+ * It fails the way a refused synthesis fails, on purpose: that is a path every
+ * caller here already has, so "this host has none" needs no new branch in
+ * {@link speak}, {@link warmSpeech} or the preload task. The learner hears the
+ * browser voice, which is what they would have heard before the model was
+ * downloaded.
+ */
+const voicelessHost: KokoroProvider = {
+	init: () => Promise.reject(new Error(NO_HOST_VOICE)),
+	onProgress: () => () => {},
+	synthesize: () => Promise.reject(new Error(NO_HOST_VOICE))
+};
+
+let provider: Promise<KokoroProvider> | undefined;
+let hostStatus: Promise<NativeVoiceStatus | undefined> | undefined;
+
+/**
+ * What the desktop host says about its voice, asked once, or `undefined` when
+ * it has none to say anything about.
+ *
+ * `tts_status` is the probe because it is the one voice command that reads the
+ * disk and nothing else — no lock, no download, no engine load — so asking it
+ * costs an IPC round trip and answers two questions at once: whether the
+ * commands exist at all, and what a first install would cost
+ * ({@link voiceDownloadBytes}). Its rejection is not an error to report: a host
+ * without the voice compiled in rejects every `invoke` of it, and that is a
+ * fact about the build, warned about once and then forgotten.
+ */
+function hostVoice(): Promise<NativeVoiceStatus | undefined> {
+	hostStatus ??= import('./native')
+		.then((module) => module.nativeVoiceStatus())
+		.catch((cause) => {
+			console.warn('[tts] This host has no voice of its own; the browser voice will speak.', cause);
+			return undefined;
+		});
+	return hostStatus;
+}
+
+/**
+ * The host's Kokoro, resolved once — or {@link voicelessHost} when the host has
+ * none to lend.
  *
  * The desktop module is reached through a dynamic import so a browser never
  * fetches it (and never sees a reference to `@tauri-apps/api`); the browser
  * branch is already loaded, so on the web this is a resolved promise and adds
- * a microtask, not a round trip.
+ * a microtask, not a round trip. In Tauri it costs one {@link hostVoice} probe
+ * before the first phrase, which is nothing beside the seconds the engine takes
+ * to load, and it is paid once for the session.
  */
 function kokoro(): Promise<KokoroProvider> {
 	provider ??= inTauri()
-		? import('./native').then((module) => module.nativeKokoro)
+		? hostVoice().then(async (status) =>
+				status ? (await import('./native')).nativeKokoro : voicelessHost
+			)
 		: Promise.resolve(sherpaProvider);
 	return provider;
 }
@@ -185,13 +241,16 @@ export function onVoiceProgress(listener: (progress: TtsProgress) => void): () =
 
 /**
  * First-run download for the voice, in bytes — two files from a mirror in the
- * browser, one release archive on the desktop. Asked rather than imported
- * because only the host knows what it will fetch.
+ * browser, one release archive on the desktop, and **nothing at all** on a host
+ * that has no voice to download. Asked rather than imported because only the
+ * host knows what it will fetch.
+ *
+ * Never rejects: Settings fires this off without waiting for it
+ * (`+page.svelte`), so a rejection here would be an unhandled one.
  */
 export async function voiceDownloadBytes(): Promise<number> {
 	if (!inTauri()) return RUNTIME_DOWNLOAD_BYTES;
-	const { nativeVoiceStatus } = await import('./native');
-	return (await nativeVoiceStatus()).downloadBytes;
+	return (await hostVoice())?.downloadBytes ?? 0;
 }
 
 /**

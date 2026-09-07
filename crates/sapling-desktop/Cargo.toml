@@ -8,8 +8,16 @@ publish = false
 [lib]
 # The host lives in the library so `tests/` can open it without a webview; the
 # binary is three lines over it.
+#
+# `cdylib` is Android's, and the only reason it is listed: there is no
+# executable on that platform: gradle packs `libsapling_desktop.so` into the
+# APK and `TauriActivity` loads it and calls the `start_app` symbol
+# `mobile_entry_point` generates over `run()`. The mobile template carries a
+# third type, `staticlib`, which is iOS's — left out because iOS is not built
+# here and it would cost every desktop check an archive of the whole dependency
+# graph.
 name = "sapling_desktop"
-crate-type = ["lib"]
+crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "sapling-desktop"
@@ -21,6 +29,13 @@ path = "src/main.rs"
 # `SharedArrayBuffer`, and a 439 MB Emscripten file package on top). It is a
 # feature only so `cargo check -p sapling-desktop --no-default-features` can
 # still typecheck the host on a machine with no sherpa toolchain.
+#
+# **Enabling it does not mean the voice exists.** Its dependencies are declared
+# for desktop targets only (see the target table below), so on Android the
+# feature is on and the voice is simply absent — `lib.rs` gates the module and
+# the five commands on `all(feature = "tts", desktop)` to match. A `dep:` entry
+# is allowed to name a target-scoped optional dependency: the feature enables it
+# where the target table applies and nothing where it does not.
 default = ["tts"]
 tts = [
 	"dep:sherpa-rs-sys",
@@ -50,6 +65,15 @@ serde_json = { version = "1", features = ["preserve_order"] }
 
 # -- The native voice (`tts` feature) ----------------------------------------
 #
+# Scoped to desktop targets, which is the whole of what Android costs. Nothing
+# in here can be built for a phone: `sherpa-rs-sys` downloads prebuilt Linux,
+# macOS and Windows shared libraries, and rodio's cpal backend wants ALSA. The
+# `tts` feature stays on there and resolves to nothing — see the note above it —
+# and the code that would have used these is gated to match, so an Android build
+# is the same host minus one capability rather than a second configuration to
+# keep in step. `desktop` is Tauri's own cfg alias (`tauri_build::build()`
+# emits it) and means exactly this table's condition.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 # The bindings, not the `sherpa-rs` wrapper over them: that wrapper's Kokoro
 # constructor frees the rule-FST path string before sherpa-onnx reads it, and
 # the FSTs are not optional here. `src/tts/kokoro.rs` says the whole story.

@@ -32,6 +32,23 @@
 //! output does not work at all (`tts/play.rs`). Both are still *host*
 //! capabilities — text in, a WAV file out; a WAV file in, a sound out — with no
 //! domain knowledge whatsoever, and `src/lib/tts/native.ts` is the other end.
+//!
+//! ## The same host, minus one capability, on Android
+//!
+//! This crate also builds as an Android app — CI only, a debug APK, and
+//! `docs/desktop.md` says what that is for — and there **the voice is compiled
+//! out**. Its dependencies fetch prebuilt desktop shared libraries and want an
+//! ALSA device, so they are declared for desktop targets only (`Cargo.toml`)
+//! and every gate below reads `all(feature = "tts", desktop)` rather than the
+//! feature alone; `desktop` is Tauri's own cfg alias for "not Android or iOS",
+//! emitted by `tauri_build::build()`. Persistence is untouched — a file in the
+//! app-data directory is a file on a phone too — so an Android build is this
+//! host minus one capability rather than a second host to keep in step.
+//!
+//! Nothing above the seam changed for it either: `src/lib/tts/tts.ts` asks the
+//! host once whether it has a voice at all and treats "no" exactly as it treats
+//! a synthesis that failed, which is the rule audio has always had here. It
+//! degrades; it never blocks.
 
 //! The crate denies `unsafe_code` rather than forbidding it, for exactly one
 //! module: `tts::kokoro`, which is the FFI call into sherpa-onnx and says at
@@ -41,17 +58,17 @@
 #![deny(unsafe_code)]
 
 pub mod host;
-#[cfg(feature = "tts")]
+#[cfg(all(feature = "tts", desktop))]
 pub mod tts;
 
 use std::sync::Arc;
 
-#[cfg(feature = "tts")]
+#[cfg(all(feature = "tts", desktop))]
 use tauri::{AppHandle, Emitter};
 use tauri::{Manager, State};
 
 use crate::host::Database;
-#[cfg(feature = "tts")]
+#[cfg(all(feature = "tts", desktop))]
 use crate::tts::{play::PlayerHandle, TtsHandle};
 
 /// One `Backend` call. The answer is `None` — JavaScript's `undefined` — for a
@@ -107,7 +124,7 @@ fn derived_schema_version() -> u32 {
 
 /// Event carrying one file's download progress to the window. Its three fields
 /// are `TtsProgress`'s, so `native.ts` can feed the existing progress listener.
-#[cfg(feature = "tts")]
+#[cfg(all(feature = "tts", desktop))]
 #[derive(Clone, serde::Serialize)]
 struct DownloadProgress {
     file: String,
@@ -117,7 +134,7 @@ struct DownloadProgress {
 
 /// The channel the progress events travel on. Named once here and once in
 /// `native.ts`.
-#[cfg(feature = "tts")]
+#[cfg(all(feature = "tts", desktop))]
 const TTS_PROGRESS_EVENT: &str = "tts://model-progress";
 
 /// Whether the voice model is on this machine, and what it costs.
@@ -131,7 +148,7 @@ const TTS_PROGRESS_EVENT: &str = "tts://model-progress";
 /// A `Result` because Tauri requires one of an `async` command that borrows
 /// `State`; the only `Err` it can produce is the blocking task failing to run
 /// at all, which `native.ts` sees as a rejected `invoke` like any other.
-#[cfg(feature = "tts")]
+#[cfg(all(feature = "tts", desktop))]
 #[tauri::command]
 async fn tts_status(tts: State<'_, Arc<TtsHandle>>) -> Result<tts::TtsStatus, String> {
     let handle = tts.inner().clone();
@@ -144,7 +161,7 @@ async fn tts_status(tts: State<'_, Arc<TtsHandle>>) -> Result<tts::TtsStatus, St
 ///
 /// `async` on purpose: a synchronous Tauri command runs on the main thread, and
 /// this one runs for minutes. Idempotent — an installed model returns at once.
-#[cfg(feature = "tts")]
+#[cfg(all(feature = "tts", desktop))]
 #[tauri::command]
 async fn tts_download(app: AppHandle, tts: State<'_, Arc<TtsHandle>>) -> Result<(), String> {
     let handle = tts.inner().clone();
@@ -172,7 +189,7 @@ async fn tts_download(app: AppHandle, tts: State<'_, Arc<TtsHandle>>) -> Result<
 /// and become a `Blob` on the other side. A `Vec<u8>` would be serialized as a
 /// JSON array of numbers — several megabytes of text per sentence, parsed on
 /// the window thread, for audio that is already in the right format.
-#[cfg(feature = "tts")]
+#[cfg(all(feature = "tts", desktop))]
 #[tauri::command]
 async fn tts_synthesize(
     tts: State<'_, Arc<TtsHandle>>,
@@ -202,7 +219,7 @@ async fn tts_synthesize(
 /// is why there is no event and no second command to poll: the promise is the
 /// clip. A clip arriving while another plays cuts that one off, so a second tap
 /// on 🔊 interrupts the first word, as it always has.
-#[cfg(feature = "tts")]
+#[cfg(all(feature = "tts", desktop))]
 #[tauri::command]
 async fn tts_play(
     player: State<'_, Arc<PlayerHandle>>,
@@ -226,14 +243,14 @@ async fn tts_play(
 /// the cheapest place to answer it from — and `stopSpeaking()` is called on the
 /// path to every new phrase, where a round trip through the pool would be pure
 /// latency.
-#[cfg(feature = "tts")]
+#[cfg(all(feature = "tts", desktop))]
 #[tauri::command]
 fn tts_stop(player: State<'_, Arc<PlayerHandle>>) {
     player.stop();
 }
 
 /// The command list, which the `tts` feature extends rather than replaces.
-#[cfg(feature = "tts")]
+#[cfg(all(feature = "tts", desktop))]
 macro_rules! commands {
     () => {
         tauri::generate_handler![
@@ -249,7 +266,7 @@ macro_rules! commands {
     };
 }
 
-#[cfg(not(feature = "tts"))]
+#[cfg(not(all(feature = "tts", desktop)))]
 macro_rules! commands {
     () => {
         tauri::generate_handler![dispatch, commit_all, derived_schema_version]
@@ -257,6 +274,12 @@ macro_rules! commands {
 }
 
 /// Opens the database and runs the window.
+///
+/// On Android this *is* the entry point, and there is no `main` (`main.rs`):
+/// the attribute wraps this in the `start_app` symbol that `TauriActivity`
+/// calls once it has loaded `libsapling_desktop.so` out of the APK. On a
+/// desktop it expands to nothing and the binary calls this directly.
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
@@ -278,9 +301,9 @@ pub fn run() {
             // Nothing is downloaded, loaded or opened here — the voice handle
             // only knows where the model would be, and the player has not
             // touched an audio device. The first tap on 🔊 pays for both.
-            #[cfg(feature = "tts")]
+            #[cfg(all(feature = "tts", desktop))]
             app.manage(Arc::new(TtsHandle::new(&dir)));
-            #[cfg(feature = "tts")]
+            #[cfg(all(feature = "tts", desktop))]
             app.manage(Arc::new(PlayerHandle::new()));
             Ok(())
         })

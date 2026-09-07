@@ -26,19 +26,22 @@ const sherpa = {
 /** The host's "no output device at all", as `native.ts` defines it. */
 class NoAudioOutput extends Error {}
 
+/** What a host that *has* the voice answers `tts_status` with. */
+const NATIVE_STATUS = {
+	model: 'kokoro-multi-lang-v1_1',
+	installed: true,
+	bytes: 426654376,
+	downloadBytes: 364816464,
+	loaded: false
+};
+
 const native = {
 	nativeKokoro: {
 		init: vi.fn(async () => {}),
 		onProgress: vi.fn(() => () => {}),
 		synthesize: vi.fn(async () => new Blob(['native']))
 	},
-	nativeVoiceStatus: vi.fn(async () => ({
-		model: 'kokoro-multi-lang-v1_1',
-		installed: true,
-		bytes: 426654376,
-		downloadBytes: 364816464,
-		loaded: false
-	})),
+	nativeVoiceStatus: vi.fn(async () => NATIVE_STATUS),
 	playOnHost: vi.fn(async (_clip: Blob) => {}),
 	stopOnHost: vi.fn(() => {}),
 	NoAudioOutput
@@ -110,9 +113,12 @@ async function loadTts(): Promise<typeof import('./tts')> {
 beforeEach(() => {
 	vi.clearAllMocks();
 	// `clearAllMocks` forgets the calls but keeps the implementations, and a
-	// test that makes the host refuse a clip must not leak that into the next.
+	// test that makes the host refuse a clip — or gives it no voice at all —
+	// must not leak that into the next.
 	native.playOnHost.mockReset();
 	native.playOnHost.mockImplementation(async () => {});
+	native.nativeVoiceStatus.mockReset();
+	native.nativeVoiceStatus.mockImplementation(async () => NATIVE_STATUS);
 	FakeAudio.built = [];
 	Object.defineProperty(globalThis, 'Audio', {
 		value: FakeAudio,
@@ -180,6 +186,61 @@ describe('choosing the host that speaks Kokoro', () => {
 		pretendTauri();
 		const desktop = await loadTts();
 		expect(await desktop.voiceDownloadBytes()).toBe(364816464);
+	});
+});
+
+describe('a Tauri host with no voice of its own', () => {
+	/**
+	 * The Android build of the same shell: the five voice commands are compiled
+	 * out, so every `invoke` of one rejects the way Tauri rejects an unknown
+	 * command. `inTauri()` is still true — this is a fact about the host, not
+	 * about the platform, which is why it is asked of the host.
+	 */
+	function voicelessHost(): void {
+		pretendTauri();
+		native.nativeVoiceStatus.mockRejectedValue(new Error('Command tts_status not found'));
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+	}
+
+	it('lets the browser voice speak instead of reaching for a command that is not there', async () => {
+		voicelessHost();
+		const { speak } = await loadTts();
+
+		await speak('你好', MANDARIN);
+		await speak('再见', MANDARIN);
+
+		expect(native.nativeKokoro.synthesize).not.toHaveBeenCalled();
+		// Nothing was synthesized, so nothing was played — by the host or by an
+		// element. `speakWithWebSpeech` is what actually says the word.
+		expect(native.playOnHost).not.toHaveBeenCalled();
+		expect(FakeAudio.built).toHaveLength(0);
+	});
+
+	it('asks once and remembers the answer', async () => {
+		voicelessHost();
+		const { warmSpeech } = await loadTts();
+
+		await warmSpeech('你好', MANDARIN);
+		await warmSpeech('再见', MANDARIN);
+
+		expect(native.nativeVoiceStatus).toHaveBeenCalledTimes(1);
+	});
+
+	it('reports nothing to download rather than rejecting into Settings', async () => {
+		voicelessHost();
+		const { voiceDownloadBytes } = await loadTts();
+
+		// Settings fires this off unawaited, so a rejection would be an unhandled
+		// one on a screen the learner is already looking at.
+		await expect(voiceDownloadBytes()).resolves.toBe(0);
+	});
+
+	it('fails an explicit preload with a reason, and never starts a download', async () => {
+		voicelessHost();
+		const { preloadKokoro } = await loadTts();
+
+		await expect(preloadKokoro()).rejects.toThrow('no built-in voice');
+		expect(native.nativeKokoro.init).not.toHaveBeenCalled();
 	});
 });
 

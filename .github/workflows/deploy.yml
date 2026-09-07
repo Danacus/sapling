@@ -12,6 +12,19 @@
 # the crate, so a red desktop check says a protocol change broke the host, not
 # that the site is wrong — it fails the commit, not the deploy.
 #
+# `android`: the *same* crate, built as a sideloadable debug APK and uploaded as
+# a workflow artifact — a spike, and the only place that build exists, since
+# nobody here has an Android SDK. It needs no secret; it reads the same two
+# build-time variables the web build does and is fine with neither set. Two things
+# about it are deliberate and both are in docs/desktop.md: the web bundle is
+# built first under nix (that is where wasm-bindgen and lld live) and Tauri's
+# `beforeBuildCommand` is overridden away so it is not built a second time under
+# a toolchain that has neither; and **the Rust half uses rustup, not nix**,
+# because nixpkgs' rustc carries no Android target std and `androidenv` is unfree
+# and enormous. So only `cargo`/`rustc` come from outside the devShell — node,
+# pnpm and everything else are still the flake's. Like `desktop`, it runs
+# alongside `build` and gates nothing: the site does not ship in an APK.
+#
 # The embed page (`embed/`) is a *third* artifact and its own Pages project. It
 # is the one document that talks to YouTube's IFrame API on behalf of the
 # desktop shell, which serves the app from `tauri://localhost` and therefore has
@@ -165,3 +178,126 @@ jobs:
       # the crate checks with no `build/` at all).
       - name: Desktop gates
         run: nix develop .#desktop -c pnpm desktop:check
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: cachix/install-nix-action@v31
+
+      # The *default* devShell — the same one `build` uses, so the same key
+      # rather than a second copy of identical store paths. Whichever of the two
+      # jobs gets there first saves it.
+      - name: Cache the nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 4G
+
+      - name: Cache the pnpm store
+        uses: actions/cache@v6
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      # Its own, unlike the two above: this is a fourth target set
+      # (`aarch64-linux-android`), built by a toolchain no other job uses.
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-android-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          restore-keys: cargo-android-${{ runner.os }}-
+
+      # For Gradle, not for the app: the Android Gradle Plugin the generated
+      # project asks for needs a JDK 17 or newer.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # The one piece that cannot come from the flake (see the header). Only the
+      # `aarch64` target is installed because only that ABI is built — see the
+      # APK step.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      # Everything this job needs to find, found once and loudly: a missing NDK
+      # or a cargo without the Android target should fail here, in four lines of
+      # log, rather than twenty minutes into a Gradle run.
+      - name: Locate the toolchain, the NDK and the SDK
+        run: |
+          set -x
+          # Remembered because `nix develop` puts its own cargo in front of
+          # rustup's shims, and nixpkgs' rustc has no Android std at all.
+          echo "RUSTUP_BIN=$(dirname "$(command -v cargo)")" >> "$GITHUB_ENV"
+          # The runner image ships an NDK, so nothing is downloaded here;
+          # `NDK_HOME` is the variable the Tauri CLI reads. If the image ever
+          # stops shipping one, `nttld/setup-ndk` is the replacement for this.
+          ndk="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_ROOT:-}}"
+          test -d "$ndk"
+          echo "NDK_HOME=$ndk" >> "$GITHUB_ENV"
+          cat "$ndk/source.properties"
+          # The two the generated `app/build.gradle.kts` names by number
+          # (`compileSdk = 36`). Already present on the image, in which case this
+          # is a no-op — but an auto-download half-way through a Gradle run is
+          # not something to leave to chance.
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" --install "platforms;android-36" "build-tools;36.0.0"
+          cargo --version
+          rustc --version
+          rustup target list --installed
+          java -version
+
+      - name: Install
+        run: nix develop -c pnpm install --frozen-lockfile
+
+      # Inside the devShell, and before Tauri is asked for anything: `pnpm build`
+      # runs `core:wasm`, which needs the wasm32 target, `lld` and the exact
+      # pinned wasm-bindgen — none of which exist outside the flake. The APK step
+      # then tells Tauri not to build it again.
+      - name: Build the web bundle
+        env:
+          VITE_SYNC_URL: ${{ vars.VITE_SYNC_URL }}
+          VITE_YOUTUBE_EMBED_URL: ${{ vars.VITE_YOUTUBE_EMBED_URL }}
+        run: nix develop -c pnpm build
+
+      # `gen/android` is generated and not committed (Tauri's docs suggest
+      # committing it; for a spike, a few seconds per run beats a large
+      # generated tree in the history — docs/desktop.md).
+      #
+      # The `PATH` prepend is the whole rustup/nix seam, and it is needed here
+      # too: `tauri android init` writes the Gradle project against the cargo it
+      # can see. Everything else in the command is still the flake's node, pnpm
+      # and Tauri CLI.
+      - name: Generate the Android project
+        run: |
+          set -x
+          test -d crates/sapling-desktop/gen/android ||
+            nix develop -c bash -c 'PATH="$RUSTUP_BIN:$PATH" pnpm desktop:android:init'
+
+      # Gradle calls the Tauri CLI back per ABI (`pnpm tauri android
+      # android-studio-script`), so pnpm, node and rustup's cargo all have to be
+      # on the PATH this inherits — which is exactly why the prepend happens
+      # inside the devShell rather than around it. The quotes are single on
+      # purpose: `$PATH` must be the one nix has just set, not the one out here.
+      - name: Build the debug APK
+        run: nix develop -c bash -c 'set -x; PATH="$RUSTUP_BIN:$PATH" pnpm desktop:android'
+
+      # Debug, so Gradle signs it with the throwaway debug keystore it generates
+      # — enough to sideload, nothing like a release build (docs/desktop.md says
+      # what one of those would still need).
+      - name: Upload the APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: sapling-android-debug-apk
+          path: crates/sapling-desktop/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+          if-no-files-found: error

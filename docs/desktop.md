@@ -18,7 +18,9 @@ depends on any of it: the desktop crate is a workspace member but not a
 *default* member, and its toolchain lives in a second devShell. CI does check
 it — a `desktop` job in `.github/workflows/deploy.yml` runs `pnpm desktop:check`
 beside the web job, so a protocol change that breaks the host fails the commit.
-It does not gate the deploy: the site has no dependency on the crate.
+It does not gate the deploy: the site has no dependency on the crate. The same
+crate is also built as a debug APK by an `android` job, which is likewise
+CI-only and gates nothing — see [Android](#android).
 
 ## Running it
 
@@ -39,6 +41,15 @@ repo root via the config's `cwd: "../.."`. `desktop:build` produces
 `.deb`/`.AppImage` and `--no-bundle` is passed — packaging is out of scope for a
 spike and would need a full icon set.
 
+The two Android scripts are the exception and want the *default* shell plus a
+rustup toolchain, an SDK and an NDK, which is why they only ever run in CI
+(see [Android](#android)):
+
+```sh
+pnpm desktop:android:init   # write gen/android — needs the SDK, NDK and rustup
+pnpm desktop:android        # the debug APK, over a `build/` that already exists
+```
+
 New files must be `git add`ed before nix sees them (flakes read the index, not
 the working tree). This looks exactly like "the flake is broken".
 
@@ -52,6 +63,7 @@ Tauri's per-app data directory, named by the config's `identifier`
 | Linux | `~/.local/share/app.sapling.desktop/` |
 | macOS | `~/Library/Application Support/app.sapling.desktop/` |
 | Windows | `%APPDATA%\app.sapling.desktop\` |
+| Android | `/data/data/app.sapling.desktop/` (`Context.dataDir`, private to the app) |
 
 Inside it: `sapling.db` (plus `-wal`/`-shm` — the file is opened in WAL mode,
 with `synchronous=NORMAL` beside it, so a commit does not fsync the WAL; an
@@ -344,6 +356,102 @@ string before sherpa-onnx reads it (`Option::map` consumes the `CString`).
 Dropping the FSTs instead would mean "2026" read as English digits inside a
 Chinese sentence on this host only, so the twenty lines the wrapper would have
 contributed live here instead, with the strings kept alive across the call.
+
+## Android
+
+The same crate also builds as an Android app. It is a spike inside a spike:
+**nobody here has an Android SDK**, so the build exists only as the `android`
+job in `.github/workflows/deploy.yml`, it produces a *debug* APK, and nothing
+in the app or its gates depends on it. Like `desktop`, it runs beside `build`
+and gates no deploy.
+
+**What the job does**, in order: installs and builds the web bundle inside the
+flake's devShell exactly as `build` does (`pnpm install --frozen-lockfile`,
+`pnpm build`); generates `gen/android`; and builds the APK with the Tauri CLI.
+Two seams are worth knowing:
+
+- **The Rust half uses rustup, not nix.** nixpkgs' rustc carries no Android
+  target std and `androidenv` is unfree and enormous, so `dtolnay/rust-toolchain`
+  installs `aarch64-linux-android` and the two Android steps prepend rustup's
+  shims to `PATH` *inside* `nix develop`. Everything else — node, pnpm, the
+  Tauri CLI — is still the flake's. The NDK is the runner image's
+  (`ANDROID_NDK_LATEST_HOME` → `NDK_HOME`), Java is `actions/setup-java`, and
+  the SDK platform and build-tools are installed explicitly rather than left to
+  a Gradle auto-download.
+- **The web bundle is built first, so Tauri must not build it again.**
+  `beforeBuildCommand` is `pnpm build`, which needs the wasm target, `lld` and
+  the pinned wasm-bindgen; under rustup it would fail. `pnpm desktop:android`
+  therefore passes `--config '{"build":{"beforeBuildCommand":""}}'` — an empty
+  hook is a skipped hook — and the script's contract is "the bundle in `build/`
+  is already there".
+- **Both steps go through a package.json script, and that is load-bearing.**
+  `tauri android init` writes the command Gradle will use to call the CLI back
+  (once per ABI) out of *how it was itself invoked*: with a package manager in
+  the environment it writes `pnpm tauri android android-studio-script`, and
+  without one it writes `node tauri …`, which is not a runnable command and
+  fails minutes later inside Gradle. So the init runs as
+  `pnpm desktop:android:init` (which sets `PNPM_PACKAGE_NAME`), and
+  `"tauri": "tauri"` exists in `package.json` for Gradle to call — **do not
+  delete it**; it looks unused and is not. pnpm finds it by walking up from
+  `crates/sapling-desktop`.
+
+**One ABI, `arm64-v8a`.** Every extra one is the whole dependency tree compiled
+again for a spike nobody has a device farm for; `--target aarch64` in
+`pnpm desktop:android` is the single place to widen it, and the flavor stays
+`universal` either way.
+
+**The APK** lands at
+`crates/sapling-desktop/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`
+and is uploaded as the workflow artifact `sapling-android-debug-apk`. Gradle
+signs a debug build with the throwaway keystore it generates, so it installs on
+a phone with USB debugging on:
+
+```sh
+unzip sapling-android-debug-apk.zip     # what GitHub hands back
+adb install -r app-universal-debug.apk
+```
+
+**`gen/android` is generated in CI and never committed** (`.gitignore` covers
+`/crates/sapling-desktop/gen/`). Tauri's docs suggest committing it; for a spike
+the trade is the other way round — it is a few hundred generated files whose
+only reader is a build nobody runs locally, and regenerating costs seconds.
+The cost of that choice: it cannot be regenerated on a machine with no SDK
+(`tauri android init` validates the environment and shells out to `rustup`
+before it writes anything), so any change to the generated project has to be
+made through the config or the CLI, never by hand.
+
+**The voice is compiled out.** `sherpa-rs-sys` downloads prebuilt desktop
+shared libraries and rodio's cpal backend wants ALSA, so the `tts` feature's
+dependencies are declared for desktop targets only and the module, the five
+commands and their registration are gated on `all(feature = "tts", desktop)`
+(`desktop` being Tauri's own cfg alias for "not Android or iOS"). The `tts`
+feature is still on there — it simply resolves to nothing, so there is one
+configuration and not two. Persistence is untouched: `app_data_dir()` answers
+`Context.dataDir` on Android, so `sapling.db` and `device-id` sit in the app's
+own private directory and the host creates it exactly as it does anywhere else.
+
+`bundle.active` being `false` does not get in the way: it is read by
+`tauri build` and `tauri info` only, and the APK comes out of Gradle either way.
+
+**The web side does not need to know.** `inTauri()` is still true on the phone
+and stays the only platform test; what changed is that `tts.ts` now asks the
+*host* whether it has a voice — one `tts_status` probe, memoised — and a host
+that cannot answer gets a provider whose every call fails, which is the path
+`speak` already took to the browser voice when synthesis failed. So sound
+degrades to Android's own TTS, `voiceDownloadBytes()` reports nothing to
+download instead of rejecting into the Settings screen, and an explicit
+"Preload voice model now" says the host has no built-in voice. Settings
+otherwise still shows the desktop copy, which is wrong there and cheap to
+leave wrong in a spike.
+
+**What a release build would still need**, beyond everything the desktop list
+below already names: a signing keystore and a `signingConfigs` block for it
+(today's APK is debug-signed and will not update over a store build), an
+application icon set (`tauri android init` writes Tauri's defaults —
+`tauri icon` would generate ours), a real minSdk/targetSdk decision, and the
+CSP. Also untested, and worth saying plainly: **no one has run this APK on a
+device.** CI proves it compiles, links and packages; whether the app boots, and
+whether Android's WebView gives it what WebKitGTK could not, is unknown.
 
 ## What the webview cannot do
 

@@ -24,6 +24,10 @@ pnpm embed:build                        # embed/ -> embed/dist/, its own Pages p
 pnpm desktop:dev                        # vite dev + the desktop window
 pnpm desktop:build                      # pnpm build + target/release/sapling-desktop
 pnpm desktop:check                      # clippy -D warnings + the desktop crate's test
+# The same crate as an Android app. CI only (the `android` job): these two want the
+# *default* shell plus rustup, an SDK and an NDK, which no devShell provides.
+pnpm desktop:android:init               # generate gen/android (never committed)
+pnpm desktop:android                    # the debug APK, over a `build/` that already exists
 pnpm format                             # prettier --write . (bulk pass)
 pnpm format:check                       # prettier --check . (verify only)
 ```
@@ -75,7 +79,7 @@ Every area is a registry with one module per member; forgetting a registration f
 | `src/lib/db/` | Repositories are the **only** store access, and **the window thread never speaks SQL**: `protocol.ts`'s `Backend` is the boundary, and the Rust core implements it beside SQLite (in the Worker, or in-process in tests, via `host.ts`). The `events` table is the facts log; everything else is an aggregate read model the materializer maintains, and UI reads never touch `events`. `events.ts` is types only. | `data.md` |
 | `crates/sapling-core/` | **The** persistence core — merge rules, SRS, every `Backend` method — over a four-line `Sql` trait: **it never opens a database**. `crates/sapling-wasm` wraps it for the browser; `pnpm core:wasm` builds it into `src/lib/db/wasm/` (generated, never committed) and every `pnpm` gate runs that first. What JavaScript would print is the contract: `js.rs` formats numbers and JSON as `JSON.stringify` does. The SRS is the `fsrs` crate behind ts-fsrs's scheduler shape — the crate owns the model, `srs.rs` owns the card **and the numbers a screen reads off it**, so there is no FSRS in the frontend at all. `dispatch.rs` must list exactly `BACKEND_METHODS`; `cargo test` checks. | `core.md` |
 | `src/lib/sync/`, `worker/` | The backend **orders and relays; it never merges**. A learner is a pairing phrase; the *Worker* hashes it to pick the room. | `data.md`, `deploy.md` |
-| `crates/sapling-desktop/` | A **spike**, and a host only: the same core over a SQLite file, the same `Backend` protocol, no merge rule and no SQL of its own. Not a workspace default member; needs `nix develop .#desktop`. | `desktop.md` |
+| `crates/sapling-desktop/` | A **spike**, and a host only: the same core over a SQLite file, the same `Backend` protocol, no merge rule and no SQL of its own. Not a workspace default member; needs `nix develop .#desktop`. Also builds as an Android debug APK in CI, where it is the same host **minus the voice** — gates read `all(feature = "tts", desktop)`, never the feature alone. | `desktop.md` |
 | `src/lib/srs/` | **No FSRS here** — grades, opaque cards, timestamps. Every read attaches `srs: {due, retrievability, strength}` the core derived; `isDue` is `due <= now` and stays a frontend comparison. | `data.md` |
 | `src/lib/types.ts` | Treat as frozen; extend with **additive optional fields only**. | `data.md` |
 | `src/lib/romanize/` | Never romanize a term in isolation — context resolves polyphones. | `content.md` |
