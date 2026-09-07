@@ -124,6 +124,24 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   YouTube iframe, from the real `tauri://localhost` origin; the standing
   findings are under "What the webview cannot do" in `docs/desktop.md`, and
   the measurements are in commit ffacf14.
+- **WebKitGTK denies `getUserMedia` unless the *app* answers
+  `permission-request`, and wry does not (2026-09-07).** There is no permission
+  prompt in this webview: it emits `permission-request` on the `WebKitWebView`
+  and denies the request when nothing handles the signal. wry 0.55.1's
+  `src/webkitgtk/mod.rs` sets WebGL, WebAudio and clipboard settings on that
+  view and never connects it, and Tauri connects nothing — so every desktop
+  dictation died instantly on a `NotAllowedError`, which `src/lib/asr/native.ts`
+  faithfully reported as "Microphone access is blocked. Allow it in your browser
+  settings to dictate." There is no such setting to find. The fix is
+  `crates/sapling-desktop/src/permissions.rs`, connected from `setup` over
+  `with_webview`, Linux only: allow a `UserMediaPermissionRequest` for audio and
+  not video, deny anything wanting a camera, return `false` for everything else.
+  `enable-media-stream` is **not** the cause — it is already `true` on WebKitGTK
+  2.52.6, and setting it changes nothing on its own. Two things that make this
+  hard to see: the message points at a browser UI that does not exist, and
+  Android is fine, because wry's own `RustWebChromeClient.onPermissionRequest`
+  answers there (see the Android entry below, which is the same bug from the
+  other end).
 - **`Core` is `!Send`, so `Mutex<Core>` is not a way to share it.** Its `Sql`,
   clock, ids and calendar are plain boxed trait objects and have to stay that
   way, because the wasm host's `JsSql` holds a `js_sys::Function`. Adding

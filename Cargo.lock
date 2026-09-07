@@ -3267,6 +3267,7 @@ dependencies = [
  "tauri-build",
  "ureq 3.4.0",
  "uuid",
+ "webkit2gtk",
 ]
 
 [[package]]

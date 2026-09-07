@@ -154,3 +154,27 @@ hound = { version = "3.5", optional = true }
 rodio = { version = "0.22", optional = true, default-features = false, features = [
 	"playback",
 ] }
+
+# -- One Linux-only dependency, and it is a permission prompt ----------------
+#
+# WebKitGTK has no permission UI of its own: it emits `permission-request` on
+# the `WebKitWebView` and **denies** the request when nothing handles the
+# signal. wry connects WebGL, WebAudio and the clipboard settings and not that
+# signal, and Tauri connects nothing, so `getUserMedia` on this webview fails
+# with `NotAllowedError` and there is no browser setting a learner could change
+# — see `src/permissions.rs`. Answering it needs the `WebKitWebView` behind
+# `with_webview`, which is this crate.
+#
+# **Pinned `=2.0.2`, which is what Tauri 2.11.5 already locks** (via
+# `tauri-runtime-wry` and wry, both `=2.0`): `PlatformWebview::inner()` hands
+# back a `webkit2gtk::WebView` from *their* copy of the crate, and two
+# semver-compatible versions would be two unrelated types. `v2_40` is
+# `tauri-runtime-wry`'s own feature set for it, so nothing new is unified in —
+# the two properties read here arrive with it (`is-for-audio-device` at v2_8,
+# `enable-media-stream` at v2_4).
+#
+# Android is unaffected and never sees this table: wry's own
+# `RustWebChromeClient.onPermissionRequest` answers the WebView there, over the
+# permissions the committed `AndroidManifest.xml` declares.
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = { version = "=2.0.2", features = ["v2_40"] }

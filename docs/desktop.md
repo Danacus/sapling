@@ -122,9 +122,11 @@ OpenRouter, the reading and conversation layers, the romanizer, and every
 sound that is not speech — the reader's `<video>` and the YouTube frame still
 play through WebKitGTK's GStreamer pipeline. **The microphone is in that list**:
 `getUserMedia` works in both webviews, so the audio for dictation is captured in
-the window and only the *recognition* is native. There is no native menu, no
-tray, no auto-update, no file dialog and no deep-link handling. The window is
-one `main` window loading `/`.
+the window and only the *recognition* is native — the one thing the host has to
+supply on the way in is the *permission*, because WebKitGTK denies a
+`getUserMedia` no one answers ([Dictation](#dictation)). There is no native
+menu, no tray, no auto-update, no file dialog and no deep-link handling. The
+window is one `main` window loading `/`.
 
 **No CSP.** `app.security.csp` is `null`, matching the web deploy, which sets
 none either and for a load-bearing reason (`deploy.md`: the YouTube iframe API
@@ -398,7 +400,7 @@ look like something a person would type.
 
 **The audio is captured in the window**, on both hosts, and that is the one
 place this differs in shape from the voice. `getUserMedia` works in both
-webviews, permissions are the browser's, and the desktop's reason for taking
+webviews, and the desktop's reason for taking
 *playback* over — a fresh GStreamer pipeline per `<audio>` clip — has no
 equivalent on the way in. So the graph is `getUserMedia` → `AudioWorkletNode`
 (`static/asr/pcm-worklet.js`, plain JS outside Vite for the reason
@@ -411,6 +413,34 @@ while the learner is talking. The context is asked to open at 16 kHz so the
 browser's own resampler does the work; a browser that refuses the option gets
 resampled by `src/lib/asr/pcm.ts` instead, which averages the decimation window
 rather than dropping samples.
+
+**The *permission* is the host's, though, and on Linux it has to be.**
+WebKitGTK has no permission prompt: it emits `permission-request` on the
+`WebKitWebView` and denies the request when nothing handles the signal. wry sets
+WebGL, WebAudio and clipboard settings on that view and never connects it, and
+Tauri connects nothing — so every desktop dictation failed at once with a
+`NotAllowedError`, which the dictation layer reported as "Microphone access is
+blocked. Allow it in your browser settings to dictate.", naming a setting this
+webview does not have. `crates/sapling-desktop/src/permissions.rs` answers the
+signal from `setup` over `with_webview`, and that is the whole fix: a
+`UserMediaPermissionRequest` for audio and not video is allowed, one that wants
+a camera is denied, and every other permission returns `false` so WebKitGTK
+keeps its own answer. It is the counterpart of the `AndroidManifest.xml` line
+below and deliberately just as small — nothing is enumerated and no sample is
+read there, so the microphone is still the window's. The policy is a pure
+function over a plain `Request` enum, unit-tested for audio, video, both and
+neither, because no test here can open a webview; the signal handler is the
+adapter. `enable-media-stream` is read and turned on if it is off, but on
+WebKitGTK 2.52.6 it is already `true`: that setting was never the problem.
+
+**Measured, 2026-09-07, on WebKitGTK 2.52.6 in the `desktop` shell.** A page
+calling `getUserMedia({ audio: true })` on a view with no handler throws
+`NotAllowedError`; with the handler connected the signal arrives as
+`audio=true video=false` and the call returns a live track from the default
+input device. In the shell itself a dictation in `pnpm desktop:dev` now captures
+— 31616 samples at 16 kHz off one press — where before the fix it never reached
+the worklet at all. The GStreamer packages the shell already carries are enough
+for the capture source; nothing had to be added to `flake.nix`.
 
 **Phase one is button-stopped.** One utterance, one `onTranscript(text, true)`,
 one `onEnd()`. No streaming, no VAD, no partial transcripts. sherpa-onnx ships
@@ -989,7 +1019,7 @@ APK the job hands out is a release build with a stable certificate
 
 ## What the webview cannot do
 
-Four limits shape everything above. They are facts about WebKitGTK on a page
+Five limits shape everything above. They are facts about WebKitGTK on a page
 loaded from the real `tauri://localhost` origin, not about Sapling; the runs
 behind them are in ffacf14, f78eff6 and 3f41c84.
 
@@ -999,6 +1029,15 @@ behind them are in ffacf14, f78eff6 and 3f41c84.
   which is what [Dictation](#dictation) is. `getUserMedia` *is* here, so only
   the recognition had to move. `SharedArrayBuffer` is absent too, which is half
   of why the browser's sherpa TTS wasm has no path here.
+
+- **No permission prompt, and no default of "ask" either.** `getUserMedia` is
+  here, but WebKitGTK will not grant it on its own: it emits
+  `permission-request` on the `WebKitWebView` and denies the request when the
+  application does not handle the signal. There is nothing for a learner to
+  click and no browser setting to change, so a host that ignores the signal has
+  no microphone at all. The app answers it in
+  `crates/sapling-desktop/src/permissions.rs` — see
+  [Dictation](#dictation).
 
 - **Audio needs GStreamer, and without it WebKit does not degrade — it
   crashes.** In a shell without the GStreamer plugins the app starts and renders

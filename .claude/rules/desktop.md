@@ -171,8 +171,29 @@ someone to run the check by hand.
   hands the host samples that already exist. The desktop's reason for taking
   *playback* over is a measured WebKitGTK stall on the way out and has no
   counterpart on the way in, and `rodio`'s `recording` feature stays off. What
-  that buys is one code path, permissions that are the browser's, and a host
-  that cannot listen to anything nobody pressed a button for.
+  that buys is one code path and a host that cannot listen to anything nobody
+  pressed a button for.
+
+- **The *permission*, though, is not the browser's on WebKitGTK, and assuming it
+  was is what made every desktop dictation fail.** There is no permission UI in
+  that webview: it emits `permission-request` on the `WebKitWebView` and
+  **denies the request when nothing handles the signal**. wry 0.55.1 connects
+  WebGL, WebAudio and the clipboard settings and not that signal, and Tauri
+  connects nothing — so `getUserMedia` came back `NotAllowedError` and
+  `src/lib/asr/native.ts` truthfully told the learner to allow the microphone in
+  a browser setting that does not exist. `src/permissions.rs` answers the signal
+  instead, from `setup` over `with_webview`, `#[cfg(target_os = "linux")]` like
+  the `webkit2gtk = "=2.0.2"` it needs: a `UserMediaPermissionRequest` for audio
+  and not video is `allow()`ed, any other one is `deny()`ed, and anything else
+  returns `false` so WebKitGTK keeps its own answer. **This is the desktop's
+  equivalent of Android's manifest line, not a capability** — no device, no
+  sample and no decision about audio passes through the file, which is why the
+  bullet above still holds. The policy is a pure function over a plain `Request`
+  (`answer`) with the signal handler as its adapter, because nothing here can
+  open a webview in a test. `enable-media-stream` is read and set if it is off,
+  but it was already `true` on WebKitGTK 2.52.6: a guard, not the fix. Android
+  is untouched — wry's own `RustWebChromeClient.onPermissionRequest` answers
+  there, over the permissions the manifest declares.
 
 - **Every command that waits for anything is `async` and hands its work to
   `spawn_blocking`.** A synchronous Tauri command runs on the main thread — the

@@ -77,7 +77,13 @@
 //! **Capture is the window's on both hosts**, which is why there is no
 //! microphone anywhere in this crate. `getUserMedia` works in both webviews,
 //! and the desktop's reason for taking playback over does not apply to it: the
-//! samples arrive here already recorded, as a raw IPC body.
+//! samples arrive here already recorded, as a raw IPC body. What the host has
+//! to supply is the *permission*, and only on Linux: WebKitGTK has no
+//! permission UI and denies a `getUserMedia` that the application does not
+//! answer, so `permissions.rs` answers it — audio yes, camera no, everything
+//! else left alone. That is the desktop's equivalent of Android's manifest
+//! line, and it is a declaration rather than a capability: no audio passes
+//! through it.
 //!
 //! Nothing above the seam branches on the platform for it: `tts_status` carries
 //! a `playback` flag, `src/lib/tts/tts.ts` reads it off the one probe it
@@ -104,6 +110,11 @@ pub mod captions;
 pub mod host;
 #[cfg(feature = "speech")]
 pub mod models;
+/// Linux only, like the `webkit2gtk` dependency it needs: WebKitGTK is the one
+/// webview here that asks the *application* whether the page may have the
+/// microphone, and denies it when nobody answers.
+#[cfg(target_os = "linux")]
+pub mod permissions;
 #[cfg(feature = "speech")]
 pub mod tts;
 
@@ -569,6 +580,14 @@ pub fn run() {
             }
             #[cfg(all(feature = "speech", desktop))]
             app.manage(Arc::new(PlayerHandle::new()));
+            // The one thing this host has to say about the microphone, and it
+            // says it before the page can ask: WebKitGTK denies a
+            // `getUserMedia` the application leaves unanswered, and neither
+            // wry nor Tauri answers it (`permissions.rs`).
+            #[cfg(target_os = "linux")]
+            if let Some(window) = app.get_webview_window("main") {
+                permissions::connect(&window)?;
+            }
             Ok(())
         })
         .invoke_handler(commands!())
