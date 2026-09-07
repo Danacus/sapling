@@ -45,7 +45,7 @@
 import { base } from '$app/paths';
 
 import { micErrorMessage, type DictationHandlers, type DictationSession } from './webspeech';
-import { frameUtterance, TARGET_SAMPLE_RATE } from './pcm';
+import { frameUtterance, peakOf, TARGET_SAMPLE_RATE } from './pcm';
 
 /** Where the Rust host announces model-download progress. Named there too. */
 const PROGRESS_EVENT = 'asr://model-progress';
@@ -204,7 +204,7 @@ export function captureAvailable(): boolean {
  * context and `pcm.ts` resamples instead. Which one happened is carried out on
  * {@link Capture.sampleRate} rather than assumed.
  */
-async function openMicrophone(): Promise<Capture> {
+async function openMicrophone(context: AudioContext): Promise<Capture> {
 	const stream = await navigator.mediaDevices.getUserMedia({
 		// One channel, because the model is mono and a stereo capture would only
 		// be downmixed. The three cleanups are the browser's own and are exactly
@@ -217,16 +217,7 @@ async function openMicrophone(): Promise<Capture> {
 		}
 	});
 
-	let context: AudioContext | undefined;
 	try {
-		try {
-			context = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
-		} catch {
-			// A browser that will not open a context at that rate. Not worth a
-			// warning: the samples are resampled on the way out either way.
-			context = new AudioContext();
-		}
-
 		await context.audioWorklet.addModule(WORKLET_URL);
 		const source = context.createMediaStreamSource(stream);
 		// `numberOfOutputs: 0` is the whole reason this graph never reaches an
@@ -257,9 +248,34 @@ async function openMicrophone(): Promise<Capture> {
 		};
 	} catch (cause) {
 		for (const track of stream.getTracks()) track.stop();
-		void context?.close().catch(() => {});
 		throw cause;
 	}
+}
+
+/**
+ * The context, opened **synchronously, inside the tap**.
+ *
+ * Chromium's autoplay policy — Android's WebView included — lets a context
+ * start only during a user gesture. The permission prompt is an `await` away
+ * from the tap, and by the time it resolves the gesture is spent: a context
+ * created then is born `suspended`, the worklet never runs, and the utterance
+ * is zero samples that end silently as "nothing was said". So the context is
+ * made and resumed here, before anything is awaited, and handed to
+ * {@link openMicrophone}. The resume is not awaited — `dictateNatively` is
+ * synchronous by contract — and its outcome is read off `state` when the
+ * capture closes, where it is the first thing a dropped utterance reports.
+ */
+function openContext(): AudioContext {
+	let context: AudioContext;
+	try {
+		context = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
+	} catch {
+		// A browser that will not open a context at that rate. Not worth a
+		// warning: the samples are resampled on the way out either way.
+		context = new AudioContext();
+	}
+	void context.resume().catch(() => {});
+	return context;
 }
 
 /**
@@ -306,6 +322,9 @@ function captureErrorMessage(cause: unknown): string | undefined {
 export function dictateNatively(handlers: DictationHandlers): DictationSession | undefined {
 	if (!captureAvailable()) return undefined;
 
+	// Before anything is awaited: see `openContext`.
+	const context = openContext();
+
 	let ended = false;
 	/** Set once the microphone is open, and cleared the moment it closes. */
 	let capture: Capture | undefined;
@@ -330,8 +349,18 @@ export function dictateNatively(handlers: DictationHandlers): DictationSession |
 	const settle = async (): Promise<void> => {
 		const { chunks, sampleRate } = release();
 		const pcm = frameUtterance(chunks, sampleRate);
-		// Nothing was said. Silent, exactly as `no-speech` is.
-		if (!pcm) return finish();
+		// Nothing was said. Silent to the learner, exactly as `no-speech` is —
+		// but said to the console, because a context that never ran, a worklet
+		// that never posted and a muted microphone all arrive here looking the
+		// same, and this line is what tells them apart on a phone.
+		if (!pcm) {
+			const samples = chunks.reduce((total, chunk) => total + chunk.length, 0);
+			const peak = chunks.reduce((loudest, chunk) => Math.max(loudest, peakOf(chunk)), 0);
+			console.warn(
+				`[asr] Nothing to transcribe: ${samples} samples at ${sampleRate} Hz, peak ${peak.toFixed(4)}, context ${context.state}.`
+			);
+			return finish();
+		}
 
 		try {
 			const text = (await transcribe(pcm)).trim();
@@ -347,7 +376,7 @@ export function dictateNatively(handlers: DictationHandlers): DictationSession |
 
 	void (async () => {
 		try {
-			const open = await openMicrophone();
+			const open = await openMicrophone(context);
 			// The learner was faster than the permission prompt.
 			if (requested) {
 				capture = open;
@@ -367,6 +396,7 @@ export function dictateNatively(handlers: DictationHandlers): DictationSession |
 			// a worklet that would not load — and only the first two of those have
 			// anything to say to the learner.
 			console.warn('[asr] Could not open the microphone.', cause);
+			void context.close().catch(() => {});
 			finish(captureErrorMessage(cause));
 		}
 	})();

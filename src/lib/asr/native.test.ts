@@ -71,6 +71,10 @@ class FakeAudioContext {
 	readonly sampleRate: number;
 	closed = false;
 	disconnected = 0;
+	/** Chromium's autoplay policy: born suspended, running only once resumed. */
+	state: 'suspended' | 'running' | 'closed' = 'suspended';
+	/** Whether `resume()` was called while `getUserMedia` was still pending. */
+	resumedBeforePrompt = false;
 	readonly audioWorklet = {
 		addModule: vi.fn(async (_url: string) => {
 			if (FakeAudioContext.refuseWorklet) throw new Error('404');
@@ -89,8 +93,15 @@ class FakeAudioContext {
 		return { connect: () => {}, disconnect: () => (this.disconnected += 1) };
 	}
 
+	resume(): Promise<void> {
+		this.state = 'running';
+		this.resumedBeforePrompt = getUserMedia.mock.results.length === 0;
+		return Promise.resolve();
+	}
+
 	close(): Promise<void> {
 		this.closed = true;
+		this.state = 'closed';
 		return Promise.resolve();
 	}
 }
@@ -186,6 +197,22 @@ describe('starting at all', () => {
 		// reach the speakers could make a sound while the learner is talking.
 		expect(FakeWorkletNode.last?.options.numberOfOutputs).toBe(0);
 		expect(FakeWorkletNode.last?.name).toBe('pcm-collector');
+	});
+
+	it('opens and resumes the context inside the tap, before the permission prompt', async () => {
+		// Chromium (Android's WebView included) starts a context only during a
+		// user gesture, and the gesture is spent by the time `getUserMedia`
+		// resolves. A context made after the prompt is born suspended, the
+		// worklet never runs, and every utterance is zero samples — which is
+		// exactly what the first phone did.
+		const { dictateNatively } = await loadNative();
+
+		dictateNatively({ onTranscript: vi.fn(), onEnd: vi.fn() });
+
+		// Synchronously — nothing has been awaited yet.
+		expect(FakeAudioContext.built).toHaveLength(1);
+		expect(FakeAudioContext.built[0].resumedBeforePrompt).toBe(true);
+		expect(FakeAudioContext.built[0].state).toBe('running');
 	});
 
 	it('asks the browser to open at the rate the recognizer reads', async () => {
