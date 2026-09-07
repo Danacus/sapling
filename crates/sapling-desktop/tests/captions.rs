@@ -57,8 +57,15 @@ fn the_probe_answers_for_whichever_tools_this_machine_has() {
     for (name, version) in [("yt-dlp", &status.ytdlp), ("deno", &status.deno)] {
         match version {
             Some(version) => {
-                assert!(!version.trim().is_empty(), "{name} reported a blank version");
-                assert_eq!(version.lines().count(), 1, "{name}: one line, not the banner");
+                assert!(
+                    !version.trim().is_empty(),
+                    "{name} reported a blank version"
+                );
+                assert_eq!(
+                    version.lines().count(),
+                    1,
+                    "{name}: one line, not the banner"
+                );
             }
             None => println!("{name} is not on PATH"),
         }

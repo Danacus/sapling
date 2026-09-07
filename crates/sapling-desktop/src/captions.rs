@@ -475,7 +475,10 @@ mod tests {
             !listing.tracks.iter().any(|track| track.lang == "en"),
             "`tlang=` marks a translation of the Japanese recognition"
         );
-        assert!(listing.tracks.iter().any(|track| track.lang == "ja" && track.auto));
+        assert!(listing
+            .tracks
+            .iter()
+            .any(|track| track.lang == "ja" && track.auto));
     }
 
     #[test]
@@ -555,7 +558,10 @@ mod tests {
         // yt-dlp narrates first and explains itself last, so the tail is the
         // half worth showing.
         assert!(said.contains("Private video"), "{said}");
-        assert!(!said.contains("Extracting URL"), "only the last few: {said}");
+        assert!(
+            !said.contains("Extracting URL"),
+            "only the last few: {said}"
+        );
         assert_eq!(last_lines("   \n\n"), "it said nothing");
     }
 }
