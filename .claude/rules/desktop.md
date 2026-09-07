@@ -116,8 +116,13 @@ someone to run the check by hand.
   bindings and the prebuilt libraries must come from the same sherpa-onnx tag
   or the TTS config structs disagree about their own layout.
 
-- **`src/lib/platform.ts` is where "am I in Tauri?" is asked**, once, by
-  `db/backend.ts`, `tts/tts.ts` and `media/youtube-host.ts`. Everything
+- **`src/lib/platform.ts` is where "am I in Tauri?" is asked** — one test, and
+  each area asks it at its own seam rather than once per process: the
+  persistence transport (`db/backend.ts`), the TTS provider (`tts/tts.ts`, which
+  asks again wherever the host changes the answer — whether stored clips are
+  worth keeping, what a first download costs, where a clip plays), the media
+  player host (`media/youtube-host.ts`), and the settings screen's native-voice
+  row. Nowhere else, and never a second implementation of the test. Everything
   host-specific stays behind a dynamic import gated on it (`db/tauri.ts`,
   `tts/native.ts`), so a browser fetches neither those modules nor
   `@tauri-apps/api`. `media/youtube-host.ts` is the documented exception and

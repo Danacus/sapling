@@ -7,10 +7,13 @@ Code: `crates/sapling-desktop/`, `src/lib/db/tauri.ts`, `src/lib/tts/native.ts`,
 **This is a spike, not a product.** It exists to answer one question — can the
 Rust persistence core run natively over a SQLite file behind the *existing*
 domain protocol, with the same SvelteKit app on top? It can, and the app boots
-to onboarding through it. Since then it has grown a second native capability,
-the voice — both synthesizing a clip and playing it (see [Speech](#speech)) —
-for the same reason both times: the webview cannot run the browser's
-implementation at all. Nothing in the web build or its gates
+to onboarding through it. It also has to: WebKitGTK has no OPFS
+(`navigator.storage.getDirectory` is `undefined`), so the browser's sqlite-wasm
+Worker cannot boot in this webview at all, and the native core is not a
+performance choice here but the only database the app has. It carries a second
+native capability for the same reason, the voice — both synthesizing a clip and
+playing it (see [Speech](#speech)): the webview cannot run the browser's
+implementation of either. Nothing in the web build or its gates
 depends on any of it: the desktop crate is a workspace member but not a
 *default* member, and its toolchain lives in a second devShell. CI does check
 it — a `desktop` job in `.github/workflows/deploy.yml` runs `pnpm desktop:check`
@@ -98,11 +101,17 @@ audio-out, and audio-in sound-out. None carries a merge rule, a lesson, or a
 language.
 
 **Everything else is the same web app in a webview**: the UI, the LLM call to
-OpenRouter, ASR, the reading and conversation layers, the romanizer, and every
+OpenRouter, the reading and conversation layers, the romanizer, and every
 sound that is not speech — the reader's `<video>` and the YouTube frame still
 play through WebKitGTK's GStreamer pipeline. There is no native menu, no tray,
 no auto-update, no file dialog and no deep-link handling. The window is one
 `main` window loading `/`.
+
+Dictation is the exception: WebKitGTK exposes neither `SpeechRecognition`
+constructor, so `dictationAvailable()` is false and the control never renders.
+`content.md` already says the fallback is typing — on this host it is the only
+path. `getUserMedia` *is* present, so a recorder-plus-transcription route
+would not be blocked by the webview.
 
 **No CSP.** `app.security.csp` is `null`, matching the web deploy, which sets
 none either and for a load-bearing reason (`deploy.md`: the YouTube iframe API
@@ -119,9 +128,7 @@ works; a reload on a deep route would not. Untested, because nothing reloads.
 
 **The symptom.** A YouTube-backed reading text plays under `pnpm desktop:dev`
 and fails in a release build with YouTube's error 153, "video player
-configuration error". Before the fix it failed *silently* — a frame that never
-filled — because `youtube.ts` wired `onReady` and `onStateChange` but not
-`onError`.
+configuration error".
 
 **The cause is the scheme, not the code.** In dev the app is Vite's
 `http://localhost:5173`, which YouTube accepts. A release build serves the app
@@ -176,6 +183,14 @@ for the workflow step, the repository variables, and why the page must stay
 frameable (no `X-Frame-Options`, no `frame-ancestors`: the framer's origin is a
 custom scheme no allowlist can name).
 
+**Pause lands a second or two late on this host, and that is the engine.** It
+happens whether the pause comes from the app's button or from a click on the
+picture, and the click case never touches Sapling's code; the same lag
+reproduces in GNOME Web on the embed page opened directly, where Firefox pauses
+instantly. It is WebKitGTK's GStreamer Media Source Extensions pipeline, there
+is no knob for it in the app, and it is not the `postMessage` bridge — do not
+re-investigate the bridge for this symptom.
+
 ## Speech
 
 **Why any of this is native.** The browser runs Kokoro as sherpa-onnx compiled
@@ -183,18 +198,14 @@ to WASM in a Worker, and that path cannot exist here: the engine is a 439 MB
 Emscripten *file package* whose byte offsets are baked into vendored glue, and
 this webview has no `SharedArrayBuffer`. So synthesis moved to Rust.
 
-**And so did playback**, for a separate reason found later and measured
-separately (WebKitGTK 2.52.6, GStreamer 1.28.5). `<audio>` over a blob does play
+**And so did playback**, for a separate reason. `<audio>` over a blob does play
 correctly here, but it builds a fresh GStreamer pipeline per clip: the first
 sample lands about a second after `play()` and the window stalls while the
 pipeline is built, on every spoken word. Web Audio is the obvious way to keep
-one pipeline for the session, and in this webview it is unusable — a bare
-oscillator on a fresh `AudioContext` alternates between clean and noise across
-runs, and an `AudioBufferSourceNode` fed a sine at the context's own sample rate
-plays silence. (The decoder was not at fault: fed a WAV written by Python's
-`wave` module it returns the sine within one sample step. Commit f78eff6
-reverted that attempt.) So the clip goes back over the IPC and rodio plays it on
-one output stream the host holds open. **Only speech moved** — the reader's
+one pipeline for the session, and in this webview it is unusable — noise or
+silence depending on the run, with nothing logged and nothing to catch. So the
+clip goes back over the IPC and rodio plays it on one output stream the host
+holds open. **Only speech moved** — the reader's
 `<video>` and the YouTube frame still go through GStreamer, and `src/lib/tts/`'s
 `<audio>` path is still what the web build runs and still this host's fallback.
 
@@ -282,32 +293,20 @@ first off, which is what makes a second tap on 🔊 interrupt the first word.
   is merely slow; if the host refuses one *clip*, only that clip falls back.
   Neither is visible in Settings, because neither is a choice a learner makes.
 
-**Measured** on this machine (16 threads, the model on an SSD), from
-`tests/voice.rs` and `tests/playback.rs`:
-
-| | |
-|---|---|
-| download + verify + unpack | 60 s |
-| engine load (once per launch) | ~2.1 s |
-| Mandarin, 3.78 s of audio | 0.96–1.02 s (≈3.8× real time) |
-| English, 1.76 s of audio | 0.47–0.51 s (≈3.5× real time) |
-| mixed zh/en, 2.48 s of audio | ~3.0 s (first call, includes the load) |
-| `tts_play` of a 100 ms clip | 163 ms end to end, device already open |
-| `tts_stop` during a 3 s clip | the pending `tts_play` returns in ~0.3 ms |
+Synthesis runs at several times real time on an ordinary desktop CPU, and that
+is what every "is this fast enough" decision above rests on — the engine load,
+the missing clip cache, the download bar. `tests/voice.rs` and
+`tests/playback.rs` print the current numbers on the machine that runs them.
 
 Synthesis is **not** bit-reproducible: ONNX reduces in whatever order its
 threads finish, so the same phrase twice differs in the low bits and by a few
 samples of length. Harmless — clips key on text, speaker and speed, so a
 learner hears one rendering — but do not write a test that expects equal bytes.
 
-**The int8 question, answered.** `models.ts` records that every published int8
-Kokoro WASM build returns all-`NaN` samples (sherpa-onnx#2236), which is why
-the browser pays for fp32. Natively it does not reproduce:
-`kokoro-int8-multi-lang-v1_1` (147 MB) synthesized six clips across both
-languages with zero NaN samples and normal peaks. So that bug belongs to the
-WASM build, not to the quantized weights. fp32 still ships on both hosts — one
-model, one sound, and no reason to introduce a second answer to "what does this
-word sound like" for 218 MB.
+fp32 ships on both hosts. The int8 Kokoro build's all-`NaN` samples are a bug in
+the *WASM* build (`models.ts`, sherpa-onnx#2236) and do not reproduce natively,
+but one model means one sound on both hosts, and 218 MB is not reason enough for
+a second answer to "what does this word sound like".
 
 **How sherpa-onnx is linked.** `sherpa-rs-sys` with `download-binaries`: it
 vendors sherpa-onnx's headers for one exact tag (v1.12.9) and its build script
@@ -335,102 +334,44 @@ Dropping the FSTs instead would mean "2026" read as English digits inside a
 Chinese sentence on this host only, so the twenty lines the wrapper would have
 contributed live here instead, with the strings kept alive across the call.
 
-## What actually happens in WebKitGTK
+## What the webview cannot do
 
-Measured 2026-09-05 on NixOS, GNOME/Wayland, webkitgtk 2.52.6 (abi 4.1), Tauri
-2.11.5, from a page loaded on the real `tauri://localhost` origin.
+Four limits shape everything above. They are facts about WebKitGTK on a page
+loaded from the real `tauri://localhost` origin, not about Sapling; the runs
+behind them are in ffacf14, f78eff6 and 3f41c84.
 
-| feature | observed |
-|---|---|
-| `navigator.storage.getDirectory` (OPFS) | **`undefined`** |
-| `SpeechRecognition` / `webkitSpeechRecognition` | **`undefined`** |
-| `SharedArrayBuffer`, `crossOriginIsolated` | `undefined`, `false` |
-| `WebAssembly` + `instantiateStreaming` | present |
-| `Worker`, `AudioContext`, `AudioWorklet` | present |
-| `speechSynthesis` | present (object) |
-| `navigator.mediaDevices.getUserMedia` | present |
-| `localStorage`, `crypto.randomUUID`, `serviceWorker` | present |
-| `fetch https://openrouter.ai/api/v1/models` | `200`, response type `cors` |
-| `fetch` POST to OpenRouter with no key | `401`, response type `cors` |
-| `fetch https://huggingface.co/...` (TTS mirror host) | `200`, response type `cors` |
-| `https://www.youtube.com/iframe_api` as a `<script>` | loads, `window.YT` is an object |
-| `<iframe src="https://www.youtube-nocookie.com/embed/…">` | `onload` fires |
-
-Item by item, against the things the brief asked about:
-
-- **OPFS is absent, and that is the finding that justifies the whole exercise.**
-  The browser persistence path — sqlite-wasm on the OPFS SAH-pool VFS inside
-  `sqlite.worker.ts` — cannot run in this webview at all. The native core is not
-  a performance choice here; it is the only way the app has a database. The
-  Worker is never even loaded: on a real boot the webview fetched
-  `src/lib/db/tauri.ts` and never `sqlite.worker.ts`.
-
-- **Speech recognition is gone.** WebKitGTK exposes neither constructor, so
-  dictation has no input method. `content.md` already says ASR is an input
-  method and not a grader and that the fallback is typing, so the app degrades
-  the way it was designed to — but on this host the fallback is the only path.
-  `getUserMedia` *is* present, so a future recorder-plus-server transcription
-  route is not blocked by the webview.
-
-- **Cross-origin `fetch` from `tauri://localhost` works.** OpenRouter answered
-  `200`/`401` with `type: "cors"`, so the API key path is fine as-is with no
-  Rust-side HTTP proxy and no `tauri-plugin-http`. Same for the TTS model
-  mirror's host. This was the risk that looked biggest going in and it is a
-  non-issue.
-
-- **The YouTube player loads.** Both halves of `media.md`'s YouTube path — the
-  `iframe_api` script and the `youtube-nocookie` frame — load from the custom
-  protocol origin. Playback itself was not driven (no interaction possible in
-  this session), so "the API is reachable" is what was proven, not "a video
-  plays".
-
-- **The sherpa TTS wasm was never exercised, and now never will be.** Every
-  prerequisite was there — `WebAssembly` with streaming instantiation,
-  `Worker`, `AudioContext`, `AudioWorklet`, a working cross-origin `fetch` to
-  the mirror — except `SharedArrayBuffer`, and the vendored glue is
-  single-threaded, so it was *expected* to work under 439 MB of Emscripten file
-  package. It was never worth finding out: the same model runs natively at
-  several times real time with no file package at all, which is what the
-  [Speech](#speech) section describes. The web build's path is untouched.
+- **No OPFS and no `SpeechRecognition`**, the two absences the sections above
+  are built around: persistence is native because the sqlite-wasm Worker cannot
+  boot here, and dictation has no input method. `SharedArrayBuffer` is absent
+  too, which is half of why the browser's sherpa TTS wasm has no path here.
 
 - **Audio needs GStreamer, and without it WebKit does not degrade — it
-  crashes.** This is the one that cost real time. In a shell without the
-  GStreamer plugins the app starts and renders fine, logs `GStreamer element
-  appsink not found`, and then the *first* `new AudioContext()` kills the whole
-  WebKit web process: the page vanishes, with only `GStreamer-CRITICAL`
-  assertions on stderr and nothing in the app to catch. WebKitGTK routes Web
-  Audio through GStreamer, so at the time this was found it was every spoken
-  word in the app, not just `<video>`. `flake.nix`'s `desktop` shell therefore
-  carries `gstreamer` + `gst-plugins-{base,good,bad}` + `gst-libav` and exports
-  `GST_PLUGIN_SYSTEM_PATH_1_0`; with them, `AudioContext` constructs (its clock
-  advances), `<audio>` plays a generated WAV, and the criticals are gone. A
-  packaged build would have to ship or depend on these — speech no longer needs
-  them, but the reader's `<video>` and the YouTube frame still do.
+  crashes.** In a shell without the GStreamer plugins the app starts and renders
+  fine, logs `GStreamer element appsink not found`, and then the *first*
+  `new AudioContext()` kills the whole WebKit web process: the page vanishes,
+  with only `GStreamer-CRITICAL` assertions on stderr and nothing in the app to
+  catch. WebKitGTK routes Web Audio through GStreamer, not just `<video>`.
+  `flake.nix`'s `desktop` shell therefore carries `gstreamer` +
+  `gst-plugins-{base,good,bad}` + `gst-libav` and exports
+  `GST_PLUGIN_SYSTEM_PATH_1_0`; with them, `AudioContext` constructs, `<audio>`
+  plays a generated WAV, and the criticals are gone. A packaged build would have
+  to ship or depend on these — speech no longer needs them, but the reader's
+  `<video>` and the YouTube frame still do.
 
-- **With the plugins present, WebKitGTK's audio *output* is still not usable for
-  speech.** This is the sequel to the entry above and it is a different fact:
-  nothing crashes, nothing logs. `<audio>` over a blob plays the right sound but
-  a second late, every time, because a fresh GStreamer pipeline is built per
-  clip. Web Audio, which would build one pipeline and keep it, produces a bare
-  oscillator that is clean on some runs and noise on others, and plays silence
-  from an `AudioBufferSourceNode` — while `decodeAudioData` is provably correct
-  on the same page. Two commits went into that (e273058, reverted by f78eff6)
-  before playback moved to the host. Do not re-attempt Web Audio here.
+- **With the plugins present, the audio *output* is still not usable for
+  speech**, which is why playback is the host's ([Speech](#speech)). It is a
+  separate fact from the crash above: nothing crashes and nothing logs, the
+  element path is merely a second late and Web Audio plays noise or silence.
+  **Do not re-attempt Web Audio here**, and do not "simplify" the desktop back
+  to `<audio>`: it is the fallback on purpose.
 
-- **YouTube pauses a second or two late, and that is the engine.** Pressing
-  pause — the app's button or a click on the picture — stops the video only
-  after a one-to-two-second lag. The click case never touches Sapling's code
-  (it lands inside YouTube's own iframe), and the same lag reproduces in GNOME
-  Web on the embed page opened directly, so it is WebKitGTK's GStreamer Media
-  Source Extensions pipeline and not the `postMessage` bridge (verified
-  2026-09-06). Firefox on the same page pauses instantly. There is no knob for
-  it in the app; do not re-investigate the bridge for this symptom.
+- **Cross-origin `fetch` works.** OpenRouter and the TTS model mirror both
+  answer normally with `type: "cors"`, so the API key path needs no Rust-side
+  HTTP proxy and no `tauri-plugin-http`.
 
-- **Console noise seen at launch**, none of it fatal: `VM 0x… received
-  NeedDebuggerBreak trap` from JavaScriptCore's remote inspector on the first
-  dev run. No compositing or dmabuf errors appeared, so
-  `WEBKIT_DISABLE_DMABUF_RENDERER=1` was never needed here — reach for it first
-  if a window comes up blank on another machine.
+If a window comes up blank on another machine, reach for
+`WEBKIT_DISABLE_DMABUF_RENDERER=1` first; no compositing or dmabuf errors have
+appeared here, so it has never been needed.
 
 ## Nix packages the shell needs
 

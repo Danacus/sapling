@@ -90,8 +90,9 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   and no `SpeechRecognition`. The first is why the desktop build must run the
   native core — the sqlite-wasm/OPFS Worker cannot boot there at all. Both were
   measured, along with working cross-origin `fetch` to OpenRouter and a working
-  YouTube iframe, from the real `tauri://localhost` origin; the table is in
-  `docs/desktop.md`.
+  YouTube iframe, from the real `tauri://localhost` origin; the standing
+  findings are under "What the webview cannot do" in `docs/desktop.md`, and
+  the measurements are in commit ffacf14.
 - **`Core` is `!Send`, so `Mutex<Core>` is not a way to share it.** Its `Sql`,
   clock, ids and calendar are plain boxed trait objects and have to stay that
   way, because the wasm host's `JsSql` holds a `js_sys::Function`. Adding

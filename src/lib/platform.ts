@@ -1,11 +1,12 @@
 /**
  * Which host the app is running in.
  *
- * Exactly one question — "is this the Tauri desktop shell?" — asked in one
- * place, because the answer decides two unrelated things (which `Backend`
- * transport `db/backend.ts` opens, and which Kokoro `tts/tts.ts` speaks
- * through) and a second copy of the test would eventually disagree with the
- * first.
+ * Exactly one question — "is this the Tauri desktop shell?" — with one
+ * implementation, because the answer decides several unrelated things (which
+ * `Backend` transport `db/backend.ts` opens, which voice `tts/tts.ts` speaks
+ * through, which host `media/youtube-host.ts` frames the player in, and
+ * whether Settings shows the native-voice row) and a second copy of the test
+ * would eventually disagree with the first. Each area asks it at its own seam.
  *
  * The check is deliberately a property on `window` rather than a build-time
  * flag: there is one bundle, and the *same* build is served by `vite dev`, by
