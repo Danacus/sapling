@@ -39,7 +39,7 @@ import { challengeOf } from '$lib/db';
 import { getBatch, isMockMode, makeMatchPairsChallenge } from '$lib/llm';
 import type { BatchArgs, OnProgress, TokenUsage } from '$lib/llm';
 import { Grade, dueAt, gradeFromResult, isDue } from '$lib/srs';
-import { RESERVE_GAP, isPlayable, isRested, knownItemIds } from './pool';
+import { RESERVE_GAP, SESSION_LENGTH, isPlayable, isRested, knownItemIds } from './pool';
 import { planTopUp, topUpCoverage } from './topup';
 import type { PlanTopUpOptions, TopUpCoverage } from './topup';
 import { difficultyOf } from '$lib/challenges/difficulty';
@@ -62,18 +62,13 @@ import {
 export const BATCH_TARGET = 14;
 
 /**
- * How long a challenge rests after being served before it may be planned again.
- * Lives in `./pool` with the eligibility predicates, since the top-up planner
- * reads it too; re-exported here where every caller has always found it.
+ * How long a challenge rests after being served before it may be planned again,
+ * and the hard ceiling on LLM challenges in one session. Both live in `./pool`
+ * with the eligibility predicates, since the top-up planner reads them too and
+ * this module imports that one; re-exported here where every caller has always
+ * found them.
  */
-export { RESERVE_GAP };
-
-/**
- * Hard ceiling on LLM challenges in one session. {@link BATCH_TARGET} is what
- * actually sizes a session; this only exists so a pool that has grown large
- * cannot turn one sitting into a marathon.
- */
-export const SESSION_LENGTH = 20;
+export { RESERVE_GAP, SESSION_LENGTH };
 
 /** A free, locally built match-pairs round is slotted in after every N challenges. */
 export const MATCH_PAIRS_EVERY = 4;
@@ -714,14 +709,14 @@ export interface PlanRefillOptions extends PlanTopUpOptions {
 /**
  * Turns the pool and the learner's collection into one batch request.
  *
- * The brief is {@link planTopUp}'s: a want for every kind an upcoming word is
- * short of, and nothing for a word already covered — unless `extra` is set, in
- * which case every upcoming word gets its full share regardless. A batch is
- * written *about* vocabulary the learner already has and introduces none of its
- * own — new words arrive through the assistant and conversation mode — so a
- * learner with no words has no wants, and one whose upcoming words are all
- * covered has none either without `extra`. Both come back as an empty `wants`,
- * and {@link generateChallenges} says which before spending anything.
+ * The brief is {@link planTopUp}'s: a want for every kind a word is short of,
+ * walked most urgent first over the whole collection, and nothing at all for a
+ * word already covered. A batch is written *about* vocabulary the learner
+ * already has and introduces none of its own — new words arrive through the
+ * assistant and conversation mode — so a learner with no words has no wants,
+ * and one whose every word is covered has none either. Both come back as an
+ * empty `wants`, and {@link generateChallenges} says which before spending
+ * anything.
  *
  * Pure: no clock, no database, no network. `now` is passed in so the SRS
  * decisions are reproducible in tests.
@@ -734,9 +729,7 @@ export function planRefill(
 	opts: PlanRefillOptions = {}
 ): BatchArgs {
 	const wants = planTopUp(pool, items, now, {
-		...(opts.maxItems === undefined ? {} : { maxItems: opts.maxItems }),
-		...(opts.rng === undefined ? {} : { rng: opts.rng }),
-		...(opts.extra === undefined ? {} : { extra: opts.extra })
+		...(opts.rng === undefined ? {} : { rng: opts.rng })
 	});
 	const topic = opts.topic?.trim();
 
@@ -802,12 +795,6 @@ export interface GenerateOptions {
 	/** Forwarded to {@link planRefill}; see {@link PlanRefillOptions.topic}. */
 	topic?: string;
 	/**
-	 * Forwarded to {@link planTopUp}: write for every upcoming word, covered or
-	 * not. The start screen sets it when coverage is complete, so the button is
-	 * always live — "more variety" is a legitimate thing to spend on.
-	 */
-	extra?: boolean;
-	/**
 	 * Called as each phase of generation starts, so the learn screen can show
 	 * what is being waited on. Steps are reported, not measured: the caller times
 	 * each one from its event to the next.
@@ -821,12 +808,13 @@ export interface GenerateOptions {
  * There is no threshold and no "if needed" about *when*: generating is a
  * deliberate button press, it is the only thing in the app that spends tokens
  * on content, and the pool it adds to is never drained by playing. What gets
- * written, though, is exactly what the pool is missing ({@link planTopUp}) —
- * so a second press straight after the first has nothing to ask for, and says
- * so instead of paying for challenges the pool already holds. The caller runs
- * this in the background — a session can be played from existing material while
- * it is in flight, and the new challenges simply show up in the pool for next
- * time.
+ * written, though, is exactly what the pool is missing ({@link planTopUp}),
+ * most urgent word first — so a second press straight after the first buys the
+ * next words down the list rather than a third copy of what the pool already
+ * holds, and once the whole collection is covered it has nothing to ask for and
+ * says so. The caller runs this in the background — a session can be played
+ * from existing material while it is in flight, and the new challenges simply
+ * show up in the pool for next time.
  *
  * **It writes challenges and nothing else.** A top-up is drilling practice for
  * vocabulary the learner already has, so nothing here touches the item table:
@@ -854,18 +842,16 @@ export async function generateChallenges(
 	const [pool, items] = await Promise.all([getPool(), getAllItems()]);
 
 	const args = planRefill(pool, items, profile, now, {
-		...(opts.topic === undefined ? {} : { topic: opts.topic }),
-		...(opts.extra === undefined ? {} : { extra: opts.extra })
+		...(opts.topic === undefined ? {} : { topic: opts.topic })
 	});
 
 	// Said here, before any request step is announced, so an empty brief is
-	// never reported as a model that returned nothing. In extra mode coverage
-	// is no reason to refuse, so an empty brief there can only mean no words.
+	// never reported as a model that returned nothing.
 	if (args.wants.length === 0) {
 		throw new Error(
-			items.length === 0 || opts.extra
+			items.length === 0
 				? 'There are no words to write challenges about yet.'
-				: 'Every word coming up already has fresh challenges waiting. Play a session, then generate again.'
+				: 'Every word you have already has fresh challenges waiting. Play a session, then generate again.'
 		);
 	}
 
@@ -900,26 +886,19 @@ export interface SessionPlan {
 	/** Words whose card is due at `now`. */
 	dueCount: number;
 	/**
-	 * How well the pool covers the words coming up, and what a top-up would
-	 * write — the same `planTopUp` walk generation makes, counted rather than
-	 * planned (`topUpCoverage`). This is the start screen's freshness figure and
-	 * the Generate button's label in one: "N of M upcoming words have fresh
+	 * How well the pool covers the words this session will serve, and what a
+	 * top-up would write — the same `planTopUp` walk generation makes, counted
+	 * rather than planned (`topUpCoverage`). This is the start screen's freshness
+	 * figure and the Generate button's label in one: "N of M due words have fresh
 	 * challenges" is exactly the question the learner is asking, and `wants`
-	 * being zero is exactly when the button switches to *extra* mode. A pool-wide
-	 * count of rested rows used to stand here, and it could say "running low" on
-	 * a day every upcoming word was already covered.
+	 * being zero is exactly when the button has nothing left to write and says
+	 * so. A pool-wide count of rested rows used to stand here, and it could say
+	 * "running low" on a day every due word was already covered.
 	 */
-	topUp: StartCoverage;
+	topUp: TopUpCoverage;
 }
 
-/**
- * {@link TopUpCoverage} plus what an *extra* top-up would write — the label the
- * Generate button wears once every upcoming word is covered, so it is never
- * disabled while there are words to write about.
- */
-export interface StartCoverage extends TopUpCoverage {
-	extraWants: number;
-}
+export type { TopUpCoverage };
 
 export interface StartSessionOptions extends PlanSessionOptions {
 	/** Epoch ms; defaults to `Date.now()`. */
@@ -949,10 +928,7 @@ export async function startSession(opts: StartSessionOptions = {}): Promise<Sess
 		challenges,
 		items,
 		dueCount,
-		topUp: {
-			...topUpCoverage(pool, items, now),
-			extraWants: topUpCoverage(pool, items, now, { extra: true }).wants
-		}
+		topUp: topUpCoverage(pool, items, now)
 	};
 }
 

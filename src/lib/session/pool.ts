@@ -1,6 +1,7 @@
 /**
- * What makes a pooled challenge eligible — shared by the two halves of the
- * engine that read the pool for different reasons.
+ * What makes a pooled challenge eligible, and how much of it one sitting is —
+ * shared by the two halves of the engine that read the pool for different
+ * reasons.
  *
  * `planSession` (`./engine`) asks these questions to decide what to *play*;
  * `planTopUp` (`./topup`) asks the very same ones to decide what to *write*: a
@@ -8,6 +9,11 @@
  * it can bear. Keeping the predicates in one place is what keeps those two
  * answers the same — a challenge the session would decline to serve is not
  * coverage, and one it would happily serve does not need writing again.
+ *
+ * The numbers live here for the same reason and one more: `./engine` imports
+ * `./topup`, so anything both of them read has to sit below the pair of them
+ * or the import would close a cycle. Both are re-exported from `./engine`,
+ * where every caller has always found them.
  */
 
 import type { ChallengeRow } from '$lib/db';
@@ -26,6 +32,16 @@ import type { KnowledgeItem } from '$lib/types';
  * review has nothing else to offer.
  */
 export const RESERVE_GAP = 3 * 24 * 60 * 60 * 1000;
+
+/**
+ * Hard ceiling on LLM challenges in one session, and so also on how far ahead
+ * the start screen's coverage figure looks when the schedule owes nothing:
+ * `topUpCoverage` (`./topup`) reports on the words a session would actually
+ * serve, and with nothing due that is the next `SESSION_LENGTH` soonest-due
+ * words. `BATCH_TARGET` is what actually sizes a session; this only exists so
+ * a pool that has grown large cannot turn one sitting into a marathon.
+ */
+export const SESSION_LENGTH = 20;
 
 /**
  * True while a pooled challenge is worth playing at all.

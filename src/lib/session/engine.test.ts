@@ -1112,13 +1112,10 @@ describe('planRefill', () => {
 		});
 	});
 
-	it('with extra, writes for a word the pool already covers', () => {
+	it('has nothing to want for a word the pool already covers', () => {
 		const word = item('a', -DAY);
 		const pool = [recognition('r1', ['a']), recognition('r2', ['a'], { direction: 'toTarget' })];
 		expect(planRefill(pool, [word], profile(), NOW).wants).toEqual([]);
-		const extra = planRefill(pool, [word], profile(), NOW, { extra: true });
-		expect(extra.wants.length).toBeGreaterThan(0);
-		expect(wordsOf(extra)).toEqual(['a']);
 	});
 
 	it('sends the wants and the vocabulary they are written against, and nothing else', () => {
@@ -1221,12 +1218,12 @@ describe('planRefill', () => {
 		expect(wordsOf(plan)).toEqual(['a']);
 	});
 
-	it('honours maxItems', () => {
-		const items = [item('a', -3 * DAY), item('b', -2 * DAY), item('c', -DAY)];
-		const plan = planRefill([], items, profile(), NOW, { maxItems: 2 });
+	it('walks every word the learner has, most overdue first', () => {
+		const items = [item('c', -DAY), item('a', -3 * DAY), item('b', -2 * DAY)];
+		const plan = planRefill([], items, profile(), NOW);
 
-		expect(wordsOf(plan)).toEqual(['a', 'b']);
-		expect(plan.wants).toHaveLength(4);
+		expect(wordsOf(plan)).toEqual(['a', 'b', 'c']);
+		expect(plan.wants).toHaveLength(6);
 	});
 
 	it('includes a trimmed topic in the batch args when one is given', () => {

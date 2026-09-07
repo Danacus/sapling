@@ -6,14 +6,24 @@
  * that matters. What a word needs is a **fresh challenge of each kind it can
  * bear**, and only where it has none.
  *
- * The brief comes from here, and it is a list of *wants*: one word, one
- * kind, one rung each. A want exists where one of the words the learner is
- * about to meet ({@link selectSessionItems}: due first, then soonest due) has
- * no rested, playable challenge of a kind that word can bear
- * ({@link WANT_PER_WORD} of them — a recognition kind and a production kind
- * once the word can bear production, two recognition kinds before that). The
- * LLM layer (`$lib/llm`) plans nothing: it fills the list, one request per
- * kind.
+ * The brief comes from here, and it is a list of *wants*: one word, one kind,
+ * one rung each. The walk is the learner's **whole vocabulary**, in urgency
+ * order — the words the schedule owes, most overdue first, then the not-yet-due
+ * ones, soonest first — and each word in turn contributes a want for every
+ * kind-group it is short in ({@link WANT_PER_WORD} of them: a recognition kind
+ * and a production kind once the word can bear production, two recognition
+ * kinds before that). A word that is already covered contributes nothing and is
+ * simply stepped over. The LLM layer (`$lib/llm`) plans nothing: it fills the
+ * list, one request per kind.
+ *
+ * **Nothing windows the walk.** It used to stop at the twelve most urgent
+ * words, which meant a collection with thirty due words got its third and
+ * fourth challenge about the same twelve while eighteen due words had none —
+ * and a second "write more anyway" mode existed only to keep the button doing
+ * *something* once that small window was full. Walking everything is the one
+ * mechanism both of those were papering over: one press writes for the words
+ * that can use it most, the next press reaches the words below them, and the
+ * button runs dry exactly when the whole collection is covered.
  *
  * There is deliberately **no accuracy dial and no recent-mistake list**. FSRS
  * already answers a wrong answer by lowering the word's strength, which lowers
@@ -28,15 +38,15 @@
 import type { ChallengeRow } from '$lib/db';
 import { PLANNABLE_KINDS, bareKind, kindKey, kindOf } from '$lib/llm';
 import type { PlannableKind, Want, WantItem } from '$lib/llm';
-import { selectSessionItems } from '$lib/srs';
+import { dueAt, isDue } from '$lib/srs';
 import type { KnowledgeItem } from '$lib/types';
-import { isPlayable, isRested, knownItemIds } from './pool';
+import { SESSION_LENGTH, isPlayable, isRested, knownItemIds } from './pool';
 import { demandForLevel, difficultyLevelOf } from './progression';
 
 /**
- * Fresh challenges each upcoming word should have waiting: a recognition kind
- * and a production kind once the word can bear production, two recognition
- * kinds before that.
+ * Fresh challenges each word should have waiting: a recognition kind and a
+ * production kind once the word can bear production, two recognition kinds
+ * before that.
  *
  * Two, not more, because a session serves each word once or twice and the
  * pool is recycled after {@link RESERVE_GAP}: a third challenge per word would
@@ -47,26 +57,15 @@ export const WANT_PER_WORD = 2;
 
 /**
  * Ceiling on wants in one top-up, so a long-neglected collection does not turn
- * one button press into a dozen requests. Twelve upcoming words at two each is
- * the everyday case, and the words beyond the cap are the least urgent ones —
- * they come first next time.
+ * one button press into a dozen requests. Twelve words at two each is a
+ * generous lesson, and the words beyond the cap are the least urgent ones —
+ * they are still uncovered afterwards, so the next press starts with them.
  */
 export const MAX_TOPUP_WANTS = 24;
 
 export interface PlanTopUpOptions {
-	/** Cap on upcoming words considered. Defaults to the SRS default (12). */
-	maxItems?: number;
 	/** Injectable `[0,1)` source for tie-breaking between kinds; defaults to `Math.random`. */
 	rng?: () => number;
-	/**
-	 * Write {@link WANT_PER_WORD} challenges for every upcoming word whether or
-	 * not it is covered — the learner asked for *more*, not for what is missing.
-	 * Kind choice then prefers a kind the word has never had, then the kind it
-	 * has fewest rows of, so extra challenges add variety rather than a third
-	 * copy of the one format the pool already leans on. Everything else — the
-	 * bearable tiers, one-of-each-group, no kind twice, the cap — is unchanged.
-	 */
-	extra?: boolean;
 }
 
 /** What one word already has in the pool, by kind. */
@@ -75,8 +74,6 @@ interface Coverage {
 	rested: Set<string>;
 	/** Kinds the word has *ever* had a playable challenge of, rested or not. */
 	ever: Set<string>;
-	/** Playable rows per kind, rested or not — what `extra` spreads new ones across. */
-	rows: Map<string, number>;
 }
 
 /**
@@ -99,25 +96,24 @@ function coverageOf(pool: readonly ChallengeRow[], items: readonly KnowledgeItem
 		for (const id of row.itemIds) {
 			let entry = coverage.get(id);
 			if (!entry) {
-				entry = { rested: new Set(), ever: new Set(), rows: new Map() };
+				entry = { rested: new Set(), ever: new Set() };
 				coverage.set(id, entry);
 			}
 			entry.ever.add(key);
-			entry.rows.set(key, (entry.rows.get(key) ?? 0) + 1);
 			if (rested) entry.rested.add(key);
 		}
 	}
 	return coverage;
 }
 
-const NONE: Coverage = { rested: new Set(), ever: new Set(), rows: new Map() };
+const NONE: Coverage = { rested: new Set(), ever: new Set() };
 
 /**
- * The wants the pool is missing for the words the learner is about to meet.
+ * The wants the pool is missing, most urgent word first.
  *
- * For each upcoming word, in due order: its rung is `difficultyLevelOf`, the
- * kinds it may be asked are the ones whose stored demand tier that rung can
- * bear (`demandForLevel` — the same floors `planSession` gates serving on, so
+ * For each word, in urgency order: its rung is `difficultyLevelOf`, the kinds
+ * it may be asked are the ones whose stored demand tier that rung can bear
+ * (`demandForLevel` — the same floors `planSession` gates serving on, so
  * nothing is written that would then sit unserved for weeks), and a want is
  * added for each kind-group the word is short in, up to {@link WANT_PER_WORD}
  * across both. A kind the word already has a rested challenge of is never
@@ -126,8 +122,8 @@ const NONE: Coverage = { rested: new Set(), ever: new Set(), rows: new Map() };
  * same kind twice in one top-up.
  *
  * The list is capped at {@link MAX_TOPUP_WANTS}, cutting the least urgent words
- * first — they are at the end, because the words come out of
- * `selectSessionItems` most overdue first.
+ * first — they are at the end of the walk, and being still uncovered they lead
+ * the next one.
  */
 export function planTopUp(
 	pool: readonly ChallengeRow[],
@@ -138,26 +134,42 @@ export function planTopUp(
 	return collectWants(pool, items, now, opts).wants.slice(0, MAX_TOPUP_WANTS);
 }
 
-/** How well the pool covers the words coming up — the start screen's figure. */
+/** How well the pool covers the words a session is about to serve. */
 export interface TopUpCoverage {
-	/** Words the next top-up would consider: the same list a session draws on. */
+	/**
+	 * The words the figure is about: every word the schedule owes, or — when it
+	 * owes none — the next {@link SESSION_LENGTH} soonest-due ones, which is
+	 * what a session would then play instead.
+	 */
 	upcoming: number;
 	/** Of those, the words with nothing left to write — every kind they need is rested and waiting. */
 	covered: number;
-	/** What a top-up would write right now, after the cap. Zero means the button has nothing to do. */
+	/**
+	 * What a top-up would write right now, after the cap. Counted over the
+	 * *whole* walk, so it can be positive while every due word is covered: the
+	 * button is then writing ahead, into the words below them. Zero means the
+	 * whole collection is covered and the button has nothing to do.
+	 */
 	wants: number;
+	/** Whether {@link upcoming} is the due words (true) or the next ones (false). */
+	due: boolean;
 }
 
 /**
- * Counts, not wants: how many upcoming words are fully covered, and how many
- * challenges a top-up would write. Deterministic whatever `rng` says — the
- * roll only picks *which* kind fills a gap, never whether there is one — so
- * the start screen can show the same number the Generate button acts on.
+ * Counts, not wants: how many of the words a session is about to serve are
+ * fully covered, and how many challenges a top-up would write. Deterministic
+ * whatever `rng` says — the roll only picks *which* kind fills a gap, never
+ * whether there is one — so the start screen can show the same number the
+ * Generate button acts on.
+ *
+ * The two numbers deliberately answer different questions. The **figure** is
+ * about the session in front of the learner, so it is scoped to the words that
+ * session will serve. The **count** is about the button, so it spans the whole
+ * walk: pressing Generate with every due word covered is a perfectly good
+ * thing to do, it just buys the words further down.
  *
  * `covered` is counted before the cap: a word past {@link MAX_TOPUP_WANTS}
- * still has gaps, it just does not get them filled this time. With `extra`,
- * `wants` is what an extra top-up would write while `covered` stays the plain
- * coverage — the figure is about the pool, the count is about the button.
+ * still has gaps, it just does not get them filled this time.
  */
 export function topUpCoverage(
 	pool: readonly ChallengeRow[],
@@ -165,42 +177,51 @@ export function topUpCoverage(
 	now: number,
 	opts: PlanTopUpOptions = {}
 ): TopUpCoverage {
-	const { extra, ...plain } = opts;
-	const { upcoming, wants } = collectWants(pool, items, now, plain);
+	const { owed, ahead, wants } = collectWants(pool, items, now, opts);
 	const short = new Set(wants.map((want) => want.item.id));
-	const written = extra ? collectWants(pool, items, now, opts).wants : wants;
+	const due = owed.length > 0;
+	const upcoming = due ? owed : ahead.slice(0, SESSION_LENGTH);
+
 	return {
 		upcoming: upcoming.length,
-		covered: upcoming.length - short.size,
-		wants: Math.min(written.length, MAX_TOPUP_WANTS)
+		covered: upcoming.filter((word) => !short.has(word.id)).length,
+		wants: Math.min(wants.length, MAX_TOPUP_WANTS),
+		due
 	};
 }
 
 /**
- * The uncapped plan: every upcoming word that can be written about, and every
- * want it has. {@link planTopUp} cuts the list; {@link topUpCoverage} counts
- * it — the one walk, so the two can never disagree about a word.
+ * The uncapped plan: every word that can be written about, split at the due
+ * line and in urgency order, and every want any of them has.
+ * {@link planTopUp} cuts the list; {@link topUpCoverage} counts it — the one
+ * walk, so the two can never disagree about a word.
  */
 function collectWants(
 	pool: readonly ChallengeRow[],
 	items: KnowledgeItem[],
 	now: number,
 	opts: PlanTopUpOptions
-): { upcoming: KnowledgeItem[]; wants: Want[] } {
+): { owed: KnowledgeItem[]; ahead: KnowledgeItem[]; wants: Want[] } {
 	const rng = opts.rng ?? Math.random;
-	const extra = opts.extra === true;
-	const { reviewItems } = selectSessionItems(items, {
-		now,
-		...(opts.maxItems === undefined ? {} : { maxItems: opts.maxItems })
-	});
+
 	// A word with no term or no meaning has nothing to write a challenge
 	// about — and nothing a challenge could be graded against — so it is
 	// neither upcoming nor covered: it is not in the picture at all.
-	const upcoming = reviewItems.filter((word) => word.term?.trim() && word.meaning?.trim());
+	const writable = items.filter((word) => word.term?.trim() && word.meaning?.trim());
+	// Soonest due first, id breaking the tie so the walk does not depend on the
+	// order the store handed the items back. Everything the schedule owes sorts
+	// ahead of everything it does not, most overdue at the front — the same
+	// order `planSession` walks on the play side.
+	const sorted = [...writable].sort(
+		(a, b) => dueAt(a, now) - dueAt(b, now) || (a.id < b.id ? -1 : 1)
+	);
+	const owed = sorted.filter((word) => isDue(word, now));
+	const ahead = sorted.filter((word) => !isDue(word, now));
+
 	const coverage = coverageOf(pool, items, now);
 	const wants: Want[] = [];
 
-	for (const word of upcoming) {
+	for (const word of [...owed, ...ahead]) {
 		const term = word.term.trim();
 		const meaning = word.meaning.trim();
 
@@ -227,24 +248,14 @@ function collectWants(
 				: [[recognition, WANT_PER_WORD]];
 
 		for (const [group, need] of groups) {
-			// Extra mode ignores coverage: the learner asked for more, and a rested
-			// row is no reason to refuse a second angle on the same word.
-			const covered = extra ? 0 : group.filter((kind) => have.rested.has(kindKey(kind))).length;
+			const covered = group.filter((kind) => have.rested.has(kindKey(kind))).length;
 			for (let missing = need - covered; missing > 0; missing--) {
 				const candidates = group.filter(
-					(kind) => (extra || !have.rested.has(kindKey(kind))) && !chosen.has(kindKey(kind))
+					(kind) => !have.rested.has(kindKey(kind)) && !chosen.has(kindKey(kind))
 				);
 				if (candidates.length === 0) break;
 				const fresh = candidates.filter((kind) => !have.ever.has(kindKey(kind)));
-				let from = fresh.length > 0 ? fresh : candidates;
-				// Nothing fresh left, and extra mode asked anyway: spread the new row
-				// onto the kind this word has fewest of, so variety keeps growing
-				// instead of the pool piling up one format.
-				if (extra && fresh.length === 0) {
-					const rowsOf = (kind: PlannableKind) => have.rows.get(kindKey(kind)) ?? 0;
-					const fewest = Math.min(...from.map(rowsOf));
-					from = from.filter((kind) => rowsOf(kind) === fewest);
-				}
+				const from = fresh.length > 0 ? fresh : candidates;
 				const kind = from[Math.min(from.length - 1, Math.floor(rng() * from.length))];
 				chosen.add(kindKey(kind));
 				wants.push({ item, kind: bareKind(kind), difficulty: level });
@@ -252,5 +263,5 @@ function collectWants(
 		}
 	}
 
-	return { upcoming, wants };
+	return { owed, ahead, wants };
 }

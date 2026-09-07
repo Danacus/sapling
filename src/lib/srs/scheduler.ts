@@ -142,22 +142,27 @@ export function retrievabilityOf(item: KnowledgeItem): number {
 }
 
 /**
- * Picks the vocabulary a generated batch is written about: what the schedule
- * owes now, topped up with what it will owe soonest.
+ * A short list of the words most worth putting in front of the learner: what
+ * the schedule owes now, topped up with what it will owe soonest.
  *
- * Generation never introduces vocabulary — new words reach the learner through
- * the assistant and conversation mode, never through a lesson — so this list is
- * the *only* material a batch has to build from, and stopping at the due items
- * would mean a learner who is caught up asks for a lesson and hands the model
- * nothing to write about. Hence the two tiers: due items first, most overdue
- * first, capped at `maxItems` (default 12); then, while there is room left, the
- * soonest-due items that are not due yet.
+ * The reading composer is what wants this — a generated text is only a genuine
+ * review if the words it leans on are the ones the schedule owes, and the
+ * prompt can only carry a handful of them, which is what `maxItems` is for.
+ * Stopping at the due items would mean a learner who is caught up hands the
+ * model nothing to build around, so there are two tiers: due items first, most
+ * overdue first, capped at `maxItems` (default 12); then, while there is room
+ * left, the soonest-due items that are not due yet.
  *
  * That is the same degradation `planSession` performs on the play side — a
  * session runs out of due work and continues into review-ahead rather than into
- * nothing — applied one step earlier, to what gets *written* rather than to
- * what gets served. Early review is native to FSRS: a review is graded whenever
- * it happens, it simply banks a smaller stability gain.
+ * nothing. Early review is native to FSRS: a review is graded whenever it
+ * happens, it simply banks a smaller stability gain.
+ *
+ * **The challenge top-up does not use this**, and used to: a window this size
+ * over a collection of thirty due words meant every press wrote another row
+ * about the same twelve. `planTopUp` (`$lib/session/topup`) walks the whole
+ * collection in this same order instead, and skips the words it has already
+ * covered.
  *
  * Pure selection over `srs.due` and `now`: no model, no weights, no clock of
  * its own.

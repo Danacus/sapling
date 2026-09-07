@@ -1,12 +1,16 @@
 <!--
   The session screen — the part of the app people actually spend time in.
 
-  Shape of a visit: one start screen shows what the pool holds ("N challenges
-  ready · M words due"), and offers two independent actions. **Start session**
-  plays a plan the engine assembled from challenges that already exist — no
-  network, no waiting, ever. **Generate new lesson** spends one batched LLM
-  call in the *background*, adding to the pool; the learner can start playing
-  while it runs, and whatever it produces is simply there next time.
+  Shape of a visit: one start screen shows how much of the session ahead
+  already has fresh material ("N/M due words with fresh challenges · K words
+  due"), and offers two independent actions. **Start session** plays a plan the
+  engine assembled from challenges that already exist — no network, no waiting,
+  ever. **Generate new lesson** spends one batched LLM call in the
+  *background*, adding to the pool; the learner can start playing while it
+  runs, and whatever it produces is simply there next time. That button writes
+  for the words that can use it most, most urgent first, and each press reaches
+  further down the collection — so it is disabled only when every word the
+  learner has is already covered.
 
   Then: play the planned challenges, slipping a free locally-built match-pairs
   round in after every 4th → summary.
@@ -142,20 +146,22 @@
 
 	const dueCount = $derived(plan?.dueCount ?? 0);
 	/**
-	 * Coverage of the words coming up, straight from the top-up planner: how
-	 * many have every challenge they need resting in the pool, and how many
-	 * challenges the Generate button would write. One source for the figure, the
-	 * nudge and the button label, so none of them can contradict the task.
+	 * Coverage of the words this session will serve, straight from the top-up
+	 * planner: how many have every challenge they need resting in the pool, and
+	 * how many challenges the Generate button would write — that last one
+	 * counted over the whole collection, so the button can still write ahead on
+	 * a day every due word is covered. One source for the figure, the nudge and
+	 * the button label, so none of them can contradict the task.
 	 */
 	const upcoming = $derived(plan?.topUp.upcoming ?? 0);
 	const covered = $derived(plan?.topUp.covered ?? 0);
 	const wants = $derived(plan?.topUp.wants ?? 0);
 	/**
-	 * What an *extra* top-up would write: the button's count once every
-	 * upcoming word is covered, so it always has something to offer while there
-	 * are words at all.
+	 * Whether the figure is about the words the schedule owes or, when it owes
+	 * none, the next ones a session would reach for instead. It only changes the
+	 * word on the label; the number means the same thing either way.
 	 */
-	const extraWants = $derived(plan?.topUp.extraWants ?? 0);
+	const dueFigure = $derived(plan?.topUp.due ?? false);
 	const uncovered = $derived(upcoming - covered);
 	const canStart = $derived((plan?.challenges.length ?? 0) > 0);
 	/**
@@ -172,8 +178,8 @@
 	const aheadOfSchedule = $derived(canStart && dueCount === 0);
 	/**
 	 * Worth nudging towards a fresh lesson: nothing to play, or at most half of
-	 * the upcoming words covered with something to write for them — but only
-	 * once there is vocabulary to write a lesson about. With an empty
+	 * the words this session will serve covered with something to write for
+	 * them — but only once there is vocabulary to write a lesson about. With an empty
 	 * collection, generating is not the lever, so the drawer is left untinted and
 	 * the message below sends the learner somewhere that can actually help. The
 	 * nudge and the button read the same `wants`, so it never points at a button
@@ -233,7 +239,7 @@
 		// wins over review-ahead: it is the one that has a next move attached.
 		if (nudgeGenerate) {
 			return say(
-				`${uncovered} of your next ${upcoming} word${upcoming === 1 ? '' : 's'} ${uncovered === 1 ? 'has' : 'have'} no fresh challenge yet — a new lesson writes ${wants}.`
+				`${uncovered} of your ${upcoming} ${dueFigure ? 'due' : 'next'} word${upcoming === 1 ? '' : 's'} ${uncovered === 1 ? 'has' : 'have'} no fresh challenge yet — a new lesson writes ${wants}.`
 			);
 		}
 		if (aheadOfSchedule) {
@@ -406,17 +412,16 @@
 	 * the runner; the effect above re-plans when it lands.
 	 */
 	function generate(): void {
-		// No words is the button's only disabled state; the Enter key in the
-		// topic field lands here too, and a task that would only refuse is not
-		// worth a row in the tray. With every upcoming word covered the press
-		// means "more", and the task is told so.
-		if (generating || !profile || !hasWords) return;
+		// The same two conditions the button is disabled on — no words to write
+		// about, or nothing left to write — because the Enter key in the topic
+		// field lands here too, and a task that would only refuse is not worth a
+		// row in the tray.
+		if (generating || !profile || !hasWords || wants === 0) return;
 		const topic = topicInput.trim();
 		if (topic) recentTopics = addRecentTopic(topic);
 		startTask('top-up', {
 			profile,
-			...(topic ? { topic } : {}),
-			...(wants === 0 ? { extra: true } : {})
+			...(topic ? { topic } : {})
 		});
 	}
 
@@ -909,16 +914,18 @@
 				{:else}
 					<div class="ledger ll-rise" style="animation-delay: 70ms">
 						<!--
-						  Coverage, not a pool-wide count: the number that decides whether
-						  the Generate button below has anything to do. Amber while some
-						  upcoming word still has nothing fresh waiting.
+						  Coverage, not a pool-wide count: how much of the session in front
+						  of the learner already has fresh material. The due words when the
+						  schedule owes any, the next ones when it does not — the same words
+						  a session would serve. Amber while one of them still has nothing
+						  fresh waiting.
 						-->
 						<div class="figure">
 							<span class="fig-num" class:pending={covered < upcoming}>
 								{covered}<span class="fig-of">/{upcoming}</span>
 							</span>
 							<span class="fig-label">
-								Upcoming word{upcoming === 1 ? '' : 's'} with fresh challenges
+								{dueFigure ? 'Due' : 'Next'} word{upcoming === 1 ? '' : 's'} with fresh challenges
 							</span>
 						</div>
 						<div class="figure">
@@ -1035,7 +1042,7 @@
 							<button
 								type="button"
 								class="btn btn-block generate-btn"
-								disabled={generating || !hasWords}
+								disabled={generating || !hasWords || wants === 0}
 								onclick={() => {
 									genOpenChoice = true;
 									generate();
@@ -1043,18 +1050,14 @@
 							>
 								{#if generating}
 									Generating… details in the task tray
+								{:else if !hasWords}
+									No words to write about yet
 								{:else if wants === 0}
-									Write {extraWants} extra challenge{extraWants === 1 ? '' : 's'}
+									Everything's covered
 								{:else}
 									Write {wants} new challenge{wants === 1 ? '' : 's'}
 								{/if}
 							</button>
-
-							{#if wants === 0 && hasWords && !generating}
-								<p class="hint gen-hint">
-									All upcoming words are covered — extra challenges add variety.
-								</p>
-							{/if}
 
 							{#if genSummary}
 								<p class="gen-summary">{genSummary}</p>

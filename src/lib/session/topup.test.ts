@@ -1,5 +1,6 @@
 /**
- * The top-up planner: what the pool is missing for the words coming up.
+ * The top-up planner: what the pool is missing, walked over the whole
+ * collection in urgency order.
  *
  * Pure, so every case is a pool, a collection and a clock. The kinds are read
  * back through `$lib/llm`'s `PLANNABLE_KINDS`, so the demand tiers asserted on
@@ -11,7 +12,7 @@ import type { ChallengeRow } from '$lib/db';
 import { PLANNABLE_KINDS, kindKey } from '$lib/llm';
 import type { ChallengeKind, Want } from '$lib/llm';
 import type { KnowledgeItem } from '$lib/types';
-import { RESERVE_GAP } from './pool';
+import { RESERVE_GAP, SESSION_LENGTH } from './pool';
 import { MAX_TOPUP_WANTS, WANT_PER_WORD, planTopUp, topUpCoverage } from './topup';
 
 const NOW = 1_700_000_000_000;
@@ -116,6 +117,17 @@ const demandOfKind = (kind: ChallengeKind): number =>
 	PLANNABLE_KINDS.find((k) => kindKey(k) === kindKey(kind))?.demand ?? -1;
 
 const keysOf = (wants: Want[]) => wants.map((want) => kindKey(want.kind));
+const wordsOf = (wants: Want[]) => [...new Set(wants.map((want) => want.item.id))];
+
+/** `count` brand-new words, all overdue, `w0` the most overdue of them. */
+const overdueWords = (count: number) =>
+	Array.from({ length: count }, (_, i) => item(`w${i}`, (i - count) * DAY));
+
+/** Two rested recognition rows about `id` — everything a level-1 word wants. */
+const coverNew = (id: string) => [
+	pooled(`${id}-r0`, RECOGNITION[0], [id]),
+	pooled(`${id}-r1`, RECOGNITION[1], [id])
+];
 
 /** A deterministic rng that walks a fixed cycle rather than sitting on one value. */
 function cyclingRng(): () => number {
@@ -232,23 +244,44 @@ describe('planTopUp', () => {
 		expect(wants).toHaveLength(WANT_PER_WORD);
 	});
 
-	it('walks the words most overdue first, then review-ahead, and caps the list', () => {
-		const items = Array.from({ length: 20 }, (_, i) => item(`w${i}`, (i - 10) * DAY));
-		const wants = planTopUp([], items, NOW, { rng: cyclingRng(), maxItems: 20 });
+	it('walks the words most overdue first and caps the list', () => {
+		const wants = planTopUp([], overdueWords(20), NOW, { rng: cyclingRng() });
 
 		expect(wants).toHaveLength(MAX_TOPUP_WANTS);
-		// Most overdue first: w0 is due ten days ago, w9 yesterday, w10 today...
+		// w0 is due twenty days ago, w19 yesterday.
 		expect(wants[0].item.id).toBe('w0');
 		expect(wants[1].item.id).toBe('w0');
 		expect(wants[2].item.id).toBe('w1');
 		// ...and the cap cuts the least urgent words, not the most.
-		expect(wants.map((want) => want.item.id)).not.toContain('w19');
+		expect(wordsOf(wants)).toHaveLength(MAX_TOPUP_WANTS / WANT_PER_WORD);
+		expect(wordsOf(wants)).not.toContain('w19');
 	});
 
-	it('honours maxItems', () => {
-		const items = [item('a', -3 * DAY), item('b', -2 * DAY), item('c', -DAY)];
-		const wants = planTopUp([], items, NOW, { rng: cyclingRng(), maxItems: 2 });
-		expect(new Set(wants.map((want) => want.item.id))).toEqual(new Set(['a', 'b']));
+	it('walks past the due line into words that are not due yet', () => {
+		// No window: once the schedule is paid off the walk keeps going, soonest
+		// due first, exactly as `planSession` does on the play side.
+		const items = [item('ahead', +5 * DAY), item('owed', -DAY), item('later', +9 * DAY)];
+		const wants = planTopUp([], items, NOW, { rng: cyclingRng() });
+		expect(wordsOf(wants)).toEqual(['owed', 'ahead', 'later']);
+	});
+
+	it('steps over covered words, so the next press reaches the words below them', () => {
+		const items = overdueWords(20);
+		const first = planTopUp([], items, NOW, { rng: cyclingRng() });
+		const reached = wordsOf(first);
+		expect(reached).toEqual(Array.from({ length: 12 }, (_, i) => `w${i}`));
+
+		// Everything that press covered is now waiting in the pool.
+		const pool = reached.flatMap(coverNew);
+		const second = planTopUp(pool, items, NOW, { rng: cyclingRng() });
+		expect(wordsOf(second)).toEqual(Array.from({ length: 8 }, (_, i) => `w${i + 12}`));
+		expect(second).toHaveLength(8 * WANT_PER_WORD);
+	});
+
+	it('runs dry only once the whole collection is covered', () => {
+		const items = overdueWords(3);
+		const pool = ['w0', 'w1', 'w2'].flatMap(coverNew);
+		expect(planTopUp(pool, items, NOW, { rng: cyclingRng() })).toEqual([]);
 	});
 
 	it('never gives one word the same kind twice', () => {
@@ -272,6 +305,14 @@ describe('planTopUp', () => {
 			)
 		);
 		expect(kinds.size).toBeGreaterThan(1);
+	});
+
+	it('does not depend on the order the store handed the words back', () => {
+		const items = overdueWords(6);
+		const shuffled = [items[3], items[0], items[5], items[1], items[4], items[2]];
+		expect(planTopUp([], shuffled, NOW, { rng: cyclingRng() })).toEqual(
+			planTopUp([], items, NOW, { rng: cyclingRng() })
+		);
 	});
 
 	it('depends on now: a challenge rests as the clock moves', () => {
@@ -307,7 +348,8 @@ describe('topUpCoverage', () => {
 		expect(topUpCoverage(pool, [strong('a')], NOW)).toEqual({
 			upcoming: 1,
 			covered: 1,
-			wants: 0
+			wants: 0,
+			due: true
 		});
 	});
 
@@ -316,7 +358,8 @@ describe('topUpCoverage', () => {
 		expect(topUpCoverage(pool, [strong('a'), item('b')], NOW)).toEqual({
 			upcoming: 2,
 			covered: 0,
-			wants: 3
+			wants: 3,
+			due: true
 		});
 	});
 
@@ -339,10 +382,34 @@ describe('topUpCoverage', () => {
 	});
 
 	it('caps the wants but not the coverage', () => {
-		const items = Array.from({ length: 20 }, (_, i) => item(`w${i}`, (i - 10) * DAY));
-		const coverage = topUpCoverage([], items, NOW, { maxItems: 20 });
+		const coverage = topUpCoverage([], overdueWords(20), NOW);
 		expect(coverage.wants).toBe(MAX_TOPUP_WANTS);
-		expect(coverage).toMatchObject({ upcoming: 20, covered: 0 });
+		expect(coverage).toMatchObject({ upcoming: 20, covered: 0, due: true });
+	});
+
+	it('is the due words when the schedule owes any, however many there are', () => {
+		const items = [...overdueWords(3), item('later', +2 * DAY), item('latest', +4 * DAY)];
+		expect(topUpCoverage([], items, NOW)).toMatchObject({ upcoming: 3, due: true });
+	});
+
+	it('is the next SESSION_LENGTH words when nothing is due', () => {
+		const items = Array.from({ length: 25 }, (_, i) => item(`w${i}`, (i + 1) * DAY));
+		const coverage = topUpCoverage([], items, NOW);
+		expect(coverage).toMatchObject({ upcoming: SESSION_LENGTH, covered: 0, due: false });
+		expect(coverage.wants).toBe(MAX_TOPUP_WANTS);
+	});
+
+	it('still has wants to write once every due word is covered — the button writes ahead', () => {
+		// The figure is about the session; the count is about the button. One due
+		// word, fully covered, and one word the schedule does not owe yet.
+		const items = [item('due'), item('ahead', +3 * DAY)];
+		const pool = coverNew('due');
+		expect(topUpCoverage(pool, items, NOW)).toEqual({
+			upcoming: 1,
+			covered: 1,
+			wants: WANT_PER_WORD,
+			due: true
+		});
 	});
 
 	it('leaves a word with nothing to write about out of both counts', () => {
@@ -350,89 +417,17 @@ describe('topUpCoverage', () => {
 		expect(topUpCoverage([], [blank, item('b')], NOW)).toEqual({
 			upcoming: 1,
 			covered: 0,
-			wants: WANT_PER_WORD
+			wants: WANT_PER_WORD,
+			due: true
 		});
 	});
 
 	it('is all zeros with no words', () => {
-		expect(topUpCoverage([], [], NOW)).toEqual({ upcoming: 0, covered: 0, wants: 0 });
-	});
-
-	it('with extra, counts what an extra top-up would write while coverage stays plain', () => {
-		const pool = [pooled('r', RECOGNITION[0], ['a']), pooled('p', FREE[0], ['a'])];
-		const items = [strong('a')];
-		expect(topUpCoverage(pool, items, NOW, { extra: true })).toEqual({
-			upcoming: 1,
-			covered: 1,
-			wants: WANT_PER_WORD
+		expect(topUpCoverage([], [], NOW)).toEqual({
+			upcoming: 0,
+			covered: 0,
+			wants: 0,
+			due: false
 		});
-		expect(topUpCoverage(pool, items, NOW, { extra: true }).wants).toBe(
-			planTopUp(pool, items, NOW, { extra: true }).length
-		);
-	});
-});
-
-describe('planTopUp with extra', () => {
-	/** A pool that fully covers `a` (strong) and `b` (new). */
-	const covered = () => [
-		pooled('ar', RECOGNITION[0], ['a']),
-		pooled('ap', FREE[0], ['a']),
-		pooled('br1', RECOGNITION[0], ['b']),
-		pooled('br2', RECOGNITION[1], ['b'])
-	];
-
-	it('writes the full share for every upcoming word, covered or not', () => {
-		const items = [strong('a'), item('b')];
-		expect(planTopUp(covered(), items, NOW)).toEqual([]);
-		const wants = planTopUp(covered(), items, NOW, { extra: true });
-		expect(wants.filter((want) => want.item.id === 'a')).toHaveLength(WANT_PER_WORD);
-		expect(wants.filter((want) => want.item.id === 'b')).toHaveLength(WANT_PER_WORD);
-	});
-
-	it('still writes one of each group, within what the word can bear', () => {
-		const wants = planTopUp(covered(), [strong('a'), item('b')], NOW, { extra: true });
-		const a = wants.filter((want) => want.item.id === 'a').map((want) => demandOfKind(want.kind));
-		expect(a.filter((demand) => demand === 0)).toHaveLength(1);
-		expect(a.filter((demand) => demand > 0)).toHaveLength(1);
-		const b = wants.filter((want) => want.item.id === 'b').map((want) => demandOfKind(want.kind));
-		expect(b).toEqual([0, 0]);
-	});
-
-	it('prefers a kind the word has never had', () => {
-		const wants = planTopUp(covered(), [item('b')], NOW, { extra: true });
-		const had = new Set([kindKey(RECOGNITION[0]), kindKey(RECOGNITION[1])]);
-		for (const key of keysOf(wants)) expect(had.has(key)).toBe(false);
-	});
-
-	it('then spreads onto the kind the word has fewest rows of', () => {
-		// Every recognition kind already in the pool for `b`, one of them twice.
-		const pool = RECOGNITION.map((kind, i) => pooled(`b${i}`, kind, ['b']));
-		pool.push(pooled('again', RECOGNITION[0], ['b']));
-		const wants = planTopUp(pool, [item('b')], NOW, { extra: true, rng: () => 0 });
-		expect(keysOf(wants)).not.toContain(kindKey(RECOGNITION[0]));
-		expect(wants).toHaveLength(WANT_PER_WORD);
-	});
-
-	it('never gives one word the same kind twice', () => {
-		const rng = cyclingRng();
-		for (let n = 0; n < 12; n++) {
-			const wants = planTopUp(covered(), [strong('a'), item('b')], NOW, { extra: true, rng });
-			const seen = new Set(wants.map((want) => `${want.item.id}:${kindKey(want.kind)}`));
-			expect(seen.size).toBe(wants.length);
-		}
-	});
-
-	it('is capped like a plain top-up', () => {
-		const items = Array.from({ length: 20 }, (_, i) => strong(`w${i}`, (i - 10) * DAY));
-		const wants = planTopUp([], items, NOW, { extra: true, maxItems: 20 });
-		expect(wants).toHaveLength(MAX_TOPUP_WANTS);
-	});
-
-	it('leaves the plain plan exactly as it was', () => {
-		const items = [item('a'), strong('b'), item('c')];
-		const pool = [pooled('r', RECOGNITION[0], ['a'])];
-		expect(planTopUp(pool, items, NOW, { rng: () => 0.3, extra: false })).toEqual(
-			planTopUp(pool, items, NOW, { rng: () => 0.3 })
-		);
 	});
 });
