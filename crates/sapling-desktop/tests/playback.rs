@@ -26,6 +26,12 @@
 //! ```sh
 //! nix develop .#desktop -c cargo test -p sapling-desktop --test playback -- --ignored --nocapture
 //! ```
+//!
+//! The whole file is desktop-only, because the module it tests is: a phone's
+//! WebView plays the clip itself and `tts::play` is not compiled there at all
+//! (`tts/mod.rs`'s `HOST_PLAYS_AUDIO`).
+
+#![cfg(desktop)]
 
 use std::sync::Arc;
 use std::thread;

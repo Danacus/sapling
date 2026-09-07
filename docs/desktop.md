@@ -253,11 +253,12 @@ crash leaves the part file and the `.partial` tree, both swept by the next
 install. Download and unpack each report progress, so the bar covers the
 whole minute rather than sitting at 100% through bzip2.
 
-**The commands**, and there are only five:
+**The commands**, and there are only five — the first three on every target, the
+last two on desktop targets only ([the voice on Android](#the-voice-on-android)):
 
 | command | answers |
 |---|---|
-| `tts_status()` | model name, installed, bytes on disk, bytes a fresh download costs, whether the engine is warm |
+| `tts_status()` | model name, installed, bytes on disk, bytes a fresh download costs, whether the engine is warm, **whether this host plays** |
 | `tts_download()` | nothing; idempotent, verifies, emits `tts://model-progress` |
 | `tts_synthesize(text, sid, speed)` | a complete WAV file as a binary IPC payload |
 | `tts_play(<raw body>)` | nothing, once the clip has finished playing or been stopped |
@@ -309,11 +310,13 @@ first off, which is what makes a second tap on 🔊 interrupt the first word.
   clips.
 - **A different player, and a fallback for it.** Nothing above the seam changed
   — `speak()` still resolves when the clip finishes — but `playClip` sends the
-  bytes to `tts_play` instead of building an `<audio>`. If the host answers that
-  it has **no output device**, that is latched for the session and warned about
-  once, and every clip after it goes through the element path, which works and
-  is merely slow; if the host refuses one *clip*, only that clip falls back.
-  Neither is visible in Settings, because neither is a choice a learner makes.
+  bytes to `tts_play` instead of building an `<audio>`, *when the host says it
+  plays* (`tts_status`'s `playback`; false on Android, where the element path is
+  used and nothing is attempted). If a host that does play answers that it has
+  **no output device**, that is latched for the session and warned about once,
+  and every clip after it goes through the element path, which works and is
+  merely slow; if the host refuses one *clip*, only that clip falls back. None
+  of it is visible in Settings, because none of it is a choice a learner makes.
 
 Synthesis runs at several times real time on an ordinary desktop CPU, and that
 is what every "is this fast enough" decision above rests on — the engine load,
@@ -589,36 +592,98 @@ deliberately out of the mask — a keyboard that covers a focused input is the
 behaviour this host already had, and changing when the WebView resizes is a
 change that wants a device to check.
 
-**The voice is compiled out.** `sherpa-rs-sys` downloads prebuilt desktop
-shared libraries and rodio's cpal backend wants ALSA, so the `tts` feature's
-dependencies are declared for desktop targets only and the module, the five
-commands and their registration are gated on `all(feature = "tts", desktop)`
-(`desktop` being Tauri's own cfg alias for "not Android or iOS"). The `tts`
-feature is still on there — it simply resolves to nothing, so there is one
-configuration and not two. Persistence is untouched: `app_data_dir()` answers
-`Context.dataDir` on Android, so `sapling.db` and `device-id` sit in the app's
-own private directory and the host creates it exactly as it does anywhere else.
+### The voice on Android
+
+**Synthesis is native here too; playback is not.** The whole of
+[Speech](#speech) applies to the phone unchanged — the same sherpa-onnx, the
+same pinned 365 MB Kokoro archive, the same `app_data_dir()`, the same
+`tts_status` / `tts_download` / `tts_synthesize`. What is missing is
+`tts_play`/`tts_stop`, and only because of *why* they exist: they were added to
+get around WebKitGTK, which builds a fresh GStreamer pipeline per `<audio>` clip
+and starts a spoken word about a second late. **Android's WebView is Chromium**,
+where an `<audio>` element over a blob is the ordinary path and works, so the
+clip stays in the window and rodio — whose cpal backend wants an ALSA that is
+not there anyway — is the one dependency still declared for desktop targets
+only. `tts::play` and its two commands are gated `all(feature = "tts", desktop)`;
+everything else about the voice is gated on the feature alone and builds
+everywhere. One configuration, not two.
+
+**The window is told, not left to guess.** `TtsStatus` carries a `playback`
+boolean (`tts::HOST_PLAYS_AUDIO`, which is `cfg!(desktop)`), `tts.ts` reads it
+off the `tts_status` probe it already makes, and a host that answers `false`
+goes straight to the element path — no `tts_play` attempt per clip, no warning
+per word, and no "no output device" latch. `inTauri()` is still the only
+platform test on the web side; everything else about the host is asked of the
+host. A shell built with `--no-default-features` has no voice commands at all,
+and that still degrades the way a failed synthesis does.
+
+**Getting sherpa-onnx into the APK is the one real piece of work**, and it falls
+to `crates/sapling-desktop/build.rs`. `sherpa-onnx-sys` links *shared* on
+Android (the `static` feature is ignored there) and downloads
+`sherpa-onnx-v1.13.7-android.tar.bz2` into
+`target/sherpa-onnx-prebuilt/…/jniLibs/<abi>/`, but nothing packages what it
+downloads: Tauri's Gradle `RustPlugin` copies exactly one file, the crate's own
+`libsapling_desktop.so`. So when `CARGO_CFG_TARGET_OS` is `android`, `build.rs`
+copies `libsherpa-onnx-c-api.so` (4.5 MB) and `libonnxruntime.so` (21.7 MB) into
+`gen/android/app/src/main/jniLibs/arm64-v8a/`, which the generated project's own
+`.gitignore` already covers (`/src/main/jniLibs/**/*.so`). Four things about
+that are worth knowing:
+
+- **It is in `build.rs` rather than in CI** so that any `pnpm desktop:android`,
+  anywhere, produces an APK that runs.
+- **The ordering is not luck.** `sherpa-onnx-sys` declares
+  `links = "sherpa-onnx"`, and cargo runs a `links` dependency's build script
+  before that of the crate depending on it. Without that key the two build
+  scripts would race and a cold cache would lose.
+- **No third library.** `readelf -d` on both lists `libandroid`, `liblog`,
+  `libm`, `libdl`, `libc` and (for the c-api one) `libonnxruntime` — nothing
+  else, so the C++ runtime is statically linked inside them and there is no
+  `libc++_shared.so` to fetch from the NDK. Android's loader resolves
+  `DT_NEEDED` against the APK's own lib directory, so `libonnxruntime.so` is
+  found with no rpath. Both are built with 16 KB `LOAD` alignment, so they are
+  fine on Android 15's 16 KB-page devices.
+- **The APK is what is checked, not the build script.** Whether cargo reran a
+  build script is cargo's business, so a `Check sherpa-onnx reached the APK`
+  step greps the finished APK for all three `lib/arm64-v8a/*.so` and fails if
+  one is missing, after printing the jniLibs listing and the `readelf` output.
+
+`INTERNET` is in the committed manifest, which the 365 MB download needs; the
+download itself goes through `ureq` + rustls with webpki-roots, so there is no
+system certificate store to find, and its `.part` staging and single `rename`
+are ordinary filesystem operations inside the app's private directory.
+
+**ONNX gets at most four threads on a phone** (`MOBILE_MAX_THREADS`). A desktop
+gets `available_parallelism()` entire, because it is one interactive request and
+nothing else wants the box; a phone's cores are not interchangeable, and an
+eight-thread session split across four fast and four slow cores runs at the pace
+of the slow ones while spending the battery of all eight. Four is the usual size
+of the fast cluster. **Nobody has measured this on a device** — that number is
+the thing to revisit first if synthesis on a phone is disappointing.
+
+Persistence is untouched by any of it: `app_data_dir()` answers
+`Context.dataDir` on Android, so `sapling.db`, `device-id` and
+`tts/kokoro-multi-lang-v1_1/` sit in the app's own private directory and the
+host creates it exactly as it does anywhere else. That does mean the model is
+another 407 MB of app data on the phone.
 
 `bundle.active` being `false` does not get in the way: it is read by
 `tauri build` and `tauri info` only, and the APK comes out of Gradle either way.
 
-**The web side does not need to know.** `inTauri()` is still true on the phone
-and stays the only platform test; what changed is that `tts.ts` now asks the
-*host* whether it has a voice — one `tts_status` probe, memoised — and a host
-that cannot answer gets a provider whose every call fails, which is the path
-`speak` already took to the browser voice when synthesis failed. So sound
-degrades to Android's own TTS, `voiceDownloadBytes()` reports nothing to
-download instead of rejecting into the Settings screen, and an explicit
-"Preload voice model now" says the host has no built-in voice. Settings
-otherwise still shows the desktop copy, which is wrong there and cheap to
-leave wrong in a spike.
+**Settings needed almost nothing.** The native-voice copy was already nearly
+right; two claims that were true of a desktop are not claims about a phone, so
+"on every core" and "several times faster than real time" are gone and the rest
+stands. `nativeVoice` is still `inTauri()`, and Settings still shows no sign of
+which player is in use — that has never been a choice a learner makes.
 
 ### What the phone said
 
 The APK has now been sideloaded, once, onto an Android 15 phone. It boots and
-the app runs: pages mount, the database opens, and the voice degrades exactly as
-designed (the host has none, `tts.ts` says so and falls back). Three things came
-back, and the state of each:
+the app runs: pages mount, the database opens, and the voice degraded exactly as
+designed — that build had none at all, `tts.ts` said so and fell back. **That
+observation predates the section above**: no APK carrying the native voice has
+been on a device yet, so the phone has never actually spoken, the synthesis
+speed there is unknown, and so is what four ONNX threads do to a battery. Three
+things came back, and the state of each:
 
 - **The launcher icon was Tauri's**, and is now the app's — [the two
   edits](#the-two-edits).
@@ -727,9 +792,10 @@ web build does, and nothing about that was exercised. A CSP here would have to
 allow framing the embed host as well as the two YouTube origins, since a shipped
 desktop build reaches YouTube only through that frame.
 
-For the voice specifically: shipping sherpa-onnx and onnxruntime as bundled
-libraries rather than as a build-time download into `~/.cache` (today
-`cargo build` needs the network once per machine), a `cancellable: true` for
-the `tts-model` task (the download does not watch for an abort, so the tray
-still says "Stop watching"), and macOS/Windows, where none of the linking above
-has been tried.
+For the voice specifically: a `cancellable: true` for the `tts-model` task (the
+download does not watch for an abort, so the tray still says "Stop watching"),
+and macOS/Windows, where none of the linking above has been tried. Shipping
+sherpa-onnx has come off this list on desktop targets — it is linked statically
+into the binary — but `cargo build` still needs the network once per checkout
+to fetch the prebuilt archive into `target/sherpa-onnx-prebuilt/`, and on
+Android the two `.so` files are packaged rather than linked in.

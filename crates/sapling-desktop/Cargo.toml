@@ -30,12 +30,15 @@ path = "src/main.rs"
 # feature only so `cargo check -p sapling-desktop --no-default-features` can
 # still typecheck the host on a machine with no sherpa toolchain.
 #
-# **Enabling it does not mean the voice exists.** Its dependencies are declared
-# for desktop targets only (see the target table below), so on Android the
-# feature is on and the voice is simply absent — `lib.rs` gates the module and
-# the five commands on `all(feature = "tts", desktop)` to match. A `dep:` entry
-# is allowed to name a target-scoped optional dependency: the feature enables it
-# where the target table applies and nothing where it does not.
+# **Enabling it does not mean the whole voice exists.** Six of its seven
+# dependencies build for every target, so Android gets synthesis; the seventh is
+# `rodio`, which is declared for desktop targets only (see the table below)
+# because there is nothing for it to do on a phone — the WebView there is
+# Chromium and plays a clip perfectly well. So `lib.rs` gates the module and the
+# three synthesis commands on `feature = "tts"` and only `tts::play` and its two
+# commands on `all(feature = "tts", desktop)`. A `dep:` entry is allowed to name
+# a target-scoped optional dependency: the feature enables it where the target
+# table applies and nothing where it does not.
 default = ["tts"]
 tts = [
 	"dep:sherpa-onnx",
@@ -72,15 +75,10 @@ serde_json = { version = "1", features = ["preserve_order"] }
 
 # -- The native voice (`tts` feature) ----------------------------------------
 #
-# Scoped to desktop targets, which is the whole of what Android costs. Nothing
-# in here can be built for a phone: `sherpa-onnx`'s prebuilt libraries are only
-# fetched for desktop targets on this branch, and rodio's cpal backend wants
-# ALSA. The `tts` feature stays on there and resolves to nothing — see the note
-# above it — and the code that would have used these is gated to match, so an
-# Android build is the same host minus one capability rather than a second
-# configuration to keep in step. `desktop` is Tauri's own cfg alias
-# (`tauri_build::build()` emits it) and means exactly this table's condition.
-[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# Every target, phones included: synthesis is the same code and the same model
+# wherever this crate runs. Only *playback* is a desktop capability, and only
+# `rodio` is therefore in the target table at the bottom of this file.
+#
 # k2-fsa's **own** Rust API — the safe `sherpa-onnx` wrapper over its
 # `sherpa-onnx-sys` bindings, both published from the sherpa-onnx repository.
 # It replaces the third-party `sherpa-rs`/`sherpa-rs-sys`, whose README now
@@ -97,6 +95,11 @@ serde_json = { version = "1", features = ["preserve_order"] }
 # always come from one tag. A `^` requirement would let cargo move the tag
 # under a lockfile update, and a config struct that grew a member is a silent
 # ABI mismatch rather than a compile error.
+#
+# On Android the same crate fetches `sherpa-onnx-v1.13.7-android.tar.bz2` and
+# links **shared** (the `static` feature is ignored there — the sys crate forces
+# shared on Android and iOS), which is why `build.rs` has an Android half: the
+# two `.so` files have to reach the APK.
 sherpa-onnx = { version = "=1.13.7", optional = true }
 # The model download. `default-features = false` drops ureq's transparent gzip:
 # the archive is pinned by byte size and sha256, and a decoding layer between
@@ -111,11 +114,25 @@ sha2 = { version = "0.10", optional = true }
 # The RIFF/WAVE container the voice writes and the player reads back. Pure Rust,
 # no unsafe, no dependencies of its own, and it works over an in-memory `Cursor`
 # either way — so the byte layout is a library's problem rather than ours
-# (`src/tts/wav.rs` encodes, `src/tts/play.rs` decodes).
+# (`src/tts/wav.rs` encodes everywhere; `src/tts/play.rs` decodes on the
+# desktop, where the host is also the player).
 hound = { version = "3.5", optional = true }
-# Playback, because the webview's audio stack cannot do it here (`src/tts/play.rs`
-# and `docs/desktop.md` say what was measured). `default-features = false` keeps
-# out everything but the device: `playback` is the only feature that is wanted,
+
+# -- Playback, and only playback, is a desktop capability ---------------------
+#
+# This is the whole of what a phone does differently. `rodio` exists here
+# because *WebKitGTK* cannot play a clip without a second of latency per word
+# and its Web Audio output is unusable (`src/tts/play.rs` has the measurements);
+# Android's WebView is Chromium, where `<audio>` over a blob is the ordinary
+# path and works, and rodio's cpal backend would want an ALSA that is not there
+# anyway. So the dependency is target-scoped, `tts::play` and the two commands
+# that reach it are gated `all(feature = "tts", desktop)`, and everything else
+# about the voice is one configuration on every target. `desktop` is Tauri's own
+# cfg alias (`tauri_build::build()` emits it) and means exactly this table's
+# condition.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# `default-features = false` keeps out everything but the device: `playback` is
+# the only feature that is wanted,
 # and it pulls exactly cpal. The decoders (`wav`, `mp3`, `flac`, `mp4`,
 # `vorbis` — symphonia, MPL-2.0) are all off because the clip is decoded here
 # with the `hound` above and handed over as samples; `recording` is off because

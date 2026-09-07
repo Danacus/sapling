@@ -9,15 +9,22 @@
  * voice — is the same code the web build runs, because it is the same model
  * with the same speaker ids and the engine is the only thing that moved.
  *
- * **Playing the clip is native here too**, which is the one thing this module
- * offers that `sherpa.ts` does not (`playOnHost`, `stopOnHost`). The webview's
- * audio stack cannot do it: `<audio>` over a blob builds a fresh GStreamer
- * pipeline per clip and starts about a second late, and Web Audio — the way to
- * keep one pipeline — plays noise or silence in this webview. The measurements
+ * **On the desktop, playing the clip is native too**, which is the one thing
+ * this module offers that `sherpa.ts` does not (`playOnHost`, `stopOnHost`).
+ * WebKitGTK's audio stack cannot do it: `<audio>` over a blob builds a fresh
+ * GStreamer pipeline per clip and starts about a second late, and Web Audio —
+ * the way to keep one pipeline — plays noise or silence there. The measurements
  * are in `crates/sapling-desktop/src/tts/play.rs` and `docs/desktop.md`. So the
  * bytes go back across the IPC and the host makes the sound; `tts.ts` keeps the
  * caches and the decision, and falls back to the element path when the host
  * says it has no output device.
+ *
+ * **Not every Tauri host has that half.** The Android build of the same shell
+ * synthesizes identically and compiles `tts_play`/`tts_stop` out, because that
+ * WebView is Chromium and an `<audio>` element over a blob is the ordinary path
+ * there. `tts_status` says which one this is ({@link NativeVoiceStatus.playback}),
+ * so `tts.ts` chooses the player from the probe it already makes rather than by
+ * calling a command to see whether it exists.
  *
  * `@tauri-apps/api` is imported dynamically and this whole module is imported
  * dynamically by `tts.ts`, gated on `inTauri()` — so a browser fetches neither.
@@ -64,6 +71,14 @@ export interface NativeVoiceStatus {
 	downloadBytes: number;
 	/** Whether the engine is loaded and warm in the host process. */
 	loaded: boolean;
+	/**
+	 * Whether this host *plays* a clip as well as making one — true on the
+	 * desktop, false in the Android build, where `tts_play`/`tts_stop` are not
+	 * compiled at all. It is what the host was built as, not something it
+	 * discovered, so `tts.ts` can trust it for the session and never has to
+	 * attempt a command that is not there.
+	 */
+	playback: boolean;
 }
 
 /** The two `@tauri-apps/api` entry points this module needs, loaded once. */

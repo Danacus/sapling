@@ -40,7 +40,7 @@ someone to run the check by hand.
   runs. The line that does not move: a host still contains no merge rule and no
   SQL against the read tables.
 
-- **Speech does not touch the webview's audio stack, and that was measured, not
+- **Speech does not touch *WebKitGTK's* audio stack, and that was measured, not
   assumed.** On WebKitGTK 2.52.6 / GStreamer 1.28.5 an `<audio>` element over a
   blob plays correctly but builds a fresh GStreamer pipeline per clip: the first
   sample lands about a second late and the window stalls while it is built, on
@@ -53,6 +53,16 @@ someone to run the check by hand.
   frame still go through GStreamer, which is why the shell still carries the
   plugins, and `src/lib/tts/`'s element path is still the code the web build
   runs *and* this host's fallback.
+
+- **That is a fact about one webview, so it is the one thing the Android build
+  does differently.** Chromium plays a blob without any of that, so on Android
+  `tts::play`, `rodio`, `tts_play` and `tts_stop` do not exist and the clip
+  stays in the window. **The window is told rather than left to infer it**:
+  `TtsStatus` carries `playback` (`tts::HOST_PLAYS_AUDIO`, which is `cfg!(desktop)`),
+  `tts.ts` reads it off the `tts_status` probe it already makes, and a host that
+  answers `false` never attempts `tts_play` — no per-clip failure, no warning,
+  no "no output device" latch. `inTauri()` stays the only platform test on the
+  web side; everything else about the host is asked of the host.
 
 - **One output stream for the process, owned by one thread**, for the reason
   `host.rs` gives about the core: rodio's `MixerDeviceSink` holds a
@@ -84,7 +94,8 @@ someone to run the check by hand.
   browser does not also have — the protocol is `src/lib/db/protocol.ts` and
   `dispatch.rs`, and adding to it is still the three edits `core.md` names.
   **The voice adds exactly five more** — `tts_status`, `tts_download`,
-  `tts_synthesize`, `tts_play`, `tts_stop` — and they are not part of that
+  `tts_synthesize` on every target, and `tts_play`, `tts_stop` on desktop
+  targets only — and they are not part of that
   protocol and never touch it. A clip crosses as bytes in both directions and
   never as JSON: `tts_synthesize` answers a `tauri::ipc::Response`, and
   `tts_play` takes a raw body (`tauri::ipc::Request` with `InvokeBody::Raw`,
@@ -216,10 +227,12 @@ someone to run the check by hand.
   to precede silences the *new* word, so `native.ts` keeps `invoke` as a plain
   value once the dynamic import has landed and `stopOnHost` sends without an
   `await` — and is correctly a no-op before then, since a host that has never
-  been spoken to has nothing to stop. `tts.ts` holds the fallback decision, not
-  this module: **no output device** is latched for the session and warned about
-  once (the element path still works there, slowly, which beats silence), while
-  a clip the host merely refuses falls back alone. The `TtsEngine` preference
+  been spoken to has nothing to stop. `tts.ts` holds every decision, not this
+  module: a host that answers `playback: false` is never asked to play at all,
+  and on one that does, **no output device** is latched for the session and
+  warned about once (the element path still works there, slowly, which beats
+  silence), while a clip the host merely refuses falls back alone. The
+  `TtsEngine` preference
   values do
   **not** change — `'kokoro'` has always named the good downloaded neural voice,
   and it now means Kokoro from whichever host provides it, with identical
@@ -230,24 +243,41 @@ someone to run the check by hand.
   skipped** here because native synthesis runs at several times real time.
 
 - **The crate also builds for Android, in CI and nowhere else, and there it is
-  this host minus the voice.** `docs/desktop.md` has the job; the contract is
-  that Android is not a second host. Persistence, the device id, the clock and
-  the calendar are the same code over the same app-data directory. The voice is
-  not: `sherpa-rs-sys` fetches prebuilt desktop shared libraries and rodio's
-  cpal backend wants ALSA, so those dependencies are declared under a
-  `[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]`
-  table and the module, the five commands and their registration are gated on
-  `all(feature = "tts", desktop)` — Tauri's own cfg alias, emitted by
-  `tauri_build::build()`. The `tts` feature stays on and resolves to nothing
-  there, which is the point: one configuration, not two. **A gate that says
-  `feature = "tts"` alone is a bug** that only Android's compiler sees, and
-  `build.rs` must read `CARGO_CFG_TARGET_OS` rather than `cfg!(target_os)`,
-  which on a build script is the *host's*. Two consequences reach outside the
-  crate: `[lib] crate-type` carries `cdylib` because the app on that platform is
+  this host minus the *player*.** `docs/desktop.md` has the job; the contract is
+  that Android is not a second host. Persistence, the device id, the clock, the
+  calendar **and the voice** are the same code over the same app-data
+  directory — the same sherpa-onnx, the same 365 MB Kokoro archive, the same
+  `tts_status`/`tts_download`/`tts_synthesize`. Only `rodio` is target-scoped
+  (`[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]`),
+  and only `tts::play`, `tts_play` and `tts_stop` are gated
+  `all(feature = "tts", desktop)` — `desktop` being Tauri's own cfg alias,
+  emitted by `tauri_build::build()`. **Widening one of those two gates to
+  `feature = "tts"` alone is a bug** that only Android's compiler sees; the
+  reverse — narrowing a synthesis gate back to `desktop` — is a bug nobody's
+  compiler sees, and costs the phone its voice.
+- **The two sherpa `.so` files reach the APK from `build.rs`, and nothing else
+  puts them there.** `sherpa-onnx-sys` links shared on Android and Tauri's
+  Gradle plugin packages exactly one library, the crate's own — so `build.rs`
+  copies `libsherpa-onnx-c-api.so` and `libonnxruntime.so` out of
+  `<target>/sherpa-onnx-prebuilt/…/jniLibs/<abi>/` into
+  `gen/android/app/src/main/jniLibs/<abi>/` (gitignored by the generated
+  project) whenever `CARGO_CFG_TARGET_OS` is `android`. It must read
+  `CARGO_CFG_TARGET_OS` and never `cfg!(target_os)`, which on a build script is
+  the *host's*. The ordering is safe because `sherpa-onnx-sys` declares
+  `links = "sherpa-onnx"`, which is what makes cargo run its build script first;
+  without that key the two would race on a cold cache. No third library is
+  needed — `readelf -d` on both lists only `libandroid`, `liblog`, `libm`,
+  `libdl`, `libc` and `libonnxruntime`, so there is no `libc++_shared.so` to
+  ship, and Android's loader resolves `DT_NEEDED` against the APK's own lib
+  directory, so there is no rpath either. **What is trusted is the APK, not the
+  build script**: whether cargo reran it is cargo's business, so the workflow
+  greps the finished APK for all three libraries and fails if one is missing.
+- Two consequences of Android reach outside the crate:
+  `[lib] crate-type` carries `cdylib` because the app on that platform is
   `libsapling_desktop.so` and there is no executable (`main.rs` is empty there,
   and `run()` carries `#[cfg_attr(mobile, tauri::mobile_entry_point)]`); and
-  `src/lib/tts/tts.ts` asks the host whether it has a voice at all instead of
-  assuming Tauri means one — see `content.md`.
+  `src/lib/tts/tts.ts` asks the host what it lends instead of assuming Tauri
+  means everything — see `content.md`.
 
 - **The APK is a *release* build signed with a key that is not in this tree, and
   a missing key may not fail it.** A debug APK is signed with whatever throwaway
@@ -303,7 +333,8 @@ someone to run the check by hand.
   length; with no model installed it prints why and passes, because a checkout
   without one is normal and `pnpm desktop:check` must be green in it. The
   `#[ignore]`d `installs_the_model` is how a machine gets one, into the same
-  directory the app uses. `tests/playback.rs` is the same shape one layer down:
+  directory the app uses. `tests/playback.rs` is the same shape one layer down,
+  and is `#![cfg(desktop)]` in its entirety because the module it covers is:
   it opens the *real* default device and plays **silence** through it, asserting
   that a 100 ms clip returns in roughly 100 ms and that a stop and a second clip
   both cut a long one short — and it skips itself with a printed reason on a

@@ -27,7 +27,10 @@
 # **the Rust half uses rustup, not nix**,
 # because nixpkgs' rustc carries no Android target std and `androidenv` is unfree
 # and enormous. So only `cargo`/`rustc` come from outside the devShell — node,
-# pnpm and everything else are still the flake's. Like `desktop`, it runs
+# pnpm and everything else are still the flake's. That toolchain is bare — no
+# libclang, in particular — and nothing needs one: `sherpa-onnx-sys` ships
+# pregenerated bindings and runs no bindgen. It does download k2-fsa's Android
+# libraries, into the `target/` this job already caches. Like `desktop`, it runs
 # alongside `build` and gates nothing: the site does not ship in an APK.
 #
 # The embed page (`embed/`) is a *third* artifact and its own Pages project. It
@@ -207,7 +210,11 @@ jobs:
           restore-keys: pnpm-${{ runner.os }}-
 
       # Its own, unlike the two above: this is a fourth target set
-      # (`aarch64-linux-android`), built by a toolchain no other job uses.
+      # (`aarch64-linux-android`), built by a toolchain no other job uses. It
+      # also carries the ~45 MB sherpa-onnx Android archive, which
+      # `sherpa-onnx-sys` downloads into `target/sherpa-onnx-prebuilt/` — no
+      # separate cache step for it, and a `Cargo.lock` bump (which is where the
+      # sherpa tag lives) refetches.
       - name: Cache cargo
         uses: actions/cache@v6
         with:
@@ -325,6 +332,38 @@ jobs:
       # purpose: `$PATH` must be the one nix has just set, not the one out here.
       - name: Build the release APK
         run: nix develop -c bash -c 'set -x; PATH="$RUSTUP_BIN:$PATH" pnpm desktop:android'
+
+      # The voice's own gate. `crates/sapling-desktop/build.rs` copies
+      # sherpa-onnx's two Android `.so` files into the project's `jniLibs/`
+      # during the cargo build, because nothing else does — Tauri's Gradle
+      # plugin packages exactly one library, the crate's own. Whether a build
+      # script ran is cargo's business, so what is checked here is the *APK*:
+      # a phone that installed a voiceless one would be a much later discovery.
+      # The `readelf` list is printed because it is the answer to "does this
+      # also need libc++_shared?" — it does not, and that is a fact about these
+      # binaries rather than a thing to assume.
+      - name: Check sherpa-onnx reached the APK
+        run: |
+          set -eu
+          apk=crates/sapling-desktop/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+          jni=crates/sapling-desktop/gen/android/app/src/main/jniLibs/arm64-v8a
+          readelf="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          echo "--- $jni"
+          ls -l "$jni" || echo "(the build script wrote nothing here)"
+          for so in "$jni"/*.so; do
+            [ -f "$so" ] || continue
+            echo "--- $so"
+            "$readelf" -d "$so" | grep -E 'NEEDED|SONAME' || true
+          done
+          echo "--- $apk"
+          unzip -l "$apk" | grep 'lib/arm64-v8a/' || true
+          for lib in libsapling_desktop.so libsherpa-onnx-c-api.so libonnxruntime.so; do
+            unzip -l "$apk" | grep -q "lib/arm64-v8a/$lib" || {
+              echo "$lib is not in the APK — the voice would fail on the phone." >&2
+              echo "See crates/sapling-desktop/build.rs and docs/desktop.md." >&2
+              exit 1
+            }
+          done
 
       # The gate on all of the above: an APK that came out unsigned fails here,
       # and `--print-certs` names the certificate in the log, so which key signed

@@ -24,21 +24,27 @@
  * the same model, so everything below this line — the caches, the warm-up, the
  * fallback — is host-blind. {@link inTauri} decides, once.
  *
- * And a Tauri host may have **no** voice: the same shell built for Android
- * compiles the native one out (`crates/sapling-desktop/Cargo.toml`), so its
- * five commands are not there at all. That is a question about the host, not
- * about the platform, so it is asked of the host — one `tts_status` probe,
- * memoised — and a host that cannot answer gets a provider whose every call
- * fails, which is the path `speak` has always taken to the browser voice.
+ * And a Tauri host may have **no** voice: a build with the `tts` feature off has
+ * none of its commands at all. That is a question about the host, not about the
+ * platform, so it is asked of the host — one `tts_status` probe, memoised — and
+ * a host that cannot answer gets a provider whose every call fails, which is
+ * the path `speak` has always taken to the browser voice.
  *
- * ## And so does the *player*, on the desktop
+ * ## And on one of those hosts, so does the *player*
  *
- * A clip is an `<audio>` element over a blob everywhere except inside Tauri,
- * where the webview's audio stack cannot do the job: `<audio>` starts about a
- * second late per clip because WebKitGTK builds a fresh GStreamer pipeline for
+ * A clip is an `<audio>` element over a blob everywhere except the Tauri
+ * desktop, where WebKitGTK's audio stack cannot do the job: `<audio>` starts
+ * about a second late per clip because a fresh GStreamer pipeline is built for
  * each one, and Web Audio plays noise or silence there. So `playClip` sends the
  * bytes back to the host, which owns one output stream for the process. The
  * element path stays as that host's fallback, because a slow word beats none.
+ *
+ * **The Android build of that same shell keeps the element path**, because its
+ * WebView is Chromium and there was never anything wrong with it — `tts_play`
+ * is not compiled there. Again a fact about the host and not about the
+ * platform, and again read off the one probe: `tts_status` answers `playback`,
+ * so a host that does not play is never asked to, and there is no per-clip
+ * failure to warn about.
  *
  * Synthesized clips are cached twice over — an in-memory LRU for this session,
  * then Cache Storage (`ll-tts-audio`) so a word drilled yesterday still plays
@@ -108,13 +114,17 @@ const KOKORO_SPEED = 1;
 let playing: { stop: () => void } | null = null;
 
 /**
- * Whether the desktop host can play anything. Latched to `false` the first time
- * it answers that it has no output device — a machine does not grow a sound
- * card mid-session, and retrying per clip would mean the same warning on every
- * spoken word. A clip the host merely *refuses* does not latch this; that is
- * one clip's problem. See {@link playClip}.
+ * Whether a host that *has* a player still has a working one. Latched to
+ * `false` the first time it answers that it has no output device — a machine
+ * does not grow a sound card mid-session, and retrying per clip would mean the
+ * same warning on every spoken word. A clip the host merely *refuses* does not
+ * latch this; that is one clip's problem.
+ *
+ * Not the same question as whether the host has a player at all, which is
+ * `tts_status`'s `playback` and is answered before any of this. See
+ * {@link playClip}.
  */
-let hostPlayback = true;
+let hostOutputWorks = true;
 
 // -- Which Kokoro ------------------------------------------------------------
 
@@ -143,8 +153,9 @@ const sherpaProvider: KokoroProvider = {
 const NO_HOST_VOICE = 'this host has no built-in voice';
 
 /**
- * A host that lends no voice — the Android build of the desktop shell, whose
- * five voice commands are compiled out.
+ * A host that lends no voice — a shell built with its `tts` feature off, whose
+ * voice commands are not registered at all, so every `invoke` of one is
+ * rejected as an unknown command.
  *
  * It fails the way a refused synthesis fails, on purpose: that is a path every
  * caller here already has, so "this host has none" needs no new branch in
@@ -461,23 +472,29 @@ function playBlob(blob: Blob): Promise<void> {
  * Plays a WAV blob wherever this host can actually play one, resolving when it
  * finishes. Never rejects.
  *
- * In a browser that is an `<audio>` element and always has been. **On the
+ * In a browser that is an `<audio>` element and always has been. **On the Tauri
  * desktop it is the Rust host**, and the element path is only the fallback:
  * WebKitGTK builds a fresh GStreamer pipeline per clip, so `<audio>` starts
  * about a second late and stalls the window on every spoken word, and Web Audio
  * — the way to keep one pipeline for the session — plays noise or silence
  * there. So the clip goes back across the IPC and rodio plays it over one
  * output stream the host holds open (`crates/sapling-desktop/src/tts/play.rs`,
- * `docs/desktop.md`). This is the same {@link inTauri} decision as the engine
- * above, made in the same place for the same reason.
+ * `docs/desktop.md`).
  *
- * The two failures are not the same failure. A host with **no output device**
- * will not have one later, so it is latched for the session and warned about
- * once; the element path still works there, slowly, which is better than
- * silence. A clip the host **refuses** is one bad clip and falls back alone.
+ * **Which host it is comes from the host**, not from {@link inTauri}: the same
+ * shell on Android has a Chromium WebView, plays a blob perfectly well, and
+ * compiles `tts_play` out entirely, so `tts_status` answers `playback: false`
+ * and this goes straight to the element path — no attempt per clip, nothing to
+ * warn about, nothing to latch. It is the probe {@link hostVoice} already made.
+ *
+ * On a host that does play, the two failures are not the same failure. **No
+ * output device** will not become one later, so it is latched for the session
+ * and warned about once; the element path still works there, slowly, which is
+ * better than silence. A clip the host **refuses** is one bad clip and falls
+ * back alone.
  */
 async function playClip(blob: Blob): Promise<void> {
-	if (inTauri() && hostPlayback) {
+	if (hostOutputWorks && inTauri() && (await hostVoice())?.playback) {
 		const host = await import('./native');
 		const current = { stop: host.stopOnHost };
 		try {
@@ -487,7 +504,7 @@ async function playClip(blob: Blob): Promise<void> {
 			return;
 		} catch (cause) {
 			if (cause instanceof host.NoAudioOutput) {
-				hostPlayback = false;
+				hostOutputWorks = false;
 				console.warn(
 					'[tts] The desktop host has no audio output; falling back to the webview player.',
 					cause

@@ -33,22 +33,28 @@
 //! capabilities — text in, a WAV file out; a WAV file in, a sound out — with no
 //! domain knowledge whatsoever, and `src/lib/tts/native.ts` is the other end.
 //!
-//! ## The same host, minus one capability, on Android
+//! ## The same host, minus the *player*, on Android
 //!
-//! This crate also builds as an Android app — CI only, a debug APK, and
-//! `docs/desktop.md` says what that is for — and there **the voice is compiled
-//! out**. Its dependencies fetch prebuilt desktop shared libraries and want an
-//! ALSA device, so they are declared for desktop targets only (`Cargo.toml`)
-//! and every gate below reads `all(feature = "tts", desktop)` rather than the
-//! feature alone; `desktop` is Tauri's own cfg alias for "not Android or iOS",
-//! emitted by `tauri_build::build()`. Persistence is untouched — a file in the
-//! app-data directory is a file on a phone too — so an Android build is this
-//! host minus one capability rather than a second host to keep in step.
+//! This crate also builds as an Android app — CI only, and `docs/desktop.md`
+//! says what that is for. Persistence is untouched there, because a file in the
+//! app-data directory is a file on a phone too, and **so is the voice**: the
+//! same sherpa-onnx, the same Kokoro archive, the same three commands. Only the
+//! *player* is missing, and for the reason it exists at all. `tts::play` is
+//! rodio over ALSA because *WebKitGTK* cannot play a clip without a second of
+//! latency per word; Android's WebView is Chromium, where an `<audio>` element
+//! over a blob is the ordinary path and works. So the clip stays in the window
+//! there, `rodio` is declared for desktop targets only (`Cargo.toml`), and
+//! exactly two things below read `all(feature = "tts", desktop)` — `tts_play`
+//! and `tts_stop` — while everything else about the voice reads
+//! `feature = "tts"` and builds everywhere. `desktop` is Tauri's own cfg alias
+//! for "not Android or iOS", emitted by `tauri_build::build()`.
 //!
-//! Nothing above the seam changed for it either: `src/lib/tts/tts.ts` asks the
-//! host once whether it has a voice at all and treats "no" exactly as it treats
-//! a synthesis that failed, which is the rule audio has always had here. It
-//! degrades; it never blocks.
+//! Nothing above the seam branches on the platform for it: `tts_status` carries
+//! a `playback` flag, `src/lib/tts/tts.ts` reads it off the one probe it
+//! already makes, and a host that answers `false` takes the element path
+//! without ever calling `tts_play`. A host with no voice commands at all is
+//! still handled the way a synthesis that failed is — it degrades; it never
+//! blocks — which is what a `--no-default-features` build is.
 
 //! The crate **forbids** `unsafe_code`, and no module may opt out. It used to
 //! only deny it, for `tts::kokoro`, which hand-rolled the FFI call into
@@ -60,18 +66,20 @@
 #![forbid(unsafe_code)]
 
 pub mod host;
-#[cfg(all(feature = "tts", desktop))]
+#[cfg(feature = "tts")]
 pub mod tts;
 
 use std::sync::Arc;
 
-#[cfg(all(feature = "tts", desktop))]
+#[cfg(feature = "tts")]
 use tauri::{AppHandle, Emitter};
 use tauri::{Manager, State};
 
 use crate::host::Database;
 #[cfg(all(feature = "tts", desktop))]
-use crate::tts::{play::PlayerHandle, TtsHandle};
+use crate::tts::play::PlayerHandle;
+#[cfg(feature = "tts")]
+use crate::tts::TtsHandle;
 
 /// One `Backend` call. The answer is `None` — JavaScript's `undefined` — for a
 /// `void` method and for a read of a row that is not there. When the database
@@ -120,13 +128,15 @@ fn derived_schema_version() -> u32 {
 // -- The native voice -------------------------------------------------------
 //
 // Five commands, and deliberately no more: is it here, put it here, say this,
-// make this sound, be quiet. Everything about *what* to speak — the language
-// mapping, the speaker table, the caches, the fallback to the browser voice —
-// stays in `src/lib/tts/`, which is the same code the web build runs.
+// make this sound, be quiet. The first three are every host's; the last two are
+// the desktop's alone, because they are the *player* and a phone's WebView has
+// one already. Everything about *what* to speak — the language mapping, the
+// speaker table, the caches, the fallback to the browser voice — stays in
+// `src/lib/tts/`, which is the same code the web build runs.
 
 /// Event carrying one file's download progress to the window. Its three fields
 /// are `TtsProgress`'s, so `native.ts` can feed the existing progress listener.
-#[cfg(all(feature = "tts", desktop))]
+#[cfg(feature = "tts")]
 #[derive(Clone, serde::Serialize)]
 struct DownloadProgress {
     file: String,
@@ -136,7 +146,7 @@ struct DownloadProgress {
 
 /// The channel the progress events travel on. Named once here and once in
 /// `native.ts`.
-#[cfg(all(feature = "tts", desktop))]
+#[cfg(feature = "tts")]
 const TTS_PROGRESS_EVENT: &str = "tts://model-progress";
 
 /// Whether the voice model is on this machine, and what it costs.
@@ -150,7 +160,7 @@ const TTS_PROGRESS_EVENT: &str = "tts://model-progress";
 /// A `Result` because Tauri requires one of an `async` command that borrows
 /// `State`; the only `Err` it can produce is the blocking task failing to run
 /// at all, which `native.ts` sees as a rejected `invoke` like any other.
-#[cfg(all(feature = "tts", desktop))]
+#[cfg(feature = "tts")]
 #[tauri::command]
 async fn tts_status(tts: State<'_, Arc<TtsHandle>>) -> Result<tts::TtsStatus, String> {
     let handle = tts.inner().clone();
@@ -163,7 +173,7 @@ async fn tts_status(tts: State<'_, Arc<TtsHandle>>) -> Result<tts::TtsStatus, St
 ///
 /// `async` on purpose: a synchronous Tauri command runs on the main thread, and
 /// this one runs for minutes. Idempotent — an installed model returns at once.
-#[cfg(all(feature = "tts", desktop))]
+#[cfg(feature = "tts")]
 #[tauri::command]
 async fn tts_download(app: AppHandle, tts: State<'_, Arc<TtsHandle>>) -> Result<(), String> {
     let handle = tts.inner().clone();
@@ -191,7 +201,7 @@ async fn tts_download(app: AppHandle, tts: State<'_, Arc<TtsHandle>>) -> Result<
 /// and become a `Blob` on the other side. A `Vec<u8>` would be serialized as a
 /// JSON array of numbers — several megabytes of text per sentence, parsed on
 /// the window thread, for audio that is already in the right format.
-#[cfg(all(feature = "tts", desktop))]
+#[cfg(feature = "tts")]
 #[tauri::command]
 async fn tts_synthesize(
     tts: State<'_, Arc<TtsHandle>>,
@@ -251,7 +261,8 @@ fn tts_stop(player: State<'_, Arc<PlayerHandle>>) {
     player.stop();
 }
 
-/// The command list, which the `tts` feature extends rather than replaces.
+/// The command list, which the voice extends rather than replaces — in two
+/// steps, because a phone gets the synthesis half and not the player half.
 #[cfg(all(feature = "tts", desktop))]
 macro_rules! commands {
     () => {
@@ -268,7 +279,21 @@ macro_rules! commands {
     };
 }
 
-#[cfg(not(all(feature = "tts", desktop)))]
+#[cfg(all(feature = "tts", not(desktop)))]
+macro_rules! commands {
+    () => {
+        tauri::generate_handler![
+            dispatch,
+            commit_all,
+            derived_schema_version,
+            tts_status,
+            tts_download,
+            tts_synthesize
+        ]
+    };
+}
+
+#[cfg(not(feature = "tts"))]
 macro_rules! commands {
     () => {
         tauri::generate_handler![dispatch, commit_all, derived_schema_version]
@@ -303,7 +328,7 @@ pub fn run() {
             // Nothing is downloaded, loaded or opened here — the voice handle
             // only knows where the model would be, and the player has not
             // touched an audio device. The first tap on 🔊 pays for both.
-            #[cfg(all(feature = "tts", desktop))]
+            #[cfg(feature = "tts")]
             app.manage(Arc::new(TtsHandle::new(&dir)));
             #[cfg(all(feature = "tts", desktop))]
             app.manage(Arc::new(PlayerHandle::new()));

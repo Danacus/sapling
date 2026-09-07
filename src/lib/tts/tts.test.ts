@@ -26,14 +26,22 @@ const sherpa = {
 /** The host's "no output device at all", as `native.ts` defines it. */
 class NoAudioOutput extends Error {}
 
-/** What a host that *has* the voice answers `tts_status` with. */
+/** What a host that has the voice *and* a player of its own answers. */
 const NATIVE_STATUS = {
 	model: 'kokoro-multi-lang-v1_1',
 	installed: true,
 	bytes: 426654376,
 	downloadBytes: 364816464,
-	loaded: false
+	loaded: false,
+	playback: true
 };
+
+/**
+ * What the Android build of the same shell answers: identical synthesis, no
+ * player. `tts_play` and `tts_stop` are not compiled there, so the flag is what
+ * keeps the window from ever invoking them.
+ */
+const SYNTHESIS_ONLY_STATUS = { ...NATIVE_STATUS, playback: false };
 
 const native = {
 	nativeKokoro: {
@@ -191,10 +199,10 @@ describe('choosing the host that speaks Kokoro', () => {
 
 describe('a Tauri host with no voice of its own', () => {
 	/**
-	 * The Android build of the same shell: the five voice commands are compiled
-	 * out, so every `invoke` of one rejects the way Tauri rejects an unknown
-	 * command. `inTauri()` is still true — this is a fact about the host, not
-	 * about the platform, which is why it is asked of the host.
+	 * A shell built with its `tts` feature off: the voice commands are not
+	 * registered, so every `invoke` of one rejects the way Tauri rejects an
+	 * unknown command. `inTauri()` is still true — this is a fact about the
+	 * host, not about the platform, which is why it is asked of the host.
 	 */
 	function voicelessHost(): void {
 		pretendTauri();
@@ -241,6 +249,63 @@ describe('a Tauri host with no voice of its own', () => {
 
 		await expect(preloadKokoro()).rejects.toThrow('no built-in voice');
 		expect(native.nativeKokoro.init).not.toHaveBeenCalled();
+	});
+});
+
+describe('a Tauri host that synthesizes but does not play', () => {
+	/**
+	 * The Android build: the same three synthesis commands, no `tts_play` and no
+	 * `tts_stop`. What must not happen here is an attempt per clip — that is a
+	 * rejected `invoke` and a `console.warn` on every spoken word, for a host
+	 * that said up front it has no player.
+	 */
+	function synthesisOnlyHost(): void {
+		pretendTauri();
+		native.nativeVoiceStatus.mockResolvedValue(SYNTHESIS_ONLY_STATUS);
+	}
+
+	it('still synthesizes on the host', async () => {
+		synthesisOnlyHost();
+		const { warmSpeech } = await loadTts();
+
+		await warmSpeech('你好', MANDARIN);
+
+		expect(native.nativeKokoro.synthesize).toHaveBeenCalledWith('你好', ZF_001, 1);
+		expect(sherpa.synthesize).not.toHaveBeenCalled();
+	});
+
+	it('plays every clip in the webview, and never asks the host to', async () => {
+		synthesisOnlyHost();
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const { speak } = await loadTts();
+
+		await speak('你好', MANDARIN);
+		await speak('再见', MANDARIN);
+
+		expect(native.playOnHost).not.toHaveBeenCalled();
+		expect(FakeAudio.built).toHaveLength(2);
+		// Not once, and not once per word: nothing failed.
+		expect(warn).not.toHaveBeenCalled();
+	});
+
+	it('stops an element clip rather than reaching for tts_stop', async () => {
+		synthesisOnlyHost();
+		const { speak, stopSpeaking } = await loadTts();
+
+		await speak('你好', MANDARIN);
+		stopSpeaking();
+
+		expect(native.stopOnHost).not.toHaveBeenCalled();
+	});
+
+	it('asks once, like every other host question', async () => {
+		synthesisOnlyHost();
+		const { speak } = await loadTts();
+
+		await speak('你好', MANDARIN);
+		await speak('再见', MANDARIN);
+
+		expect(native.nativeVoiceStatus).toHaveBeenCalledTimes(1);
 	});
 });
 

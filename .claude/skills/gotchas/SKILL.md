@@ -211,13 +211,42 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
 - **A build script's `#[cfg(target_os = …)]` is the *host's*.** `build.rs` runs
   on the machine doing the building, so the attribute answers for the laptop and
   not for the phone. `CARGO_CFG_TARGET_OS` is the question actually being asked;
-  in this crate it decides whether to emit the sherpa `$ORIGIN` rpath link arg.
+  in this crate it decides whether to copy sherpa-onnx's `.so` files into the
+  Android project's `jniLibs/`.
 - **A feature may name an optional dependency that only exists for some
-  targets.** `tts = ["dep:rodio", …]` with those dependencies declared under
+  targets.** `tts = ["dep:rodio", …]` with `rodio` declared under
   `[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]`
-  resolves to nothing on Android and to the voice everywhere else — one feature,
-  no second configuration to keep in step. `cargo tree -p sapling-desktop
-  --target aarch64-linux-android` is how to check what a target actually gets.
+  resolves to nothing on Android and to the player everywhere else — one
+  feature, no second configuration to keep in step. `cargo tree -p
+  sapling-desktop --target aarch64-linux-android` is how to check what a target
+  actually gets.
+- **Nothing packages a dependency's Android `.so` files for you.** Tauri's
+  Gradle `RustPlugin` copies exactly one library into the APK, the crate's own
+  `libsapling_desktop.so`. `sherpa-onnx-sys` links shared on Android and *does*
+  have a `copy_to_tauri_android_jnilibs` of its own — but it locates the project
+  as `<cargo target dir>/../tauri.conf.json`, which in a workspace is the repo
+  root and not `crates/sapling-desktop`, so it finds nothing and prints
+  "Tauri jniLibs directory not found; skipping". `crates/sapling-desktop/build.rs`
+  does the copy instead. Symptom if it is ever lost: the APK installs, boots and
+  dies on the first spoken word.
+- **Cargo does *not* order a dependency's build script before yours — unless it
+  declares `links`.** Verified with a two-crate scratch project: a plain
+  dependency's build script had not run when the dependent's started. So a build
+  script that reads what another one downloaded is a race, and the only reason
+  the sherpa copy above is safe is that `sherpa-onnx-sys` declares
+  `links = "sherpa-onnx"`.
+- **A `links` crate passes nothing to you unless it prints it.** `DEP_<LINKS>_*`
+  carries only the `cargo:<key>=<value>` lines the dependency emits, and
+  `sherpa-onnx-sys` emits none — its `SHERPA_ONNX_LIB_DIR` is an `env::set_var`
+  inside its own process. So the path has to be reconstructed, which is why
+  `build.rs` reads the pinned version out of `Cargo.toml` rather than repeating
+  it.
+- **The prebuilt sherpa Android libraries need no `libc++_shared.so`.** `readelf
+  -d` lists `libandroid`, `liblog`, `libm`, `libdl`, `libc` and (for the c-api
+  one) `libonnxruntime` — the C++ runtime is static inside them. Their `LOAD`
+  segments are 16 KB-aligned, so they are fine on Android 15's 16 KB-page
+  devices too. Both facts are worth re-checking on a version bump, and the CI
+  step prints the `readelf` output so they are visible rather than assumed.
 - **Gradle builds the whole package, `[[bin]]` included** — cargo-mobile2 runs
   `cargo build -p <crate> --target <triple>` with no `--lib`. On Android the app
   is the cdylib (`TauriActivity` loads `libsapling_desktop.so` and calls

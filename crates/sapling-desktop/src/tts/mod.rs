@@ -7,16 +7,26 @@
 //! `SharedArrayBuffer` to spare it any of that. So on this host synthesis moves
 //! to Rust.
 //!
-//! **And so does playback**, which was not the plan. `<audio>` over a blob does
-//! work in this webview, but it builds a fresh GStreamer pipeline per clip and
-//! starts about a second late, and Web Audio — the way to keep one pipeline —
-//! is unusable here altogether. [`play`] is the measurement and the answer;
-//! the short version is that speech no longer touches the webview's audio
-//! stack at all, while everything else in the app still does.
+//! **And on the desktop so does playback**, which was not the plan. `<audio>`
+//! over a blob does work in this webview, but it builds a fresh GStreamer
+//! pipeline per clip and starts about a second late, and Web Audio — the way to
+//! keep one pipeline — is unusable here altogether. `play` is the measurement
+//! and the answer; the short version is that speech no longer touches
+//! *WebKitGTK's* audio stack at all, while everything else in the app still
+//! does.
 //!
-//! The seam is still small and boring: five commands, and none of them knows a
-//! word of any language. `src/lib/tts/native.ts` offers `tts.ts` exactly the
-//! shape `sherpa.ts` offers it, and `speak()` cannot tell which host it is on.
+//! **That half is WebKitGTK's problem and nobody else's.** The same crate built
+//! for Android synthesizes exactly like this one and does not play anything:
+//! that WebView is Chromium, where an `<audio>` element over a blob is the
+//! ordinary path. So `play` is compiled for desktop targets only, and
+//! [`HOST_PLAYS_AUDIO`] — which rides out on [`TtsStatus::playback`] — is how
+//! the window learns which host it got, instead of asking what platform it is
+//! on.
+//!
+//! The seam is still small and boring: five commands at most, three of them on
+//! every host, and none of them knows a word of any language.
+//! `src/lib/tts/native.ts` offers `tts.ts` exactly the shape `sherpa.ts` offers
+//! it, and `speak()` cannot tell which host it is on.
 //!
 //! ## The engine is loaded once and kept
 //!
@@ -77,6 +87,10 @@
 
 pub mod kokoro;
 pub mod model;
+/// Desktop only, and it is the *only* part of the voice that is: rodio over an
+/// output device exists because WebKitGTK cannot play a clip, and Android's
+/// Chromium WebView can. See [`HOST_PLAYS_AUDIO`].
+#[cfg(desktop)]
 pub mod play;
 pub mod wav;
 
@@ -107,6 +121,35 @@ const LENGTH_SCALE: f32 = 1.0;
 /// `abs(NaN) > threshold` is false, so an all-`NaN` clip fails this test.
 const AUDIBLE_THRESHOLD: f32 = 1e-4;
 
+/// Whether this host *plays* a clip as well as making one.
+///
+/// It is not a preference and not a runtime probe — it is what was compiled.
+/// [`play`] is rodio over an output device, and it exists for one measured
+/// reason: WebKitGTK builds a fresh GStreamer pipeline per `<audio>` clip, so a
+/// spoken word starts about a second late, and its Web Audio output is unusable
+/// besides. Android's WebView is Chromium, where an `<audio>` element over a
+/// blob is the ordinary path and works — so there the clip stays in the window,
+/// `rodio` is not even a dependency, and `tts_play`/`tts_stop` do not exist.
+///
+/// The window is told rather than left to guess: this rides out on
+/// [`TtsStatus::playback`], and `src/lib/tts/tts.ts` reads it off the same
+/// memoised probe it already makes. A host that answers `false` never attempts
+/// `tts_play`, so there is no per-clip failure to warn about and no
+/// "no output device" to latch.
+pub const HOST_PLAYS_AUDIO: bool = cfg!(desktop);
+
+/// Threads to give ONNX on a phone, whatever [`std::thread::available_parallelism`]
+/// says.
+///
+/// A desktop gets every core, because this is one interactive request at a time
+/// and nothing else is competing for the box. A phone's cores are not
+/// interchangeable: a big.LITTLE eight is four fast and four slow, and an ONNX
+/// session split evenly across them runs at the pace of the slow ones while
+/// spending the battery of all eight. Four is the usual size of the fast
+/// cluster and is the number to revisit if anyone ever measures this on a
+/// device — nobody here has.
+const MOBILE_MAX_THREADS: usize = 4;
+
 /// What `tts_status` answers. Serialized camelCase because it is read by
 /// TypeScript, and the field names are `native.ts`'s `NativeTtsStatus`.
 #[derive(Serialize)]
@@ -124,6 +167,10 @@ pub struct TtsStatus {
     pub download_bytes: u64,
     /// Whether the engine is loaded and warm in this process.
     pub loaded: bool,
+    /// Whether this host also *plays* the clip it makes, or only makes one.
+    /// [`HOST_PLAYS_AUDIO`] is the whole story; the window needs it because it
+    /// owns the choice of player.
+    pub playback: bool,
 }
 
 /// The voice: where its files live, and the engine once it has been loaded.
@@ -178,6 +225,7 @@ impl TtsHandle {
             // boolean on a settings row, and the engine it describes is reached
             // through the mutex either way.
             loaded: self.loaded.load(Ordering::Relaxed),
+            playback: HOST_PLAYS_AUDIO,
         }
     }
 
@@ -279,8 +327,9 @@ impl TtsHandle {
             dict_dir: path("dict"),
             lexicon: format!("{},{}", path("lexicon-us-en.txt"), path("lexicon-zh.txt")),
             rule_fsts: format!("{},{}", path("date-zh.fst"), path("number-zh.fst")),
-            // The whole machine: this is one interactive request at a time, not
-            // a batch job sharing the box with anything else.
+            // The whole machine on a desktop: this is one interactive request
+            // at a time, not a batch job sharing the box with anything else.
+            // Capped on a phone, where the cores are not all the same core.
             num_threads: available_threads(),
             length_scale: LENGTH_SCALE,
             max_num_sentences: MAX_NUM_SENTENCES,
@@ -295,10 +344,16 @@ fn is_audible(samples: &[f32]) -> bool {
     samples.iter().any(|s| s.abs() > AUDIBLE_THRESHOLD)
 }
 
-/// Cores to give ONNX, never fewer than one.
+/// Cores to give ONNX, never fewer than one and never more than a phone should
+/// spend (see [`MOBILE_MAX_THREADS`]).
 fn available_threads() -> i32 {
+    let ceiling = if cfg!(desktop) {
+        usize::MAX
+    } else {
+        MOBILE_MAX_THREADS
+    };
     std::thread::available_parallelism()
-        .map(|cores| cores.get().min(i32::MAX as usize) as i32)
+        .map(|cores| cores.get().min(ceiling).min(i32::MAX as usize) as i32)
         .unwrap_or(1)
 }
 
@@ -319,8 +374,15 @@ mod tests {
     }
 
     #[test]
-    fn there_is_always_at_least_one_thread() {
-        assert!(available_threads() >= 1);
+    fn there_is_always_at_least_one_thread_and_never_more_than_a_phone_should_spend() {
+        let threads = available_threads();
+        assert!(threads >= 1);
+        if !cfg!(desktop) {
+            assert!(
+                threads <= MOBILE_MAX_THREADS as i32,
+                "a phone's slow cluster is not worth an ONNX thread each: {threads}"
+            );
+        }
     }
 
     #[test]
@@ -332,6 +394,9 @@ mod tests {
         assert_eq!(status.bytes, 0);
         assert_eq!(status.download_bytes, KOKORO.bytes);
         assert_eq!(status.model, KOKORO.dir);
+        // What the window branches its player on, and it is what was compiled
+        // rather than anything this handle discovered.
+        assert_eq!(status.playback, cfg!(desktop));
     }
 
     #[test]

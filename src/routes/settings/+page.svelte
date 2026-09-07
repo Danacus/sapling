@@ -252,7 +252,7 @@
 	 * already the answer and nothing should flicker.
 	 */
 	let downloadSize = $state(formatMb(RUNTIME_DOWNLOAD_BYTES));
-	/** True in the Tauri desktop shell, where the voice is native. */
+	/** True in a Tauri shell, desktop or Android, where the voice is native. */
 	const nativeVoice = inTauri();
 
 	/** e.g. "37 MB of 105 MB" — both halves come from the cache module. */
@@ -812,8 +812,8 @@
 						</p>
 						{#if nativeVoice}
 							<p class="hint">
-								Runs natively on your CPU, on every core — there is no GPU path, and none is needed
-								for single words and short sentences.
+								Runs natively on your CPU — there is no GPU path, and none is needed for single
+								words and short sentences.
 							</p>
 						{:else}
 							<p class="hint">
@@ -838,12 +838,12 @@
 					{#if nativeVoice}
 						<p class="hint">
 							{downloadSize} in one archive, unpacked into this app's own data folder. It happens once
-							per machine, and everything works offline afterwards. The model is the full-precision build,
+							per device, and everything works offline afterwards. The model is the full-precision build,
 							the same one the web app uses, so a phrase sounds the same wherever you study.
 						</p>
 						<p class="hint">
-							Synthesis runs several times faster than real time here, so clips are made fresh
-							rather than stored — only the ones you have just played are kept, in memory.
+							Clips are made fresh here rather than stored — only the ones you have just played are
+							kept, in memory.
 						</p>
 					{:else}
 						<p class="hint">
@@ -864,9 +864,9 @@
 			  Outside the Kokoro block on purpose: only Kokoro fills this cache, but
 			  someone who has just switched to the browser voice is exactly the
 			  person who wants to reclaim the space. Hidden only where nothing can
-			  ever fill it — the desktop host synthesizes too fast for a stored
-			  clip to be worth its bytes — and even there it comes back if some
-			  earlier build left something behind.
+			  ever fill it — a native host re-synthesizes rather than storing
+			  clips — and even there it comes back if some earlier build left
+			  something behind.
 			-->
 				{#if !nativeVoice || audioBytes > 0}
 					<div class="field">
