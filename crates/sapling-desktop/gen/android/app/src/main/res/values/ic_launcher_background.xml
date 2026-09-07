@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- `tauri icon` writes #fff here. The foreground it generates is the whole
+       squircle icon, corners and all, so the only place this shows is the
+       sliver a launcher's mask leaves outside those rounded corners — paper
+       (`--bg`) reads as part of the icon there, white as a chip out of it. -->
+  <color name="ic_launcher_background">#f4efe4</color>
+</resources>

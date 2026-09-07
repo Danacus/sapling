@@ -24,9 +24,9 @@ pnpm embed:build                        # embed/ -> embed/dist/, its own Pages p
 pnpm desktop:dev                        # vite dev + the desktop window
 pnpm desktop:build                      # pnpm build + target/release/sapling-desktop
 pnpm desktop:check                      # clippy -D warnings + the desktop crate's test
-# The same crate as an Android app. CI only (the `android` job): these two want the
-# *default* shell plus rustup, an SDK and an NDK, which no devShell provides.
-pnpm desktop:android:init               # generate gen/android (never committed)
+# The same crate as an Android app. CI builds the APK (the `android` job); both want
+# the *default* shell plus rustup, an SDK and an NDK, which no devShell provides.
+pnpm desktop:android:init               # rewrite gen/android — which is committed, so rarely
 pnpm desktop:android                    # the debug APK, over a `build/` that already exists
 pnpm format                             # prettier --write . (bulk pass)
 pnpm format:check                       # prettier --check . (verify only)

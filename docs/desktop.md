@@ -42,13 +42,17 @@ repo root via the config's `cwd: "../.."`. `desktop:build` produces
 spike and would need a full icon set.
 
 The two Android scripts are the exception and want the *default* shell plus a
-rustup toolchain, an SDK and an NDK, which is why they only ever run in CI
-(see [Android](#android)):
+rustup toolchain, an SDK and an NDK, which is why the APK is only ever built in
+CI (see [Android](#android)):
 
 ```sh
-pnpm desktop:android:init   # write gen/android — needs the SDK, NDK and rustup
+pnpm desktop:android:init   # rewrite gen/android — needs the SDK, NDK and rustup
 pnpm desktop:android        # the debug APK, over a `build/` that already exists
 ```
+
+**`gen/android` is committed, so the init is not part of anyone's loop** — it is
+how the tree was first written and how it would be rebuilt for a new Tauri
+version, and it *overwrites* the two edits [Android](#android) describes.
 
 New files must be `git add`ed before nix sees them (flakes read the index, not
 the working tree). This looks exactly like "the flake is broken".
@@ -363,17 +367,18 @@ The same crate also builds as an Android app. It is a spike inside a spike:
 **nobody here has an Android SDK**, so the build exists only as the `android`
 job in `.github/workflows/deploy.yml`, it produces a *debug* APK, and nothing
 in the app or its gates depends on it. Like `desktop`, it runs beside `build`
-and gates no deploy.
+and gates no deploy. It has been installed on a phone once (Android 15) — see
+[What the phone said](#what-the-phone-said).
 
 **What the job does**, in order: installs and builds the web bundle inside the
 flake's devShell exactly as `build` does (`pnpm install --frozen-lockfile`,
-`pnpm build`); generates `gen/android`; and builds the APK with the Tauri CLI.
-Two seams are worth knowing:
+`pnpm build`); checks that the committed `gen/android` is there; and builds the
+APK with the Tauri CLI. Two seams are worth knowing:
 
 - **The Rust half uses rustup, not nix.** nixpkgs' rustc carries no Android
   target std and `androidenv` is unfree and enormous, so `dtolnay/rust-toolchain`
-  installs `aarch64-linux-android` and the two Android steps prepend rustup's
-  shims to `PATH` *inside* `nix develop`. Everything else — node, pnpm, the
+  installs `aarch64-linux-android` and the APK step prepends rustup's shims to
+  `PATH` *inside* `nix develop`. Everything else — node, pnpm, the
   Tauri CLI — is still the flake's. The NDK is the runner image's
   (`ANDROID_NDK_LATEST_HOME` → `NDK_HOME`), Java is `actions/setup-java`, and
   the SDK platform and build-tools are installed explicitly rather than left to
@@ -384,16 +389,17 @@ Two seams are worth knowing:
   therefore passes `--config '{"build":{"beforeBuildCommand":""}}'` — an empty
   hook is a skipped hook — and the script's contract is "the bundle in `build/`
   is already there".
-- **Both steps go through a package.json script, and that is load-bearing.**
+- **Every step goes through a package.json script, and that is load-bearing.**
   `tauri android init` writes the command Gradle will use to call the CLI back
   (once per ABI) out of *how it was itself invoked*: with a package manager in
   the environment it writes `pnpm tauri android android-studio-script`, and
   without one it writes `node tauri …`, which is not a runnable command and
-  fails minutes later inside Gradle. So the init runs as
-  `pnpm desktop:android:init` (which sets `PNPM_PACKAGE_NAME`), and
-  `"tauri": "tauri"` exists in `package.json` for Gradle to call — **do not
-  delete it**; it looks unused and is not. pnpm finds it by walking up from
-  `crates/sapling-desktop`.
+  fails minutes later inside Gradle. That command is now **committed**, in
+  `gen/android/buildSrc/.../BuildTask.kt`, so it was written once — by
+  `pnpm desktop:android:init`, which sets `PNPM_PACKAGE_NAME` — and it says
+  `pnpm`, with no path from the machine that ran it. `"tauri": "tauri"` exists
+  in `package.json` for Gradle to call — **do not delete it**; it looks unused
+  and is not. pnpm finds it by walking up from `crates/sapling-desktop`.
 
 **One ABI, `arm64-v8a`.** Every extra one is the whole dependency tree compiled
 again for a spike nobody has a device farm for; `--target aarch64` in
@@ -411,14 +417,84 @@ unzip sapling-android-debug-apk.zip     # what GitHub hands back
 adb install -r app-universal-debug.apk
 ```
 
-**`gen/android` is generated in CI and never committed** (`.gitignore` covers
-`/crates/sapling-desktop/gen/`). Tauri's docs suggest committing it; for a spike
-the trade is the other way round — it is a few hundred generated files whose
-only reader is a build nobody runs locally, and regenerating costs seconds.
-The cost of that choice: it cannot be regenerated on a machine with no SDK
-(`tauri android init` validates the environment and shells out to `rustup`
-before it writes anything), so any change to the generated project has to be
-made through the config or the CLI, never by hand.
+### The generated project is committed
+
+**`gen/android` is in git** — 42 files, ~320 KB, the Gradle wrapper jar included
+— and the root `.gitignore` keeps only `gen/schemas/`, which `tauri-build`
+rewrites on every desktop build. This reverses the first decision here
+("generate it per CI run"), and the reason is that the app's own icons and its
+edge-to-edge fix exist *only* as edits to that tree: there is no config key for
+either, and `tauri android init` writes Tauri's defaults back over both. So the
+CI job now **checks that the tree is there** and fails with a sentence if it is
+not, rather than generating one. What is committed is what a device runs.
+
+Regenerating it — a Tauri upgrade, say — needs an SDK, an NDK *and* rustup,
+because `tauri android init` validates the environment and shells out to
+`rustup target add` before it writes anything. It never actually *uses* them:
+empty directories and a `rustup` that exits 0 are enough, which is how this tree
+was written on a machine with no Android tooling at all.
+
+```sh
+mkdir -p /tmp/sdk /tmp/ndk /tmp/bin
+printf 'Pkg.Revision = 27.2.12479018\n' > /tmp/ndk/source.properties
+printf '#!/bin/sh\nexit 0\n' > /tmp/bin/rustup && chmod +x /tmp/bin/rustup
+ANDROID_HOME=/tmp/sdk NDK_HOME=/tmp/ndk PATH="/tmp/bin:$PATH" \
+  pnpm desktop:android:init
+```
+
+After a regeneration, **redo the two edits below** and re-check that nothing
+absolute leaked in: `grep -rn '/home/\|/nix/store' crates/sapling-desktop/gen`
+should be silent. `BuildTask.kt` is the file to watch, since it embeds the
+command Gradle calls the CLI back with.
+
+A CI build does not dirty the tree. Everything `tauri android build` rewrites
+per run is covered by the generated project's own nested `.gitignore` files:
+`app/tauri.build.gradle.kts`, `app/tauri.properties`, `app/proguard-tauri.pro`,
+`app/src/main/assets/tauri.conf.json`, `app/src/main/jniLibs/**/*.so`, the
+`generated/` Kotlin sources (`TauriActivity` among them), `build/`, `.gradle/`
+and `local.properties`.
+
+### The two edits
+
+**The icons** are the app's, generated from the same 512px source the web build
+uses:
+
+```sh
+cd crates/sapling-desktop && pnpm exec tauri icon ../../static/icons/icon-512.png
+```
+
+It fills `app/src/main/res/mipmap-*/ic_launcher{,_round,_foreground}.png` and
+the adaptive-icon pair beside them, and there is no flag to ask it for one
+platform — it also writes a desktop and iOS set into
+`crates/sapling-desktop/icons/`, which nothing reads (`bundle.icon` points
+straight at `static/icons/icon-512.png`, and bundling is off), so that directory
+is gitignored and deleted rather than committed. This is the one CLI call that
+has to run as `pnpm exec` rather than as a script: a pnpm script would run it
+from the repo root, where there is no `tauri.conf.json`. One value in what it
+writes is changed by hand — `values/ic_launcher_background.xml` is the app's
+paper instead of `#fff`, since the generated foreground is the whole squircle
+and white would only ever show as a chip out of its corners.
+
+**The window insets** are `MainActivity.kt`, and they are why the status bar no
+longer sits on top of the app. The template calls `enableEdgeToEdge()` and the
+project targets SDK 36, so the window is laid out behind the status bar and the
+gesture bar. Neither cheap answer works: `android:windowOptOutEdgeToEdgeEnforcement`
+switches off the *framework's* enforcement and cannot undo an explicit
+`enableEdgeToEdge()`, and it is deprecated and ignored outright for an app
+targeting 36 on an Android 16 device; `env(safe-area-inset-*)` is a bet on a
+WebView behaviour this repo cannot verify. So the activity applies the
+`systemBars() | displayCutout()` insets as padding on its content view — the
+`FrameLayout` wry drops the WebView into with `setContentView(webView)` — which
+*sizes* the WebView to the safe area and leaves the web app knowing nothing.
+`enableEdgeToEdge()` stays, so the window behaves the same way on every API
+level from minSdk 24 up. The strip left behind the bars is painted with the
+app's paper (`--bg`) by `values/themes.xml`; the night theme keeps Material's
+dark background, because what the WebView reports for `prefers-color-scheme`
+under a DayNight theme is exactly the sort of thing that needs a device, and a
+paper strip under light status-bar icons would hide them. The IME is
+deliberately out of the mask — a keyboard that covers a focused input is the
+behaviour this host already had, and changing when the WebView resizes is a
+change that wants a device to check.
 
 **The voice is compiled out.** `sherpa-rs-sys` downloads prebuilt desktop
 shared libraries and rodio's cpal backend wants ALSA, so the `tts` feature's
@@ -444,14 +520,44 @@ download instead of rejecting into the Settings screen, and an explicit
 otherwise still shows the desktop copy, which is wrong there and cheap to
 leave wrong in a spike.
 
+### What the phone said
+
+The APK has now been sideloaded, once, onto an Android 15 phone. It boots and
+the app runs: pages mount, the database opens, and the voice degrades exactly as
+designed (the host has none, `tts.ts` says so and falls back). Three things came
+back, and the state of each:
+
+- **The launcher icon was Tauri's**, and is now the app's — [the two
+  edits](#the-two-edits).
+- **The status bar sat on top of the app**, and no longer does — same section.
+- **The settings page reloaded in a loop.** The guard in `+layout.svelte` was
+  not a guard: it cleared its own flag as the layout script ran, which is
+  *before* the failing import is attempted, so a chunk that fails on every load
+  reloaded forever. `$lib/ui/preload-reload` now clears it only when the learner
+  navigates somewhere else — `afterNavigate` minus the `enter` the reload itself
+  lands on, since the failing import here is fired by an effect *after* Settings
+  has mounted and the landing navigation would otherwise clear the flag a
+  heartbeat before the failure. A persistent failure now reloads once and then
+  surfaces as the ordinary error. **Why the import fails on this host is still
+  open**, and the reload is what hid it: the logs show Settings mounting and
+  hard-reloading ~150 ms later with nothing printed. The suspect is the one
+  dynamic import Settings makes that other visited pages do not — `loadRomanizer`
+  → `./zh`, the ~288 KB pinyin-pro chunk — so the handler now logs the failing
+  module's URL *before* it reloads, and the next APK's logcat should name the
+  file. Nothing calls `preventDefault()` on the event, so Vite still rethrows
+  and `loadRomanizer`'s caller still sees its rejection (Settings catches it and
+  keeps the stored LLM readings, which is the documented fallback).
+- **SvelteKit's service-worker registration fails here**, on every load, with
+  "unknown error occurred when fetching the script": the page is served from
+  `http://tauri.localhost` and `/service-worker.js` cannot be fetched there. It
+  is one unhandled rejection in logcat and costs nothing — the shell already
+  ships its assets and has no use for a precache — so `kit.serviceWorker` is
+  left alone rather than growing a host-shaped exception.
+
 **What a release build would still need**, beyond everything the desktop list
 below already names: a signing keystore and a `signingConfigs` block for it
-(today's APK is debug-signed and will not update over a store build), an
-application icon set (`tauri android init` writes Tauri's defaults —
-`tauri icon` would generate ours), a real minSdk/targetSdk decision, and the
-CSP. Also untested, and worth saying plainly: **no one has run this APK on a
-device.** CI proves it compiles, links and packages; whether the app boots, and
-whether Android's WebView gives it what WebKitGTK could not, is unknown.
+(today's APK is debug-signed and will not update over a store build), a real
+minSdk/targetSdk decision, and the CSP.
 
 ## What the webview cannot do
 

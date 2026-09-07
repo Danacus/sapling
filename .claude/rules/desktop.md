@@ -239,8 +239,29 @@ someone to run the check by hand.
   `libsapling_desktop.so` and there is no executable (`main.rs` is empty there,
   and `run()` carries `#[cfg_attr(mobile, tauri::mobile_entry_point)]`); and
   `src/lib/tts/tts.ts` asks the host whether it has a voice at all instead of
-  assuming Tauri means one — see `content.md`. `gen/android` is generated per CI
-  run and never committed.
+  assuming Tauri means one — see `content.md`.
+
+- **`gen/android` is committed, and the CI job may never regenerate it.** It
+  started out generated per run; it is a checked-in tree now because two things
+  about the app exist *only* as edits to it, and `tauri android init` writes
+  Tauri's defaults back over both. Those two are the launcher icons
+  (`app/src/main/res/mipmap-*`, made from `static/icons/icon-512.png` by
+  `tauri icon`) and the **window insets in `MainActivity.kt`**: the template
+  calls `enableEdgeToEdge()` and the project targets SDK 36, so without them the
+  status bar sits on top of the app. The theme opt-out
+  (`android:windowOptOutEdgeToEdgeEnforcement`) is not an alternative — it
+  cannot undo an explicit `enableEdgeToEdge()`, and it is deprecated and ignored
+  for an app targeting 36 on Android 16 — and neither is
+  `env(safe-area-inset-*)`, which is a bet on a WebView behaviour nothing here
+  can check. So the insets are applied where they are a fact: as padding on the
+  activity's content view, the `FrameLayout` wry calls `setContentView(webView)`
+  on, which *sizes* the WebView to the safe area. The `.gitignore` that keeps
+  the tree honest is the generated project's own, and it already covers
+  everything `tauri android build` rewrites per run (`app/tauri.build.gradle.kts`,
+  `app/tauri.properties`, `app/proguard-tauri.pro`, the assets copy of
+  `tauri.conf.json`, `jniLibs/*.so`, the `generated/` sources, `build/`), so a
+  CI build leaves the tree clean. The root `.gitignore` keeps only
+  `gen/schemas/`, which `tauri-build` writes on every desktop build.
 
 - **The crate is a workspace member but not a *default* member.** It links
   WebKitGTK, which only `nix develop .#desktop` provides, and `pnpm core:check`

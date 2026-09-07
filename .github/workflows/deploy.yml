@@ -270,19 +270,19 @@ jobs:
           VITE_YOUTUBE_EMBED_URL: ${{ vars.VITE_YOUTUBE_EMBED_URL }}
         run: nix develop -c pnpm build
 
-      # `gen/android` is generated and not committed (Tauri's docs suggest
-      # committing it; for a spike, a few seconds per run beats a large
-      # generated tree in the history — docs/desktop.md).
-      #
-      # The `PATH` prepend is the whole rustup/nix seam, and it is needed here
-      # too: `tauri android init` writes the Gradle project against the cargo it
-      # can see. Everything else in the command is still the flake's node, pnpm
-      # and Tauri CLI.
-      - name: Generate the Android project
+      # `gen/android` is committed — it carries the app's icons and the
+      # edge-to-edge fix, which exist only as edits to the generated project
+      # (docs/desktop.md). This job must never regenerate it: `tauri android
+      # init` writes Tauri's own defaults back over both, and the APK would
+      # come out with a launcher icon nobody chose and the status bar over the
+      # top of the app. So the step checks instead of generating.
+      - name: Check the Android project is present
         run: |
-          set -x
-          test -d crates/sapling-desktop/gen/android ||
-            nix develop -c bash -c 'PATH="$RUSTUP_BIN:$PATH" pnpm desktop:android:init'
+          test -d crates/sapling-desktop/gen/android || {
+            echo "crates/sapling-desktop/gen/android is missing." >&2
+            echo "It is committed, not generated here — see docs/desktop.md." >&2
+            exit 1
+          }
 
       # Gradle calls the Tauri CLI back per ABI (`pnpm tauri android
       # android-studio-script`), so pnpm, node and rustup's cargo all have to be

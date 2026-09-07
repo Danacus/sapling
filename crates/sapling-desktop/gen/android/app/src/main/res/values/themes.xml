@@ -1,0 +1,19 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Theme.sapling_desktop" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <!--
+            The window is edge-to-edge and MainActivity insets the WebView out
+            from under the system bars, so what shows through behind them is
+            this: Material's white, against the app's warm paper, is a visible
+            seam. `sapling_paper` is `--bg` from `src/app.css`.
+
+            Only the day theme is repainted. `enableEdgeToEdge()` picks the bar
+            icons off the system's night setting, while what the *page* renders
+            in night mode is the WebView's call (algorithmic darkening is off by
+            default for an app targeting SDK 33+, so it may well stay light) —
+            and a paper band under light icons would hide them. Material's dark
+            background there is readable whichever way that goes.
+        -->
+        <item name="android:windowBackground">@color/sapling_paper</item>
+    </style>
+</resources>

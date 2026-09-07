@@ -49,4 +49,15 @@ result-*
 /src/lib/db/wasm/
 
 # Tauri's generated ACL schemas, written by `tauri-build` on every desktop build.
-/crates/sapling-desktop/gen/
+# Its sibling `gen/android` *is* committed — it carries an icon set and an
+# edge-to-edge fix that only exist as edits to the generated project, and it
+# cannot be regenerated on a machine with no Android SDK (docs/desktop.md).
+# What `tauri android build` rewrites per run is ignored by the generated
+# project's own nested `.gitignore` files.
+/crates/sapling-desktop/gen/schemas/
+
+# `tauri icon` writes a desktop and iOS set beside the Android mipmaps it is
+# run for, and there is no flag to ask for one platform. Nothing reads these —
+# `bundle.icon` points straight at `static/icons/icon-512.png` and bundling is
+# off — so they are a side effect, not an artifact.
+/crates/sapling-desktop/icons/

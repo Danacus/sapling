@@ -149,6 +149,28 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
 
 ## Android (the same crate, built only in CI)
 
+- **`gen/android` is committed now (2026-09-07), and CI must not regenerate it.**
+  It was generated per run until the app's icons and the edge-to-edge fix turned
+  out to have no home but that tree — `tauri android init` writes Tauri's
+  defaults back over both. The job checks the directory exists and fails if it
+  does not. What `tauri android build` rewrites per run is covered by the
+  generated project's own nested `.gitignore` files, so a build leaves the tree
+  clean; the root `.gitignore` keeps only `gen/schemas/`.
+- **`tauri icon` has no "Android only" flag**, and a pnpm *script* runs it from
+  the repo root where there is no `tauri.conf.json`. So it is the one Tauri call
+  here that wants `pnpm exec`, from `crates/sapling-desktop` — and it writes a
+  desktop and iOS set into `crates/sapling-desktop/icons/` beside the mipmaps it
+  was run for. Nothing reads that directory (`bundle.icon` names
+  `static/icons/icon-512.png` and bundling is off); it is gitignored.
+- **`android:windowOptOutEdgeToEdgeEnforcement` does not fix an overlapping
+  status bar here, twice over.** Tauri's `MainActivity` template calls
+  `enableEdgeToEdge()` explicitly, and the attribute only switches off the
+  *framework's* enforcement — it cannot undo a window the app itself made
+  edge-to-edge. And the generated project targets SDK 36, where the attribute is
+  deprecated and ignored on an Android 16 device (it still works there for an
+  app running on Android 15). The fix that holds on every version is insets as
+  padding on the activity's content view, which is the `FrameLayout` wry calls
+  `setContentView(webView)` on, so the WebView is sized to the safe area.
 - **`tauri android init` writes the Gradle → CLI callback out of `argv[0]`, and
   gets it wrong unless a package manager is in the environment.** The generated
   `gen/android/buildSrc/.../BuildTask.kt` runs the Tauri CLI once per ABI
@@ -164,10 +186,16 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   `package.json` and must stay: Gradle calls it by that name, from
   `crates/sapling-desktop`, and pnpm walks up to the root manifest to find it.
 - **`tauri android init` needs the SDK, the NDK *and* rustup just to write
-  files.** It checks `ANDROID_HOME`, reads `$NDK_HOME/source.properties` for a
-  version, and shells out to `rustup target add` before it generates anything.
-  There is no "generate the project offline" mode, which is why `gen/android`
-  cannot be produced on a machine that only has nix.
+  files — but it never uses them.** It checks `ANDROID_HOME`, reads
+  `$NDK_HOME/source.properties` for a version, and shells out to `rustup target
+  add` before it generates anything. There is no "generate the project offline"
+  mode, and there does not need to be: two empty directories, a one-line
+  `source.properties` and a `rustup` shim that exits 0 satisfy every check, and
+  the tree that comes out is the real one. That is how `gen/android` was written
+  on a machine with no Android tooling (`docs/desktop.md` has the snippet).
+  Check the result for absolute paths — `BuildTask.kt` is where a path from the
+  generating machine would land — but with the init run as a pnpm script the
+  callback is just `pnpm`.
 - **A build script's `#[cfg(target_os = …)]` is the *host's*.** `build.rs` runs
   on the machine doing the building, so the attribute answers for the laptop and
   not for the phone. `CARGO_CFG_TARGET_OS` is the question actually being asked;
@@ -201,6 +229,27 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   because nothing needs isolation, not because it is unavailable. Firefox only;
   re-check in Chrome before enabling. The wrong version of this note nearly cost
   a needless plan to self-host 439MB of Kokoro voices.
+- **A reload guard that clears itself at load time is not a guard (2026-09-07).**
+  `+layout.svelte` reloads once on `vite:preloadError` to heal a tab left open
+  across a deploy. It also cleared its sessionStorage flag as the script ran,
+  which is *before* the failing import is attempted — so a chunk that fails on
+  every load reloaded forever, which is what an Android build did on the settings
+  page. `afterNavigate` alone does not fix it either, and that is the subtle
+  half: the import that failed there is fired by an effect *after* the page has
+  mounted, so the landing navigation completes first and clears the flag a
+  heartbeat before the failure. The flag is cleared by `afterNavigate` **minus
+  `type === 'enter'`** — the learner going somewhere else is evidence the app
+  works; landing where the reload put us is not. Log the failing URL before
+  reloading, too: the reload cancels
+  the error, so on a host with no devtools it is the only report there will be.
+  And do not call `preventDefault()` on that event — Vite rethrows an
+  unprevented one, which is what lets the awaiting caller see its rejection
+  instead of a module that resolved to `undefined`.
+- **SvelteKit registers `/service-worker.js` on the Android Tauri host too, and
+  it fails there.** The page is served from `http://tauri.localhost` and the
+  fetch errors ("unknown error occurred when fetching the script"), leaving one
+  unhandled rejection per load in logcat. Harmless — the shell ships its own
+  assets — and not worth a host-shaped exception in `kit.serviceWorker`.
 - **SvelteKit's `$service-worker` `build` list omits Vite worker output.** It is
   assembled purely from Vite's *client manifest*, and a `?worker` import is a
   separate Rollup build that never appears there. Anything loaded via `?worker`

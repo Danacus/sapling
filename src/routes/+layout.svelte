@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
-	import { goto } from '$app/navigation';
+	import { afterNavigate, goto } from '$app/navigation';
 	import { page } from '$app/state';
 
 	import favicon from '$lib/assets/favicon.svg';
 	import { getProfile } from '$lib/db';
 	import { isSyncEnabled, runSync } from '$lib/sync';
+	import { preloadReloadGuard } from '$lib/ui/preload-reload';
 	import Spinner from '$lib/ui/Spinner.svelte';
 	import TaskTray from '$lib/ui/TaskTray.svelte';
 
@@ -20,23 +21,28 @@
 	let bootError = $state<string | undefined>(undefined);
 
 	/**
-	 * A tab left open across a deploy keeps running the old build's JS. When it
-	 * later dynamically imports one of its own (now-deleted) hashed chunks, the
-	 * SPA fallback rewrites the missing path to `index.html` instead of a 404,
-	 * and Vite's loader rejects with `vite:preloadError` — this is the "error
-	 * loading dynamically imported module" report. Reloading picks up the fresh
-	 * shell and heals it, since nothing in this app's state lives past the local database.
+	 * One heal-by-reload when a dynamic import fails, and never a loop —
+	 * `$lib/ui/preload-reload` carries the whole reasoning and the test.
 	 *
-	 * Guarded against looping if the reload lands on a genuinely broken deploy:
-	 * this line only runs once a page load has gotten this far successfully, so
-	 * it clears any guard a previous reload set, and re-arms for the next one.
+	 * All this layer owns is the wiring: the browser's `sessionStorage`, a real
+	 * reload, the console, and — the part that makes the guard a guard —
+	 * `afterNavigate` as the one thing that re-arms it. This used to clear the
+	 * flag as the script ran, which is *before* the failing import is ever
+	 * attempted, so a chunk that fails every time reloaded forever.
 	 */
+	const preloadGuard = browser
+		? preloadReloadGuard({
+				storage: sessionStorage,
+				reload: () => window.location.reload(),
+				log: (message) => console.error(message)
+			})
+		: undefined;
+
+	afterNavigate((navigation) => preloadGuard?.onNavigated(navigation));
+
 	if (browser) {
-		sessionStorage.removeItem('ll.reloadedForPreloadError');
-		window.addEventListener('vite:preloadError', () => {
-			if (sessionStorage.getItem('ll.reloadedForPreloadError')) return;
-			sessionStorage.setItem('ll.reloadedForPreloadError', '1');
-			window.location.reload();
+		window.addEventListener('vite:preloadError', (event) => {
+			preloadGuard?.onPreloadError(event.payload);
 		});
 
 		// Coming back to the tab is the one moment worth spending a sync on: the
