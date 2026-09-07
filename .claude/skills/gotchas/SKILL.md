@@ -211,6 +211,24 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   is the cdylib (`TauriActivity` loads `libsapling_desktop.so` and calls
   `start_app`), so `main.rs` is deliberately empty there rather than an
   executable nothing can launch.
+- **A debug APK's signature is per-machine, so a CI debug build can never
+  update itself on a phone.** Gradle mints `~/.android/debug.keystore` on the
+  runner that has none, and a fresh runner means a fresh certificate, which
+  Android reads as a different app: `adb install -r` fails with
+  `INSTALL_FAILED_UPDATE_INCOMPATIBLE` and the only way forward is an uninstall,
+  which takes the app's database with it. The job builds a *release* APK signed
+  from four `ANDROID_*` secrets instead (docs/desktop.md).
+- **AGP renames an unsigned release APK**, and an exact artifact path is what
+  notices. With a signing config it is `app-universal-release.apk`, without one
+  `app-universal-release-unsigned.apk` — so "just leave it unsigned when there
+  is no key" quietly breaks `upload-artifact`'s `if-no-files-found: error`.
+  `app/build.gradle.kts` falls back to the *debug* signing config for that
+  reason: the file keeps its name and the APK still installs.
+- **The `secrets` context is not available in a step's `if:`.** Only github,
+  needs, strategy, matrix, job, runner, env, vars, steps and inputs are, so
+  `if: secrets.FOO != ''` is not a condition that can be written — it is either a
+  job-level `env:` to test through the `env` context, or, as here, a `[ -z "$FOO" ]`
+  guard inside the step's own shell with the secret in that step's `env:`.
 
 ## Deploying / edge caching
 

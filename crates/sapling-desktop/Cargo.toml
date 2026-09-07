@@ -52,7 +52,14 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 sapling-core = { path = "../sapling-core", features = ["sqlite"] }
-tauri = { version = "2", features = [] }
+# `devtools` is on because this is a spike and the APK CI hands out is now a
+# *release* build: without it a release webview has no inspector at all, and the
+# only way anyone here sees a console on the phone is `chrome://inspect` over
+# adb — the feature is exactly what gates wry's `setWebContentsDebuggingEnabled`
+# on Android (and `open_devtools` on the desktop window). **It comes off when
+# the app is distributed**: it leaves a shipped build inspectable by anyone with
+# a cable, and on macOS it reaches for private APIs the App Store rejects.
+tauri = { version = "2", features = ["devtools"] }
 # The host opens the file, so it needs the driver the core's adapter wraps.
 # The version must match `sapling-core`'s or two SQLite builds link at once.
 rusqlite = { version = "0.40", features = ["bundled"] }

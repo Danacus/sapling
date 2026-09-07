@@ -241,6 +241,24 @@ someone to run the check by hand.
   `src/lib/tts/tts.ts` asks the host whether it has a voice at all instead of
   assuming Tauri means one — see `content.md`.
 
+- **The APK is a *release* build signed with a key that is not in this tree, and
+  a missing key may not fail it.** A debug APK is signed with whatever throwaway
+  keystore Gradle minted on that runner, so every download demands an uninstall
+  before it will install; one stable certificate is what makes `adb install -r`
+  work and what keeps a phone's data across builds. The key is four
+  `ANDROID_*` repository secrets, written back into
+  `gen/android/keystore.properties` and a `.jks` beside it — both gitignored, by
+  the generated project's own `.gitignore` — and `app/build.gradle.kts` reads
+  them into `signingConfigs.release`. **With no properties file it falls back to
+  the debug key and logs why**, because a fork and every pull request from one
+  have no secrets and a release build is now the only build there is; unsigned
+  would be the wrong fallback, since AGP renames an unsigned release APK and the
+  job names one exact file. `apksigner verify --print-certs` at the end of the
+  job is the gate: what is uploaded is signed, and the log says by whom.
+  `tauri`'s `devtools` feature is on for the same reason the crate exists — a
+  release webview is otherwise not inspectable at all — and comes off when the
+  app is distributed.
+
 - **`gen/android` is committed, and the CI job may never regenerate it.** It
   started out generated per run; it is a checked-in tree now because two things
   about the app exist *only* as edits to it, and `tauri android init` writes
@@ -259,9 +277,10 @@ someone to run the check by hand.
   the tree honest is the generated project's own, and it already covers
   everything `tauri android build` rewrites per run (`app/tauri.build.gradle.kts`,
   `app/tauri.properties`, `app/proguard-tauri.pro`, the assets copy of
-  `tauri.conf.json`, `jniLibs/*.so`, the `generated/` sources, `build/`), so a
-  CI build leaves the tree clean. The root `.gitignore` keeps only
-  `gen/schemas/`, which `tauri-build` writes on every desktop build.
+  `tauri.conf.json`, `jniLibs/*.so`, the `generated/` sources, `build/`) plus the
+  signing material the job writes (`keystore.properties`, `*.jks`), so a CI build
+  leaves the tree clean. The root `.gitignore` keeps only `gen/schemas/`, which
+  `tauri-build` writes on every desktop build.
 
 - **The crate is a workspace member but not a *default* member.** It links
   WebKitGTK, which only `nix develop .#desktop` provides, and `pnpm core:check`

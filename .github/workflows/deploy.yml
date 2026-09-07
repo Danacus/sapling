@@ -12,14 +12,19 @@
 # the crate, so a red desktop check says a protocol change broke the host, not
 # that the site is wrong — it fails the commit, not the deploy.
 #
-# `android`: the *same* crate, built as a sideloadable debug APK and uploaded as
-# a workflow artifact — a spike, and the only place that build exists, since
-# nobody here has an Android SDK. It needs no secret; it reads the same two
-# build-time variables the web build does and is fine with neither set. Two things
-# about it are deliberate and both are in docs/desktop.md: the web bundle is
-# built first under nix (that is where wasm-bindgen and lld live) and Tauri's
-# `beforeBuildCommand` is overridden away so it is not built a second time under
-# a toolchain that has neither; and **the Rust half uses rustup, not nix**,
+# `android`: the *same* crate, built as a sideloadable **release** APK and
+# uploaded as a workflow artifact — a spike, and the only place that build
+# exists, since nobody here has an Android SDK. It is signed with a stable key
+# held in the four `ANDROID_*` secrets below, so each APK installs over the last
+# one instead of demanding an uninstall; with no keystore secret (a fork, a pull
+# request from one) the signing step is skipped and Gradle's debug key signs it
+# instead, which still installs and still cannot update a properly signed build.
+# It reads the same two build-time variables the web build does and is fine with
+# neither set. Two things about it are deliberate and both are in
+# docs/desktop.md: the web bundle is built first under nix (that is where
+# wasm-bindgen and lld live) and Tauri's `beforeBuildCommand` is overridden away
+# so it is not built a second time under a toolchain that has neither; and
+# **the Rust half uses rustup, not nix**,
 # because nixpkgs' rustc carries no Android target std and `androidenv` is unfree
 # and enormous. So only `cargo`/`rustc` come from outside the devShell — node,
 # pnpm and everything else are still the flake's. Like `desktop`, it runs
@@ -37,6 +42,11 @@
 # Needs, set once in the repository settings:
 #   secrets  CLOUDFLARE_API_TOKEN     token with Cloudflare Pages: Edit
 #            CLOUDFLARE_ACCOUNT_ID
+#            ANDROID_KEYSTORE_BASE64  the APK signing keystore, `base64 -w0` of
+#                                     the .jks; unset means a debug-signed APK
+#            ANDROID_KEYSTORE_PASSWORD
+#            ANDROID_KEY_ALIAS        `sapling`
+#            ANDROID_KEY_PASSWORD     equal to the store password (PKCS12)
 #   vars     CLOUDFLARE_PAGES_PROJECT the Pages project name (defaults to `sapling`)
 #            VITE_SYNC_URL            the sync Worker's URL; unset builds without sync
 #            CLOUDFLARE_PAGES_EMBED_PROJECT  the embed page's own Pages project;
@@ -252,6 +262,9 @@ jobs:
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
           "$sdkmanager" --install "platforms;android-36" "build-tools;36.0.0"
+          # `apksigner` lives in the build-tools that were just installed, and
+          # the signature check at the end of the job is the only caller.
+          echo "$ANDROID_HOME/build-tools/36.0.0" >> "$GITHUB_PATH"
           cargo --version
           rustc --version
           rustup target list --installed
@@ -284,20 +297,56 @@ jobs:
             exit 1
           }
 
+      # The signing key, out of the secrets and into the two files Gradle reads.
+      # The check is inside the shell rather than an `if:` on the step because
+      # the `secrets` context is not available in a step condition — and an
+      # absent keystore is not an error: `app/build.gradle.kts` falls back to
+      # the debug key and says so, so a fork still gets an installable APK.
+      # `keystore.properties` is gitignored and `storeFile` is relative to
+      # gen/android, which is where the .jks is written beside it.
+      - name: Write the Android signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          gen=crates/sapling-desktop/gen/android
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "No ANDROID_KEYSTORE_BASE64 — this APK will be debug-signed (docs/desktop.md)."
+            exit 0
+          fi
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$gen/sapling-upload.jks"
+          {
+            echo "storeFile=sapling-upload.jks"
+            echo "storePassword=$ANDROID_KEYSTORE_PASSWORD"
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "keyPassword=$ANDROID_KEY_PASSWORD"
+          } > "$gen/keystore.properties"
+
       # Gradle calls the Tauri CLI back per ABI (`pnpm tauri android
       # android-studio-script`), so pnpm, node and rustup's cargo all have to be
       # on the PATH this inherits — which is exactly why the prepend happens
       # inside the devShell rather than around it. The quotes are single on
       # purpose: `$PATH` must be the one nix has just set, not the one out here.
-      - name: Build the debug APK
+      - name: Build the release APK
         run: nix develop -c bash -c 'set -x; PATH="$RUSTUP_BIN:$PATH" pnpm desktop:android'
 
-      # Debug, so Gradle signs it with the throwaway debug keystore it generates
-      # — enough to sideload, nothing like a release build (docs/desktop.md says
-      # what one of those would still need).
+      # The gate on all of the above: an APK that came out unsigned fails here,
+      # and `--print-certs` names the certificate in the log, so which key signed
+      # it is a fact rather than an assumption. A debug-signed fallback build
+      # passes too — it is signed, just not with ours, and the printed subject
+      # says `CN=Android Debug`.
+      - name: Verify the APK's signature
+        run: |
+          set -x
+          apksigner verify --print-certs \
+            crates/sapling-desktop/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+
       - name: Upload the APK
         uses: actions/upload-artifact@v7
         with:
-          name: sapling-android-debug-apk
-          path: crates/sapling-desktop/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+          name: sapling-android-apk
+          path: crates/sapling-desktop/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
           if-no-files-found: error

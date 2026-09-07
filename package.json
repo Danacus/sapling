@@ -20,7 +20,7 @@
 		"desktop:build": "cd crates/sapling-desktop && cargo tauri build --no-bundle",
 		"desktop:check": "cargo clippy -p sapling-desktop --all-targets -- -D warnings && cargo test -p sapling-desktop",
 		"desktop:android:init": "cd crates/sapling-desktop && tauri android init --ci --skip-targets-install",
-		"desktop:android": "cd crates/sapling-desktop && tauri android build --ci --debug --apk --target aarch64 --config '{\"build\":{\"beforeBuildCommand\":\"\"}}'",
+		"desktop:android": "cd crates/sapling-desktop && tauri android build --ci --apk --target aarch64 --config '{\"build\":{\"beforeBuildCommand\":\"\"}}'",
 		"tauri": "tauri",
 		"embed:dev": "vite --config embed/vite.config.ts",
 		"embed:build": "vite build --config embed/vite.config.ts",

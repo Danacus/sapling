@@ -13,6 +13,34 @@ val tauriProperties = Properties().apply {
     }
 }
 
+// The release APK is signed with a key that lives outside this repository — four
+// repository secrets in CI, `~/.config/sapling/android-signing/` on the machine
+// that minted them (docs/desktop.md). `keystore.properties` next to this
+// project's root is how it arrives: gitignored, in the shape Tauri's own signing
+// docs describe, written by the workflow and by nothing else.
+//
+// **Its absence may not fail the build.** A fork, or a pull request from one,
+// has no secrets, and a release build is now the only build there is. So the
+// fallback is Gradle's throwaway debug key: the APK still comes out, it still
+// installs, and it simply cannot update one signed with the real key. Debug-
+// signed rather than unsigned because an unsigned release APK is named
+// `app-universal-release-unsigned.apk` and the workflow's artifact path — one
+// exact file, `if-no-files-found: error` — would miss it.
+val keystoreProperties = Properties().apply {
+    val propFile = rootProject.file("keystore.properties")
+    if (propFile.exists()) {
+        propFile.inputStream().use { load(it) }
+    }
+}
+val hasReleaseKeystore = keystoreProperties.getProperty("storeFile") != null
+if (!hasReleaseKeystore) {
+    logger.lifecycle(
+        "sapling: no gen/android/keystore.properties, so a release APK is signed with " +
+            "Gradle's debug key. It installs, but never over one signed with the real " +
+            "key — see docs/desktop.md."
+    )
+}
+
 android {
     compileSdk = 36
     namespace = "app.sapling.desktop"
@@ -23,6 +51,19 @@ android {
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+    }
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                // A relative `storeFile` resolves against gen/android, an
+                // absolute one is left as it is: CI writes the .jks beside the
+                // properties file, a laptop points at ~/.config.
+                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
     }
     buildTypes {
         getByName("debug") {
@@ -37,6 +78,7 @@ android {
             }
         }
         getByName("release") {
+            signingConfig = signingConfigs.getByName(if (hasReleaseKeystore) "release" else "debug")
             isMinifyEnabled = true
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }

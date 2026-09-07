@@ -19,8 +19,8 @@ depends on any of it: the desktop crate is a workspace member but not a
 it — a `desktop` job in `.github/workflows/deploy.yml` runs `pnpm desktop:check`
 beside the web job, so a protocol change that breaks the host fails the commit.
 It does not gate the deploy: the site has no dependency on the crate. The same
-crate is also built as a debug APK by an `android` job, which is likewise
-CI-only and gates nothing — see [Android](#android).
+crate is also built as a signed release APK by an `android` job, which is
+likewise CI-only and gates nothing — see [Android](#android).
 
 ## Running it
 
@@ -47,7 +47,7 @@ CI (see [Android](#android)):
 
 ```sh
 pnpm desktop:android:init   # rewrite gen/android — needs the SDK, NDK and rustup
-pnpm desktop:android        # the debug APK, over a `build/` that already exists
+pnpm desktop:android        # the release APK, over a `build/` that already exists
 ```
 
 **`gen/android` is committed, so the init is not part of anyone's loop** — it is
@@ -365,15 +365,18 @@ contributed live here instead, with the strings kept alive across the call.
 
 The same crate also builds as an Android app. It is a spike inside a spike:
 **nobody here has an Android SDK**, so the build exists only as the `android`
-job in `.github/workflows/deploy.yml`, it produces a *debug* APK, and nothing
-in the app or its gates depends on it. Like `desktop`, it runs beside `build`
-and gates no deploy. It has been installed on a phone once (Android 15) — see
-[What the phone said](#what-the-phone-said).
+job in `.github/workflows/deploy.yml`, and nothing in the app or its gates
+depends on it. Like `desktop`, it runs beside `build` and gates no deploy. It
+has been installed on a phone once (Android 15) — see [What the phone
+said](#what-the-phone-said). The APK is a **release** build signed with a stable
+key ([Signing](#signing)), so each one installs over the last.
 
 **What the job does**, in order: installs and builds the web bundle inside the
 flake's devShell exactly as `build` does (`pnpm install --frozen-lockfile`,
-`pnpm build`); checks that the committed `gen/android` is there; and builds the
-APK with the Tauri CLI. Two seams are worth knowing:
+`pnpm build`); checks that the committed `gen/android` is there; writes the
+signing key out of the secrets ([Signing](#signing)); builds the APK with the
+Tauri CLI; and verifies the signature on what came out. Three seams are worth
+knowing:
 
 - **The Rust half uses rustup, not nix.** nixpkgs' rustc carries no Android
   target std and `androidenv` is unfree and enormous, so `dtolnay/rust-toolchain`
@@ -407,15 +410,89 @@ again for a spike nobody has a device farm for; `--target aarch64` in
 `universal` either way.
 
 **The APK** lands at
-`crates/sapling-desktop/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`
-and is uploaded as the workflow artifact `sapling-android-debug-apk`. Gradle
-signs a debug build with the throwaway keystore it generates, so it installs on
-a phone with USB debugging on:
+`crates/sapling-desktop/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk`
+and is uploaded as the workflow artifact `sapling-android-apk`. It is signed
+with the key [Signing](#signing) describes, so it installs *in place* over the
+one already on the phone — no uninstall, and the app's data survives:
 
 ```sh
-unzip sapling-android-debug-apk.zip     # what GitHub hands back
-adb install -r app-universal-debug.apk
+unzip sapling-android-apk.zip           # what GitHub hands back
+adb install -r app-universal-release.apk
 ```
+
+The step before that upload is `apksigner verify --print-certs` over the same
+file, so an APK that came out unsigned fails CI and the log always names the
+certificate that signed the one it hands out.
+
+### Signing
+
+Android identifies an app by the certificate that signed it: two builds signed
+by different keys are two different apps to a device, and installing the second
+means uninstalling the first. That is what a debug build costs — Gradle mints a
+throwaway keystore per machine — so the APK is a release build signed with **one
+key that does not change**.
+
+**The key lives outside this repository**, in
+`~/.config/sapling/android-signing/` (mode 700) on the machine that minted it:
+
+| file | what it is |
+|---|---|
+| `sapling-upload.jks` | PKCS12, RSA 2048, alias `sapling`, valid 10000 days from 2026-09-07 |
+| `keystore.properties` | the alias and the password, in the shape Gradle reads |
+| `README` | the same summary as this section, next to the key |
+
+Back it up. Nothing in the repo can regenerate it, and losing it means every
+device uninstalls once, forever after.
+
+**CI gets it as four repository secrets**, and the `Write the Android signing
+key` step turns them back into the two files Gradle wants —
+`gen/android/sapling-upload.jks` and `gen/android/keystore.properties`, both
+gitignored:
+
+| secret | value |
+|---|---|
+| `ANDROID_KEYSTORE_BASE64` | `base64 -w0 sapling-upload.jks` |
+| `ANDROID_KEYSTORE_PASSWORD` | the store password |
+| `ANDROID_KEY_ALIAS` | `sapling` |
+| `ANDROID_KEY_PASSWORD` | the same password (PKCS12 requires the two to be equal) |
+
+**An absent keystore may not fail the build.** A fork has no secrets, and a
+release build is the only build there is now, so `app/build.gradle.kts` falls
+back to Gradle's debug key and says so in one lifecycle line. Debug-signed
+rather than unsigned on purpose: an unsigned release APK is named
+`app-universal-release-unsigned.apk`, and the workflow's artifact path names one
+exact file with `if-no-files-found: error`.
+
+**Rotating** means a new keystore (`keytool -genkeypair -storetype PKCS12
+-keyalg RSA -keysize 2048 -validity 10000 -alias sapling`), the four secrets
+re-uploaded, and **one uninstall on every device** — the new certificate is a
+new app identity. Keep the old keystore until every device has been through it.
+
+**This is a sideload key.** It signs APKs that are installed with `adb`, and
+that is the whole of its job. If Sapling ever went to Google Play, Play App
+Signing would issue the *app's* signing certificate and hold it; this key would
+become the upload key only, and the APKs on devices would have to be reinstalled
+against Play's certificate.
+
+### What else release changes
+
+**`devtools` is on** (`tauri`'s feature, in `Cargo.toml`), because a release
+webview otherwise has no inspector at all and `chrome://inspect` over adb is the
+only console this app has on a phone. It is a spike's setting: it comes off when
+the app is distributed.
+
+**Release is not debug with a signature on it**, and three of the differences
+are worth knowing because the one APK that has been on a phone was a debug
+build. The generated project's release type sets `isMinifyEnabled = true`, so R8
+shrinks the Kotlin side (Tauri writes `proguard-tauri.pro` per build, which is
+what keeps the classes JNI reaches by name). The workspace's `[profile.release]`
+is tuned for the wasm core — `opt-level = "s"`, LTO, one codegen unit,
+`panic = "abort"` — and the Android cdylib is built under it too, which makes
+this the slowest build in CI by a wide margin. And the manifest's
+`usesCleartextTraffic` placeholder is `"false"` here where debug set it `"true"`;
+the app's own assets are served through wry's interceptor and never touch the
+network stack, so this is Tauri's template behaving as designed rather than
+something to work around.
 
 ### The generated project is committed
 
@@ -554,10 +631,11 @@ back, and the state of each:
   ships its assets and has no use for a precache — so `kit.serviceWorker` is
   left alone rather than growing a host-shaped exception.
 
-**What a release build would still need**, beyond everything the desktop list
-below already names: a signing keystore and a `signingConfigs` block for it
-(today's APK is debug-signed and will not update over a store build), a real
-minSdk/targetSdk decision, and the CSP.
+**What a distributed build would still need**, beyond everything the desktop
+list below already names: a real minSdk/targetSdk decision, the CSP, and
+`devtools` switched back off. The signing keystore has come off that list — the
+APK the job hands out is a release build with a stable certificate
+([Signing](#signing)) — but it is a sideload key, not a store one.
 
 ## What the webview cannot do
 

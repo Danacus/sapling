@@ -15,6 +15,10 @@ build
 local.properties
 key.properties
 keystore.properties
+# The signing key itself, which the workflow decodes into this directory from a
+# repository secret. The original lives outside the repo (docs/desktop.md).
+*.jks
+*.keystore
 
 /.tauri
 /tauri.settings.gradle
