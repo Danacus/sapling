@@ -435,7 +435,12 @@ precisely the failure the composer exists to absorb.
 Mandarin transcribed in 0.98 s *including* the engine load, and 7 s of English
 and 5 s of Cantonese in about 0.2 s each once warm — 30-odd times real time. The
 load is fast enough that there is no warm-up command and no case for one. **On a
-phone these numbers are unknown**, like the voice's.
+phone (2026-09-07, an arm64 Android 16 device, a release build, four threads)**:
+the first dictation answered in about 4 s, which is the session load plus one
+utterance, and every one after it in a few hundred milliseconds — the same
+shape as the desktop, one order of magnitude slower on the cold call and
+nothing a learner notices once warm. That is why there is still no warm-up
+command here either.
 
 `tests/dictation.rs` is `tests/voice.rs`'s shape and its contract: it transcribes
 the `test_wavs/` the model archive ships and asserts what came out, and it
@@ -829,8 +834,11 @@ gets `available_parallelism()` entire, because it is one interactive request and
 nothing else wants the box; a phone's cores are not interchangeable, and an
 eight-thread session split across four fast and four slow cores runs at the pace
 of the slow ones while spending the battery of all eight. Four is the usual size
-of the fast cluster. **Nobody has measured this on a device** — that number is
-the thing to revisit first if synthesis on a phone is disappointing.
+of the fast cluster. **Measured once, 2026-09-07**: with this cap, Kokoro
+synthesized a lesson's phrases in about 7 s on a phone where the browser's WASM
+path took 21 s, and SenseVoice answers warm dictations in a few hundred
+milliseconds. The number is still the first thing to revisit if a slower phone
+disappoints.
 
 Persistence is untouched by any of it: `app_data_dir()` answers
 `Context.dataDir` on Android, so `sapling.db`, `device-id` and
