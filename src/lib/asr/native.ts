@@ -205,6 +205,10 @@ export function captureAvailable(): boolean {
  * {@link Capture.sampleRate} rather than assumed.
  */
 async function openMicrophone(context: AudioContext): Promise<Capture> {
+	// The stage lines below are the only trace a phone leaves: logcat shows the
+	// WebView's console and nothing else, and a dictation that hangs at any of
+	// these awaits is otherwise indistinguishable from one that never began.
+	console.info(`[asr] asking for the microphone; context ${context.state}`);
 	const stream = await navigator.mediaDevices.getUserMedia({
 		// One channel, because the model is mono and a stereo capture would only
 		// be downmixed. The three cleanups are the browser's own and are exactly
@@ -218,7 +222,9 @@ async function openMicrophone(context: AudioContext): Promise<Capture> {
 	});
 
 	try {
+		console.info(`[asr] microphone granted; loading the worklet from ${WORKLET_URL}`);
 		await context.audioWorklet.addModule(WORKLET_URL);
+		console.info(`[asr] worklet loaded; context ${context.state} at ${context.sampleRate} Hz`);
 		const source = context.createMediaStreamSource(stream);
 		// `numberOfOutputs: 0` is the whole reason this graph never reaches an
 		// output device. See the module header.
@@ -363,7 +369,11 @@ export function dictateNatively(handlers: DictationHandlers): DictationSession |
 		}
 
 		try {
+			const started = Date.now();
 			const text = (await transcribe(pcm)).trim();
+			console.info(
+				`[asr] transcribed ${pcm.byteLength} bytes into ${text.length} characters in ${Date.now() - started} ms`
+			);
 			if (text) handlers.onTranscript(text, true);
 		} catch (cause) {
 			// The host refused, or has no recognizer after all. The learner
@@ -404,6 +414,7 @@ export function dictateNatively(handlers: DictationHandlers): DictationSession |
 	return {
 		stop(): void {
 			if (ended) return;
+			console.info(`[asr] stop pressed; microphone ${capture ? 'open' : 'still opening'}`);
 			if (!capture) {
 				// Still opening: remembered, and acted on when it lands.
 				requested ??= 'stop';
