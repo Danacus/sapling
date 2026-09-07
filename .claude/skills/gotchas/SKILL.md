@@ -245,6 +245,16 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   And do not call `preventDefault()` on that event — Vite rethrows an
   unprevented one, which is what lets the awaiting caller see its rejection
   instead of a module that resolved to `undefined`.
+- **A `.then` chained onto a dynamic `import()` is inside Vite's preload helper
+  (2026-09-07).** Rolldown-Vite rewrites `import('./x').then(m => m.f())` to
+  `__vitePreload(() => import('./x').then(m => m.f()), deps)`, so a rejection
+  from `f()` is reported as `vite:preloadError` — a chunk that failed to load —
+  and the layout's heal-by-reload fires for it. That was one reload per first
+  visit to Settings on Android, where `tts_status` is not a command: the log
+  named the payload `Command tts_status not found`, not a URL. `await` the
+  import on its own statement and call the export on the next; the helper then
+  wraps the import alone. Grep a built chunk for `vite:preloadError` payloads
+  that are not fetch errors when the guard fires on a host with every file.
 - **SvelteKit registers `/service-worker.js` on the Android Tauri host too, and
   it fails there.** The page is served from `http://tauri.localhost` and the
   fetch errors ("unknown error occurred when fetching the script"), leaving one

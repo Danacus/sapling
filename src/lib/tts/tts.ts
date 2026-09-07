@@ -172,15 +172,27 @@ let hostStatus: Promise<NativeVoiceStatus | undefined> | undefined;
  * ({@link voiceDownloadBytes}). Its rejection is not an error to report: a host
  * without the voice compiled in rejects every `invoke` of it, and that is a
  * fact about the build, warned about once and then forgotten.
+ *
+ * The import is a statement of its own, and the call another, on purpose. Vite
+ * wraps a dynamic import in its preload helper, and a `.then(...)` chained
+ * straight onto the `import()` expression is wrapped *with* it — so a
+ * rejection from inside that `.then` is reported as `vite:preloadError`, a
+ * chunk that failed to load, and the layout's heal-by-reload fires for a host
+ * that merely has no `tts_status`. That was one reload on every first visit to
+ * Settings on Android. Awaiting the module first keeps the helper around the
+ * import alone.
  */
 function hostVoice(): Promise<NativeVoiceStatus | undefined> {
-	hostStatus ??= import('./native')
-		.then((module) => module.nativeVoiceStatus())
-		.catch((cause) => {
-			console.warn('[tts] This host has no voice of its own; the browser voice will speak.', cause);
-			return undefined;
-		});
+	hostStatus ??= probeHostVoice().catch((cause) => {
+		console.warn('[tts] This host has no voice of its own; the browser voice will speak.', cause);
+		return undefined;
+	});
 	return hostStatus;
+}
+
+async function probeHostVoice(): Promise<NativeVoiceStatus> {
+	const module = await import('./native');
+	return module.nativeVoiceStatus();
 }
 
 /**
