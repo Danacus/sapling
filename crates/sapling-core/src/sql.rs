@@ -11,6 +11,7 @@
 //! whichever core wrote the row.
 
 use std::fmt;
+use std::sync::Arc;
 
 /// One bound parameter.
 #[derive(Debug, Clone, PartialEq)]
@@ -91,27 +92,45 @@ pub enum SqlValue {
 }
 
 /// One result row: the columns in `SELECT` order, by name.
+///
+/// The names live beside the values rather than in them, and are shared: a
+/// statement names its columns once and every row it returns points at that one
+/// list. A thousand-row page therefore allocates one header, not one `String`
+/// per cell — and `Arc`, not `Rc`, so a `Row` stays as `Send` as its values are.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Row {
-    columns: Vec<(String, SqlValue)>,
+    names: Arc<[String]>,
+    values: Vec<SqlValue>,
 }
 
 impl Row {
     pub fn new(columns: Vec<(String, SqlValue)>) -> Row {
-        Row { columns }
+        let (names, values): (Vec<String>, Vec<SqlValue>) = columns.into_iter().unzip();
+        Row {
+            names: names.into(),
+            values,
+        }
+    }
+
+    /// One row of a batch that already knows its column names — see
+    /// [`Row::new`] for the one-off case.
+    pub fn with_names(names: Arc<[String]>, values: Vec<SqlValue>) -> Row {
+        Row { names, values }
+    }
+
+    fn index_of(&self, name: &str) -> Option<usize> {
+        self.names.iter().position(|column| column == name)
     }
 
     pub fn get(&self, name: &str) -> Result<&SqlValue> {
-        self.columns
-            .iter()
-            .find(|(column, _)| column == name)
-            .map(|(_, value)| value)
+        self.index_of(name)
+            .and_then(|index| self.values.get(index))
             .ok_or_else(|| Error(format!("no column `{name}` in row")))
     }
 
     /// Whether the query returned this column at all — `SELECT` lists differ.
     pub fn has(&self, name: &str) -> bool {
-        self.columns.iter().any(|(column, _)| column == name)
+        self.index_of(name).is_some()
     }
 
     /// A `NOT NULL` number, `INTEGER` or `REAL`.
@@ -206,5 +225,24 @@ mod tests {
         assert_eq!(Param::number(0.0), Param::Integer(0));
         assert_eq!(Param::number(-3.0), Param::Integer(-3));
         assert_eq!(Param::number(2.5), Param::Real(2.5));
+    }
+
+    #[test]
+    fn rows_sharing_a_header_read_like_rows_that_own_one() {
+        let names: Arc<[String]> = vec!["id".to_owned(), "at".to_owned()].into();
+        let shared = Row::with_names(
+            Arc::clone(&names),
+            vec![SqlValue::Text("a".into()), SqlValue::Integer(7)],
+        );
+        let owned = Row::new(vec![
+            ("id".to_owned(), SqlValue::Text("a".into())),
+            ("at".to_owned(), SqlValue::Integer(7)),
+        ]);
+        assert_eq!(shared, owned);
+        assert_eq!(shared.text("id").unwrap(), "a");
+        assert_eq!(shared.f64("at").unwrap(), 7.0);
+        assert!(shared.has("at"));
+        assert!(!shared.has("device"));
+        assert!(shared.get("device").is_err());
     }
 }

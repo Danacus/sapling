@@ -11,6 +11,10 @@
 //! the calendar ([`LocalDay`]). A host supplies all four; the golden fixtures
 //! pin them.
 
+use std::collections::HashSet;
+
+use serde::de::value::{Error as EnumError, StrDeserializer};
+use serde::de::IntoDeserializer;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
@@ -82,6 +86,18 @@ fn parse_json<T: for<'de> serde::Deserialize<'de>>(text: &str) -> Result<T> {
     Ok(serde_json::from_str(text)?)
 }
 
+/// A column that holds one of a closed set of names — `kind`, `verdict`,
+/// `source`, `level` — read straight off the borrowed text.
+///
+/// The stored string *is* the variant name, so quoting it into JSON and parsing
+/// the quotes back off (which is what this did, once per row) allocated twice to
+/// arrive where serde already was. An unknown name is still the error zod's
+/// `z.enum` gave.
+fn parse_enum<T: for<'de> serde::Deserialize<'de>>(text: &str) -> Result<T> {
+    let name: StrDeserializer<'_, EnumError> = text.into_deserializer();
+    T::deserialize(name).map_err(|error| Error(error.to_string()))
+}
+
 /// One item row, with the derived schedule numbers attached as of `now`.
 ///
 /// `srs` is computed here rather than in the browser because the browser has no
@@ -95,7 +111,7 @@ fn item_from(row: &Row, history: Vec<HistoryEntry>, now: f64) -> Result<Knowledg
         .map(|card| item_srs(&card, now));
     Ok(KnowledgeItem {
         id: row.text("id")?.to_owned(),
-        kind: parse_json(&js::stringify(&Value::String(row.text("kind")?.to_owned())))?,
+        kind: parse_enum(row.text("kind")?)?,
         term: row.text("term")?.to_owned(),
         meaning: row.text("meaning")?.to_owned(),
         romanization: row.opt_text("romanization")?.map(str::to_owned),
@@ -153,9 +169,7 @@ fn number(x: f64) -> Value {
 fn result_from(row: &Row) -> Result<ChallengeResult> {
     Ok(ChallengeResult {
         challenge_id: row.text("challengeId")?.to_owned(),
-        verdict: parse_json(&js::stringify(&Value::String(
-            row.text("verdict")?.to_owned(),
-        )))?,
+        verdict: parse_enum(row.text("verdict")?)?,
         answer_given: row.text("answerGiven")?.to_owned(),
         at: row.f64("at")?,
     })
@@ -165,9 +179,7 @@ fn text_from(row: &Row) -> Result<ReadingText> {
     Ok(ReadingText {
         id: row.text("id")?.to_owned(),
         title: row.text("title")?.to_owned(),
-        source: parse_json(&js::stringify(&Value::String(
-            row.text("source")?.to_owned(),
-        )))?,
+        source: parse_enum(row.text("source")?)?,
         topic: row.opt_text("topic")?.map(str::to_owned),
         sentences: parse_json(row.text("sentences")?)?,
         glossary: parse_json(row.text("glossary")?)?,
@@ -326,9 +338,7 @@ impl Core {
         Ok(Some(Profile {
             native_language: row.text("nativeLanguage")?.to_owned(),
             target_language: row.text("targetLanguage")?.to_owned(),
-            level: parse_json(&js::stringify(&Value::String(
-                row.text("level")?.to_owned(),
-            )))?,
+            level: parse_enum(row.text("level")?)?,
             interests: parse_json(row.text("interests")?)?,
             about: row.opt_text("about")?.map(str::to_owned),
             model: row.text("model")?.to_owned(),
@@ -386,7 +396,9 @@ impl Core {
             return Ok(());
         }
         let ids: Vec<Param> = items.iter().map(|item| Param::text(&item.id)).collect();
-        let known: Vec<String> = self
+        // A set, not a list: one `upsert_items` can carry a whole imported
+        // vocabulary, and a scan per item is the quadratic half of that.
+        let known: HashSet<String> = self
             .sql
             .query(
                 &format!(
@@ -936,6 +948,21 @@ impl Core {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{ItemKind, Level, TextSource, Verdict};
+
+    #[test]
+    fn parse_enum_takes_the_stored_name_and_refuses_anything_else() {
+        assert_eq!(parse_enum::<ItemKind>("vocab").unwrap(), ItemKind::Vocab);
+        assert_eq!(parse_enum::<Verdict>("almost").unwrap(), Verdict::Almost);
+        assert_eq!(parse_enum::<Level>("advanced").unwrap(), Level::Advanced);
+        assert_eq!(
+            parse_enum::<TextSource>("imported").unwrap(),
+            TextSource::Imported
+        );
+        assert!(parse_enum::<ItemKind>("Vocab").is_err());
+        assert!(parse_enum::<Verdict>("").is_err());
+        assert!(parse_enum::<Level>("\"beginner\"").is_err());
+    }
 
     #[test]
     fn parse_int_reads_a_leading_integer_like_javascript() {
