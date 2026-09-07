@@ -79,6 +79,14 @@ android {
         }
         getByName("release") {
             signingConfig = signingConfigs.getByName(if (hasReleaseKeystore) "release" else "debug")
+            // The WebView's console reaches logcat only through wry's `Logger`, and
+            // that class drops every level — errors included — unless
+            // `BuildConfig.DEBUG` is true, which is this flag. A release APK is the
+            // only build there is now, and one that logs nothing cannot be
+            // diagnosed on a phone (an afternoon of empty logs, 2026-09-07). Like
+            // tauri's `devtools` feature it is on for the spike and comes off when
+            // the app is distributed; it does not change the signing.
+            isDebuggable = true
             isMinifyEnabled = true
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }

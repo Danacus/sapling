@@ -192,6 +192,15 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
 
 ## Android (the same crate, built only in CI)
 
+- **A release APK logs nothing from the WebView (2026-09-07).** `Tauri/Console`
+  lines exist only because wry's `RustWebChromeClient` forwards console
+  messages through its `Logger`, and `Logger` drops every level, `error`
+  included, unless `BuildConfig.DEBUG`. Every log read off a phone before the
+  signing switch came from a debug build; after it, `adb logcat -s
+  Tauri/Console:*` is empty whatever the page does. The committed
+  `build.gradle.kts` sets `isDebuggable = true` on `release` for the spike, and
+  `chrome://inspect` (devtools on) is the other way in. Neither survives
+  distribution.
 - **An `AudioContext` made after `await getUserMedia` is born suspended on a
   phone (2026-09-07).** Chromium's autoplay policy, Android's WebView
   included, lets a context start only inside a user gesture, and the gesture is
