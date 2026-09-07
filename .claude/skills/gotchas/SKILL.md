@@ -192,6 +192,16 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
 
 ## Android (the same crate, built only in CI)
 
+- **An `AudioContext` made after `await getUserMedia` is born suspended on a
+  phone (2026-09-07).** Chromium's autoplay policy, Android's WebView
+  included, lets a context start only inside a user gesture, and the gesture is
+  spent by the time the permission prompt resolves. The first dictation on a
+  phone captured zero samples and ended silently as "nothing was said", with an
+  empty log. `src/lib/asr/native.ts` now creates and resumes the context
+  synchronously in `dictateNatively`, before anything is awaited, and the
+  dropped-utterance path logs sample count, peak and `context.state` so the
+  three silent causes can be told apart. Desktop never showed it: WebKitGTK
+  and desktop Chromium are lax about it.
 - **`gen/android` is committed now (2026-09-07), and CI must not regenerate it.**
   It was generated per run until the app's icons and the edge-to-edge fix turned
   out to have no home but that tree — `tauri android init` writes Tauri's
