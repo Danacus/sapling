@@ -306,17 +306,26 @@ describe('a Tauri host with no recognizer at all', () => {
 });
 
 describe('listen without the probe', () => {
-	it('takes the browser engine, because the host has not answered yet', async () => {
-		// The documented consequence of `listen` being synchronous. A caller that
-		// renders the microphone on `dictationAvailable`'s answer has already
-		// warmed the probe by the time anyone can press it; one that did not gets
-		// the engine that needs no asking.
-		pretendTauri();
+	it('takes the browser engine in a browser, because nothing needs asking there', async () => {
 		pretendWebSpeech();
 		const { listen } = await loadAsr();
 
 		expect(listen('Mandarin Chinese', handlers)).toBeDefined();
 		expect(native.dictateNatively).not.toHaveBeenCalled();
 		expect(FakeRecognition.built).toBe(1);
+	});
+
+	it('starts nothing on a Tauri host, even one whose webview advertises Web Speech', async () => {
+		// Android's WebView exposes `webkitSpeechRecognition` with no service
+		// behind it: a session that starts, hears nothing and ends silently. The
+		// first phone spent an afternoon on that looking like a native dictation
+		// that never ran. On a Tauri host the recognizer is the host's or none.
+		pretendTauri();
+		pretendWebSpeech();
+		const { listen } = await loadAsr();
+
+		expect(listen('Mandarin Chinese', handlers)).toBeUndefined();
+		expect(native.dictateNatively).not.toHaveBeenCalled();
+		expect(FakeRecognition.built).toBe(0);
 	});
 });

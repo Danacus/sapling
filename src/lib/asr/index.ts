@@ -134,8 +134,20 @@ function ready(dictation: NativeDictation | undefined, language: string | undefi
  * route.
  */
 export async function dictationAvailable(language?: string): Promise<boolean> {
-	if (ready(await hostDictation(), language)) return true;
+	if (inTauri()) return ready(await hostDictation(), language);
 	return webSpeechRecognitionAvailable();
+}
+
+/**
+ * On a Tauri host the recognizer is the host's or there is none. Neither
+ * webview has a working Web Speech: WebKitGTK has no `SpeechRecognition` at
+ * all, and Android's WebView exposes the constructor with no speech service
+ * behind it — a session that starts, hears nothing and ends silently, which
+ * on the first phone looked exactly like a native dictation that never ran.
+ * So Web Speech is a browser's engine, never a fallback here.
+ */
+function hostOnly(): boolean {
+	return inTauri();
 }
 
 /**
@@ -157,14 +169,16 @@ export async function dictationCoversLanguage(language?: string): Promise<boolea
  *
  * Synchronous, deliberately, because that is the contract the pages are written
  * against — and it is why {@link dictationAvailable} exists as the awaited
- * half. A caller that never awaited it simply gets Web Speech, which is the
- * right answer everywhere the host has nothing to offer anyway.
+ * half. In a browser a caller that never awaited it simply gets Web Speech; on
+ * a Tauri host it gets nothing until the probe has answered, because there is
+ * no browser engine to fall back on there ({@link hostOnly}).
  */
 export function listen(
 	language: string | undefined,
 	handlers: DictationHandlers
 ): DictationSession | undefined {
 	if (ready(host, language)) return host?.dictate(handlers);
+	if (hostOnly()) return undefined;
 	return dictateWithWebSpeech(bcp47For(language), handlers);
 }
 
