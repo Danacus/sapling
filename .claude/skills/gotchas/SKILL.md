@@ -249,8 +249,11 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   directory" on every Android build. Verified by `tar tjf` on the 1.13.7
   archive. The way through is `SHERPA_ONNX_LIB_DIR`, which both that crate and
   our `build.rs` honour: the `android` job fetches the same archive itself,
-  extracts `jniLibs/arm64-v8a`, and exports the variable. Worth an upstream
-  report; drop the step once a release handles the root-level layout.
+  extracts `jniLibs/arm64-v8a`, and exports the variable. **Upstream fixed it the day
+  after the release**, in k2-fsa/sherpa-onnx@a24dad69b4 ("Fix releasing
+  (#3911)"): the build script now also checks `cache_root/jniLibs/`. Not in a
+  published crate yet. Issue #24 says how the step goes when the pin moves past
+  1.13.7 — check the published `build.rs` for `android_lib_dir_alt` first.
 - **The prebuilt sherpa Android libraries need no `libc++_shared.so`.** `readelf
   -d` lists `libandroid`, `liblog`, `libm`, `libdl`, `libc` and (for the c-api
   one) `libonnxruntime` — the C++ runtime is static inside them. Their `LOAD`
