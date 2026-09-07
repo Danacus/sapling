@@ -9,8 +9,23 @@
 //! CI runner is a normal place to run `pnpm desktop:check`, and it must stay
 //! green there.
 //!
-//! Running it makes a quiet sound. The clips are sine waves at a tenth of full
-//! scale, a fraction of a second each.
+//! **What it plays is silence**, so running the suite is not an event in the
+//! room. The device is real and the stream is real; the wall-clock numbers
+//! below are that stream consuming samples at the rate they were recorded at,
+//! and nothing about that depends on the samples being non-zero. Zero samples
+//! are samples: rodio queues them, the device eats them at `SAMPLE_RATE`, and
+//! `Player::empty` goes true when the last one is gone. A test suite that plays
+//! a tone through whatever the machine's speakers are pointed at is a surprise
+//! nobody asked for.
+//!
+//! The one thing silence cannot show is that the sound comes *out*, which is
+//! the whole reason this slice exists — so exactly one test plays an audible
+//! tone and is `#[ignore]`d for it, the way `voice.rs`'s installer is. Run it
+//! by hand when the question is whether this machine makes a noise:
+//!
+//! ```sh
+//! nix develop .#desktop -c cargo test -p sapling-desktop --test playback -- --ignored --nocapture
+//! ```
 
 use std::sync::Arc;
 use std::thread;
@@ -22,15 +37,26 @@ use sapling_desktop::tts::wav::encode_wav;
 /// The rate the voice synthesizes at, so the test plays what the app plays.
 const SAMPLE_RATE: u32 = 24000;
 
-/// Quiet enough that running the suite is not an event in the room.
+/// Quiet enough that the one audible test is not an event in the room either.
 const AMPLITUDE: f32 = 0.1;
 
-/// A 440 Hz sine of `millis`, as a complete WAV file — the same encoder
+/// How many samples `millis` is at [`SAMPLE_RATE`] — the length is what the
+/// timing assertions are about, so both clip makers count it the same way.
+fn sample_count(millis: u64) -> usize {
+    (SAMPLE_RATE as u64 * millis / 1000) as usize
+}
+
+/// `millis` of silence, as a complete WAV file — the same encoder
 /// `tts_synthesize` answers with, so the decoder is exercised over real output
 /// rather than over bytes written for the test.
+fn silence(millis: u64) -> Vec<u8> {
+    encode_wav(&vec![0.0; sample_count(millis)], SAMPLE_RATE)
+}
+
+/// The same file with a 440 Hz sine in it, for the one test that is meant to be
+/// heard. Nothing but the amplitude differs, so it exercises the same path.
 fn tone(millis: u64) -> Vec<u8> {
-    let count = (SAMPLE_RATE as u64 * millis / 1000) as usize;
-    let samples: Vec<f32> = (0..count)
+    let samples: Vec<f32> = (0..sample_count(millis))
         .map(|n| {
             let seconds = n as f32 / SAMPLE_RATE as f32;
             (seconds * 440.0 * std::f32::consts::TAU).sin() * AMPLITUDE
@@ -42,13 +68,13 @@ fn tone(millis: u64) -> Vec<u8> {
 /// A handle that has proved it can open the default device, or `None` — in
 /// which case the reason is printed and the test passes.
 ///
-/// The probe is a real (very short, near-inaudible) clip rather than a separate
-/// "open the device" call, because there is no such call: opening is what the
-/// first clip does, and a probe that took another path would be testing another
+/// The probe is a real (very short, silent) clip rather than a separate "open
+/// the device" call, because there is no such call: opening is what the first
+/// clip does, and a probe that took another path would be testing another
 /// path.
-fn audible_handle() -> Option<PlayerHandle> {
+fn opened_handle() -> Option<PlayerHandle> {
     let handle = PlayerHandle::new();
-    match handle.play(&tone(20)) {
+    match handle.play(&silence(20)) {
         Ok(()) => Some(handle),
         Err(error) if error.starts_with(NO_OUTPUT_DEVICE) => {
             eprintln!("skipping: {error}");
@@ -60,12 +86,12 @@ fn audible_handle() -> Option<PlayerHandle> {
 
 #[test]
 fn the_default_device_opens_and_a_clip_plays_for_as_long_as_it_lasts() {
-    let Some(handle) = audible_handle() else {
+    let Some(handle) = opened_handle() else {
         return;
     };
 
     let started = Instant::now();
-    handle.play(&tone(100)).expect("a 100 ms clip plays");
+    handle.play(&silence(100)).expect("a 100 ms clip plays");
     let elapsed = started.elapsed();
 
     eprintln!("a 100 ms clip returned after {elapsed:?}");
@@ -83,7 +109,7 @@ fn the_default_device_opens_and_a_clip_plays_for_as_long_as_it_lasts() {
 
 #[test]
 fn stopping_cuts_the_clip_short_and_the_play_call_returns() {
-    let Some(handle) = audible_handle() else {
+    let Some(handle) = opened_handle() else {
         return;
     };
     let handle = Arc::new(handle);
@@ -92,7 +118,7 @@ fn stopping_cuts_the_clip_short_and_the_play_call_returns() {
     let started = Instant::now();
     let clip = thread::spawn(move || {
         playing
-            .play(&tone(3000))
+            .play(&silence(3000))
             .expect("a three-second clip plays");
         started.elapsed()
     });
@@ -110,7 +136,7 @@ fn stopping_cuts_the_clip_short_and_the_play_call_returns() {
 
 #[test]
 fn a_second_clip_cuts_off_the_first_and_both_calls_return() {
-    let Some(handle) = audible_handle() else {
+    let Some(handle) = opened_handle() else {
         return;
     };
     let handle = Arc::new(handle);
@@ -118,12 +144,14 @@ fn a_second_clip_cuts_off_the_first_and_both_calls_return() {
     let interrupted = Arc::clone(&handle);
     let started = Instant::now();
     let first = thread::spawn(move || {
-        interrupted.play(&tone(3000)).expect("the first clip plays");
+        interrupted
+            .play(&silence(3000))
+            .expect("the first clip plays");
         started.elapsed()
     });
 
     thread::sleep(Duration::from_millis(150));
-    handle.play(&tone(100)).expect("the second clip plays");
+    handle.play(&silence(100)).expect("the second clip plays");
     let second = started.elapsed();
 
     let first = first.join().expect("the interrupted call returns");
@@ -135,6 +163,28 @@ fn a_second_clip_cuts_off_the_first_and_both_calls_return() {
     assert!(
         first <= second,
         "the interrupted call must not outlive the clip that interrupted it"
+    );
+}
+
+/// Silence proves the timing; only a tone proves the sound comes *out*, and
+/// that is the one thing this whole slice exists to make true. So it stays
+/// runnable and out of the suite, exactly as `voice.rs`'s installer does — the
+/// module header has the command.
+#[test]
+#[ignore = "plays an audible tone"]
+fn a_tone_actually_reaches_the_speakers() {
+    let Some(handle) = opened_handle() else {
+        return;
+    };
+
+    let started = Instant::now();
+    handle.play(&tone(500)).expect("an audible clip plays");
+    let elapsed = started.elapsed();
+
+    eprintln!("a 500 ms tone returned after {elapsed:?} — that was the audible one");
+    assert!(
+        elapsed >= Duration::from_millis(400),
+        "returned after {elapsed:?} — that is not long enough to have played the clip"
     );
 }
 

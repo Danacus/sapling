@@ -303,6 +303,11 @@ Synthesis runs at several times real time on an ordinary desktop CPU, and that
 is what every "is this fast enough" decision above rests on — the engine load,
 the missing clip cache, the download bar. `tests/voice.rs` and
 `tests/playback.rs` print the current numbers on the machine that runs them.
+`playback.rs` opens the real default device but plays **silence** through it —
+zero samples take exactly as long to consume as any others, so the timings are
+real and the check is inaudible; its one audible clip is `#[ignore]`d and is run
+by hand (`cargo test -p sapling-desktop --test playback -- --ignored`) when the
+question is whether this machine makes a noise.
 
 Synthesis is **not** bit-reproducible: ONNX reduces in whatever order its
 threads finish, so the same phrase twice differs in the low bits and by a few

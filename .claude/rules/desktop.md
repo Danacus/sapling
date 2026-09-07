@@ -235,9 +235,14 @@ someone to run the check by hand.
   without one is normal and `pnpm desktop:check` must be green in it. The
   `#[ignore]`d `installs_the_model` is how a machine gets one, into the same
   directory the app uses. `tests/playback.rs` is the same shape one layer down:
-  it opens the *real* default device and plays generated tones, asserting that a
-  100 ms clip returns in roughly 100 ms and that a stop and a second clip both
-  cut a long one short — and it skips itself with a printed reason on a machine
-  with no output device, because a headless runner is a normal place to run the
-  check. Neither may become a mock: what is worth testing is that sherpa-onnx,
-  this config and that archive make sound, and that the sound comes out.
+  it opens the *real* default device and plays **silence** through it, asserting
+  that a 100 ms clip returns in roughly 100 ms and that a stop and a second clip
+  both cut a long one short — and it skips itself with a printed reason on a
+  machine with no output device, because a headless runner is a normal place to
+  run the check. Silence rather than a tone because zero samples are still
+  samples: the stream and every wall-clock number are real, and running the
+  check is not an event in the room. What silence cannot show is that the sound
+  comes *out*, so one clip is audible and `#[ignore]`d for it, exactly like
+  `installs_the_model`. Neither file may become a mock: what is worth testing is
+  that sherpa-onnx, this config and that archive make sound, and that the sound
+  comes out.
