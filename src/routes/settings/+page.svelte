@@ -417,7 +417,7 @@
 		preloadStatus = 'idle';
 		preloadMessage = '';
 
-		// The task does the download and sums the progress; this only reports
+		// The task does the download and draws the progress bar; this only reports
 		// how it ended, in the same inline slot as every other action here.
 		const outcome = await startTask('tts-model', undefined).done;
 		if (outcome.status === 'done') {

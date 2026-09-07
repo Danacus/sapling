@@ -195,6 +195,24 @@ export async function voiceDownloadBytes(): Promise<number> {
 }
 
 /**
+ * How many times over the install reports the same megabytes.
+ *
+ * The browser fetches its two runtime files and is finished — one pass. The
+ * desktop host fetches one archive and then unpacks it, reporting both halves
+ * against the archive's own size (`crates/sapling-desktop/src/tts/model.rs`),
+ * so there the progress events cross the model twice.
+ *
+ * Asked rather than inferred from the events, for the same reason
+ * {@link voiceDownloadBytes} is asked rather than imported: only the host knows
+ * what it is going to do. The second pass is not announced until the first has
+ * finished, which is too late for a bar that may not go backwards — see
+ * `$lib/tasks/kinds/tts-model`, which is the one caller.
+ */
+export function voiceInstallPasses(): number {
+	return inTauri() ? 2 : 1;
+}
+
+/**
  * Persists the engine choice. Changing it drops the in-memory audio: clips are
  * engine-specific, and a learner switching engines is usually doing it
  * *because* they disliked what they just heard. Stored clips survive — only
