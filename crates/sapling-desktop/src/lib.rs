@@ -291,12 +291,22 @@ async fn asr_download(app: AppHandle, asr: State<'_, Arc<AsrHandle>>) -> Result<
 
 /// One utterance in, one sentence out.
 ///
-/// The samples arrive as a **raw** IPC body, exactly as `tts_play`'s clip does
-/// and for the same reason pointing the same way: ten seconds of 16 kHz 16-bit
-/// mono is ~320 KB, and a `Vec<u8>` field would cross as an array of decimal
+/// The samples arrive as a **raw** IPC body where the IPC can carry one, exactly
+/// as `tts_play`'s clip does and for the same reason: ten seconds of 16 kHz
+/// 16-bit mono is ~320 KB, and a `Vec<u8>` field crosses as an array of decimal
 /// digits — megabytes of text to serialize on the window thread and to parse
 /// here. `native.ts` invokes this with a `Uint8Array`, which is what makes the
-/// body `InvokeBody::Raw`; anything else is a caller bug and says so.
+/// body `InvokeBody::Raw` on the desktop.
+///
+/// **On Android it is not raw, and cannot be.** Tauri's IPC script never uses
+/// the custom protocol there ("Android does not have support to reading the
+/// request body"), falls back to `postMessage`, and turns a `Uint8Array`
+/// payload into a JSON array of numbers; `tauri::ipc::InvokeBody`'s own docs
+/// say `Raw` is never seen on Android. So the JSON form is accepted here too,
+/// as `Vec<u8>`: a ten-second utterance is about a megabyte of text, which
+/// serde parses in a few milliseconds — a cost worth paying once per sentence,
+/// and the only way an utterance reaches this host on a phone. Anything else
+/// is a caller bug and says so.
 ///
 /// There is no language argument: the model identifies its own, and which
 /// languages reach this host at all is `asr_status`'s `languages` answered one
@@ -310,10 +320,11 @@ async fn asr_transcribe(
     asr: State<'_, Arc<AsrHandle>>,
     request: tauri::ipc::Request<'_>,
 ) -> Result<String, String> {
-    let tauri::ipc::InvokeBody::Raw(pcm) = request.body() else {
-        return Err("asr_transcribe takes the audio as a raw body, not as JSON".to_owned());
+    let pcm: Vec<u8> = match request.body() {
+        tauri::ipc::InvokeBody::Raw(pcm) => pcm.clone(),
+        tauri::ipc::InvokeBody::Json(json) => serde_json::from_value(json.clone())
+            .map_err(|cause| format!("asr_transcribe takes the audio as bytes: {cause}"))?,
     };
-    let pcm = pcm.clone();
     let handle = asr.inner().clone();
     tauri::async_runtime::spawn_blocking(move || handle.transcribe(&pcm))
         .await

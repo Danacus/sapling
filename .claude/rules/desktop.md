@@ -116,11 +116,17 @@ someone to run the check by hand.
   `tts_synthesize`, `asr_status`, `asr_download`, `asr_transcribe` on every
   target, and `tts_play`, `tts_stop` on desktop targets only — and they are not
   part of that protocol and never touch it. Audio crosses as bytes in every
-  direction and never as JSON: `tts_synthesize` answers a
-  `tauri::ipc::Response`, and `tts_play` and `asr_transcribe` take a raw body
-  (`tauri::ipc::Request` with `InvokeBody::Raw`, invoked from JavaScript with a
-  `Uint8Array`), because ~150 KB of a clip or ~320 KB of an utterance as an
-  array of decimal digits is megabytes of text to serialize and to parse.
+  direction and never as JSON, wherever the IPC can carry bytes: `tts_synthesize`
+  answers a `tauri::ipc::Response`, and `tts_play` and `asr_transcribe` take a
+  raw body (`tauri::ipc::Request` with `InvokeBody::Raw`, invoked from
+  JavaScript with a `Uint8Array`), because ~150 KB of a clip or ~320 KB of an
+  utterance as an array of decimal digits is megabytes of text to serialize and
+  to parse. **Android has no raw body**: Tauri's IPC there is `postMessage`
+  only (the WebView cannot expose a request body) and a `Uint8Array` arrives as
+  `InvokeBody::Json`, an array of numbers — so every command that takes bytes
+  and exists on Android (`asr_transcribe`; `tts_play` does not) accepts both
+  forms, and a `Raw`-only match is a command that works on the desktop and
+  fails on every phone.
   `tts_play` takes bytes rather than text because the clip caches are the
   window's; if they ever move to the host, `tts_speak(text, sid, speed)`
   replaces `tts_play(bytes)` and nothing in `play.rs` changes shape.

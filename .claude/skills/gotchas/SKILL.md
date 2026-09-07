@@ -192,6 +192,15 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
 
 ## Android (the same crate, built only in CI)
 
+- **Tauri's Android IPC has no raw body (2026-09-07).** `tauri::ipc::InvokeBody`'s
+  docs: "On Android, `InvokeBody::Raw` is not supported. The enum will always
+  contain `InvokeBody::Json`." The IPC script never uses the custom protocol
+  there because the WebView cannot expose a request body, and a `Uint8Array`
+  payload becomes a JSON array of numbers over `postMessage`. `asr_transcribe`
+  matched `Raw` only, so every phone dictation was refused with "takes the
+  audio as a raw body, not as JSON" — the first thing the console said once a
+  release build could log at all. Commands that take bytes and exist on Android
+  accept `Json` as `Vec<u8>` too.
 - **A release APK logs nothing from the WebView (2026-09-07).** `Tauri/Console`
   lines exist only because wry's `RustWebChromeClient` forwards console
   messages through its `Logger`, and `Logger` drops every level, `error`

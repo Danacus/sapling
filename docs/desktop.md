@@ -265,11 +265,16 @@ desktop targets only ([speech on Android](#speech-on-android)):
 | `asr_download()` | nothing; idempotent, verifies, emits `asr://model-progress` |
 | `asr_transcribe(<raw body>)` | one sentence, from one utterance of 16 kHz 16-bit mono PCM |
 
-Audio crosses as bytes in every direction and never as JSON. `tts_synthesize`
-returns `tauri::ipc::Response`, not a `Vec<u8>`, and `tts_play` and
-`asr_transcribe` take a raw body (`tauri::ipc::Request` matched against
-`InvokeBody::Raw`; `native.ts` invokes them with a `Uint8Array`) rather than a
-field: ~150 KB of a clip, or ~320 KB of a ten-second utterance, as an array of
+Audio crosses as bytes in every direction and never as JSON where the IPC can
+carry bytes. `tts_synthesize` returns `tauri::ipc::Response`, not a `Vec<u8>`,
+and `tts_play` and `asr_transcribe` take a raw body (`tauri::ipc::Request`
+matched against `InvokeBody::Raw`; `native.ts` invokes them with a
+`Uint8Array`) rather than a field. **Except on Android**, where Tauri's IPC has
+no raw body at all — the WebView cannot expose a request body, so the script
+falls back to `postMessage` and a `Uint8Array` crosses as a JSON array of
+numbers — and `asr_transcribe` therefore accepts `InvokeBody::Json` as a
+`Vec<u8>` too, at about a megabyte of text per ten-second utterance. The reason
+for bytes elsewhere: ~150 KB of a clip, or ~320 KB of a ten-second utterance, as an array of
 decimal digits is megabytes of text to serialize on the window thread and to
 parse on the other side, for audio already in the right format. `tts_play` takes
 bytes rather than text because the clip caches are the window's; if they ever
