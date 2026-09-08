@@ -776,11 +776,6 @@
 				<hr class="stitch" />
 				<div class="field">
 					<span class="label">Pronunciation (romanization)</span>
-					<p class="hint">
-						Pinyin, romaji and the like under words written in a non-Latin script. Only shows up for
-						languages that need it. Adaptive hides the reading for words you know well, so the
-						crutch fades as a word sticks.
-					</p>
 					<div class="preset-row" role="group" aria-label="Pronunciation (romanization)">
 						{#each ROMANIZATION_MODES as option (option.value)}
 							<button
@@ -794,15 +789,13 @@
 							</button>
 						{/each}
 					</div>
+					<p class="hint">Adaptive fades the reading as a word sticks.</p>
 				</div>
 
 				<div class="switch-row">
 					<div class="switch-copy">
 						<span class="label">Listening challenges</span>
-						<p class="hint">
-							Some "what does this mean?" challenges are played instead of shown, with the text one
-							tap away. Needs speech to be on; turn this off to always see the words.
-						</p>
+						<p class="hint">Some prompts are spoken instead of shown.</p>
 					</div>
 					<button
 						type="button"
@@ -828,15 +821,6 @@
 					<h2>Speech</h2>
 				</div>
 				<hr class="stitch" />
-				<p class="hint test-bench-link">
-					<a href="/tts-test">
-						Test voices
-						<svg class="ico jump-ico" viewBox="0 0 24 24" aria-hidden="true">
-							<path d="M4.8 12h14" />
-							<path d="m13.4 6.6 5.4 5.4-5.4 5.4" />
-						</svg>
-					</a>
-				</p>
 
 				<div class="field">
 					<span class="label" id="tts-engine-label">Voice engine</span>
@@ -846,22 +830,16 @@
 						value={ttsEngine}
 						onchange={(event) => chooseEngine(event.currentTarget.value as TtsEngine)}
 					>
-						<option value="kokoro"
-							>Kokoro (neural) — downloads {downloadSize} once, then offline</option
-						>
-						<option value="webspeech">Browser built-in — instant, uses your system voices</option>
-						<option value="off">Off — no audio anywhere</option>
+						<option value="kokoro">Kokoro (neural)</option>
+						<option value="webspeech">Browser built-in</option>
+						<option value="off">Off</option>
 					</select>
 					{#if ttsEngine === 'kokoro' && profile && !kokoroCoversTarget}
 						<p class="hint">
-							Heads up: Kokoro speaks Mandarin and English, so {profile.targetLanguage} will use your
-							browser's built-in voice regardless.
+							Kokoro has no {profile.targetLanguage} voice; your browser speaks it instead.
 						</p>
 					{:else if ttsEngine === 'kokoro'}
-						<p class="hint">
-							Kokoro v1.1-zh speaks Mandarin (including sentences that mix in English) and English.
-							Every other language uses your browser's own voices.
-						</p>
+						<p class="hint">Mandarin and English; other languages use the browser voice.</p>
 					{/if}
 				</div>
 
@@ -879,38 +857,22 @@
 								<option value={speaker.name}>{speaker.label}</option>
 							{/each}
 						</select>
-						<p class="hint">
-							Three of the model's 100 Mandarin speakers. English always uses its own voice (Maple,
-							or Vale if your language is set to British English).
-						</p>
 					</div>
 
-					<div class="actions-row">
-						<button
-							type="button"
-							class="btn btn-primary"
-							onclick={() => void preloadVoiceModel()}
-							disabled={preloading}
-						>
-							{preloading ? 'Downloading…' : 'Preload voice model now'}
-						</button>
-						<InlineStatus status={preloadStatus} message={preloadMessage} />
+					<div class="field">
+						<div class="actions-row">
+							<button
+								type="button"
+								class="btn btn-primary"
+								onclick={() => void preloadVoiceModel()}
+								disabled={preloading}
+							>
+								{preloading ? 'Downloading…' : 'Download the voice'}
+							</button>
+							<InlineStatus status={preloadStatus} message={preloadMessage} />
+						</div>
+						<p class="hint">Downloads {downloadSize} once, then works offline.</p>
 					</div>
-
-					<p class="hint">
-						{downloadSize}, downloaded once and kept on this device. Speech is generated here,
-						nothing is sent anywhere, and it works offline afterwards.
-					</p>
-					{#if nativeVoice}
-						<p class="hint">
-							Clips are made fresh each time; only the ones just played are kept, in memory.
-						</p>
-					{:else}
-						<p class="hint">
-							Each clip is kept, so a word you have heard before plays back instantly — including
-							after a reload.
-						</p>
-					{/if}
 				{/if}
 
 				<!--
@@ -923,21 +885,13 @@
 					<div class="field">
 						<span class="label">Dictation</span>
 						{#if dictationInstalled}
-							<p class="hint">
-								The microphone button in conversations transcribes on this device. Nothing is sent
-								anywhere.
-							</p>
+							<p class="hint">Transcribes on this device.</p>
 						{:else}
-							<p class="hint">
-								{formatMb(dictationBytes)}, downloaded once and kept on this device. It transcribes
-								what you say into the composer, where you read it before sending — nothing is sent
-								anywhere.
-							</p>
+							<p class="hint">{formatMb(dictationBytes)} download; transcribes on this device.</p>
 						{/if}
 						{#if profile && !dictationCoversTarget}
 							<p class="hint">
-								Heads up: this model covers Mandarin, English, Cantonese, Japanese and Korean, so
-								{profile.targetLanguage} would not be transcribed and the microphone button stays hidden.
+								{profile.targetLanguage} is not covered, so the microphone button stays hidden.
 							</p>
 						{/if}
 						<div class="actions-row">
@@ -948,9 +902,9 @@
 								disabled={dictating || dictationInstalled}
 							>
 								{#if dictationInstalled}
-									Dictation model downloaded
+									Downloaded
 								{:else}
-									{dictating ? 'Downloading…' : 'Download dictation model'}
+									{dictating ? 'Downloading…' : 'Download'}
 								{/if}
 							</button>
 							<InlineStatus status={dictationStatus} message={dictationMessage} />
@@ -969,12 +923,7 @@
 				{#if !nativeVoice || audioBytes > 0}
 					<div class="field">
 						<span class="label">Audio cache</span>
-						<p class="hint">
-							{audioCacheSize} of spoken clips, out of {audioCacheCap}. Stored in your browser
-							alongside the voice model; once it is full the clips you have not played in longest
-							are dropped. Clearing them costs nothing but a moment's re-synthesis — the {downloadSize}
-							voice model is a separate cache and stays put.
-						</p>
+						<p class="hint cache-size">{audioCacheSize} of {audioCacheCap}</p>
 						<div class="actions-row">
 							<button
 								type="button"
@@ -988,6 +937,16 @@
 						</div>
 					</div>
 				{/if}
+
+				<p class="hint test-bench-link">
+					<a href="/tts-test">
+						Test voices
+						<svg class="ico jump-ico" viewBox="0 0 24 24" aria-hidden="true">
+							<path d="M4.8 12h14" />
+							<path d="m13.4 6.6 5.4 5.4-5.4 5.4" />
+						</svg>
+					</a>
+				</p>
 			</section>
 
 			<section class="card ll-rise" style="animation-delay: 200ms">
@@ -1003,17 +962,6 @@
 				<hr class="stitch" />
 
 				<div class="field">
-					<span class="label">API endpoint</span>
-					<input
-						class="input"
-						type="url"
-						bind:value={baseUrlInput}
-						placeholder="https://openrouter.ai/api/v1"
-						autocomplete="off"
-						spellcheck="false"
-					/>
-				</div>
-				<div class="field">
 					<span class="label">API key</span>
 					<input
 						class="input"
@@ -1023,6 +971,7 @@
 						autocomplete="off"
 						spellcheck="false"
 					/>
+					<p class="hint">The key stays in this browser.</p>
 				</div>
 				<div class="field">
 					<span class="label">Model</span>
@@ -1040,9 +989,21 @@
 						{/each}
 					</datalist>
 				</div>
-				<p class="hint">
-					Any OpenAI-compatible endpoint; blank means OpenRouter. The key stays in this browser.
-				</p>
+				<!--
+			  Last, and set quieter: the endpoint is an expert knob. Blank is
+			  OpenRouter, which the placeholder already says.
+			-->
+				<div class="field field-aside">
+					<span class="label">API endpoint</span>
+					<input
+						class="input"
+						type="url"
+						bind:value={baseUrlInput}
+						placeholder="https://openrouter.ai/api/v1"
+						autocomplete="off"
+						spellcheck="false"
+					/>
+				</div>
 				<div class="actions-row">
 					<button type="button" class="btn btn-primary" onclick={applyLlmSettings}>Apply</button>
 					<InlineStatus status={llmStatus} message={llmMessage} />
@@ -1074,7 +1035,7 @@
 						<dd>{usageCompletionTokens.toLocaleString()}</dd>
 					</div>
 				</dl>
-				<p class="hint">Actual cost depends on the model you've chosen above.</p>
+				<p class="hint">Cost depends on your model.</p>
 			</section>
 
 			<section class="card ll-rise" style="animation-delay: 200ms">
@@ -1090,19 +1051,12 @@
 				<hr class="stitch" />
 
 				{#if !syncAvailable}
-					<p class="hint">
-						This build has no sync backend, so everything stays on this device. Deploying the worker
-						and rebuilding with a sync URL turns this section on.
-					</p>
+					<p class="hint">This build has no sync server; everything stays on this device.</p>
 				{:else}
 					<div class="switch-row">
 						<div class="switch-copy">
 							<span class="label">Sync this device</span>
-							<p class="hint">
-								Keeps your words, reviews and lessons the same on every device you pair. Sync only
-								ever adds to what a device already knows, and the app keeps working with the server
-								unreachable.
-							</p>
+							<p class="hint">Your words and reviews reach every device you pair.</p>
 						</div>
 						<button
 							type="button"
@@ -1153,10 +1107,7 @@
 					{#if syncPhrase}
 						<div class="field">
 							<span class="label">Pairing phrase</span>
-							<p class="hint">
-								Type this on another device to join it to this library. It is the only thing
-								protecting your progress — treat it like a password.
-							</p>
+							<p class="hint">Treat it like a password.</p>
 							<p class="phrase" class:covered={!syncRevealed}>
 								{syncRevealed ? formatPhrase(syncPhrase) : '•••••-•••••-•••••-•••••'}
 							</p>
@@ -1184,15 +1135,9 @@
 							autocomplete="off"
 							spellcheck="false"
 						/>
-						<p class="hint">
-							Paste the phrase from a device that already has your progress. Capitals, dashes and
-							spaces don't matter.
-						</p>
 						{#if pairStage === 'confirm'}
 							<p class="hint">
-								This device will follow that library instead of its own. Anything it has learned
-								that never reached another device stays here and stops being synced. Press again to
-								confirm.
+								This device will follow that library instead. Anything only it knows stops syncing.
 							</p>
 						{/if}
 						<div class="actions-row">
@@ -1202,7 +1147,7 @@
 								onclick={requestPair}
 								disabled={pairInput.trim() === ''}
 							>
-								{pairStage === 'confirm' ? 'Yes, pair to that library' : 'Pair this device'}
+								{pairStage === 'confirm' ? 'Yes, pair' : 'Pair this device'}
 							</button>
 						</div>
 					</div>
@@ -1215,7 +1160,6 @@
 						{/if}
 						<InlineStatus status={syncStatus} message={syncMessage} />
 					</div>
-					<p class="hint">Syncing through {SYNC_URL}.</p>
 				{/if}
 			</section>
 
@@ -1239,21 +1183,14 @@
 				{#if canBackfill}
 					<div class="field backfill-field">
 						<span class="label">Missing pronunciations</span>
+						<!-- The cost lives in the line, not in the button: a label with a
+						     parenthesis is a label that has stopped being a verb. -->
 						<p class="hint">
 							{missingReadings.length} word{missingReadings.length === 1 ? '' : 's'}
-							{missingReadings.length === 1 ? 'has' : 'have'} no reading.
-							{#if modelReadings.length === 0}
-								All of them can be worked out on this device — no model call.
-							{:else if freeReadings.size === 0}
-								One short model call fills them all in.
-							{:else}
-								{freeReadings.size} can be worked out on this device; {modelReadings.length}
-								{modelReadings.length === 1 ? 'is' : 'are'} ambiguous on {modelReadings.length === 1
-									? 'its'
-									: 'their'} own and {modelReadings.length === 1 ? 'needs' : 'need'} one short model call{mockMode
-									? ', which needs an API key'
-									: ''}.
-							{/if}
+							{missingReadings.length === 1 ? 'has' : 'have'} no reading{modelReadings.length > 0 &&
+							!mockMode
+								? '; one short model call fills them in'
+								: ''}.
 						</p>
 						<div class="actions-row">
 							<button
@@ -1264,8 +1201,7 @@
 							>
 								{backfilling
 									? 'Adding…'
-									: `Add ${backfillCount} reading${backfillCount === 1 ? '' : 's'}` +
-										(modelReadings.length === 0 || mockMode ? ' (no model call)' : '')}
+									: `Add ${backfillCount} reading${backfillCount === 1 ? '' : 's'}`}
 							</button>
 							<InlineStatus status={backfillStatus} message={backfillMessage} />
 						</div>
@@ -1281,9 +1217,7 @@
 						onchange={handleImportChange}
 						disabled={importing}
 					/>
-					<p class="hint">
-						Replaces all current progress on this device with the backup's contents.
-					</p>
+					<p class="hint">Replaces everything on this device.</p>
 				</div>
 				<InlineStatus status={importStatus} message={importMessage} />
 			</section>
@@ -1298,9 +1232,6 @@
 					<h2>Danger zone</h2>
 				</div>
 				<hr class="stitch" />
-				<p class="hint">
-					Permanently deletes every word, review, and stat on this device. This cannot be undone.
-				</p>
 
 				{#if resetStage === 'idle'}
 					<button type="button" class="btn danger-btn" onclick={startReset}>
@@ -1487,7 +1418,6 @@
 	.preset-row {
 		display: flex;
 		gap: 0.5rem;
-		margin-bottom: 0.6rem;
 	}
 
 	/*
@@ -1642,8 +1572,12 @@
 		}
 	}
 
+	/* A side door out of the card rather than the first thing in it: ruled off at
+	   the foot and set at body weight, so it reads quieter than the controls. */
 	.test-bench-link {
-		margin: 0 0 1.15rem;
+		margin: 0.35rem 0 0;
+		padding-top: 0.9rem;
+		border-top: 1px solid var(--border);
 	}
 
 	.profile-link {
@@ -1658,6 +1592,10 @@
 		color: var(--primary-strong);
 		font-weight: 700;
 		text-decoration: none;
+	}
+
+	.test-bench-link a {
+		font-weight: 500;
 	}
 
 	.profile-link a:hover,
@@ -1681,6 +1619,20 @@
 		.jump-ico {
 			transition: none;
 		}
+	}
+
+	/* A measurement, not an aside: set in the ink colour with the same tabular
+	   figures the usage tally uses. */
+	.cache-size {
+		margin-bottom: 0.6rem;
+		color: var(--text);
+		font-variant-numeric: tabular-nums;
+	}
+
+	/* The expert knob of a card: still a full field, just set back from the two
+	   above it so the eye stops at the key and the model. */
+	.field-aside .input {
+		background: var(--surface-alt);
 	}
 
 	.backfill-field {

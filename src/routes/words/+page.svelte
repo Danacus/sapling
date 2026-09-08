@@ -399,10 +399,7 @@
 				<h2>Nothing entered yet</h2>
 			</div>
 			<hr class="stitch" />
-			<p class="hint">
-				Every word you meet grows here — when it is next due, how firmly it has settled, and every
-				review you have ever given it. Your first session writes the first entry.
-			</p>
+			<p class="hint">Your first session writes the first entry.</p>
 			<a class="btn btn-primary btn-block" href="/learn">Start a session</a>
 		</section>
 	{:else}
@@ -521,7 +518,7 @@
 				<p class="nothing">
 					Nothing matches.
 					<button type="button" class="btn btn-ghost clear-filters" onclick={clearFilters}>
-						Clear search and filters
+						Clear filters
 					</button>
 				</p>
 			{:else}
@@ -745,32 +742,30 @@
 				<div class="entry-def">
 					<dt>Stability</dt>
 					<dd>
-						How long the word holds. Measured in days: the time it takes your chance of recalling it
-						to drift down to about 90%. Every review you get right after a real gap stretches it.
+						How long the word holds: the days it takes your chance of recalling it to drift down to
+						about 90%. Every review you get right after a real gap stretches it.
 					</dd>
 				</div>
 				<div class="entry-def">
 					<dt>Difficulty</dt>
 					<dd>
 						How stubborn the scheduler thinks <em>this word</em> is, on a 1–10 scale. It creeps up when
-						you forget it and eases down when you find it easy. It is a property of the word, not a mark
-						against you.
+						you forget it and eases down when you find it easy.
 					</dd>
 				</div>
 				<div class="entry-def">
 					<dt>Recall chance</dt>
 					<dd>
-						The estimated probability you would get the word right if it were asked this second. It
-						falls as time passes and resets with each review — reviews are scheduled to land while
-						it is still around 90%, so words you are on top of sit high.
+						The estimated probability you would get the word right if it were asked this second.
+						Reviews are scheduled to land while it is still around 90%, so words you are on top of
+						sit high.
 					</dd>
 				</div>
 				<div class="entry-def">
 					<dt>Strength</dt>
 					<dd>
-						The dashboard's bar: how mature the word is (stability, on a log scale where 30 days
-						counts as fully grown) multiplied by its recall chance right now. Recall chance alone
-						would read full for everyone on schedule; multiplying is what makes a mature word left
+						How mature the word is — stability on a log scale where 30 days counts as fully grown —
+						times its recall chance right now. Multiplying is what makes a mature word left
 						untouched for a month visibly sag.
 					</dd>
 				</div>
@@ -786,9 +781,8 @@
 				<div class="entry-def">
 					<dt>Lapses</dt>
 					<dd>
-						How many times a word you had already learned came back wrong. Each lapse shortens the
-						next interval and nudges the word's difficulty up — which is the system working, not you
-						failing.
+						How many times a word you had already learned came back wrong. Each one shortens the
+						next interval and nudges the word's difficulty up.
 					</dd>
 				</div>
 			</dl>
@@ -1493,9 +1487,28 @@
 		display: none;
 	}
 
+	/* A footnote, not a section: the same disclosure as the ledger above it, one
+	   step down in every dimension — the specimen frame comes off the mark, and
+	   the heading drops to the muted label size the rest of the page uses for
+	   things you read only if you asked. */
 	.glossary summary h2 {
 		margin: 0;
-		font-size: 1.08rem;
+		font-size: 0.95rem;
+		color: var(--text-muted);
+	}
+
+	.glossary .head-ico {
+		width: 1.15rem;
+		height: 1.15rem;
+		padding: 0;
+		border: 0;
+		background: none;
+		color: var(--text-muted);
+	}
+
+	.glossary summary:hover h2,
+	.glossary summary:hover .head-ico {
+		color: var(--text);
 	}
 
 	.glossary summary:focus-visible {

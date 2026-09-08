@@ -185,8 +185,7 @@
 						<path d="M12 16.1h.01" />
 					</svg>
 					<span>
-						No API key configured — conversations run in offline demo mode, in a fixed Spanish
-						scene.
+						Offline demo — add an API key in <a href="/settings">Settings</a> for real conversations.
 					</span>
 				</p>
 			{/if}
@@ -200,17 +199,12 @@
 						<path d="M10.6 9.4h8.8v6.2h-2.4v2.6l-3-2.6h-3.4Z" />
 					</svg>
 				</span>
-				<p class="setup-lead">
-					Pick something to talk about, or leave it blank and I'll choose a scene for us. You'll
-					both stay in character — I'll correct your {profile?.targetLanguage} quietly as we go.
-				</p>
-
 				<label class="field">
 					<span class="label">What about?</span>
 					<input
 						class="input"
 						type="text"
-						placeholder="Ordering coffee, arguing about football…"
+						placeholder="Leave it blank and I'll pick a scene"
 						disabled={starting}
 						bind:value={topic}
 						onkeydown={(event) => {
@@ -250,10 +244,7 @@
 			<section class="shelf ll-rise" style="animation-delay: 180ms">
 				<h2 class="shelf-head">Your conversations</h2>
 				{#if conversations.length === 0}
-					<p class="hint empty">
-						Nothing on the shelf yet — every scene you play stays here, and you can pick one up
-						where you left it.
-					</p>
+					<p class="hint empty">Scenes you play stay here.</p>
 				{:else}
 					<ul class="chats">
 						{#each conversations as chat (chat.id)}
@@ -271,10 +262,7 @@
 
 								{#if confirming === chat.id}
 									<div class="forget-block">
-										<p class="forget-warning">
-											It goes for good, here and on every paired device. Words the teacher filed
-											stay.
-										</p>
+										<p class="forget-warning">Gone for good, on every device.</p>
 										<div class="forget-actions">
 											<button
 												type="button"
@@ -408,7 +396,9 @@
 		justify-content: center;
 		width: 3rem;
 		height: 3rem;
-		margin-bottom: 0.9rem;
+		/* The lead paragraph that used to sit under this is gone; the mark now
+		   opens straight onto the field, and carries the air the lead did. */
+		margin-bottom: 1.2rem;
 		border: 1px dashed var(--border-strong);
 		border-radius: var(--radius);
 		background: color-mix(in srgb, var(--primary-soft) 65%, transparent);
@@ -418,13 +408,6 @@
 	.mark .ico {
 		width: 1.5rem;
 		height: 1.5rem;
-	}
-
-	.setup-lead {
-		margin: 0 auto 1.2rem;
-		color: var(--text-muted);
-		max-width: 26rem;
-		text-wrap: balance;
 	}
 
 	.field {

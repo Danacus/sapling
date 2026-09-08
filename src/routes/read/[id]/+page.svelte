@@ -1260,7 +1260,7 @@
 						{:else}
 							<div class="pick" bind:clientWidth={pickWidth}>
 								<p class="pick-copy">
-									Choose <strong>{mediaName}</strong> to play it beside the text.
+									Choose <strong>{mediaName}</strong> to play it here.
 								</p>
 								<input
 									class="input file-input"
@@ -1269,10 +1269,7 @@
 									aria-label="Choose the recording"
 									onchange={chooseMedia}
 								/>
-								<p class="hint">
-									Only the name was kept — the file itself never left this device, so it is asked
-									for once each time you open this.
-								</p>
+								<p class="hint">Only its name was kept, so it is asked for on each open.</p>
 							</div>
 						{/if}
 					</div>
@@ -1371,10 +1368,13 @@
 				-->
 				{#if following}
 					<div class="transport">
+						<!-- Each button names its key in a `title` rather than a line of prose
+						     under the row: the shortcut belongs to the control it works. -->
 						<div class="transport-keys">
 							<button
 								type="button"
 								class="btn btn-ghost tool"
+								title="Replay line (←)"
 								disabled={!playable}
 								onclick={replayLine}
 							>
@@ -1383,6 +1383,7 @@
 							<button
 								type="button"
 								class="btn btn-primary tool"
+								title={mediaPaused ? 'Play (Space)' : 'Pause (Space)'}
 								disabled={!playable}
 								onclick={toggleMedia}
 							>
@@ -1391,6 +1392,7 @@
 							<button
 								type="button"
 								class="btn btn-ghost tool"
+								title="Next line (→)"
 								disabled={!playable || nextIndex < 0}
 								onclick={() => seekTo(nextIndex)}
 							>
@@ -1407,10 +1409,7 @@
 						     somebody just clicked on would be worse than the buttons above,
 						     which always work. -->
 						{#if isYouTube}
-							<p class="hint transport-hint">
-								Space and ← → work these — until you click inside the video, after which the
-								keyboard is YouTube's. Click the text to take it back.
-							</p>
+							<p class="hint transport-hint">Keys work until you click the video.</p>
 						{/if}
 						<!-- The paged reader is where a text is *finished* — the receipt and
 						     the page grading live there, and nothing here writes a grade. -->
@@ -1485,24 +1484,32 @@
 							<hr class="stitch" />
 							<button type="button" class="btn btn-ghost btn-block" onclick={close}>Close</button>
 						{:else}
-							<p class="panel-copy">
-								{#if finishPlan.read.length === 0 && finishPlan.looked.length === 0}
-									Every garden word on this page was already reviewed today, so there is nothing new
-									to count.
-								{:else}
-									{finishPlan.read.length} garden word{finishPlan.read.length === 1 ? '' : 's'} on this
-									page that you read without looking up will be reviewed as remembered{finishPlan
-										.looked.length > 0
-										? `; ${finishPlan.looked.length} you looked up ${finishPlan.looked.length === 1 ? 'is' : 'are'} already counted as forgotten`
-										: ''}.
+							<!-- One line per fact, and only the facts there are: a page with
+							     nothing read fresh says so instead of leading with a zero. -->
+							{#if finishPlan.read.length === 0 && finishPlan.looked.length === 0}
+								<p class="panel-copy">Nothing new to count on this page.</p>
+							{:else}
+								{#if finishPlan.read.length > 0}
+									<p class="panel-copy">
+										{finishPlan.read.length} word{finishPlan.read.length === 1 ? '' : 's'} read without
+										a lookup count{finishPlan.read.length === 1 ? 's' : ''} as remembered.
+									</p>
 								{/if}
-							</p>
+								{#if finishPlan.looked.length > 0}
+									<p class="panel-copy">
+										{finishPlan.looked.length} you looked up count{finishPlan.looked.length === 1
+											? 's'
+											: ''} as forgotten.
+									</p>
+								{/if}
+							{/if}
 							{#if finishPlan.fresh.length > 0}
 								<label class="finish-opt">
 									<input type="checkbox" bind:checked={markFresh} />
-									Also mark the {finishPlan.fresh.length} new word{finishPlan.fresh.length === 1
+									Also mark {finishPlan.fresh.length} untapped new word{finishPlan.fresh.length ===
+									1
 										? ''
-										: 's'} I didn't tap as known
+										: 's'} as known
 								</label>
 							{/if}
 							<hr class="stitch" />
@@ -1533,10 +1540,7 @@
 								</svg>
 							</button>
 						</div>
-						<p class="panel-copy">
-							It goes for good, here and on every paired device. Words you added or marked from it
-							stay.
-						</p>
+						<p class="panel-copy">Gone for good, on every device.</p>
 						<hr class="stitch" />
 						<div class="word-actions">
 							<button
@@ -2367,6 +2371,13 @@
 		font-size: 0.95rem;
 		line-height: 1.5;
 		color: var(--text-muted);
+	}
+
+	/* The looked-up count is a footnote to the line above it rather than a
+	   second announcement: tighter, and a size down. */
+	.panel-copy + .panel-copy {
+		margin-top: 0.3rem;
+		font-size: 0.88rem;
 	}
 
 	.finish-opt {

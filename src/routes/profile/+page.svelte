@@ -142,12 +142,7 @@
 				<h2>About you</h2>
 			</div>
 			<hr class="stitch" />
-			<p class="hint lead">
-				Written in your own words, and used to build your lessons: scenarios set where you live,
-				examples about what you do, people who fit your life. It is sent along with each lesson
-				request to {profile?.model ?? 'your model'} through OpenRouter with your own key — the same place
-				your lessons already come from, and nowhere else.
-			</p>
+			<p class="hint lead">Used to write your lessons around your life.</p>
 
 			<div class="field">
 				<label class="label" for="about">About me</label>
@@ -190,10 +185,7 @@
 			  saying so here is cheaper than fielding "I changed this and nothing
 			  happened" once per edit.
 			-->
-			<p class="hint">
-				Changes shape newly generated lessons. Anything already waiting in your queue was written
-				before this and stays as it is.
-			</p>
+			<p class="hint">Applies to new lessons only.</p>
 		</section>
 
 		{#if profile}
@@ -217,9 +209,7 @@
 					</span>
 				</p>
 				<p class="hint">
-					Your languages are fixed once you start — every word you have learned is stored against
-					them. Starting a different language means resetting your progress in
-					<a href="/settings">settings</a>.
+					Fixed once you start; change them by <a href="/settings">resetting in Settings</a>.
 				</p>
 			</section>
 		{/if}

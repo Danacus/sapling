@@ -218,7 +218,7 @@
 
 		if (!hasWords) {
 			return {
-				body: 'No words yet. Lessons practise vocabulary you already have, so pick some up first — talk your way into them, or just ask.',
+				body: 'No words yet — a lesson practises words you already have.',
 				actions: [
 					{ href: '/converse', label: 'Have a conversation' },
 					{ href: '/chat', label: 'Ask the assistant' }
@@ -233,13 +233,16 @@
 
 		// Nothing to play, but there are words to build from: the generator below
 		// is the lever, and it is tinted to match (see `nudgeGenerate`).
-		if (!canStart) return say('Nothing to practise yet. Generate a lesson to get started.');
+		if (!canStart) return say('Nothing to practise yet.');
 
 		// Playable, but say what kind of session it is going to be. Thin material
 		// wins over review-ahead: it is the one that has a next move attached.
 		if (nudgeGenerate) {
+			// Leans on the ledger directly above rather than restating it: the
+			// figure there already says how many of the session's words are
+			// covered, so the only news here is what a lesson would write.
 			return say(
-				`${uncovered} of your ${upcoming} ${dueFigure ? 'due' : 'next'} word${upcoming === 1 ? '' : 's'} ${uncovered === 1 ? 'has' : 'have'} no fresh challenge yet — a new lesson writes ${wants}.`
+				`${uncovered} of those still ${uncovered === 1 ? 'needs' : 'need'} a challenge — a new lesson writes ${wants}.`
 			);
 		}
 		if (aheadOfSchedule) {
@@ -706,7 +709,7 @@
 	}
 
 	/**
-	 * "Too hard — skip": an answer event like any other, with the verdict a skip
+	 * "Skip": an answer event like any other, with the verdict a skip
 	 * honestly deserves. `wrong` counts as a miss in the summary, and
 	 * `applyResult` grades the item FSRS-`Again` — which is exactly "I could not
 	 * produce this". That grade lowers the word's strength, and so the ladder
@@ -984,15 +987,11 @@
 							id="new-lesson-panel"
 							transition:slide={{ duration: motionMs(220) }}
 						>
-							<p class="hint gen-hint">
-								Optional — pick or type a scenario and the lesson leans into it.
-							</p>
-
 							<input
 								class="input topic-input"
 								type="text"
 								bind:value={topicInput}
-								placeholder="e.g. checking into a hotel…"
+								placeholder="Optional — e.g. checking into a hotel"
 								autocomplete="off"
 								aria-label="Lesson topic"
 								onkeydown={(event) => {
@@ -1049,7 +1048,7 @@
 								}}
 							>
 								{#if generating}
-									Generating… details in the task tray
+									Generating…
 								{:else if !hasWords}
 									No words to write about yet
 								{:else if wants === 0}
@@ -1243,7 +1242,7 @@
 
 							{#if current.type !== 'match-pairs' && !feedback}
 								<button type="button" class="btn btn-ghost skip-btn" onclick={skipCurrent}>
-									Too hard — skip
+									Skip
 								</button>
 							{/if}
 						</div>
@@ -1278,10 +1277,7 @@
 			<div class="overlay" transition:fade={{ duration: motionMs(150) }}>
 				<div class="card quit-card" in:scale={{ duration: motionMs(200), start: 0.92 }}>
 					<h2>Leave the session?</h2>
-					<p class="hint">
-						Everything you've answered is already saved. Whatever you haven't played stays in your
-						pool for next time.
-					</p>
+					<p class="hint">Answers so far are saved.</p>
 					<div class="quit-actions">
 						<button type="button" class="btn btn-primary" onclick={() => (showQuitConfirm = false)}>
 							Keep going
@@ -1558,10 +1554,6 @@
 
 	.gen-panel {
 		padding-top: 1.1rem;
-	}
-
-	.gen-hint {
-		margin: 0 0 0.85rem;
 	}
 
 	.topic-input {

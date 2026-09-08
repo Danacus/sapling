@@ -218,21 +218,17 @@
 					     takes it back the moment there is something to review. -->
 					{#if items.length === 0}
 						<p class="start-lead">
-							Nothing planted yet — your first words in {targetLanguage} come from talking.
+							Nothing planted yet — your first {targetLanguage} words come from talking.
 						</p>
 						<a class="btn btn-primary btn-block start-btn" href="/converse">Start a conversation</a>
-						<a class="btn btn-ghost btn-block ask-link" href="/chat"
-							>Or ask the assistant for a few</a
-						>
+						<a class="btn btn-ghost btn-block ask-link" href="/chat">Or ask the assistant</a>
 					{:else}
 						<a class="btn btn-primary btn-block start-btn" href="/learn">Start session</a>
 						<!-- Only the empty pool speaks here. The due count is the card below's
 						     job, and a number stated twice on one screen invites the two to
 						     disagree. -->
 						{#if pooled === 0}
-							<p class="hint centered">
-								No challenges waiting — a new lesson grows a fresh set from the words you have.
-							</p>
+							<p class="hint centered">No fresh challenges — write a new lesson first.</p>
 						{/if}
 					{/if}
 				</section>
@@ -258,9 +254,7 @@
 							</span>
 							<span class="door-body">
 								<span class="door-title">Have a conversation</span>
-								<span class="door-copy">
-									A scene you talk your way through — new words get planted as you reach for them.
-								</span>
+								<span class="door-copy">A scene to talk through. New words come from here.</span>
 							</span>
 							<svg class="ico door-arrow" viewBox="0 0 24 24" aria-hidden="true">
 								<path d="M4.8 12h14" />
@@ -281,8 +275,7 @@
 							<span class="door-body">
 								<span class="door-title">Read or watch something</span>
 								<span class="door-copy">
-									A text written from your words, or one you import — read it, listen to it, or
-									watch it, with every word one tap from its meaning.
+									A text, a song or a video, every word one tap from its meaning.
 								</span>
 							</span>
 							<svg class="ico door-arrow" viewBox="0 0 24 24" aria-hidden="true">

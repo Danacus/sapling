@@ -16,32 +16,37 @@
   stateless.
 
   **The import door has three parts, in the order the questions arise**: what the
-  text is, what it will cost, and what it should play alongside.
+  text is, what it will cost, and what it should play alongside — and then a
+  title, last, because it is the one thing the learner may leave to the model.
+  The door explains nothing in prose: every control is labelled by what it does,
+  and the only lines of copy are the ones a control cannot say for itself (why
+  it is disabled, what is attached, that a file is kept by name alone).
 
   *What it is* has two shapes and shows one of them. A paste stays in the box —
   prose, a copied transcript panel, anything typed. An **uploaded file is an
   object, not a paste**: a subtitle file is a thousand lines of cue soup, and
   pouring it into the textarea buried the only thing worth seeing, which is what
-  the app made of it. So it becomes a card stating its own facts (what format,
-  how many cues, how many sentences, how long, how many calls) with a × that
-  gives the box back. The file's *content* decides which shape it takes, not its
-  extension: anything the detector recognises becomes the card, anything else is
-  a paste and lands in the box, where it can still be read and edited.
+  the app made of it. So it becomes a card stating what it is (format, cues,
+  duration) with a × that gives the box back. The file's *content* decides which
+  shape it takes, not its extension: anything the detector recognises becomes
+  the card, anything else is a paste and lands in the box, where it can still be
+  read and edited.
 
-  *What it costs* is a row that never moves: the sentence and call count for
-  what is in the box, and the character counter, both before the button and
-  whichever source they describe.
+  *What it costs* is one quiet line under the source, whichever source it is:
+  sentences, the call count only when it is more than one, and the character
+  counter. Silent while the box is empty; red where the button below is dead.
 
   *What it plays alongside* is a group that is **always there**, disabled rather
   than absent while the text has no timings — a control that materialises only
-  when a paste happens to parse is a feature nobody knows exists. One recording,
-  chosen two ways — a file on this device, or a YouTube link — and the fields
-  clear each other, because "which of these two is it" is not a question the
-  reader should have to answer later. Attached now or never: a text is
-  immutable. What is *stored* is a reference either way: a video id, or a file's
-  name and nothing else. The file handle itself goes into `$lib/media`'s session
-  cache, so the reader opening a second later already has it and every later
-  open asks for it again.
+  when a paste happens to parse is a feature nobody knows exists — with the
+  legend's note ("needs subtitles") as the whole explanation. One recording,
+  chosen two ways on one row — a file on this device, *or* a YouTube link — and
+  the fields clear each other, because "which of these two is it" is not a
+  question the reader should have to answer later. Attached now or never: a text
+  is immutable. What is *stored* is a reference either way: a video id, or a
+  file's name and nothing else. The file handle itself goes into `$lib/media`'s
+  session cache, so the reader opening a second later already has it and every
+  later open asks for it again.
 
   **On the desktop app the YouTube link is also a *source*, and that reorders the
   three parts.** The shell can run yt-dlp, so a link alone can produce the text
@@ -754,33 +759,19 @@
 
 					<!-- An empty garden is allowed through: the model still writes
 					     something readable at the learner's level. It just has nothing of
-					     theirs to build from, which is worth saying once here rather than
+					     theirs to build from, which is worth one line here rather than
 					     discovering in the text. -->
 					<p class="hint">
 						{#if items.length === 0}
-							Texts get much better once there are words in your garden — this one will be written
-							from scratch.
+							Your garden is empty, so this one is written from scratch.
 						{:else}
-							Written from your {items.length} word{items.length === 1 ? '' : 's'}, around whatever
-							is due.
+							Written from your {items.length} word{items.length === 1 ? '' : 's'}.
 						{/if}
 					</p>
 				{:else}
-					<label class="field">
-						<span class="label">Title</span>
-						<input
-							class="input"
-							type="text"
-							placeholder="Optional — I'll name it otherwise"
-							disabled={busy}
-							bind:value={title}
-						/>
-					</label>
-
 					<!-- The text source: the box, or the file standing in its place. Never
-					     both — a file that poured itself into the textarea is what this
-					     replaces, and one of the two being *gone* is how the page says
-					     which one is the source. -->
+					     both — one of the two being *gone* is how the page says which one
+					     is the source. -->
 					{#if sourceFile}
 						<div class="field tight">
 							<p class="label">The text</p>
@@ -795,15 +786,10 @@
 										{plan.format ? FORMAT_NAMES[plan.format] : 'Uploaded file'}
 									</p>
 									<p class="source-name">{sourceFile.name}</p>
-									<!-- Everything the file turned out to hold, in one line: the
-									     learner handed over cues and gets back sentences, which is the
-									     whole transformation this page performs. -->
 									<p class="source-facts">
-										{plan.cues} cue{plan.cues === 1 ? '' : 's'} · {plan.sentences.length} sentence{plan
-											.sentences.length === 1
-											? ''
-											: 's'}{plan.durationMs > 0 ? ` · ${clock(plan.durationMs)}` : ''} · about {plan.calls}
-										call{plan.calls === 1 ? '' : 's'}
+										{plan.cues} cue{plan.cues === 1 ? '' : 's'}{plan.durationMs > 0
+											? ` · ${clock(plan.durationMs)}`
+											: ''}
 									</p>
 								</div>
 								<button
@@ -818,11 +804,6 @@
 									</svg>
 								</button>
 							</div>
-							{#if pasted.trim()}
-								<p class="hint">
-									What you typed is still here — remove the file and it comes back.
-								</p>
-							{/if}
 						</div>
 					{:else}
 						<label class="field tight paste-field">
@@ -830,7 +811,7 @@
 							<textarea
 								class="input paste-input"
 								rows="8"
-								placeholder="An article, a song, a transcript you copied…"
+								placeholder="Paste an article, a song, a transcript…"
 								disabled={busy}
 								bind:value={pasted}></textarea>
 						</label>
@@ -853,115 +834,102 @@
 								<path d="m7.6 9.3 4.4-4.4 4.4 4.4" />
 								<path d="M4.6 15.1v2.8a1.6 1.6 0 0 0 1.6 1.6h11.6a1.6 1.6 0 0 0 1.6-1.6v-2.8" />
 							</svg>
-							<span>Or upload a file — subtitles, or plain text</span>
+							<span>Upload a file</span>
 						</label>
 					{/if}
 
-					<!-- Cost, before anything is spent on it: an import is the one action
-					     here whose price is invisible until it has been paid. The card
-					     above already states an uploaded file's counts, so this side only
-					     speaks for what is in the box. -->
-					<div class="cost">
-						{#if !sourceFile && plan.sentences.length > 0}
-							<p class="plan">
-								{#if plan.format}{FORMAT_NAMES[plan.format]} · {plan.cues} cue{plan.cues === 1
+					<!-- What is about to be sent and what it costs, whichever source it
+					     came from. Silent while the box is empty; one call is the ordinary
+					     case and goes unmentioned. The two things that disable the button
+					     are said here, because a dead control cannot explain itself. -->
+					{#if plan.chars > 0}
+						<p class="cost">
+							<span class="plan" class:trouble={sourceFile && plan.sentences.length === 0}>
+								{#if plan.sentences.length > 0}
+									{plan.sentences.length} sentence{plan.sentences.length === 1
 										? ''
-										: 's'} ·
-								{/if}{plan.sentences.length} sentence{plan.sentences.length === 1 ? '' : 's'} · about
-								{plan.calls}
-								call{plan.calls === 1 ? '' : 's'}
-							</p>
-						{/if}
-						<p
-							class="counter"
-							class:near={plan.chars > MAX_IMPORT_TOTAL_CHARS * 0.9}
-							class:over={overCap}
-						>
-							{plan.chars} / {MAX_IMPORT_TOTAL_CHARS}
+										: 's'}{plan.calls > 1 ? ` · ${plan.calls} calls` : ''}
+								{:else if sourceFile}
+									Nothing to read in that file
+								{/if}
+							</span>
+							<span
+								class="counter"
+								class:near={plan.chars > MAX_IMPORT_TOTAL_CHARS * 0.9}
+								class:over={overCap}
+							>
+								{plan.chars.toLocaleString()} / {MAX_IMPORT_TOTAL_CHARS.toLocaleString()}
+							</span>
 						</p>
-					</div>
-
-					<!-- The button below is disabled in both these cases, so this is the
-					     only place the reason can be given: a dead control that does not
-					     say why is the failure. -->
+					{/if}
 					{#if overCap}
-						<p class="hint over-note">
-							That is more than one import can carry — import a shorter piece.
-						</p>
-					{:else if sourceFile && plan.sentences.length === 0}
-						<p class="hint over-note">There is nothing to read in that file.</p>
+						<p class="hint over-note">Too long for one import — cut it down.</p>
 					{/if}
 
 					<!--
-					  The recording. Always here, never conjured: a control that appears
+					  The recording. Always here, never conjured — a control that appears
 					  only once a paste happens to validate is a feature nobody knows the
-					  app has. Without timings there is nothing for a recording to be in
-					  step with, so the group is disabled and says so — a `<fieldset>`,
-					  which makes every control inside it inert in one attribute and needs
-					  no per-input bookkeeping.
+					  app has — and disabled rather than hidden while the text has no
+					  timings, with the legend saying why. A `<fieldset>` makes every
+					  control inside inert in one attribute.
 
 					  **Except where the link is also the source.** On a host that can run
 					  yt-dlp the group is live from the start, because pasting a link there
-					  is how the timings are *obtained* and waiting for them first would be
-					  a door locked from the inside. The file picker still waits — a
-					  recording it cannot follow is a reference nothing can use — and says
-					  so by being the one control with a `disabled` of its own.
+					  is how the timings are *obtained*; only the file picker keeps its own
+					  guard, since a recording nothing can follow is a reference nothing can
+					  use.
 					-->
 					<fieldset
 						class="group"
 						disabled={busy || fetchingCaptions || (!plan.format && !canFetchCaptions)}
 					>
 						<legend class="group-legend">
-							Recording <span class="group-note">optional</span>
+							Recording
+							<span class="group-note">
+								{!plan.format && !canFetchCaptions ? 'needs subtitles' : 'optional'}
+							</span>
 						</legend>
 
-						<label class="file-btn">
+						<!-- Two ways, one recording: each clears the other as it is used. -->
+						<div class="recording-row">
+							<label class="file-btn slim">
+								<input
+									class="file-real"
+									type="file"
+									accept="video/*,audio/*"
+									disabled={!plan.format}
+									bind:this={mediaInput}
+									onchange={chooseRecording}
+								/>
+								<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+									<rect x="3.4" y="6.2" width="12.4" height="11.6" rx="2" />
+									<path d="m15.8 12 4.8-3.2v6.4L15.8 12z" />
+								</svg>
+								<span>Video or audio file</span>
+							</label>
+							<span class="or" aria-hidden="true">or</span>
 							<input
-								class="file-real"
-								type="file"
-								accept="video/*,audio/*"
-								disabled={!plan.format}
-								bind:this={mediaInput}
-								onchange={chooseRecording}
-							/>
-							<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-								<rect x="3.4" y="6.2" width="12.4" height="11.6" rx="2" />
-								<path d="m15.8 12 4.8-3.2v6.4L15.8 12z" />
-							</svg>
-							<!-- The control stays a verb and the line below says what is
-							     attached: a button that renames itself to a filename is a
-							     button that has stopped saying what pressing it does. -->
-							<span>Choose a video or audio file</span>
-						</label>
-
-						<!-- Or the video where it lives. One recording per text, so the two
-						     clear each other rather than both being sent. -->
-						<label class="field link-field">
-							<span class="link-label">or a YouTube link</span>
-							<input
-								class="input"
+								class="input link-input"
 								type="url"
 								inputmode="url"
-								placeholder="https://youtu.be/…"
+								placeholder="YouTube link"
+								aria-label="YouTube link"
 								value={mediaLink}
 								oninput={enterLink}
 							/>
-						</label>
+						</div>
 
 						<!--
 						  Fetching the captions. Only ever on a host that answered the probe:
-						  in a browser `captionTools` stays `undefined` and this whole block,
-						  the note included, does not exist.
-
-						  An inline list rather than a sheet — it is three or four rows,
-						  chosen once, right under the link they are about, and a sheet would
-						  cover the field the learner might still want to correct.
+						  in a browser `captionTools` stays `undefined` and this whole block
+						  does not exist. The button shows once there is a video to ask
+						  about; the track list takes its place while the learner chooses.
 						-->
 						{#if captionTools}
 							<div class="captions">
 								{#if !canFetchCaptions}
 									<p class="hint captions-note">
-										Install <strong>yt-dlp</strong> and Sapling can fetch a video's captions for you.
+										Install <strong>yt-dlp</strong> to fetch a video's captions.
 									</p>
 								{:else if tracks}
 									<p class="captions-head">Which captions?</p>
@@ -981,26 +949,25 @@
 									<button type="button" class="captions-back" onclick={() => (tracks = undefined)}>
 										Never mind
 									</button>
-								{:else}
+								{:else if linkId}
 									<button
 										type="button"
 										class="btn captions-go"
-										disabled={!linkId || listingTracks || fetchingCaptions}
+										disabled={listingTracks || fetchingCaptions}
 										onclick={() => void askForTracks()}
 									>
 										{#if listingTracks}
 											<Spinner />
-											Asking yt-dlp…
+											Looking…
 										{:else if fetchingCaptions}
-											Fetching… details in the task tray
+											Fetching…
 										{:else}
 											Fetch captions
 										{/if}
 									</button>
 									{#if !captionTools.deno}
 										<p class="hint captions-note">
-											<strong>Deno</strong> is not installed either — yt-dlp wants a JavaScript runtime
-											for YouTube, and may find fewer tracks without one.
+											Without <strong>Deno</strong> installed, some tracks may not be listed.
 										</p>
 									{/if}
 								{/if}
@@ -1010,25 +977,30 @@
 							</div>
 						{/if}
 
-						<p class="hint media-hint">
-							{#if !plan.format && canFetchCaptions}
-								Paste a YouTube link and fetch its captions — they become the text, and the video
-								plays beside it.
-							{:else if !plan.format}
-								Import subtitles and the text can follow its recording, line by line.
-							{:else if linkId}
-								Video <strong>{linkId}</strong> plays beside the text, from YouTube.
-							{:else if mediaLink.trim()}
-								That is not a YouTube link — paste the address of a video, or its id.
-							{:else if mediaFile}
-								<strong>{mediaFile.name}</strong> plays beside the text. Only its name is kept — the file
-								stays on your device, so you'll pick it again next time you open this.
-							{:else}
-								Add the recording and the text follows along with it. A file never leaves this
-								device — only its name is kept.
-							{/if}
-						</p>
+						<!-- What is attached, said only once something is. A file is kept by
+						     name alone — the one fact about it the learner cannot see. -->
+						{#if linkId}
+							<p class="hint media-hint">Plays from YouTube beside the text.</p>
+						{:else if mediaLink.trim()}
+							<p class="hint media-hint">That is not a YouTube link.</p>
+						{:else if mediaFile}
+							<p class="hint media-hint">
+								<strong>{mediaFile.name}</strong> — only its name is kept, so you'll pick the file again
+								when you open this.
+							</p>
+						{/if}
 					</fieldset>
+
+					<label class="field title-field">
+						<span class="label">Title <span class="group-note">optional</span></span>
+						<input
+							class="input"
+							type="text"
+							placeholder="Leave it blank and I'll name it"
+							disabled={busy}
+							bind:value={title}
+						/>
+					</label>
 
 					<button
 						type="button"
@@ -1037,20 +1009,15 @@
 						onclick={() => void add()}
 					>
 						{#if busy}
-							Annotating… details in the task tray
+							Annotating…
 						{:else if fetchingCaptions}
-							Waiting for the captions…
+							Fetching captions…
 						{:else if composeError}
 							Try again
 						{:else}
 							Add
 						{/if}
 					</button>
-
-					<p class="hint">
-						Kept word for word. Only the readings, the translations and the glossary are added — and
-						a subtitle file keeps the time each line is spoken.
-					</p>
 				{/if}
 
 				{#if composeError}
@@ -1357,6 +1324,14 @@
 		overflow-wrap: anywhere;
 	}
 
+	/* The same slot, sized to share a row with the link beside it. */
+	.file-btn.slim {
+		flex: 1 1 11rem;
+		width: auto;
+		margin-bottom: 0;
+		padding-block: 0.6rem;
+	}
+
 	/* A `<label>` is never `:disabled` itself, but it can be the label *of*
 	   something that is — which covers both pickers, the one the fieldset turns
 	   off and the one `busy` does. Without this the slot still lights up under a
@@ -1404,8 +1379,8 @@
 		   its old browser behaviour that still bites: it refuses to be narrower
 		   than its widest child and would push the card past the phone. */
 		min-inline-size: 0;
-		margin: 0 0 0.9rem;
-		padding: 0.9rem 0.9rem 0.2rem;
+		margin: 0 0 1.1rem;
+		padding: 0.9rem;
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
 		background: color-mix(in srgb, var(--surface-alt) 35%, transparent);
@@ -1440,22 +1415,36 @@
 		opacity: 0.8;
 	}
 
-	.link-field {
-		margin-bottom: 0.7rem;
+	/* A file or a link, on one line: the two answers to the same question sit
+	   side by side, with the "or" between them doing the explaining. */
+	.recording-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem 0.6rem;
+	}
+
+	.or {
+		flex: 0 0 auto;
+		font-size: 0.78rem;
+		font-weight: 700;
+		color: var(--text-muted);
+	}
+
+	.link-input {
+		flex: 1 1 12rem;
+		min-width: 0;
+		padding-block: 0.6rem;
 	}
 
 	.media-hint {
-		margin: 0 0 0.75rem;
+		margin: 0.6rem 0 0;
 		font-size: 0.8rem;
 		overflow-wrap: anywhere;
 	}
 
-	.link-label {
-		display: block;
-		margin-bottom: 0.3rem;
-		font-size: 0.78rem;
-		font-weight: 700;
-		color: var(--text-muted);
+	.title-field {
+		margin-bottom: 1rem;
 	}
 
 	/* Fetching the captions ------------------------------------------------ */
@@ -1466,7 +1455,7 @@
 	  "which track?" replaces the question "is there one?".
 	*/
 	.captions {
-		margin-bottom: 0.75rem;
+		margin-top: 0.6rem;
 	}
 
 	.captions-go {
@@ -1628,6 +1617,7 @@
 	.over-note {
 		margin: -0.5rem 0 0.9rem;
 		color: var(--danger);
+		font-weight: 700;
 	}
 
 	/* What the paste was recognised as. A note, not a warning: it is the same
@@ -1638,6 +1628,11 @@
 		font-size: 0.8rem;
 		font-variant-numeric: tabular-nums;
 		color: var(--text-muted);
+	}
+
+	.plan.trouble {
+		color: var(--danger);
+		font-weight: 700;
 	}
 
 	.examples {
@@ -1777,6 +1772,17 @@
 	@media (max-width: 400px) {
 		.doors {
 			flex-direction: column;
+		}
+
+		/* The row cannot hold a slot, an "or" and a field at this width, so the
+		   three stack and the "or" centres between them. */
+		.recording-row {
+			flex-direction: column;
+			align-items: stretch;
+		}
+
+		.or {
+			text-align: center;
 		}
 	}
 </style>

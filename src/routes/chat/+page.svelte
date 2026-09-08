@@ -185,7 +185,7 @@
 					<path d="M12 16.1h.01" />
 				</svg>
 				<span>
-					No API key configured — the assistant is running in offline demo mode. Try: hola = hello
+					Offline demo — add an API key in <a href="/settings">Settings</a> for real conversations.
 				</span>
 			</p>
 		{/if}
@@ -201,9 +201,7 @@
 							<path d="M9 11.9h.01M12 11.9h.01M15 11.9h.01" />
 						</svg>
 					</span>
-					<p class="empty-lead">
-						Ask me to add words to your list, look words up, or clean up your vocabulary.
-					</p>
+					<p class="empty-lead">Ask me to add words, look them up, or tidy your list.</p>
 					<div class="examples">
 						{#each EXAMPLE_PROMPTS as prompt (prompt)}
 							<button type="button" class="example-chip" onclick={() => useExample(prompt)}>

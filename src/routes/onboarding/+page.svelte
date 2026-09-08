@@ -239,10 +239,7 @@
 					</svg>
 				</span>
 				<h1>Connect a model</h1>
-				<p class="sub">
-					Lessons are generated on the fly through OpenRouter. Add your key now, or skip and add it
-					later in settings.
-				</p>
+				<p class="sub">Lessons are generated through OpenRouter with your own key.</p>
 			</header>
 
 			<label class="field">
@@ -256,11 +253,10 @@
 					spellcheck="false"
 				/>
 				<p class="hint">
-					Stored only in your browser — it never leaves this device except to call OpenRouter.
 					Create one at
 					<a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer noopener"
 						>openrouter.ai/keys</a
-					>.
+					> — it stays in this browser.
 				</p>
 			</label>
 
@@ -279,7 +275,6 @@
 						<option value={option}></option>
 					{/each}
 				</datalist>
-				<p class="hint">Fast and cheap by default. Any OpenRouter model id works.</p>
 			</label>
 		{/if}
 
@@ -313,10 +308,7 @@
 	{#if syncAvailable && step === 1}
 		<section class="card pair ll-rise" style="animation-delay: 90ms">
 			<h2>Already using Sapling on another device?</h2>
-			<p class="sub">
-				Enter its pairing phrase and this device joins that library instead — your words, reviews
-				and settings come across. Find the phrase under Settings → Sync there.
-			</p>
+			<p class="sub">Find its pairing phrase there under Settings → Sync.</p>
 
 			<label class="field">
 				<span class="label">Pairing phrase</span>
@@ -328,7 +320,6 @@
 					spellcheck="false"
 					disabled={pairing}
 				/>
-				<p class="hint">Capitals, dashes and spaces don't matter.</p>
 			</label>
 
 			<div class="pair-actions">

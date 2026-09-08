@@ -435,9 +435,10 @@ drill arrives in the text already counted as forgotten.
   it is ticked on purpose, every time. Eligibility for *that* is text-open-wide,
   not per page — a `new` word tapped on page one is never marked known on page
   four. `plain` words are left alone: unglossed, they are as likely to be a
-  segmenter's slip as a word. The confirm step speaks for the page ("3 garden
-  words on this page … will be reviewed as remembered", or "every garden word
-  on this page was already reviewed today"); the one-line receipt on the last
+  segmenter's slip as a word. The confirm step speaks for the page, one short
+  line per fact there is to state ("3 words read without a lookup count as
+  remembered", the looked-up count under it only when there is one, or
+  "Nothing new to count on this page"); the one-line receipt on the last
   page totals every page confirmed in this open ("12 garden words read fine ·
   1 forgotten · 4 new marked known"), because it appears once, under
   "Finished", and a last page whose words were all graded on page one would

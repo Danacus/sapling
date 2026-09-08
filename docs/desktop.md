@@ -304,7 +304,8 @@ the clip ends, is stopped, or is replaced by a newer clip — because a thread
 blocked on a clip could not answer `tts_stop`. A second `tts_play` cuts the
 first off, which is what makes a second tap on 🔊 interrupt the first word.
 
-**Two deliberate differences from the browser**, both visible in Settings:
+**Two deliberate differences from the browser**, neither of them explained in
+Settings — the second one shows as a row that simply is not there:
 
 - **No warm-up command.** `preloadKokoro` downloads the model and stops there;
   the engine's ~2 s load happens on the first synthesis. That is not a hole:

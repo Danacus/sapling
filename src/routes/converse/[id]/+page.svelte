@@ -335,8 +335,7 @@
 					<path d="M12 16.1h.01" />
 				</svg>
 				<span>
-					No API key configured — the conversation is running in offline demo mode, in a fixed
-					Spanish scene.
+					Offline demo — add an API key in <a href="/settings">Settings</a> for real conversations.
 				</span>
 			</p>
 		{/if}

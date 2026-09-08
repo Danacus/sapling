@@ -3,9 +3,11 @@
   committed, and owns everything that happens after grading.
 
   It is also the only place in a session that can spend tokens after the batch
-  was generated. "Explain" is opt-in, one call, and carries just this one
-  challenge plus the learner's own question — which is the whole point of
-  grading locally first.
+  was generated. "Explain" is opt-in and **one press is one call**: it asks the
+  default question straight away, and the box that appears under the answer is
+  for a follow-up — including "I was right, because…", since the default question
+  already asks whether the answer should count. Nothing here has to be read
+  before it can be used, and nothing is typed unless the learner wants more.
 
   That call can also *win*: when the model agrees a `wrong` answer should have
   counted it replies `overturn: true`, the banner repaints green and
@@ -52,7 +54,7 @@
 		nativeLanguage: string;
 		targetLanguage: string;
 		/**
-		 * The learner pressed "Too hard — skip" rather than answering. Still a
+		 * The learner pressed "Skip" rather than answering. Still a
 		 * `wrong` verdict everywhere else; it only changes what the banner says,
 		 * because "Not quite" is the wrong thing to tell someone who never tried.
 		 */
@@ -95,7 +97,6 @@
 	let asking = $state(false);
 	let answer = $state('');
 	let askError = $state('');
-	let questionInput = $state<HTMLInputElement | null>(null);
 
 	/* Self-assessment ------------------------------------------------------- */
 
@@ -235,6 +236,8 @@
 				...(question.trim() ? { userQuestion: question.trim() } : {})
 			});
 			answer = result.answer;
+			// The box is for the *next* question; a sent one has done its job.
+			question = '';
 			// A dispute can only *win* something back: 'almost' already counted, and
 			// 'correct' has nothing to fix. Fired once — the page ignores repeats.
 			if (result.overturn && verdict === 'wrong' && !overturned) onoverturn?.();
@@ -250,12 +253,14 @@
 		}
 	}
 
+	/**
+	 * Opens the panel and asks at once. The first press is the whole
+	 * interaction for most learners; the follow-up box is there for the rest.
+	 * Focus stays where it was, so Enter still means Continue.
+	 */
 	function toggleExplain(): void {
 		showExplain = !showExplain;
-		if (showExplain) {
-			// Focus after the slide has laid the field out.
-			setTimeout(() => questionInput?.focus(), 60);
-		}
+		if (showExplain && !answer && !asking && !askError) void ask();
 	}
 
 	function onFormSubmit(event: SubmitEvent): void {
@@ -344,31 +349,38 @@
 
 		{#if showExplain}
 			<div class="explain" transition:slide={{ duration: motionMs(180) }}>
-				<form class="ask" onsubmit={onFormSubmit}>
-					<input
-						bind:this={questionInput}
-						bind:value={question}
-						class="input"
-						type="text"
-						placeholder="Why is this the answer?"
-						aria-label="Ask about this answer"
-						disabled={asking}
-					/>
-					<button type="submit" class="btn btn-ghost ask-btn" disabled={asking}>Ask</button>
-				</form>
-
 				{#if asking}
 					<div class="asking"><Spinner /></div>
 				{:else if askError}
 					<p class="ask-error" role="alert">{askError}</p>
 				{:else if answer}
 					<p class="answer">{answer}</p>
-				{:else if verdict === 'wrong' && !overturned}
-					<p class="ask-hint">
-						Think you were right? Ask — a justified answer gets your grade fixed.
-					</p>
-				{:else}
-					<p class="ask-hint">Ask anything about this challenge — "why not …?" works fine.</p>
+				{/if}
+
+				<!-- The follow-up, under the answer it follows. An empty box re-asks
+				     the default question, which is what "try again" means after a
+				     failure; otherwise there is nothing to send until something is
+				     typed. The placeholder is the only nudge a dispute gets: the
+				     default question already asked whether the answer should count. -->
+				{#if !asking}
+					<form class="ask" onsubmit={onFormSubmit}>
+						<input
+							bind:value={question}
+							class="input"
+							type="text"
+							placeholder={verdict === 'wrong' && !overturned
+								? 'Think you were right? Say why…'
+								: 'Ask a follow-up…'}
+							aria-label="Ask about this answer"
+						/>
+						<button
+							type="submit"
+							class="btn btn-ghost ask-btn"
+							disabled={!question.trim() && !askError}
+						>
+							{askError ? 'Try again' : 'Ask'}
+						</button>
+					</form>
 				{/if}
 			</div>
 		{/if}
@@ -618,8 +630,21 @@
 		gap: 0.5rem;
 	}
 
+	/* Under an answer the box is a footnote to it, so it steps back a little:
+	   a gap above, and a smaller field than the page's forms wear. */
+	.answer + .ask,
+	.ask-error + .ask {
+		margin-top: 0.7rem;
+	}
+
+	.ask .input {
+		padding: 0.55rem 0.75rem;
+		font-size: 0.9rem;
+	}
+
 	.ask-btn {
 		flex: 0 0 auto;
+		padding: 0.55rem 0.9rem;
 	}
 
 	/* Match the spinner to the slip of paper it sits on: `--spinner-tone`
@@ -632,15 +657,10 @@
 	}
 
 	.answer,
-	.ask-hint,
 	.ask-error {
-		margin: 0.7rem 0 0;
+		margin: 0;
 		font-size: 0.92rem;
 		line-height: 1.5;
-	}
-
-	.ask-hint {
-		color: var(--text-muted);
 	}
 
 	.ask-error {
