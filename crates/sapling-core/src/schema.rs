@@ -42,8 +42,6 @@ CREATE TABLE IF NOT EXISTS results (
   answerGiven TEXT NOT NULL, at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS results_at ON results(at);
 
-CREATE TABLE IF NOT EXISTS daily (day TEXT PRIMARY KEY, count INTEGER NOT NULL);
-
 CREATE TABLE IF NOT EXISTS tombstones (itemId TEXT PRIMARY KEY);
 
 CREATE TABLE IF NOT EXISTS profile (
@@ -98,12 +96,16 @@ pub fn review_key(item_id: &str, at: f64, device: &str) -> String {
 pub const DERIVED_SCHEMA_VERSION: u32 = 4;
 
 /// Every read table the materializer owns; `events` and `meta` survive a rebuild.
-pub const DERIVED_TABLES: [&str; 14] = [
+///
+/// `daily` (answers per local day) used to be one of these and is gone: the
+/// activity read folds the base tables at read time instead, since a day is
+/// made of reviews, lookups and added words as much as of answers. A database
+/// from before still carries the empty table; nothing reads or drops it.
+pub const DERIVED_TABLES: [&str; 13] = [
     "items",
     "reviews",
     "challenges",
     "results",
-    "daily",
     "tombstones",
     "profile",
     "texts",

@@ -17,7 +17,12 @@ import type { Backend, BackendMethod } from './protocol';
 
 export { challengeOf } from './database';
 export { activityByDay, localDay, previousDay, streakFrom } from './day';
-export { EXPORT_VERSION, type ConversationSummary, type ExportEnvelope } from './protocol';
+export {
+	EXPORT_VERSION,
+	type ConversationSummary,
+	type DailyActivity,
+	type ExportEnvelope
+} from './protocol';
 
 function forward<M extends BackendMethod>(method: M): Backend[M] {
 	const forwarded = async (...args: unknown[]): Promise<unknown> => {

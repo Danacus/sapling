@@ -42,6 +42,23 @@ export interface ConversationSummary extends Conversation {
 	lastTurnAt?: number;
 }
 
+/**
+ * What the learner did on one local calendar day. `count` is the answers given
+ * in drills — the name the home screen's strip has always read; the rest is
+ * the day beyond the drill. `reviewed` counts distinct words, whatever route
+ * reviewed them; `added` is words that joined the garden that day.
+ */
+export interface DailyActivity {
+	day: string;
+	count: number;
+	correct: number;
+	almost: number;
+	wrong: number;
+	reviewed: number;
+	lookups: number;
+	added: number;
+}
+
 /** Envelope version written by {@link Backend.exportData}. */
 export const EXPORT_VERSION = 3;
 
@@ -178,8 +195,12 @@ export interface Backend {
 	addResult(result: ChallengeResult): Promise<void>;
 	/** The most recent results, newest first. */
 	recentResults(limit: number): Promise<ChallengeResult[]>;
-	/** How many answers landed on each local calendar day, oldest day first. */
-	getDailyActivity(): Promise<{ day: string; count: number }[]>;
+	/**
+	 * What the learner did on each local calendar day, oldest day first — a day
+	 * is present when anything at all happened on it. Folded from the base
+	 * tables at read time; there is no aggregate behind it.
+	 */
+	getDailyActivity(): Promise<DailyActivity[]>;
 
 	/* ---- Reading texts, word marks and lookups --------------------------- */
 

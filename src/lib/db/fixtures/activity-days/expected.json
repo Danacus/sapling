@@ -1,0 +1,556 @@
+{
+	"getAllItems": {
+		"lean": [
+			{
+				"id": "item-ni",
+				"kind": "vocab",
+				"term": "你好",
+				"meaning": "hello",
+				"romanization": "nǐ hǎo",
+				"introducedAt": 1710061200000,
+				"fsrsCard": {
+					"due": 1710062280000,
+					"stability": 2.30649996,
+					"difficulty": 4.75285816,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 1,
+					"reps": 2,
+					"lapses": 0,
+					"state": 1,
+					"last_review": 1710061920000
+				},
+				"srs": {
+					"due": 1710062280000,
+					"retrievability": 0.90949321,
+					"strength": 0.31673212
+				},
+				"reviewCount": 2,
+				"correctCount": 1,
+				"history": []
+			},
+			{
+				"id": "item-xie",
+				"kind": "vocab",
+				"term": "谢谢",
+				"meaning": "thanks",
+				"romanization": "xièxie",
+				"introducedAt": 1710061260000,
+				"fsrsCard": {
+					"due": 1710151320000,
+					"stability": 0.1008859,
+					"difficulty": 8.80630398,
+					"elapsed_days": 1,
+					"scheduled_days": 0,
+					"learning_steps": 0,
+					"reps": 2,
+					"lapses": 0,
+					"state": 1,
+					"last_review": 1710151260000
+				},
+				"srs": {
+					"due": 1710151320000,
+					"retrievability": 0.69368184,
+					"strength": 0.01941573
+				},
+				"reviewCount": 2,
+				"correctCount": 0,
+				"history": []
+			},
+			{
+				"id": "item-zai",
+				"kind": "vocab",
+				"term": "再见",
+				"meaning": "goodbye",
+				"romanization": "zàijiàn",
+				"introducedAt": 1710237600000,
+				"fsrsCard": {
+					"due": 1710237600000,
+					"stability": 0,
+					"difficulty": 0,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 0,
+					"reps": 0,
+					"lapses": 0,
+					"state": 0,
+					"last_review": null
+				},
+				"srs": {
+					"due": 1710237600000,
+					"retrievability": 0,
+					"strength": 0
+				},
+				"reviewCount": 0,
+				"correctCount": 0,
+				"history": []
+			}
+		],
+		"withRecentGrades": [
+			{
+				"id": "item-ni",
+				"kind": "vocab",
+				"term": "你好",
+				"meaning": "hello",
+				"romanization": "nǐ hǎo",
+				"introducedAt": 1710061200000,
+				"fsrsCard": {
+					"due": 1710062280000,
+					"stability": 2.30649996,
+					"difficulty": 4.75285816,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 1,
+					"reps": 2,
+					"lapses": 0,
+					"state": 1,
+					"last_review": 1710061920000
+				},
+				"srs": {
+					"due": 1710062280000,
+					"retrievability": 0.90949321,
+					"strength": 0.31673212
+				},
+				"reviewCount": 2,
+				"correctCount": 1,
+				"recentGrades": [
+					{
+						"at": 1710061800000,
+						"grade": 3
+					},
+					{
+						"at": 1710061920000,
+						"grade": 2
+					}
+				],
+				"history": []
+			},
+			{
+				"id": "item-xie",
+				"kind": "vocab",
+				"term": "谢谢",
+				"meaning": "thanks",
+				"romanization": "xièxie",
+				"introducedAt": 1710061260000,
+				"fsrsCard": {
+					"due": 1710151320000,
+					"stability": 0.1008859,
+					"difficulty": 8.80630398,
+					"elapsed_days": 1,
+					"scheduled_days": 0,
+					"learning_steps": 0,
+					"reps": 2,
+					"lapses": 0,
+					"state": 1,
+					"last_review": 1710151260000
+				},
+				"srs": {
+					"due": 1710151320000,
+					"retrievability": 0.69368184,
+					"strength": 0.01941573
+				},
+				"reviewCount": 2,
+				"correctCount": 0,
+				"recentGrades": [
+					{
+						"at": 1710061860000,
+						"grade": 1
+					},
+					{
+						"at": 1710151260000,
+						"grade": 1
+					}
+				],
+				"history": []
+			},
+			{
+				"id": "item-zai",
+				"kind": "vocab",
+				"term": "再见",
+				"meaning": "goodbye",
+				"romanization": "zàijiàn",
+				"introducedAt": 1710237600000,
+				"fsrsCard": {
+					"due": 1710237600000,
+					"stability": 0,
+					"difficulty": 0,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 0,
+					"reps": 0,
+					"lapses": 0,
+					"state": 0,
+					"last_review": null
+				},
+				"srs": {
+					"due": 1710237600000,
+					"retrievability": 0,
+					"strength": 0
+				},
+				"reviewCount": 0,
+				"correctCount": 0,
+				"recentGrades": [],
+				"history": []
+			}
+		]
+	},
+	"getItem": {
+		"item-ni": {
+			"id": "item-ni",
+			"kind": "vocab",
+			"term": "你好",
+			"meaning": "hello",
+			"romanization": "nǐ hǎo",
+			"introducedAt": 1710061200000,
+			"fsrsCard": {
+				"due": 1710062280000,
+				"stability": 2.30649996,
+				"difficulty": 4.75285816,
+				"elapsed_days": 0,
+				"scheduled_days": 0,
+				"learning_steps": 1,
+				"reps": 2,
+				"lapses": 0,
+				"state": 1,
+				"last_review": 1710061920000
+			},
+			"srs": {
+				"due": 1710062280000,
+				"retrievability": 0.90949321,
+				"strength": 0.31673212
+			},
+			"reviewCount": 2,
+			"correctCount": 1,
+			"recentGrades": [
+				{
+					"at": 1710061800000,
+					"grade": 3
+				},
+				{
+					"at": 1710061920000,
+					"grade": 2
+				}
+			],
+			"history": [
+				{
+					"at": 1710061800000,
+					"grade": 3,
+					"device": "dev-a"
+				},
+				{
+					"at": 1710061920000,
+					"grade": 2,
+					"device": "dev-a"
+				}
+			]
+		},
+		"item-nobody": null,
+		"item-xie": {
+			"id": "item-xie",
+			"kind": "vocab",
+			"term": "谢谢",
+			"meaning": "thanks",
+			"romanization": "xièxie",
+			"introducedAt": 1710061260000,
+			"fsrsCard": {
+				"due": 1710151320000,
+				"stability": 0.1008859,
+				"difficulty": 8.80630398,
+				"elapsed_days": 1,
+				"scheduled_days": 0,
+				"learning_steps": 0,
+				"reps": 2,
+				"lapses": 0,
+				"state": 1,
+				"last_review": 1710151260000
+			},
+			"srs": {
+				"due": 1710151320000,
+				"retrievability": 0.69368184,
+				"strength": 0.01941573
+			},
+			"reviewCount": 2,
+			"correctCount": 0,
+			"recentGrades": [
+				{
+					"at": 1710061860000,
+					"grade": 1
+				},
+				{
+					"at": 1710151260000,
+					"grade": 1
+				}
+			],
+			"history": [
+				{
+					"at": 1710061860000,
+					"grade": 1,
+					"device": "dev-a"
+				},
+				{
+					"at": 1710151260000,
+					"grade": 1,
+					"device": "dev-a"
+				}
+			]
+		},
+		"item-zai": {
+			"id": "item-zai",
+			"kind": "vocab",
+			"term": "再见",
+			"meaning": "goodbye",
+			"romanization": "zàijiàn",
+			"introducedAt": 1710237600000,
+			"fsrsCard": {
+				"due": 1710237600000,
+				"stability": 0,
+				"difficulty": 0,
+				"elapsed_days": 0,
+				"scheduled_days": 0,
+				"learning_steps": 0,
+				"reps": 0,
+				"lapses": 0,
+				"state": 0,
+				"last_review": null
+			},
+			"srs": {
+				"due": 1710237600000,
+				"retrievability": 0,
+				"strength": 0
+			},
+			"reviewCount": 0,
+			"correctCount": 0,
+			"recentGrades": [],
+			"history": []
+		}
+	},
+	"getPool": [],
+	"poolSize": 0,
+	"getChallengesByIds": [],
+	"recentResults": [
+		{
+			"challengeId": "ch-3",
+			"verdict": "almost",
+			"answerGiven": "ni hao",
+			"at": 1710061920000
+		},
+		{
+			"challengeId": "ch-2",
+			"verdict": "wrong",
+			"answerGiven": "再见",
+			"at": 1710061860000
+		},
+		{
+			"challengeId": "ch-1",
+			"verdict": "correct",
+			"answerGiven": "hello",
+			"at": 1710061800000
+		}
+	],
+	"getDailyActivity": [
+		{
+			"day": "2024-03-10",
+			"count": 3,
+			"correct": 1,
+			"almost": 1,
+			"wrong": 1,
+			"reviewed": 2,
+			"lookups": 0,
+			"added": 2
+		},
+		{
+			"day": "2024-03-11",
+			"count": 0,
+			"correct": 0,
+			"almost": 0,
+			"wrong": 0,
+			"reviewed": 1,
+			"lookups": 2,
+			"added": 0
+		},
+		{
+			"day": "2024-03-12",
+			"count": 0,
+			"correct": 0,
+			"almost": 0,
+			"wrong": 0,
+			"reviewed": 0,
+			"lookups": 0,
+			"added": 1
+		}
+	],
+	"getTexts": [],
+	"getText": {
+		"text-1": null
+	},
+	"getKnownTerms": [],
+	"getConversations": [],
+	"getConversation": {},
+	"exportData": {
+		"version": 3,
+		"exportedAt": 1710244800000,
+		"events": [
+			{
+				"id": "ev-add-ni",
+				"type": "itemAdded",
+				"at": 1710061200000,
+				"device": "dev-a",
+				"payload": {
+					"id": "item-ni",
+					"kind": "vocab",
+					"term": "你好",
+					"meaning": "hello",
+					"romanization": "nǐ hǎo",
+					"introducedAt": 1710061200000
+				}
+			},
+			{
+				"id": "ev-add-xie",
+				"type": "itemAdded",
+				"at": 1710061260000,
+				"device": "dev-a",
+				"payload": {
+					"id": "item-xie",
+					"kind": "vocab",
+					"term": "谢谢",
+					"meaning": "thanks",
+					"romanization": "xièxie",
+					"introducedAt": 1710061260000
+				}
+			},
+			{
+				"id": "ev-result-1",
+				"type": "resultLogged",
+				"at": 1710061800000,
+				"device": "dev-a",
+				"payload": {
+					"challengeId": "ch-1",
+					"verdict": "correct",
+					"answerGiven": "hello",
+					"at": 1710061800000
+				}
+			},
+			{
+				"id": "ev-review-1",
+				"type": "itemReviewed",
+				"at": 1710061800000,
+				"device": "dev-a",
+				"payload": {
+					"device": "dev-a",
+					"at": 1710061800000,
+					"itemId": "item-ni",
+					"grade": 3
+				}
+			},
+			{
+				"id": "ev-result-2",
+				"type": "resultLogged",
+				"at": 1710061860000,
+				"device": "dev-a",
+				"payload": {
+					"challengeId": "ch-2",
+					"verdict": "wrong",
+					"answerGiven": "再见",
+					"at": 1710061860000
+				}
+			},
+			{
+				"id": "ev-review-2",
+				"type": "itemReviewed",
+				"at": 1710061860000,
+				"device": "dev-a",
+				"payload": {
+					"device": "dev-a",
+					"at": 1710061860000,
+					"itemId": "item-xie",
+					"grade": 1
+				}
+			},
+			{
+				"id": "ev-result-3",
+				"type": "resultLogged",
+				"at": 1710061920000,
+				"device": "dev-a",
+				"payload": {
+					"challengeId": "ch-3",
+					"verdict": "almost",
+					"answerGiven": "ni hao",
+					"at": 1710061920000
+				}
+			},
+			{
+				"id": "ev-review-3",
+				"type": "itemReviewed",
+				"at": 1710061920000,
+				"device": "dev-a",
+				"payload": {
+					"device": "dev-a",
+					"at": 1710061920000,
+					"itemId": "item-ni",
+					"grade": 2
+				}
+			},
+			{
+				"id": "ev-lookup-1",
+				"type": "wordLookedUp",
+				"at": 1710151200000,
+				"device": "dev-a",
+				"payload": {
+					"term": "早餐",
+					"textId": "text-1"
+				}
+			},
+			{
+				"id": "ev-lookup-2",
+				"type": "wordLookedUp",
+				"at": 1710151260000,
+				"device": "dev-a",
+				"payload": {
+					"term": "谢谢",
+					"itemId": "item-xie",
+					"textId": "text-1"
+				}
+			},
+			{
+				"id": "ev-review-4",
+				"type": "itemReviewed",
+				"at": 1710151260000,
+				"device": "dev-a",
+				"payload": {
+					"device": "dev-a",
+					"at": 1710151260000,
+					"itemId": "item-xie",
+					"grade": 1
+				}
+			},
+			{
+				"id": "ev-add-zai",
+				"type": "itemAdded",
+				"at": 1710237600000,
+				"device": "dev-a",
+				"payload": {
+					"id": "item-zai",
+					"kind": "vocab",
+					"term": "再见",
+					"meaning": "goodbye",
+					"romanization": "zàijiàn",
+					"introducedAt": 1710237600000
+				}
+			},
+			{
+				"id": "ev-review-orphan",
+				"type": "itemReviewed",
+				"at": 1710324000000,
+				"device": "dev-a",
+				"payload": {
+					"device": "dev-a",
+					"at": 1710324000000,
+					"itemId": "item-nobody",
+					"grade": 3
+				}
+			}
+		]
+	},
+	"pendingEvents": [],
+	"getPullCursor": 0
+}

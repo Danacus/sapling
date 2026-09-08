@@ -11,7 +11,7 @@
 //! the calendar ([`LocalDay`]). A host supplies all four; the golden fixtures
 //! pin them.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use serde::de::value::{Error as EnumError, StrDeserializer};
 use serde::de::IntoDeserializer;
@@ -32,7 +32,7 @@ use crate::srs::{item_srs, FsrsCardState};
 use crate::types::{
     ChallengeResult, Conversation, ConversationDetail, ConversationExchange,
     ConversationLearnerTurn, ConversationSummary, ConversationTeacherTurn, DailyActivity,
-    GradeEntry, HistoryEntry, KnowledgeItem, Profile, ReadingText,
+    GradeEntry, HistoryEntry, KnowledgeItem, Profile, ReadingText, Verdict,
 };
 
 /// Envelope version `export_data` writes and a v3 `import_data` reads.
@@ -611,18 +611,91 @@ impl Core {
             .collect()
     }
 
-    /// How many answers landed on each local calendar day, oldest day first.
+    /// What the learner did on each local calendar day, oldest day first.
+    ///
+    /// Folded at read time from the four base tables rather than kept as an
+    /// aggregate: a day is *any* day something happened — an answer, a review
+    /// from reading, a lookup, a word added — and four counters maintained by
+    /// four materializers would be four things to keep agreeing. The tables are
+    /// small (a review a second for a year is still a few hundred thousand
+    /// rows) and the day boundary is the host's, through `LocalDay`, which SQL
+    /// cannot be asked to draw.
     pub fn get_daily_activity(&self) -> Result<Vec<DailyActivity>> {
-        self.sql
-            .query("SELECT day, count FROM daily ORDER BY day ASC", &[])?
+        let mut days: BTreeMap<String, DailyActivity> = BTreeMap::new();
+        let day_of = |at: f64, days: &mut BTreeMap<String, DailyActivity>| -> String {
+            let day = self.day.local_day(at);
+            days.entry(day.clone()).or_insert_with(|| DailyActivity {
+                day: day.clone(),
+                count: 0.0,
+                correct: 0.0,
+                almost: 0.0,
+                wrong: 0.0,
+                reviewed: 0.0,
+                lookups: 0.0,
+                added: 0.0,
+            });
+            day
+        };
+
+        for row in self
+            .sql
+            .query("SELECT at, verdict FROM results", &[])?
             .iter()
-            .map(|row| {
-                Ok(DailyActivity {
-                    day: row.text("day")?.to_owned(),
-                    count: row.f64("count")?,
-                })
-            })
-            .collect()
+        {
+            let day = day_of(row.f64("at")?, &mut days);
+            let entry = days.get_mut(&day).expect("just inserted");
+            entry.count += 1.0;
+            match parse_enum::<Verdict>(row.text("verdict")?)? {
+                Verdict::Correct => entry.correct += 1.0,
+                Verdict::Almost => entry.almost += 1.0,
+                Verdict::Wrong => entry.wrong += 1.0,
+            }
+        }
+
+        // Distinct words, not reviews: a word drilled three times in one
+        // session was one word's worth of work that day. Only words still in
+        // the garden — a forgotten word takes its history with it everywhere
+        // else, and a review row for an item the log never added (or one whose
+        // tombstone arrived first) is present or absent by arrival order, which
+        // a read must not expose.
+        let mut reviewed: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for row in self
+            .sql
+            .query(
+                "SELECT r.itemId AS itemId, r.at AS at FROM reviews r
+                 JOIN items i ON i.id = r.itemId",
+                &[],
+            )?
+            .iter()
+        {
+            let day = day_of(row.f64("at")?, &mut days);
+            reviewed
+                .entry(day)
+                .or_default()
+                .insert(row.text("itemId")?.to_owned());
+        }
+        for (day, items) in reviewed {
+            days.get_mut(&day).expect("just inserted").reviewed = items.len() as f64;
+        }
+
+        for row in self.sql.query("SELECT at FROM lookups", &[])?.iter() {
+            let day = day_of(row.f64("at")?, &mut days);
+            days.get_mut(&day).expect("just inserted").lookups += 1.0;
+        }
+
+        for row in self
+            .sql
+            .query(
+                "SELECT introducedAt FROM items WHERE introducedAt IS NOT NULL",
+                &[],
+            )?
+            .iter()
+        {
+            let day = day_of(row.f64("introducedAt")?, &mut days);
+            days.get_mut(&day).expect("just inserted").added += 1.0;
+        }
+
+        Ok(days.into_values().collect())
     }
 
     /* ---- Reading texts, word marks and lookups ----------------------- */

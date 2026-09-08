@@ -237,10 +237,22 @@ pub struct ChallengeResult {
     pub at: f64,
 }
 
+/// Everything the learner did on one local calendar day, read straight off
+/// the base tables — there is no aggregate to keep in step. `count` keeps its
+/// old name: it is the answers given in drills, and the home screen's strip
+/// reads it. The rest is what a day looks like beyond the drill: how those
+/// answers went, how many distinct words were reviewed by any route, how many
+/// were looked up while reading, and how many joined the garden.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DailyActivity {
     pub day: String,
     pub count: f64,
+    pub correct: f64,
+    pub almost: f64,
+    pub wrong: f64,
+    pub reviewed: f64,
+    pub lookups: f64,
+    pub added: f64,
 }
 
 /* -------------------------------------------------------------------------- */

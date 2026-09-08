@@ -22,7 +22,7 @@ replace this one.
 
 ## How the reads are probed
 
-Reads are always taken under `TZ=UTC` (`daily` buckets by local day).
+Reads are always taken under `TZ=UTC` (`getDailyActivity` buckets by local day).
 
 - No-argument reads are recorded as returned.
 - `getAllItems` is recorded twice, as `lean` and `withRecentGrades`. Both — and
@@ -59,6 +59,13 @@ Reads are always taken under `TZ=UTC` (`daily` buckets by local day).
 - `stale-and-duplicate-reviews` — a review older than one already folded (a
   refold), the same review under a fresh event id (a legacy import), the same
   event redelivered, and a review of an item the log never adds.
+- `activity-days` — three UTC days for `getDailyActivity`, each a different
+  mix: a drill day (three answers, one per verdict, over two words — one of
+  them twice, so `reviewed` counts words), a reading-only day (two lookups and
+  the review a lookup files, no answer, so a day exists with `count` 0), and a
+  day on which one word was added and nothing else. A review of an item the
+  log never adds makes no day: `reviewed` counts only words in the garden,
+  which is also what keeps the read arrival-order free around a tombstone.
 - `version-skew` — rows this build cannot read: `wordShelved`, a kind only a
   newer build writes, and two `itemAdded` payloads carrying `notes: null`,
   which the schema rejects. All eight rows are in `exportData`, field for

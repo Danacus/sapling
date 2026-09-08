@@ -1,0 +1,182 @@
+{
+	"meta": {
+		"deviceId": "fixture-device",
+		"now": 1710244800000,
+		"orderFree": true,
+		"note": "Three UTC days of doing things, each a different mix, so `getDailyActivity` is pinned on every field: 2024-03-10 is a drill (three answers, one of each verdict, over two words — one of them answered twice, so `reviewed` counts words and not reviews) on the day both words were added; 2024-03-11 is reading only — two lookups and the Again review a lookup on a garden word files, with no answer at all, so the day exists without a `count`; 2024-03-12 is one word added and nothing else. A review of an item the log never adds sits on 2024-03-13 and must not make a day: its row exists, but `reviewed` counts only words in the garden, which is what keeps the read the same in either arrival order when a tombstone is involved."
+	},
+	"events": [
+		{
+			"seq": 1,
+			"id": "ev-add-ni",
+			"type": "itemAdded",
+			"at": 1710061200000,
+			"device": "dev-a",
+			"payload": {
+				"id": "item-ni",
+				"kind": "vocab",
+				"term": "你好",
+				"meaning": "hello",
+				"romanization": "nǐ hǎo",
+				"introducedAt": 1710061200000
+			}
+		},
+		{
+			"seq": 2,
+			"id": "ev-add-xie",
+			"type": "itemAdded",
+			"at": 1710061260000,
+			"device": "dev-a",
+			"payload": {
+				"id": "item-xie",
+				"kind": "vocab",
+				"term": "谢谢",
+				"meaning": "thanks",
+				"romanization": "xièxie",
+				"introducedAt": 1710061260000
+			}
+		},
+		{
+			"seq": 3,
+			"id": "ev-result-1",
+			"type": "resultLogged",
+			"at": 1710061800000,
+			"device": "dev-a",
+			"payload": {
+				"challengeId": "ch-1",
+				"verdict": "correct",
+				"answerGiven": "hello",
+				"at": 1710061800000
+			}
+		},
+		{
+			"seq": 4,
+			"id": "ev-review-1",
+			"type": "itemReviewed",
+			"at": 1710061800000,
+			"device": "dev-a",
+			"payload": {
+				"device": "dev-a",
+				"at": 1710061800000,
+				"itemId": "item-ni",
+				"grade": 3
+			}
+		},
+		{
+			"seq": 5,
+			"id": "ev-result-2",
+			"type": "resultLogged",
+			"at": 1710061860000,
+			"device": "dev-a",
+			"payload": {
+				"challengeId": "ch-2",
+				"verdict": "wrong",
+				"answerGiven": "再见",
+				"at": 1710061860000
+			}
+		},
+		{
+			"seq": 6,
+			"id": "ev-review-2",
+			"type": "itemReviewed",
+			"at": 1710061860000,
+			"device": "dev-a",
+			"payload": {
+				"device": "dev-a",
+				"at": 1710061860000,
+				"itemId": "item-xie",
+				"grade": 1
+			}
+		},
+		{
+			"seq": 7,
+			"id": "ev-result-3",
+			"type": "resultLogged",
+			"at": 1710061920000,
+			"device": "dev-a",
+			"payload": {
+				"challengeId": "ch-3",
+				"verdict": "almost",
+				"answerGiven": "ni hao",
+				"at": 1710061920000
+			}
+		},
+		{
+			"seq": 8,
+			"id": "ev-review-3",
+			"type": "itemReviewed",
+			"at": 1710061920000,
+			"device": "dev-a",
+			"payload": {
+				"device": "dev-a",
+				"at": 1710061920000,
+				"itemId": "item-ni",
+				"grade": 2
+			}
+		},
+		{
+			"seq": 9,
+			"id": "ev-lookup-1",
+			"type": "wordLookedUp",
+			"at": 1710151200000,
+			"device": "dev-a",
+			"payload": {
+				"term": "早餐",
+				"textId": "text-1"
+			}
+		},
+		{
+			"seq": 10,
+			"id": "ev-lookup-2",
+			"type": "wordLookedUp",
+			"at": 1710151260000,
+			"device": "dev-a",
+			"payload": {
+				"term": "谢谢",
+				"itemId": "item-xie",
+				"textId": "text-1"
+			}
+		},
+		{
+			"seq": 11,
+			"id": "ev-review-4",
+			"type": "itemReviewed",
+			"at": 1710151260000,
+			"device": "dev-a",
+			"payload": {
+				"device": "dev-a",
+				"at": 1710151260000,
+				"itemId": "item-xie",
+				"grade": 1
+			}
+		},
+		{
+			"seq": 12,
+			"id": "ev-add-zai",
+			"type": "itemAdded",
+			"at": 1710237600000,
+			"device": "dev-a",
+			"payload": {
+				"id": "item-zai",
+				"kind": "vocab",
+				"term": "再见",
+				"meaning": "goodbye",
+				"romanization": "zàijiàn",
+				"introducedAt": 1710237600000
+			}
+		},
+		{
+			"seq": 13,
+			"id": "ev-review-orphan",
+			"type": "itemReviewed",
+			"at": 1710324000000,
+			"device": "dev-a",
+			"payload": {
+				"device": "dev-a",
+				"at": 1710324000000,
+				"itemId": "item-nobody",
+				"grade": 3
+			}
+		}
+	]
+}

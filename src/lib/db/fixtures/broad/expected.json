@@ -612,15 +612,33 @@
 	"getDailyActivity": [
 		{
 			"day": "2024-03-10",
-			"count": 3
+			"count": 3,
+			"correct": 2,
+			"almost": 0,
+			"wrong": 1,
+			"reviewed": 2,
+			"lookups": 2,
+			"added": 3
 		},
 		{
 			"day": "2024-03-11",
-			"count": 1
+			"count": 1,
+			"correct": 0,
+			"almost": 1,
+			"wrong": 0,
+			"reviewed": 0,
+			"lookups": 0,
+			"added": 0
 		},
 		{
 			"day": "2024-03-12",
-			"count": 2
+			"count": 2,
+			"correct": 2,
+			"almost": 0,
+			"wrong": 0,
+			"reviewed": 0,
+			"lookups": 0,
+			"added": 0
 		}
 	],
 	"getTexts": [

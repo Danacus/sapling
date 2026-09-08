@@ -39,8 +39,8 @@ const RECENT_LIMIT = 5;
 const PENDING_LIMIT = 100;
 
 /**
- * `daily` buckets by local calendar day, so the reads are only reproducible
- * under one time zone. Pinned for this file and put back afterwards.
+ * `getDailyActivity` buckets by local calendar day, so the reads are only
+ * reproducible under one time zone. Pinned for this file and put back afterwards.
  */
 const originalTz = process.env.TZ;
 beforeAll(() => {

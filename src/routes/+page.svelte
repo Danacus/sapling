@@ -322,6 +322,9 @@
 							</div>
 						{/each}
 					</div>
+
+					<!-- The strip is a shape to glance at; the whole record is a page. -->
+					<a class="btn btn-ghost every-day" href="/activity">Every day</a>
 				</section>
 
 				{#if items.length > 0}
@@ -776,6 +779,16 @@
 
 	.strip-col.is-today .strip-letter {
 		color: var(--text);
+	}
+
+	/* The same quiet door the garden card wears, at the strip's foot. */
+	.every-day {
+		display: inline-flex;
+		margin-top: 0.85rem;
+		padding: 0.28rem 0.7rem;
+		border-color: var(--border);
+		font-size: 0.78rem;
+		text-decoration: none;
 	}
 
 	/* Garden ------------------------------------------------------------- */

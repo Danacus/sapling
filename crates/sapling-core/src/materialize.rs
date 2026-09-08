@@ -428,10 +428,6 @@ impl<'a> Materializer<'a> {
                 Param::text(&p.answer_given),
                 Param::number(p.at),
             ],
-        )?;
-        self.sql.exec(
-            "INSERT INTO daily (day, count) VALUES (?, 1) ON CONFLICT(day) DO UPDATE SET count = count + 1",
-            &[Param::text(self.day.local_day(p.at))],
         )
     }
 

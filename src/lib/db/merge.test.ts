@@ -56,7 +56,6 @@ async function snapshot(store: TestBackend) {
 			'SELECT * FROM challenges ORDER BY id'
 		),
 		results: await store.query('SELECT * FROM results ORDER BY id'),
-		daily: await store.query('SELECT * FROM daily ORDER BY day'),
 		tombstones: await store.query('SELECT * FROM tombstones ORDER BY itemId'),
 		profile: await store.query<{ model: string; about: string | null; interests: string }>(
 			'SELECT * FROM profile'
@@ -365,7 +364,6 @@ describe('challenges and results', () => {
 			[result('r1', 'same'), result('r2', 'same'), result('r1', 'same')]
 		);
 		expect(state.results).toHaveLength(2);
-		expect(state.daily).toEqual([{ day: expect.any(String), count: 2 }]);
 	});
 
 	it('keeps challenge content verbatim', async () => {

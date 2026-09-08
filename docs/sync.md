@@ -52,7 +52,7 @@ operations (`pendingEvents`, `markPushed`, `applyRemote`, the pull cursor) and
 export/import — is implemented by the Rust core (`crates/sapling-core`,
 compiled to wasm and lent the Worker's database through `host.ts`) and
 forwarded by `client.ts`, one `postMessage` per call. `events` is the facts
-log; `items`, `reviews`, `challenges`, `results`, `daily`, `tombstones`,
+log; `items`, `reviews`, `challenges`, `results`, `tombstones`,
 `profile` are aggregates the materializer maintains — UI reads never touch
 `events`. The VFS is exclusive: a second tab gets "Sapling is already open in
 another tab." and stops; no leader election. Node tests run the same wasm

@@ -187,7 +187,18 @@
 	"poolSize": 0,
 	"getChallengesByIds": [],
 	"recentResults": [],
-	"getDailyActivity": [],
+	"getDailyActivity": [
+		{
+			"day": "2024-03-10",
+			"count": 0,
+			"correct": 0,
+			"almost": 0,
+			"wrong": 0,
+			"reviewed": 0,
+			"lookups": 0,
+			"added": 2
+		}
+	],
 	"getTexts": [],
 	"getText": {},
 	"getKnownTerms": [],
