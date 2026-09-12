@@ -31,6 +31,16 @@
  * own schedule and the learner ends up reading the words they own bare while
  * the new one in the same sentence keeps its crutch. Both are rolled in the
  * same single serve-time call, so the plan is as stable as the boolean was.
+ *
+ * `byTerm` covers every known word the caller was handed (`items`), not only
+ * the challenge's own `itemIds`: a multi-cloze's gap words appear as blanks
+ * and bank chips, never as passage tokens, so a passage token can easily be a
+ * word the learner knows well that the challenge itself doesn't exercise. If
+ * `byTerm` stopped at `itemIds`, every such token had no entry and fell back
+ * to `sentence` — the single whole-challenge roll from the weakest gap word —
+ * so a multi-cloze's entire passage hid or showed in lockstep instead of each
+ * word fading on its own schedule. Rolling one entry per known item fixes
+ * that for every challenge shape at once, not just multi-cloze.
  */
 
 import type { RomanizedToken } from '$lib/romanize';
@@ -123,10 +133,13 @@ export interface ReadingPlan {
 	 */
 	sentence: boolean;
 	/**
-	 * Per-word decisions for tokenized (ruby) rendering, keyed by the knowledge
-	 * item's `term` — the same string a {@link RomanizedToken}'s `text` carries
-	 * when the romanizer grouped it around that vocabulary word, which is what
-	 * makes the lookup a plain map hit rather than a search.
+	 * Per-word decisions for tokenized (ruby) rendering and for bank/tile
+	 * chips, keyed by the knowledge item's `term` — the same string a
+	 * {@link RomanizedToken}'s `text` carries when the romanizer grouped it
+	 * around that vocabulary word, which is what makes the lookup a plain map
+	 * hit rather than a search. Covers every known word handed to
+	 * {@link planReadings}, not only the words the challenge names in
+	 * `itemIds` — see the module note.
 	 *
 	 * Empty under `'on'`/`'off'`: the learner asked for one answer everywhere,
 	 * and an empty map means every token falls through to `sentence`.
@@ -141,13 +154,18 @@ const NO_TERMS: ReadonlyMap<string, boolean> = new Map();
  * The learner's romanization preference, resolved for one served challenge.
  *
  * Rolled **once, at serve time**, by the session screen; see the module note
- * for why. Under `'adaptive'` each word the challenge exercises gets its *own*
- * independent flip from its *own* strength — so an owned word can lose its
- * pinyin in the very sentence where a word met yesterday keeps it, which is the
- * whole point of fading a crutch per word rather than per screen. An `itemId`
- * that no longer resolves contributes no entry: there is no term to key it by,
- * and any token it would have covered falls back to `sentence` (which counted
- * it as unknown, so that fallback shows the reading).
+ * for why. Under `'adaptive'` every known word gets its *own* independent flip
+ * from its *own* strength — not only the words this challenge's `itemIds`
+ * name, because a passage can carry a known word (a multi-cloze's non-gap
+ * text, particles and glue aside) that the challenge doesn't itself exercise
+ * — so an owned word can lose its pinyin in the very sentence where a word met
+ * yesterday keeps it, which is the whole point of fading a crutch per word
+ * rather than per screen or per gap. `items` is walked sorted by id for a
+ * deterministic draw order regardless of how the caller happened to fetch
+ * them. A word with no term contributes no entry: there is no term to key it
+ * by, and any token it would have covered falls back to `sentence` (which, for
+ * an `itemId` that no longer resolves, counted it as unknown, so that fallback
+ * shows the reading).
  */
 export function planReadings(
 	mode: RomanizationMode,
@@ -162,11 +180,10 @@ export function planReadings(
 	// injected `rng` that `shouldShowReading` would have on its own.
 	const sentence = shouldShowReading(mode, challenge, items, rng);
 
-	const byId = new Map(items.map((item) => [item.id, item]));
 	const byTerm = new Map<string, boolean>();
-	for (const id of challenge.itemIds) {
-		const item = byId.get(id);
-		if (!item) continue;
+	const sorted = [...items].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+	for (const item of sorted) {
+		if (!item.term) continue;
 		byTerm.set(item.term, rollShow(strengthOf(item), rng));
 	}
 

@@ -158,3 +158,26 @@ export function rubyFor(
 export function storedReading(readings: ReadingPlan, stored: string | undefined | null): string {
 	return (readings.sentence ? stored : '') ?? '';
 }
+
+/**
+ * {@link storedReading}'s sibling for a single vocabulary word rendered on its
+ * own — a cloze's or multi-cloze's word-bank chip, a word-order tile — rather
+ * than as part of a flat sentence line.
+ *
+ * A bank chip or tray tile is a *word*, so it fades on that word's own
+ * `byTerm` roll exactly as a ruby token would, and only falls back to the
+ * whole-challenge `sentence` roll for a word the plan never rolled for (glue
+ * the challenge doesn't exercise, or `'on'`/`'off'`, whose empty `byTerm`
+ * always misses and so always defers to `sentence`). Without this a bank or
+ * tray followed `sentence` alone, which is the bug this exists to fix: every
+ * chip in a multi-cloze hid or showed together, in lockstep with the weakest
+ * gap word, instead of each fading on its own schedule like the passage text
+ * around it does.
+ */
+export function termReading(
+	readings: ReadingPlan,
+	term: string,
+	stored: string | undefined | null
+): string {
+	return (readings.byTerm.get(term) ?? readings.sentence) ? (stored ?? '') : '';
+}

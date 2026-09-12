@@ -221,6 +221,42 @@ describe('planReadings', () => {
 		// The vanished word still counts as unknown for the sentence fallback.
 		expect(plan.sentence).toBe(true);
 	});
+
+	it('rolls a reading for every known word, not only the ones the challenge names in itemIds', () => {
+		// A multi-cloze's gap words are its itemIds; a word that only appears in
+		// the passage text (never as a gap) is not named there, but it is still
+		// a known item and must get its own roll rather than silently deferring
+		// to the whole-challenge `sentence` answer.
+		const items = [item('gap', OWNED), item('passage-word', MIDDLING)];
+		const plan = planReadings('adaptive', challenge(['gap']), items, rigged(0.5));
+		expect(plan.byTerm.has('gap')).toBe(true);
+		expect(plan.byTerm.has('passage-word')).toBe(true);
+	});
+
+	it('draws one independent roll per known word, the sentence roll first, in id order', () => {
+		const items = [
+			item('a-word', MIDDLING), // in itemIds
+			item('b-word', MIDDLING), // in itemIds
+			item('c-bystander', MIDDLING) // a multi-cloze passage word, not a gap
+		];
+		const hideChance = hideReadingProbability(MIDDLING);
+		// Draw order: the sentence roll, then one per known item, sorted by id.
+		const rolls = sequence(
+			hideChance + 0.01, // sentence: shows
+			hideChance - 0.01, // a-word: hides
+			hideChance + 0.01, // b-word: shows
+			hideChance - 0.01 // c-bystander: hides
+		);
+
+		const plan = planReadings('adaptive', challenge(['a-word', 'b-word']), items, rolls);
+
+		expect(plan.sentence).toBe(true);
+		expect(plan.byTerm.get('a-word')).toBe(false);
+		expect(plan.byTerm.get('b-word')).toBe(true);
+		// The bystander — a multi-cloze's non-gap passage word — still gets its
+		// own independent flip instead of following `sentence`.
+		expect(plan.byTerm.get('c-bystander')).toBe(false);
+	});
 });
 
 describe('applyPlan', () => {

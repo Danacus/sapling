@@ -5,7 +5,13 @@
   item-level verdict for every gap while keeping one intuitive overall result.
 -->
 <script lang="ts">
-	import { ALL_READINGS, rubyFor, storedReading, type ChallengeProps } from '$lib/challenges/props';
+	import {
+		ALL_READINGS,
+		rubyFor,
+		storedReading,
+		termReading,
+		type ChallengeProps
+	} from '$lib/challenges/props';
 	import {
 		completedMultiClozePassage,
 		gradeMultiClozeAnswers,
@@ -82,7 +88,11 @@
 	}
 
 	function readingFor(index: number): string {
-		return storedReading(readings, challenge.wordBankRomanization?.[visibleIndices[index]]);
+		return termReading(
+			readings,
+			bank[index],
+			challenge.wordBankRomanization?.[visibleIndices[index]]
+		);
 	}
 
 	function usedBy(index: number): number | undefined {

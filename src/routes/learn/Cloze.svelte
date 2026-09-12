@@ -19,7 +19,13 @@
   comes from `PromptHeader` and the line below it stays this component's own.
 -->
 <script lang="ts">
-	import { ALL_READINGS, rubyFor, storedReading, type ChallengeProps } from '$lib/challenges/props';
+	import {
+		ALL_READINGS,
+		rubyFor,
+		storedReading,
+		termReading,
+		type ChallengeProps
+	} from '$lib/challenges/props';
 	import type { RomanizedToken } from '$lib/romanize';
 	import { visibleBank } from '$lib/session/support';
 	import type { ClozeChallenge } from '$lib/types';
@@ -158,7 +164,11 @@
 	const gapTokens = $derived(pickedIndex === null ? null : ruby(bank[pickedIndex]));
 
 	function readingOf(index: number): string {
-		return storedReading(readings, challenge.wordBankRomanization?.[visibleIndices[index]]);
+		return termReading(
+			readings,
+			bank[index],
+			challenge.wordBankRomanization?.[visibleIndices[index]]
+		);
 	}
 
 	function pick(index: number): void {

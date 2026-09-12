@@ -25,7 +25,13 @@
   by the same rule as the answer it is graded against, spaces or no spaces.
 -->
 <script lang="ts">
-	import { ALL_READINGS, rubyFor, storedReading, type ChallengeProps } from '$lib/challenges/props';
+	import {
+		ALL_READINGS,
+		rubyFor,
+		storedReading,
+		termReading,
+		type ChallengeProps
+	} from '$lib/challenges/props';
 	import type { RomanizedToken } from '$lib/romanize';
 	import { visibleTiles } from '$lib/session/support';
 	import { isPunctuationOnly, joinTokens } from '$lib/text';
@@ -101,7 +107,7 @@
 	}
 
 	function readingOf(index: number): string {
-		return storedReading(readings, challenge.tilesRomanization?.[index]);
+		return termReading(readings, challenge.tiles[index], challenge.tilesRomanization?.[index]);
 	}
 
 	function place(index: number): void {
