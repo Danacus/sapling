@@ -6,6 +6,15 @@
   submits on its own — a misplaced tap must always be recoverable before
   committing, exactly as in multiple choice.
 
+  The tray always shows `answerTokens.length` slots — placed tiles, then a
+  dashed empty slot for each one still missing — so the target length is
+  visible before the first tap, not discovered by building a correct-looking
+  fragment and having it rejected. Once every slot is filled the remaining
+  bank tiles disable themselves (`TapOption`'s own disabled skin, not a
+  scoped override): there is nowhere left to put them, and taking a tray tile
+  back re-enables the bank. Check stays disabled until the count matches,
+  since a short arrangement can never be right.
+
   `challenge.prompt` is the native-language anchor, always written by
   generation; whether it is *shown* is the session's serve-time call
   (`presentation.showHint`, from `$lib/session/support`), and some rows
@@ -90,7 +99,20 @@
 
 	const chosen = $derived(placed.map((index) => challenge.tiles[index]));
 	const sentence = $derived(joinTokens(chosen));
-	const ready = $derived(placed.length > 0 && !lock.locked);
+
+	/** A short answer can never be right, so Check stays disabled until every slot is filled. */
+	const full = $derived(placed.length === challenge.answerTokens.length);
+	const ready = $derived(full && !lock.locked);
+
+	/**
+	 * Empty slots after the placed tiles, one per tile the sentence still
+	 * needs — the tray's dashed-frame emptiness, now per missing word instead
+	 * of one message across the whole box, so the learner can see the target
+	 * length before they've placed anything and watch it close as they go.
+	 */
+	const openSlots = $derived(
+		Array.from({ length: Math.max(0, challenge.answerTokens.length - placed.length) })
+	);
 
 	const askedIn = $derived(challenge.instruction ?? 'Put the words in order');
 
@@ -153,22 +175,25 @@
 <form class="word-order" onsubmit={onFormSubmit}>
 	<PromptHeader kicker={askedIn} prompt={showHint ? challenge.prompt : undefined} size="md" />
 
-	<div class="tray" class:empty={placed.length === 0} aria-label="Your sentence">
-		{#if placed.length === 0}
-			<span class="tray-hint">Tap the words below</span>
-		{:else}
-			{#each placed as index, position (position)}
-				<TapOption
-					text={challenge.tiles[index]}
-					reading={readingOf(index)}
-					tokens={tokensOf(index)}
-					state="selected"
-					disabled={lock.locked}
-					label={`Remove ${challenge.tiles[index]}`}
-					onclick={() => remove(position)}
-				/>
-			{/each}
-		{/if}
+	<div
+		class="tray"
+		class:filled={placed.length > 0}
+		aria-label={`Your sentence, ${placed.length} of ${challenge.answerTokens.length} words placed`}
+	>
+		{#each placed as index, position (position)}
+			<TapOption
+				text={challenge.tiles[index]}
+				reading={readingOf(index)}
+				tokens={tokensOf(index)}
+				state="selected"
+				disabled={lock.locked}
+				label={`Remove ${challenge.tiles[index]}`}
+				onclick={() => remove(position)}
+			/>
+		{/each}
+		{#each openSlots as _, position (position)}
+			<span class="slot" aria-hidden="true"></span>
+		{/each}
 	</div>
 
 	<WordBank label="Available words">
@@ -177,7 +202,7 @@
 				text={tile.text}
 				reading={readingOf(tile.index)}
 				tokens={tokensOf(tile.index)}
-				disabled={lock.locked}
+				disabled={lock.locked || full}
 				onclick={() => place(tile.index)}
 			/>
 		{/each}
@@ -213,20 +238,22 @@
 		transition: border-color 0.2s ease;
 	}
 
-	.tray:not(.empty) {
+	.tray.filled {
 		border-bottom-color: var(--accent);
 	}
 
-	.tray.empty {
-		display: grid;
-		place-items: center;
-	}
-
-	.tray-hint {
-		color: var(--text-muted);
-		font-size: 0.88rem;
-		font-weight: 500;
-		font-style: italic;
+	/*
+	  A slot the sentence still needs: the same dashed frame the tray itself
+	  wears before anything is placed, now one per missing word instead of one
+	  message across the whole box — it is what lets the learner see the
+	  target length up front and watch it close as they place tiles.
+	*/
+	.slot {
+		flex: 0 0 auto;
+		width: 2.4rem;
+		height: 2.4rem;
+		border: 1px dashed var(--border-strong);
+		border-radius: var(--radius-sm);
 	}
 
 	@media (prefers-reduced-motion: reduce) {
