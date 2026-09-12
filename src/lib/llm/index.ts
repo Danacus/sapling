@@ -105,8 +105,11 @@ export {
 	REQUEST_ITEMS,
 	bareKind,
 	groupIntoRequests,
+	isActiveKind,
+	isKindAvailableAt,
 	kindKey,
-	kindOf
+	kindOf,
+	plannableKind
 } from './requests';
 export type { ChallengeKind, PlannableKind, TypeRequest, Want, WantItem } from './requests';
 

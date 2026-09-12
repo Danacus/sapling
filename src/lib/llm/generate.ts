@@ -636,6 +636,12 @@ function resolveOne(generated: GeneratedChallenge, ctx: ResolveContext): Challen
 export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): ResolvedBatch {
 	const known = options.knownItemIds ? new Set(options.knownItemIds) : undefined;
 	const rng = options.rng ?? Math.random;
+	const resolveItemRef = (ref: string): string | undefined => {
+		const byTerm = options.termToId?.get(termKey(ref));
+		if (byTerm) return byTerm;
+		if (known && !known.has(ref)) return undefined;
+		return ref;
+	};
 
 	const challenges: Challenge[] = [];
 	let dropped = 0;
@@ -646,13 +652,8 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
 			// A term citation: known words reach the model without ids, so "this
 			// challenge is about 护照" can only be said with the word itself — and
 			// with its reading, when the spelling names two cards.
-			const byTerm = options.termToId?.get(termKey(ref));
-			if (byTerm) {
-				itemIds.push(byTerm);
-				continue;
-			}
-			if (known && !known.has(ref)) continue; // Hallucinated id.
-			itemIds.push(ref);
+			const resolved = resolveItemRef(ref);
+			if (resolved) itemIds.push(resolved);
 		}
 
 		const unique = [...new Set(itemIds)];
@@ -676,7 +677,12 @@ export function resolveBatch(batch: ParsedBatch, options: ResolveOptions = {}): 
 					.find((found) => found !== undefined)
 			: undefined;
 
-		const resolved = resolveOne(generated, { base, rng, ...(params ? { params } : {}) });
+		const resolved = resolveOne(generated, {
+			base,
+			rng,
+			resolveItemRef,
+			...(params ? { params } : {})
+		});
 		if (!resolved) {
 			dropped++;
 			continue;

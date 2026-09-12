@@ -110,18 +110,23 @@
 		challenge.instruction ??
 			(hidingPrompt
 				? 'Listen — what does this mean?'
-				: challenge.direction === 'toTarget'
-					? 'Pick the translation'
-					: 'What does this mean?')
+				: challenge.promptIsTarget
+					? 'Pick the word that fits'
+					: challenge.direction === 'toTarget'
+						? 'Pick the translation'
+						: 'What does this mean?')
 	);
 
 	/**
 	 * The prompt is in the target language when the learner is translating
-	 * *out* of it. Options are only worth a speaker button in the other
-	 * direction, and four of them would be noise — the feedback banner reads
-	 * the right answer aloud instead.
+	 * *out* of it (`toNative`) — or, for `context-mc`, when the stored row says
+	 * so directly, since its `direction` is `toTarget` like `produce-mc`'s but
+	 * its prompt is a target-language context, not a native one. Options are
+	 * only worth a speaker button when the prompt itself is native, and four of
+	 * them would be noise — the feedback banner reads the right answer aloud
+	 * instead.
 	 */
-	const promptIsTarget = $derived(challenge.direction === 'toNative');
+	const promptIsTarget = $derived(challenge.promptIsTarget ?? challenge.direction === 'toNative');
 
 	/**
 	 * Ruby for the two slots that carry target-language text, each in exactly one

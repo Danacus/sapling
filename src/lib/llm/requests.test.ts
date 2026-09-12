@@ -14,6 +14,8 @@ import {
 	REQUEST_ITEMS,
 	bareKind,
 	groupIntoRequests,
+	isActiveKind,
+	isKindAvailableAt,
 	kindKey,
 	kindOf
 } from './requests';
@@ -24,12 +26,37 @@ function want(id: string, kind: ChallengeKind, difficulty: Want['difficulty'] = 
 }
 
 describe('PLANNABLE_KINDS', () => {
-	it('names every wire type at least once, and cloze twice — banked and not', () => {
+	it('names active wire types, while retired wire types remain parseable', () => {
 		const types = new Set(PLANNABLE_KINDS.map((kind) => kind.type));
-		expect([...types].sort()).toEqual(WIRE_TYPE_DEFS.map((def) => def.type).sort());
+		expect([...types].sort()).toEqual(
+			WIRE_TYPE_DEFS.map((def) => def.type)
+				.filter((type) => type !== 'translate-to-target')
+				.sort()
+		);
+		expect(isActiveKind({ type: 'translate-to-target' })).toBe(false);
+		expect(isActiveKind({ type: 'translate-to-native' })).toBe(true);
+		expect(WIRE_TYPE_DEFS.some((def) => def.type === 'translate-to-target')).toBe(true);
 		expect(
 			PLANNABLE_KINDS.filter((kind) => kind.type === 'cloze').map((kind) => kind.bank)
 		).toEqual([true, false]);
+	});
+
+	it('publishes the gradual level availability ladder', () => {
+		const available = (type: ChallengeKind['type'], level: Want['difficulty'], bank?: boolean) =>
+			isKindAvailableAt({ type, ...(bank === undefined ? {} : { bank }) }, level);
+
+		expect(available('recognize-mc', 1)).toBe(true);
+		expect(available('recognize-mc', 3)).toBe(false);
+		expect(available('translate-to-native', 1)).toBe(true);
+		expect(available('translate-to-native', 2)).toBe(false);
+		expect(available('spot-error', 2)).toBe(true);
+		expect(available('spot-error', 4)).toBe(false);
+		expect(available('word-order', 2)).toBe(true);
+		expect(available('word-order', 5)).toBe(false);
+		expect(available('cloze', 3, true)).toBe(true);
+		expect(available('cloze', 5, true)).toBe(false);
+		expect(available('cloze', 4, false)).toBe(true);
+		expect(available('cloze', 3, false)).toBe(false);
 	});
 
 	it('has a distinct key per kind', () => {
@@ -75,6 +102,28 @@ describe('kindOf', () => {
 		});
 		expect(kindOf(mc('toNative'))).toEqual({ type: 'recognize-mc' });
 		expect(kindOf(mc('toTarget'))).toEqual({ type: 'produce-mc' });
+	});
+
+	it('tells context-mc from produce-mc by promptIsTarget, both toTarget', () => {
+		const contextRow: Challenge = {
+			...base,
+			type: 'multiple-choice',
+			direction: 'toTarget',
+			promptIsTarget: true,
+			prompt: 'p',
+			options: ['a', 'b', 'c', 'd'],
+			correctIndex: 0
+		};
+		const produceRow: Challenge = {
+			...base,
+			type: 'multiple-choice',
+			direction: 'toTarget',
+			prompt: 'p',
+			options: ['a', 'b', 'c', 'd'],
+			correctIndex: 0
+		};
+		expect(kindOf(contextRow)).toEqual({ type: 'context-mc' });
+		expect(kindOf(produceRow)).toEqual({ type: 'produce-mc' });
 	});
 
 	it('tells the two translate kinds apart by direction', () => {

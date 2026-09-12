@@ -57,26 +57,30 @@ export interface ChallengeKind extends SizingKind {
  */
 export interface PlannableKind extends ChallengeKind {
 	readonly demand: Demand;
+	/** Ladder rungs at which new challenges of this kind may be generated. */
+	readonly levels: readonly [DifficultyRung, ...DifficultyRung[]];
 }
 
 /**
- * Every kind the session can ask for.
+ * Every active kind the session can ask for.
  *
- * This is the membership list that matters: a wire type registered in
- * `./challenge-types` but named nowhere here is a type that can be prompted and
- * exampled and is never asked for. It is pinned against the registry in
- * `challenge-types/registry.test.ts`, and adding a wire type means adding it
- * here too, with the tier its resolved challenge reports.
+ * This is the membership list that matters for new generation: a wire type
+ * registered in `./challenge-types` but named nowhere here remains parseable
+ * for legacy rows while being excluded from prompts, coverage and serving. It
+ * is pinned against the registry in `challenge-types/registry.test.ts`, and
+ * adding an active wire type means adding it here too, with its demand tier and
+ * available ladder rungs.
  */
 export const PLANNABLE_KINDS: readonly PlannableKind[] = [
-	{ type: 'recognize-mc', demand: 0 },
-	{ type: 'produce-mc', demand: 0 },
-	{ type: 'translate-to-native', demand: 0 },
-	{ type: 'spot-error', demand: 0 },
-	{ type: 'word-order', demand: 1 },
-	{ type: 'cloze', bank: true, demand: 1 },
-	{ type: 'translate-to-target', demand: 2 },
-	{ type: 'cloze', bank: false, demand: 2 }
+	{ type: 'recognize-mc', demand: 0, levels: [1, 2] },
+	{ type: 'produce-mc', demand: 0, levels: [1, 2] },
+	{ type: 'context-mc', demand: 0, levels: [2, 3] },
+	{ type: 'translate-to-native', demand: 0, levels: [1] },
+	{ type: 'spot-error', demand: 0, levels: [2, 3] },
+	{ type: 'word-order', demand: 1, levels: [2, 3, 4] },
+	{ type: 'cloze', bank: true, demand: 1, levels: [2, 3, 4] },
+	{ type: 'multi-cloze', demand: 1, levels: [3, 4, 5] },
+	{ type: 'cloze', bank: false, demand: 2, levels: [4, 5] }
 ];
 
 /** Stable identity of a kind: the key a pool is grouped by and a plan cut on. */
@@ -89,23 +93,58 @@ export function bareKind(kind: ChallengeKind): ChallengeKind {
 	return kind.bank === undefined ? { type: kind.type } : { type: kind.type, bank: kind.bank };
 }
 
-/** Stored `{type, direction}` → the wire def that writes it, built once. */
+/** The active planner entry for a kind, if this kind is still generated. */
+export function plannableKind(kind: ChallengeKind): PlannableKind | undefined {
+	const key = kindKey(kind);
+	return PLANNABLE_KINDS.find((candidate) => kindKey(candidate) === key);
+}
+
+/** Whether a kind participates in new coverage and ordinary session serving. */
+export function isActiveKind(kind: ChallengeKind): boolean {
+	return plannableKind(kind) !== undefined;
+}
+
+/** Whether a kind may be generated for the requested ladder rung. */
+export function isKindAvailableAt(kind: ChallengeKind, level: DifficultyRung): boolean {
+	return plannableKind(kind)?.levels.includes(level) ?? false;
+}
+
+/**
+ * The lookup key two wire types can share `{type, direction}` under —
+ * `context-mc` and `produce-mc` both write `{multiple-choice, toTarget}` — so
+ * `defByStored` and `kindOf` fold in `promptIsTarget`, the one stored fact
+ * that tells them apart. Built from a `StoredShape` when registering a def,
+ * and from a resolved `Challenge` when reading one back; a type without the
+ * field reads as the same key either way.
+ */
+function storedKey(shape: { type: string; direction: string; promptIsTarget?: unknown }): string {
+	return `${shape.type}|${shape.direction}|${shape.promptIsTarget ? '1' : '0'}`;
+}
+
+/** Stored `{type, direction, promptIsTarget}` → the wire def that writes it, built once. */
 const defByStored: ReadonlyMap<string, (typeof WIRE_TYPE_DEFS)[number]> = new Map(
-	WIRE_TYPE_DEFS.map((def) => [`${def.stored.type}|${def.stored.direction}`, def] as const)
+	WIRE_TYPE_DEFS.map((def) => [storedKey(def.stored), def] as const)
 );
 
 /**
  * The kind a stored challenge *is* — the inverse of generating one.
  *
  * Read off the stored `{type, direction}` each wire def declares (which is what
- * tells the two multiple-choice wire types and the two translate wire types
- * apart) plus, for a cloze, whether a word bank survived. Two callers need the
+ * tells the two translate wire types apart) plus `promptIsTarget` (what tells
+ * `context-mc` from `produce-mc`, the pair `{type, direction}` alone cannot)
+ * and, for a cloze, whether a word bank survived. Two callers need the
  * same answer: `./generate` checks a reply against the kind it asked for, and
  * the session counts what kinds a word already has in the pool. `undefined` for
  * a `match-pairs` round, which no wire type writes.
  */
 export function kindOf(challenge: Challenge): ChallengeKind | undefined {
-	const def = defByStored.get(`${challenge.type}|${challenge.direction}`);
+	const def = defByStored.get(
+		storedKey({
+			type: challenge.type,
+			direction: challenge.direction,
+			promptIsTarget: 'promptIsTarget' in challenge ? challenge.promptIsTarget : undefined
+		})
+	);
 	if (!def) return undefined;
 	if (def.type !== 'cloze') return { type: def.type };
 	const banked = 'wordBank' in challenge && (challenge.wordBank?.length ?? 0) > 0;

@@ -31,6 +31,7 @@
 
 	import Cloze from './Cloze.svelte';
 	import MatchPairs from './MatchPairs.svelte';
+	import MultiCloze from './MultiCloze.svelte';
 	import MultipleChoice from './MultipleChoice.svelte';
 	import SpotError from './SpotError.svelte';
 	import TypedTranslation from './TypedTranslation.svelte';
@@ -57,6 +58,8 @@
 	<MultipleChoice {challenge} {onanswer} {targetLanguage} {nativeLanguage} {readings} {tokenize} />
 {:else if challenge.type === 'cloze'}
 	<Cloze {challenge} {onanswer} {targetLanguage} {nativeLanguage} {readings} {tokenize} />
+{:else if challenge.type === 'multi-cloze'}
+	<MultiCloze {challenge} {onanswer} {targetLanguage} {nativeLanguage} {readings} {tokenize} />
 {:else if challenge.type === 'typed-translation'}
 	<TypedTranslation
 		{challenge}

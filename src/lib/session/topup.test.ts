@@ -40,6 +40,22 @@ function strong(id: string, dueOffset = -DAY): KnowledgeItem {
 	};
 }
 
+/** A level-3 word: constrained production is available, free production is not. */
+function developing(id: string, dueOffset = -DAY): KnowledgeItem {
+	return {
+		...item(id, dueOffset),
+		srs: { due: NOW + dueOffset, retrievability: 1, strength: 0.3 }
+	};
+}
+
+/** A level-4 word: all production formats are available, recognition is not. */
+function advanced(id: string, dueOffset = -DAY): KnowledgeItem {
+	return {
+		...item(id, dueOffset),
+		srs: { due: NOW + dueOffset, retrievability: 1, strength: 0.6 }
+	};
+}
+
 /** A pooled row of the given kind about the given words. */
 function pooled(
 	id: string,
@@ -67,6 +83,16 @@ function pooled(
 				options: ['a', 'b', 'c', 'd'],
 				correctIndex: 0
 			} as ChallengeRow;
+		case 'context-mc':
+			return {
+				...base,
+				type: 'multiple-choice',
+				direction: 'toTarget',
+				promptIsTarget: true,
+				prompt: 'p',
+				options: ['a', 'b', 'c', 'd'],
+				correctIndex: 0
+			} as ChallengeRow;
 		case 'translate-to-native':
 		case 'translate-to-target':
 			return {
@@ -84,6 +110,18 @@ function pooled(
 				sentence: 'a ___ b',
 				acceptedAnswers: ['x'],
 				...(kind.bank ? { wordBank: ['x', 'y', 'z'] } : {})
+			} as ChallengeRow;
+		case 'multi-cloze':
+			return {
+				...base,
+				type: 'multi-cloze',
+				direction: 'toTarget',
+				passage: '___1___ lee. ___2___ bebe.',
+				gaps: [
+					{ itemId: itemIds[0] ?? 'i1', acceptedAnswers: ['Yo'] },
+					{ itemId: itemIds[1] ?? 'i2', acceptedAnswers: ['Ella'] }
+				],
+				wordBank: ['Yo', 'Ella', 'Tú', 'nosotros', 'ellos']
 			} as ChallengeRow;
 		case 'word-order':
 			return {
@@ -112,6 +150,9 @@ function pooled(
 const RECOGNITION = PLANNABLE_KINDS.filter((kind) => kind.demand === 0);
 const CONSTRAINED = PLANNABLE_KINDS.filter((kind) => kind.demand === 1);
 const FREE = PLANNABLE_KINDS.filter((kind) => kind.demand === 2);
+const SPOT_ERROR = RECOGNITION.find((kind) => kind.type === 'spot-error')!;
+const CONTEXT_MC = RECOGNITION.find((kind) => kind.type === 'context-mc')!;
+const MULTI_CLOZE = CONSTRAINED.find((kind) => kind.type === 'multi-cloze')!;
 
 const demandOfKind = (kind: ChallengeKind): number =>
 	PLANNABLE_KINDS.find((k) => kindKey(k) === kindKey(kind))?.demand ?? -1;
@@ -149,15 +190,24 @@ describe('planTopUp', () => {
 		expect(new Set(keysOf(wants)).size).toBe(WANT_PER_WORD);
 	});
 
-	it('wants one recognition and one production kind for a word that can bear production', () => {
+	it('wants two distinct production kinds at the top rung', () => {
 		const wants = planTopUp([], [strong('a')], NOW, { rng: cyclingRng() });
 
+		// At level 5 only multi-cloze and bankless cloze are active; the old
+		// recognition formats have deliberately aged out, but variety remains.
 		expect(wants).toHaveLength(WANT_PER_WORD);
-		// Both wants carry the word's own rung, and a strong word sits high on it.
-		expect(wants[1].difficulty).toBe(wants[0].difficulty);
-		expect(wants[0].difficulty).toBeGreaterThanOrEqual(4);
-		expect(demandOfKind(wants[0].kind)).toBe(0);
-		expect(demandOfKind(wants[1].kind)).toBeGreaterThan(0);
+		expect(wants.every((want) => want.difficulty === 5)).toBe(true);
+		expect(new Set(keysOf(wants))).toEqual(new Set([kindKey(MULTI_CLOZE), kindKey(FREE[0])]));
+		expect(wants.every((want) => demandOfKind(want.kind) > 0)).toBe(true);
+	});
+
+	it('keeps two distinct production kinds at level 4 when recognition has ended', () => {
+		const wants = planTopUp([], [advanced('a')], NOW, { rng: cyclingRng() });
+
+		expect(wants).toHaveLength(WANT_PER_WORD);
+		expect(wants.every((want) => want.difficulty === 4)).toBe(true);
+		expect(wants.every((want) => demandOfKind(want.kind) > 0)).toBe(true);
+		expect(new Set(keysOf(wants)).size).toBe(WANT_PER_WORD);
 	});
 
 	it('never asks a new word for a kind it cannot bear', () => {
@@ -170,13 +220,13 @@ describe('planTopUp', () => {
 	});
 
 	it('wants nothing for a word the pool already covers', () => {
-		const pool = [pooled('r', RECOGNITION[0], ['a']), pooled('p', FREE[0], ['a'])];
+		const pool = [pooled('p', FREE[0], ['a']), pooled('m', MULTI_CLOZE, ['a'])];
 		expect(planTopUp(pool, [strong('a')], NOW)).toEqual([]);
 	});
 
 	it('asks only for the production kind when the recognition side is covered', () => {
-		const pool = [pooled('r', RECOGNITION[0], ['a'])];
-		const wants = planTopUp(pool, [strong('a')], NOW, { rng: cyclingRng() });
+		const pool = [pooled('r', SPOT_ERROR, ['a'])];
+		const wants = planTopUp(pool, [developing('a')], NOW, { rng: cyclingRng() });
 
 		expect(wants).toHaveLength(1);
 		expect(demandOfKind(wants[0].kind)).toBeGreaterThan(0);
@@ -184,10 +234,14 @@ describe('planTopUp', () => {
 
 	it('asks only for the recognition kind when the production side is covered', () => {
 		const pool = [pooled('p', CONSTRAINED[0], ['a'])];
-		const wants = planTopUp(pool, [strong('a')], NOW, { rng: cyclingRng() });
+		const wants = planTopUp(pool, [developing('a')], NOW, { rng: cyclingRng() });
 
 		expect(wants).toHaveLength(1);
 		expect(demandOfKind(wants[0].kind)).toBe(0);
+		// A level-3 word's recognition side now has two available kinds
+		// (spot-error and context-mc, both demand-0 at that rung), neither ever
+		// served: the first cyclingRng() draw picks between them.
+		expect(kindKey(wants[0].kind)).toBe(kindKey(CONTEXT_MC));
 	});
 
 	it('does not count a challenge the word cannot bear as coverage', () => {
@@ -344,7 +398,7 @@ describe('planTopUp', () => {
 
 describe('topUpCoverage', () => {
 	it('counts a fully covered vocabulary as covered, with nothing to write', () => {
-		const pool = [pooled('r', RECOGNITION[0], ['a']), pooled('p', FREE[0], ['a'])];
+		const pool = [pooled('m', MULTI_CLOZE, ['a']), pooled('p', FREE[0], ['a'])];
 		expect(topUpCoverage(pool, [strong('a')], NOW)).toEqual({
 			upcoming: 1,
 			covered: 1,
@@ -354,7 +408,7 @@ describe('topUpCoverage', () => {
 	});
 
 	it('counts a word short of one kind as uncovered, and the want it would write', () => {
-		const pool = [pooled('r', RECOGNITION[0], ['a'])];
+		const pool = [pooled('m', MULTI_CLOZE, ['a'])];
 		expect(topUpCoverage(pool, [strong('a'), item('b')], NOW)).toEqual({
 			upcoming: 2,
 			covered: 0,

@@ -18,6 +18,7 @@ import type {
 	ChallengeType,
 	ClozeChallenge,
 	MatchPairsChallenge,
+	MultiClozeChallenge,
 	MultipleChoiceChallenge,
 	SpotErrorChallenge,
 	TypedTranslationChallenge,
@@ -57,6 +58,22 @@ function cloze(overrides: Partial<ClozeChallenge> = {}): ClozeChallenge {
 		acceptedAnswers: ['菜单', 'càidān'],
 		translationHint: 'A menu, please.',
 		itemIds: ['i1'],
+		...overrides
+	};
+}
+
+function multiCloze(overrides: Partial<MultiClozeChallenge> = {}): MultiClozeChallenge {
+	return {
+		id: 'mcz1',
+		type: 'multi-cloze',
+		direction: 'toTarget',
+		passage: '___1___，我是李明。然后我说___2___。',
+		gaps: [
+			{ itemId: 'i1', acceptedAnswers: ['你好'], answerRomanization: 'nǐ hǎo' },
+			{ itemId: 'i2', acceptedAnswers: ['谢谢'], answerRomanization: 'xièxie' }
+		],
+		wordBank: ['你好', '谢谢', '再见', '请', '菜单'],
+		itemIds: ['i1', 'i2'],
 		...overrides
 	};
 }
@@ -127,6 +144,7 @@ function matchPairs(overrides: Partial<MatchPairsChallenge> = {}): MatchPairsCha
 const everyType: { [T in ChallengeType]: Challenge } = {
 	'multiple-choice': mc(),
 	cloze: cloze(),
+	'multi-cloze': multiCloze(),
 	'typed-translation': typed(),
 	'match-pairs': matchPairs(),
 	'word-order': wordOrder(),
@@ -254,6 +272,10 @@ describe('spokenAnswerFor', () => {
 
 	it('splices the canonical answer into the cloze sentence, blank and all', () => {
 		expect(spokenAnswerFor(cloze())).toBe('请给我一份菜单。');
+	});
+
+	it('speaks a multi-cloze passage with every canonical answer filled', () => {
+		expect(spokenAnswerFor(multiCloze())).toBe('你好，我是李明。然后我说谢谢。');
 	});
 
 	it('speaks a word-order answer as the assembled sentence, not tile by tile', () => {

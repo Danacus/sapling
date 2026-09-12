@@ -39,7 +39,7 @@ differs.
    **`params(difficulty, kind)` is this type's difficulty**, as counts the model
    can hit: `{words}`, `{tiles, distractors}`, `{words, bank}`. It must be pure,
    keep the same keys at every rung, and be monotone in the rung (lengths never
-   fall; a word bank shrinks, since a bank is support). Align the ends with the
+   fall; a word bank grows, since more plausible candidates is a harder choice). Align the ends with the
    *stored* side's scales — `challenges/types/primitives.ts`' 1..12-word
    `lengthKnob`, and whatever constants that type's stored `difficulty` reads —
    so a challenge written at rung 1 sits at the low end of its tier and one at

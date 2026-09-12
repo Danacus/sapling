@@ -25,6 +25,8 @@
 
 import { z } from 'zod';
 import { clozeDef } from './cloze';
+import { contextMcDef } from './context-mc';
+import { multiClozeDef } from './multi-cloze';
 import { produceMcDef } from './produce-mc';
 import { recognizeMcDef } from './recognize-mc';
 import { spotErrorDef } from './spot-error';
@@ -54,6 +56,8 @@ export { clozePartSchema, itemRefSchema, targetTextSchema } from './primitives';
 export type { TargetText } from './primitives';
 export {
 	clozeDef,
+	contextMcDef,
+	multiClozeDef,
 	produceMcDef,
 	recognizeMcDef,
 	spotErrorDef,
@@ -63,6 +67,10 @@ export {
 };
 export { generatedClozeSchema } from './cloze';
 export type { GeneratedCloze } from './cloze';
+export { generatedContextMcSchema } from './context-mc';
+export type { GeneratedContextMc } from './context-mc';
+export { generatedMultiClozeSchema } from './multi-cloze';
+export type { GeneratedMultiCloze } from './multi-cloze';
 export { generatedProduceMcSchema } from './produce-mc';
 export type { GeneratedProduceMc } from './produce-mc';
 export { generatedRecognizeMcSchema } from './recognize-mc';
@@ -79,7 +87,9 @@ export type { GeneratedWordOrder } from './word-order';
 const REGISTRY = [
 	recognizeMcDef,
 	produceMcDef,
+	contextMcDef,
 	clozeDef,
+	multiClozeDef,
 	translateToTargetDef,
 	translateToNativeDef,
 	wordOrderDef,
@@ -116,7 +126,9 @@ export type AnyWireTypeDef = (typeof WIRE_TYPE_DEFS)[number];
 export const generatedChallengeSchema = z.discriminatedUnion('type', [
 	recognizeMcDef.schema,
 	produceMcDef.schema,
+	contextMcDef.schema,
 	clozeDef.schema,
+	multiClozeDef.schema,
 	translateToTargetDef.schema,
 	translateToNativeDef.schema,
 	wordOrderDef.schema,

@@ -23,9 +23,8 @@ import { wordCount } from './word-count';
 const BASE = 0.2;
 
 /**
- * Word-bank size spanning the full 0..1 range, smaller-is-harder: a bank with
- * only the correct answer and a couple of distractors gives the learner far
- * less to lean on than one with five or six candidates on it.
+ * Word-bank size spanning the full 0..1 range. A bank with more plausible
+ * candidates creates more competing completions and is therefore harder.
  */
 const SMALLEST_BANK = 3;
 const LARGEST_BANK = 6;
@@ -40,7 +39,10 @@ export const clozeChallengeSchema = z.object({
 	wordBank: z.array(z.string()).optional(),
 	/** Index-aligned with `wordBank`; all-or-nothing, see the resolver. */
 	wordBankRomanization: z.array(z.string()).optional(),
-	translationHint: z.string(),
+	// Older cloze rows always carried a native translation. It became optional
+	// when higher rungs moved to target-language-only context, so accepting both
+	// shapes keeps the existing pool and synced rows readable.
+	translationHint: z.string().optional(),
 	...storedBase
 });
 
@@ -75,9 +77,10 @@ export const clozeStoredDef = {
 		return challenge.wordBank && challenge.wordBank.length > 0 ? 1 : 2;
 	},
 
-	// Two knobs, weighted so the sentence carries most of the read: how long the
-	// sentence is, and — only when there is a bank at all — how much support it
-	// gives. A bankless cloze (free recall) reads on sentence length alone.
+	// Three knobs, weighted so the sentence carries most of the read: how long
+	// the sentence is, how many plausible candidates compete in its bank, and
+	// whether a native-language bridge is present. A bankless cloze (free recall)
+	// reads on sentence length plus its optional hint alone.
 	//
 	// The gap is split out before counting: `segmentWords` reads `___` as a word
 	// of its own where it stands alone, and glues it to its neighbours where it
@@ -86,10 +89,15 @@ export const clozeStoredDef = {
 	// Rejoining the pieces with a space says what the sentence is made of.
 	difficulty(challenge) {
 		const lengthFit = lengthKnob(wordCount(challenge.sentence.split(GAP).join(' ')));
+		// A native rendering makes the missing word substantially easier to infer.
+		// Treat blank legacy values as absent so a stale empty field gains no support.
+		const contextFit = challenge.translationHint?.trim() ? 0 : 1;
 		const bank = challenge.wordBank;
-		if (!bank || bank.length === 0) return withBase(BASE, lengthFit);
-		const bankFit = clamp01((LARGEST_BANK - bank.length) / (LARGEST_BANK - SMALLEST_BANK));
-		return withBase(BASE, lengthFit * 0.6 + bankFit * 0.4);
+		if (!bank || bank.length === 0) return withBase(BASE, lengthFit * 0.85 + contextFit * 0.15);
+		// More candidates create more competing plausible completions, so a larger
+		// bank is harder. This matches the generation ladder (3 → 6 choices).
+		const bankFit = clamp01((bank.length - SMALLEST_BANK) / (LARGEST_BANK - SMALLEST_BANK));
+		return withBase(BASE, lengthFit * 0.5 + bankFit * 0.35 + contextFit * 0.15);
 	},
 
 	correctAnswerText(challenge) {

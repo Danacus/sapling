@@ -20,12 +20,14 @@
  * (`$lib/challenges/demand`); the floors below are the session's half of the
  * pairing, and this module is where the two meet.
  *
- * Same machinery, and the same philosophy, as the adaptive-romanization ramp in
- * `./romanization`: both read the *weakest* word a challenge exercises, both
- * fade a support out as that word grows, and both are preferences the planner may
- * spend rather than rules it must obey. {@link weakestWordStrength} is the shared
- * computation, and lives here because it is neutral between them —
- * `challengeReadingStrength` over there is now this function under its own name.
+ * Same machinery as the adaptive-romanization ramp in `./romanization`: both
+ * read the *weakest* word a challenge exercises and both fade a support out as
+ * that word grows. The two differ in how firm they are, though — the reading
+ * ramp stays a preference the planner fades, while bearability below is a
+ * serving rule: an above-level challenge is not served at all.
+ * {@link weakestWordStrength} is the shared computation, and lives here
+ * because it is neutral between them — `challengeReadingStrength` over there is
+ * now this function under its own name.
  *
  * Pure and deterministic: nothing here reads the clock or the database. It does
  * not take `now` either, and that is not an oversight — a word's strength is
@@ -39,9 +41,10 @@
  * after one, ~0.32 after two (the second review lands with stability unchanged
  * and a day of decay behind it) and ~0.65 after three. The floors sit under
  * those steps: tier 1 unlocks on the first successful review, tier 2 on the
- * third. Deliberately *low* — this is a preference the planner spends the moment
- * a due word has nothing else to offer, so an over-tight gate would not starve
- * anyone, it would just stop shaping anything.
+ * third. Deliberately *low* — bearability is a firm serving rule, not a
+ * fallback the planner spends when a due word has nothing else to offer, so an
+ * over-tight gate would not just fail to shape anything, it would silently
+ * shrink every session and every top-up's coverage with it.
  *
  * ## The five-rung ladder
  *
@@ -169,11 +172,9 @@ export function bearableDemand(
 /**
  * True when this challenge's demand fits its weakest word's strength.
  *
- * A **preference**, not permission. `planSession` prefers a bearable challenge
- * where it has the choice and takes an unbearable one where it does not: a due
- * word whose only material is a typed translation still gets the typed
- * translation, because a hard exercise beats a skipped review. Nothing in the
- * app refuses to serve a challenge on this answer.
+ * This is the serving permission used by `planSession` and the coverage
+ * permission used by `planTopUp`: an above-level challenge is left for a later
+ * rung instead of being served as a surprise difficulty jump.
  */
 export function bearable(
 	challenge: Challenge,

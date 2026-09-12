@@ -150,6 +150,15 @@ export interface MultipleChoiceChallenge extends ChallengeBase {
 	/** Romanization of `prompt`, when the prompt is in the target script. */
 	promptRomanization?: string;
 	/**
+	 * `true` when the prompt is target-language text rather than native text —
+	 * the `context-mc` wire type, whose challenge otherwise looks exactly like
+	 * `produce-mc`'s: both resolve to `direction: 'toTarget'`. Absent (never
+	 * `false`) for every other multiple-choice row, produce-mc's `toTarget`
+	 * rows included, since `direction` alone already tells `recognize-mc`
+	 * (`toNative`) from those.
+	 */
+	promptIsTarget?: true;
+	/**
 	 * Heading shown above the prompt, e.g. "What does this mean?" or "Pick the
 	 * best reply". The generator picks it to match what the challenge actually
 	 * asks; absent means the UI falls back to its own default heading.
@@ -199,8 +208,41 @@ export interface ClozeChallenge extends ChallengeBase {
 	 * reading; a half-annotated bank would be worse than a bare one.
 	 */
 	wordBankRomanization?: string[];
-	/** Native-language rendering of the full sentence. */
-	translationHint: string;
+	/**
+	 * Optional native-language rendering of the full sentence. Early cloze
+	 * exercises use it as a bridge into target-language context; later ones omit
+	 * it so the sentence itself carries the meaning.
+	 *
+	 * Older stored rows always have this field, so it remains fully supported.
+	 */
+	translationHint?: string;
+	itemIds: string[];
+}
+
+/**
+ * Fill several target-language gaps from one shared word bank.
+ *
+ * The passage uses numbered `___N___` markers internally so the stored answer
+ * key can bind each gap to its own knowledge item. They are rendered as blank
+ * controls by the exercise, never as learner-facing text.
+ */
+export interface MultiClozeChallenge extends ChallengeBase {
+	type: 'multi-cloze';
+	/** Target-language passage containing one numbered placeholder per gap. */
+	passage: string;
+	/** A safe reading of the passage, with blanks rather than their answers. */
+	passageRomanization?: string;
+	/** One answer key and one SRS subject for each numbered gap. */
+	gaps: {
+		itemId: string;
+		acceptedAnswers: string[];
+		/** Reading of the canonical answer, available after feedback only. */
+		answerRomanization?: string;
+	}[];
+	/** Shared target-language choices: every answer plus plausible distractors. */
+	wordBank: string[];
+	/** Index-aligned with `wordBank`, present only when complete. */
+	wordBankRomanization?: string[];
 	itemIds: string[];
 }
 
@@ -305,6 +347,7 @@ export interface SpotErrorChallenge extends ChallengeBase {
 export type Challenge =
 	| MultipleChoiceChallenge
 	| ClozeChallenge
+	| MultiClozeChallenge
 	| TypedTranslationChallenge
 	| MatchPairsChallenge
 	| WordOrderChallenge

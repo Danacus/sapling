@@ -28,11 +28,12 @@ export const generatedClozeSchema = z.object({
 	before: clozePartSchema,
 	answer: targetTextSchema,
 	after: clozePartSchema,
-	hintNative: nonEmpty,
+	/** Only early-rung requests ask for this native-language bridge. */
+	hintNative: nonEmpty.nullish(),
 	/**
 	 * Two to five wrong candidates turn the challenge into a word bank; null
-	 * means the learner types the answer. Two is the floor because the bank
-	 * *shrinks* as difficulty rises (the `rulesSpec`), and `clozeWordBank` needs
+	 * means the learner types the answer. Two is the floor because
+	 * `clozeWordBank` needs
 	 * two surviving chips to be a choice at all — the answer plus one wrong one.
 	 * Deliberately *not* length-constrained here: a bank of the wrong size is a
 	 * cosmetic defect, and rejecting a challenge we already paid for over it
@@ -48,31 +49,31 @@ export type GeneratedCloze = z.infer<typeof generatedClozeSchema>;
 const SENTENCE_WORDS = [3, 5, 7, 9, 11] as const;
 
 /**
- * How many words the bank holds at each rung, the answer counted among them —
- * so `distractorWords` gets one fewer, which is exactly the schema's 2-5.
- *
- * It *shrinks* as the rung rises: a bank is support, and six candidates give a
- * learner far more to lean on than three. The two ends are the stored side's own
- * `LARGEST_BANK` (6) and `SMALLEST_BANK` (3), so a banked cloze written at rung
- * 1 sits at the easy end of the constrained-production tier and one written at
- * rung 5 at the hard end. A bankless cloze reports 0: there is nothing to size.
+ * How many words the bank holds at each rung, answer included — so
+ * `distractorWords` gets one fewer. More plausible completions make contextual
+ * selection harder, so the bank grows with the rung. The early two rungs stay
+ * compact at three choices; the later rungs add one competitor at a time.
  */
-const BANK_WORDS = [6, 5, 4, 3, 3] as const;
+const BANK_WORDS = [3, 3, 4, 5, 6] as const;
+
+/** A native-language bridge belongs only on the first, most supported rung. */
+const HINT = [1, 0, 0, 0, 0] as const;
 
 export const clozeDef = {
 	type: 'cloze',
 	schema: generatedClozeSchema,
 	stored: { type: 'cloze', direction: 'toTarget' },
 	promptSpec:
-		'cloze — one target-language word missing from a target-language sentence. {before:TargetText, answer:TargetText, after:TargetText, hintNative, distractorWords:[2-5 TargetText] or null} e.g. {"type":"cloze","before":{"text":"你好，请给我一份","reading":"Nǐ hǎo, qǐng gěi wǒ yī fèn"},"answer":{"text":"菜单","reading":"càidān"},"after":{"text":"。","reading":"."},"hintNative":"Hello, could I have a menu, please?","distractorWords":[{"text":"筷子","reading":"kuàizi"},{"text":"茶","reading":"chá"},{"text":"水","reading":"shuǐ"}],"itemIds":["i3"],"explanation":"份 (fèn) is the measure word for a menu or a portion."} — before and after carry their own spacing and punctuation and the app puts the blank between them; either may be {"text":"","reading":null}. hintNative is the whole sentence in the native language. distractorWords null means the learner types the answer.',
+		'cloze — one target-language word missing from a target-language sentence. {before:TargetText, answer:TargetText, after:TargetText, hintNative?:string, distractorWords:[2-5 TargetText] or null} e.g. {"type":"cloze","before":{"text":"你好，请给我一份","reading":"Nǐ hǎo, qǐng gěi wǒ yī fèn"},"answer":{"text":"菜单","reading":"càidān"},"after":{"text":"。","reading":"."},"distractorWords":[{"text":"筷子","reading":"kuàizi"},{"text":"茶","reading":"chá"},{"text":"水","reading":"shuǐ"}],"itemIds":["i3"],"explanation":"份 (fèn) is the measure word for a menu or a portion."} — before and after carry their own spacing and punctuation and the app puts the blank between them; either may be {"text":"","reading":null}. Include hintNative, the whole sentence in the native language, only when the item asks for hint:1. distractorWords null means the learner types the answer.',
 	rulesSpec:
-		'- Cloze sentences use only vocabulary at or below the learner level, and the blank must be the one word the rest of the sentence and hintNative together pin down.',
-	correctiveSpec: 'cloze {before,answer,after,hintNative}',
+		'- Cloze sentences use only vocabulary at or below the learner level. The target-language context and plausible target-language distractors must pin down the blank; hintNative is an early-rung bridge, never the sole clue.',
+	correctiveSpec: 'cloze {before,answer,after,distractorWords,hintNative?}',
 	paramsSpec:
-		'- words: how many words the whole sentence (before + answer + after) should have. bank: how many words the learner should choose between, the answer included — so distractorWords gets bank-1 entries; 0 means no bank at all and distractorWords must be null.',
+		'- words: how many words the whole sentence (before + answer + after) should have. bank: how many words the learner should choose between, answer included — so distractorWords gets bank-1 entries; 0 means no bank at all and distractorWords must be null. hint: 1 means include hintNative; 0 means omit it.',
 	params: (difficulty, kind) => ({
 		words: SENTENCE_WORDS[difficulty - 1],
-		bank: kind.bank ? BANK_WORDS[difficulty - 1] : 0
+		bank: kind.bank ? BANK_WORDS[difficulty - 1] : 0,
+		hint: HINT[difficulty - 1]
 	}),
 
 	// The only type with two fixtures per scenario, and deliberately so: one
@@ -105,7 +106,6 @@ export const clozeDef = {
 					before: { text: '¿Ya podemos ', reading: null },
 					answer: { text: 'pedir', reading: null },
 					after: { text: '?', reading: null },
-					hintNative: 'Can we order now?',
 					distractorWords: null,
 					itemIds: ['pedir'],
 					explanation: null
@@ -140,7 +140,6 @@ export const clozeDef = {
 					before: { text: '我们想', reading: 'Wǒmen xiǎng' },
 					answer: { text: '买单', reading: 'mǎidān' },
 					after: { text: '。', reading: '.' },
-					hintNative: 'We would like to pay the bill.',
 					distractorWords: null,
 					itemIds: ['买单'],
 					explanation: null
@@ -150,13 +149,14 @@ export const clozeDef = {
 	},
 
 	resolve(generated, { base, rng, params }) {
-		// The one parameter the resolver can hold the model to. `bank: 0` was a
+		// The two parameters the resolver can hold the model to. `bank: 0` was a
 		// request for a typed cloze, so distractors sent anyway are discarded
 		// rather than quietly turning it into the easier exercise; a bank that
 		// came back too generous is trimmed to the size that was asked for.
 		// Absent params (mock, a bare resolveBatch) leave both alone.
 		const bank = params?.bank;
 		const distractors = bank === 0 ? null : generated.distractorWords;
+		const hint = params?.hint === 0 ? undefined : generated.hintNative;
 
 		return {
 			...base,
@@ -173,7 +173,7 @@ export const clozeDef = {
 			// annotates that string and nothing the learner still has to produce.
 			...optionalString('answerRomanization', generated.answer.reading),
 			...clozeWordBank(generated.answer, distractors, rng, bank || undefined),
-			translationHint: generated.hintNative.trim()
+			...optionalString('translationHint', hint)
 		};
 	}
 } satisfies WireTypeDef<GeneratedCloze>;

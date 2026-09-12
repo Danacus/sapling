@@ -59,6 +59,25 @@ const validBatch = {
 			explanation: 'leer -> leo'
 		},
 		{
+			type: 'multi-cloze',
+			parts: [
+				{ text: 'Primero quiero ', reading: null },
+				{ text: '. Después pido la ', reading: null },
+				{ text: '.', reading: null }
+			],
+			gaps: [
+				{ itemId: 'i1', answer: { text: 'comer', reading: null } },
+				{ itemId: 'i2', answer: { text: 'cuenta', reading: null } }
+			],
+			distractorWords: [
+				{ text: 'mesa', reading: null },
+				{ text: 'carta', reading: null },
+				{ text: 'propina', reading: null }
+			],
+			itemIds: ['i1', 'i2'],
+			explanation: null
+		},
+		{
 			type: 'translate-to-target',
 			promptNative: 'the water is cold',
 			answers: [{ text: 'el agua está fría', reading: null }],
@@ -117,7 +136,7 @@ describe('generatedBatchSchema', () => {
 	it('parses a well-formed batch', () => {
 		const parsed = generatedBatchSchema.safeParse(validBatch);
 		expect(parsed.success).toBe(true);
-		expect(parsed.success && parsed.data.challenges).toHaveLength(7);
+		expect(parsed.success && parsed.data.challenges).toHaveLength(8);
 	});
 
 	it('accepts an omitted optional field as well as an explicit null', () => {
@@ -156,12 +175,17 @@ describe('generatedBatchSchema', () => {
 		expect(generatedChallengeSchema.safeParse(noAnswer).success).toBe(false);
 	});
 
+	it('allows a cloze without a native-language hint for target-only context', () => {
+		const { hintNative: _hintNative, ...targetOnly } = validBatch.challenges[2];
+		expect(generatedChallengeSchema.safeParse(targetOnly).success).toBe(true);
+	});
+
 	it('rejects an empty answers list on either typed type', () => {
 		expect(
-			generatedChallengeSchema.safeParse({ ...validBatch.challenges[3], answers: [] }).success
+			generatedChallengeSchema.safeParse({ ...validBatch.challenges[4], answers: [] }).success
 		).toBe(false);
 		expect(
-			generatedChallengeSchema.safeParse({ ...validBatch.challenges[4], answersNative: [] }).success
+			generatedChallengeSchema.safeParse({ ...validBatch.challenges[5], answersNative: [] }).success
 		).toBe(false);
 	});
 
@@ -286,8 +310,23 @@ describe('generatedBatchSchema', () => {
 		).toBe(true);
 	});
 
+	it('reads both older cloze rows with a translation and target-only rows without one', () => {
+		const base = {
+			id: 'c1',
+			type: 'cloze' as const,
+			direction: 'toTarget' as const,
+			sentence: '请给我一份___。',
+			acceptedAnswers: ['菜单'],
+			itemIds: ['i1']
+		};
+		expect(clozeChallengeSchema.safeParse(base).success).toBe(true);
+		expect(
+			clozeChallengeSchema.safeParse({ ...base, translationHint: 'Please give me a menu.' }).success
+		).toBe(true);
+	});
+
 	describe('word-order', () => {
-		const wordOrder = validBatch.challenges[5];
+		const wordOrder = validBatch.challenges[6];
 
 		it('needs at least two tiles to be a sentence to build', () => {
 			expect(
@@ -336,7 +375,7 @@ describe('generatedBatchSchema', () => {
 	});
 
 	describe('spot-error', () => {
-		const spotError = validBatch.challenges[6];
+		const spotError = validBatch.challenges[7];
 
 		it('needs a sentence long enough to hide an error in', () => {
 			expect(
@@ -451,7 +490,9 @@ describe('batchJsonSchemaFor', () => {
 			expect(only, def.type).toContain('reading');
 			for (const other of WIRE_TYPE_DEFS) {
 				if (other.type === def.type) continue;
-				expect(only, `${def.type}'s schema admits ${other.type}`).not.toContain(other.type);
+				expect(only, `${def.type}'s schema admits ${other.type}`).not.toContain(
+					`\"const\":\"${other.type}\"`
+				);
 			}
 		}
 	});

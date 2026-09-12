@@ -36,7 +36,15 @@ import {
 } from '$lib/db';
 import type { ChallengeRow } from '$lib/db';
 import { challengeOf } from '$lib/db';
-import { getBatch, isMockMode, makeMatchPairsChallenge } from '$lib/llm';
+import { demandOf } from '$lib/challenges/demand';
+import {
+	getBatch,
+	isActiveKind,
+	isKindAvailableAt,
+	isMockMode,
+	kindOf,
+	makeMatchPairsChallenge
+} from '$lib/llm';
 import type { BatchArgs, OnProgress, TokenUsage } from '$lib/llm';
 import { Grade, dueAt, gradeFromResult, isDue } from '$lib/srs';
 import { RESERVE_GAP, SESSION_LENGTH, isPlayable, isRested, knownItemIds } from './pool';
@@ -110,6 +118,12 @@ export interface AnswerEvent {
 	responseMs: number;
 	/** Nearest accepted answer, when the component graded with `validateAnswer`. */
 	closestAccepted?: string;
+	/**
+	 * Optional per-item evidence from a challenge with several independently
+	 * gradable answers. The overall `verdict` still drives the banner and session
+	 * summary; these entries let SRS grade each item by the gap it actually owned.
+	 */
+	itemVerdicts?: readonly { itemId: string; verdict: Verdict }[];
 }
 
 /**
@@ -189,8 +203,9 @@ export function sessionSummary(answers: SessionAnswer[]): SessionSummary {
  * warm loop, the progress math and the walk all see the same session, and an
  * early quit wastes only free, locally built material.
  *
- * One round goes in after every {@link MATCH_PAIRS_EVERY}th challenge, **never
- * after the last one** — a session must not end on free filler. Each splice
+ * One round goes in after every {@link MATCH_PAIRS_EVERY}th early-material
+ * challenge, **never after the last one** — a session must not end on free
+ * filler. Mature-only production therefore runs uninterrupted. Each splice
  * point builds its own round, so every one is an independent shuffle and pick.
  * A point where {@link makeMatchPairsChallenge} declines (too few collision-free
  * items to fill even the smallest round) simply gets no round; with static items
@@ -217,15 +232,20 @@ export function interleaveMatchRounds(
 	rng: () => number = Math.random
 ): Challenge[] {
 	const queue: Challenge[] = [];
-	const difficulty = medianRoundRung(items);
+	const earlyItems = items.filter((item) => difficultyLevelOf(item) <= 2);
+	const earlyIds = new Set(earlyItems.map((item) => item.id));
+	const difficulty = medianRoundRung(earlyItems);
+	let earlyChallenges = 0;
 
 	for (const [index, challenge] of challenges.entries()) {
 		queue.push(challenge);
 
-		const position = index + 1;
-		if (position === challenges.length || position % MATCH_PAIRS_EVERY !== 0) continue;
+		const isEarly = challenge.itemIds.some((id) => earlyIds.has(id));
+		if (isEarly) earlyChallenges++;
+		if (!isEarly || earlyChallenges % MATCH_PAIRS_EVERY !== 0 || index === challenges.length - 1)
+			continue;
 
-		const round = makeMatchPairsChallenge(items, rng, { difficulty });
+		const round = makeMatchPairsChallenge(earlyItems, rng, { difficulty });
 		if (round) queue.push(round);
 	}
 
@@ -386,7 +406,7 @@ interface PlanBoard {
 	bearable: (row: ChallengeRow) => boolean;
 	/**
 	 * How far a row's own difficulty sits from the **centre of its weakest
-	 * word's level band** — the planner's third preference (see
+	 * word's level band** — the planner's tie-breaker after eligibility (see
 	 * {@link firstFree}). Lower is a closer fit. Memoized for the same reason
 	 * {@link bearable} is.
 	 *
@@ -419,14 +439,25 @@ function planBoard(
 	known: Set<string>,
 	now: number
 ): PlanBoard {
-	const playable = pool.filter((row) => isPlayable(row, known));
+	// One index over the vocabulary for the whole plan: eligibility and the two
+	// ranking predicates below all ask about the rows' weakest items.
+	const byId = itemsById(items);
+	const playable = pool.filter((row) => {
+		if (!isPlayable(row, known)) return false;
+		const kind = kindOf(row);
+		// Keep old wire shapes readable, while allowing retired challenge kinds to
+		// fade out instead of consuming normal session slots or coverage.
+		if (!kind || !isActiveKind(kind)) return false;
+		// A row may have been generated for an earlier rung. It stays parseable,
+		// but it is only served while every item it exercises is on a rung where
+		// this kind is an appropriate exercise.
+		return row.itemIds.every((id) => {
+			const item = byId.get(id);
+			return item !== undefined && isKindAvailableAt(kind, difficultyLevelOf(item));
+		});
+	});
 	const rested = playable.filter((row) => isRested(row, now)).sort(byFreshness);
 	const resting = playable.filter((row) => !isRested(row, now)).sort(byRecency);
-
-	// One index over the vocabulary for the whole plan: both predicates below ask
-	// about the weakest word of every row, repeatedly, and each question used to
-	// rebuild this map from scratch.
-	const byId = itemsById(items);
 
 	const memo = new Map<string, boolean>();
 	const bearableRow = (row: ChallengeRow): boolean => {
@@ -483,14 +514,14 @@ function nearestFit(
 
 /**
  * The challenge a plan takes next out of one already-ordered bucket: among the
- * unclaimed **bearable** ones, whichever is the {@link nearestFit}; failing
- * that, the first unclaimed one at all.
+ * unclaimed **bearable** ones, whichever is the {@link nearestFit}. An
+ * above-level challenge is never a fallback: returning `undefined` lets the
+ * session report a shortfall through a shorter plan, and avoids teaching the
+ * learner that an unanswerable format is expected review practice.
  *
- * Bearability is still the firm half of the preference (see `./progression`):
- * a word gets nothing from the bucket unless something in it fits at all, and
- * when nothing does the word is still served — a hard exercise beats a skipped
- * review, exactly as a too-familiar sentence does. *Which* bearable challenge
- * wins is the finer question this answers: not "the freshest one that fits",
+ * Bearability is the serving rule (see `./progression`): a word gets nothing
+ * from the bucket unless something in it fits at all. *Which* bearable
+ * challenge wins is the finer question this answers: not "the freshest one that fits",
  * but "the one whose own difficulty is closest to the middle of this word's
  * level band" — a strong word gets the harder of two fitting challenges, a
  * shaky one the easier — with freshness/recency (the bucket's own order)
@@ -501,9 +532,9 @@ function nearestFit(
  * inside one word's own bucket and nothing at all between two words' buckets.
  *
  * And because the rule only ever reorders *inside* a bucket, it cannot bend the
- * rest gap: the caller consults the rested bucket first, so an unbearable rested
- * challenge still outranks a bearable resting one. The one place the gap yields
- * is the first due pass, and it yields for its own reason.
+ * rest gap: the caller consults the rested bucket first. If no rested challenge
+ * is bearable, the word contributes no challenge and the resulting short plan
+ * is the explicit signal that generation or a later rung is needed.
  */
 function firstFree(
 	bucket: ChallengeRow[] | undefined,
@@ -514,13 +545,11 @@ function firstFree(
 	if (!bucket) return undefined;
 	const free = (row: ChallengeRow) => !taken.has(row.id);
 	const fitting = bucket.filter((row) => free(row) && bearableRow(row));
-	if (fitting.length > 0) return nearestFit(fitting, fitRank);
-	return bucket.find(free);
+	return fitting.length > 0 ? nearestFit(fitting, fitRank) : undefined;
 }
 
 /**
- * `rows` partitioned so the bearable ones come first, **both halves in exactly
- * the order they arrived**.
+ * `rows` filtered to challenges the learner can bear, preserving arrival order.
  *
  * Used by the fillers, where there is no single item to walk and the bucket
  * order *is* the plan: `board.rested` is in {@link byFreshness} order and
@@ -540,10 +569,7 @@ function bearableFirst(
 	rows: ChallengeRow[],
 	bearableRow: (row: ChallengeRow) => boolean
 ): ChallengeRow[] {
-	const fits: ChallengeRow[] = [];
-	const rest: ChallengeRow[] = [];
-	for (const row of rows) (bearableRow(row) ? fits : rest).push(row);
-	return [...fits, ...rest];
+	return rows.filter(bearableRow);
 }
 
 /**
@@ -599,24 +625,16 @@ function byDueDate(now: number): (a: KnowledgeItem, b: KnowledgeItem) => number 
  * learner it is time to generate is coverage (`SessionPlan.topUp`), not an
  * empty session.
  *
- * Two gates decide what any of that may draw on, and only one of them is firm.
- * *Playable* ({@link isPlayable}) is absolute. *Rested* ({@link isRested}) is a
- * preference, and it is spent in two places, in this order. A word that owes a
- * review ({@link isDue}) spends it on its very first challenge: when it has
- * nothing rested left it takes its longest-resting one instead, because a
- * learner who played hard for two days — serve-stamping the whole pool while
- * their young cards come due within hours — would otherwise be shown words due
- * and nothing to do about them, which is the priority above inverted. And the
- * final filler spends it once every rested row is used up, since by then the
- * alternative is a shorter session. In between — second angles, words not yet
- * due, the freshness filler — rested is strictly preferred, because variety is
- * precisely what those are for. A slightly too familiar sentence still reviews
- * the word; silence does not.
+ * Three gates decide what any of that may draw on. *Playable*
+ * ({@link isPlayable}) and bearability ({@link bearable}) are absolute;
+ * retired kinds are excluded before either planner sees them. *Rested*
+ * ({@link isRested}) remains a preference, so a due word may receive a shorter
+ * plan when all of its eligible rows are inside the reserve gap.
  *
- * A third preference rides *inside* that structure rather than beside it, in
- * two layers. **Bearability** ({@link bearable}, `./progression`) is the coarse
- * one: where a word has several challenges to choose from, only the ones whose
- * demand its weakest word can currently carry are even in the running —
+ * Difficulty rides inside that structure rather than beside it. **Bearability**
+ * ({@link bearable}, `./progression`) is the coarse serving rule: where a word
+ * has several challenges to choose from, only the ones whose demand its
+ * weakest word can currently carry are even in the running —
  * recognition while the word is new, production once it has been recalled a few
  * times. **Fit** ({@link PlanBoard.fitRank}, `$lib/challenges/difficulty`) is
  * the fine one, breaking the tie among those: the challenge whose own
@@ -690,7 +708,38 @@ export function planSession(
 		chosen.push(row);
 	}
 
-	return chosen.map(challengeOf);
+	return smoothDemand(chosen.map(challengeOf));
+}
+
+/**
+ * A minimal local repair, run once over `planSession`'s finished order:
+ * wherever a challenge's demand tier ({@link demandOf}) is two above the one
+ * right before it — straight from recognition into free production with no
+ * constrained-production challenge in between — the nearest later challenge
+ * at the missing middle tier is pulled forward to sit between them. Nothing
+ * else moves, and if the plan has no such challenge left to pull, the jump is
+ * left as it is.
+ *
+ * Deliberately **not** a sort: due-first order is load-bearing (an early quit
+ * must still have hit the most overdue words first), so this only ever pulls
+ * one challenge forward at a time, never re-ranks the plan.
+ * Pure and deterministic, and runs before {@link interleaveMatchRounds} (the
+ * caller splices match rounds in afterwards), so a spliced-in round is never
+ * itself treated as part of a demand jump.
+ */
+export function smoothDemand(challenges: Challenge[]): Challenge[] {
+	const result = [...challenges];
+	for (let i = 1; i < result.length; i++) {
+		const prev = demandOf(result[i - 1]);
+		const curr = demandOf(result[i]);
+		if (curr - prev !== 2) continue;
+		const target = prev + 1;
+		const foundAt = result.findIndex((challenge, idx) => idx > i && demandOf(challenge) === target);
+		if (foundAt === -1) continue;
+		const [pulled] = result.splice(foundAt, 1);
+		result.splice(i, 0, pulled);
+	}
+	return result;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -961,6 +1010,8 @@ export interface AnswerOutcome {
 	 * see {@link AnswerEvent.responseMs}.
 	 */
 	responseMs?: number;
+	/** See {@link AnswerEvent.itemVerdicts}; absent preserves one verdict per challenge. */
+	itemVerdicts?: readonly { itemId: string; verdict: Verdict }[];
 	/** Epoch ms; defaults to `Date.now()`. */
 	now?: number;
 }
@@ -999,9 +1050,13 @@ export async function applyResult(
 	const reviewed = new Set<string>();
 
 	if (challenge.type !== 'match-pairs') {
-		const grade = gradeFromResult(outcome.verdict);
+		const verdictByItem = new Map(outcome.itemVerdicts?.map((item) => [item.itemId, item.verdict]));
 		for (const itemId of challenge.itemIds) {
-			const { existed } = await updateItemAfterReview(itemId, { at: now, grade });
+			const verdict = verdictByItem.get(itemId) ?? outcome.verdict;
+			const { existed } = await updateItemAfterReview(itemId, {
+				at: now,
+				grade: gradeFromResult(verdict)
+			});
 			if (existed) reviewed.add(itemId);
 		}
 	}
@@ -1075,10 +1130,20 @@ export async function amendResult(
  * Match-pairs is skipped for the same reason as in {@link applyResult}: those
  * rounds never touch SRS state at all.
  */
-export async function applyOverturn(challenge: Challenge, now: number = Date.now()): Promise<void> {
+export async function applyOverturn(
+	challenge: Challenge,
+	now: number = Date.now(),
+	/**
+	 * For a composite challenge, only the items the original answer actually
+	 * graded wrong should receive compensation. Omit it for legacy one-verdict
+	 * formats, whose whole challenge received the wrong grade.
+	 */
+	wrongItemIds?: ReadonlySet<string>
+): Promise<void> {
 	if (challenge.type === 'match-pairs') return;
 
 	for (const itemId of challenge.itemIds) {
+		if (wrongItemIds && !wrongItemIds.has(itemId)) continue;
 		await updateItemAfterReview(itemId, { at: now, grade: Grade.Good });
 	}
 }

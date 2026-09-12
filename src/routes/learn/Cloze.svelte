@@ -218,7 +218,9 @@
 		<p class="rom sentence-rom">{challenge.sentenceRomanization}</p>
 	{/if}
 
-	<p class="hint translation">{challenge.translationHint}</p>
+	{#if challenge.translationHint}
+		<p class="hint translation">{challenge.translationHint}</p>
+	{/if}
 
 	{#if usesBank}
 		<WordBank>

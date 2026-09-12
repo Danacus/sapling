@@ -26,6 +26,7 @@ export const multipleChoiceChallengeSchema = z.object({
 	type: z.literal('multiple-choice'),
 	prompt: nonEmpty,
 	promptRomanization: z.string().optional(),
+	promptIsTarget: z.literal(true).optional(),
 	instruction: z.string().optional(),
 	options: z.tuple([z.string(), z.string(), z.string(), z.string()]),
 	/** Index-aligned with `options` when present; the resolver guarantees the length. */

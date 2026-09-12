@@ -64,6 +64,7 @@ export {
 	clozePartSchema,
 	generatedChallengeSchema,
 	generatedClozeSchema,
+	generatedMultiClozeSchema,
 	generatedProduceMcSchema,
 	generatedRecognizeMcSchema,
 	generatedSpotErrorSchema,
@@ -76,6 +77,7 @@ export {
 export type {
 	GeneratedChallenge,
 	GeneratedCloze,
+	GeneratedMultiCloze,
 	GeneratedProduceMc,
 	GeneratedRecognizeMc,
 	GeneratedSpotError,
@@ -116,6 +118,7 @@ export {
 	clozeChallengeSchema,
 	directionSchema,
 	matchPairsChallengeSchema,
+	multiClozeChallengeSchema,
 	multipleChoiceChallengeSchema,
 	spotErrorChallengeSchema,
 	typedTranslationChallengeSchema,

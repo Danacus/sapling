@@ -34,6 +34,7 @@ const DEF_FILES: Record<ChallengeType, string> = {
 	cloze: 'cloze.ts',
 	'typed-translation': 'typed-translation.ts',
 	'match-pairs': 'match-pairs.ts',
+	'multi-cloze': 'multi-cloze.ts',
 	'word-order': 'word-order.ts',
 	'spot-error': 'spot-error.ts'
 };
@@ -107,6 +108,7 @@ describe('stored-type purity', () => {
 			cloze: true,
 			'typed-translation': true,
 			'match-pairs': true,
+			'multi-cloze': true,
 			'word-order': true,
 			'spot-error': true
 		};

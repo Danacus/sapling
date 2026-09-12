@@ -89,10 +89,18 @@ describe('difficultyOf', () => {
 			expect(glued).toBeCloseTo(split, 10);
 		});
 
-		it('shrinks as the word bank grows: fewer distractors is harder', () => {
+		it('grows as the word bank grows: more distractors are harder', () => {
 			const smallBank = difficultyOf(challenge(banked('Yo ___ un libro.', 3)));
 			const bigBank = difficultyOf(challenge(banked('Yo ___ un libro.', 6)));
-			expect(smallBank).toBeGreaterThan(bigBank);
+			expect(smallBank).toBeLessThan(bigBank);
+		});
+
+		it('grows when the native-language bridge is removed', () => {
+			const supported = difficultyOf(challenge(banked('Yo ___ un libro.', 3)));
+			const targetOnly = difficultyOf(
+				challenge({ ...banked('Yo ___ un libro.', 3), translationHint: undefined })
+			);
+			expect(supported).toBeLessThan(targetOnly);
 		});
 
 		it('stays in the constrained-production span [0.15, 0.45] when banked', () => {
@@ -292,6 +300,16 @@ describe('difficultyOf', () => {
 				sentence: 'Yo ___ un libro.',
 				acceptedAnswers: ['leo'],
 				translationHint: 'I read a book.'
+			},
+			'multi-cloze': {
+				type: 'multi-cloze',
+				direction: 'toTarget',
+				passage: '___1___ leo un libro. Luego ___2___ café.',
+				gaps: [
+					{ itemId: 'i1', acceptedAnswers: ['Yo'] },
+					{ itemId: 'i2', acceptedAnswers: ['bebo'] }
+				],
+				wordBank: ['Yo', 'bebo', 'como', 'libro', 'café']
 			},
 			'typed-translation': {
 				type: 'typed-translation',

@@ -93,7 +93,12 @@ describe('WIRE_TYPE_DEFS', () => {
 						rng: () => 0.5
 					});
 					expect(resolved, `${def.type} fixture (${scenario}) did not resolve`).not.toBeNull();
-					expect({ type: resolved?.type, direction: resolved?.direction }).toEqual(def.stored);
+					expect({
+						type: resolved?.type,
+						direction: resolved?.direction,
+						promptIsTarget:
+							resolved && 'promptIsTarget' in resolved ? resolved.promptIsTarget : undefined
+					}).toEqual(def.stored);
 				}
 			}
 		}
@@ -104,14 +109,18 @@ describe('WIRE_TYPE_DEFS', () => {
 		expect(byType.size).toBe(WIRE_TYPE_DEFS.length);
 	});
 
-	it('is plannable: every registered type is one the top-up planner can ask for', () => {
+	it('keeps legacy wire types parseable while limiting new planning to active types', () => {
 		// Type choice is the session's (`$lib/session/topup`, over `../requests`'
 		// `PLANNABLE_KINDS`), so being in the registry is not enough to be
 		// generated — a type no kind names is a type the model could be told
 		// about, shown an example of, and never asked for.
 		expect([...new Set(PLANNABLE_KINDS.map((kind) => kind.type))].sort()).toEqual(
-			WIRE_TYPE_DEFS.map((def) => def.type).sort()
+			WIRE_TYPE_DEFS.map((def) => def.type)
+				.filter((type) => type !== 'translate-to-target')
+				.sort()
 		);
+		expect(PLANNABLE_KINDS.some((kind) => kind.type === 'translate-to-target')).toBe(false);
+		expect(WIRE_TYPE_DEFS.some((def) => def.type === 'translate-to-target')).toBe(true);
 	});
 
 	it('states, for every plannable kind, the demand tier its resolved challenge reports', () => {
@@ -178,15 +187,16 @@ describe('difficulty parameters', () => {
 		}
 	});
 
-	it('is monotone in the rung: lengths never fall, a word bank never grows', () => {
+	it('is monotone in the rung: difficulty counts grow while support falls', () => {
 		for (const def of WIRE_TYPE_DEFS) {
 			for (const kind of [{}, { bank: true }, { bank: false }]) {
 				const ladders = RUNGS.map((rung) => paramsOf(def, rung, kind));
 				for (const key of Object.keys(ladders[0])) {
 					const values = ladders.map((params) => params[key]);
-					// A bank is support, so it shrinks as the rung rises; everything
-					// else — words, tiles, distractors — grows.
-					const rising = key === 'bank' ? [...values].reverse() : values;
+					// `hint` is the one support flag: it falls after the first rung.
+					// A larger bank now means more competing choices, so it grows with
+					// every other difficulty count.
+					const rising = key === 'hint' ? [...values].reverse() : values;
 					for (let i = 1; i < rising.length; i++) {
 						expect(rising[i], `${def.type}.${key} at rung ${i + 1}`).toBeGreaterThanOrEqual(
 							rising[i - 1]
@@ -278,8 +288,10 @@ describe('the rungs, as the stored side reads them back', () => {
 		// rung, and a tray that stops where the plan said it should.
 		const easy = clozeAt(1);
 		const hard = clozeAt(5);
-		expect(easy.type === 'cloze' && easy.wordBank).toHaveLength(6);
-		expect(hard.type === 'cloze' && hard.wordBank).toHaveLength(3);
+		expect(easy.type === 'cloze' && easy.wordBank).toHaveLength(3);
+		expect(hard.type === 'cloze' && hard.wordBank).toHaveLength(6);
+		expect(easy.type === 'cloze' && easy.translationHint).toBe('what it means');
+		expect(hard.type === 'cloze' && 'translationHint' in hard).toBe(false);
 
 		const shortest = wordOrderAt(1);
 		expect(shortest.type === 'word-order' && shortest.tiles).toHaveLength(3);
@@ -307,9 +319,11 @@ describe('prompt composition', () => {
 			const prompt = promptFor(def);
 			for (const other of WIRE_TYPE_DEFS) {
 				if (other.type === def.type) continue;
-				// `cloze` is a substring of nothing else, and no type name is a
-				// substring of another, so a bare `includes` is exact here.
-				expect(prompt, `${def.type}'s prompt mentions ${other.type}`).not.toContain(other.type);
+				// `multi-cloze` intentionally contains `cloze`; quoted discriminator
+				// values distinguish a type reference from that harmless substring.
+				expect(prompt, `${def.type}'s prompt mentions ${other.type}`).not.toContain(
+					`"${other.type}"`
+				);
 			}
 		}
 	});
@@ -320,7 +334,9 @@ describe('prompt composition', () => {
 			expect(corrective, def.type).toContain(def.correctiveSpec);
 			for (const other of WIRE_TYPE_DEFS) {
 				if (other.type === def.type) continue;
-				expect(corrective, `${def.type}'s retry mentions ${other.type}`).not.toContain(other.type);
+				expect(corrective, `${def.type}'s retry mentions ${other.type}`).not.toContain(
+					` ${other.type} `
+				);
 			}
 		}
 	});

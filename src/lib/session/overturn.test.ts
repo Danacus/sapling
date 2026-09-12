@@ -82,6 +82,19 @@ const match: Challenge = {
 	]
 };
 
+const multiCloze: Challenge = {
+	id: 'mc1',
+	type: 'multi-cloze',
+	direction: 'toTarget',
+	passage: '___1___ leo. ___2___ bebe.',
+	gaps: [
+		{ itemId: 'i1', acceptedAnswers: ['Yo'] },
+		{ itemId: 'i2', acceptedAnswers: ['Ella'] }
+	],
+	wordBank: ['Yo', 'Ella', 'Tú', 'nosotros', 'ellos'],
+	itemIds: ['i1', 'i2']
+};
+
 describe('applyResult', () => {
 	/** The grade written for a fast, correct answer to `challenge`. */
 	async function gradeFor(challenge: Challenge): Promise<number | undefined> {
@@ -159,6 +172,24 @@ describe('applyResult', () => {
 
 		const none = await applyResult(match, { verdict: 'correct', answerGiven: '', now: NOW });
 		expect(none.size).toBe(0);
+	});
+
+	it('grades each multi-cloze item from its own gap, while logging one overall verdict', async () => {
+		await seed('i1');
+		await seed('i2');
+
+		await applyResult(multiCloze, {
+			verdict: 'wrong',
+			answerGiven: '1: Yo · 2: Tú',
+			itemVerdicts: [
+				{ itemId: 'i1', verdict: 'correct' },
+				{ itemId: 'i2', verdict: 'wrong' }
+			],
+			now: NOW
+		});
+
+		expect((await historyOf('i1')).at(-1)?.grade).toBe(Grade.Good);
+		expect((await historyOf('i2')).at(-1)?.grade).toBe(Grade.Again);
 	});
 });
 
@@ -253,6 +284,24 @@ describe('amendResult', () => {
 		await amendResult(match, Grade.Easy, reviewed, NOW);
 		expect(await historyOf('i1')).toHaveLength(1);
 	});
+
+	it('re-grades every reviewed multi-cloze item after an all-correct passage', async () => {
+		await seed('i1');
+		await seed('i2');
+		const reviewed = await applyResult(multiCloze, {
+			verdict: 'correct',
+			answerGiven: '1: Yo · 2: Ella',
+			itemVerdicts: [
+				{ itemId: 'i1', verdict: 'correct' },
+				{ itemId: 'i2', verdict: 'correct' }
+			],
+			now: NOW
+		});
+
+		await amendResult(multiCloze, Grade.Easy, reviewed, NOW);
+		expect((await historyOf('i1')).at(-1)?.grade).toBe(Grade.Easy);
+		expect((await historyOf('i2')).at(-1)?.grade).toBe(Grade.Easy);
+	});
 });
 
 describe('applyOverturn', () => {
@@ -287,6 +336,28 @@ describe('applyOverturn', () => {
 
 		// The lapse is not rewritten — the compensating review is appended to it.
 		expect(await historyOf('i1')).toEqual([
+			{ at: NOW - 1000, grade: Grade.Again },
+			{ at: NOW, grade: Grade.Good }
+		]);
+	});
+
+	it('only compensates the multi-cloze items that were actually wrong', async () => {
+		await seed('i1');
+		await seed('i2');
+		await applyResult(multiCloze, {
+			verdict: 'wrong',
+			answerGiven: '1: Yo · 2: Tú',
+			itemVerdicts: [
+				{ itemId: 'i1', verdict: 'correct' },
+				{ itemId: 'i2', verdict: 'wrong' }
+			],
+			now: NOW - 1000
+		});
+
+		await applyOverturn(multiCloze, NOW, new Set(['i2']));
+
+		expect(await historyOf('i1')).toEqual([{ at: NOW - 1000, grade: Grade.Good }]);
+		expect(await historyOf('i2')).toEqual([
 			{ at: NOW - 1000, grade: Grade.Again },
 			{ at: NOW, grade: Grade.Good }
 		]);

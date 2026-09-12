@@ -89,6 +89,8 @@
 		answerGiven: string;
 		correctAnswer: string;
 		closestAccepted?: string;
+		/** Per-gap evidence for composite challenges; retained for an overturn. */
+		itemVerdicts?: AnswerEvent['itemVerdicts'];
 		explanation?: string;
 		/** An escalation overturned a `wrong` grade; see {@link overturnCurrent}. */
 		overturned?: boolean;
@@ -626,6 +628,7 @@
 			answerGiven: event.answerGiven,
 			correctAnswer: correctAnswerText(challenge),
 			...(event.closestAccepted ? { closestAccepted: event.closestAccepted } : {}),
+			...(event.itemVerdicts ? { itemVerdicts: event.itemVerdicts } : {}),
 			...(challenge.explanation ? { explanation: challenge.explanation } : {})
 		};
 
@@ -638,6 +641,7 @@
 			verdict: event.verdict,
 			answerGiven: event.answerGiven,
 			responseMs: event.responseMs,
+			...(event.itemVerdicts ? { itemVerdicts: event.itemVerdicts } : {}),
 			now: Date.now()
 		}).catch(() => {
 			// A failed write must not eat the session; the answer is already logged.
@@ -701,8 +705,13 @@
 
 		// After the pending `applyResult`: the Again review must already be on the
 		// card before the compensating Good review goes on top of it.
+		const wrongItemIds = fb.itemVerdicts
+			? new Set(
+					fb.itemVerdicts.filter((item) => item.verdict === 'wrong').map((item) => item.itemId)
+				)
+			: undefined;
 		pendingWrite = pendingWrite
-			.then(() => applyOverturn(fb.challenge, Date.now()))
+			.then(() => applyOverturn(fb.challenge, Date.now(), wrongItemIds))
 			.catch(() => {
 				// A failed write must not eat the session; the banner already repainted.
 			});

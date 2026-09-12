@@ -97,6 +97,7 @@ const samples = {
 		{ type: 'cloze', direction: 'toTarget' },
 		{ type: 'cloze', direction: 'toTarget', wordBank: [] }
 	],
+	'multi-cloze': [{ type: 'multi-cloze', direction: 'toTarget', gaps: [], wordBank: [] }],
 	'typed-translation': [
 		{ type: 'typed-translation', direction: 'toTarget' },
 		{ type: 'typed-translation', direction: 'toNative' }

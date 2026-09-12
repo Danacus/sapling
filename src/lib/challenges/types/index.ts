@@ -26,6 +26,7 @@ import { clozeStoredDef } from './cloze';
 import type { StoredTypeBehaviour, StoredTypeRegistry } from './def';
 import { unhandledChallenge } from './def';
 import { matchPairsStoredDef } from './match-pairs';
+import { multiClozeStoredDef } from './multi-cloze';
 import { multipleChoiceStoredDef } from './multiple-choice';
 import { spotErrorStoredDef } from './spot-error';
 import { typedTranslationStoredDef } from './typed-translation';
@@ -42,6 +43,7 @@ export { unhandledChallenge };
 
 export { clozeChallengeSchema } from './cloze';
 export { matchPairsChallengeSchema } from './match-pairs';
+export { multiClozeChallengeSchema } from './multi-cloze';
 export { multipleChoiceChallengeSchema } from './multiple-choice';
 export { spotErrorChallengeSchema } from './spot-error';
 export { typedTranslationChallengeSchema } from './typed-translation';
@@ -50,6 +52,7 @@ export { directionSchema, nonEmpty, storedBase } from './primitives';
 export {
 	clozeStoredDef,
 	matchPairsStoredDef,
+	multiClozeStoredDef,
 	multipleChoiceStoredDef,
 	spotErrorStoredDef,
 	typedTranslationStoredDef,
@@ -61,6 +64,7 @@ const REGISTRY = {
 	cloze: clozeStoredDef,
 	'typed-translation': typedTranslationStoredDef,
 	'match-pairs': matchPairsStoredDef,
+	'multi-cloze': multiClozeStoredDef,
 	'word-order': wordOrderStoredDef,
 	'spot-error': spotErrorStoredDef
 } satisfies StoredTypeRegistry;
@@ -93,6 +97,7 @@ export const STORED_TYPE_ORDER = [
 	'cloze',
 	'typed-translation',
 	'match-pairs',
+	'multi-cloze',
 	'word-order',
 	'spot-error'
 ] as const;
@@ -125,6 +130,7 @@ export const storedChallengeSchemas = [
 	clozeStoredDef.schema,
 	typedTranslationStoredDef.schema,
 	matchPairsStoredDef.schema,
+	multiClozeStoredDef.schema,
 	wordOrderStoredDef.schema,
 	spotErrorStoredDef.schema
 ] as const;

@@ -503,10 +503,21 @@ describe('buildRequestPrompt', () => {
 			const [, user] = buildRequestPrompt(args, requestFor({ type: 'cloze', bank }, 1));
 			return (JSON.parse(user.content) as { items: { bank: number }[] }).items[0].bank;
 		};
-		// Six candidates at the easy end; nothing at all when the want asked for a
+		// Three candidates at the easy end; nothing at all when the want asked for a
 		// typed cloze, which is what `bank: false` means.
-		expect(bankAt(true)).toBe(6);
+		expect(bankAt(true)).toBe(3);
 		expect(bankAt(false)).toBe(0);
+	});
+
+	it('asks for a native cloze bridge only on the first rung', () => {
+		const hintAt = (difficulty: Want['difficulty']): number => {
+			const [, user] = buildRequestPrompt(
+				args,
+				requestFor({ type: 'cloze', bank: true }, difficulty)
+			);
+			return (JSON.parse(user.content) as { items: { hint: number }[] }).items[0].hint;
+		};
+		expect(([1, 2, 3, 4, 5] as Want['difficulty'][]).map(hintAt)).toEqual([1, 0, 0, 0, 0]);
 	});
 
 	it('writes everything shared across requests before the brief itself', () => {
@@ -1507,6 +1518,22 @@ describe('resolveBatch', () => {
 			const challenge = resolveCloze({}, { paramsByItem: new Map([['i1', { bank: 0 }]]) });
 			expect('wordBank' in (challenge ?? {})).toBe(false);
 			expect(challenge?.acceptedAnswers).toContain('菜单');
+		});
+
+		it('drops a native hint when the planned rung asks for target-only context', () => {
+			const challenge = resolveCloze(
+				{},
+				{ paramsByItem: new Map([['i1', { words: 7, bank: 4, hint: 0 }]]) }
+			);
+			expect('translationHint' in (challenge ?? {})).toBe(false);
+		});
+
+		it('keeps a native hint when the planned rung explicitly asks for one', () => {
+			const challenge = resolveCloze(
+				{},
+				{ paramsByItem: new Map([['i1', { words: 3, bank: 3, hint: 1 }]]) }
+			);
+			expect(challenge?.translationHint).toBe('Hello, could I have a menu, please?');
 		});
 
 		it('leaves the bank alone when no parameters travelled with it', () => {

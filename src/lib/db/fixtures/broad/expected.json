@@ -404,6 +404,52 @@
 			"reported": false
 		},
 		{
+			"id": "ch-multi-cloze",
+			"type": "multi-cloze",
+			"direction": "toTarget",
+			"passage": "___1___，我是李明。然后我说___2___。",
+			"passageRomanization": "___, wǒ shì Lǐ Míng. Ránhòu wǒ shuō ___.",
+			"gaps": [
+				{
+					"itemId": "item-ni",
+					"acceptedAnswers": [
+						"你好"
+					],
+					"answerRomanization": "nǐ hǎo"
+				},
+				{
+					"itemId": "item-xie",
+					"acceptedAnswers": [
+						"谢谢"
+					],
+					"answerRomanization": "xièxie"
+				}
+			],
+			"wordBank": [
+				"你好",
+				"谢谢",
+				"再见",
+				"请",
+				"菜单"
+			],
+			"wordBankRomanization": [
+				"nǐ hǎo",
+				"xièxie",
+				"zàijiàn",
+				"qǐng",
+				"càidān"
+			],
+			"itemIds": [
+				"item-ni",
+				"item-xie"
+			],
+			"generatedAt": 1710061560000,
+			"timesServed": 0,
+			"lastServedAt": null,
+			"reported": false,
+			"topic": "greetings"
+		},
+		{
 			"id": "ch-tt",
 			"type": "typed-translation",
 			"direction": "toTarget",
@@ -452,7 +498,7 @@
 			"reported": false
 		}
 	],
-	"poolSize": 5,
+	"poolSize": 6,
 	"getChallengesByIds": [
 		{
 			"id": "ch-cloze",
@@ -513,6 +559,47 @@
 					"b": "thanks",
 					"aRom": "xièxie"
 				}
+			],
+			"itemIds": [
+				"item-ni",
+				"item-xie"
+			]
+		},
+		{
+			"id": "ch-multi-cloze",
+			"type": "multi-cloze",
+			"direction": "toTarget",
+			"passage": "___1___，我是李明。然后我说___2___。",
+			"passageRomanization": "___, wǒ shì Lǐ Míng. Ránhòu wǒ shuō ___.",
+			"gaps": [
+				{
+					"itemId": "item-ni",
+					"acceptedAnswers": [
+						"你好"
+					],
+					"answerRomanization": "nǐ hǎo"
+				},
+				{
+					"itemId": "item-xie",
+					"acceptedAnswers": [
+						"谢谢"
+					],
+					"answerRomanization": "xièxie"
+				}
+			],
+			"wordBank": [
+				"你好",
+				"谢谢",
+				"再见",
+				"请",
+				"菜单"
+			],
+			"wordBankRomanization": [
+				"nǐ hǎo",
+				"xièxie",
+				"zàijiàn",
+				"qǐng",
+				"càidān"
 			],
 			"itemIds": [
 				"item-ni",
@@ -981,6 +1068,57 @@
 						]
 					},
 					"generatedAt": 1710061500002,
+					"topic": "greetings"
+				}
+			},
+			{
+				"id": "ev-ch-multi-cloze",
+				"type": "challengeAdded",
+				"at": 1710061560000,
+				"device": "dev-a",
+				"payload": {
+					"challenge": {
+						"id": "ch-multi-cloze",
+						"type": "multi-cloze",
+						"direction": "toTarget",
+						"passage": "___1___，我是李明。然后我说___2___。",
+						"passageRomanization": "___, wǒ shì Lǐ Míng. Ránhòu wǒ shuō ___.",
+						"gaps": [
+							{
+								"itemId": "item-ni",
+								"acceptedAnswers": [
+									"你好"
+								],
+								"answerRomanization": "nǐ hǎo"
+							},
+							{
+								"itemId": "item-xie",
+								"acceptedAnswers": [
+									"谢谢"
+								],
+								"answerRomanization": "xièxie"
+							}
+						],
+						"wordBank": [
+							"你好",
+							"谢谢",
+							"再见",
+							"请",
+							"菜单"
+						],
+						"wordBankRomanization": [
+							"nǐ hǎo",
+							"xièxie",
+							"zàijiàn",
+							"qǐng",
+							"càidān"
+						],
+						"itemIds": [
+							"item-ni",
+							"item-xie"
+						]
+					},
+					"generatedAt": 1710061560000,
 					"topic": "greetings"
 				}
 			},

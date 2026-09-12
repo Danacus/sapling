@@ -24,7 +24,9 @@ import type {
 	KnowledgeItem,
 	MultipleChoiceChallenge,
 	Profile,
-	Verdict
+	TypedTranslationChallenge,
+	Verdict,
+	WordOrderChallenge
 } from '$lib/types';
 import {
 	BATCH_TARGET,
@@ -37,6 +39,7 @@ import {
 	planRefill,
 	planSession,
 	sessionSummary,
+	smoothDemand,
 	spokenAnswerFor,
 	type SessionAnswer
 } from './engine';
@@ -86,10 +89,53 @@ function atStrength(word: KnowledgeItem, strength: number): KnowledgeItem {
 function row(id: string, itemIds: string[], over: Partial<ChallengeRow> = {}): ChallengeRow {
 	return {
 		id,
+		type: 'multiple-choice',
+		direction: 'toNative',
+		prompt: `prompt-${id}`,
+		options: ['a', 'b', 'c', 'd'],
+		correctIndex: 0,
+		itemIds,
+		generatedAt: NOW - DAY,
+		timesServed: 0,
+		lastServedAt: null,
+		reported: false,
+		...over
+	} as ChallengeRow;
+}
+
+/** An explicit legacy production row, retained for retirement and gating tests. */
+function targetTranslationRow(
+	id: string,
+	itemIds: string[],
+	over: Partial<ChallengeRow> = {}
+): ChallengeRow {
+	return {
+		id,
 		type: 'typed-translation',
 		direction: 'toTarget',
 		prompt: `prompt-${id}`,
 		acceptedAnswers: ['a'],
+		itemIds,
+		generatedAt: NOW - DAY,
+		timesServed: 0,
+		lastServedAt: null,
+		reported: false,
+		...over
+	} as ChallengeRow;
+}
+
+/** An active free-production row whose kind is available at the top rung. */
+function freeProductionRow(
+	id: string,
+	itemIds: string[],
+	over: Partial<ChallengeRow> = {}
+): ChallengeRow {
+	return {
+		id,
+		type: 'cloze',
+		direction: 'toTarget',
+		sentence: 'Yo ___ ayer.',
+		acceptedAnswers: ['corrí'],
 		itemIds,
 		generatedAt: NOW - DAY,
 		timesServed: 0,
@@ -153,6 +199,45 @@ function midLevelOneItem(id: string, dueOffset: number): KnowledgeItem {
 
 const ids = (challenges: Challenge[]) => challenges.map((challenge) => challenge.id);
 
+/** A demand-0 (recognition) challenge, for {@link smoothDemand}. */
+function demand0(id: string): MultipleChoiceChallenge {
+	return {
+		id,
+		type: 'multiple-choice',
+		direction: 'toNative',
+		prompt: `prompt-${id}`,
+		options: ['a', 'b', 'c', 'd'],
+		correctIndex: 0,
+		itemIds: [id]
+	};
+}
+
+/** A demand-1 (constrained production) challenge, for {@link smoothDemand}. */
+function demand1(id: string): WordOrderChallenge {
+	return {
+		id,
+		type: 'word-order',
+		direction: 'toTarget',
+		prompt: `prompt-${id}`,
+		tiles: ['a', 'b'],
+		answerTokens: ['a', 'b'],
+		answer: 'a b',
+		itemIds: [id]
+	};
+}
+
+/** A demand-2 (free production) challenge, for {@link smoothDemand}. */
+function demand2(id: string): TypedTranslationChallenge {
+	return {
+		id,
+		type: 'typed-translation',
+		direction: 'toTarget',
+		prompt: `prompt-${id}`,
+		acceptedAnswers: ['a'],
+		itemIds: [id]
+	};
+}
+
 /* -------------------------------------------------------------------------- */
 
 describe('interleaveMatchRounds', () => {
@@ -209,6 +294,15 @@ describe('interleaveMatchRounds', () => {
 		expect(interleaveMatchRounds([], known(6))).toEqual([]);
 	});
 
+	it('does not interrupt a mature-only production plan with match pairs', () => {
+		const mature = Array.from({ length: 9 }, (_, i) =>
+			row(`m${i}`, [`k${i}`], { type: 'word-order' })
+		) as Challenge[];
+		const matureItems = Array.from({ length: 9 }, (_, i) => strongItem(`k${i}`, -DAY));
+
+		expect(interleaveMatchRounds(mature, matureItems)).toEqual(mature);
+	});
+
 	it('leaves the plan alone when a round cannot be built', () => {
 		// Below the ladder's own floor of three usable items:
 		// `makeMatchPairsChallenge` declines, and with static items that means no
@@ -252,7 +346,7 @@ describe('interleaveMatchRounds', () => {
 
 		it('gives a vocabulary the learner owns the full six', () => {
 			const strong = Array.from({ length: 8 }, (_, i) => strongItem(`k${i}`, -DAY));
-			expect(pairsOf(interleaveMatchRounds(generated(9), strong))).toEqual([6, 6]);
+			expect(pairsOf(interleaveMatchRounds(generated(9), strong))).toEqual([]);
 		});
 
 		it('takes the median rung, so one mature word cannot size the round', () => {
@@ -271,13 +365,13 @@ describe('interleaveMatchRounds', () => {
 				...Array.from({ length: 7 }, (_, i) => strongItem(`k${i}`, -DAY)),
 				item('k7', -DAY)
 			];
-			expect(pairsOf(interleaveMatchRounds(generated(5), mixed))).toEqual([6]);
+			expect(pairsOf(interleaveMatchRounds(generated(5), mixed))).toEqual([]);
 		});
 
 		it('builds a smaller round rather than none when the vocabulary is short', () => {
 			// Rung 5 asks for six pairs and there are four words to make them from.
 			const strong = Array.from({ length: 4 }, (_, i) => strongItem(`k${i}`, -DAY));
-			expect(pairsOf(interleaveMatchRounds(generated(5), strong))).toEqual([4]);
+			expect(pairsOf(interleaveMatchRounds(generated(5), strong))).toEqual([]);
 		});
 	});
 });
@@ -535,6 +629,34 @@ describe('sessionSummary', () => {
 /* -------------------------------------------------------------------------- */
 
 describe('planSession', () => {
+	it('drops retired target-translation rows from normal serving', () => {
+		const items = [item('due', -DAY)];
+		const legacy = targetTranslationRow('legacy', ['due']);
+		const active = recognition('active', ['due']);
+
+		expect(ids(planSession([legacy, active], items, NOW, { target: 2 }))).toEqual(['active']);
+	});
+
+	it('returns a short plan when due material is above the word level', () => {
+		const items = [item('due', -DAY)];
+		const aboveLevel: ChallengeRow = {
+			id: 'word-order',
+			type: 'word-order',
+			direction: 'toTarget',
+			prompt: 'p',
+			tiles: ['a', 'b'],
+			answerTokens: ['a', 'b'],
+			answer: 'a b',
+			itemIds: ['due'],
+			generatedAt: NOW,
+			timesServed: 0,
+			lastServedAt: null,
+			reported: false
+		};
+
+		expect(planSession([aboveLevel], items, NOW, { target: 1 })).toEqual([]);
+	});
+
 	it('serves a due word before a brand-new challenge about a word that is not due', () => {
 		const items = [item('due', -5 * DAY), item('fine', +5 * DAY)];
 		const pool = [
@@ -673,43 +795,46 @@ describe('planSession', () => {
 	});
 
 	describe('a challenge a word can bear beats one it cannot', () => {
-		// `recognition` is demand 0 and `row` is a toTarget typed translation,
-		// demand 2; `item` builds a fresh card at strength 0 and `strongItem` one
+		// `recognition` is demand 0 and `freeProductionRow` is an active demand-2
+		// cloze; `item` builds a fresh card at strength 0 and `strongItem` one
 		// past FREE_PRODUCTION_FLOOR. See `./progression`.
 
 		it('gives a weak due word the recognition challenge over the production one', () => {
 			const items = [item('due', -DAY)];
 			const pool = [
-				// Freshness would take the typed translation first: it is the newer
+				// Freshness would take production first: it is the newer
 				// never-served row. Bearability outranks freshness within the bucket.
-				row('typed', ['due'], { generatedAt: NOW }),
+				freeProductionRow('typed', ['due'], { generatedAt: NOW }),
 				recognition('choice', ['due'], { generatedAt: NOW - 5 * DAY })
 			];
 
 			expect(ids(planSession(pool, items, NOW, { target: 1 }))).toEqual(['choice']);
-			// And the production one is still second, not dropped.
-			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['choice', 'typed']);
+			// Above-level production is excluded instead of being used as fallback.
+			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['choice']);
 		});
 
 		it('still serves the production challenge when it is the only one', () => {
-			// The invariant that keeps this a preference: a hard exercise beats a
-			// skipped review, so a due word is never starved for being weak.
+			// An above-level due row produces a shortfall so the missing rung can be
+			// generated.
 			const items = [item('due', -DAY)];
-			const pool = [row('typed', ['due'], { generatedAt: NOW })];
+			const pool = [freeProductionRow('typed', ['due'], { generatedAt: NOW })];
 
-			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['typed']);
+			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual([]);
 		});
 
 		it('prefers the closer-fitting challenge over the fresher one for a word that can bear both', () => {
 			// Both bearable for a strong item, so bearability alone has nothing to
-			// prefer — but they are not equally good a fit: a typed-translation
-			// (difficulty ~0.5) sits far closer to this word's own strength
+			// prefer — but they are not equally good a fit: a free-production cloze
+			// sits far closer to this word's own strength
 			// (~0.7) than a two-word multiple-choice (difficulty ~0.02). Freshness
 			// would pick `choice` (the newer, never-served row); fit overrides it.
-			const items = [strongItem('due', -DAY)];
+			const items = [atStrength(item('due', -DAY), 0.2)];
 			const pool = [
 				recognition('choice', ['due'], { generatedAt: NOW }),
-				row('typed', ['due'], { generatedAt: NOW - 5 * DAY })
+				freeProductionRow('typed', ['due'], {
+					generatedAt: NOW - 5 * DAY,
+					wordBank: ['corrí', 'fui', 'comí']
+				})
 			];
 
 			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['typed', 'choice']);
@@ -719,7 +844,7 @@ describe('planSession', () => {
 			// Two multiple-choice rows of the same prompt length are an equally good
 			// (or bad) fit for a strong word, so fit has nothing to decide between
 			// them and freshness — the newer, never-served row — settles it.
-			const items = [strongItem('due', -DAY)];
+			const items = [atStrength(item('due', -DAY), 0.2)];
 			const pool = [
 				recognition('newer', ['due'], { generatedAt: NOW }),
 				recognition('older', ['due'], { generatedAt: NOW - 5 * DAY })
@@ -750,23 +875,19 @@ describe('planSession', () => {
 		});
 
 		it('does not spend the rest gap to find something bearable', () => {
-			// The preference works *within* a bucket, so the rested bucket is still
-			// consulted first and an unbearable rested row wins over a bearable
-			// resting one — even though the resting one is the better fit. The gap
-			// yields on its own terms (a due word with nothing rested) or not at
-			// all until the filler, never to chase a fit.
+			// Above-level rows are removed before the rest-gap preference is applied;
+			// the remaining active row is inside the reserve gap and yields a
+			// shortfall rather than being served early.
 			const items = [item('due', -DAY)];
 			const pool = [
-				row('typed-rested', ['due']),
+				freeProductionRow('typed-rested', ['due']),
 				recognition('choice-hot', ['due'], { timesServed: 1, lastServedAt: NOW - DAY })
 			];
 
-			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual([
-				'typed-rested',
-				'choice-hot'
-			]);
-			// With one slot the fit never gets a look in.
-			expect(ids(planSession(pool, items, NOW, { target: 1 }))).toEqual(['typed-rested']);
+			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['choice-hot']);
+			// Due review may use a rested, bearable row even while it is inside the
+			// reserve gap; the difficulty gate still excludes the production row.
+			expect(ids(planSession(pool, items, NOW, { target: 1 }))).toEqual(['choice-hot']);
 		});
 
 		it('prefers bearable material in the freshness filler too', () => {
@@ -774,11 +895,11 @@ describe('planSession', () => {
 			// the rest, each in its own order" rule, applied to a whole bucket.
 			const items = [item('later', +5 * DAY)];
 			const pool = [
-				row('typed', ['later'], { generatedAt: NOW }),
+				freeProductionRow('typed', ['later'], { generatedAt: NOW }),
 				recognition('choice', ['later'], { generatedAt: NOW - 5 * DAY })
 			];
 
-			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['choice', 'typed']);
+			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['choice']);
 		});
 	});
 
@@ -848,7 +969,7 @@ describe('planSession', () => {
 		// prompts within a word, so the walk's own fit preference has nothing to
 		// say and takes them in plain freshness order.
 		const strongRow = (id: string, over: Partial<ChallengeRow> = {}) =>
-			row(id, ['strong'], { prompt: 'la cuenta', ...over });
+			freeProductionRow(id, ['strong'], { prompt: 'la cuenta', ...over });
 		const weakRow = (id: string, over: Partial<ChallengeRow> = {}) =>
 			recognition(id, ['weak'], { prompt: 'the bill', ...over });
 
@@ -1034,18 +1155,16 @@ describe('planSession', () => {
 
 		it('prefers a bearable challenge for a word that is not due either', () => {
 			// Reaching ahead is not asking to be over-faced: a word still at
-			// strength 0 gets the recognition row first here too, and the production
-			// one right after it rather than never.
+			// strength 0 gets the recognition row; production waits for its rung.
 			const items = [item('a', +DAY)];
 			const pool = [
-				row('typed', ['a'], { generatedAt: NOW }),
+				freeProductionRow('typed', ['a'], { generatedAt: NOW }),
 				recognition('choice', ['a'], { generatedAt: NOW - 5 * DAY })
 			];
 
-			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['choice', 'typed']);
+			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['choice']);
 			expect(ids(planSession(pool, [strongItem('a', +DAY)], NOW, { target: 2 }))).toEqual([
-				'typed',
-				'choice'
+				'typed'
 			]);
 		});
 
@@ -1083,6 +1202,41 @@ describe('planSession', () => {
 
 			expect(ids(planSession(pool, items, NOW, { target: 1 }))).toEqual(['old-but-due']);
 		});
+	});
+});
+
+/* -------------------------------------------------------------------------- */
+
+describe('smoothDemand', () => {
+	it('pulls the nearest later demand-1 challenge between a 0,2 pair', () => {
+		const plan = [demand0('a'), demand2('b'), demand1('c')];
+
+		expect(ids(smoothDemand(plan))).toEqual(['a', 'c', 'b']);
+	});
+
+	it('leaves a 0,2 jump alone when no demand-1 challenge exists anywhere', () => {
+		const plan = [demand0('a'), demand2('b'), demand0('c')];
+
+		expect(ids(smoothDemand(plan))).toEqual(['a', 'b', 'c']);
+	});
+
+	it('leaves an already-smooth 0,1,2 run untouched', () => {
+		const plan = [demand0('a'), demand1('b'), demand2('c')];
+
+		expect(ids(smoothDemand(plan))).toEqual(['a', 'b', 'c']);
+	});
+
+	it('preserves the relative order of every challenge not pulled forward', () => {
+		const plan = [demand0('a'), demand0('b'), demand2('c'), demand1('d'), demand0('e')];
+
+		// 'd' is pulled between 'b' and 'c'; 'a', 'b', 'c' and 'e' keep their order.
+		expect(ids(smoothDemand(plan))).toEqual(['a', 'b', 'd', 'c', 'e']);
+	});
+
+	it('is deterministic', () => {
+		const plan = [demand0('a'), demand2('b'), demand1('c'), demand0('d'), demand2('e')];
+
+		expect(ids(smoothDemand(plan))).toEqual(ids(smoothDemand(plan)));
 	});
 });
 
@@ -1388,18 +1542,19 @@ describe('session walkthrough (mock batch, no database)', () => {
 		};
 	}
 
-	it('plays a flawless session: the whole plan and 3 free rounds', async () => {
+	it('plays a flawless session with only early-level active formats', async () => {
 		const known = Array.from({ length: 7 }, (_, i) => item(`k${i}`, -DAY));
 		const run = await playSession(known, () => 'correct');
 
-		// A BATCH_TARGET-sized plan, played to the end: the session is sized by
-		// what was planned, and nothing may be left over at the end of it.
-		expect(run.llmAnswered).toBe(BATCH_TARGET);
+		// Every playable challenge the mock batch yields for seven words, played
+		// to the end: the session is sized by what was planned, and nothing may be
+		// left over at the end of it.
+		expect(run.llmAnswered).toBe(5);
 		expect(run.unplayed).toBe(0);
-		expect(run.matchRounds).toBe(3); // after the 4th, 8th and 12th answer
-		expect(run.answers).toHaveLength(BATCH_TARGET + 3);
+		expect(run.matchRounds).toBe(1); // after the 4th early-material answer
+		expect(run.answers).toHaveLength(6);
 		expect(run.summary.accuracy).toBe(1);
-		expect(run.summary.correct).toBe(BATCH_TARGET + 3);
+		expect(run.summary.correct).toBe(6);
 	});
 
 	it('counts a single miss without disturbing the rest of the session', async () => {
@@ -1408,9 +1563,9 @@ describe('session walkthrough (mock batch, no database)', () => {
 			index === 4 ? 'wrong' : 'correct'
 		);
 
-		expect(run.llmAnswered).toBe(BATCH_TARGET);
+		expect(run.llmAnswered).toBe(5);
 		expect(run.summary.wrong).toBe(1);
-		expect(run.summary.answered).toBe(BATCH_TARGET + 3);
+		expect(run.summary.answered).toBe(6);
 	});
 
 	it('ends gracefully when the plan is shorter than a full session', async () => {

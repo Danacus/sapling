@@ -162,6 +162,58 @@
 		},
 		{
 			"seq": 8,
+			"id": "ev-ch-multi-cloze",
+			"type": "challengeAdded",
+			"at": 1710061560000,
+			"device": "dev-a",
+			"payload": {
+				"challenge": {
+					"id": "ch-multi-cloze",
+					"type": "multi-cloze",
+					"direction": "toTarget",
+					"passage": "___1___，我是李明。然后我说___2___。",
+					"passageRomanization": "___, wǒ shì Lǐ Míng. Ránhòu wǒ shuō ___.",
+					"gaps": [
+						{
+							"itemId": "item-ni",
+							"acceptedAnswers": [
+								"你好"
+							],
+							"answerRomanization": "nǐ hǎo"
+						},
+						{
+							"itemId": "item-xie",
+							"acceptedAnswers": [
+								"谢谢"
+							],
+							"answerRomanization": "xièxie"
+						}
+					],
+					"wordBank": [
+						"你好",
+						"谢谢",
+						"再见",
+						"请",
+						"菜单"
+					],
+					"wordBankRomanization": [
+						"nǐ hǎo",
+						"xièxie",
+						"zàijiàn",
+						"qǐng",
+						"càidān"
+					],
+					"itemIds": [
+						"item-ni",
+						"item-xie"
+					]
+				},
+				"generatedAt": 1710061560000,
+				"topic": "greetings"
+			}
+		},
+		{
+			"seq": 9,
 			"id": "ev-ch-mp",
 			"type": "challengeAdded",
 			"at": 1710061560000,
@@ -192,7 +244,7 @@
 			}
 		},
 		{
-			"seq": 9,
+			"seq": 10,
 			"id": "ev-ch-wo",
 			"type": "challengeAdded",
 			"at": 1710061560000,
@@ -228,7 +280,7 @@
 			}
 		},
 		{
-			"seq": 10,
+			"seq": 11,
 			"id": "ev-ch-se",
 			"type": "challengeAdded",
 			"at": 1710061560000,
@@ -256,7 +308,7 @@
 			}
 		},
 		{
-			"seq": 11,
+			"seq": 12,
 			"id": "ev-ch-unknown",
 			"type": "challengeAdded",
 			"at": 1710061560000,
@@ -272,7 +324,7 @@
 			}
 		},
 		{
-			"seq": 12,
+			"seq": 13,
 			"id": "ev-serve-1",
 			"type": "challengeServed",
 			"at": 1710061800000,
@@ -283,7 +335,7 @@
 			}
 		},
 		{
-			"seq": 13,
+			"seq": 14,
 			"id": "ev-result-1",
 			"type": "resultLogged",
 			"at": 1710061800000,
@@ -296,7 +348,7 @@
 			}
 		},
 		{
-			"seq": 14,
+			"seq": 15,
 			"id": "ev-review-1",
 			"type": "itemReviewed",
 			"at": 1710061800000,
@@ -309,7 +361,7 @@
 			}
 		},
 		{
-			"seq": 15,
+			"seq": 16,
 			"id": "ev-serve-2",
 			"type": "challengeServed",
 			"at": 1710061860000,
@@ -320,7 +372,7 @@
 			}
 		},
 		{
-			"seq": 16,
+			"seq": 17,
 			"id": "ev-result-2",
 			"type": "resultLogged",
 			"at": 1710061860000,
@@ -333,7 +385,7 @@
 			}
 		},
 		{
-			"seq": 17,
+			"seq": 18,
 			"id": "ev-review-2",
 			"type": "itemReviewed",
 			"at": 1710061860000,
@@ -346,7 +398,7 @@
 			}
 		},
 		{
-			"seq": 18,
+			"seq": 19,
 			"id": "ev-amend-2",
 			"type": "reviewAmended",
 			"at": 1710061890000,
@@ -360,7 +412,7 @@
 			}
 		},
 		{
-			"seq": 19,
+			"seq": 20,
 			"id": "ev-serve-3",
 			"type": "challengeServed",
 			"at": 1710061920000,
@@ -371,7 +423,7 @@
 			}
 		},
 		{
-			"seq": 20,
+			"seq": 21,
 			"id": "ev-result-3",
 			"type": "resultLogged",
 			"at": 1710061920000,
@@ -384,7 +436,7 @@
 			}
 		},
 		{
-			"seq": 21,
+			"seq": 22,
 			"id": "ev-review-3",
 			"type": "itemReviewed",
 			"at": 1710061920000,
@@ -397,7 +449,7 @@
 			}
 		},
 		{
-			"seq": 22,
+			"seq": 23,
 			"id": "ev-report-se",
 			"type": "challengeReported",
 			"at": 1710062100000,
@@ -407,7 +459,7 @@
 			}
 		},
 		{
-			"seq": 23,
+			"seq": 24,
 			"id": "ev-update-xie",
 			"type": "itemUpdated",
 			"at": 1710062400000,
@@ -420,7 +472,7 @@
 			}
 		},
 		{
-			"seq": 24,
+			"seq": 25,
 			"id": "ev-add-gone",
 			"type": "itemAdded",
 			"at": 1710062700000,
@@ -435,7 +487,7 @@
 			}
 		},
 		{
-			"seq": 25,
+			"seq": 26,
 			"id": "ev-review-gone",
 			"type": "itemReviewed",
 			"at": 1710062760000,
@@ -448,7 +500,7 @@
 			}
 		},
 		{
-			"seq": 26,
+			"seq": 27,
 			"id": "ev-delete-gone",
 			"type": "itemDeleted",
 			"at": 1710063000000,
@@ -458,7 +510,7 @@
 			}
 		},
 		{
-			"seq": 27,
+			"seq": 28,
 			"id": "ev-serve-4",
 			"type": "challengeServed",
 			"at": 1710199800000,
@@ -469,7 +521,7 @@
 			}
 		},
 		{
-			"seq": 28,
+			"seq": 29,
 			"id": "ev-result-4",
 			"type": "resultLogged",
 			"at": 1710199800000,
@@ -482,7 +534,7 @@
 			}
 		},
 		{
-			"seq": 29,
+			"seq": 30,
 			"id": "ev-result-5",
 			"type": "resultLogged",
 			"at": 1710202500000,
@@ -495,7 +547,7 @@
 			}
 		},
 		{
-			"seq": 30,
+			"seq": 31,
 			"id": "ev-result-6",
 			"type": "resultLogged",
 			"at": 1710230400000,
@@ -508,7 +560,7 @@
 			}
 		},
 		{
-			"seq": 31,
+			"seq": 32,
 			"id": "ev-text-1",
 			"type": "textAdded",
 			"at": 1710064800000,
@@ -540,7 +592,7 @@
 			}
 		},
 		{
-			"seq": 32,
+			"seq": 33,
 			"id": "ev-text-2",
 			"type": "textAdded",
 			"at": 1710065100000,
@@ -570,7 +622,7 @@
 			}
 		},
 		{
-			"seq": 33,
+			"seq": 34,
 			"id": "ev-text-3",
 			"type": "textAdded",
 			"at": 1710065160000,
@@ -596,7 +648,7 @@
 			}
 		},
 		{
-			"seq": 34,
+			"seq": 35,
 			"id": "ev-text-3-deleted",
 			"type": "textDeleted",
 			"at": 1710065220000,
@@ -606,7 +658,7 @@
 			}
 		},
 		{
-			"seq": 35,
+			"seq": 36,
 			"id": "ev-mark-1",
 			"type": "wordMarked",
 			"at": 1710065400000,
@@ -617,7 +669,7 @@
 			}
 		},
 		{
-			"seq": 36,
+			"seq": 37,
 			"id": "ev-mark-2",
 			"type": "wordMarked",
 			"at": 1710065460000,
@@ -628,7 +680,7 @@
 			}
 		},
 		{
-			"seq": 37,
+			"seq": 38,
 			"id": "ev-mark-3",
 			"type": "wordMarked",
 			"at": 1710065520000,
@@ -639,7 +691,7 @@
 			}
 		},
 		{
-			"seq": 38,
+			"seq": 39,
 			"id": "ev-lookup-1",
 			"type": "wordLookedUp",
 			"at": 1710065580000,
@@ -650,7 +702,7 @@
 			}
 		},
 		{
-			"seq": 39,
+			"seq": 40,
 			"id": "ev-lookup-2",
 			"type": "wordLookedUp",
 			"at": 1710065640000,
@@ -662,7 +714,7 @@
 			}
 		},
 		{
-			"seq": 40,
+			"seq": 41,
 			"id": "ev-conv-1",
 			"type": "conversationStarted",
 			"at": 1710068400000,
@@ -685,7 +737,7 @@
 			}
 		},
 		{
-			"seq": 41,
+			"seq": 42,
 			"id": "ev-turn-1-0",
 			"type": "turnAdded",
 			"at": 1710068400000,
@@ -705,7 +757,7 @@
 			}
 		},
 		{
-			"seq": 42,
+			"seq": 43,
 			"id": "ev-turn-1-1",
 			"type": "turnAdded",
 			"at": 1710068520000,
@@ -744,7 +796,7 @@
 			}
 		},
 		{
-			"seq": 43,
+			"seq": 44,
 			"id": "ev-conv-2",
 			"type": "conversationStarted",
 			"at": 1710069000000,
@@ -761,7 +813,7 @@
 			}
 		},
 		{
-			"seq": 44,
+			"seq": 45,
 			"id": "ev-turn-2-0",
 			"type": "turnAdded",
 			"at": 1710069060000,
@@ -784,7 +836,7 @@
 			}
 		},
 		{
-			"seq": 45,
+			"seq": 46,
 			"id": "ev-conv-2-deleted",
 			"type": "conversationDeleted",
 			"at": 1710069300000,

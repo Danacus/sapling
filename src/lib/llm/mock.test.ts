@@ -78,7 +78,14 @@ describe('mockBatch', () => {
 	it('covers every generated challenge type and both directions', () => {
 		const types = new Set(result.challenges.map((c) => c.type));
 		expect(types).toEqual(
-			new Set(['multiple-choice', 'cloze', 'typed-translation', 'word-order', 'spot-error'])
+			new Set([
+				'multiple-choice',
+				'cloze',
+				'multi-cloze',
+				'typed-translation',
+				'word-order',
+				'spot-error'
+			])
 		);
 
 		const directions = new Set(result.challenges.map((c) => c.direction));

@@ -36,6 +36,15 @@ import type { Challenge, ChallengeType, Direction } from '$lib/types';
 export interface StoredShape {
 	readonly type: ChallengeType;
 	readonly direction: Direction;
+	/**
+	 * The one stored fact beyond `{type, direction}` a wire type may need to be
+	 * told apart from a sibling that resolves to the same pair — `context-mc`
+	 * from `produce-mc`, both `{multiple-choice, toTarget}`. Mirrors the stored
+	 * `MultipleChoiceChallenge.promptIsTarget` field verbatim, so `kindOf`
+	 * (`../requests`) can build the same lookup key from either side: this
+	 * declared shape, or the resolved challenge it produced.
+	 */
+	readonly promptIsTarget?: true;
 }
 
 /**
@@ -95,6 +104,15 @@ export type ChallengeParams = Record<string, number>;
 /** Everything a resolver is allowed to depend on beyond its own payload. */
 export interface ResolveContext {
 	base: ChallengeBase;
+	/**
+	 * Resolves one generated item reference (id or known-term citation) to its
+	 * actual item id. Most types only need `base.itemIds`; multi-item formats use
+	 * this to keep each sub-question attached to the item it names.
+	 *
+	 * Optional for direct fixture resolves, which deliberately construct only the
+	 * minimal context.
+	 */
+	resolveItemRef?: (ref: string) => string | undefined;
 	/** Injectable `[0,1)` source, so option order and tile order are replayable. */
 	rng: () => number;
 	/**

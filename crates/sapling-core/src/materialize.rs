@@ -31,9 +31,10 @@ pub const LOG_ORDER: &str = "seq IS NULL, seq, rowid";
 
 /// The challenge types this build knows how to play; an unknown type costs one
 /// skipped row and the event stays in the log for a later build.
-const CHALLENGE_TYPES: [&str; 6] = [
+const CHALLENGE_TYPES: [&str; 7] = [
     "multiple-choice",
     "cloze",
+    "multi-cloze",
     "typed-translation",
     "match-pairs",
     "word-order",

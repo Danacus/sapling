@@ -10,9 +10,9 @@
  * one rung each. The walk is the learner's **whole vocabulary**, in urgency
  * order — the words the schedule owes, most overdue first, then the not-yet-due
  * ones, soonest first — and each word in turn contributes a want for every
- * kind-group it is short in ({@link WANT_PER_WORD} of them: a recognition kind
- * and a production kind once the word can bear production, two recognition
- * kinds before that). A word that is already covered contributes nothing and is
+ * kind-group it is short in ({@link WANT_PER_WORD} of them: one recognition kind
+ * and one production kind when both are available, or two distinct kinds from
+ * the available side at a ladder edge). A word that is already covered contributes nothing and is
  * simply stepped over. The LLM layer (`$lib/llm`) plans nothing: it fills the
  * list, one request per kind.
  *
@@ -36,7 +36,14 @@
  */
 
 import type { ChallengeRow } from '$lib/db';
-import { PLANNABLE_KINDS, bareKind, kindKey, kindOf } from '$lib/llm';
+import {
+	PLANNABLE_KINDS,
+	bareKind,
+	isActiveKind,
+	isKindAvailableAt,
+	kindKey,
+	kindOf
+} from '$lib/llm';
 import type { PlannableKind, Want, WantItem } from '$lib/llm';
 import { dueAt, isDue } from '$lib/srs';
 import type { KnowledgeItem } from '$lib/types';
@@ -44,9 +51,9 @@ import { SESSION_LENGTH, isPlayable, isRested, knownItemIds } from './pool';
 import { demandForLevel, difficultyLevelOf } from './progression';
 
 /**
- * Fresh challenges each word should have waiting: a recognition kind and a
- * production kind once the word can bear production, two recognition kinds
- * before that.
+ * Fresh challenges each word should have waiting: one recognition kind and one
+ * production kind when both are available, or two distinct kinds from the
+ * available side at a ladder edge.
  *
  * Two, not more, because a session serves each word once or twice and the
  * pool is recycled after {@link RESERVE_GAP}: a third challenge per word would
@@ -86,14 +93,23 @@ interface Coverage {
  */
 function coverageOf(pool: readonly ChallengeRow[], items: readonly KnowledgeItem[], now: number) {
 	const known = knownItemIds(items);
+	const byId = new Map(items.map((item) => [item.id, item]));
 	const coverage = new Map<string, Coverage>();
 	for (const row of pool) {
 		if (!isPlayable(row, known)) continue;
 		const kind = kindOf(row);
-		if (!kind) continue;
+		// Legacy rows remain parseable, but retired kinds (for example full
+		// sentence translation into the target language) must not count as new
+		// coverage. They can age out of the pool without keeping generation from
+		// filling an active kind.
+		if (!kind || !isActiveKind(kind)) continue;
 		const key = kindKey(kind);
 		const rested = isRested(row, now);
 		for (const id of row.itemIds) {
+			const item = byId.get(id);
+			// A challenge generated for an earlier rung should not keep a word
+			// covered after it has progressed beyond that kind's availability.
+			if (!item || !isKindAvailableAt(kind, difficultyLevelOf(item))) continue;
 			let entry = coverage.get(id);
 			if (!entry) {
 				entry = { rested: new Set(), ever: new Set() };
@@ -227,25 +243,26 @@ function collectWants(
 
 		const level = difficultyLevelOf(word);
 		const bearable = demandForLevel(level);
-		const allowed = PLANNABLE_KINDS.filter((kind) => kind.demand <= bearable);
+		const allowed = PLANNABLE_KINDS.filter(
+			(kind) => kind.demand <= bearable && kind.levels.includes(level)
+		);
 		const recognition = allowed.filter((kind) => kind.demand === 0);
 		const production = allowed.filter((kind) => kind.demand > 0);
 		const have = coverage.get(word.id) ?? NONE;
 		const item: WantItem = { id: word.id, term, meaning };
 		const chosen = new Set<string>();
 
-		// One of each group once production is bearable; otherwise both from
-		// recognition. `need` is distinct *kinds* the word should have rested
-		// challenges of in that group, so a word with two rested recognize-mc rows
-		// still gets a second recognition kind — that is the variety the pool is
-		// for.
+		// One of each group when both sides exist; otherwise both wants come from
+		// the available side. The latter matters at the top of the ladder, where
+		// recognition has deliberately ended and mature words should still get
+		// two different production formats for variety.
 		const groups: [readonly PlannableKind[], number][] =
-			production.length > 0
+			recognition.length > 0 && production.length > 0
 				? [
 						[recognition, WANT_PER_WORD - 1],
 						[production, 1]
 					]
-				: [[recognition, WANT_PER_WORD]];
+				: [[allowed, WANT_PER_WORD]];
 
 		for (const [group, need] of groups) {
 			const covered = group.filter((kind) => have.rested.has(kindKey(kind))).length;
