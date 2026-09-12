@@ -348,7 +348,13 @@
 			</p>
 		</section>
 
-		<div class="messages" bind:this={messagesEl} aria-live="polite">
+		<div
+			class="messages"
+			bind:this={messagesEl}
+			role="log"
+			aria-label="Conversation with your teacher"
+			aria-relevant="additions text"
+		>
 			{#each turns as turn, index (index)}
 				{#if turn.role === 'learner'}
 					<div class="row learner-row">
@@ -443,7 +449,7 @@
 
 			{#if busy}
 				<div class="row teacher-row">
-					<div class="bubble teacher-bubble typing" role="status" aria-label="Teacher is typing">
+					<div class="bubble teacher-bubble typing" aria-label="Teacher is typing">
 						<span class="dot"></span>
 						<span class="dot"></span>
 						<span class="dot"></span>
@@ -453,7 +459,7 @@
 
 			{#if pendingError}
 				<div class="row teacher-row">
-					<div class="bubble error-bubble" role="alert">
+					<div class="bubble error-bubble">
 						<p class="error-text">{pendingError.message}</p>
 						<button type="button" class="btn btn-ghost retry-btn" onclick={() => void retry()}>
 							Retry
@@ -982,7 +988,7 @@
 
 	@media (max-width: 480px) {
 		.shell {
-			padding: 1rem 0.75rem 0;
+			padding-block: 1rem 0;
 		}
 
 		.messages {

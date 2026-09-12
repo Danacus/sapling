@@ -435,10 +435,12 @@
 	}
 
 	/* One cell size drives every track, so the month row, the weekday column
-	   and the grid line up by construction rather than by measurement. */
+	   and the grid line up by construction rather than by measurement. The
+	   1.625rem pitch gives each small day target at least 24 CSS pixels from
+	   the next target's centre, while the year still scrolls within its card. */
 	.heat {
-		--cell: 0.8rem;
-		--cell-gap: 3px;
+		--cell: 1.25rem;
+		--cell-gap: 0.375rem;
 		display: grid;
 		grid-template-columns: auto 1fr;
 		grid-template-rows: auto auto;

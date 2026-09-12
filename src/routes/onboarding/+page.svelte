@@ -226,7 +226,7 @@
 
 			<div class="field">
 				<span class="label">Interests</span>
-				<InterestPicker bind:interests />
+				<InterestPicker bind:interests label="Interests" />
 			</div>
 		{:else}
 			<header class="head">

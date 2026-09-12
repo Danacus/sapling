@@ -190,7 +190,13 @@
 			</p>
 		{/if}
 
-		<div class="messages" bind:this={messagesEl} aria-live="polite">
+		<div
+			class="messages"
+			bind:this={messagesEl}
+			role="log"
+			aria-label="Assistant conversation history"
+			aria-relevant="additions text"
+		>
 			{#if turns.length === 0}
 				<div class="empty">
 					<span class="mark" aria-hidden="true">
@@ -250,11 +256,7 @@
 
 			{#if busy}
 				<div class="row assistant-row">
-					<div
-						class="bubble assistant-bubble typing"
-						role="status"
-						aria-label="Assistant is typing"
-					>
+					<div class="bubble assistant-bubble typing" aria-label="Assistant is typing">
 						<span class="dot"></span>
 						<span class="dot"></span>
 						<span class="dot"></span>
@@ -264,7 +266,7 @@
 
 			{#if pendingError}
 				<div class="row assistant-row">
-					<div class="bubble error-bubble" role="alert">
+					<div class="bubble error-bubble">
 						<p class="error-text">{pendingError.message}</p>
 						<button type="button" class="btn btn-ghost retry-btn" onclick={() => void retry()}>
 							Retry
@@ -710,7 +712,7 @@
 
 	@media (max-width: 480px) {
 		.shell {
-			padding: 1rem 0.75rem 0;
+			padding-block: 1rem 0;
 		}
 
 		.messages {

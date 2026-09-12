@@ -962,8 +962,9 @@
 				<hr class="stitch" />
 
 				<div class="field">
-					<span class="label">API key</span>
+					<label class="label" for="settings-api-key">API key</label>
 					<input
+						id="settings-api-key"
 						class="input"
 						type="password"
 						bind:value={apiKeyInput}
@@ -974,8 +975,9 @@
 					<p class="hint">The key stays in this browser.</p>
 				</div>
 				<div class="field">
-					<span class="label">Model</span>
+					<label class="label" for="settings-model">Model</label>
 					<input
+						id="settings-model"
 						class="input"
 						list="settings-models"
 						bind:value={modelInput}
@@ -994,8 +996,9 @@
 			  OpenRouter, which the placeholder already says.
 			-->
 				<div class="field field-aside">
-					<span class="label">API endpoint</span>
+					<label class="label" for="settings-api-endpoint">API endpoint</label>
 					<input
+						id="settings-api-endpoint"
 						class="input"
 						type="url"
 						bind:value={baseUrlInput}
@@ -1126,8 +1129,9 @@
 					{/if}
 
 					<div class="field">
-						<span class="label">Pair with another device</span>
+						<label class="label" for="settings-pairing-phrase">Pair with another device</label>
 						<input
+							id="settings-pairing-phrase"
 							class="input"
 							bind:value={pairInput}
 							oninput={() => (pairStage = 'idle')}
@@ -1209,8 +1213,9 @@
 				{/if}
 
 				<div class="field import-field">
-					<span class="label">Import progress</span>
+					<label class="label" for="settings-import-progress">Import progress</label>
 					<input
+						id="settings-import-progress"
 						class="input"
 						type="file"
 						accept="application/json"

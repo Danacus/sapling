@@ -22,13 +22,13 @@
 	--text-muted: #71765f;
 	--text-inverse: #fdfbf5;
 
-	--primary: #4f8c3d; /* leaf green */
-	--primary-strong: #3c7030;
+	--primary: #3c7030; /* leaf green — AA across every paper surface */
+	--primary-strong: #2e5925;
 	--primary-soft: #e2ecd4;
-	--accent: #c96a3b; /* terracotta */
+	--accent: #a34822; /* terracotta */
 	--accent-soft: #f4e2d3;
 	--warn: #dfa932;
-	--danger: #c94f35;
+	--danger: #aa3420;
 	--amber: #d89035;
 
 	/* Measure & gutters ----------------------------------------------------- */
