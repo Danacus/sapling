@@ -21,6 +21,7 @@
 <script lang="ts">
 	import { ALL_READINGS, rubyFor, storedReading, type ChallengeProps } from '$lib/challenges/props';
 	import type { RomanizedToken } from '$lib/romanize';
+	import { visibleBank } from '$lib/session/support';
 	import type { ClozeChallenge } from '$lib/types';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import { validateAnswer } from '$lib/validate';
@@ -37,6 +38,7 @@
 		targetLanguage = '',
 		readings = ALL_READINGS,
 		showHint = true,
+		bankSize,
 		tokenize = null
 	}: ChallengeProps<ClozeChallenge> = $props();
 
@@ -90,7 +92,15 @@
 		return { before, after };
 	});
 
-	const bank = $derived(challenge.wordBank ?? []);
+	/**
+	 * The stored bank positions this served challenge shows — every position
+	 * when `bankSize` was not supplied, so a bare render (tests) keeps showing
+	 * everything stored.
+	 */
+	const visibleIndices = $derived(
+		visibleBank(challenge, bankSize ?? challenge.wordBank?.length ?? 0)
+	);
+	const bank = $derived(visibleIndices.map((index) => challenge.wordBank![index]));
 	const usesBank = $derived(bank.length > 0);
 
 	let typed = $state('');
@@ -147,7 +157,7 @@
 	const gapTokens = $derived(pickedIndex === null ? null : ruby(bank[pickedIndex]));
 
 	function readingOf(index: number): string {
-		return storedReading(readings, challenge.wordBankRomanization?.[index]);
+		return storedReading(readings, challenge.wordBankRomanization?.[visibleIndices[index]]);
 	}
 
 	function pick(index: number): void {

@@ -68,6 +68,25 @@ export interface ChallengeProps<C extends Challenge> {
 	 */
 	showHint?: boolean;
 	/**
+	 * How many entries a cloze's or multi-cloze's word bank should show,
+	 * answer(s) included — decided once per served challenge by
+	 * `$lib/session/support`'s `bankSizeFor`, from how well the challenge's
+	 * words are known. The full stored bank is always kept; this only says how
+	 * much of it to render, via `visibleBank`.
+	 *
+	 * Optional, defaulting to "show everything stored", so a bare render (tests,
+	 * `MatchPairs`, any component that ignores this) needs nothing.
+	 */
+	bankSize?: number;
+	/**
+	 * How many extra distractor tiles a word-order challenge's tray should show
+	 * beyond the sentence's own tiles — decided once per served challenge by
+	 * `$lib/session/support`'s `distractorTilesFor`, via `visibleTiles`.
+	 *
+	 * Optional, defaulting to "show every stored tile".
+	 */
+	distractorTiles?: number;
+	/**
 	 * Romanize one string of *target-language* text locally, or `null` when this
 	 * language has no local romanizer (`$lib/romanize`) — in which case the
 	 * component falls back to the stored, LLM-written romanization fields on the

@@ -27,6 +27,7 @@
 <script lang="ts">
 	import { ALL_READINGS, rubyFor, storedReading, type ChallengeProps } from '$lib/challenges/props';
 	import type { RomanizedToken } from '$lib/romanize';
+	import { visibleTiles } from '$lib/session/support';
 	import { isPunctuationOnly, joinTokens } from '$lib/text';
 	import type { WordOrderChallenge } from '$lib/types';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
@@ -43,6 +44,7 @@
 		onanswer,
 		readings = ALL_READINGS,
 		showHint = true,
+		distractorTiles,
 		tokenize = null
 	}: ChallengeProps<WordOrderChallenge> = $props();
 
@@ -60,10 +62,22 @@
 		}
 	);
 
+	/**
+	 * The stored tile positions this served challenge shows — every position
+	 * when `distractorTiles` was not supplied, so a bare render (tests) keeps
+	 * showing every stored tile.
+	 */
+	const visibleIndices = $derived(
+		visibleTiles(
+			challenge,
+			distractorTiles ?? Math.max(0, challenge.tiles.length - challenge.answerTokens.length)
+		)
+	);
+
 	const bank = $derived(
 		challenge.tiles
 			.map((text, index) => ({ index, text }))
-			.filter((tile) => !placed.includes(tile.index))
+			.filter((tile) => visibleIndices.includes(tile.index) && !placed.includes(tile.index))
 	);
 
 	const chosen = $derived(placed.map((index) => challenge.tiles[index]));

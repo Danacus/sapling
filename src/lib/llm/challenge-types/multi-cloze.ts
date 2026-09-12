@@ -21,7 +21,12 @@ export const generatedMultiClozeSchema = z.object({
 	/** Consecutive target-language spans around the gaps; one more than `gaps`. */
 	parts: z.array(clozePartSchema).min(3).max(5),
 	gaps: z.array(generatedGapSchema).min(2).max(4),
-	/** Wrong target-language choices only; answers enter the bank locally. */
+	/**
+	 * Wrong target-language choices only; answers enter the bank locally.
+	 * Always written large enough that the shared bank reaches nine entries —
+	 * answers included; how much of it a served challenge shows is a
+	 * serve-time decision (`$lib/session/support`), not this schema's.
+	 */
 	distractorWords: z.array(targetTextSchema).min(2),
 	...generatedBase
 });
@@ -30,7 +35,15 @@ export type GeneratedMultiCloze = z.infer<typeof generatedMultiClozeSchema>;
 
 const PASSAGE_WORDS = [8, 11, 14, 17, 20] as const;
 const GAP_COUNTS = [2, 2, 3, 3, 4] as const;
-const BANK_CHOICES = [5, 6, 7, 8, 9] as const;
+
+/**
+ * The shared bank's target size, answers included — constant, not a ladder:
+ * which rung a word sits at no longer changes what is *written*, only what a
+ * served challenge *shows* (`$lib/session/support`'s
+ * `bankSizeFor`/`visibleBank`). Nine is the top of the old ladder, so every
+ * banked passage is written with the fullest bank the model can supply.
+ */
+const BANK_ENTRIES = 9;
 
 function marker(index: number): string {
 	return `___${index + 1}___`;
@@ -51,12 +64,15 @@ function passageRomanization(
 	);
 }
 
-/** Shared word bank; every answer survives and collision-prone extras do not. */
+/**
+ * Shared word bank; every answer survives and collision-prone extras do not.
+ * Stores the full surviving set — sizing how much of it a served challenge
+ * shows is `$lib/session/support`'s job, not this resolver's.
+ */
 function wordBank(
 	gaps: readonly { answer: TargetText }[],
 	distractors: readonly TargetText[],
-	rng: () => number,
-	limit?: number
+	rng: () => number
 ): { wordBank: string[]; wordBankRomanization?: string[] } | null {
 	const answers = gaps.map((gap) => ({
 		text: gap.answer.text.trim(),
@@ -67,11 +83,9 @@ function wordBank(
 	// rely on the same bank entry.
 	if (answerKeys.some((key) => !key) || new Set(answerKeys).size !== answerKeys.length) return null;
 
-	const targetSize = limit === undefined ? Infinity : Math.max(answers.length, limit);
 	const entries = [...answers];
 	const seen = new Set(answerKeys);
 	for (const distractor of distractors) {
-		if (entries.length >= targetSize) break;
 		const text = distractor.text.trim();
 		const key = labelKey(text);
 		if (!key || seen.has(key)) continue;
@@ -110,17 +124,14 @@ export const multiClozeDef = {
 	type: 'multi-cloze',
 	schema: generatedMultiClozeSchema,
 	stored: { type: 'multi-cloze', direction: 'toTarget' },
-	promptSpec:
-		'multi-cloze — 2-4 target-language sentences with 2-4 target-language gaps and one shared bank. {parts:[{text,reading}],gaps:[{itemId,answer:{text,reading}}],distractorWords:[{text,reading}],itemIds} e.g. {"type":"multi-cloze","parts":[{"text":"En el restaurante, pido ","reading":null},{"text":". Después pago la ","reading":null},{"text":".","reading":null}],"gaps":[{"itemId":"pedir","answer":{"text":"comida","reading":null}},{"itemId":"la cuenta","answer":{"text":"cuenta","reading":null}}],"distractorWords":[{"text":"mesa","reading":null},{"text":"carta","reading":null},{"text":"propina","reading":null}],"itemIds":["pedir","la cuenta"],"explanation":null} — parts are consecutive spans around gaps and must have exactly one more entry than gaps; gaps and itemIds are in the same order; all text is target-language.',
+	promptSpec: `multi-cloze — 2-4 target-language sentences with 2-4 target-language gaps and one shared bank of ${BANK_ENTRIES}. {parts:[{text,reading}],gaps:[{itemId,answer:{text,reading}}],distractorWords:[{text,reading}],itemIds} e.g. {"type":"multi-cloze","parts":[{"text":"En el restaurante, pido ","reading":null},{"text":". Después pago la ","reading":null},{"text":".","reading":null}],"gaps":[{"itemId":"pedir","answer":{"text":"comida","reading":null}},{"itemId":"la cuenta","answer":{"text":"cuenta","reading":null}}],"distractorWords":[{"text":"mesa","reading":null},{"text":"carta","reading":null},{"text":"propina","reading":null},{"text":"botella","reading":null},{"text":"servilleta","reading":null},{"text":"copa","reading":null},{"text":"plato","reading":null}],"itemIds":["pedir","la cuenta"],"explanation":null} — parts are consecutive spans around gaps and must have exactly one more entry than gaps; gaps and itemIds are in the same order; all text is target-language. Write enough distractorWords that, together with the answers, the shared bank has ${BANK_ENTRIES} entries.`,
 	rulesSpec:
 		'- Multi-cloze is target-language-only: do not include a native translation or hint. Write a coherent 2-4 sentence scene, use each itemId for exactly one gap, and make distractors plausible in the same context without making an answer ambiguous.',
 	correctiveSpec: 'multi-cloze {parts,gaps,distractorWords,itemIds}',
-	paramsSpec:
-		'- words: target-language words across the whole passage. gaps: blanks to write. choices: shared word-bank entries including every answer; fill the rest with plausible distractors.',
+	paramsSpec: '- words: target-language words across the whole passage. gaps: blanks to write.',
 	params: (difficulty) => ({
 		words: PASSAGE_WORDS[difficulty - 1],
-		gaps: GAP_COUNTS[difficulty - 1],
-		choices: BANK_CHOICES[difficulty - 1]
+		gaps: GAP_COUNTS[difficulty - 1]
 	}),
 	escalationSpec:
 		'multi-cloze passage stores numbered gaps; the logged answer is `N: chosen word` entries in passage order, and each gap has its own accepted answer and item id.',
@@ -142,7 +153,11 @@ export const multiClozeDef = {
 					distractorWords: [
 						{ text: 'mesa', reading: null },
 						{ text: 'carta', reading: null },
-						{ text: 'propina', reading: null }
+						{ text: 'propina', reading: null },
+						{ text: 'botella', reading: null },
+						{ text: 'servilleta', reading: null },
+						{ text: 'copa', reading: null },
+						{ text: 'plato', reading: null }
 					],
 					itemIds: ['pedir', 'la cuenta'],
 					explanation: null
@@ -166,7 +181,11 @@ export const multiClozeDef = {
 					distractorWords: [
 						{ text: '筷子', reading: 'kuàizi' },
 						{ text: '茶', reading: 'chá' },
-						{ text: '水', reading: 'shuǐ' }
+						{ text: '水', reading: 'shuǐ' },
+						{ text: '咖啡', reading: 'kāfēi' },
+						{ text: '啤酒', reading: 'píjiǔ' },
+						{ text: '碗', reading: 'wǎn' },
+						{ text: '勺子', reading: 'sháozi' }
 					],
 					itemIds: ['菜单', '买单'],
 					explanation: '先 (xiān) marks the first action; 然后 (ránhòu) introduces what comes next.'
@@ -189,7 +208,7 @@ export const multiClozeDef = {
 		if (ctx.resolveItemRef && new Set(resolvedItemIds).size !== resolvedItemIds.length) return null;
 		const itemIds = resolvedItemIds;
 
-		const bank = wordBank(generated.gaps, generated.distractorWords, ctx.rng, ctx.params?.choices);
+		const bank = wordBank(generated.gaps, generated.distractorWords, ctx.rng);
 		if (!bank) return null;
 
 		const passage = generated.parts

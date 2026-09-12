@@ -149,8 +149,9 @@ describe('mockBatch', () => {
 
 		expect(wordOrder.answerTokens).toEqual(['¿Nos', 'trae', 'la', 'cuenta,', 'por', 'favor?']);
 		expect(wordOrder.answer).toBe('¿Nos trae la cuenta, por favor?');
-		// Two distractors on top of the six real tiles, all still available.
-		expect(wordOrder.tiles).toHaveLength(8);
+		// Three distractors on top of the six real tiles, all still available —
+		// every generated row now carries the fullest tray, whatever the rung.
+		expect(wordOrder.tiles).toHaveLength(9);
 		for (const token of wordOrder.answerTokens) expect(wordOrder.tiles).toContain(token);
 		expect(wordOrder.tiles).not.toEqual(wordOrder.answerTokens);
 	});

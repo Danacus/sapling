@@ -66,11 +66,10 @@ function answersFromSerialized(answerGiven: string): string[] {
 	return answerGiven.split(' · ').map((entry) => entry.replace(/^\d+:\s*/, '').trim());
 }
 
-/** Four answers and a nine-word bank are the intentional top end of this format. */
+/** Four answers is the intentional top end of this format; nine is the bank's. */
 const MIN_GAPS = 2;
 const MAX_GAPS = 4;
 const MIN_BANK = 5;
-const MAX_BANK = 9;
 const MIN_PASSAGE_WORDS = 8;
 const MAX_PASSAGE_WORDS = 24;
 
@@ -128,15 +127,16 @@ export const multiClozeStoredDef = {
 		return 1;
 	},
 
-	// Passage length, number of decisions and bank size all climb together. A
-	// larger *shared* bank is a larger search task here, unlike a one-gap cloze
-	// where a bank mostly supplies support.
+	// Passage length and number of decisions climb together; the bank is no
+	// longer one of them. Every generated passage now carries the fullest
+	// shared bank the model can supply regardless of rung, so bank size stopped
+	// being a difficulty knob — how much of it a served challenge shows is a
+	// serve-time decision (`$lib/session/support`), not a fact about the row.
 	difficulty(challenge) {
 		const gaps = clamp01((challenge.gaps.length - MIN_GAPS) / (MAX_GAPS - MIN_GAPS));
 		const words = wordCount(challenge.passage.replace(/___\d+___/g, ' '));
 		const passage = clamp01((words - MIN_PASSAGE_WORDS) / (MAX_PASSAGE_WORDS - MIN_PASSAGE_WORDS));
-		const bank = clamp01((challenge.wordBank.length - MIN_BANK) / (MAX_BANK - MIN_BANK));
-		return withBase(0.45, gaps * 0.4 + passage * 0.35 + bank * 0.25);
+		return withBase(0.45, gaps * 0.55 + passage * 0.45);
 	},
 
 	correctAnswerText(challenge) {

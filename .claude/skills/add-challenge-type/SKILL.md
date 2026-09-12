@@ -37,14 +37,21 @@ differs.
    otherwise be asked for and then rejected on arrival, every time.
 
    **`params(difficulty, kind)` is this type's difficulty**, as counts the model
-   can hit: `{words}`, `{tiles, distractors}`, `{words, bank}`. It must be pure,
-   keep the same keys at every rung, and be monotone in the rung (lengths never
-   fall; a word bank grows, since more plausible candidates is a harder choice). Align the ends with the
-   *stored* side's scales — `challenges/types/primitives.ts`' 1..12-word
-   `lengthKnob`, and whatever constants that type's stored `difficulty` reads —
-   so a challenge written at rung 1 sits at the low end of its tier and one at
-   rung 5 at the high end. `paramsSpec` is one prompt line explaining exactly
-   the keys `params` returns, in the model's terms.
+   can hit: `{words}`, `{tiles}`. It must be pure, keep the same keys at every
+   rung, and be monotone in the rung (lengths never fall). A word bank or a
+   distractor-tile count is deliberately **not** a rung-varying key any more —
+   cloze, multi-cloze and word-order all ask for a constant, full-size set
+   whichever rung the want is written at (cloze's `distractors: kind.bank ? 5
+   : 0`, multi-cloze always writing enough to reach nine bank entries,
+   word-order always asking for three distractor tiles), and `$lib/session/support`
+   sizes how much of that stored set a *served* challenge shows, from the
+   word's current rung. Only a structural count — a sentence's length, a tile
+   tray's own tile count, a gap count — belongs in `params` now. Align the
+   ends with the *stored* side's scales — `challenges/types/primitives.ts`'
+   1..12-word `lengthKnob`, and whatever constants that type's stored
+   `difficulty` reads — so a challenge written at rung 1 sits at the low end of
+   its tier and one at rung 5 at the high end. `paramsSpec` is one prompt line
+   explaining exactly the keys `params` returns, in the model's terms.
    *Forget either, or emit a key `paramsSpec` does not name:* `registry.test.ts`
    fails (and `pnpm check` fails at the def for a missing one).
 

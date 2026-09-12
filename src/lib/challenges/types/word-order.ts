@@ -12,7 +12,7 @@ import { z } from 'zod';
 import type { WordOrderChallenge } from '$lib/types';
 import { normalize } from '$lib/validate';
 import type { StoredTypeDef } from './def';
-import { clamp01, lengthKnob, nonEmpty, storedBase, withBase } from './primitives';
+import { lengthKnob, nonEmpty, storedBase, withBase } from './primitives';
 
 /**
  * The constrained-production tier's floor, shared with a banked `cloze`: both
@@ -20,14 +20,6 @@ import { clamp01, lengthKnob, nonEmpty, storedBase, withBase } from './primitive
  * neither should outrank the other before its own knobs are read.
  */
 const BASE = 0.2;
-
-/**
- * Distractor-tile count spanning the full 0..1 range. Mirrors
- * `MAX_WORD_ORDER_DISTRACTORS` in `$lib/llm/resolve-helpers`, restated rather
- * than imported: the stored side must not reach into the generation layer, and
- * a def may only import zod, `$lib/types` and `$lib/validate`.
- */
-const MOST_DISTRACTORS = 3;
 
 export const wordOrderChallengeSchema = z.object({
 	type: z.literal('word-order'),
@@ -63,15 +55,15 @@ export const wordOrderStoredDef = {
 		return 1;
 	},
 
-	// Two knobs on the tray: how many tiles the answer itself needs — which is
-	// the sentence's own length, so it reads on the shared prose scale like
-	// every other length knob — and how many extra wrong ones are mixed in to
-	// sift through.
+	// One structural knob: how many tiles the answer itself needs — which is the
+	// sentence's own length, so it reads on the shared prose scale like every
+	// other length knob. Distractor-tile count stopped varying by rung (every
+	// generated row now carries the fullest tray the model can supply) so it
+	// stopped being a difficulty knob too; how many of the stored tiles a
+	// served challenge *shows* is a serve-time decision
+	// (`$lib/session/support`), not a fact about the row.
 	difficulty(challenge) {
-		const tileFit = lengthKnob(challenge.answerTokens.length);
-		const distractors = Math.max(0, challenge.tiles.length - challenge.answerTokens.length);
-		const distractorFit = clamp01(distractors / MOST_DISTRACTORS);
-		return withBase(BASE, tileFit * 0.7 + distractorFit * 0.3);
+		return withBase(BASE, lengthKnob(challenge.answerTokens.length));
 	},
 
 	correctAnswerText(challenge) {

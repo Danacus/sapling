@@ -44,6 +44,8 @@
 		nativeLanguage = '',
 		readings = ALL_READINGS,
 		showHint = true,
+		bankSize,
+		distractorTiles,
 		tokenize = null
 	}: {
 		challenge: Challenge;
@@ -52,6 +54,8 @@
 		nativeLanguage?: string;
 		readings?: ReadingPlan;
 		showHint?: boolean;
+		bankSize?: number;
+		distractorTiles?: number;
 		tokenize?: ((text: string) => RomanizedToken[]) | null;
 	} = $props();
 </script>
@@ -66,10 +70,19 @@
 		{nativeLanguage}
 		{readings}
 		{showHint}
+		{bankSize}
 		{tokenize}
 	/>
 {:else if challenge.type === 'multi-cloze'}
-	<MultiCloze {challenge} {onanswer} {targetLanguage} {nativeLanguage} {readings} {tokenize} />
+	<MultiCloze
+		{challenge}
+		{onanswer}
+		{targetLanguage}
+		{nativeLanguage}
+		{readings}
+		{bankSize}
+		{tokenize}
+	/>
 {:else if challenge.type === 'typed-translation'}
 	<TypedTranslation
 		{challenge}
@@ -87,6 +100,7 @@
 		{nativeLanguage}
 		{readings}
 		{showHint}
+		{distractorTiles}
 		{tokenize}
 	/>
 {:else if challenge.type === 'spot-error'}

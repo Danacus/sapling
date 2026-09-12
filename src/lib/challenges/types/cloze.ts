@@ -11,7 +11,7 @@ import { z } from 'zod';
 import type { ClozeChallenge } from '$lib/types';
 import { checkAnswer } from '$lib/validate';
 import type { StoredTypeDef } from './def';
-import { clamp01, lengthKnob, nonEmpty, storedBase, withBase } from './primitives';
+import { lengthKnob, nonEmpty, storedBase, withBase } from './primitives';
 import { wordCount } from './word-count';
 
 /**
@@ -21,13 +21,6 @@ import { wordCount } from './word-count';
  * the other before its own knobs are read.
  */
 const BASE = 0.2;
-
-/**
- * Word-bank size spanning the full 0..1 range. A bank with more plausible
- * candidates creates more competing completions and is therefore harder.
- */
-const SMALLEST_BANK = 3;
-const LARGEST_BANK = 6;
 
 export const clozeChallengeSchema = z.object({
 	type: z.literal('cloze'),
@@ -77,12 +70,13 @@ export const clozeStoredDef = {
 		return challenge.wordBank && challenge.wordBank.length > 0 ? 1 : 2;
 	},
 
-	// Two knobs, weighted so the sentence carries most of the read: how long the
-	// sentence is, and — only when there is a bank at all — how many plausible
-	// candidates compete in it. A bankless cloze (free recall) reads on sentence
-	// length alone. The native-language line is deliberately not a knob: whether
-	// the learner sees it is decided at serve time, so it says nothing about the
-	// row itself.
+	// One structural knob: how long the sentence is. A generated row now always
+	// carries the fullest word bank the model can supply (or none at all, for a
+	// typed want) — bank size stopped varying by rung, so it stopped being a
+	// difficulty knob too; how much of a stored bank a served challenge *shows*
+	// is a serve-time decision (`$lib/session/support`), read off the word's
+	// current rung rather than baked into the row. The native-language line is
+	// deliberately not a knob either, for the same reason.
 	//
 	// The gap is split out before counting: `segmentWords` reads `___` as a word
 	// of its own where it stands alone, and glues it to its neighbours where it
@@ -90,13 +84,7 @@ export const clozeStoredDef = {
 	// over-counts a five-word sentence and under-counts a mid-word blank.
 	// Rejoining the pieces with a space says what the sentence is made of.
 	difficulty(challenge) {
-		const lengthFit = lengthKnob(wordCount(challenge.sentence.split(GAP).join(' ')));
-		const bank = challenge.wordBank;
-		if (!bank || bank.length === 0) return withBase(BASE, lengthFit);
-		// More candidates create more competing plausible completions, so a larger
-		// bank is harder. This matches the generation ladder (3 → 6 choices).
-		const bankFit = clamp01((bank.length - SMALLEST_BANK) / (LARGEST_BANK - SMALLEST_BANK));
-		return withBase(BASE, lengthFit * 0.6 + bankFit * 0.4);
+		return withBase(BASE, lengthKnob(wordCount(challenge.sentence.split(GAP).join(' '))));
 	},
 
 	correctAnswerText(challenge) {

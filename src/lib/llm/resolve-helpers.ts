@@ -180,24 +180,20 @@ export function clozeSentenceRomanization(generated: {
  * itself never is. A bank of fewer than two chips is not a choice, so the
  * challenge falls back to typing.
  *
- * `limit` is the bank size the challenge was *planned* at, answer included —
- * how much support a word at that rung should get. Surplus distractors are cut
- * before the shuffle, never after, so which chip the answer lands on stays a
- * question only `rng` answers.
+ * The full surviving set is stored, deduplication aside — sizing how much of
+ * it a served challenge shows is a serve-time decision (`$lib/session/support`),
+ * not the resolver's.
  */
 export function clozeWordBank(
 	answer: TargetText,
 	distractors: TargetText[] | null | undefined,
-	rng: () => number,
-	limit?: number
+	rng: () => number
 ): Partial<Pick<ClozeChallenge, 'wordBank' | 'wordBankRomanization'>> {
 	if (!distractors?.length) return {};
 	const answerChoice: Choice = { text: answer.text.trim(), reading: readingOf(answer) };
 	const seen = new Set([labelKey(answerChoice.text)]);
-	const allowance = limit === undefined ? Infinity : Math.max(0, limit - 1);
 	const kept: Choice[] = [];
 	for (const distractor of distractors) {
-		if (kept.length >= allowance) break;
 		const text = distractor.text.trim();
 		const key = labelKey(text);
 		if (!key || seen.has(key)) continue;

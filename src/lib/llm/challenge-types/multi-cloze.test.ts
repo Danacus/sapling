@@ -27,11 +27,11 @@ const context = {
 	base: { id: 'c1', itemIds: ['i1', 'i2'] },
 	resolveItemRef: (ref: string) => (ref === 'i1' || ref === 'i2' ? ref : undefined),
 	rng: () => 0.5,
-	params: { words: 8, gaps: 2, choices: 5 }
+	params: { words: 8, gaps: 2 }
 };
 
 describe('multi-cloze resolver', () => {
-	it('puts every distinct answer into a bounded shared bank and preserves the gap bindings', () => {
+	it('puts every distinct answer into the shared bank, whole, and preserves the gap bindings', () => {
 		const resolved = multiClozeDef.resolve(generated, context);
 		expect(resolved).toMatchObject({
 			type: 'multi-cloze',
@@ -41,7 +41,10 @@ describe('multi-cloze resolver', () => {
 		if (!resolved || resolved.type !== 'multi-cloze') return;
 		expect(resolved.itemIds).toEqual(['i1', 'i2']);
 		expect(resolved.gaps.map((gap) => gap.itemId)).toEqual(['i1', 'i2']);
-		expect(resolved.wordBank).toHaveLength(5);
+		// No cap at resolve time any more: every surviving distractor is kept,
+		// answers included. Sizing what a served challenge shows from it is
+		// `$lib/session/support`'s job.
+		expect(resolved.wordBank).toHaveLength(6);
 		expect(resolved.wordBank).toEqual(expect.arrayContaining(['comer', 'cuenta']));
 	});
 

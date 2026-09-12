@@ -12,6 +12,7 @@
 		serializeMultiClozeAnswers
 	} from '$lib/challenges/types/multi-cloze';
 	import type { RomanizedToken } from '$lib/romanize';
+	import { visibleBank } from '$lib/session/support';
 	import type { MultiClozeChallenge } from '$lib/types';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import RubyText from '$lib/ui/RubyText.svelte';
@@ -27,11 +28,18 @@
 		onanswer,
 		targetLanguage = '',
 		readings = ALL_READINGS,
+		bankSize,
 		tokenize = null
 	}: ChallengeProps<MultiClozeChallenge> = $props();
 
 	const ruby = $derived(rubyFor(tokenize, readings));
-	const bank = $derived(challenge.wordBank);
+	/**
+	 * The stored bank positions this served challenge shows — every position
+	 * when `bankSize` was not supplied, so a bare render (tests) keeps showing
+	 * everything stored.
+	 */
+	const visibleIndices = $derived(visibleBank(challenge, bankSize ?? challenge.wordBank.length));
+	const bank = $derived(visibleIndices.map((index) => challenge.wordBank[index]));
 	let assignments = $state<(number | null)[]>([]);
 	let activeGap = $state(0);
 
@@ -72,7 +80,7 @@
 	}
 
 	function readingFor(index: number): string {
-		return storedReading(readings, challenge.wordBankRomanization?.[index]);
+		return storedReading(readings, challenge.wordBankRomanization?.[visibleIndices[index]]);
 	}
 
 	function usedBy(index: number): number | undefined {

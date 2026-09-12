@@ -205,7 +205,7 @@ function typeOfPrompt(system: string): WireType {
 /** One request as the model saw it. */
 interface SeenRequest {
 	type: WireType;
-	/** Only a cloze brief has a `bank` parameter, and it is a count, not a flag. */
+	/** Only a cloze brief has a `distractors` parameter, and it is a count, not a flag. */
 	banked?: boolean;
 	itemIds: string[];
 	params: Record<string, number>[];
@@ -221,7 +221,7 @@ function readRequest(rawBody: unknown): SeenRequest {
 	const params = payload.items.map(({ id: _id, t: _t, m: _m, ...rest }) => rest as never);
 	return {
 		type,
-		...(type === 'cloze' ? { banked: (payload.items[0].bank ?? 0) > 0 } : {}),
+		...(type === 'cloze' ? { banked: (payload.items[0].distractors ?? 0) > 0 } : {}),
 		itemIds: payload.items.map((item) => item.id),
 		params,
 		retry: body.messages.length > 2
@@ -498,15 +498,19 @@ describe('buildRequestPrompt', () => {
 		expect(wordsAt(1)).toBeLessThan(wordsAt(5));
 	});
 
-	it('sends a cloze its bank size, as a count including the answer', () => {
-		const bankAt = (bank: boolean): number => {
-			const [, user] = buildRequestPrompt(args, requestFor({ type: 'cloze', bank }, 1));
-			return (JSON.parse(user.content) as { items: { bank: number }[] }).items[0].bank;
+	it('sends a cloze its distractor count, constant across rungs', () => {
+		const distractorsAt = (bank: boolean, difficulty: 1 | 5): number => {
+			const [, user] = buildRequestPrompt(args, requestFor({ type: 'cloze', bank }, difficulty));
+			return (JSON.parse(user.content) as { items: { distractors: number }[] }).items[0]
+				.distractors;
 		};
-		// Three candidates at the easy end; nothing at all when the want asked for a
-		// typed cloze, which is what `bank: false` means.
-		expect(bankAt(true)).toBe(3);
-		expect(bankAt(false)).toBe(0);
+		// Five candidates whichever rung a banked want is written at; nothing at
+		// all when the want asked for a typed cloze, which is what `bank: false`
+		// means. The rung no longer changes what is written — only what a served
+		// challenge shows (`$lib/session/support`).
+		expect(distractorsAt(true, 1)).toBe(5);
+		expect(distractorsAt(true, 5)).toBe(5);
+		expect(distractorsAt(false, 1)).toBe(0);
 	});
 
 	it('writes everything shared across requests before the brief itself', () => {
@@ -1484,10 +1488,10 @@ describe('resolveBatch', () => {
 			expect(challenge?.wordBank).toContain('菜单');
 		});
 
-		it('trims the bank to the size the challenge was planned at', () => {
-			// A parameter the resolver can hold the model to: the bank is how much
-			// support a word at this rung gets, so a generous one is cut back rather
-			// than making the challenge quietly easier than the plan asked for.
+		it('stores the whole bank the model sent, whatever the plan asked for', () => {
+			// No trim any more: the resolver stores the full surviving set, and
+			// sizing what a served challenge shows from it is
+			// `$lib/session/support`'s job.
 			const challenge = resolveCloze(
 				{
 					distractorWords: ['筷子', '茶', '水', '碗', '杯子'].map((text) => ({
@@ -1495,16 +1499,17 @@ describe('resolveBatch', () => {
 						reading: null
 					}))
 				},
-				{ paramsByItem: new Map([['i1', { words: 7, bank: 3 }]]) }
+				{ paramsByItem: new Map([['i1', { words: 7, distractors: 5 }]]) }
 			);
-			expect(challenge?.wordBank).toHaveLength(3);
+			expect(challenge?.wordBank).toHaveLength(6);
 			expect(challenge?.wordBank).toContain('菜单');
 		});
 
 		it('drops a bank the plan did not ask for at all', () => {
-			// `bank: 0` was a request for a typed cloze. Distractors sent anyway are
-			// discarded: the two are different exercises for different stages.
-			const challenge = resolveCloze({}, { paramsByItem: new Map([['i1', { bank: 0 }]]) });
+			// `distractors: 0` was a request for a typed cloze. Distractors sent
+			// anyway are discarded: the two are different exercises for different
+			// stages.
+			const challenge = resolveCloze({}, { paramsByItem: new Map([['i1', { distractors: 0 }]]) });
 			expect('wordBank' in (challenge ?? {})).toBe(false);
 			expect(challenge?.acceptedAnswers).toContain('菜单');
 		});
@@ -1515,7 +1520,7 @@ describe('resolveBatch', () => {
 			// rung it was written at.
 			const challenge = resolveCloze(
 				{},
-				{ paramsByItem: new Map([['i1', { words: 11, bank: 6 }]]) }
+				{ paramsByItem: new Map([['i1', { words: 11, distractors: 5 }]]) }
 			);
 			expect(challenge?.translationHint).toBe('Hello, could I have a menu, please?');
 		});
@@ -1720,23 +1725,18 @@ describe('resolveBatch', () => {
 			expect(challenge).not.toHaveProperty('answerRomanization');
 		});
 
-		it('caps the distractors at the count the challenge was planned with', () => {
-			// Extra tiles are the second half of this type's difficulty, so a tray
-			// padded past the plan is trimmed rather than left as a harder puzzle.
+		it('is unaffected by a planned tile count: the resolver keeps all surviving distractors', () => {
+			// The rung no longer changes what is written or resolved, only what a
+			// served challenge shows (`$lib/session/support`). `params.tiles` still
+			// travels for other types' resolvers to read, but word-order's own
+			// distractor allowance is structural now, not planned.
 			const challenge = resolveWordOrder(
 				{
 					distractorWords: ['bebo', 'como', 'corro'].map((text) => ({ text, reading: null }))
 				},
-				{ paramsByItem: new Map([['i1', { tiles: 4, distractors: 1 }]]) }
+				{ paramsByItem: new Map([['i1', { tiles: 4 }]]) }
 			);
-			expect(challenge?.tiles).toHaveLength(5);
-
-			// Nothing at all at the bottom of the ladder.
-			const bare = resolveWordOrder(
-				{ distractorWords: [{ text: 'bebo', reading: null }] },
-				{ paramsByItem: new Map([['i1', { tiles: 3, distractors: 0 }]]) }
-			);
-			expect(bare?.tiles).toHaveLength(4);
+			expect(challenge?.tiles).toHaveLength(7);
 		});
 
 		it('caps an oversized distractor list instead of dropping the challenge', () => {

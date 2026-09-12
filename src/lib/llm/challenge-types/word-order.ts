@@ -37,9 +37,12 @@ export const generatedWordOrderSchema = z.object({
 	/** The sentence *in the correct order*; the app shuffles. */
 	words: z.array(targetTextSchema).min(2),
 	/**
-	 * Extra wrong tiles. Not length-constrained, for the same reason as the
-	 * cloze word bank: an oversized list is a cosmetic defect and the resolver
-	 * caps it rather than costing us a challenge we already paid for.
+	 * Three extra wrong tiles, always. Not exactly length-constrained on the
+	 * wire, for the same reason as the cloze word bank: a wrong count is a
+	 * cosmetic defect, and the resolver keeps what survives deduplication
+	 * rather than costing us a challenge we already paid for. How many of them
+	 * a served challenge shows is a serve-time decision
+	 * (`$lib/session/support`), not this def's.
 	 */
 	distractorWords: z.array(targetTextSchema).nullish(),
 	instruction: z.string().nullish(),
@@ -49,29 +52,26 @@ export const generatedWordOrderSchema = z.object({
 export type GeneratedWordOrder = z.infer<typeof generatedWordOrderSchema>;
 
 /**
- * Tiles the sentence itself is cut into at each rung, and extra wrong ones to
- * sift through. Eight is the top because the tray is capped at
- * {@link MAX_WORD_ORDER_TILES} including distractors — past that the exercise
- * stops being about word order and becomes a search — and the resolver's own
- * allowance still has the last word when a sentence overshoots.
+ * Tiles the sentence itself is cut into at each rung. Eight is the top because
+ * the tray is capped at {@link MAX_WORD_ORDER_TILES} including distractors —
+ * past that the exercise stops being about word order and becomes a search —
+ * and the resolver's own allowance still has the last word when a sentence
+ * overshoots.
  */
 const SENTENCE_TILES = [3, 4, 5, 7, 8] as const;
-const EXTRA_TILES = [0, 0, 1, 2, 3] as const;
 
 export const wordOrderDef = {
 	type: 'word-order',
 	schema: generatedWordOrderSchema,
 	stored: { type: 'word-order', direction: 'toTarget' },
 	promptSpec:
-		'word-order — build a target sentence out of tiles. {promptNative, words:[2+ TargetText — the sentence split into tiles, IN THE CORRECT ORDER], distractorWords:[0-3 TargetText] or null, instruction} e.g. {"type":"word-order","promptNative":"Could you bring us the bill, please?","words":[{"text":"¿Nos","reading":null},{"text":"trae","reading":null},{"text":"la","reading":null},{"text":"cuenta,","reading":null},{"text":"por","reading":null},{"text":"favor?","reading":null}],"distractorWords":[{"text":"carta","reading":null}],"instruction":null,"itemIds":["i6"],"explanation":null} — the app shuffles the tiles, so never state an order anywhere else. promptNative is the sentence in the native language; always include it.',
+		'word-order — build a target sentence out of tiles. {promptNative, words:[2+ TargetText — the sentence split into tiles, IN THE CORRECT ORDER], distractorWords:[3 TargetText] or null, instruction} e.g. {"type":"word-order","promptNative":"Could you bring us the bill, please?","words":[{"text":"¿Nos","reading":null},{"text":"trae","reading":null},{"text":"la","reading":null},{"text":"cuenta,","reading":null},{"text":"por","reading":null},{"text":"favor?","reading":null}],"distractorWords":[{"text":"carta","reading":null},{"text":"propina","reading":null},{"text":"mesa","reading":null}],"instruction":null,"itemIds":["i6"],"explanation":null} — the app shuffles the tiles, so never state an order anywhere else. promptNative is the sentence in the native language; always include it. Always write exactly 3 distractorWords.',
 	rulesSpec:
 		'- word-order sentences must have exactly one natural order: if the same tiles could be rearranged into a second correct sentence, rewrite it. 8 tiles is a hard limit; past it, shorten the sentence. distractorWords are plausible words that fit nowhere in the sentence, never a form of a word already in it.\n- Segmentation: one tile per WORD, never per character or syllable, and punctuation rides on the tile it touches — never a tile of its own ("吗？" is one tile, "？" alone is not a tile). For Chinese and Japanese split on word boundaries — 菜单 is one tile, not 菜 + 单. Each tile is a TargetText and carries its own reading under the usual rule.',
 	correctiveSpec: 'word-order {promptNative,words}',
-	paramsSpec:
-		'- tiles: how many tiles the sentence itself should be cut into. distractors: how many extra wrong tiles to add in distractorWords, 0 meaning none.',
+	paramsSpec: '- tiles: how many tiles the sentence itself should be cut into.',
 	params: (difficulty) => ({
-		tiles: SENTENCE_TILES[difficulty - 1],
-		distractors: EXTRA_TILES[difficulty - 1]
+		tiles: SENTENCE_TILES[difficulty - 1]
 	}),
 	escalationSpec:
 		'"word-order": the learner arranged the shuffled "tiles" into a sentence, and "answerTokens" in that order (printed as "answer") is the only accepted arrangement.',
@@ -93,7 +93,8 @@ export const wordOrderDef = {
 					],
 					distractorWords: [
 						{ text: 'carta', reading: null },
-						{ text: 'propina', reading: null }
+						{ text: 'propina', reading: null },
+						{ text: 'mesa', reading: null }
 					],
 					instruction: null,
 					itemIds: ['la cuenta'],
@@ -119,7 +120,8 @@ export const wordOrderDef = {
 					],
 					distractorWords: [
 						{ text: '筷子', reading: 'kuàizi' },
-						{ text: '茶', reading: 'chá' }
+						{ text: '茶', reading: 'chá' },
+						{ text: '水', reading: 'shuǐ' }
 					],
 					instruction: null,
 					itemIds: ['菜单'],
@@ -129,7 +131,7 @@ export const wordOrderDef = {
 		]
 	},
 
-	resolve(generated, { base, rng, params }) {
+	resolve(generated, { base, rng }) {
 		// Structural: fewer than two real tiles is not a sentence to build,
 		// and a blank tile is a tile that cannot be tapped. Punctuation-only
 		// tiles ("？" as its own tile) are merged into their neighbour first —
@@ -139,18 +141,17 @@ export const wordOrderDef = {
 		const words = raw && mergePunctuationTokens(raw);
 		if (!words || words.length < 2) return null;
 
-		// Distractors are cosmetic: an oversized list is trimmed, and one that
-		// duplicates a real tile is dropped — it could only ever be used in
-		// place of its twin, which grades correct anyway (text sequence, not
-		// indices), so it is a tile that does nothing. The allowance shrinks
-		// as the sentence grows, so an overshot sentence is not padded past
-		// MAX_WORD_ORDER_TILES into a search puzzle — and where the challenge
-		// was planned with a distractor count, that count binds too: extra
-		// tiles are the second half of this type's difficulty, not a garnish.
+		// Distractors are cosmetic: the resolver keeps what survives, capped
+		// only by the two structural ceilings — one that duplicates a real tile
+		// is dropped (it could only ever be used in place of its twin, which
+		// grades correct anyway by text sequence, not indices, so it is a tile
+		// that does nothing), and the allowance shrinks as the sentence grows so
+		// an overshot sentence is not padded past MAX_WORD_ORDER_TILES into a
+		// search puzzle. How many of the surviving tiles a served challenge
+		// shows is `$lib/session/support`'s call, not this cap's.
 		const allowance = Math.min(
 			MAX_WORD_ORDER_DISTRACTORS,
-			Math.max(0, MAX_WORD_ORDER_TILES - words.length),
-			params?.distractors ?? Infinity
+			Math.max(0, MAX_WORD_ORDER_TILES - words.length)
 		);
 		const seen = new Set(words.map((word) => labelKey(word.text)));
 		const distractors: Token[] = [];

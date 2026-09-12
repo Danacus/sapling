@@ -282,12 +282,14 @@ describe('the rungs, as the stored side reads them back', () => {
 		}
 	});
 
-	it('gives the resolver the bank and tile counts it was told to expect', () => {
-		// The parameters the resolver can enforce, enforced: a bank sized to the
-		// rung, and a tray that stops where the plan said it should.
+	it('stores the same full bank and tray at every rung: only the sentence grows', () => {
+		// The one thing generation-time parameters used to enforce — how much of
+		// the bank/tray survives — is gone: every banked cloze and every
+		// word-order now write (and resolve) the fullest set regardless of rung,
+		// and `$lib/session/support` decides what a served challenge shows.
 		const easy = clozeAt(1);
 		const hard = clozeAt(5);
-		expect(easy.type === 'cloze' && easy.wordBank).toHaveLength(3);
+		expect(easy.type === 'cloze' && easy.wordBank).toHaveLength(6);
 		expect(hard.type === 'cloze' && hard.wordBank).toHaveLength(6);
 		// The native line is not a parameter: it is on the row at every rung, and
 		// whether it shows is the session's serve-time call.
@@ -295,7 +297,13 @@ describe('the rungs, as the stored side reads them back', () => {
 		expect(hard.type === 'cloze' && hard.translationHint).toBe('what it means');
 
 		const shortest = wordOrderAt(1);
-		expect(shortest.type === 'word-order' && shortest.tiles).toHaveLength(3);
+		const longest = wordOrderAt(5);
+		// Three sentence tiles plus all three distractors at rung 1; eight
+		// sentence tiles at rung 5, where MAX_WORD_ORDER_TILES leaves room for
+		// only two of the three distractors supplied — a structural ceiling,
+		// not a planned one.
+		expect(shortest.type === 'word-order' && shortest.tiles).toHaveLength(6);
+		expect(longest.type === 'word-order' && longest.tiles).toHaveLength(10);
 	});
 });
 
