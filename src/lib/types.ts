@@ -209,11 +209,11 @@ export interface ClozeChallenge extends ChallengeBase {
 	 */
 	wordBankRomanization?: string[];
 	/**
-	 * Optional native-language rendering of the full sentence. Early cloze
-	 * exercises use it as a bridge into target-language context; later ones omit
-	 * it so the sentence itself carries the meaning.
-	 *
-	 * Older stored rows always have this field, so it remains fully supported.
+	 * Native-language rendering of the full sentence. Generation always writes
+	 * it; whether the learner *sees* it is decided when the challenge is served
+	 * (`$lib/session/hints`), from how well the word is known. Optional only
+	 * because some rows were written by a build that omitted it above the early
+	 * rungs, and those rows still play.
 	 */
 	translationHint?: string;
 	itemIds: string[];
@@ -290,11 +290,12 @@ export interface MatchPairsChallenge extends ChallengeBase {
 export interface WordOrderChallenge extends ChallengeBase {
 	type: 'word-order';
 	/**
-	 * Optional native-language rendering of the sentence to build. Early
-	 * word-order exercises use it as an anchor; later ones omit it and the
-	 * tiles alone are the puzzle — shown only after answering, as feedback.
-	 *
-	 * Older stored rows always have this field, so it remains fully supported.
+	 * The sentence to build, in the learner's native language. Generation always
+	 * writes it; whether the learner *sees* it is decided when the challenge is
+	 * served (`$lib/session/hints`), from how well the word is known — without
+	 * it the tiles alone are the puzzle. Optional only because some rows were
+	 * written by a build that omitted it above the early rungs, and those rows
+	 * still play.
 	 */
 	prompt?: string;
 	/** Heading shown above the prompt; absent means the UI's default. */
@@ -345,11 +346,12 @@ export interface SpotErrorChallenge extends ChallengeBase {
 	/** The sentence with `intendedWord` restored — printed and spoken after answering. */
 	correctedSentence: string;
 	/**
-	 * Optional native-language rendering of what the sentence is meant to say.
-	 * Early spot-error exercises use it as a bridge; later ones omit it and the
-	 * error is spotted from the target-language sentence alone.
-	 *
-	 * Older stored rows always have this field, so it remains fully supported.
+	 * What the sentence is meant to say, in the learner's native language.
+	 * Generation always writes it; whether the learner *sees* it is decided when
+	 * the challenge is served (`$lib/session/hints`), from how well the word is
+	 * known — without it the error is spotted from the target-language sentence
+	 * alone. Optional only because some rows were written by a build that
+	 * omitted it above the early rungs, and those rows still play.
 	 */
 	meaning?: string;
 	itemIds: string[];

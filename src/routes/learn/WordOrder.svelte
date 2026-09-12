@@ -6,11 +6,12 @@
   submits on its own — a misplaced tap must always be recoverable before
   committing, exactly as in multiple choice.
 
-  `challenge.prompt` is an optional native-language anchor, asked for only at
-  the lowest rung this type is planned at (and always present on older rows).
-  Where it is present it is shown as the prompt, the way it always was: the
-  native sentence says what to build, not in which order, so it is support
-  rather than the answer. Without it the tiles are the whole puzzle.
+  `challenge.prompt` is the native-language anchor, always written by
+  generation; whether it is *shown* is the session's serve-time call
+  (`showHint`, from `$lib/session/hints`), and some rows written by an earlier
+  build lack it altogether. Where it shows it is the prompt, the way it always
+  was: the native sentence says what to build, not in which order, so it is
+  support rather than the answer. Without it the tiles are the whole puzzle.
 
   Grading compares the *texts* the learner arranged to `answerTokens`, never the
   tile indices they came from. That is what keeps a sentence using the same word
@@ -41,6 +42,7 @@
 		challenge,
 		onanswer,
 		readings = ALL_READINGS,
+		showHint = true,
 		tokenize = null
 	}: ChallengeProps<WordOrderChallenge> = $props();
 
@@ -127,7 +129,7 @@
 </script>
 
 <form class="word-order" onsubmit={onFormSubmit}>
-	<PromptHeader kicker={askedIn} prompt={challenge.prompt} size="md" />
+	<PromptHeader kicker={askedIn} prompt={showHint ? challenge.prompt : undefined} size="md" />
 
 	<div class="tray" class:empty={placed.length === 0} aria-label="Your sentence">
 		{#if placed.length === 0}

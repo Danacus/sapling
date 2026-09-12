@@ -57,6 +57,17 @@ export interface ChallengeProps<C extends Challenge> {
 	 */
 	readings?: ReadingPlan;
 	/**
+	 * Whether the challenge's native-language line — a cloze's translation, a
+	 * word-order's prompt, a spot-error's intended meaning — is shown. Decided
+	 * once per served challenge by `$lib/session/hints` from how well the
+	 * challenge's words are known; the line itself is always on the row.
+	 *
+	 * Optional, defaulting to `true`, so a bare render shows the line the way
+	 * every component did before it could be hidden, and a component without
+	 * such a line simply does not destructure it.
+	 */
+	showHint?: boolean;
+	/**
 	 * Romanize one string of *target-language* text locally, or `null` when this
 	 * language has no local romanizer (`$lib/romanize`) — in which case the
 	 * component falls back to the stored, LLM-written romanization fields on the

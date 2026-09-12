@@ -509,17 +509,6 @@ describe('buildRequestPrompt', () => {
 		expect(bankAt(false)).toBe(0);
 	});
 
-	it('asks for a native cloze bridge up to rung 2, the floor a banked cloze is planned at', () => {
-		const hintAt = (difficulty: Want['difficulty']): number => {
-			const [, user] = buildRequestPrompt(
-				args,
-				requestFor({ type: 'cloze', bank: true }, difficulty)
-			);
-			return (JSON.parse(user.content) as { items: { hint: number }[] }).items[0].hint;
-		};
-		expect(([1, 2, 3, 4, 5] as Want['difficulty'][]).map(hintAt)).toEqual([1, 1, 0, 0, 0]);
-	});
-
 	it('writes everything shared across requests before the brief itself', () => {
 		// Prompt caching pays up to the first byte that differs. `known` is the
 		// biggest block and identical on every request of a lesson, so it belongs
@@ -1520,18 +1509,13 @@ describe('resolveBatch', () => {
 			expect(challenge?.acceptedAnswers).toContain('菜单');
 		});
 
-		it('drops a native hint when the planned rung asks for target-only context', () => {
+		it('always keeps the native hint, whatever rung the row was planned at', () => {
+			// Whether the learner *sees* it is decided when the row is served
+			// (`$lib/session/hints`), not when it is written: a row outlives the
+			// rung it was written at.
 			const challenge = resolveCloze(
 				{},
-				{ paramsByItem: new Map([['i1', { words: 7, bank: 4, hint: 0 }]]) }
-			);
-			expect('translationHint' in (challenge ?? {})).toBe(false);
-		});
-
-		it('keeps a native hint when the planned rung explicitly asks for one', () => {
-			const challenge = resolveCloze(
-				{},
-				{ paramsByItem: new Map([['i1', { words: 3, bank: 3, hint: 1 }]]) }
+				{ paramsByItem: new Map([['i1', { words: 11, bank: 6 }]]) }
 			);
 			expect(challenge?.translationHint).toBe('Hello, could I have a menu, please?');
 		});

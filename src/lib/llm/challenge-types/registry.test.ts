@@ -187,19 +187,18 @@ describe('difficulty parameters', () => {
 		}
 	});
 
-	it('is monotone in the rung: difficulty counts grow while support falls', () => {
+	it('is monotone in the rung: every count grows', () => {
 		for (const def of WIRE_TYPE_DEFS) {
 			for (const kind of [{}, { bank: true }, { bank: false }]) {
 				const ladders = RUNGS.map((rung) => paramsOf(def, rung, kind));
 				for (const key of Object.keys(ladders[0])) {
 					const values = ladders.map((params) => params[key]);
-					// `hint` is the one support flag: it falls after the first rung.
-					// A larger bank now means more competing choices, so it grows with
-					// every other difficulty count.
-					const rising = key === 'hint' ? [...values].reverse() : values;
-					for (let i = 1; i < rising.length; i++) {
-						expect(rising[i], `${def.type}.${key} at rung ${i + 1}`).toBeGreaterThanOrEqual(
-							rising[i - 1]
+					// Words, tiles, distractors — and the bank too, since a larger bank
+					// means more competing choices. No parameter is a support flag:
+					// what support a learner *sees* is decided at serve time.
+					for (let i = 1; i < values.length; i++) {
+						expect(values[i], `${def.type}.${key} at rung ${i + 1}`).toBeGreaterThanOrEqual(
+							values[i - 1]
 						);
 					}
 				}
@@ -290,8 +289,10 @@ describe('the rungs, as the stored side reads them back', () => {
 		const hard = clozeAt(5);
 		expect(easy.type === 'cloze' && easy.wordBank).toHaveLength(3);
 		expect(hard.type === 'cloze' && hard.wordBank).toHaveLength(6);
+		// The native line is not a parameter: it is on the row at every rung, and
+		// whether it shows is the session's serve-time call.
 		expect(easy.type === 'cloze' && easy.translationHint).toBe('what it means');
-		expect(hard.type === 'cloze' && 'translationHint' in hard).toBe(false);
+		expect(hard.type === 'cloze' && hard.translationHint).toBe('what it means');
 
 		const shortest = wordOrderAt(1);
 		expect(shortest.type === 'word-order' && shortest.tiles).toHaveLength(3);

@@ -95,14 +95,6 @@ describe('difficultyOf', () => {
 			expect(smallBank).toBeLessThan(bigBank);
 		});
 
-		it('grows when the native-language bridge is removed', () => {
-			const supported = difficultyOf(challenge(banked('Yo ___ un libro.', 3)));
-			const targetOnly = difficultyOf(
-				challenge({ ...banked('Yo ___ un libro.', 3), translationHint: undefined })
-			);
-			expect(supported).toBeLessThan(targetOnly);
-		});
-
 		it('stays in the constrained-production span [0.15, 0.45] when banked', () => {
 			for (const bankSize of [3, 4, 5, 6]) {
 				const value = difficultyOf(challenge(banked('Yo ___ un libro.', bankSize)));
@@ -154,12 +146,6 @@ describe('difficultyOf', () => {
 				expect(value).toBeLessThanOrEqual(0.45 + 1e-9);
 			}
 		});
-
-		it('grows when the native-language anchor is removed', () => {
-			const anchored = difficultyOf(challenge(wordOrder(5, 0)));
-			const bare = difficultyOf(challenge({ ...wordOrder(5, 0), prompt: undefined }));
-			expect(anchored).toBeLessThan(bare);
-		});
 	});
 
 	describe('typed-translation', () => {
@@ -197,12 +183,6 @@ describe('difficultyOf', () => {
 			expect(short).toBeLessThan(long);
 			expect(short).toBeGreaterThanOrEqual(0);
 			expect(long).toBeLessThanOrEqual(0.15);
-		});
-
-		it('grows when the native-language meaning is removed', () => {
-			const supported = difficultyOf(challenge(spotError(5)));
-			const targetOnly = difficultyOf(challenge({ ...spotError(5), meaning: undefined }));
-			expect(supported).toBeLessThan(targetOnly);
 		});
 	});
 

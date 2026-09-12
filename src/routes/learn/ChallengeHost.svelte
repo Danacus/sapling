@@ -43,6 +43,7 @@
 		targetLanguage = '',
 		nativeLanguage = '',
 		readings = ALL_READINGS,
+		showHint = true,
 		tokenize = null
 	}: {
 		challenge: Challenge;
@@ -50,6 +51,7 @@
 		targetLanguage?: string;
 		nativeLanguage?: string;
 		readings?: ReadingPlan;
+		showHint?: boolean;
 		tokenize?: ((text: string) => RomanizedToken[]) | null;
 	} = $props();
 </script>
@@ -57,7 +59,15 @@
 {#if challenge.type === 'multiple-choice'}
 	<MultipleChoice {challenge} {onanswer} {targetLanguage} {nativeLanguage} {readings} {tokenize} />
 {:else if challenge.type === 'cloze'}
-	<Cloze {challenge} {onanswer} {targetLanguage} {nativeLanguage} {readings} {tokenize} />
+	<Cloze
+		{challenge}
+		{onanswer}
+		{targetLanguage}
+		{nativeLanguage}
+		{readings}
+		{showHint}
+		{tokenize}
+	/>
 {:else if challenge.type === 'multi-cloze'}
 	<MultiCloze {challenge} {onanswer} {targetLanguage} {nativeLanguage} {readings} {tokenize} />
 {:else if challenge.type === 'typed-translation'}
@@ -70,9 +80,25 @@
 		{tokenize}
 	/>
 {:else if challenge.type === 'word-order'}
-	<WordOrder {challenge} {onanswer} {targetLanguage} {nativeLanguage} {readings} {tokenize} />
+	<WordOrder
+		{challenge}
+		{onanswer}
+		{targetLanguage}
+		{nativeLanguage}
+		{readings}
+		{showHint}
+		{tokenize}
+	/>
 {:else if challenge.type === 'spot-error'}
-	<SpotError {challenge} {onanswer} {targetLanguage} {nativeLanguage} {readings} {tokenize} />
+	<SpotError
+		{challenge}
+		{onanswer}
+		{targetLanguage}
+		{nativeLanguage}
+		{readings}
+		{showHint}
+		{tokenize}
+	/>
 {:else if challenge.type === 'match-pairs'}
 	<MatchPairs {challenge} {onanswer} {targetLanguage} {nativeLanguage} {readings} {tokenize} />
 {:else}

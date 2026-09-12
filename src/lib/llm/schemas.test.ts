@@ -175,9 +175,9 @@ describe('generatedBatchSchema', () => {
 		expect(generatedChallengeSchema.safeParse(noAnswer).success).toBe(false);
 	});
 
-	it('allows a cloze without a native-language hint for target-only context', () => {
+	it('requires the native-language hint on a cloze: showing it is a serve-time call', () => {
 		const { hintNative: _hintNative, ...targetOnly } = validBatch.challenges[2];
-		expect(generatedChallengeSchema.safeParse(targetOnly).success).toBe(true);
+		expect(generatedChallengeSchema.safeParse(targetOnly).success).toBe(false);
 	});
 
 	it('rejects an empty answers list on either typed type', () => {

@@ -29,8 +29,11 @@ import type { WireTypeDef } from './def';
 
 export const generatedWordOrderSchema = z.object({
 	type: z.literal('word-order'),
-	/** Only early-rung requests ask for this native-language anchor. */
-	promptNative: nonEmpty.nullish(),
+	/**
+	 * Always written: whether the learner *sees* it is a serve-time decision
+	 * (`$lib/session/hints`), since a row outlives the rung it was written at.
+	 */
+	promptNative: nonEmpty,
 	/** The sentence *in the correct order*; the app shuffles. */
 	words: z.array(targetTextSchema).min(2),
 	/**
@@ -55,28 +58,20 @@ export type GeneratedWordOrder = z.infer<typeof generatedWordOrderSchema>;
 const SENTENCE_TILES = [3, 4, 5, 7, 8] as const;
 const EXTRA_TILES = [0, 0, 1, 2, 3] as const;
 
-/**
- * A native-language anchor belongs only on the lowest rung word-order is ever
- * planned at (rung 2, `PLANNABLE_KINDS`) — index 0 is moot since rung 1 never
- * asks for this type, but the ladder stays non-increasing regardless.
- */
-const HINT = [1, 1, 0, 0, 0] as const;
-
 export const wordOrderDef = {
 	type: 'word-order',
 	schema: generatedWordOrderSchema,
 	stored: { type: 'word-order', direction: 'toTarget' },
 	promptSpec:
-		'word-order — build a target sentence out of tiles. {promptNative?, words:[2+ TargetText — the sentence split into tiles, IN THE CORRECT ORDER], distractorWords:[0-3 TargetText] or null, instruction} e.g. {"type":"word-order","promptNative":"Could you bring us the bill, please?","words":[{"text":"¿Nos","reading":null},{"text":"trae","reading":null},{"text":"la","reading":null},{"text":"cuenta,","reading":null},{"text":"por","reading":null},{"text":"favor?","reading":null}],"distractorWords":[{"text":"carta","reading":null}],"instruction":null,"itemIds":["i6"],"explanation":null} — the app shuffles the tiles, so never state an order anywhere else. Include promptNative, the sentence in the native language, only when the item asks for hint:1.',
+		'word-order — build a target sentence out of tiles. {promptNative, words:[2+ TargetText — the sentence split into tiles, IN THE CORRECT ORDER], distractorWords:[0-3 TargetText] or null, instruction} e.g. {"type":"word-order","promptNative":"Could you bring us the bill, please?","words":[{"text":"¿Nos","reading":null},{"text":"trae","reading":null},{"text":"la","reading":null},{"text":"cuenta,","reading":null},{"text":"por","reading":null},{"text":"favor?","reading":null}],"distractorWords":[{"text":"carta","reading":null}],"instruction":null,"itemIds":["i6"],"explanation":null} — the app shuffles the tiles, so never state an order anywhere else. promptNative is the sentence in the native language; always include it.',
 	rulesSpec:
 		'- word-order sentences must have exactly one natural order: if the same tiles could be rearranged into a second correct sentence, rewrite it. 8 tiles is a hard limit; past it, shorten the sentence. distractorWords are plausible words that fit nowhere in the sentence, never a form of a word already in it.\n- Segmentation: one tile per WORD, never per character or syllable, and punctuation rides on the tile it touches — never a tile of its own ("吗？" is one tile, "？" alone is not a tile). For Chinese and Japanese split on word boundaries — 菜单 is one tile, not 菜 + 单. Each tile is a TargetText and carries its own reading under the usual rule.',
-	correctiveSpec: 'word-order {words,promptNative?}',
+	correctiveSpec: 'word-order {promptNative,words}',
 	paramsSpec:
-		'- tiles: how many tiles the sentence itself should be cut into. distractors: how many extra wrong tiles to add in distractorWords, 0 meaning none. hint: 1 means include promptNative; 0 means omit it.',
+		'- tiles: how many tiles the sentence itself should be cut into. distractors: how many extra wrong tiles to add in distractorWords, 0 meaning none.',
 	params: (difficulty) => ({
 		tiles: SENTENCE_TILES[difficulty - 1],
-		distractors: EXTRA_TILES[difficulty - 1],
-		hint: HINT[difficulty - 1]
+		distractors: EXTRA_TILES[difficulty - 1]
 	}),
 	escalationSpec:
 		'"word-order": the learner arranged the shuffled "tiles" into a sentence, and "answerTokens" in that order (printed as "answer") is the only accepted arrangement.',
@@ -87,6 +82,7 @@ export const wordOrderDef = {
 				order: 6,
 				challenge: {
 					type: 'word-order',
+					promptNative: 'Could you bring us the bill, please?',
 					words: [
 						{ text: '¿Nos', reading: null },
 						{ text: 'trae', reading: null },
@@ -113,6 +109,7 @@ export const wordOrderDef = {
 					// the whole reason the model does the splitting. Punctuation rides
 					// the word it touches, never a tile of its own, per the prompt rule.
 					type: 'word-order',
+					promptNative: 'Hello, could I have a menu, please?',
 					words: [
 						{ text: '你好，', reading: 'nǐ hǎo' },
 						{ text: '请', reading: 'qǐng' },
@@ -169,14 +166,13 @@ export const wordOrderDef = {
 		const tiles = shuffled([...words, ...distractors], rng);
 		const answerTokens = words.map((word) => word.text);
 		const answerReadings = words.map((word) => word.reading);
-		const prompt = params?.hint === 0 ? undefined : generated.promptNative;
 
 		return {
 			...base,
 			type: 'word-order',
 			direction: 'toTarget',
 			// Native by construction: there is no reading to leak the sentence.
-			...optionalString('prompt', prompt),
+			prompt: generated.promptNative.trim(),
 			tiles: tiles.map((tile) => tile.text),
 			...tokenReadings('tilesRomanization', tiles),
 			answerTokens,

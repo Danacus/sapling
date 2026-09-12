@@ -46,6 +46,7 @@
 		type SessionPlan
 	} from '$lib/session/engine';
 	import { motionMs } from '$lib/session/motion';
+	import { showNativeHint } from '$lib/session/hints';
 	import { planReadings, type ReadingPlan } from '$lib/session/romanization';
 	import type { Grade } from '$lib/srs';
 	import { runSync } from '$lib/sync';
@@ -278,6 +279,14 @@
 	 * the challenge is on screen.
 	 */
 	let currentReadings = $state<ReadingPlan>(ALL_READINGS);
+	/**
+	 * Whether {@link current} shows its native-language line (a cloze's
+	 * translation, a word-order's prompt, a spot-error's meaning). Decided in
+	 * {@link show} beside the readings, from the same weakest word, and for the
+	 * same reason: the row carries the line for life, and only the rung the word
+	 * is at *now* says whether the learner still needs it.
+	 */
+	let currentShowHint = $state(true);
 	/**
 	 * The learner's local romanizer, once its chunk has landed. `null` until then
 	 * — and forever, for a language that has none; see {@link loadStartScreen}.
@@ -596,6 +605,7 @@
 		const at = Date.now();
 		challengeShownAt = at;
 		currentReadings = planReadings(romanizationMode, challenge, items);
+		currentShowHint = showNativeHint(challenge, items);
 		current = challenge;
 		// Warm this challenge's own audio while the learner is still reading it.
 		// The queue loop covers the whole session now, so it has usually got there
@@ -1246,6 +1256,7 @@
 								{targetLanguage}
 								{nativeLanguage}
 								readings={currentReadings}
+								showHint={currentShowHint}
 								{tokenize}
 							/>
 

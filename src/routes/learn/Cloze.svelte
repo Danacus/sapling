@@ -36,6 +36,7 @@
 		onanswer,
 		targetLanguage = '',
 		readings = ALL_READINGS,
+		showHint = true,
 		tokenize = null
 	}: ChallengeProps<ClozeChallenge> = $props();
 
@@ -218,7 +219,9 @@
 		<p class="rom sentence-rom">{challenge.sentenceRomanization}</p>
 	{/if}
 
-	{#if challenge.translationHint}
+	<!-- The native line is always on the row; whether it shows is the session's
+	     serve-time call (`$lib/session/hints`), like the readings above. -->
+	{#if showHint && challenge.translationHint}
 		<p class="hint translation">{challenge.translationHint}</p>
 	{/if}
 
