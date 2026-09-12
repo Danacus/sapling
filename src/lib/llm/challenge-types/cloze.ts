@@ -56,8 +56,13 @@ const SENTENCE_WORDS = [3, 5, 7, 9, 11] as const;
  */
 const BANK_WORDS = [3, 3, 4, 5, 6] as const;
 
-/** A native-language bridge belongs only on the first, most supported rung. */
-const HINT = [1, 0, 0, 0, 0] as const;
+/**
+ * A native-language bridge travels only up to rung 2 — the floor a banked
+ * cloze is planned at (`PLANNABLE_KINDS`), and the same floor word-order and
+ * spot-error keep theirs to — so a learner meets the format with the sentence's
+ * meaning beside it once, and never again.
+ */
+const HINT = [1, 1, 0, 0, 0] as const;
 
 export const clozeDef = {
 	type: 'cloze',

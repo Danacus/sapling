@@ -509,7 +509,7 @@ describe('buildRequestPrompt', () => {
 		expect(bankAt(false)).toBe(0);
 	});
 
-	it('asks for a native cloze bridge only on the first rung', () => {
+	it('asks for a native cloze bridge up to rung 2, the floor a banked cloze is planned at', () => {
 		const hintAt = (difficulty: Want['difficulty']): number => {
 			const [, user] = buildRequestPrompt(
 				args,
@@ -517,7 +517,7 @@ describe('buildRequestPrompt', () => {
 			);
 			return (JSON.parse(user.content) as { items: { hint: number }[] }).items[0].hint;
 		};
-		expect(([1, 2, 3, 4, 5] as Want['difficulty'][]).map(hintAt)).toEqual([1, 0, 0, 0, 0]);
+		expect(([1, 2, 3, 4, 5] as Want['difficulty'][]).map(hintAt)).toEqual([1, 1, 0, 0, 0]);
 	});
 
 	it('writes everything shared across requests before the brief itself', () => {
