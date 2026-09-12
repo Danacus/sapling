@@ -1,10 +1,11 @@
 <!--
   Spot the error: one word in the sentence does not belong.
 
-  The sentence is laid out as tappable word tiles and the native-language
-  meaning sits under it — that meaning is not decoration, it is the whole
-  premise: without knowing what the sentence is *supposed* to say, a wrong word
-  is indistinguishable from a word you have not met yet.
+  The sentence is laid out as tappable word tiles. `challenge.meaning` is an
+  optional native-language bridge, asked for only at the lowest rung this type
+  is planned at — without it the wrong word has to be judged from the
+  target-language sentence alone, which is the harder, later-rung version of
+  the same task.
 
   Grading is a plain index comparison, like multiple choice: the learner picked
   a token rather than producing a string, so there is no fuzzy matching and this
@@ -119,7 +120,9 @@
 		</TapRow>
 	</div>
 
-	<p class="hint meaning">It should mean: {challenge.meaning}</p>
+	{#if challenge.meaning}
+		<p class="hint meaning">It should mean: {challenge.meaning}</p>
+	{/if}
 
 	<CheckButton disabled={selected === null || lock.locked} onclick={submit} />
 </div>

@@ -154,6 +154,12 @@ describe('difficultyOf', () => {
 				expect(value).toBeLessThanOrEqual(0.45 + 1e-9);
 			}
 		});
+
+		it('grows when the native-language anchor is removed', () => {
+			const anchored = difficultyOf(challenge(wordOrder(5, 0)));
+			const bare = difficultyOf(challenge({ ...wordOrder(5, 0), prompt: undefined }));
+			expect(anchored).toBeLessThan(bare);
+		});
 	});
 
 	describe('typed-translation', () => {
@@ -191,6 +197,12 @@ describe('difficultyOf', () => {
 			expect(short).toBeLessThan(long);
 			expect(short).toBeGreaterThanOrEqual(0);
 			expect(long).toBeLessThanOrEqual(0.15);
+		});
+
+		it('grows when the native-language meaning is removed', () => {
+			const supported = difficultyOf(challenge(spotError(5)));
+			const targetOnly = difficultyOf(challenge({ ...spotError(5), meaning: undefined }));
+			expect(supported).toBeLessThan(targetOnly);
 		});
 	});
 

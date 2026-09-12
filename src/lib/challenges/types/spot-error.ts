@@ -38,7 +38,10 @@ export const spotErrorChallengeSchema = z.object({
 	intendedWord: nonEmpty,
 	intendedWordRomanization: z.string().optional(),
 	correctedSentence: nonEmpty,
-	meaning: nonEmpty,
+	// Older spot-error rows always carried this. It became optional when the
+	// higher rung this type is planned at (rung 2 and up) stopped asking for
+	// one, leaving the target-language sentence to carry the whole read.
+	meaning: nonEmpty.optional(),
 	...storedBase
 });
 
@@ -62,9 +65,13 @@ export const spotErrorStoredDef = {
 	},
 
 	// `tokens` is already one entry per word — the model did the segmenting — so
-	// the length knob reads straight off it with no counting of its own.
+	// the length knob reads straight off it with no counting of its own. The
+	// second knob is whether a native-language meaning bridges the sentence at
+	// all; blank legacy values count as absent, same as cloze's `translationHint`.
 	difficulty(challenge) {
-		return withBase(BASE, lengthKnob(challenge.tokens.length));
+		const lengthFit = lengthKnob(challenge.tokens.length);
+		const contextFit = challenge.meaning?.trim() ? 0 : 1;
+		return withBase(BASE, lengthFit * 0.85 + contextFit * 0.15);
 	},
 
 	// Not the word they had to tap — the word that belonged there.

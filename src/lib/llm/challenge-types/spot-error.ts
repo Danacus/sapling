@@ -11,7 +11,7 @@
 
 import { z } from 'zod';
 import { joinTokens } from '$lib/text';
-import { labelKey, readingOf, tokenReadings, tokenize } from '../resolve-helpers';
+import { labelKey, optionalString, readingOf, tokenReadings, tokenize } from '../resolve-helpers';
 import type { Token } from '../resolve-helpers';
 import { generatedBase, nonEmpty, targetTextSchema } from './primitives';
 import type { WireTypeDef } from './def';
@@ -23,8 +23,11 @@ export const generatedSpotErrorSchema = z.object({
 	wrongWord: targetTextSchema,
 	/** 0-based index into `words`; the resolver rejects one that overshoots. */
 	wrongPosition: z.int().min(0),
-	/** What the sentence is meant to say — what makes the error findable. */
-	meaningNative: nonEmpty,
+	/**
+	 * What the sentence is meant to say. Only early-rung requests ask for this —
+	 * later ones expect the error spotted from the target-language sentence alone.
+	 */
+	meaningNative: nonEmpty.nullish(),
 	...generatedBase
 });
 
@@ -37,19 +40,30 @@ export type GeneratedSpotError = z.infer<typeof generatedSpotErrorSchema>;
  */
 const SENTENCE_WORDS = [3, 5, 7, 9, 11] as const;
 
+/**
+ * The native-language meaning belongs only on the lowest rung spot-error is
+ * ever planned at (rung 2, `PLANNABLE_KINDS`) — index 0 is moot since rung 1
+ * never asks for this type, but the ladder stays non-increasing regardless.
+ */
+const HINT = [1, 1, 0, 0, 0] as const;
+
 export const spotErrorDef = {
 	type: 'spot-error',
 	schema: generatedSpotErrorSchema,
 	stored: { type: 'spot-error', direction: 'toNative' },
 	promptSpec:
-		'spot-error — one wrong word in a target sentence. {words:[3+ TargetText — the CORRECT sentence split into tiles, in order], wrongWord:TargetText, wrongPosition:int, meaningNative} e.g. {"type":"spot-error","words":[{"text":"我们","reading":"wǒmen"},{"text":"想","reading":"xiǎng"},{"text":"买单","reading":"mǎidān"}],"wrongWord":{"text":"菜单","reading":"càidān"},"wrongPosition":2,"meaningNative":"We would like to pay the bill.","itemIds":["i7"],"explanation":null} — the app replaces words[wrongPosition] with wrongWord and asks the learner to tap it.',
+		'spot-error — one wrong word in a target sentence. {words:[3+ TargetText — the CORRECT sentence split into tiles, in order], wrongWord:TargetText, wrongPosition:int, meaningNative?} e.g. {"type":"spot-error","words":[{"text":"我们","reading":"wǒmen"},{"text":"想","reading":"xiǎng"},{"text":"买单","reading":"mǎidān"}],"wrongWord":{"text":"菜单","reading":"càidān"},"wrongPosition":2,"itemIds":["i7"],"explanation":null} — the app replaces words[wrongPosition] with wrongWord and asks the learner to tap it. Include meaningNative, what the sentence is meant to say, only when the item asks for hint:1.',
 	rulesSpec:
-		'- spot-error: wrongWord must be a real target-language word that is unambiguously wrong in that slot given meaningNative — same part of speech, wrong meaning — never a synonym, a spelling slip or a stylistic quibble. wrongPosition is a 0-based index into words, and wrongWord must differ from the word it replaces. The nearer wrongWord sits to the word it replaces while still being plainly wrong, the better the challenge.\n- Segmentation: one tile per WORD, never per character or syllable, and punctuation rides on the tile it touches — never a tile of its own ("吗？" is one tile, "？" alone is not a tile). For Chinese and Japanese split on word boundaries — 菜单 is one tile, not 菜 + 单. Each tile is a TargetText and carries its own reading under the usual rule.',
-	correctiveSpec: 'spot-error {words,wrongWord,wrongPosition,meaningNative}',
-	paramsSpec: '- words: how many words the sentence should be cut into in "words".',
-	params: (difficulty) => ({ words: SENTENCE_WORDS[difficulty - 1] }),
+		'- spot-error: wrongWord must be a real target-language word that is unambiguously wrong in that slot — same part of speech, wrong meaning — never a synonym, a spelling slip or a stylistic quibble. wrongPosition is a 0-based index into words, and wrongWord must differ from the word it replaces. The nearer wrongWord sits to the word it replaces while still being plainly wrong, the better the challenge.\n- Segmentation: one tile per WORD, never per character or syllable, and punctuation rides on the tile it touches — never a tile of its own ("吗？" is one tile, "？" alone is not a tile). For Chinese and Japanese split on word boundaries — 菜单 is one tile, not 菜 + 单. Each tile is a TargetText and carries its own reading under the usual rule.',
+	correctiveSpec: 'spot-error {words,wrongWord,wrongPosition,meaningNative?}',
+	paramsSpec:
+		'- words: how many words the sentence should be cut into in "words". hint: 1 means include meaningNative; 0 means omit it.',
+	params: (difficulty) => ({
+		words: SENTENCE_WORDS[difficulty - 1],
+		hint: HINT[difficulty - 1]
+	}),
 	escalationSpec:
-		'"spot-error": "tokens" is the sentence as the learner saw it, "correctIndex" is the position of the WRONG word they had to tap, "intendedWord" is what belongs there and "meaning" is what the sentence was supposed to say.',
+		'"spot-error": "tokens" is the sentence as the learner saw it, "correctIndex" is the position of the WRONG word they had to tap, "intendedWord" is what belongs there and "meaning", when present, is what the sentence was supposed to say.',
 
 	fixtures: {
 		spanish: [
@@ -91,7 +105,7 @@ export const spotErrorDef = {
 		]
 	},
 
-	resolve(generated, { base }) {
+	resolve(generated, { base, params }) {
 		const words = tokenize(generated.words);
 		const wrong: Token = {
 			text: generated.wrongWord.text.trim(),
@@ -105,12 +119,14 @@ export const spotErrorDef = {
 		if (labelKey(wrong.text) === labelKey(words[at].text)) return null;
 
 		const tokens = words.map((word, index) => (index === at ? wrong : word));
+		const meaning = params?.hint === 0 ? undefined : generated.meaningNative;
 
 		return {
 			...base,
 			type: 'spot-error',
-			// The sentence is target-language and the meaning is given; the
-			// learner is reading *out* of the target language to find the slip.
+			// The sentence is target-language; the learner is reading *out* of the
+			// target language to find the slip, with the meaning as a bridge only
+			// where the rung still asks for one.
 			direction: 'toNative',
 			tokens: tokens.map((token) => token.text),
 			...tokenReadings('tokensRomanization', tokens),
@@ -118,7 +134,7 @@ export const spotErrorDef = {
 			intendedWord: words[at].text,
 			...(words[at].reading ? { intendedWordRomanization: words[at].reading } : {}),
 			correctedSentence: joinTokens(words.map((word) => word.text)),
-			meaning: generated.meaningNative.trim()
+			...optionalString('meaning', meaning)
 		};
 	}
 } satisfies WireTypeDef<GeneratedSpotError>;

@@ -1,10 +1,16 @@
 <!--
   Word order: build the sentence out of shuffled tiles.
 
-  A native-language prompt, a tray the learner fills, and a bank of tiles below
-  it. Tapping a bank tile appends it to the tray; tapping a tray tile takes it
-  back out. Nothing submits on its own — a misplaced tap must always be
-  recoverable before committing, exactly as in multiple choice.
+  A tray the learner fills and a bank of tiles below it. Tapping a bank tile
+  appends it to the tray; tapping a tray tile takes it back out. Nothing
+  submits on its own — a misplaced tap must always be recoverable before
+  committing, exactly as in multiple choice.
+
+  `challenge.prompt` is an optional native-language anchor, asked for only at
+  the lowest rung this type is planned at (and always present on older rows).
+  Where it is present it is shown as the prompt, the way it always was: the
+  native sentence says what to build, not in which order, so it is support
+  rather than the answer. Without it the tiles are the whole puzzle.
 
   Grading compares the *texts* the learner arranged to `answerTokens`, never the
   tile indices they came from. That is what keeps a sentence using the same word

@@ -289,8 +289,14 @@ export interface MatchPairsChallenge extends ChallengeBase {
  */
 export interface WordOrderChallenge extends ChallengeBase {
 	type: 'word-order';
-	/** The sentence to build, in the learner's native language. */
-	prompt: string;
+	/**
+	 * Optional native-language rendering of the sentence to build. Early
+	 * word-order exercises use it as an anchor; later ones omit it and the
+	 * tiles alone are the puzzle — shown only after answering, as feedback.
+	 *
+	 * Older stored rows always have this field, so it remains fully supported.
+	 */
+	prompt?: string;
 	/** Heading shown above the prompt; absent means the UI's default. */
 	instruction?: string;
 	/**
@@ -338,8 +344,14 @@ export interface SpotErrorChallenge extends ChallengeBase {
 	intendedWordRomanization?: string;
 	/** The sentence with `intendedWord` restored — printed and spoken after answering. */
 	correctedSentence: string;
-	/** What the sentence is meant to say, in the learner's native language. */
-	meaning: string;
+	/**
+	 * Optional native-language rendering of what the sentence is meant to say.
+	 * Early spot-error exercises use it as a bridge; later ones omit it and the
+	 * error is spotted from the target-language sentence alone.
+	 *
+	 * Older stored rows always have this field, so it remains fully supported.
+	 */
+	meaning?: string;
 	itemIds: string[];
 }
 

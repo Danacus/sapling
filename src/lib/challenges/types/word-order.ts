@@ -31,7 +31,10 @@ const MOST_DISTRACTORS = 3;
 
 export const wordOrderChallengeSchema = z.object({
 	type: z.literal('word-order'),
-	prompt: nonEmpty,
+	// Older word-order rows always carried a native-language prompt. It became
+	// optional when the higher rung this type is planned at (rung 2 and up)
+	// stopped asking for one, leaving the tiles as the whole puzzle.
+	prompt: nonEmpty.optional(),
 	instruction: z.string().optional(),
 	/** Shuffled by the resolver; duplicates are legal (grading is by text sequence). */
 	tiles: z.array(nonEmpty).min(2),
@@ -60,15 +63,17 @@ export const wordOrderStoredDef = {
 		return 1;
 	},
 
-	// Two knobs on the tray: how many tiles the answer itself needs — which is
+	// Three knobs on the tray: how many tiles the answer itself needs — which is
 	// the sentence's own length, so it reads on the shared prose scale like
-	// every other length knob — and how many extra wrong ones are mixed in to
-	// sift through.
+	// every other length knob — how many extra wrong ones are mixed in to sift
+	// through, and whether a native-language anchor is present at all. Blank
+	// legacy values count as absent, same as cloze's `translationHint`.
 	difficulty(challenge) {
 		const tileFit = lengthKnob(challenge.answerTokens.length);
 		const distractors = Math.max(0, challenge.tiles.length - challenge.answerTokens.length);
 		const distractorFit = clamp01(distractors / MOST_DISTRACTORS);
-		return withBase(BASE, tileFit * 0.7 + distractorFit * 0.3);
+		const contextFit = challenge.prompt?.trim() ? 0 : 1;
+		return withBase(BASE, tileFit * 0.6 + distractorFit * 0.25 + contextFit * 0.15);
 	},
 
 	correctAnswerText(challenge) {
