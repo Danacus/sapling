@@ -9,6 +9,8 @@
 const API_KEY_STORAGE_KEY = 'll.openrouter.apiKey';
 const MODEL_STORAGE_KEY = 'll.openrouter.model';
 const BASE_URL_STORAGE_KEY = 'll.llm.baseUrl';
+const REASONING_EFFORT_STORAGE_KEY = 'll.llm.reasoningEffort';
+const REQUEST_ITEMS_STORAGE_KEY = 'll.llm.requestItems';
 
 /** Model used when the learner has not picked one. */
 export const DEFAULT_MODEL = 'google/gemini-3.7-flash';
@@ -79,6 +81,74 @@ export function setModel(model: string): void {
 		return;
 	}
 	write(MODEL_STORAGE_KEY, trimmed);
+}
+
+/**
+ * How hard the generation model may think before answering.
+ *
+ * Reasoning tokens are billed as output tokens, and a thinking model on its own
+ * default can spend thousands per challenge — for lesson generation, where a
+ * strict schema already does the structural work, that is usually waste.
+ * `'default'` sends nothing and leaves the model's own choice in place. Every
+ * other value travels two ways (`reasoning_effort` and `reasoning.effort`; see
+ * `$lib/llm/client`) so it lands on both OpenAI-compatible and OpenRouter
+ * endpoints.
+ */
+export type ReasoningEffort = 'default' | 'minimal' | 'low' | 'medium' | 'high' | 'max';
+
+export const REASONING_EFFORTS: readonly ReasoningEffort[] = [
+	'default',
+	'minimal',
+	'low',
+	'medium',
+	'high',
+	'max'
+];
+
+/** Low by default: generation is structured output, not a puzzle. */
+export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'low';
+
+/** The generation model's reasoning effort; {@link DEFAULT_REASONING_EFFORT} until changed. */
+export function getReasoningEffort(): ReasoningEffort {
+	const raw = read(REASONING_EFFORT_STORAGE_KEY);
+	return raw && (REASONING_EFFORTS as readonly string[]).includes(raw)
+		? (raw as ReasoningEffort)
+		: DEFAULT_REASONING_EFFORT;
+}
+
+/** Persists the reasoning effort. The default stores nothing, so it stays the default. */
+export function setReasoningEffort(effort: ReasoningEffort): void {
+	if (effort === DEFAULT_REASONING_EFFORT) {
+		remove(REASONING_EFFORT_STORAGE_KEY);
+		return;
+	}
+	write(REASONING_EFFORT_STORAGE_KEY, effort);
+}
+
+/** Wants one generation request may carry. Mirrors `REQUEST_ITEMS` in `$lib/llm`. */
+export const MAX_REQUEST_ITEMS = 24;
+
+/**
+ * An override for the number of wants one generation request carries, or
+ * `undefined` to use `REQUEST_ITEMS`' built-in value. Out-of-range or
+ * unparseable stored values are treated as absent rather than clamped, so a
+ * corrupt entry cannot silently pin generation to a bad size.
+ */
+export function getRequestItems(): number | undefined {
+	const raw = read(REQUEST_ITEMS_STORAGE_KEY);
+	if (!raw) return undefined;
+	const n = Number.parseInt(raw, 10);
+	return Number.isFinite(n) && n >= 1 && n <= MAX_REQUEST_ITEMS ? n : undefined;
+}
+
+/** Stores the request-size override. `undefined` clears it back to the built-in. */
+export function setRequestItems(items: number | undefined): void {
+	const n = items === undefined ? Number.NaN : Math.round(items);
+	if (!Number.isFinite(n) || n < 1 || n > MAX_REQUEST_ITEMS) {
+		remove(REQUEST_ITEMS_STORAGE_KEY);
+		return;
+	}
+	write(REQUEST_ITEMS_STORAGE_KEY, String(n));
 }
 
 /**

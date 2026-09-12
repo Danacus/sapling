@@ -48,6 +48,7 @@
  */
 
 import { getModel } from '$lib/db/settings';
+import type { ReasoningEffort } from '$lib/db/settings';
 import { termKey } from '$lib/text';
 import type { Challenge, KnowledgeItem, Profile } from '$lib/types';
 import { byType } from './challenge-types';
@@ -179,6 +180,14 @@ export interface BatchOptions {
 	newId?: () => string;
 	/** Called as each generation step starts; see {@link ProgressStep}. */
 	onProgress?: OnProgress;
+	/**
+	 * How many wants one request may carry, overriding {@link REQUEST_ITEMS}.
+	 * The per-kind cut still applies: this sizes each type's request, it does
+	 * not merge types into one call. See `$lib/db/settings`.
+	 */
+	itemsPerRequest?: number;
+	/** Forwarded to every call; see `ChatCompletionOptions.reasoningEffort`. */
+	reasoningEffort?: ReasoningEffort;
 	/**
 	 * Injectable `[0,1)` source for the option/word-bank shuffles the resolver
 	 * performs; defaults to `Math.random`. Only tests and the mock pass one.
@@ -870,7 +879,7 @@ export async function generateBatch(
 	// Nothing to write. Announcing a `request` step and then reporting an
 	// unusable reply would blame the model for a call that was never made, so
 	// this says what actually happened, before any step is announced.
-	const requests = groupIntoRequests(args.wants);
+	const requests = groupIntoRequests(args.wants, opts.itemsPerRequest);
 	if (requests.length === 0) {
 		throw new LlmError('bad-response', 'There is nothing to write: no challenges were asked for.');
 	}
@@ -970,7 +979,8 @@ export async function generateBatch(
 					signal: stop.signal,
 					fetchFn: opts.fetchFn,
 					responseFormat,
-					temperature: 0.7
+					temperature: 0.7,
+					...(opts.reasoningEffort ? { reasoningEffort: opts.reasoningEffort } : {})
 				});
 			} catch (error) {
 				// `bad-response` is this request's problem and costs this request only;

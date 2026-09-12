@@ -223,13 +223,22 @@ export interface TypeRequest {
  * other six types are, and never asked to read an abstract difficulty.
  *
  * Requests come out in first-appearance order, and a kind with more than
- * {@link REQUEST_ITEMS} wants spills into a second request of the same kind.
+ * `itemsPerRequest` wants spills into a second request of the same kind.
  * Every item within a request is a different word: a reply is matched back to
  * its brief by the word each challenge cites, so a second want of the same kind
  * for the same word could never be told from the first, and is dropped here
  * rather than asked for twice.
+ *
+ * `itemsPerRequest` defaults to {@link REQUEST_ITEMS}; it is an override for
+ * experimentation (see `$lib/db/settings`), clamped to at least one so a
+ * nonsensical value cannot become an infinite loop. The per-kind cut itself is
+ * not negotiable here — a request is still one wire type.
  */
-export function groupIntoRequests(wants: readonly Want[]): TypeRequest[] {
+export function groupIntoRequests(
+	wants: readonly Want[],
+	itemsPerRequest: number = REQUEST_ITEMS
+): TypeRequest[] {
+	const perRequest = Math.max(1, Math.floor(itemsPerRequest));
 	const openByKind = new Map<string, TypeRequest>();
 	const seen = new Set<string>();
 	const requests: TypeRequest[] = [];
@@ -241,7 +250,7 @@ export function groupIntoRequests(wants: readonly Want[]): TypeRequest[] {
 		seen.add(identity);
 
 		const open = openByKind.get(key);
-		if (open && open.wants.length < REQUEST_ITEMS) {
+		if (open && open.wants.length < perRequest) {
 			open.wants.push(want);
 			continue;
 		}

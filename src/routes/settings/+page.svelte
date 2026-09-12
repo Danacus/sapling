@@ -9,18 +9,25 @@
 		getBaseUrl,
 		getModel,
 		getProfile,
+		getReasoningEffort,
+		getRequestItems,
 		importData,
+		MAX_REQUEST_ITEMS,
+		REASONING_EFFORTS,
 		setApiKey,
 		setBaseUrl,
 		resetData,
-		setModel
+		setModel,
+		setReasoningEffort,
+		setRequestItems,
+		type ReasoningEffort
 	} from '$lib/db';
 	import {
 		dictationCoversLanguage,
 		dictationDownloadBytes,
 		dictationModelInstalled
 	} from '$lib/asr';
-	import { isMockMode } from '$lib/llm';
+	import { REQUEST_ITEMS, isMockMode } from '$lib/llm';
 	import { inTauri } from '$lib/platform';
 	import { loadRomanizer, localReadings } from '$lib/romanize';
 	import { TASK_KINDS, startTask } from '$lib/tasks';
@@ -85,6 +92,14 @@
 		{ value: 'on', label: 'On' },
 		{ value: 'adaptive', label: 'Adaptive' }
 	];
+	const REASONING_EFFORT_LABELS: Record<ReasoningEffort, string> = {
+		default: 'Provider default',
+		minimal: 'Minimal',
+		low: 'Low',
+		medium: 'Medium',
+		high: 'High',
+		max: 'Max'
+	};
 
 	let loading = $state(true);
 	let loadError = $state('');
@@ -143,6 +158,11 @@
 	let modelInput = $state(DEFAULT_MODEL);
 	let llmStatus = $state<Status>('idle');
 	let llmMessage = $state('');
+
+	// Lesson generation: the model-call knobs, for tuning cost and output size.
+	let reasoningEffort = $state<ReasoningEffort>('low');
+	/** Blank means the built-in {@link REQUEST_ITEMS}. */
+	let requestItemsInput = $state('');
 
 	// Usage -------------------------------------------------------------------------
 	let usagePromptTokens = $state(0);
@@ -216,6 +236,9 @@
 				apiKeySet = getApiKey() !== undefined;
 				modelInput = getModel();
 				baseUrlInput = getBaseUrl() ?? '';
+				reasoningEffort = getReasoningEffort();
+				const storedItems = getRequestItems();
+				requestItemsInput = storedItems === undefined ? '' : String(storedItems);
 				romanizationMode = getRomanizationMode();
 				listeningMode = getListeningMode();
 
@@ -539,6 +562,28 @@
 			llmMessage = cause instanceof Error ? cause.message : 'Could not save.';
 			llmStatus = 'error';
 		}
+	}
+
+	/** Applies at once: the next top-up reads whatever is stored here. */
+	function chooseReasoningEffort(effort: ReasoningEffort) {
+		reasoningEffort = effort;
+		setReasoningEffort(effort);
+	}
+
+	/**
+	 * Commits the request-size override on blur. Blank restores the built-in;
+	 * anything out of range is treated as blank rather than clamped, matching
+	 * `setRequestItems` itself.
+	 */
+	function commitRequestItems() {
+		const parsed = Number.parseInt(requestItemsInput.trim(), 10);
+		if (!Number.isFinite(parsed) || parsed < 1 || parsed > MAX_REQUEST_ITEMS) {
+			requestItemsInput = '';
+			setRequestItems(undefined);
+			return;
+		}
+		requestItemsInput = String(parsed);
+		setRequestItems(parsed);
 	}
 
 	/**
@@ -1010,6 +1055,62 @@
 				<div class="actions-row">
 					<button type="button" class="btn btn-primary" onclick={applyLlmSettings}>Apply</button>
 					<InlineStatus status={llmStatus} message={llmMessage} />
+				</div>
+			</section>
+
+			<!--
+			  The generation knobs. Reasoning is the big one: on a thinking model
+			  its tokens are billed as output, and a lesson is structured output
+			  that a strict schema already holds together. Both values are read at
+			  the moment a top-up starts, so changing them needs no reload.
+			-->
+			<section class="card ll-rise" style="animation-delay: 200ms">
+				<div class="card-head">
+					<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
+						<path d="M4.8 15.4a7.8 7.8 0 1 1 14.4 0" />
+						<path d="m12 15.4 3.6-4.6" />
+						<path d="M4.2 18.4h15.6" />
+					</svg>
+					<h2>Lesson generation</h2>
+				</div>
+				<hr class="stitch" />
+
+				<div class="field">
+					<label class="label" for="settings-reasoning">Reasoning effort</label>
+					<select
+						id="settings-reasoning"
+						class="input"
+						value={reasoningEffort}
+						onchange={(event) =>
+							chooseReasoningEffort(event.currentTarget.value as ReasoningEffort)}
+					>
+						{#each REASONING_EFFORTS as effort (effort)}
+							<option value={effort}>{REASONING_EFFORT_LABELS[effort]}</option>
+						{/each}
+					</select>
+					<p class="hint">
+						How long the model may think before answering. Reasoning is billed as output tokens; low
+						is plenty for structured lessons.
+					</p>
+				</div>
+
+				<div class="field">
+					<label class="label" for="settings-request-items">Challenges per request</label>
+					<input
+						id="settings-request-items"
+						class="input"
+						type="number"
+						min="1"
+						max={MAX_REQUEST_ITEMS}
+						inputmode="numeric"
+						value={requestItemsInput}
+						oninput={(event) => (requestItemsInput = event.currentTarget.value)}
+						onchange={commitRequestItems}
+						placeholder={String(REQUEST_ITEMS)}
+					/>
+					<p class="hint">
+						Blank uses {REQUEST_ITEMS}. Each challenge type is still a separate request.
+					</p>
 				</div>
 			</section>
 

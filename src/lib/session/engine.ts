@@ -34,7 +34,7 @@ import {
 	reportChallenge as flagChallengeReported,
 	updateItemAfterReview
 } from '$lib/db';
-import type { ChallengeRow } from '$lib/db';
+import type { ChallengeRow, ReasoningEffort } from '$lib/db';
 import { challengeOf } from '$lib/db';
 import { getBatch, isActiveKind, isKindAvailableAt, isMockMode, kindOf } from '$lib/llm';
 import type { BatchArgs, OnProgress, TokenUsage } from '$lib/llm';
@@ -785,6 +785,13 @@ export interface GenerateOptions {
 	 * each one from its event to the next.
 	 */
 	onProgress?: OnProgress;
+	/**
+	 * The generation knobs from `$lib/db/settings`, read by the task that starts
+	 * a top-up and forwarded to `getBatch` unchanged. Absent means the built-in
+	 * defaults (`REQUEST_ITEMS`, the model's own reasoning effort).
+	 */
+	itemsPerRequest?: number;
+	reasoningEffort?: ReasoningEffort;
 }
 
 /**
@@ -842,7 +849,9 @@ export async function generateChallenges(
 
 	const batch = await getBatch(args, {
 		...(opts.signal ? { signal: opts.signal } : {}),
-		...(progress ? { onProgress: progress } : {})
+		...(progress ? { onProgress: progress } : {}),
+		...(opts.itemsPerRequest === undefined ? {} : { itemsPerRequest: opts.itemsPerRequest }),
+		...(opts.reasoningEffort === undefined ? {} : { reasoningEffort: opts.reasoningEffort })
 	});
 
 	progress?.({ id: 'save', label: 'Saving new challenges' });

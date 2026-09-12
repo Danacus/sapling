@@ -207,6 +207,13 @@ describe('groupIntoRequests', () => {
 		expect(kindKey(requests[1].kind)).toBe(kindKey(requests[0].kind));
 	});
 
+	it('sizes requests by an explicit items-per-request override', () => {
+		const wants = Array.from({ length: 5 }, (_, i) => want(`w${i}`, { type: 'spot-error' }));
+		const requests = groupIntoRequests(wants, 2);
+
+		expect(requests.map((request) => request.wants.length)).toEqual([2, 2, 1]);
+	});
+
 	it('never asks one request about the same word twice', () => {
 		// A reply is matched back to its brief by the word each challenge cites,
 		// so a second want of the same kind for the same word could never be told

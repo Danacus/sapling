@@ -7,6 +7,7 @@
  * twice.
  */
 
+import { getReasoningEffort, getRequestItems } from '$lib/db';
 import { generateChallenges } from '$lib/session/engine';
 import type { GenerateInfo } from '$lib/session/engine';
 import type { Profile } from '$lib/types';
@@ -26,10 +27,17 @@ export const topUpTask = {
 	},
 
 	run(input, ctx) {
+		// The generation knobs are device settings, read here rather than
+		// threaded through the page: every top-up, however it was started, gets
+		// whatever is configured now.
+		const itemsPerRequest = getRequestItems();
+		const reasoningEffort = getReasoningEffort();
 		return generateChallenges(input.profile, {
 			signal: ctx.signal,
 			onProgress: (step) => ctx.step(step.id, step.label),
-			...(input.topic ? { topic: input.topic } : {})
+			...(input.topic ? { topic: input.topic } : {}),
+			...(itemsPerRequest === undefined ? {} : { itemsPerRequest }),
+			...(reasoningEffort === 'default' ? {} : { reasoningEffort })
 		});
 	},
 

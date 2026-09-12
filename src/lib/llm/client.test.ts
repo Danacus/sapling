@@ -82,6 +82,30 @@ describe('chatCompletion', () => {
 		expect(headers.Authorization).toBe(`Bearer ${KEY}`);
 	});
 
+	it('sends a configured reasoning effort in both spellings, and neither when default', async () => {
+		const configured = recordingFetch([() => jsonResponse(okCompletion())]);
+		await chatCompletion({
+			messages,
+			apiKey: KEY,
+			model: 'm',
+			fetchFn: configured.fetchFn,
+			reasoningEffort: 'low'
+		});
+		expect(configured.calls[0].body.reasoning_effort).toBe('low');
+		expect(configured.calls[0].body.reasoning).toEqual({ effort: 'low' });
+
+		const omitted = recordingFetch([() => jsonResponse(okCompletion())]);
+		await chatCompletion({
+			messages,
+			apiKey: KEY,
+			model: 'm',
+			fetchFn: omitted.fetchFn,
+			reasoningEffort: 'default'
+		});
+		expect(omitted.calls[0].body).not.toHaveProperty('reasoning_effort');
+		expect(omitted.calls[0].body).not.toHaveProperty('reasoning');
+	});
+
 	it('opts in to browser CORS on the Anthropic endpoint', async () => {
 		const { fetchFn, calls } = recordingFetch([() => jsonResponse(okCompletion())]);
 		await chatCompletion({
