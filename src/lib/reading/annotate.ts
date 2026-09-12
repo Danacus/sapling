@@ -21,7 +21,7 @@
  * ## Why the caller owns the roll map
  *
  * Under `'adaptive'` a tracked word's reading is a weighted coin flip against
- * its strength (`$lib/session/romanization`). A challenge rolls once at serve
+ * its strength (`$lib/challenges/serve/reading`). A challenge rolls once at serve
  * time because it is one screen; a text is many sentences and the same word
  * turns up in several of them, and a word that showed its pinyin in sentence
  * two and hid it in sentence five reads as a bug. So the roll is memoised by
@@ -40,9 +40,9 @@
  * candidate, which is exactly what this module did before.
  */
 
-import { hideReadingProbability } from '$lib/session/romanization';
-import { maturityOf } from '$lib/session/progression';
-import type { Maturity } from '$lib/session/progression';
+import { hideReadingProbability } from '$lib/challenges/serve/reading';
+import { maturityOf } from '$lib/challenges/serve/progression';
+import type { Maturity } from '$lib/challenges/serve/progression';
 import type { RomanizedToken } from '$lib/romanize';
 import { strengthOf } from '$lib/srs';
 import { cardKey, isPunctuationOnly, readingKey } from '$lib/text';
@@ -200,7 +200,7 @@ function pickByReading<T>(
  * one roll shared between them would show a reading the other has outgrown.
  *
  * `>=` rather than `>` at the ends, matching `rollShow` in
- * `$lib/session/romanization`: a probability of 1 hides for every roll in
+ * `$lib/challenges/serve/reading`: a probability of 1 hides for every roll in
  * `[0, 1)`, and a probability of 0 shows for all of them.
  */
 function showsReading(item: KnowledgeItem, ctx: AnnotateContext): boolean {

@@ -181,7 +181,7 @@ export function clozeSentenceRomanization(generated: {
  * challenge falls back to typing.
  *
  * The full surviving set is stored, deduplication aside — sizing how much of
- * it a served challenge shows is a serve-time decision (`$lib/session/support`),
+ * it a served challenge shows is a serve-time decision (`$lib/challenges/serve/presentation`),
  * not the resolver's.
  */
 export function clozeWordBank(

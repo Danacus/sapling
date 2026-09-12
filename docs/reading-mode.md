@@ -260,7 +260,7 @@ interface ReadingWord {
   key?: string;            // wordKey(text); absent for whitespace/punctuation
   status: WordStatus;
   itemId?: string;         // tracked
-  maturity?: Maturity;     // tracked — `maturityOf` from $lib/session/progression
+  maturity?: Maturity;     // tracked — `maturityOf` from $lib/challenges/serve/progression
   gloss?: { term: string; meaning: string; reading?: string }; // tracked (from the item) or new (from the glossary)
 }
 ```
@@ -273,7 +273,7 @@ gloss — the card lets the learner type a meaning).
 Reading visibility, under the learner's `RomanizationMode` (`$lib/ui/prefs`):
 `'on'` keeps every reading, `'off'` nulls every reading; `'adaptive'`: `known`
 → null; `tracked` → one roll per **card** per text open with
-`hideReadingProbability(strengthOf(item))` from `$lib/session/romanization`
+`hideReadingProbability(strengthOf(item))` from `$lib/challenges/serve/reading`
 (memoised by `cardKey` in a `Map` the caller owns, so a word reads the same in
 every sentence and two cards sharing a spelling fade on their own strengths);
 `new`/`plain` keep theirs. A sentence's stored `reading` (the

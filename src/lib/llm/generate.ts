@@ -265,7 +265,7 @@ function hasInstructionField(def: AnyWireTypeDef): boolean {
  * A word bank or a distractor-tile count is no longer one of those parameters:
  * every wire type that has one now asks for the fullest set its schema allows
  * at every rung, and how much of it a served challenge shows is decided later
- * (`$lib/session/support`).
+ * (`$lib/challenges/serve/presentation`).
  */
 function composeSystemPrompt(def: AnyWireTypeDef): string {
 	return (

@@ -11,7 +11,7 @@
   **Deliberately dumb.** It renders exactly the tokens it is handed: a token
   with a `reading` becomes a `<ruby>`, one without becomes plain text. No
   preference lives here — callers pass tokens whose hidden readings have already
-  been nulled by `$lib/session/romanization`'s `applyPlan`, so "the learner owns
+  been nulled by `$lib/challenges/serve/reading`'s `applyPlan`, so "the learner owns
   this word" and "this span is punctuation" arrive as the same thing, a token
   with no reading, and both render as bare text.
 

@@ -10,7 +10,7 @@ import {
 	planReadings,
 	shouldShowReading,
 	type ReadingPlan
-} from './romanization';
+} from './reading';
 
 /** Fixed instant: 2026-01-01T00:00:00.000Z. Every test computes off this. */
 const NOW = Date.UTC(2026, 0, 1, 0, 0, 0);

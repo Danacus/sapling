@@ -45,8 +45,9 @@ export interface ChallengeKind {
  * fails the suite. Cloze is planned at demand 1 — every want asks for the same
  * banked exercise, whatever the rung — even though a served row at the top
  * rung shows no bank at all and is answered exactly as a demand-2 challenge
- * would be; that gap between planned and served demand is `$lib/session/
- * progression`'s `servedDemand`, not this module's concern.
+ * would be; that gap between planned and served demand is
+ * `$lib/challenges/serve/progression`'s `servedDemand`, not this module's
+ * concern.
  */
 export interface PlannableKind extends ChallengeKind {
 	readonly demand: Demand;
@@ -131,8 +132,8 @@ const defByStored: ReadonlyMap<string, (typeof WIRE_TYPE_DEFS)[number]> = new Ma
  * Deliberately blind to whether a cloze's word bank survived: that used to be
  * part of a kind's identity (two different exercises, planned separately), but
  * is now purely a fact about one stored row, read by `$lib/challenges/demand`'s
- * `demandOf` and reconciled with the rung at serve time by `$lib/session/
- * progression`'s `servedDemand`.
+ * `demandOf` and reconciled with the rung at serve time by
+ * `$lib/challenges/serve/progression`'s `servedDemand`.
  */
 export function kindOf(challenge: Challenge): ChallengeKind | undefined {
 	const def = defByStored.get(
@@ -157,7 +158,7 @@ export interface WantItem {
  * hard to write it.
  *
  * The rung is the word's own ladder level (`difficultyLevelOf` in
- * `$lib/session/progression`, a bare `1..5` here since `$lib/llm` never reaches
+ * `$lib/challenges/serve/progression`, a bare `1..5` here since `$lib/llm` never reaches
  * into `$lib/session`). It is never sent as itself — see `WireTypeDef.params`.
  */
 export interface Want {

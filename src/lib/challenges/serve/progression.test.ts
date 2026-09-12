@@ -170,7 +170,7 @@ describe('servedDemand', () => {
 	});
 
 	it('reads a banked cloze at demand 2 for a rung-5 word, unlike demandOf', () => {
-		// `$lib/session/support`'s `bankSizeFor` shows no bank at all at the top
+		// `$lib/challenges/serve/presentation`'s `bankSizeFor` shows no bank at all at the top
 		// rung — the row is answered exactly like a typed, demand-2 challenge —
 		// even though the stored row still carries its `wordBank` in full, which
 		// is what `demandOf` reads.

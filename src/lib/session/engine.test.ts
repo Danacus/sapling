@@ -1242,7 +1242,7 @@ describe('smoothDemand', () => {
 
 	it('treats a rung-5 banked cloze as tier 2, the demand it is actually served at', () => {
 		// A banked cloze is stored at demand 1 (`demandOf` reads its `wordBank`),
-		// but at rung 5 `$lib/session/support`'s `bankSizeFor` shows none of it —
+		// but at rung 5 `$lib/challenges/serve/presentation`'s `bankSizeFor` shows none of it —
 		// the learner types the answer exactly as they would for a demand-2
 		// challenge. `smoothDemand` has to see that, or it would leave a
 		// recognition-then-"constrained-production" pair alone that the learner

@@ -19,15 +19,10 @@
   comes from `PromptHeader` and the line below it stays this component's own.
 -->
 <script lang="ts">
-	import {
-		ALL_READINGS,
-		rubyFor,
-		storedReading,
-		termReading,
-		type ChallengeProps
-	} from '$lib/challenges/props';
+	import type { ChallengeProps } from '$lib/challenges/props';
+	import { resolvedPresentation, visibleBank } from '$lib/challenges/serve/presentation';
+	import { rubyFor, termReading } from '$lib/challenges/serve/reading';
 	import type { RomanizedToken } from '$lib/romanize';
-	import { visibleBank } from '$lib/session/support';
 	import type { ClozeChallenge } from '$lib/types';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import { validateAnswer } from '$lib/validate';
@@ -42,12 +37,19 @@
 		challenge,
 		onanswer,
 		targetLanguage = '',
-		readings = ALL_READINGS,
 		presentation,
 		tokenize = null
 	}: ChallengeProps<ClozeChallenge> = $props();
 
-	const showHint = $derived(presentation?.showHint ?? true);
+	/**
+	 * The serve-time presentation with the bare-render defaults filled in — the
+	 * hint on, every stored bank entry shown, every reading shown. Spelling
+	 * those defaults out here is what this object exists to stop, and the
+	 * readings now travel inside it rather than as a second prop.
+	 */
+	const served = $derived(resolvedPresentation(challenge, presentation));
+	const showHint = $derived(served.showHint);
+	const readings = $derived(served.readings);
 
 	const GAP = '___';
 
@@ -100,13 +102,11 @@
 	});
 
 	/**
-	 * The stored bank positions this served challenge shows — every position
-	 * when `presentation` was not supplied, so a bare render (tests) keeps
-	 * showing everything stored.
+	 * The stored bank positions this served challenge shows — the resolved
+	 * presentation's size, which is every position when `presentation` was not
+	 * supplied, so a bare render (tests) keeps showing everything stored.
 	 */
-	const visibleIndices = $derived(
-		visibleBank(challenge, presentation?.bankSize ?? challenge.wordBank?.length ?? 0)
-	);
+	const visibleIndices = $derived(visibleBank(challenge, served.bankSize));
 	const bank = $derived(visibleIndices.map((index) => challenge.wordBank![index]));
 	const usesBank = $derived(bank.length > 0);
 
@@ -240,8 +240,8 @@
 		<p class="rom sentence-rom">{challenge.sentenceRomanization}</p>
 	{/if}
 
-	<!-- The native line is always on the row; whether it shows is the session's
-	     serve-time call (`$lib/session/support`), like the readings above. -->
+	<!-- The native line is always on the row; whether it shows is the serve-time
+	     call (`$lib/challenges/serve/presentation`), like the readings above. -->
 	{#if showHint && challenge.translationHint}
 		<p class="hint translation">{challenge.translationHint}</p>
 	{/if}

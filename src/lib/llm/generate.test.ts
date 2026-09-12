@@ -489,7 +489,7 @@ describe('buildRequestPrompt', () => {
 		// whichever rung it is written at — so `distractorWords` stopped being a
 		// per-item number the plan sends and became a constant line in the
 		// prompt itself ("always write exactly five"). Whether a served
-		// challenge shows that bank at all is `$lib/session/support`'s call, made
+		// challenge shows that bank at all is `$lib/challenges/serve/presentation`'s call, made
 		// long after generation.
 		const itemsAt = (difficulty: 1 | 5) => {
 			const [, user] = buildRequestPrompt(args, requestFor({ type: 'cloze' }, difficulty));
@@ -1446,7 +1446,7 @@ describe('resolveBatch', () => {
 			// No trim, and no enforcement against `params` any more — there is only
 			// one cloze kind now, so nothing the plan sent could mark this bank as
 			// unwanted. Sizing what a served challenge shows from it is
-			// `$lib/session/support`'s job.
+			// `$lib/challenges/serve/presentation`'s job.
 			const challenge = resolveCloze(
 				{
 					distractorWords: ['筷子', '茶', '水', '碗', '杯子'].map((text) => ({
@@ -1462,7 +1462,7 @@ describe('resolveBatch', () => {
 
 		it('always keeps the native hint, whatever rung the row was planned at', () => {
 			// Whether the learner *sees* it is decided when the row is served
-			// (`$lib/session/support`), not when it is written: a row outlives the
+			// (`$lib/challenges/serve/presentation`), not when it is written: a row outlives the
 			// rung it was written at.
 			const challenge = resolveCloze({}, { paramsByItem: new Map([['i1', { words: 11 }]]) });
 			expect(challenge?.translationHint).toBe('Hello, could I have a menu, please?');
@@ -1670,7 +1670,7 @@ describe('resolveBatch', () => {
 
 		it('is unaffected by a planned tile count: the resolver keeps all surviving distractors', () => {
 			// The rung no longer changes what is written or resolved, only what a
-			// served challenge shows (`$lib/session/support`). `params.tiles` still
+			// served challenge shows (`$lib/challenges/serve/presentation`). `params.tiles` still
 			// travels for other types' resolvers to read, but word-order's own
 			// distractor allowance is structural now, not planned.
 			const challenge = resolveWordOrder(

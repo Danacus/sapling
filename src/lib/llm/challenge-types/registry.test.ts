@@ -286,7 +286,7 @@ describe('the rungs, as the stored side reads them back', () => {
 		// The one thing generation-time parameters used to enforce — how much of
 		// the bank/tray survives — is gone: every banked cloze and every
 		// word-order now write (and resolve) the fullest set regardless of rung,
-		// and `$lib/session/support` decides what a served challenge shows.
+		// and `$lib/challenges/serve/presentation` decides what a served challenge shows.
 		const easy = clozeAt(1);
 		const hard = clozeAt(5);
 		expect(easy.type === 'cloze' && easy.wordBank).toHaveLength(6);

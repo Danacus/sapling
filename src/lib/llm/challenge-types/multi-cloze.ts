@@ -25,7 +25,7 @@ export const generatedMultiClozeSchema = z.object({
 	 * Wrong target-language choices only; answers enter the bank locally.
 	 * Always written large enough that the shared bank reaches nine entries —
 	 * answers included; how much of it a served challenge shows is a
-	 * serve-time decision (`$lib/session/support`), not this schema's.
+	 * serve-time decision (`$lib/challenges/serve/presentation`), not this schema's.
 	 */
 	distractorWords: z.array(targetTextSchema).min(2),
 	...generatedBase
@@ -39,7 +39,7 @@ const GAP_COUNTS = [2, 2, 3, 3, 4] as const;
 /**
  * The shared bank's target size, answers included — constant, not a ladder:
  * which rung a word sits at no longer changes what is *written*, only what a
- * served challenge *shows* (`$lib/session/support`'s
+ * served challenge *shows* (`$lib/challenges/serve/presentation`'s
  * `bankSizeFor`/`visibleBank`). Nine is the top of the old ladder, so every
  * banked passage is written with the fullest bank the model can supply.
  */
@@ -67,7 +67,7 @@ function passageRomanization(
 /**
  * Shared word bank; every answer survives and collision-prone extras do not.
  * Stores the full surviving set — sizing how much of it a served challenge
- * shows is `$lib/session/support`'s job, not this resolver's.
+ * shows is `$lib/challenges/serve/presentation`'s job, not this resolver's.
  */
 function wordBank(
 	gaps: readonly { answer: TargetText }[],

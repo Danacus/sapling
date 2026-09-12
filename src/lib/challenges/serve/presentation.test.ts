@@ -11,14 +11,19 @@ import {
 	HINT_CEILING_LEVEL,
 	MULTI_CLOZE_BANK_LADDER,
 	WORD_ORDER_DISTRACTOR_LADDER,
+	clozeTypedLevel
+} from './ladders';
+import {
 	bankSizeFor,
 	distractorTilesFor,
 	presentationFor,
+	resolvedPresentation,
 	showNativeHint,
 	visibleBank,
 	visibleTiles
-} from './support';
+} from './presentation';
 import { LEVEL_BANDS, levelForStrength, type DifficultyLevel } from './progression';
+import { ALL_READINGS } from './reading';
 
 const NOW = Date.UTC(2026, 0, 1, 0, 0, 0);
 
@@ -111,7 +116,7 @@ describe('bankSizeFor', () => {
 	});
 
 	it('shows no bank at all at the top rung: cued recall, typed', () => {
-		// The rung `$lib/session/progression`'s `servedDemand` treats as free
+		// The rung `./progression`'s `servedDemand` treats as free
 		// production even though the row is stored (and demand-planned) as a
 		// banked, constrained-production cloze.
 		const challenge = cloze(['w'], ['leo', 'como', 'bebo', 'corro', 'salto', 'duermo']);
@@ -287,13 +292,17 @@ describe('showNativeHint', () => {
 });
 
 describe('presentationFor', () => {
-	it('folds the hint, bank size and distractor-tile count into one object', () => {
+	/** `'on'` keeps the readings roll deterministic and out of the way in these tests. */
+	const ON = { romanizationMode: 'on' as const };
+
+	it('folds the hint, bank size, distractor-tile count and readings into one object', () => {
 		const items = [item('w', strengthAt(1))];
 		const challenge = cloze(['w'], ['leo', 'como', 'bebo', 'corro', 'salto', 'duermo']);
-		expect(presentationFor(challenge, items)).toEqual({
+		expect(presentationFor(challenge, items, ON)).toEqual({
 			showHint: true,
 			bankSize: CLOZE_BANK_LADDER[0],
-			distractorTiles: 0
+			distractorTiles: 0,
+			readings: ALL_READINGS
 		});
 	});
 
@@ -301,10 +310,11 @@ describe('presentationFor', () => {
 		const items = [item('w', strengthAt(2))];
 		const answerTokens = ['Yo', 'leo', 'un', 'libro.'];
 		const challenge = wordOrder(['w'], answerTokens, [...answerTokens, 'd1', 'd2', 'd3']);
-		expect(presentationFor(challenge, items)).toEqual({
+		expect(presentationFor(challenge, items, ON)).toEqual({
 			showHint: true,
 			bankSize: 0,
-			distractorTiles: WORD_ORDER_DISTRACTOR_LADDER[1]
+			distractorTiles: WORD_ORDER_DISTRACTOR_LADDER[1],
+			readings: ALL_READINGS
 		});
 	});
 
@@ -319,10 +329,75 @@ describe('presentationFor', () => {
 			correctIndex: 0,
 			itemIds: ['w']
 		};
-		expect(presentationFor(challenge, items)).toEqual({
+		expect(presentationFor(challenge, items, ON)).toEqual({
 			showHint: true,
 			bankSize: 0,
-			distractorTiles: 0
+			distractorTiles: 0,
+			readings: ALL_READINGS
 		});
+	});
+
+	it('rolls the readings through planReadings, honoring the mode', () => {
+		const items = [item('w', strengthAt(1))];
+		const challenge = cloze(['w'], ['leo', 'como', 'bebo']);
+		expect(presentationFor(challenge, items, { romanizationMode: 'off' }).readings.sentence).toBe(
+			false
+		);
+	});
+});
+
+describe('resolvedPresentation', () => {
+	it('shows everything stored when no presentation was supplied (a bare render)', () => {
+		const challenge = cloze(['w'], ['leo', 'como', 'bebo', 'corro']);
+		expect(resolvedPresentation(challenge)).toEqual({
+			showHint: true,
+			bankSize: 4,
+			distractorTiles: 0,
+			readings: ALL_READINGS
+		});
+	});
+
+	it('defaults a bare word-order render to every stored distractor', () => {
+		const answerTokens = ['Yo', 'leo', 'un', 'libro.'];
+		const challenge = wordOrder(['w'], answerTokens, [...answerTokens, 'd1', 'd2']);
+		expect(resolvedPresentation(challenge)).toEqual({
+			showHint: true,
+			bankSize: 0,
+			distractorTiles: 2,
+			readings: ALL_READINGS
+		});
+	});
+
+	it('passes a supplied presentation through field for field', () => {
+		const challenge = cloze(['w'], ['leo', 'como', 'bebo', 'corro']);
+		const supplied = {
+			showHint: false,
+			bankSize: 2,
+			distractorTiles: 0,
+			readings: { sentence: false, byTerm: new Map([['w', true]]) }
+		};
+		expect(resolvedPresentation(challenge, supplied)).toEqual(supplied);
+	});
+
+	it('fills only the fields a partial leaves out', () => {
+		const challenge = cloze(['w'], ['leo', 'como', 'bebo', 'corro']);
+		expect(resolvedPresentation(challenge, { showHint: false })).toEqual({
+			showHint: false,
+			bankSize: 4,
+			distractorTiles: 0,
+			readings: ALL_READINGS
+		});
+	});
+});
+
+describe('clozeTypedLevel', () => {
+	it('reads the one zero rung off CLOZE_BANK_LADDER', () => {
+		// The invariant `clozeTypedLevel` throws on: exactly one rung is zero.
+		expect(CLOZE_BANK_LADDER.filter((size) => size === 0)).toHaveLength(1);
+		expect(clozeTypedLevel()).toBe(CLOZE_BANK_LADDER.indexOf(0) + 1);
+	});
+
+	it('reports the top rung for the real ladder', () => {
+		expect(clozeTypedLevel()).toBe(5);
 	});
 });

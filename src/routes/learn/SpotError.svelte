@@ -3,8 +3,8 @@
 
   The sentence is laid out as tappable word tiles. `challenge.meaning` is the
   native-language bridge, always written by generation; whether it is *shown*
-  is the session's serve-time call (`presentation.showHint`, from
-  `$lib/session/support`), and some rows written by an earlier build lack it
+  is   the session's serve-time call (`presentation.showHint`, from
+  `$lib/challenges/serve/presentation`), and some rows written by an earlier build lack it
   altogether. Without it the
   wrong word has to be judged from the target-language sentence alone, which
   is the harder, later-rung version of the same task.
@@ -21,7 +21,9 @@
 -->
 <script lang="ts">
 	import { choiceKeyAction } from '$lib/challenges/keyboard';
-	import { ALL_READINGS, rubyFor, storedReading, type ChallengeProps } from '$lib/challenges/props';
+	import type { ChallengeProps } from '$lib/challenges/props';
+	import { resolvedPresentation } from '$lib/challenges/serve/presentation';
+	import { rubyFor, storedReading } from '$lib/challenges/serve/reading';
 	import type { RomanizedToken } from '$lib/romanize';
 	import type { SpotErrorChallenge } from '$lib/types';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
@@ -36,12 +38,13 @@
 	let {
 		challenge,
 		onanswer,
-		readings = ALL_READINGS,
 		presentation,
 		tokenize = null
 	}: ChallengeProps<SpotErrorChallenge> = $props();
 
-	const showHint = $derived(presentation?.showHint ?? true);
+	const served = $derived(resolvedPresentation(challenge, presentation));
+	const readings = $derived(served.readings);
+	const showHint = $derived(served.showHint);
 
 	let selected = $state<number | null>(null);
 

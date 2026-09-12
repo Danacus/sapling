@@ -92,7 +92,7 @@ describe('difficultyOf', () => {
 		it('does not read bank size: two banks differ only if the sentence does', () => {
 			// Bank size stopped varying by rung at generation time, so it stopped
 			// being a difficulty knob — how much of a stored bank a served
-			// challenge shows is `$lib/session/support`'s call, not the row's own.
+			// challenge shows is `$lib/challenges/serve/presentation`'s call, not the row's own.
 			const smallBank = difficultyOf(challenge(banked('Yo ___ un libro.', 3)));
 			const bigBank = difficultyOf(challenge(banked('Yo ___ un libro.', 6)));
 			expect(smallBank).toBe(bigBank);
@@ -136,7 +136,7 @@ describe('difficultyOf', () => {
 		it('does not read distractor count: two trays differ only if the sentence does', () => {
 			// Distractor-tile count stopped varying by rung at generation time, so
 			// it stopped being a difficulty knob — how many of the stored tiles a
-			// served challenge shows is `$lib/session/support`'s call.
+			// served challenge shows is `$lib/challenges/serve/presentation`'s call.
 			const none = difficultyOf(challenge(wordOrder(5, 0)));
 			const some = difficultyOf(challenge(wordOrder(5, 3)));
 			expect(none).toBe(some);

@@ -34,7 +34,8 @@ export const clozeChallengeSchema = z.object({
 	wordBankRomanization: z.array(z.string()).optional(),
 	// Always written by generation; optional only because some rows were written
 	// by a build that omitted it above the early rungs, and those rows still
-	// play. Whether it is *shown* is a serve-time decision (`$lib/session/support`).
+	// play. Whether it is *shown* is a serve-time decision
+	// (`$lib/challenges/serve/presentation`).
 	translationHint: z.string().optional(),
 	...storedBase
 });
@@ -74,7 +75,7 @@ export const clozeStoredDef = {
 	// carries the fullest word bank the model can supply (or none at all, for a
 	// typed want) — bank size stopped varying by rung, so it stopped being a
 	// difficulty knob too; how much of a stored bank a served challenge *shows*
-	// is a serve-time decision (`$lib/session/support`), read off the word's
+	// is a serve-time decision (`$lib/challenges/serve/presentation`), read off the word's
 	// current rung rather than baked into the row. The native-language line is
 	// deliberately not a knob either, for the same reason.
 	//

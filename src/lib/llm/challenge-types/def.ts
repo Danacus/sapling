@@ -73,7 +73,7 @@ export interface ChallengeBase {
 
 /**
  * The five-rung ladder a want is written at — the same one `../requests`' `Want`
- * carries and `$lib/session/progression` gates serving on.
+ * carries and `$lib/challenges/serve/progression` gates serving on.
  *
  * Declared here rather than imported from `../requests` so the arrow keeps
  * pointing one way: `../requests` names wire types, so a def that named a

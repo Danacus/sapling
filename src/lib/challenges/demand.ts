@@ -13,7 +13,7 @@
  * (see `./check`) and what gets shaped instead is the *question stream*: a word
  * earns its early reviews through recognition, and production arrives once the
  * word can bear it. Comprehension precedes production — the same principle as
- * the adaptive-romanization ramp in `$lib/session/romanization`, applied to the
+ * the adaptive-romanization ramp in `$lib/challenges/serve/reading`, applied to the
  * exercise rather than to the crutch.
  *
  * This module is only the door: the tier each type reports lives with that type,
@@ -21,7 +21,7 @@
  * registry's mapped type means a seventh member of the union fails `pnpm check`
  * there rather than silently defaulting to "easy". The *floors* — how strong a
  * word has to be before it can bear tier 1 or tier 2 — are the session's
- * question, not the challenge's, and live in `$lib/session/progression`.
+ * question, not the challenge's, and live in `$lib/challenges/serve/progression`.
  */
 
 import type { Challenge } from '$lib/types';
@@ -36,7 +36,7 @@ export type { Demand };
  * material), 2 free production (produce from nothing).
  *
  * A property of the challenge alone — nothing here knows how well the learner
- * knows the words in it. Pairing the two is `$lib/session/progression`'s job.
+ * knows the words in it. Pairing the two is `$lib/challenges/serve/progression`'s job.
  */
 export function demandOf(challenge: Challenge): Demand {
 	return storedDefFor(challenge).demand(challenge);

@@ -60,7 +60,7 @@ import {
 	servedDemand,
 	weakestWordStrength,
 	type DifficultyLevel
-} from './progression';
+} from '$lib/challenges/serve/progression';
 
 /* -------------------------------------------------------------------------- */
 /* Tuning                                                                      */
@@ -97,43 +97,12 @@ export const SKIP_ANSWER = '(skipped)';
 /* -------------------------------------------------------------------------- */
 
 /**
- * What every challenge component hands back when the learner commits an answer.
- *
- * Grading happens inside the component (it owns the input widget and therefore
- * the raw string); the session screen only decides what that verdict is *worth*
- * and what to say about it.
+ * The challenge component contract and the answer event it emits, both declared
+ * in `$lib/challenges/props` — a rendering contract, next to the components
+ * that implement it, and now the one place both halves live. Re-exported here
+ * so every existing importer of this module keeps finding them.
  */
-export interface AnswerEvent {
-	/**
-	 * Exactly what the learner produced, for the result log and escalation, or
-	 * {@link SKIP_ANSWER} when they gave up on the challenge.
-	 */
-	answerGiven: string;
-	verdict: Verdict;
-	/**
-	 * Milliseconds from "challenge shown" to "answer submitted". Kept for review
-	 * screens and analytics only — it no longer sharpens the FSRS grade, which
-	 * the learner is asked about directly instead (see {@link amendResult}).
-	 */
-	responseMs: number;
-	/** Nearest accepted answer, when the component graded with `validateAnswer`. */
-	closestAccepted?: string;
-	/**
-	 * Optional per-item evidence from a challenge with several independently
-	 * gradable answers. The overall `verdict` still drives the banner and session
-	 * summary; these entries let SRS grade each item by the gap it actually owned.
-	 */
-	itemVerdicts?: readonly { itemId: string; verdict: Verdict }[];
-}
-
-/**
- * Props shared by every challenge component.
- *
- * Declared in `$lib/challenges/props` — it is a rendering contract, and it
- * belongs next to the components that implement it. Re-exported here because
- * this is where {@link AnswerEvent}, its other half, lives.
- */
-export type { ChallengeProps } from '$lib/challenges/props';
+export type { AnswerEvent, ChallengeProps } from '$lib/challenges/props';
 
 /* -------------------------------------------------------------------------- */
 /* Session accounting (pure)                                                   */
@@ -295,48 +264,11 @@ export { spokenAnswerFor } from '$lib/challenges/display';
 /* -------------------------------------------------------------------------- */
 
 /**
- * Share of eligible challenges presented audio-first. Half: a session that was
- * *all* listening stops being reading practice, and one that never listens
- * never trains the ear.
+ * The listening-mode decision now lives in the serve layer, beside the other
+ * presentation choices: `$lib/challenges/serve/listening`. Re-exported here for
+ * the callers that have always found it on the session engine.
  */
-export const LISTENING_SHARE = 0.5;
-
-/** FNV-1a over the id, mapped to `[0,1)`. Stable across devices and reloads. */
-function idFraction(id: string): number {
-	let hash = 0x811c9dc5;
-	for (let i = 0; i < id.length; i++) {
-		hash ^= id.charCodeAt(i);
-		hash = Math.imul(hash, 0x01000193) >>> 0;
-	}
-	return hash / 0x100000000;
-}
-
-/**
- * Whether a challenge should be played before it is read.
- *
- * Listening mode is **presentation only** — the stored challenge is untouched,
- * nothing about it is generated differently, and grading is identical. That is
- * the point: every recognize-MC row already in the pool, however long ago it was
- * generated, can be served as a listening exercise.
- *
- * Eligible: `multiple-choice` in the `toNative` direction, i.e. target text
- * shown and a native meaning picked — the only stored shape whose prompt is a
- * target-language string the learner is expected to understand rather than
- * produce.
- *
- * Which of them get it is decided by a hash of the challenge id rather than a
- * coin flip, so a challenge that comes back round in a later session is
- * presented the same way it was the first time. `enabled` is the learner's
- * preference (`ll.listeningMode`); the caller also has to check that speech is
- * actually available, which is a browser question this module knows nothing
- * about.
- */
-export function isListeningChallenge(challenge: Challenge, enabled: boolean): boolean {
-	if (!enabled) return false;
-	if (challenge.type !== 'multiple-choice' || challenge.direction !== 'toNative') return false;
-	if (!challenge.prompt.trim()) return false;
-	return idFraction(challenge.id) < LISTENING_SHARE;
-}
+export { LISTENING_SHARE, isListeningChallenge } from '$lib/challenges/serve/listening';
 
 /* -------------------------------------------------------------------------- */
 /* Session planning (pure)                                                     */

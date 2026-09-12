@@ -3,7 +3,7 @@
  * reading.
  *
  * Pure and deterministic, so the coin flip is injected — the same contract
- * `$lib/session/romanization` keeps. There is no clock here any more: a word's
+ * `$lib/challenges/serve/reading` keeps. There is no clock here any more: a word's
  * strength is derived by the core when the item is read, and this module reads
  * the number.
  */

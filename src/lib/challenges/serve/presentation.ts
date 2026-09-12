@@ -18,8 +18,8 @@
  * items at all) reads as rung 1 there, which is why every ladder's floor is
  * its *most* supportive entry: showing extra support to a learner who does not
  * need it costs nothing, hiding support from one who does is a wall.
- * `presentationFor` folds all three into the one prop the learn screen hands
- * down through `ChallengeHost` (`$lib/challenges/props`'s `Presentation`).
+ * `presentationFor` folds all three, plus the readings roll, into the one prop
+ * the learn screen hands down through `ChallengeHost`.
  *
  * The two `visible*` functions decide **which** stored entries show at a given
  * size — deterministically, from the challenge's own stored order (already
@@ -30,7 +30,6 @@
  * (`wordBankRomanization`, `tilesRomanization`) by the same indices.
  */
 
-import type { Presentation } from '$lib/challenges/props';
 import type {
 	Challenge,
 	ClozeChallenge,
@@ -38,15 +37,61 @@ import type {
 	MultiClozeChallenge,
 	WordOrderChallenge
 } from '$lib/types';
-import { levelForStrength, weakestWordStrength, type DifficultyLevel } from './progression';
+import type { RomanizationMode } from '$lib/ui/prefs';
+import {
+	CLOZE_BANK_LADDER,
+	HINT_CEILING_LEVEL,
+	MULTI_CLOZE_BANK_LADDER,
+	WORD_ORDER_DISTRACTOR_LADDER
+} from './ladders';
+import { levelForStrength, weakestWordStrength } from './progression';
+import { ALL_READINGS, planReadings, type ReadingPlan } from './reading';
+
+export {
+	CLOZE_BANK_LADDER,
+	HINT_CEILING_LEVEL,
+	MULTI_CLOZE_BANK_LADDER,
+	WORD_ORDER_DISTRACTOR_LADDER
+} from './ladders';
 
 /**
- * The last rung at which the native line still shows. Rung 2 is the floor
- * word-order, spot-error and cloze are first planned at
- * (`PLANNABLE_KINDS.levels`), so a learner meets each format with the
- * sentence's meaning beside it and loses it one rung later.
+ * Everything about a served challenge that is decided at serve time rather
+ * than written by the model — one object instead of four separate optional
+ * props, since they were always rolled together by {@link presentationFor} and
+ * never independently.
+ *
+ * Declared here, in the module that builds it, rather than in
+ * `$lib/challenges/props`: a component only ever reads this, and the serve
+ * layer must not import the component contract back. `props.ts` re-exports
+ * this type so every existing importer keeps finding it.
  */
-export const HINT_CEILING_LEVEL: DifficultyLevel = 2;
+export interface Presentation {
+	/**
+	 * Whether the challenge's native-language line — a cloze's translation, a
+	 * word-order's prompt, a spot-error's intended meaning — is shown; the line
+	 * itself is always on the row.
+	 */
+	showHint: boolean;
+	/**
+	 * How many entries a cloze's or multi-cloze's word bank shows, answer(s)
+	 * included. Meaningless (read as `0`) for a type with no bank; the full
+	 * stored bank is always kept, this only says how much of it to render, via
+	 * `visibleBank`.
+	 */
+	bankSize: number;
+	/**
+	 * How many extra distractor tiles a word-order challenge's tray shows
+	 * beyond the sentence's own tiles, via `visibleTiles`. Meaningless (read as
+	 * `0`) for a type with no tray.
+	 */
+	distractorTiles: number;
+	/**
+	 * Which readings the served challenge shows — rolled once, here, by
+	 * {@link planReadings} from the learner's mode and the challenge's own
+	 * words. One answer for the whole challenge, one per word it exercises.
+	 */
+	readings: ReadingPlan;
+}
 
 /**
  * Whether this served challenge shows its native-language line — a cloze's
@@ -66,15 +111,6 @@ export const HINT_CEILING_LEVEL: DifficultyLevel = 2;
 export function showNativeHint(challenge: Challenge, items: KnowledgeItem[]): boolean {
 	return levelForStrength(weakestWordStrength(challenge, items)) <= HINT_CEILING_LEVEL;
 }
-
-/** Cloze word-bank size by rung, answer included — zero at the top rung: cued recall, typed. */
-export const CLOZE_BANK_LADDER = [3, 4, 5, 6, 0] as const;
-
-/** Multi-cloze shared word-bank size by rung, answers included. */
-export const MULTI_CLOZE_BANK_LADDER = [5, 6, 7, 8, 9] as const;
-
-/** Word-order distractor tile count by rung — the sentence's own tiles are always shown. */
-export const WORD_ORDER_DISTRACTOR_LADDER = [0, 0, 1, 2, 3] as const;
 
 /**
  * How large a served cloze's or multi-cloze's word bank should read, answer(s)
@@ -185,24 +221,75 @@ export function visibleTiles(challenge: WordOrderChallenge, count: number): numb
 }
 
 /**
- * The one served-presentation object a challenge component reads — folds
- * {@link showNativeHint}, {@link bankSizeFor} and {@link distractorTilesFor}
- * into the shape `$lib/challenges/props`'s `ChallengeProps.presentation`
- * declares, so the learn screen makes one call per served challenge instead of
- * three.
+ * The one served-presentation object a challenge component reads — the single
+ * serve entry point. Folds {@link showNativeHint}, {@link bankSizeFor},
+ * {@link distractorTilesFor} and the challenge's {@link planReadings} roll into
+ * the shape {@link Presentation} declares, so the learn screen makes one call
+ * per served challenge instead of three.
+ *
+ * The readings roll is threaded through here rather than left to the caller
+ * precisely because it is the same decision, made from the same challenge over
+ * the same vocabulary: the hint, the bank and the crutch all fade as the
+ * challenge's weakest word grows. `rng` is forwarded to `planReadings` so a
+ * deterministic draw can be injected in tests.
  *
  * `bankSizeFor`/`distractorTilesFor` only mean something for the challenge
  * types that carry a bank or a tray; the other two fields read `0` for every
  * other type, which is harmless — a component that does not have a bank or a
  * tray never reads them.
  */
-export function presentationFor(challenge: Challenge, items: KnowledgeItem[]): Presentation {
+export function presentationFor(
+	challenge: Challenge,
+	items: KnowledgeItem[],
+	opts: { romanizationMode: RomanizationMode; rng?: () => number }
+): Presentation {
 	return {
 		showHint: showNativeHint(challenge, items),
 		bankSize:
 			challenge.type === 'cloze' || challenge.type === 'multi-cloze'
 				? bankSizeFor(challenge, items)
 				: 0,
-		distractorTiles: challenge.type === 'word-order' ? distractorTilesFor(challenge, items) : 0
+		distractorTiles: challenge.type === 'word-order' ? distractorTilesFor(challenge, items) : 0,
+		readings: planReadings(opts.romanizationMode, challenge, items, opts.rng)
+	};
+}
+
+/** The full stored bank a bare render shows when no presentation was supplied. */
+function storedBankSize(challenge: Challenge): number {
+	return challenge.type === 'cloze' || challenge.type === 'multi-cloze'
+		? (challenge.wordBank?.length ?? 0)
+		: 0;
+}
+
+/** The full stored distractor tray a bare render shows when no presentation was supplied. */
+function storedDistractorTiles(challenge: Challenge): number {
+	return challenge.type === 'word-order'
+		? Math.max(0, challenge.tiles.length - challenge.answerTokens.length)
+		: 0;
+}
+
+/**
+ * A served presentation, or the "bare render shows everything stored" defaults
+ * when none was handed down.
+ *
+ * The point is that a component stops spelling the defaults itself: absent
+ * `presentation` means the hint is on, a bank shows in full, a tray's stored
+ * distractors all show, and every reading shows — the behaviour every component
+ * had before any of this was rolled at serve time, and what a bare render
+ * (tests, a component used on its own) must keep doing. A partial is accepted
+ * because a component may legitimately be handed only the fields it cares
+ * about; each field the caller supplies passes through untouched and only the
+ * missing ones fall back. A served challenge always hands the full object, made
+ * by {@link presentationFor}.
+ */
+export function resolvedPresentation(
+	challenge: Challenge,
+	presentation?: Partial<Presentation>
+): Presentation {
+	return {
+		showHint: presentation?.showHint ?? true,
+		bankSize: presentation?.bankSize ?? storedBankSize(challenge),
+		distractorTiles: presentation?.distractorTiles ?? storedDistractorTiles(challenge),
+		readings: presentation?.readings ?? ALL_READINGS
 	};
 }

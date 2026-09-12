@@ -25,7 +25,9 @@
   its per-challenge reset.
 -->
 <script lang="ts">
-	import { ALL_READINGS, rubyFor, storedReading, type ChallengeProps } from '$lib/challenges/props';
+	import type { ChallengeProps } from '$lib/challenges/props';
+	import { resolvedPresentation } from '$lib/challenges/serve/presentation';
+	import { rubyFor, storedReading } from '$lib/challenges/serve/reading';
 	import { speak } from '$lib/tts';
 	import type { MatchPairsChallenge } from '$lib/types';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
@@ -36,9 +38,12 @@
 		challenge,
 		onanswer,
 		targetLanguage = '',
-		readings = ALL_READINGS,
+		presentation,
 		tokenize = null
 	}: ChallengeProps<MatchPairsChallenge> = $props();
+
+	const served = $derived(resolvedPresentation(challenge, presentation));
+	const readings = $derived(served.readings);
 
 	/**
 	 * Ruby for the **left** column only. `a` is the term and `b` is its meaning

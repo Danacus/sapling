@@ -40,7 +40,8 @@ export type ChallengeOf<T extends ChallengeType> = Extract<Challenge, { type: T 
  * How much productive recall a challenge asks of its words.
  *
  * An ordinal, not a score: `0 < 1 < 2` is the only arithmetic anyone should do
- * with it, and the one comparison `$lib/session/progression` makes is "is this
+ * with it, and the one comparison `$lib/challenges/serve/progression` makes is
+ * "is this
  * tier at or below what the weakest word can bear".
  */
 export type Demand = 0 | 1 | 2;
@@ -72,7 +73,7 @@ export interface StoredTypeBehaviour<C extends Challenge> {
 	 * 0 recognition (read/choose), 1 constrained production (assemble from
 	 * given material), 2 free production (produce from nothing).
 	 * Session planning gates 1 and 2 behind word strength; see
-	 * `$lib/session/progression`.
+	 * `$lib/challenges/serve/progression`.
 	 *
 	 * A *fact about the question*, deliberately not a factor in
 	 * {@link check}: grading stays type-blind, because a verdict is FSRS's

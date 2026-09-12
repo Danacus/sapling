@@ -31,7 +31,7 @@ export const generatedWordOrderSchema = z.object({
 	type: z.literal('word-order'),
 	/**
 	 * Always written: whether the learner *sees* it is a serve-time decision
-	 * (`$lib/session/support`), since a row outlives the rung it was written at.
+	 * (`$lib/challenges/serve/presentation`), since a row outlives the rung it was written at.
 	 */
 	promptNative: nonEmpty,
 	/** The sentence *in the correct order*; the app shuffles. */
@@ -42,7 +42,7 @@ export const generatedWordOrderSchema = z.object({
 	 * cosmetic defect, and the resolver keeps what survives deduplication
 	 * rather than costing us a challenge we already paid for. How many of them
 	 * a served challenge shows is a serve-time decision
-	 * (`$lib/session/support`), not this def's.
+	 * (`$lib/challenges/serve/presentation`), not this def's.
 	 */
 	distractorWords: z.array(targetTextSchema).nullish(),
 	instruction: z.string().nullish(),
@@ -148,7 +148,7 @@ export const wordOrderDef = {
 		// that does nothing), and the allowance shrinks as the sentence grows so
 		// an overshot sentence is not padded past MAX_WORD_ORDER_TILES into a
 		// search puzzle. How many of the surviving tiles a served challenge
-		// shows is `$lib/session/support`'s call, not this cap's.
+		// shows is `$lib/challenges/serve/presentation`'s call, not this cap's.
 		const allowance = Math.min(
 			MAX_WORD_ORDER_DISTRACTORS,
 			Math.max(0, MAX_WORD_ORDER_TILES - words.length)

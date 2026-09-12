@@ -10,7 +10,7 @@
 		previousDay,
 		streakFrom
 	} from '$lib/db';
-	import { maturityOf, type Maturity } from '$lib/session/progression';
+	import { maturityOf, type Maturity } from '$lib/challenges/serve/progression';
 	import { isDue } from '$lib/srs';
 	import type { KnowledgeItem, Profile } from '$lib/types';
 	import Spinner from '$lib/ui/Spinner.svelte';

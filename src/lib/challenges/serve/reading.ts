@@ -147,6 +147,16 @@ export interface ReadingPlan {
 	byTerm: ReadonlyMap<string, boolean>;
 }
 
+/**
+ * Readings on everywhere, nothing hidden: the default every component gives its
+ * `readings` prop when it was handed no plan.
+ *
+ * Exported (and shared, which is safe — nothing writes to a `ReadingPlan`) so
+ * six components declare the same default by naming it rather than by each
+ * writing out a fresh object literal that could quietly disagree.
+ */
+export const ALL_READINGS: ReadingPlan = { sentence: true, byTerm: new Map() };
+
 /** No per-word entries — `sentence` decides everything. */
 const NO_TERMS: ReadonlyMap<string, boolean> = new Map();
 
@@ -209,4 +219,65 @@ export function applyPlan(tokens: RomanizedToken[], plan: ReadingPlan): Romanize
 	return tokens.map((token) =>
 		(plan.byTerm.get(token.text) ?? plan.sentence) ? token : { text: token.text, reading: null }
 	);
+}
+
+/**
+ * The two romanization pieces, combined into the one call every component makes:
+ * *"give me ruby tokens for this target-language slot, or `null` if there are
+ * none"*.
+ *
+ * `null` is the fallback signal end to end — no local romanizer for this
+ * language, so the caller renders the stored `…Romanization` string gated by
+ * `readings.sentence`, exactly as it did before any of this existed. A non-null
+ * result already has the learner's per-word decisions applied, so the blocks
+ * that draw it stay dumb.
+ *
+ * Lives here rather than six times over in the components because it is the
+ * *meaning* of the plan, not a rendering choice: a component that forgot the
+ * `applyPlan` half would silently show readings the learner has outgrown, which
+ * is precisely the kind of quiet disagreement this module exists to make
+ * impossible.
+ */
+export function rubyFor(
+	tokenize: ((text: string) => RomanizedToken[]) | null,
+	readings: ReadingPlan
+): (text: string) => RomanizedToken[] | null {
+	if (!tokenize) return () => null;
+	return (text) => applyPlan(tokenize(text), readings);
+}
+
+/**
+ * {@link rubyFor}'s other half: the stored, LLM-written `…Romanization` string a
+ * component falls back to, gated by the learner's `sentence` preference and
+ * normalized to `''` when it is switched off, absent or was never generated.
+ *
+ * Six components were spelling this out by hand — once per romanized slot,
+ * eight times over — which made "does this respect the reading preference?" a
+ * question you answered by reading every component instead of by construction.
+ */
+export function storedReading(readings: ReadingPlan, stored: string | undefined | null): string {
+	return (readings.sentence ? stored : '') ?? '';
+}
+
+/**
+ * {@link storedReading}'s sibling for a single vocabulary word rendered on its
+ * own — a cloze's or multi-cloze's word-bank chip, a word-order tile — rather
+ * than as part of a flat sentence line.
+ *
+ * A bank chip or tray tile is a *word*, so it fades on that word's own
+ * `byTerm` roll exactly as a ruby token would, and only falls back to the
+ * whole-challenge `sentence` roll for a word the plan never rolled for (glue
+ * the challenge doesn't exercise, or `'on'`/`'off'`, whose empty `byTerm`
+ * always misses and so always defers to `sentence`). Without this a bank or
+ * tray followed `sentence` alone, which is the bug this exists to fix: every
+ * chip in a multi-cloze hid or showed together, in lockstep with the weakest
+ * gap word, instead of each fading on its own schedule like the passage text
+ * around it does.
+ */
+export function termReading(
+	readings: ReadingPlan,
+	term: string,
+	stored: string | undefined | null
+): string {
+	return (readings.byTerm.get(term) ?? readings.sentence) ? (stored ?? '') : '';
 }

@@ -25,7 +25,8 @@ export const wordOrderChallengeSchema = z.object({
 	type: z.literal('word-order'),
 	// Always written by generation; optional only because some rows were written
 	// by a build that omitted it above the early rungs, and those rows still
-	// play. Whether it is *shown* is a serve-time decision (`$lib/session/support`).
+	// play. Whether it is *shown* is a serve-time decision
+	// (`$lib/challenges/serve/presentation`).
 	prompt: nonEmpty.optional(),
 	instruction: z.string().optional(),
 	/** Shuffled by the resolver; duplicates are legal (grading is by text sequence). */
@@ -61,7 +62,7 @@ export const wordOrderStoredDef = {
 	// generated row now carries the fullest tray the model can supply) so it
 	// stopped being a difficulty knob too; how many of the stored tiles a
 	// served challenge *shows* is a serve-time decision
-	// (`$lib/session/support`), not a fact about the row.
+	// (`$lib/challenges/serve/presentation`), not a fact about the row.
 	difficulty(challenge) {
 		return withBase(BASE, lengthKnob(challenge.answerTokens.length));
 	},

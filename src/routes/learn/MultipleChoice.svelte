@@ -27,9 +27,11 @@
 -->
 <script lang="ts">
 	import { choiceKeyAction } from '$lib/challenges/keyboard';
-	import { ALL_READINGS, rubyFor, storedReading, type ChallengeProps } from '$lib/challenges/props';
+	import type { ChallengeProps } from '$lib/challenges/props';
+	import { isListeningChallenge } from '$lib/challenges/serve/listening';
+	import { resolvedPresentation } from '$lib/challenges/serve/presentation';
+	import { rubyFor, storedReading } from '$lib/challenges/serve/reading';
 	import type { RomanizedToken } from '$lib/romanize';
-	import { isListeningChallenge } from '$lib/session/engine';
 	import { speak, ttsAvailable } from '$lib/tts';
 	import type { MultipleChoiceChallenge } from '$lib/types';
 	import { getListeningMode } from '$lib/ui/prefs';
@@ -43,9 +45,12 @@
 		challenge,
 		onanswer,
 		targetLanguage = '',
-		readings = ALL_READINGS,
+		presentation,
 		tokenize = null
 	}: ChallengeProps<MultipleChoiceChallenge> = $props();
+
+	const served = $derived(resolvedPresentation(challenge, presentation));
+	const readings = $derived(served.readings);
 
 	/** Read once — the toggle lives in Settings, not mid-session. */
 	const listeningEnabled = getListeningMode();

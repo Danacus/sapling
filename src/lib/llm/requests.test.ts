@@ -66,7 +66,7 @@ describe('PLANNABLE_KINDS', () => {
 		// No kind is planned at demand 2 any more: cloze — the only kind that
 		// ever was — is planned and stored at demand 1 for every rung, even the
 		// top one, where a served row shows no bank and is answered exactly like
-		// a demand-2 challenge. `$lib/session/progression`'s `servedDemand` is
+		// a demand-2 challenge. `$lib/challenges/serve/progression`'s `servedDemand` is
 		// what reconciles that, at serve time, never here.
 		expect(PLANNABLE_KINDS.some((kind) => kind.demand === 0)).toBe(true);
 		expect(PLANNABLE_KINDS.some((kind) => kind.demand === 1)).toBe(true);

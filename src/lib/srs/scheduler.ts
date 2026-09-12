@@ -127,7 +127,7 @@ export function isDue(item: KnowledgeItem, now: number): boolean {
 
 /**
  * How well a word is known, 0..1 — the number behind the strength bars, and the
- * axis `$lib/session/progression` slices into demand tiers and difficulty rungs.
+ * axis `$lib/challenges/serve/progression` slices into demand tiers and difficulty rungs.
  *
  * Zero for a word with nothing derived, for the same reason {@link dueAt} answers
  * `now`: never scheduled is the bottom of the range.

@@ -16,50 +16,42 @@
  */
 
 import type { RomanizedToken } from '$lib/romanize';
-import type { AnswerEvent } from '$lib/session/engine';
-import { applyPlan, type ReadingPlan } from '$lib/session/romanization';
-import type { Challenge } from '$lib/types';
+import type { Presentation } from '$lib/challenges/serve/presentation';
+import type { Challenge, Verdict } from '$lib/types';
 
 /**
- * Readings on everywhere, nothing hidden: the default every component gives
- * {@link ChallengeProps.readings}.
+ * What every challenge component hands back when the learner commits an answer.
  *
- * Exported (and shared, which is safe — nothing writes to a `ReadingPlan`) so
- * six components declare the same default by naming it rather than by each
- * writing out a fresh object literal that could quietly disagree.
- */
-export const ALL_READINGS: ReadingPlan = { sentence: true, byTerm: new Map() };
-
-/**
- * Everything about a served challenge that is decided at serve time rather
- * than written by the model — one object instead of three separate optional
- * props, since the three were always rolled together by `$lib/session/support`'s
- * `presentationFor` and never independently.
+ * Grading happens inside the component (it owns the input widget and therefore
+ * the raw string); the session screen only decides what that verdict is *worth*
+ * and what to say about it.
  *
- * Declared here rather than in `$lib/session/support` (which builds it)
- * because challenges must not import session — `props.ts` is the contract the
- * components and the session both already share.
+ * Declared here rather than in the session engine, where it used to live:
+ * `onanswer` in {@link ChallengeProps} is this type, so it belongs beside the
+ * contract. The engine re-exports it so its existing importers keep working.
  */
-export interface Presentation {
+export interface AnswerEvent {
 	/**
-	 * Whether the challenge's native-language line — a cloze's translation, a
-	 * word-order's prompt, a spot-error's intended meaning — is shown; the line
-	 * itself is always on the row.
+	 * Exactly what the learner produced, for the result log and escalation, or
+	 * the session's skip sentinel when they gave up on the challenge.
 	 */
-	showHint: boolean;
+	answerGiven: string;
+	verdict: Verdict;
 	/**
-	 * How many entries a cloze's or multi-cloze's word bank shows, answer(s)
-	 * included. Meaningless (read as `0`) for a type with no bank; the full
-	 * stored bank is always kept, this only says how much of it to render, via
-	 * `visibleBank`.
+	 * Milliseconds from "challenge shown" to "answer submitted". Kept for review
+	 * screens and analytics only — it no longer sharpens the FSRS grade, which
+	 * the learner is asked about directly instead (see the session engine's
+	 * `amendResult`).
 	 */
-	bankSize: number;
+	responseMs: number;
+	/** Nearest accepted answer, when the component graded with `validateAnswer`. */
+	closestAccepted?: string;
 	/**
-	 * How many extra distractor tiles a word-order challenge's tray shows
-	 * beyond the sentence's own tiles, via `visibleTiles`. Meaningless (read as
-	 * `0`) for a type with no tray.
+	 * Optional per-item evidence from a challenge with several independently
+	 * gradable answers. The overall `verdict` still drives the banner and session
+	 * summary; these entries let SRS grade each item by the gap it actually owned.
 	 */
-	distractorTiles: number;
+	itemVerdicts?: readonly { itemId: string; verdict: Verdict }[];
 }
 
 /** Props shared by every challenge component. */
@@ -77,107 +69,31 @@ export interface ChallengeProps<C extends Challenge> {
 	/** The learner's own language; used where a component names it in a prompt. */
 	nativeLanguage?: string;
 	/**
-	 * The learner's romanization preference, already resolved for *this*
-	 * challenge and rolled once when it was served (see
-	 * `$lib/session/romanization`). `sentence` is the whole-challenge answer a
-	 * component applies to a stored romanization string; `byTerm` fades
-	 * individual words out of tokenized text and is applied by `applyPlan`.
+	 * Everything decided at serve time — the hint, the bank size, the
+	 * distractor-tile count and the readings — built once per served challenge by
+	 * `$lib/challenges/serve/presentation`'s `presentationFor`. A component
+	 * resolves it with that module's `resolvedPresentation`, which fills the
+	 * bare-render defaults, and reads `readings` off the resolved object rather
+	 * than taking a separate prop.
 	 *
-	 * Optional, defaulting to {@link ALL_READINGS}, so a bare render still shows
-	 * every reading — the behaviour every component had before the preference
-	 * could hide them.
-	 */
-	readings?: ReadingPlan;
-	/**
-	 * Everything decided at serve time (the hint, the bank size, the
-	 * distractor-tile count), built once per served challenge by
-	 * `$lib/session/support`'s `presentationFor`.
-	 *
-	 * Optional, and absent means "show everything stored, hint on" — the
-	 * default every component gave each of these three before they were rolled
-	 * into one prop, and what a bare render (tests, `MatchPairs`, any component
-	 * that ignores this) still gets by passing nothing.
+	 * Optional, and absent means "show everything stored, hint on, every reading
+	 * on" — the default every component gave each of these before they were
+	 * rolled into one prop, and what a bare render (tests, a component used on
+	 * its own) still gets by passing nothing.
 	 */
 	presentation?: Presentation;
 	/**
 	 * Romanize one string of *target-language* text locally, or `null` when this
 	 * language has no local romanizer (`$lib/romanize`) — in which case the
 	 * component falls back to the stored, LLM-written romanization fields on the
-	 * challenge, gated by `readings.sentence`.
+	 * challenge, gated by the resolved presentation's readings.
 	 *
 	 * Already bound to the learner's vocabulary terms by the session screen, so a
-	 * word they are studying comes back as one token keyed by its term and
-	 * `applyPlan` can decide it on its own. The whole contract is:
-	 *
-	 * ```svelte
-	 * <RubyText tokens={applyPlan(tokenize(someTargetText), readings)} />
-	 * ```
-	 *
-	 * Call it only where the slot really is target-language text — the same
-	 * places a component reaches for a stored `…Romanization` field. Running a
-	 * native-language string through it would annotate the answer.
+	 * word they are studying comes back as one token keyed by its term and the
+	 * plan can decide it on its own. Call it only where the slot really is
+	 * target-language text — the same places a component reaches for a stored
+	 * `…Romanization` field. Running a native-language string through it would
+	 * annotate the answer.
 	 */
 	tokenize?: ((text: string) => RomanizedToken[]) | null;
-}
-
-/**
- * The two romanization props, combined into the one call every component makes:
- * *"give me ruby tokens for this target-language slot, or `null` if there are
- * none"*.
- *
- * `null` is the fallback signal end to end — no local romanizer for this
- * language, so the caller renders the stored `…Romanization` string gated by
- * `readings.sentence`, exactly as it did before any of this existed. A non-null
- * result already has the learner's per-word decisions applied, so the blocks
- * that draw it stay dumb.
- *
- * Lives here rather than six times over in the components because it is the
- * *meaning* of the two props, not a rendering choice: a component that forgot
- * the `applyPlan` half would silently show readings the learner has outgrown,
- * which is precisely the kind of quiet disagreement this contract exists to
- * make impossible.
- */
-export function rubyFor(
-	tokenize: ((text: string) => RomanizedToken[]) | null,
-	readings: ReadingPlan
-): (text: string) => RomanizedToken[] | null {
-	if (!tokenize) return () => null;
-	return (text) => applyPlan(tokenize(text), readings);
-}
-
-/**
- * The other half of {@link rubyFor}'s contract: the stored, LLM-written
- * `…Romanization` string a component falls back to, gated by the learner's
- * `sentence` preference and normalized to `''` when it is switched off, absent
- * or was never generated.
- *
- * Six components were spelling this out by hand — once per romanized slot,
- * eight times over — which made "does this respect the reading preference?" a
- * question you answered by reading every component instead of by construction.
- */
-export function storedReading(readings: ReadingPlan, stored: string | undefined | null): string {
-	return (readings.sentence ? stored : '') ?? '';
-}
-
-/**
- * {@link storedReading}'s sibling for a single vocabulary word rendered on its
- * own — a cloze's or multi-cloze's word-bank chip, a word-order tile — rather
- * than as part of a flat sentence line.
- *
- * A bank chip or tray tile is a *word*, so it fades on that word's own
- * `byTerm` roll exactly as a ruby token would, and only falls back to the
- * whole-challenge `sentence` roll for a word the plan never rolled for (glue
- * the challenge doesn't exercise, or `'on'`/`'off'`, whose empty `byTerm`
- * always misses and so always defers to `sentence`). Without this a bank or
- * tray followed `sentence` alone, which is the bug this exists to fix: every
- * chip in a multi-cloze hid or showed together, in lockstep with the weakest
- * gap word, instead of each fading on its own schedule like the passage text
- * around it does.
- */
-export function termReading(
-	readings: ReadingPlan,
-	term: string,
-	stored: string | undefined | null
-): string {
-	return (readings.byTerm.get(term) ?? readings.sentence) ? (stored ?? '') : '';
 }

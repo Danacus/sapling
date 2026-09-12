@@ -103,7 +103,7 @@ export function answerReading(challenge: Challenge): string | undefined {
  * sentence with the blank filled, because how the word sounds *in place* is
  * the thing the learner is missing.
  *
- * Re-exported from `$lib/session/engine`, where it used to live.
+ * Re-exported by the session engine, where it used to live.
  */
 export function spokenAnswerFor(challenge: Challenge): string {
 	return storedDefFor(challenge).spokenAnswerFor(challenge);

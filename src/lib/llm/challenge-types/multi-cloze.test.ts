@@ -43,7 +43,7 @@ describe('multi-cloze resolver', () => {
 		expect(resolved.gaps.map((gap) => gap.itemId)).toEqual(['i1', 'i2']);
 		// No cap at resolve time any more: every surviving distractor is kept,
 		// answers included. Sizing what a served challenge shows from it is
-		// `$lib/session/support`'s job.
+		// `$lib/challenges/serve/presentation`'s job.
 		expect(resolved.wordBank).toHaveLength(6);
 		expect(resolved.wordBank).toEqual(expect.arrayContaining(['comer', 'cuenta']));
 	});

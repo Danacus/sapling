@@ -54,7 +54,7 @@ shortens what is written about it). Everything below belongs in `topup.ts`,
 with a unit test in `topup.test.ts`:
 
 - which kinds a rung may be asked (`demandForLevel` in
-  `$lib/session/progression`, against each kind's `demand` in
+  `$lib/challenges/serve/progression`, against each kind's `demand` in
   `llm/requests.ts`' `PLANNABLE_KINDS`)
 - how many fresh challenges a word should have waiting (`WANT_PER_WORD`), and in
   which groups (a recognition kind and a production kind, or two recognition

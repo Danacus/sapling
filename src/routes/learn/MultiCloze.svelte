@@ -5,20 +5,15 @@
   item-level verdict for every gap while keeping one intuitive overall result.
 -->
 <script lang="ts">
-	import {
-		ALL_READINGS,
-		rubyFor,
-		storedReading,
-		termReading,
-		type ChallengeProps
-	} from '$lib/challenges/props';
+	import type { ChallengeProps } from '$lib/challenges/props';
+	import { resolvedPresentation, visibleBank } from '$lib/challenges/serve/presentation';
+	import { rubyFor, termReading } from '$lib/challenges/serve/reading';
 	import {
 		completedMultiClozePassage,
 		gradeMultiClozeAnswers,
 		serializeMultiClozeAnswers
 	} from '$lib/challenges/types/multi-cloze';
 	import type { RomanizedToken } from '$lib/romanize';
-	import { visibleBank } from '$lib/session/support';
 	import type { MultiClozeChallenge } from '$lib/types';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import RubyText from '$lib/ui/RubyText.svelte';
@@ -33,20 +28,19 @@
 		challenge,
 		onanswer,
 		targetLanguage = '',
-		readings = ALL_READINGS,
 		presentation,
 		tokenize = null
 	}: ChallengeProps<MultiClozeChallenge> = $props();
 
+	const served = $derived(resolvedPresentation(challenge, presentation));
+	const readings = $derived(served.readings);
 	const ruby = $derived(rubyFor(tokenize, readings));
 	/**
-	 * The stored bank positions this served challenge shows — every position
-	 * when `presentation` was not supplied, so a bare render (tests) keeps
-	 * showing everything stored.
+	 * The stored bank positions this served challenge shows — the resolved
+	 * presentation's size, which is every position when `presentation` was not
+	 * supplied, so a bare render (tests) keeps showing everything stored.
 	 */
-	const visibleIndices = $derived(
-		visibleBank(challenge, presentation?.bankSize ?? challenge.wordBank.length)
-	);
+	const visibleIndices = $derived(visibleBank(challenge, served.bankSize));
 	const bank = $derived(visibleIndices.map((index) => challenge.wordBank[index]));
 	let assignments = $state<(number | null)[]>([]);
 	let activeGap = $state(0);

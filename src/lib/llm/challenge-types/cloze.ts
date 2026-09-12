@@ -30,12 +30,12 @@ export const generatedClozeSchema = z.object({
 	after: clozePartSchema,
 	/**
 	 * Always written: whether the learner *sees* it is a serve-time decision
-	 * (`$lib/session/support`), since a row outlives the rung it was written at.
+	 * (`$lib/challenges/serve/presentation`), since a row outlives the rung it was written at.
 	 */
 	hintNative: nonEmpty,
 	/**
 	 * Always five: every cloze now asks for the same word bank, and whether the
-	 * learner ever sees it is a serve-time decision (`$lib/session/support`),
+	 * learner ever sees it is a serve-time decision (`$lib/challenges/serve/presentation`),
 	 * not a generation-time one — there is no more "typed want" to tell this
 	 * apart from. Nullish anyway, and not length-constrained on the wire: a
 	 * reply that omits it (or sends the wrong count) is a cosmetic defect, not

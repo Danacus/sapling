@@ -1,6 +1,6 @@
 /**
  * How hard a challenge actually is, 0..1, on the same axis as word strength and
- * `$lib/session/progression`'s ladder — so the planner can ask "which of these
+ * `$lib/challenges/serve/progression`'s ladder — so the planner can ask "which of these
  * bearable challenges best matches how strong this word already is" instead of
  * only "which of these can this word bear at all".
  *
@@ -12,7 +12,7 @@
  * own `difficulty` (`./types/def`) says where *within* that tier this
  * particular row sits, purely from its own stored fields (a prompt's length, a
  * word bank's size, a tile tray's size). The tiers are spans, not points, and
- * they partition `[0, 1]` in the same place `$lib/session/progression`'s
+ * they partition `[0, 1]` in the same place `$lib/challenges/serve/progression`'s
  * `demandForStrength` does, so a challenge's difficulty and the strength that
  * makes it bearable are directly comparable numbers on one scale: a
  * lower-demand challenge can never outrank a higher-demand one, however hard
@@ -25,7 +25,7 @@
  * `StoredTypeBehaviour.difficulty`.
  *
  * What the caller compares this against is the *centre of the word's level
- * band* (`$lib/session/progression`'s `levelBandCentre`), not the word's raw
+ * band* (`$lib/challenges/serve/progression`'s `levelBandCentre`), not the word's raw
  * strength: a raw target sits above the middle of its own band for half
  * of every band, and a target above the middle of a tier always selects the
  * tier's hardest row.
@@ -42,12 +42,11 @@ import { storedDefFor } from './types';
 
 /**
  * The `[start, end)` (closed at 1) span of word strength each demand tier
- * owns. Identical to the floors `$lib/session/progression` gates *serving* on
- * (`CONSTRAINED_PRODUCTION_FLOOR` = 0.15, `FREE_PRODUCTION_FLOOR` = 0.45): tier
- * 0 is exactly level 1 of the five-rung ladder, tier 1 is levels 2-3, tier 2 is
- * levels 4-5. Restated rather than imported — `$lib/challenges` never imports
- * `$lib/session`, which is the layer built on top of it — so a change to
- * either has to keep both in view.
+ * owns. Identical to the floors `$lib/challenges/serve/progression` gates
+ * *serving* on (`CONSTRAINED_PRODUCTION_FLOOR` = 0.15,
+ * `FREE_PRODUCTION_FLOOR` = 0.45): tier 0 is exactly level 1 of the five-rung
+ * ladder, tier 1 is levels 2-3, tier 2 is levels 4-5. Restated rather than
+ * imported, so a change to either has to keep both in view.
  */
 const TIER_SPANS: Record<Demand, readonly [number, number]> = {
 	0: [0, 0.15],

@@ -27,7 +27,7 @@ function hasStorage(): boolean {
  * `'adaptive'` is the interesting one: the reading is a crutch, and a crutch
  * that never goes away is a crutch the learner keeps leaning on. Under it the
  * decision is made per served challenge from how well its words are known —
- * see `$lib/session/romanization`.
+ * see `$lib/challenges/serve/reading`.
  */
 export type RomanizationMode = 'off' | 'on' | 'adaptive';
 
@@ -67,7 +67,7 @@ export function setRomanizationMode(mode: RomanizationMode): void {
 /**
  * Whether some recognize-style challenges may be presented audio-first, with
  * the prompt spoken and its text hidden until the learner asks for it (see
- * `isListeningChallenge` in `$lib/session/engine`).
+ * `$lib/challenges/serve/listening`).
  *
  * On by default — it is the cheapest listening practice the app has, and it is
  * always one tap away from turning back into an ordinary reading challenge.

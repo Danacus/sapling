@@ -200,7 +200,7 @@ describe('planTopUp', () => {
 		// formats have deliberately aged out, but variety remains. Cloze is
 		// planned at demand 1 even here — every want asks for the same banked
 		// exercise — even though a served row shows no bank at all at this rung
-		// (`$lib/session/support`, `$lib/session/progression`'s `servedDemand`).
+		// (`$lib/challenges/serve/presentation`, `$lib/challenges/serve/progression`'s `servedDemand`).
 		expect(wants).toHaveLength(WANT_PER_WORD);
 		expect(wants.every((want) => want.difficulty === 5)).toBe(true);
 		expect(new Set(keysOf(wants))).toEqual(new Set([kindKey(MULTI_CLOZE), kindKey(CLOZE)]));

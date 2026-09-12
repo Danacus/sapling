@@ -28,7 +28,7 @@
 	import { fade, fly, scale, slide } from 'svelte/transition';
 
 	import { audioTextsFor, correctAnswerText } from '$lib/challenges/display';
-	import { ALL_READINGS, type Presentation } from '$lib/challenges/props';
+	import { presentationFor, type Presentation } from '$lib/challenges/serve/presentation';
 	import { getDailyActivity, getProfile, streakFrom } from '$lib/db';
 	import { isMockMode } from '$lib/llm';
 	import { loadRomanizer, type Romanizer } from '$lib/romanize';
@@ -46,8 +46,6 @@
 		type SessionPlan
 	} from '$lib/session/engine';
 	import { motionMs } from '$lib/session/motion';
-	import { planReadings, type ReadingPlan } from '$lib/session/romanization';
-	import { presentationFor } from '$lib/session/support';
 	import type { Grade } from '$lib/srs';
 	import { runSync } from '$lib/sync';
 	import { startTask } from '$lib/tasks';
@@ -272,20 +270,14 @@
 
 	let current = $state<Challenge | null>(null);
 	/**
-	 * Which readings {@link current} renders — one answer for the challenge, one
-	 * per word it exercises. Rolled once per served challenge in {@link show}:
-	 * under the adaptive mode each answer is a coin flip weighted by how well
-	 * that word is known, and every one of them has to stay put for as long as
-	 * the challenge is on screen.
-	 */
-	let currentReadings = $state<ReadingPlan>(ALL_READINGS);
-	/**
 	 * Everything about {@link current} decided at serve time rather than
 	 * written by the model — the native-language hint, the cloze/multi-cloze
-	 * bank size, the word-order distractor-tile count. Built in {@link show}
-	 * beside the readings, from the same weakest word, and for the same
-	 * reason: a row carries its full content for life, and only the rung the
-	 * word is at *now* says how much of it the learner still needs.
+	 * bank size, the word-order distractor-tile count, and which readings to
+	 * show. Built once in {@link show} from the challenge's weakest word and
+	 * the learner's mode, and for the same reason: a row carries its full
+	 * content for life, and only the rung the word is at *now* says how much of
+	 * it the learner still needs. The readings travel inside the same object so
+	 * a component has one serve-time prop, not two.
 	 */
 	let currentPresentation = $state<Presentation | undefined>(undefined);
 	/**
@@ -605,8 +597,7 @@
 	function show(challenge: Challenge): void {
 		const at = Date.now();
 		challengeShownAt = at;
-		currentReadings = planReadings(romanizationMode, challenge, items);
-		currentPresentation = presentationFor(challenge, items);
+		currentPresentation = presentationFor(challenge, items, { romanizationMode });
 		current = challenge;
 		// Warm this challenge's own audio while the learner is still reading it.
 		// The queue loop covers the whole session now, so it has usually got there
@@ -1256,7 +1247,6 @@
 								onanswer={handleAnswer}
 								{targetLanguage}
 								{nativeLanguage}
-								readings={currentReadings}
 								presentation={currentPresentation}
 								{tokenize}
 							/>

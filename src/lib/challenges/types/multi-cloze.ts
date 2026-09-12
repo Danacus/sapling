@@ -131,7 +131,7 @@ export const multiClozeStoredDef = {
 	// longer one of them. Every generated passage now carries the fullest
 	// shared bank the model can supply regardless of rung, so bank size stopped
 	// being a difficulty knob — how much of it a served challenge shows is a
-	// serve-time decision (`$lib/session/support`), not a fact about the row.
+	// serve-time decision (`$lib/challenges/serve/presentation`), not a fact about the row.
 	difficulty(challenge) {
 		const gaps = clamp01((challenge.gaps.length - MIN_GAPS) / (MAX_GAPS - MIN_GAPS));
 		const words = wordCount(challenge.passage.replace(/___\d+___/g, ' '));

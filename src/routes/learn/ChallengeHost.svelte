@@ -17,16 +17,18 @@
   member to the union and `pnpm check` fails right here.
 
   Every component gets both language names whether it uses them or not — see
-  `ChallengeProps`. Nothing is rendered around the components: the session
+  `ChallengeProps`. The one serve-time `presentation` object every component
+  needs goes to all six the same way; a component that does not read a field
+  simply does not destructure it, and `resolvedPresentation` fills the
+  bare-render defaults. Nothing is rendered around the components: the session
   screen's `.challenge` flex column is their direct parent, and it stays that
   way.
 -->
 <script lang="ts">
 	import { unhandledChallenge } from '$lib/challenges/display';
-	import { ALL_READINGS, type Presentation } from '$lib/challenges/props';
+	import type { AnswerEvent } from '$lib/challenges/props';
+	import type { Presentation } from '$lib/challenges/serve/presentation';
 	import type { RomanizedToken } from '$lib/romanize';
-	import type { AnswerEvent } from '$lib/session/engine';
-	import type { ReadingPlan } from '$lib/session/romanization';
 	import type { Challenge } from '$lib/types';
 
 	import Cloze from './Cloze.svelte';
@@ -42,7 +44,6 @@
 		onanswer,
 		targetLanguage = '',
 		nativeLanguage = '',
-		readings = ALL_READINGS,
 		presentation,
 		tokenize = null
 	}: {
@@ -50,65 +51,39 @@
 		onanswer: (event: AnswerEvent) => void;
 		targetLanguage?: string;
 		nativeLanguage?: string;
-		readings?: ReadingPlan;
 		presentation?: Presentation;
 		tokenize?: ((text: string) => RomanizedToken[]) | null;
 	} = $props();
 </script>
 
 {#if challenge.type === 'multiple-choice'}
-	<MultipleChoice {challenge} {onanswer} {targetLanguage} {nativeLanguage} {readings} {tokenize} />
+	<MultipleChoice
+		{challenge}
+		{onanswer}
+		{targetLanguage}
+		{nativeLanguage}
+		{presentation}
+		{tokenize}
+	/>
 {:else if challenge.type === 'cloze'}
-	<Cloze
-		{challenge}
-		{onanswer}
-		{targetLanguage}
-		{nativeLanguage}
-		{readings}
-		{presentation}
-		{tokenize}
-	/>
+	<Cloze {challenge} {onanswer} {targetLanguage} {nativeLanguage} {presentation} {tokenize} />
 {:else if challenge.type === 'multi-cloze'}
-	<MultiCloze
-		{challenge}
-		{onanswer}
-		{targetLanguage}
-		{nativeLanguage}
-		{readings}
-		{presentation}
-		{tokenize}
-	/>
+	<MultiCloze {challenge} {onanswer} {targetLanguage} {nativeLanguage} {presentation} {tokenize} />
 {:else if challenge.type === 'typed-translation'}
 	<TypedTranslation
 		{challenge}
 		{onanswer}
 		{targetLanguage}
 		{nativeLanguage}
-		{readings}
+		{presentation}
 		{tokenize}
 	/>
 {:else if challenge.type === 'word-order'}
-	<WordOrder
-		{challenge}
-		{onanswer}
-		{targetLanguage}
-		{nativeLanguage}
-		{readings}
-		{presentation}
-		{tokenize}
-	/>
+	<WordOrder {challenge} {onanswer} {targetLanguage} {nativeLanguage} {presentation} {tokenize} />
 {:else if challenge.type === 'spot-error'}
-	<SpotError
-		{challenge}
-		{onanswer}
-		{targetLanguage}
-		{nativeLanguage}
-		{readings}
-		{presentation}
-		{tokenize}
-	/>
+	<SpotError {challenge} {onanswer} {targetLanguage} {nativeLanguage} {presentation} {tokenize} />
 {:else if challenge.type === 'match-pairs'}
-	<MatchPairs {challenge} {onanswer} {targetLanguage} {nativeLanguage} {readings} {tokenize} />
+	<MatchPairs {challenge} {onanswer} {targetLanguage} {nativeLanguage} {presentation} {tokenize} />
 {:else}
 	{unhandledChallenge(challenge)}
 {/if}

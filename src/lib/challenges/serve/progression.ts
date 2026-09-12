@@ -20,7 +20,7 @@
  * (`$lib/challenges/demand`); the floors below are the session's half of the
  * pairing, and this module is where the two meet.
  *
- * Same machinery as the adaptive-romanization ramp in `./romanization`: both
+ * Same machinery as the adaptive-romanization ramp in `./reading`: both
  * read the *weakest* word a challenge exercises and both fade a support out as
  * that word grows. The two differ in how firm they are, though — the reading
  * ramp stays a preference the planner fades, while bearability below is a
@@ -62,13 +62,14 @@
  * {@link LEVEL_BANDS} publishes the resulting five spans, because the planner
  * needs more than the rung number: a challenge written *for* level 3 aims at
  * the middle of level 3's strength range, so that midpoint — not the word's raw
- * strength — is what `$lib/session/engine` matches a pooled challenge's own
+ * strength — is what the session engine matches a pooled challenge's own
  * difficulty against.
  */
 
 import { demandOf, type Demand } from '$lib/challenges/demand';
 import { strengthOf } from '$lib/srs';
 import type { Challenge, KnowledgeItem } from '$lib/types';
+import { clozeTypedLevel } from './ladders';
 
 /**
  * Weakest-word strength at which constrained production (demand 1 — word-order
@@ -124,8 +125,8 @@ export function itemsById(items: KnowledgeItem[]): ReadonlyMap<string, Knowledge
  * well the rest are known. An `itemId` that no longer resolves counts as 0 for
  * the same reason: an unknown word is the weakest word there is.
  *
- * Re-exported by `./romanization` as `challengeReadingStrength`, which is what
- * it was called when the reading ramp was its only caller.
+ * Re-exported by `./reading` as `challengeReadingStrength`, which is what it was
+ * called when the reading ramp was its only caller.
  *
  * @param byId Optional pre-built {@link itemsById} index over the very same
  * `items`, so a caller in a loop does not rebuild it per challenge.
@@ -154,33 +155,26 @@ function demandForStrength(strength: number): Demand {
 }
 
 /**
- * The rung at which a served cloze's word bank reads as empty — the one point
- * where {@link servedDemand} diverges from the stored {@link demandOf}.
- *
- * A private mirror of `$lib/session/support`'s `CLOZE_BANK_LADDER` rather than
- * an import of it: `support.ts` imports {@link levelForStrength} and
- * {@link weakestWordStrength} from this module, so importing the other way
- * back would close a cycle. The ladder's only fact that matters here is which
- * rung goes to zero, and that is pinned against the real ladder by
- * `support.test.ts`.
- */
-const CLOZE_TYPED_LEVEL: DifficultyLevel = 5;
-
-/**
  * The demand tier a *served* challenge actually asks of the learner — usually
  * just {@link demandOf}, except for a cloze whose word bank a served view has
  * trimmed away entirely.
  *
  * Every banked cloze is planned and stored at demand 1 (`$lib/llm`'s
  * `PLANNABLE_KINDS`): the words are given, only which one fits is not. But
- * `$lib/session/support`'s `bankSizeFor` shows no bank at all once the
- * challenge's weakest word reaches {@link CLOZE_TYPED_LEVEL} — the row is
- * answered exactly like a typed, demand-2 challenge from there, even though
- * `demandOf` still reads 1 off the stored `wordBank`. `bearable` and
- * `smoothDemand` (`$lib/session/engine`) both care what the learner is
- * actually being asked to do, not what the row was planned as, which is what
- * this function is for. A legacy row generated with no bank at all is
+ * `$lib/challenges/serve/presentation`'s `bankSizeFor` shows no bank at all
+ * once the challenge's weakest word reaches the rung {@link clozeTypedLevel}
+ * reports — the row is answered exactly like a typed, demand-2 challenge from
+ * there, even though `demandOf` still reads 1 off the stored `wordBank`.
+ * `bearable` and `smoothDemand` (the session engine's) both care what the
+ * learner is actually being asked to do, not what the row was planned as, which
+ * is what this function is for. A legacy row generated with no bank at all is
  * unaffected: its `demandOf` is already 2, so there is nothing to reconcile.
+ *
+ * The typed rung is read from the ladder through {@link clozeTypedLevel}, which
+ * fails loudly if the ladder ever loses its zero. It used to be a private
+ * constant mirroring the ladder, because the ladder lived in `presentation.ts`,
+ * which imports this module, so importing it back closed a cycle. The ladder is
+ * a leaf now, so the mirror is gone and the two can no longer disagree.
  */
 export function servedDemand(
 	challenge: Challenge,
@@ -190,7 +184,7 @@ export function servedDemand(
 	const demand = demandOf(challenge);
 	if (challenge.type !== 'cloze' || demand !== 1) return demand;
 	const level = levelForStrength(weakestWordStrength(challenge, items, byId));
-	return level >= CLOZE_TYPED_LEVEL ? 2 : demand;
+	return level >= clozeTypedLevel() ? 2 : demand;
 }
 
 /**

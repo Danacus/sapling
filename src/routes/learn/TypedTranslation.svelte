@@ -7,7 +7,9 @@
   Enter submits.
 -->
 <script lang="ts">
-	import { ALL_READINGS, rubyFor, storedReading, type ChallengeProps } from '$lib/challenges/props';
+	import type { ChallengeProps } from '$lib/challenges/props';
+	import { resolvedPresentation } from '$lib/challenges/serve/presentation';
+	import { rubyFor, storedReading } from '$lib/challenges/serve/reading';
 	import type { TypedTranslationChallenge } from '$lib/types';
 	import { validateAnswer } from '$lib/validate';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
@@ -19,9 +21,12 @@
 		onanswer,
 		targetLanguage = '',
 		nativeLanguage = '',
-		readings = ALL_READINGS,
+		presentation,
 		tokenize = null
 	}: ChallengeProps<TypedTranslationChallenge> = $props();
+
+	const served = $derived(resolvedPresentation(challenge, presentation));
+	const readings = $derived(served.readings);
 
 	let typed = $state('');
 	let input = $state<HTMLTextAreaElement | null>(null);

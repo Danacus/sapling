@@ -48,7 +48,7 @@ import type { PlannableKind, Want, WantItem } from '$lib/llm';
 import { dueAt, isDue } from '$lib/srs';
 import type { KnowledgeItem } from '$lib/types';
 import { SESSION_LENGTH, isPlayable, isRested, knownItemIds } from './pool';
-import { demandForLevel, difficultyLevelOf } from './progression';
+import { demandForLevel, difficultyLevelOf } from '$lib/challenges/serve/progression';
 
 /**
  * Fresh challenges each word should have waiting: one recognition kind and one

@@ -44,7 +44,7 @@ differs.
    whichever rung the want is written at (cloze always asks for exactly five
    `distractorWords`, a fixed line in its prompt rather than a parameter;
    multi-cloze always writing enough to reach nine bank entries; word-order
-   always asking for three distractor tiles), and `$lib/session/support` sizes
+   always asking for three distractor tiles), and `$lib/challenges/serve/presentation` sizes
    how much of that stored set a *served* challenge shows, from the word's
    current rung. Only a structural count — a sentence's length, a tile tray's
    own tile count, a gap count — belongs in `params` now. Align the ends with
@@ -77,7 +77,7 @@ differs.
    is decided at serve time now, never as a kind — a type whose *stored* demand
    can genuinely vary by row (cloze's word bank) is still listed once, at the
    tier it is generated and planned at; the gap between that and what a served
-   row actually asks (typed, at the top rung) is `$lib/session/progression`'s
+   row actually asks (typed, at the top rung) is `$lib/challenges/serve/progression`'s
    `servedDemand`, not a second `PlannableKind`.
    *Forget it:* the type is described to the model, exampled, and **never asked
    for** — the session chooses kinds, not the model. `registry.test.ts` fails on
@@ -132,7 +132,7 @@ rather than checking by eye.
   def importing another def is caught too.
 - `demand` is deliberately **not** consulted by `check`. Grading stays
   type-blind: a verdict is FSRS's evidence about the *word*, so difficulty
-  shapes the question stream (`$lib/session/progression`), never what an answer
+  shapes the question stream (`$lib/challenges/serve/progression`), never what an answer
   is worth. Do not "improve" this by weighting grades.
 - The component is logic plus composition. Anything that looks like a shared
   skin belongs in `blocks/`, not a scoped override — scoped overrides are how
