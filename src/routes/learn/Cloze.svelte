@@ -37,10 +37,11 @@
 		onanswer,
 		targetLanguage = '',
 		readings = ALL_READINGS,
-		showHint = true,
-		bankSize,
+		presentation,
 		tokenize = null
 	}: ChallengeProps<ClozeChallenge> = $props();
+
+	const showHint = $derived(presentation?.showHint ?? true);
 
 	const GAP = '___';
 
@@ -94,11 +95,11 @@
 
 	/**
 	 * The stored bank positions this served challenge shows — every position
-	 * when `bankSize` was not supplied, so a bare render (tests) keeps showing
-	 * everything stored.
+	 * when `presentation` was not supplied, so a bare render (tests) keeps
+	 * showing everything stored.
 	 */
 	const visibleIndices = $derived(
-		visibleBank(challenge, bankSize ?? challenge.wordBank?.length ?? 0)
+		visibleBank(challenge, presentation?.bankSize ?? challenge.wordBank?.length ?? 0)
 	);
 	const bank = $derived(visibleIndices.map((index) => challenge.wordBank![index]));
 	const usesBank = $derived(bank.length > 0);
@@ -230,7 +231,7 @@
 	{/if}
 
 	<!-- The native line is always on the row; whether it shows is the session's
-	     serve-time call (`$lib/session/hints`), like the readings above. -->
+	     serve-time call (`$lib/session/support`), like the readings above. -->
 	{#if showHint && challenge.translationHint}
 		<p class="hint translation">{challenge.translationHint}</p>
 	{/if}

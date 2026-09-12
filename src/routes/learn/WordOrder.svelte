@@ -8,8 +8,8 @@
 
   `challenge.prompt` is the native-language anchor, always written by
   generation; whether it is *shown* is the session's serve-time call
-  (`showHint`, from `$lib/session/hints`), and some rows written by an earlier
-  build lack it altogether. Where it shows it is the prompt, the way it always
+  (`presentation.showHint`, from `$lib/session/support`), and some rows
+  written by an earlier build lack it altogether. Where it shows it is the prompt, the way it always
   was: the native sentence says what to build, not in which order, so it is
   support rather than the answer. Without it the tiles are the whole puzzle.
 
@@ -43,10 +43,11 @@
 		challenge,
 		onanswer,
 		readings = ALL_READINGS,
-		showHint = true,
-		distractorTiles,
+		presentation,
 		tokenize = null
 	}: ChallengeProps<WordOrderChallenge> = $props();
+
+	const showHint = $derived(presentation?.showHint ?? true);
 
 	/**
 	 * Tile *positions* the learner has placed, in the order they placed them.
@@ -64,13 +65,14 @@
 
 	/**
 	 * The stored tile positions this served challenge shows — every position
-	 * when `distractorTiles` was not supplied, so a bare render (tests) keeps
+	 * when `presentation` was not supplied, so a bare render (tests) keeps
 	 * showing every stored tile.
 	 */
 	const visibleIndices = $derived(
 		visibleTiles(
 			challenge,
-			distractorTiles ?? Math.max(0, challenge.tiles.length - challenge.answerTokens.length)
+			presentation?.distractorTiles ??
+				Math.max(0, challenge.tiles.length - challenge.answerTokens.length)
 		)
 	);
 

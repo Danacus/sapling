@@ -21,6 +21,7 @@ import type { ProgressStep } from '$lib/llm';
 import { gradeFromResult, Grade } from '$lib/srs';
 import type {
 	Challenge,
+	ClozeChallenge,
 	KnowledgeItem,
 	MultipleChoiceChallenge,
 	Profile,
@@ -1211,32 +1212,55 @@ describe('smoothDemand', () => {
 	it('pulls the nearest later demand-1 challenge between a 0,2 pair', () => {
 		const plan = [demand0('a'), demand2('b'), demand1('c')];
 
-		expect(ids(smoothDemand(plan))).toEqual(['a', 'c', 'b']);
+		expect(ids(smoothDemand(plan, []))).toEqual(['a', 'c', 'b']);
 	});
 
 	it('leaves a 0,2 jump alone when no demand-1 challenge exists anywhere', () => {
 		const plan = [demand0('a'), demand2('b'), demand0('c')];
 
-		expect(ids(smoothDemand(plan))).toEqual(['a', 'b', 'c']);
+		expect(ids(smoothDemand(plan, []))).toEqual(['a', 'b', 'c']);
 	});
 
 	it('leaves an already-smooth 0,1,2 run untouched', () => {
 		const plan = [demand0('a'), demand1('b'), demand2('c')];
 
-		expect(ids(smoothDemand(plan))).toEqual(['a', 'b', 'c']);
+		expect(ids(smoothDemand(plan, []))).toEqual(['a', 'b', 'c']);
 	});
 
 	it('preserves the relative order of every challenge not pulled forward', () => {
 		const plan = [demand0('a'), demand0('b'), demand2('c'), demand1('d'), demand0('e')];
 
 		// 'd' is pulled between 'b' and 'c'; 'a', 'b', 'c' and 'e' keep their order.
-		expect(ids(smoothDemand(plan))).toEqual(['a', 'b', 'd', 'c', 'e']);
+		expect(ids(smoothDemand(plan, []))).toEqual(['a', 'b', 'd', 'c', 'e']);
 	});
 
 	it('is deterministic', () => {
 		const plan = [demand0('a'), demand2('b'), demand1('c'), demand0('d'), demand2('e')];
 
-		expect(ids(smoothDemand(plan))).toEqual(ids(smoothDemand(plan)));
+		expect(ids(smoothDemand(plan, []))).toEqual(ids(smoothDemand(plan, [])));
+	});
+
+	it('treats a rung-5 banked cloze as tier 2, the demand it is actually served at', () => {
+		// A banked cloze is stored at demand 1 (`demandOf` reads its `wordBank`),
+		// but at rung 5 `$lib/session/support`'s `bankSizeFor` shows none of it —
+		// the learner types the answer exactly as they would for a demand-2
+		// challenge. `smoothDemand` has to see that, or it would leave a
+		// recognition-then-"constrained-production" pair alone that the learner
+		// actually experiences as a 0,2 jump.
+		const owned = strongItem('owned', -DAY);
+		const bankedCloze: ClozeChallenge = {
+			id: 'banked',
+			type: 'cloze',
+			direction: 'toTarget',
+			sentence: 'Yo ___ ayer.',
+			acceptedAnswers: ['corrí'],
+			wordBank: ['corrí', 'fui', 'comí'],
+			itemIds: ['owned']
+		};
+		const middle = demand1('middle');
+
+		const plan = [demand0('recognition'), bankedCloze, middle];
+		expect(ids(smoothDemand(plan, [owned]))).toEqual(['recognition', 'middle', 'banked']);
 	});
 });
 

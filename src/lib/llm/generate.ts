@@ -23,8 +23,8 @@
  * type: its system prompt ({@link systemPromptFor}) explains that type and no
  * other, its JSON schema admits that type and no other, and its payload is a
  * list of words each carrying the **countable parameters** that type is sized
- * by — a sentence length, a word-bank size, a tile count, computed here from
- * the want's rung by the def's own `params`. A model writing six of one thing
+ * by — a sentence length, a tile count, computed here from the want's rung by
+ * the def's own `params`. A model writing six of one thing
  * keeps the rules and its earlier answers in mind; one writing twenty across
  * seven types does not. The prompt stays static *per type*, which is what keeps
  * prompt caching paying across a top-up's requests and across sessions.
@@ -259,10 +259,13 @@ function hasInstructionField(def: AnyWireTypeDef): boolean {
  *   `"reading": null` everywhere and pay nothing.
  *
  * There is no difficulty ladder here and no "difficulty" key for the model to
- * interpret. Difficulty *is* the parameters on each item — a word count, a bank
- * size, a tile count — which each def computes from the want's rung and
- * explains in its own `paramsSpec`. A number the model can count is a number it
- * can hit.
+ * interpret. Difficulty *is* the parameters on each item — a word count, a
+ * tile count — which each def computes from the want's rung and explains in
+ * its own `paramsSpec`. A number the model can count is a number it can hit.
+ * A word bank or a distractor-tile count is no longer one of those parameters:
+ * every wire type that has one now asks for the fullest set its schema allows
+ * at every rung, and how much of it a served challenge shows is decided later
+ * (`$lib/session/support`).
  */
 function composeSystemPrompt(def: AnyWireTypeDef): string {
 	return (
@@ -401,7 +404,7 @@ export function buildRequestPrompt(args: BatchArgs, request: TypeRequest): ChatM
 			id: want.item.id,
 			t: want.item.term,
 			...(want.item.meaning ? { m: want.item.meaning } : {}),
-			...def.params(want.difficulty, request.kind)
+			...def.params(want.difficulty)
 		}))
 	};
 
@@ -570,16 +573,17 @@ export interface ResolveOptions {
 	/** Injectable `[0,1)` source for the shuffles; defaults to `Math.random`. */
 	rng?: () => number;
 	/**
-	 * The parameters each word's challenge was asked for, by item id — what the
-	 * resolver holds the model to where it can (a cloze's bank size, a
-	 * word-order's distractor count; see {@link ResolveContext.params}).
+	 * The parameters each word's challenge was asked for, by item id — see
+	 * {@link ResolveContext.params}. No current def reads this to enforce
+	 * anything (the one that did, cloze's `distractors: 0`, went away with the
+	 * banked/typed split); it still travels through so a future def with a
+	 * genuinely enforceable count has somewhere to read it from.
 	 *
 	 * Keyed by item because that is the only handle available at resolve time: a
 	 * challenge has not been matched to its planned entry yet, and cannot be
 	 * until it *is* a challenge. Within one request a word appears exactly once,
 	 * so the first of a challenge's resolved ids that this map knows is
-	 * unambiguously the entry it answers. Omitted by the mock and by tests, and
-	 * then no parameter is enforced.
+	 * unambiguously the entry it answers. Omitted by the mock and by tests.
 	 */
 	paramsByItem?: ReadonlyMap<string, ChallengeParams>;
 }
@@ -728,14 +732,11 @@ function defFor(request: TypeRequest): AnyWireTypeDef {
  *
  * A request asks for an exact list — six challenges of one kind, one per word —
  * and a reply that comes back the right *length* has told us nothing about
- * whether it is what was asked for. The model does substitute: six banked
- * clozes come back as six multiple-choice questions, or one word gets all six
- * challenges. Counting cannot see either. So each resolved challenge is read
- * back as the kind it *is* ({@link kindOf}: the stored `{type, direction}` its
- * wire def declares, plus whether a word bank actually survived resolution — a
- * banked cloze whose distractors all duplicated the answer is not the exercise
- * that was asked for, and the retry is the cheaper fix) and has to be about the
- * word the entry named.
+ * whether it is what was asked for. The model does substitute: six cloze
+ * challenges come back as six multiple-choice questions, or one word gets all
+ * six challenges. Counting cannot see either. So each resolved challenge is
+ * read back as the kind it *is* ({@link kindOf}: the stored `{type, direction}`
+ * its wire def declares) and has to be about the word the entry named.
  *
  * Each entry is filled at most once, so a request can never return more than it
  * was asked for. Anything that matches no unfilled entry is dropped rather than
@@ -935,9 +936,7 @@ export async function generateBatch(
 		// A word appears at most once in a request, so its parameters are the ones
 		// any challenge citing it was asked for. See `ResolveOptions.paramsByItem`.
 		const paramsByItem = new Map(
-			request.wants.map(
-				(want) => [want.item.id, def.params(want.difficulty, request.kind)] as const
-			)
+			request.wants.map((want) => [want.item.id, def.params(want.difficulty)] as const)
 		);
 
 		for (let attempt = 0; attempt < 2; attempt++) {

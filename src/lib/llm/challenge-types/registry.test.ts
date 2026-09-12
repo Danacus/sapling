@@ -30,7 +30,6 @@ import type {
 	ChallengeParams,
 	DifficultyRung,
 	ResolveContext,
-	SizingKind,
 	WireTypeDef
 } from './index';
 
@@ -44,11 +43,8 @@ const RUNGS: DifficultyRung[] = [1, 2, 3, 4, 5];
  * That is what the registry wants; it is not what a test iterating over every
  * def can index by key, so this reads them as the contract declares them.
  */
-const paramsOf = (
-	def: AnyWireTypeDef,
-	rung: DifficultyRung,
-	kind: SizingKind = {}
-): ChallengeParams => (def.params as WireTypeDef['params'])(rung, kind);
+const paramsOf = (def: AnyWireTypeDef, rung: DifficultyRung): ChallengeParams =>
+	(def.params as WireTypeDef['params'])(rung);
 
 /** The `type` literal each member of the generated union pins, in union order. */
 const unionTypes = (): string[] =>
@@ -130,6 +126,12 @@ describe('WIRE_TYPE_DEFS', () => {
 		// fixtures, resolved for real: a kind whose stated tier drifted from its
 		// resolver would have the session ask for challenges it then declines to
 		// serve, or count coverage it does not have.
+		//
+		// Cloze is the one type with two fixtures per scenario — one banked, one
+		// typed — kept to exercise both of the resolver's shapes, but only the
+		// banked one is what `PLANNABLE_KINDS`' single cloze entry (demand 1) was
+		// asked for; the typed fixture illustrates a possible reply, not a
+		// planned kind, so it is skipped here.
 		for (const kind of PLANNABLE_KINDS) {
 			const def = byType.get(kind.type);
 			if (!def) throw new Error(`no def for ${kind.type}`);
@@ -139,7 +141,7 @@ describe('WIRE_TYPE_DEFS', () => {
 				for (const fixture of def.fixtures[scenario]) {
 					const generated = fixture.challenge as { distractorWords?: unknown[] | null };
 					const banked = (generated.distractorWords?.length ?? 0) > 0;
-					if (kind.bank !== undefined && banked !== kind.bank) continue;
+					if (kind.type === 'cloze' && !banked) continue;
 					const resolved = resolve(fixture.challenge, {
 						base: { id: 'c1', itemIds: ['i1'] },
 						rng: () => 0.5
@@ -147,10 +149,10 @@ describe('WIRE_TYPE_DEFS', () => {
 					if (!resolved) throw new Error(`${def.type} fixture (${scenario}) did not resolve`);
 					seen++;
 					expect(kindOf(resolved), `${def.type} read back`).toEqual(bareKind(kind));
-					expect(demandOf(resolved), `${def.type} (bank: ${kind.bank}) demand`).toBe(kind.demand);
+					expect(demandOf(resolved), `${def.type} demand`).toBe(kind.demand);
 				}
 			}
-			expect(seen, `no fixture exercises ${def.type} (bank: ${kind.bank})`).toBeGreaterThan(0);
+			expect(seen, `no fixture exercises ${def.type}`).toBeGreaterThan(0);
 		}
 	});
 
@@ -182,25 +184,23 @@ describe('difficulty parameters', () => {
 
 	it('keeps the same keys at every rung', () => {
 		for (const def of WIRE_TYPE_DEFS) {
-			const shapes = RUNGS.map((rung) => Object.keys(paramsOf(def, rung, { bank: true })).sort());
+			const shapes = RUNGS.map((rung) => Object.keys(paramsOf(def, rung)).sort());
 			expect(new Set(shapes.map((keys) => keys.join(','))).size, def.type).toBe(1);
 		}
 	});
 
 	it('is monotone in the rung: every count grows', () => {
 		for (const def of WIRE_TYPE_DEFS) {
-			for (const kind of [{}, { bank: true }, { bank: false }]) {
-				const ladders = RUNGS.map((rung) => paramsOf(def, rung, kind));
-				for (const key of Object.keys(ladders[0])) {
-					const values = ladders.map((params) => params[key]);
-					// Words, tiles, distractors — and the bank too, since a larger bank
-					// means more competing choices. No parameter is a support flag:
-					// what support a learner *sees* is decided at serve time.
-					for (let i = 1; i < values.length; i++) {
-						expect(values[i], `${def.type}.${key} at rung ${i + 1}`).toBeGreaterThanOrEqual(
-							values[i - 1]
-						);
-					}
+			const ladders = RUNGS.map((rung) => paramsOf(def, rung));
+			for (const key of Object.keys(ladders[0])) {
+				const values = ladders.map((params) => params[key]);
+				// Words, tiles — no parameter is a support flag any more: a bank or a
+				// distractor-tile count is a fixed instruction now, not a per-rung
+				// number, and what support a learner *sees* is decided at serve time.
+				for (let i = 1; i < values.length; i++) {
+					expect(values[i], `${def.type}.${key} at rung ${i + 1}`).toBeGreaterThanOrEqual(
+						values[i - 1]
+					);
 				}
 			}
 		}
@@ -228,7 +228,7 @@ describe('the rungs, as the stored side reads them back', () => {
 		Array.from({ length: count }, (_, i) => ({ text: `w${i}`, reading: null }));
 
 	const clozeAt = (rung: DifficultyRung) => {
-		const params = paramsOf(clozeDef, rung, { bank: true });
+		const params = paramsOf(clozeDef, rung);
 		return resolveAs(
 			clozeDef,
 			{

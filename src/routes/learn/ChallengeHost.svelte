@@ -23,7 +23,7 @@
 -->
 <script lang="ts">
 	import { unhandledChallenge } from '$lib/challenges/display';
-	import { ALL_READINGS } from '$lib/challenges/props';
+	import { ALL_READINGS, type Presentation } from '$lib/challenges/props';
 	import type { RomanizedToken } from '$lib/romanize';
 	import type { AnswerEvent } from '$lib/session/engine';
 	import type { ReadingPlan } from '$lib/session/romanization';
@@ -43,9 +43,7 @@
 		targetLanguage = '',
 		nativeLanguage = '',
 		readings = ALL_READINGS,
-		showHint = true,
-		bankSize,
-		distractorTiles,
+		presentation,
 		tokenize = null
 	}: {
 		challenge: Challenge;
@@ -53,9 +51,7 @@
 		targetLanguage?: string;
 		nativeLanguage?: string;
 		readings?: ReadingPlan;
-		showHint?: boolean;
-		bankSize?: number;
-		distractorTiles?: number;
+		presentation?: Presentation;
 		tokenize?: ((text: string) => RomanizedToken[]) | null;
 	} = $props();
 </script>
@@ -69,8 +65,7 @@
 		{targetLanguage}
 		{nativeLanguage}
 		{readings}
-		{showHint}
-		{bankSize}
+		{presentation}
 		{tokenize}
 	/>
 {:else if challenge.type === 'multi-cloze'}
@@ -80,7 +75,7 @@
 		{targetLanguage}
 		{nativeLanguage}
 		{readings}
-		{bankSize}
+		{presentation}
 		{tokenize}
 	/>
 {:else if challenge.type === 'typed-translation'}
@@ -99,8 +94,7 @@
 		{targetLanguage}
 		{nativeLanguage}
 		{readings}
-		{showHint}
-		{distractorTiles}
+		{presentation}
 		{tokenize}
 	/>
 {:else if challenge.type === 'spot-error'}
@@ -110,7 +104,7 @@
 		{targetLanguage}
 		{nativeLanguage}
 		{readings}
-		{showHint}
+		{presentation}
 		{tokenize}
 	/>
 {:else if challenge.type === 'match-pairs'}

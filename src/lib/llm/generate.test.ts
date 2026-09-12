@@ -44,7 +44,7 @@ const args: BatchArgs = {
 	},
 	wants: [
 		want(PERRO, { type: 'recognize-mc' }),
-		want(PERRO, { type: 'cloze', bank: true }),
+		want(PERRO, { type: 'cloze' }),
 		want(LEER, { type: 'translate-to-native' }),
 		want(LEER, { type: 'translate-to-target' })
 	]
@@ -160,17 +160,13 @@ function idFactory(): () => string {
  * types a lesson asks for, and a reply now has to answer in *that* type or be
  * rejected before it is even parsed.
  */
-function fillEntry(type: WireType, itemId: string, banked?: boolean): Record<string, unknown> {
+function fillEntry(type: WireType, itemId: string): Record<string, unknown> {
 	const def = byType.get(type);
 	if (!def) throw new Error(`no wire def for ${type}`);
 	const fixtures = def.fixtures.spanish as unknown as readonly {
 		challenge: Record<string, unknown>;
 	}[];
-	const wanted =
-		banked === undefined
-			? fixtures[0]
-			: (fixtures.find((f) => (f.challenge.distractorWords != null) === banked) ?? fixtures[0]);
-	return { ...wanted.challenge, itemIds: [itemId], explanation: `${itemId}-${type}` };
+	return { ...fixtures[0].challenge, itemIds: [itemId], explanation: `${itemId}-${type}` };
 }
 
 /**
@@ -205,8 +201,6 @@ function typeOfPrompt(system: string): WireType {
 /** One request as the model saw it. */
 interface SeenRequest {
 	type: WireType;
-	/** Only a cloze brief has a `distractors` parameter, and it is a count, not a flag. */
-	banked?: boolean;
 	itemIds: string[];
 	params: Record<string, number>[];
 	retry: boolean;
@@ -221,7 +215,6 @@ function readRequest(rawBody: unknown): SeenRequest {
 	const params = payload.items.map(({ id: _id, t: _t, m: _m, ...rest }) => rest as never);
 	return {
 		type,
-		...(type === 'cloze' ? { banked: (payload.items[0].distractors ?? 0) > 0 } : {}),
 		itemIds: payload.items.map((item) => item.id),
 		params,
 		retry: body.messages.length > 2
@@ -231,9 +224,9 @@ function readRequest(rawBody: unknown): SeenRequest {
 /** A request's identity, so a fake can be scripted per request. */
 function requestKey(request: SeenRequest | TypeRequest): string {
 	if ('kind' in request) {
-		return `${request.kind.type}:${request.kind.bank ?? ''}|${request.wants.map((w) => w.item.id).join(',')}`;
+		return `${request.kind.type}|${request.wants.map((w) => w.item.id).join(',')}`;
 	}
-	return `${request.type}:${request.banked ?? ''}|${request.itemIds.join(',')}`;
+	return `${request.type}|${request.itemIds.join(',')}`;
 }
 
 interface ModelBehaviour {
@@ -245,8 +238,6 @@ interface ModelBehaviour {
 	wrongTypes?: Set<number>;
 	/** Request indices that answer their brief and then keep writing. */
 	overproduce?: Set<number>;
-	/** Request indices that answer a cloze brief on the wrong side of `bank`. */
-	flipBank?: Set<number>;
 	/** Wrap every reply in a ```json fence, as cheap models do. */
 	fenced?: boolean;
 	/** Extra entries appended to every reply — junk, ghosts, whatever. */
@@ -293,15 +284,14 @@ function modelFetch(plans: readonly TypeRequest[], options: ModelBehaviour = {})
 				? 'translate-to-native'
 				: 'recognize-mc'
 			: seen.type;
-		const banked = options.flipBank?.has(which) ? !seen.banked : seen.banked;
 
 		const written = bad
 			? []
 			: [
-					...seen.itemIds.map((id) => fillEntry(type, id, banked)),
+					...seen.itemIds.map((id) => fillEntry(type, id)),
 					// Three more about the brief's first word, unasked for.
 					...(options.overproduce?.has(which)
-						? [0, 1, 2].map(() => fillEntry(type, seen.itemIds[0], banked))
+						? [0, 1, 2].map(() => fillEntry(type, seen.itemIds[0]))
 						: []),
 					...(options.extras ?? [])
 				];
@@ -362,10 +352,7 @@ function requestFor(kind: ChallengeKind, difficulty: Want['difficulty'] = 3): Ty
 function promptForType(type: WireType): string {
 	const def = byType.get(type);
 	if (!def) throw new Error(`no wire def for ${type}`);
-	const [system] = buildRequestPrompt(
-		args,
-		requestFor({ type, ...(type === 'cloze' ? { bank: true } : {}) })
-	);
+	const [system] = buildRequestPrompt(args, requestFor({ type }));
 	return system.content;
 }
 
@@ -470,8 +457,7 @@ describe('buildRequestPrompt', () => {
 	it('sends countable parameters, never a type or a difficulty', () => {
 		// The two things this rewrite exists to remove from the payload. `type` is
 		// the subject of the system prompt; `difficulty` was a scale the model had
-		// to interpret, and is now a set of lengths it can count. (`bank` survives
-		// as a *count* of words, not as the flag the plan holds.)
+		// to interpret, and is now a set of lengths it can count.
 		for (const request of requests) {
 			const [, user] = buildRequestPrompt(args, request);
 			const payload = JSON.parse(user.content) as { items: Record<string, unknown>[] };
@@ -498,19 +484,22 @@ describe('buildRequestPrompt', () => {
 		expect(wordsAt(1)).toBeLessThan(wordsAt(5));
 	});
 
-	it('sends a cloze its distractor count, constant across rungs', () => {
-		const distractorsAt = (bank: boolean, difficulty: 1 | 5): number => {
-			const [, user] = buildRequestPrompt(args, requestFor({ type: 'cloze', bank }, difficulty));
-			return (JSON.parse(user.content) as { items: { distractors: number }[] }).items[0]
-				.distractors;
+	it('sends a cloze only its sentence length; the bank is a fixed instruction, not a count', () => {
+		// There is one cloze kind now — every want is the same banked exercise,
+		// whichever rung it is written at — so `distractorWords` stopped being a
+		// per-item number the plan sends and became a constant line in the
+		// prompt itself ("always write exactly five"). Whether a served
+		// challenge shows that bank at all is `$lib/session/support`'s call, made
+		// long after generation.
+		const itemsAt = (difficulty: 1 | 5) => {
+			const [, user] = buildRequestPrompt(args, requestFor({ type: 'cloze' }, difficulty));
+			return (JSON.parse(user.content) as { items: Record<string, unknown>[] }).items[0];
 		};
-		// Five candidates whichever rung a banked want is written at; nothing at
-		// all when the want asked for a typed cloze, which is what `bank: false`
-		// means. The rung no longer changes what is written — only what a served
-		// challenge shows (`$lib/session/support`).
-		expect(distractorsAt(true, 1)).toBe(5);
-		expect(distractorsAt(true, 5)).toBe(5);
-		expect(distractorsAt(false, 1)).toBe(0);
+		expect(Object.keys(itemsAt(1))).not.toContain('distractors');
+		expect(itemsAt(1).words).toBeLessThan(itemsAt(5).words as number);
+
+		const system = promptForType('cloze');
+		expect(system).toContain('exactly five');
 	});
 
 	it('writes everything shared across requests before the brief itself', () => {
@@ -908,15 +897,22 @@ const RECOGNITION_KINDS: ChallengeKind[] = [
 ];
 const PRODUCTION_KINDS: ChallengeKind[] = [
 	{ type: 'word-order' },
-	{ type: 'cloze', bank: true },
+	{ type: 'cloze' },
 	{ type: 'translate-to-target' },
-	{ type: 'cloze', bank: false }
+	// Not itself a production kind — kept here only so this stress test still
+	// exercises eight distinct wire types. Cloze losing its bank/typed split
+	// left only three genuinely-production kinds (word-order, cloze,
+	// multi-cloze), and multi-cloze's fixture cites its word once per gap
+	// rather than once at the top level, which this file's `fillEntry` does
+	// not know how to re-point at a single test word without breaking the
+	// resolver's own-word-once-per-gap check.
+	{ type: 'context-mc' }
 ];
 
 /**
- * Twelve words, each wanted in a recognition kind and a production kind, the
- * kinds dealt round so every one of the eight is asked for three times — a full
- * top-up, and therefore several requests of several words each.
+ * Twelve words, each wanted in two of the eight kinds above, dealt round so
+ * every one of the eight is asked for three times — a full top-up, and
+ * therefore several requests of several words each.
  */
 const bigArgs: BatchArgs = {
 	...args,
@@ -1034,48 +1030,6 @@ describe('generateBatch, one request per type', () => {
 
 		expect(result.challenges).toHaveLength(bigArgs.wants.length);
 		expect(result.challenges.map((c) => c.explanation)).toEqual(bigStamps);
-	});
-
-	it('holds a typed cloze to its brief even when the model sends a bank anyway', async () => {
-		// `bank: 0` is a parameter the resolver can enforce, so a word bank nobody
-		// asked for is discarded rather than quietly turning a retrieval exercise
-		// into the easier one. No retry: the challenge that comes out *is* the
-		// challenge that was asked for.
-		const clozeAt = bigRequests.findIndex(
-			(request) => request.kind.type === 'cloze' && request.kind.bank === false
-		);
-		expect(clozeAt).toBeGreaterThanOrEqual(0);
-		const fake = modelFetch(bigRequests, { flipBank: new Set([clozeAt]) });
-		const result = await generateBatch(bigArgs, callOpts(fake.fetchFn));
-
-		expect(fake.calls).toBe(bigRequests.length);
-		expect(result.challenges.map((c) => c.explanation)).toEqual(bigStamps);
-		for (const challenge of result.challenges) {
-			if (
-				challenge.type === 'cloze' &&
-				bigRequests[clozeAt].wants.some((w) => challenge.itemIds.includes(w.item.id))
-			) {
-				expect(challenge).not.toHaveProperty('wordBank');
-			}
-		}
-	});
-
-	it('drops a banked cloze answered without its word bank', async () => {
-		// The direction the resolver cannot rescue: a bank was asked for and none
-		// came back, which is the harder exercise, not the one this word is ready
-		// for. So the request is re-asked and then dropped.
-		const clozeAt = bigRequests.findIndex((request) => request.kind.bank === true);
-		expect(clozeAt).toBeGreaterThanOrEqual(0);
-
-		const fake = modelFetch(bigRequests, { flipBank: new Set([clozeAt]) });
-		const result = await generateBatch(bigArgs, callOpts(fake.fetchFn));
-
-		expect(fake.calls).toBe(bigRequests.length + 1);
-		expect(result.failedRequests).toBe(1);
-		const lost = new Set(stampsOf(bigRequests[clozeAt]));
-		expect(result.challenges.map((c) => c.explanation)).toEqual(
-			bigStamps.filter((stamp) => !lost.has(stamp))
-		);
 	});
 
 	it('re-asks a request that answered in the wrong type, then merges it in place', async () => {
@@ -1488,9 +1442,10 @@ describe('resolveBatch', () => {
 			expect(challenge?.wordBank).toContain('菜单');
 		});
 
-		it('stores the whole bank the model sent, whatever the plan asked for', () => {
-			// No trim any more: the resolver stores the full surviving set, and
-			// sizing what a served challenge shows from it is
+		it('stores the whole bank the model sent, whatever its size', () => {
+			// No trim, and no enforcement against `params` any more — there is only
+			// one cloze kind now, so nothing the plan sent could mark this bank as
+			// unwanted. Sizing what a served challenge shows from it is
 			// `$lib/session/support`'s job.
 			const challenge = resolveCloze(
 				{
@@ -1499,29 +1454,17 @@ describe('resolveBatch', () => {
 						reading: null
 					}))
 				},
-				{ paramsByItem: new Map([['i1', { words: 7, distractors: 5 }]]) }
+				{ paramsByItem: new Map([['i1', { words: 7 }]]) }
 			);
 			expect(challenge?.wordBank).toHaveLength(6);
 			expect(challenge?.wordBank).toContain('菜单');
 		});
 
-		it('drops a bank the plan did not ask for at all', () => {
-			// `distractors: 0` was a request for a typed cloze. Distractors sent
-			// anyway are discarded: the two are different exercises for different
-			// stages.
-			const challenge = resolveCloze({}, { paramsByItem: new Map([['i1', { distractors: 0 }]]) });
-			expect('wordBank' in (challenge ?? {})).toBe(false);
-			expect(challenge?.acceptedAnswers).toContain('菜单');
-		});
-
 		it('always keeps the native hint, whatever rung the row was planned at', () => {
 			// Whether the learner *sees* it is decided when the row is served
-			// (`$lib/session/hints`), not when it is written: a row outlives the
+			// (`$lib/session/support`), not when it is written: a row outlives the
 			// rung it was written at.
-			const challenge = resolveCloze(
-				{},
-				{ paramsByItem: new Map([['i1', { words: 11, distractors: 5 }]]) }
-			);
+			const challenge = resolveCloze({}, { paramsByItem: new Map([['i1', { words: 11 }]]) });
 			expect(challenge?.translationHint).toBe('Hello, could I have a menu, please?');
 		});
 

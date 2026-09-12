@@ -1,25 +1,27 @@
 /**
- * Adaptive word-bank size and distractor-tile count: how much of a served
- * cloze/multi-cloze bank or a word-order tray is shown, decided from the
- * challenge's weakest word's rung.
+ * Adaptive serve-time presentation: everything about a served challenge that
+ * is decided from the challenge's weakest word's rung rather than written by
+ * the model — the native-language hint line, a cloze/multi-cloze word bank's
+ * size, and a word-order tray's distractor-tile count.
  *
- * Same shape as `./hints`' native-line ramp, and for the same reason: a row is
- * generated once and played for weeks while the word's rung moves, so "how
- * much support to show" cannot be baked into the row at write time. Generation
- * now always writes the fullest bank/tray a wire type's schema allows
- * (`$lib/llm/challenge-types`' cloze, multi-cloze and word-order defs), and
- * this module decides how much of that stored set a served challenge actually
- * shows — the same relationship romanization and the native hint already have
- * to their own stored fields.
+ * All three exist for the same reason: a row is generated once and played for
+ * weeks while the word's rung moves, so "how much support to show" cannot be
+ * baked into the row at write time. The model always writes the fullest
+ * version it can — every native line, the fullest bank/tray a wire type's
+ * schema allows (`$lib/llm/challenge-types`' cloze, multi-cloze and
+ * word-order defs) — and this module decides how much of that stored content
+ * a *served* challenge actually shows.
  *
- * `bankSizeFor`/`distractorTilesFor` read `levelForStrength(weakestWordStrength(…))`,
- * exactly as `showNativeHint` does, so all three ramps move together as a
- * word's rung does. An unresolvable `itemId` (and a challenge citing no items
- * at all) reads as rung 1 there, which is why every ladder's floor is its
- * *most* supportive entry: showing extra support to a learner who does not
+ * `showNativeHint`, `bankSizeFor` and `distractorTilesFor` all read
+ * `levelForStrength(weakestWordStrength(…))`, so the three ramps move together
+ * as a word's rung does. An unresolvable `itemId` (and a challenge citing no
+ * items at all) reads as rung 1 there, which is why every ladder's floor is
+ * its *most* supportive entry: showing extra support to a learner who does not
  * need it costs nothing, hiding support from one who does is a wall.
+ * `presentationFor` folds all three into the one prop the learn screen hands
+ * down through `ChallengeHost` (`$lib/challenges/props`'s `Presentation`).
  *
- * The two `visible*` functions decide **which** stored entries show at that
+ * The two `visible*` functions decide **which** stored entries show at a given
  * size — deterministically, from the challenge's own stored order (already
  * shuffled once, at resolve time), never re-shuffled here: the answer(s)
  * first, keeping their original position, then the first
@@ -28,16 +30,45 @@
  * (`wordBankRomanization`, `tilesRomanization`) by the same indices.
  */
 
+import type { Presentation } from '$lib/challenges/props';
 import type {
+	Challenge,
 	ClozeChallenge,
 	KnowledgeItem,
 	MultiClozeChallenge,
 	WordOrderChallenge
 } from '$lib/types';
-import { levelForStrength, weakestWordStrength } from './progression';
+import { levelForStrength, weakestWordStrength, type DifficultyLevel } from './progression';
 
-/** Cloze word-bank size by rung, answer included. Mirrors the old generation ladder. */
-export const CLOZE_BANK_LADDER = [3, 3, 4, 5, 6] as const;
+/**
+ * The last rung at which the native line still shows. Rung 2 is the floor
+ * word-order, spot-error and cloze are first planned at
+ * (`PLANNABLE_KINDS.levels`), so a learner meets each format with the
+ * sentence's meaning beside it and loses it one rung later.
+ */
+export const HINT_CEILING_LEVEL: DifficultyLevel = 2;
+
+/**
+ * Whether this served challenge shows its native-language line — a cloze's
+ * `translationHint`, a word-order's `prompt`, a spot-error's `meaning`.
+ *
+ * True while the challenge's weakest word sits at or below
+ * {@link HINT_CEILING_LEVEL}. An `itemId` that no longer resolves counts as
+ * strength 0 (the weakest word there is), and so does a challenge citing no
+ * items at all — a hint is the safe default, since hiding one from a learner
+ * who needed it is a wall, and showing one to a learner who did not is only a
+ * line they can ignore. Unlike the readings ramp it is a step, not a coin
+ * flip: the hint shows on the two early rungs and is gone from rung 3 — the
+ * rung at which the target-language sentence is meant to carry the meaning on
+ * its own — so there is nothing to roll and nothing to memoise. Pure and
+ * deterministic: no rng, no clock, no DB.
+ */
+export function showNativeHint(challenge: Challenge, items: KnowledgeItem[]): boolean {
+	return levelForStrength(weakestWordStrength(challenge, items)) <= HINT_CEILING_LEVEL;
+}
+
+/** Cloze word-bank size by rung, answer included — zero at the top rung: cued recall, typed. */
+export const CLOZE_BANK_LADDER = [3, 4, 5, 6, 0] as const;
 
 /** Multi-cloze shared word-bank size by rung, answers included. */
 export const MULTI_CLOZE_BANK_LADDER = [5, 6, 7, 8, 9] as const;
@@ -153,5 +184,25 @@ export function visibleTiles(challenge: WordOrderChallenge, count: number): numb
 	return selectPositions(challenge.tiles.length, answerPositions, answerPositions.length + count);
 }
 
-/** Re-exported so a caller sizing a served challenge needs one import for both ramps. */
-export { showNativeHint } from './hints';
+/**
+ * The one served-presentation object a challenge component reads — folds
+ * {@link showNativeHint}, {@link bankSizeFor} and {@link distractorTilesFor}
+ * into the shape `$lib/challenges/props`'s `ChallengeProps.presentation`
+ * declares, so the learn screen makes one call per served challenge instead of
+ * three.
+ *
+ * `bankSizeFor`/`distractorTilesFor` only mean something for the challenge
+ * types that carry a bank or a tray; the other two fields read `0` for every
+ * other type, which is harmless — a component that does not have a bank or a
+ * tray never reads them.
+ */
+export function presentationFor(challenge: Challenge, items: KnowledgeItem[]): Presentation {
+	return {
+		showHint: showNativeHint(challenge, items),
+		bankSize:
+			challenge.type === 'cloze' || challenge.type === 'multi-cloze'
+				? bankSizeFor(challenge, items)
+				: 0,
+		distractorTiles: challenge.type === 'word-order' ? distractorTilesFor(challenge, items) : 0
+	};
+}

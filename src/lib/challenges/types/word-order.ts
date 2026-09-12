@@ -25,7 +25,7 @@ export const wordOrderChallengeSchema = z.object({
 	type: z.literal('word-order'),
 	// Always written by generation; optional only because some rows were written
 	// by a build that omitted it above the early rungs, and those rows still
-	// play. Whether it is *shown* is a serve-time decision (`$lib/session/hints`).
+	// play. Whether it is *shown* is a serve-time decision (`$lib/session/support`).
 	prompt: nonEmpty.optional(),
 	instruction: z.string().optional(),
 	/** Shuffled by the resolver; duplicates are legal (grading is by text sequence). */

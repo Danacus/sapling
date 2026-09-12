@@ -36,14 +36,13 @@ describe('PLANNABLE_KINDS', () => {
 		expect(isActiveKind({ type: 'translate-to-target' })).toBe(false);
 		expect(isActiveKind({ type: 'translate-to-native' })).toBe(true);
 		expect(WIRE_TYPE_DEFS.some((def) => def.type === 'translate-to-target')).toBe(true);
-		expect(
-			PLANNABLE_KINDS.filter((kind) => kind.type === 'cloze').map((kind) => kind.bank)
-		).toEqual([true, false]);
+		// One cloze kind now — no more banked/typed split at planning time.
+		expect(PLANNABLE_KINDS.filter((kind) => kind.type === 'cloze')).toHaveLength(1);
 	});
 
 	it('publishes the gradual level availability ladder', () => {
-		const available = (type: ChallengeKind['type'], level: Want['difficulty'], bank?: boolean) =>
-			isKindAvailableAt({ type, ...(bank === undefined ? {} : { bank }) }, level);
+		const available = (type: ChallengeKind['type'], level: Want['difficulty']) =>
+			isKindAvailableAt({ type }, level);
 
 		expect(available('recognize-mc', 1)).toBe(true);
 		expect(available('recognize-mc', 3)).toBe(false);
@@ -53,10 +52,9 @@ describe('PLANNABLE_KINDS', () => {
 		expect(available('spot-error', 4)).toBe(false);
 		expect(available('word-order', 2)).toBe(true);
 		expect(available('word-order', 5)).toBe(false);
-		expect(available('cloze', 3, true)).toBe(true);
-		expect(available('cloze', 5, true)).toBe(false);
-		expect(available('cloze', 4, false)).toBe(true);
-		expect(available('cloze', 3, false)).toBe(false);
+		expect(available('cloze', 2)).toBe(true);
+		expect(available('cloze', 5)).toBe(true);
+		expect(available('cloze', 1)).toBe(false);
 	});
 
 	it('has a distinct key per kind', () => {
@@ -64,19 +62,22 @@ describe('PLANNABLE_KINDS', () => {
 		expect(new Set(keys).size).toBe(keys.length);
 	});
 
-	it('offers recognition and both tiers of production', () => {
+	it('offers recognition and constrained production; free production is served, never planned', () => {
+		// No kind is planned at demand 2 any more: cloze — the only kind that
+		// ever was — is planned and stored at demand 1 for every rung, even the
+		// top one, where a served row shows no bank and is answered exactly like
+		// a demand-2 challenge. `$lib/session/progression`'s `servedDemand` is
+		// what reconciles that, at serve time, never here.
 		expect(PLANNABLE_KINDS.some((kind) => kind.demand === 0)).toBe(true);
 		expect(PLANNABLE_KINDS.some((kind) => kind.demand === 1)).toBe(true);
-		expect(PLANNABLE_KINDS.some((kind) => kind.demand === 2)).toBe(true);
+		expect(PLANNABLE_KINDS.some((kind) => kind.demand === 2)).toBe(false);
 	});
 });
 
 describe('kindKey and bareKind', () => {
-	it('keys a bank-less kind by its type alone, and a cloze by its bank too', () => {
+	it('keys a kind by its type alone', () => {
 		expect(kindKey({ type: 'word-order' })).toBe('word-order');
-		expect(kindKey({ type: 'cloze', bank: true })).not.toBe(
-			kindKey({ type: 'cloze', bank: false })
-		);
+		expect(kindKey({ type: 'cloze' })).toBe('cloze');
 	});
 
 	it('strips the demand off a plannable kind without touching the identity', () => {
@@ -138,7 +139,10 @@ describe('kindOf', () => {
 		expect(kindOf(typed('toTarget'))).toEqual({ type: 'translate-to-target' });
 	});
 
-	it('reads a cloze as banked only when a word bank actually survived', () => {
+	it('reads a cloze as the one cloze kind, whether or not a word bank survived', () => {
+		// Unlike `demandOf` (`$lib/challenges/demand`), which still reads the
+		// stored `wordBank` to tell a constrained-production row from a
+		// free-production one — `kindOf` only ever answers "this is a cloze".
 		const cloze = (wordBank?: string[]): Challenge => ({
 			...base,
 			type: 'cloze',
@@ -148,9 +152,9 @@ describe('kindOf', () => {
 			translationHint: 'a x b',
 			...(wordBank ? { wordBank } : {})
 		});
-		expect(kindOf(cloze(['x', 'y']))).toEqual({ type: 'cloze', bank: true });
-		expect(kindOf(cloze([]))).toEqual({ type: 'cloze', bank: false });
-		expect(kindOf(cloze())).toEqual({ type: 'cloze', bank: false });
+		expect(kindOf(cloze(['x', 'y']))).toEqual({ type: 'cloze' });
+		expect(kindOf(cloze([]))).toEqual({ type: 'cloze' });
+		expect(kindOf(cloze())).toEqual({ type: 'cloze' });
 	});
 
 	it('is undefined for a match-pairs round', () => {
@@ -164,16 +168,16 @@ describe('groupIntoRequests', () => {
 	it('cuts a list of wants into one request per kind, in first-appearance order', () => {
 		const wants = [
 			want('a', { type: 'recognize-mc' }),
-			want('a', { type: 'cloze', bank: true }),
+			want('a', { type: 'cloze' }),
 			want('b', { type: 'recognize-mc' }),
 			want('b', { type: 'word-order' }),
-			want('c', { type: 'cloze', bank: true })
+			want('c', { type: 'cloze' })
 		];
 		const requests = groupIntoRequests(wants);
 
 		expect(requests.map((request) => kindKey(request.kind))).toEqual([
 			'recognize-mc',
-			'cloze:bank',
+			'cloze',
 			'word-order'
 		]);
 		expect(requests[0].wants.map((w) => w.item.id)).toEqual(['a', 'b']);
@@ -217,14 +221,13 @@ describe('groupIntoRequests', () => {
 		expect(requests[0].wants.map((w) => w.item.id)).toEqual(['a', 'b']);
 	});
 
-	it('carries the cloze bank on the request, and nothing else carries one', () => {
+	it('carries only the type on a request, whatever the kind', () => {
 		const requests = groupIntoRequests([
-			want('a', { type: 'cloze', bank: false }),
+			want('a', { type: 'cloze' }),
 			want('a', { type: 'word-order' })
 		]);
-		expect(requests[0].kind).toEqual({ type: 'cloze', bank: false });
+		expect(requests[0].kind).toEqual({ type: 'cloze' });
 		expect(requests[1].kind).toEqual({ type: 'word-order' });
-		expect(requests[1].kind).not.toHaveProperty('bank');
 	});
 
 	it('strips a plannable kind’s demand off the request', () => {

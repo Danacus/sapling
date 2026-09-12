@@ -44,7 +44,6 @@ export type {
 	FixtureScenario,
 	OptionalSpecs,
 	ResolveContext,
-	SizingKind,
 	StoredShape,
 	WirePayload,
 	WithOptionalSpecs,

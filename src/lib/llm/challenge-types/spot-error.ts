@@ -25,7 +25,7 @@ export const generatedSpotErrorSchema = z.object({
 	wrongPosition: z.int().min(0),
 	/**
 	 * What the sentence is meant to say. Always written: whether the learner
-	 * *sees* it is a serve-time decision (`$lib/session/hints`), since a row
+	 * *sees* it is a serve-time decision (`$lib/session/support`), since a row
 	 * outlives the rung it was written at.
 	 */
 	meaningNative: nonEmpty,

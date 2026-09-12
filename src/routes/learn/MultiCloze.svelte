@@ -28,17 +28,19 @@
 		onanswer,
 		targetLanguage = '',
 		readings = ALL_READINGS,
-		bankSize,
+		presentation,
 		tokenize = null
 	}: ChallengeProps<MultiClozeChallenge> = $props();
 
 	const ruby = $derived(rubyFor(tokenize, readings));
 	/**
 	 * The stored bank positions this served challenge shows — every position
-	 * when `bankSize` was not supplied, so a bare render (tests) keeps showing
-	 * everything stored.
+	 * when `presentation` was not supplied, so a bare render (tests) keeps
+	 * showing everything stored.
 	 */
-	const visibleIndices = $derived(visibleBank(challenge, bankSize ?? challenge.wordBank.length));
+	const visibleIndices = $derived(
+		visibleBank(challenge, presentation?.bankSize ?? challenge.wordBank.length)
+	);
 	const bank = $derived(visibleIndices.map((index) => challenge.wordBank[index]));
 	let assignments = $state<(number | null)[]>([]);
 	let activeGap = $state(0);

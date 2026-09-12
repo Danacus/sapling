@@ -3,8 +3,9 @@
 
   The sentence is laid out as tappable word tiles. `challenge.meaning` is the
   native-language bridge, always written by generation; whether it is *shown*
-  is the session's serve-time call (`showHint`, from `$lib/session/hints`),
-  and some rows written by an earlier build lack it altogether. Without it the
+  is the session's serve-time call (`presentation.showHint`, from
+  `$lib/session/support`), and some rows written by an earlier build lack it
+  altogether. Without it the
   wrong word has to be judged from the target-language sentence alone, which
   is the harder, later-rung version of the same task.
 
@@ -36,9 +37,11 @@
 		challenge,
 		onanswer,
 		readings = ALL_READINGS,
-		showHint = true,
+		presentation,
 		tokenize = null
 	}: ChallengeProps<SpotErrorChallenge> = $props();
+
+	const showHint = $derived(presentation?.showHint ?? true);
 
 	let selected = $state<number | null>(null);
 

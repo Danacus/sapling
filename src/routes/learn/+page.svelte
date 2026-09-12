@@ -28,7 +28,7 @@
 	import { fade, fly, scale, slide } from 'svelte/transition';
 
 	import { audioTextsFor, correctAnswerText } from '$lib/challenges/display';
-	import { ALL_READINGS } from '$lib/challenges/props';
+	import { ALL_READINGS, type Presentation } from '$lib/challenges/props';
 	import { getDailyActivity, getProfile, streakFrom } from '$lib/db';
 	import { isMockMode } from '$lib/llm';
 	import { loadRomanizer, type Romanizer } from '$lib/romanize';
@@ -46,9 +46,8 @@
 		type SessionPlan
 	} from '$lib/session/engine';
 	import { motionMs } from '$lib/session/motion';
-	import { showNativeHint } from '$lib/session/hints';
 	import { planReadings, type ReadingPlan } from '$lib/session/romanization';
-	import { bankSizeFor, distractorTilesFor } from '$lib/session/support';
+	import { presentationFor } from '$lib/session/support';
 	import type { Grade } from '$lib/srs';
 	import { runSync } from '$lib/sync';
 	import { startTask } from '$lib/tasks';
@@ -281,23 +280,14 @@
 	 */
 	let currentReadings = $state<ReadingPlan>(ALL_READINGS);
 	/**
-	 * Whether {@link current} shows its native-language line (a cloze's
-	 * translation, a word-order's prompt, a spot-error's meaning). Decided in
-	 * {@link show} beside the readings, from the same weakest word, and for the
-	 * same reason: the row carries the line for life, and only the rung the word
-	 * is at *now* says whether the learner still needs it.
+	 * Everything about {@link current} decided at serve time rather than
+	 * written by the model — the native-language hint, the cloze/multi-cloze
+	 * bank size, the word-order distractor-tile count. Built in {@link show}
+	 * beside the readings, from the same weakest word, and for the same
+	 * reason: a row carries its full content for life, and only the rung the
+	 * word is at *now* says how much of it the learner still needs.
 	 */
-	let currentShowHint = $state(true);
-	/**
-	 * How many entries {@link current}'s word bank (cloze, multi-cloze) or extra
-	 * distractor tiles (word-order) show — `undefined` for a challenge with
-	 * neither, which the components read as "show everything stored". Decided
-	 * in {@link show} beside the readings and the hint, from the same weakest
-	 * word: the full set is always stored, but a served challenge shows only
-	 * as much of it as the word's current rung earns.
-	 */
-	let currentBankSize = $state<number | undefined>(undefined);
-	let currentDistractorTiles = $state<number | undefined>(undefined);
+	let currentPresentation = $state<Presentation | undefined>(undefined);
 	/**
 	 * The learner's local romanizer, once its chunk has landed. `null` until then
 	 * — and forever, for a language that has none; see {@link loadStartScreen}.
@@ -616,13 +606,7 @@
 		const at = Date.now();
 		challengeShownAt = at;
 		currentReadings = planReadings(romanizationMode, challenge, items);
-		currentShowHint = showNativeHint(challenge, items);
-		currentBankSize =
-			challenge.type === 'cloze' || challenge.type === 'multi-cloze'
-				? bankSizeFor(challenge, items)
-				: undefined;
-		currentDistractorTiles =
-			challenge.type === 'word-order' ? distractorTilesFor(challenge, items) : undefined;
+		currentPresentation = presentationFor(challenge, items);
 		current = challenge;
 		// Warm this challenge's own audio while the learner is still reading it.
 		// The queue loop covers the whole session now, so it has usually got there
@@ -1273,9 +1257,7 @@
 								{targetLanguage}
 								{nativeLanguage}
 								readings={currentReadings}
-								showHint={currentShowHint}
-								bankSize={currentBankSize}
-								distractorTiles={currentDistractorTiles}
+								presentation={currentPresentation}
 								{tokenize}
 							/>
 

@@ -31,7 +31,7 @@ export const generatedWordOrderSchema = z.object({
 	type: z.literal('word-order'),
 	/**
 	 * Always written: whether the learner *sees* it is a serve-time decision
-	 * (`$lib/session/hints`), since a row outlives the rung it was written at.
+	 * (`$lib/session/support`), since a row outlives the rung it was written at.
 	 */
 	promptNative: nonEmpty,
 	/** The sentence *in the correct order*; the app shuffles. */

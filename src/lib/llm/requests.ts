@@ -26,21 +26,11 @@
 import type { Demand } from '$lib/challenges/types';
 import type { Challenge } from '$lib/types';
 import { WIRE_TYPE_DEFS } from './challenge-types';
-import type { DifficultyRung, SizingKind, WireType } from './challenge-types';
+import type { DifficultyRung, WireType } from './challenge-types';
 
-/**
- * A wire type together with the one presentation choice that changes how hard
- * it is: whether a cloze comes with a word bank.
- *
- * The bank is a type-level decision, not a content one — "cloze WITH
- * distractorWords" and "cloze without" are two different exercises for two
- * different stages of a word — so it is decided by whoever asks, and told to
- * the model, rather than left for it to guess.
- */
-export interface ChallengeKind extends SizingKind {
+/** A wire type the session may ask for. */
+export interface ChallengeKind {
 	type: WireType;
-	/** `cloze` only: `true` asks for `distractorWords`, `false` forbids them. */
-	bank?: boolean;
 }
 
 /**
@@ -52,8 +42,11 @@ export interface ChallengeKind extends SizingKind {
  * the session can read it without building a challenge — and it is pinned
  * against every def's own resolved fixtures in `challenge-types/registry.test.ts`,
  * so a kind whose stated tier drifts from what its resolver actually writes
- * fails the suite. A banked cloze is demand 1 (the words are given, which one
- * fits is not) and a bankless one demand 2, which is why cloze appears twice.
+ * fails the suite. Cloze is planned at demand 1 — every want asks for the same
+ * banked exercise, whatever the rung — even though a served row at the top
+ * rung shows no bank at all and is answered exactly as a demand-2 challenge
+ * would be; that gap between planned and served demand is `$lib/session/
+ * progression`'s `servedDemand`, not this module's concern.
  */
 export interface PlannableKind extends ChallengeKind {
 	readonly demand: Demand;
@@ -78,19 +71,18 @@ export const PLANNABLE_KINDS: readonly PlannableKind[] = [
 	{ type: 'translate-to-native', demand: 0, levels: [1] },
 	{ type: 'spot-error', demand: 0, levels: [2, 3] },
 	{ type: 'word-order', demand: 1, levels: [2, 3, 4] },
-	{ type: 'cloze', bank: true, demand: 1, levels: [2, 3, 4] },
-	{ type: 'multi-cloze', demand: 1, levels: [3, 4, 5] },
-	{ type: 'cloze', bank: false, demand: 2, levels: [4, 5] }
+	{ type: 'cloze', demand: 1, levels: [2, 3, 4, 5] },
+	{ type: 'multi-cloze', demand: 1, levels: [3, 4, 5] }
 ];
 
 /** Stable identity of a kind: the key a pool is grouped by and a plan cut on. */
 export function kindKey(kind: ChallengeKind): string {
-	return kind.bank === undefined ? kind.type : `${kind.type}:${kind.bank ? 'bank' : 'free'}`;
+	return kind.type;
 }
 
 /** A kind without its `demand`, for the places that only carry the identity. */
 export function bareKind(kind: ChallengeKind): ChallengeKind {
-	return kind.bank === undefined ? { type: kind.type } : { type: kind.type, bank: kind.bank };
+	return { type: kind.type };
 }
 
 /** The active planner entry for a kind, if this kind is still generated. */
@@ -131,11 +123,16 @@ const defByStored: ReadonlyMap<string, (typeof WIRE_TYPE_DEFS)[number]> = new Ma
  *
  * Read off the stored `{type, direction}` each wire def declares (which is what
  * tells the two translate wire types apart) plus `promptIsTarget` (what tells
- * `context-mc` from `produce-mc`, the pair `{type, direction}` alone cannot)
- * and, for a cloze, whether a word bank survived. Two callers need the
- * same answer: `./generate` checks a reply against the kind it asked for, and
- * the session counts what kinds a word already has in the pool. `undefined` for
- * a `match-pairs` round, which no wire type writes.
+ * `context-mc` from `produce-mc`, the pair `{type, direction}` alone cannot).
+ * Two callers need the same answer: `./generate` checks a reply against the
+ * kind it asked for, and the session counts what kinds a word already has in
+ * the pool. `undefined` for a `match-pairs` round, which no wire type writes.
+ *
+ * Deliberately blind to whether a cloze's word bank survived: that used to be
+ * part of a kind's identity (two different exercises, planned separately), but
+ * is now purely a fact about one stored row, read by `$lib/challenges/demand`'s
+ * `demandOf` and reconciled with the rung at serve time by `$lib/session/
+ * progression`'s `servedDemand`.
  */
 export function kindOf(challenge: Challenge): ChallengeKind | undefined {
 	const def = defByStored.get(
@@ -145,10 +142,7 @@ export function kindOf(challenge: Challenge): ChallengeKind | undefined {
 			promptIsTarget: 'promptIsTarget' in challenge ? challenge.promptIsTarget : undefined
 		})
 	);
-	if (!def) return undefined;
-	if (def.type !== 'cloze') return { type: def.type };
-	const banked = 'wordBank' in challenge && (challenge.wordBank?.length ?? 0) > 0;
-	return { type: 'cloze', bank: banked };
+	return def ? { type: def.type } : undefined;
 }
 
 /** The word a want is about: the id the resolver accepts back, and what the model reads. */

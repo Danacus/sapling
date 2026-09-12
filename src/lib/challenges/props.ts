@@ -30,6 +30,38 @@ import type { Challenge } from '$lib/types';
  */
 export const ALL_READINGS: ReadingPlan = { sentence: true, byTerm: new Map() };
 
+/**
+ * Everything about a served challenge that is decided at serve time rather
+ * than written by the model — one object instead of three separate optional
+ * props, since the three were always rolled together by `$lib/session/support`'s
+ * `presentationFor` and never independently.
+ *
+ * Declared here rather than in `$lib/session/support` (which builds it)
+ * because challenges must not import session — `props.ts` is the contract the
+ * components and the session both already share.
+ */
+export interface Presentation {
+	/**
+	 * Whether the challenge's native-language line — a cloze's translation, a
+	 * word-order's prompt, a spot-error's intended meaning — is shown; the line
+	 * itself is always on the row.
+	 */
+	showHint: boolean;
+	/**
+	 * How many entries a cloze's or multi-cloze's word bank shows, answer(s)
+	 * included. Meaningless (read as `0`) for a type with no bank; the full
+	 * stored bank is always kept, this only says how much of it to render, via
+	 * `visibleBank`.
+	 */
+	bankSize: number;
+	/**
+	 * How many extra distractor tiles a word-order challenge's tray shows
+	 * beyond the sentence's own tiles, via `visibleTiles`. Meaningless (read as
+	 * `0`) for a type with no tray.
+	 */
+	distractorTiles: number;
+}
+
 /** Props shared by every challenge component. */
 export interface ChallengeProps<C extends Challenge> {
 	challenge: C;
@@ -57,35 +89,16 @@ export interface ChallengeProps<C extends Challenge> {
 	 */
 	readings?: ReadingPlan;
 	/**
-	 * Whether the challenge's native-language line — a cloze's translation, a
-	 * word-order's prompt, a spot-error's intended meaning — is shown. Decided
-	 * once per served challenge by `$lib/session/hints` from how well the
-	 * challenge's words are known; the line itself is always on the row.
+	 * Everything decided at serve time (the hint, the bank size, the
+	 * distractor-tile count), built once per served challenge by
+	 * `$lib/session/support`'s `presentationFor`.
 	 *
-	 * Optional, defaulting to `true`, so a bare render shows the line the way
-	 * every component did before it could be hidden, and a component without
-	 * such a line simply does not destructure it.
+	 * Optional, and absent means "show everything stored, hint on" — the
+	 * default every component gave each of these three before they were rolled
+	 * into one prop, and what a bare render (tests, `MatchPairs`, any component
+	 * that ignores this) still gets by passing nothing.
 	 */
-	showHint?: boolean;
-	/**
-	 * How many entries a cloze's or multi-cloze's word bank should show,
-	 * answer(s) included — decided once per served challenge by
-	 * `$lib/session/support`'s `bankSizeFor`, from how well the challenge's
-	 * words are known. The full stored bank is always kept; this only says how
-	 * much of it to render, via `visibleBank`.
-	 *
-	 * Optional, defaulting to "show everything stored", so a bare render (tests,
-	 * `MatchPairs`, any component that ignores this) needs nothing.
-	 */
-	bankSize?: number;
-	/**
-	 * How many extra distractor tiles a word-order challenge's tray should show
-	 * beyond the sentence's own tiles — decided once per served challenge by
-	 * `$lib/session/support`'s `distractorTilesFor`, via `visibleTiles`.
-	 *
-	 * Optional, defaulting to "show every stored tile".
-	 */
-	distractorTiles?: number;
+	presentation?: Presentation;
 	/**
 	 * Romanize one string of *target-language* text locally, or `null` when this
 	 * language has no local romanizer (`$lib/romanize`) — in which case the

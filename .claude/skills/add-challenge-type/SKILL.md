@@ -36,22 +36,24 @@ differs.
    `registry.test.ts` resolves every fixture and compares, and the type would
    otherwise be asked for and then rejected on arrival, every time.
 
-   **`params(difficulty, kind)` is this type's difficulty**, as counts the model
+   **`params(difficulty)` is this type's difficulty**, as counts the model
    can hit: `{words}`, `{tiles}`. It must be pure, keep the same keys at every
    rung, and be monotone in the rung (lengths never fall). A word bank or a
    distractor-tile count is deliberately **not** a rung-varying key any more —
    cloze, multi-cloze and word-order all ask for a constant, full-size set
-   whichever rung the want is written at (cloze's `distractors: kind.bank ? 5
-   : 0`, multi-cloze always writing enough to reach nine bank entries,
-   word-order always asking for three distractor tiles), and `$lib/session/support`
-   sizes how much of that stored set a *served* challenge shows, from the
-   word's current rung. Only a structural count — a sentence's length, a tile
-   tray's own tile count, a gap count — belongs in `params` now. Align the
-   ends with the *stored* side's scales — `challenges/types/primitives.ts`'
-   1..12-word `lengthKnob`, and whatever constants that type's stored
-   `difficulty` reads — so a challenge written at rung 1 sits at the low end of
-   its tier and one at rung 5 at the high end. `paramsSpec` is one prompt line
-   explaining exactly the keys `params` returns, in the model's terms.
+   whichever rung the want is written at (cloze always asks for exactly five
+   `distractorWords`, a fixed line in its prompt rather than a parameter;
+   multi-cloze always writing enough to reach nine bank entries; word-order
+   always asking for three distractor tiles), and `$lib/session/support` sizes
+   how much of that stored set a *served* challenge shows, from the word's
+   current rung. Only a structural count — a sentence's length, a tile tray's
+   own tile count, a gap count — belongs in `params` now. Align the ends with
+   the *stored* side's scales — `challenges/types/primitives.ts`'s 1..12-word
+   `lengthKnob`, and whatever constants that type's stored `difficulty` reads —
+   so a challenge written at rung 1 sits at the low end of its tier and one at
+   rung 5 at the high end. `paramsSpec` is one prompt line explaining exactly
+   the keys `params` returns, in the model's terms — plus, where it applies,
+   the fixed instruction for a bank/tray the model always writes in full.
    *Forget either, or emit a key `paramsSpec` does not name:* `registry.test.ts`
    fails (and `pnpm check` fails at the def for a missing one).
 
@@ -71,9 +73,12 @@ differs.
    (`$lib/session/topup`) only asks a word for kinds at or below the tier its
    rung can bear, so a kind whose stated tier is lower than its stored one is
    written for words the session planner will then refuse to serve it to, and
-   one stated higher is never written for words that could use it. A type with
-   a presentation choice that changes its tier (cloze's word bank) is listed
-   once per choice.
+   one stated higher is never written for words that could use it. Presentation
+   is decided at serve time now, never as a kind — a type whose *stored* demand
+   can genuinely vary by row (cloze's word bank) is still listed once, at the
+   tier it is generated and planned at; the gap between that and what a served
+   row actually asks (typed, at the top rung) is `$lib/session/progression`'s
+   `servedDemand`, not a second `PlannableKind`.
    *Forget it:* the type is described to the model, exampled, and **never asked
    for** — the session chooses kinds, not the model. `registry.test.ts` fails on
    the `PLANNABLE_KINDS` parity check. *Get the tier wrong:* `registry.test.ts`
@@ -84,8 +89,7 @@ Import direction is strict: `primitives.ts` ← def modules ← `index.ts` ←
 `schemas.ts` ← `generate.ts`, with `requests.ts` importing the registry and
 `generate.ts` importing `requests.ts`. **A def module must never import
 `schemas.ts`**, and never `requests.ts` either — a def sizes itself by
-`DifficultyRung` and `SizingKind`, which `def.ts` declares for exactly that
-reason.
+`DifficultyRung`, which `def.ts` declares for exactly that reason.
 
 Registry order *is* union order and escalation-gloss order — not prompt order,
 since each type composes its own prompt. Prefer appending.

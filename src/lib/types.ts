@@ -211,7 +211,7 @@ export interface ClozeChallenge extends ChallengeBase {
 	/**
 	 * Native-language rendering of the full sentence. Generation always writes
 	 * it; whether the learner *sees* it is decided when the challenge is served
-	 * (`$lib/session/hints`), from how well the word is known. Optional only
+	 * (`$lib/session/support`), from how well the word is known. Optional only
 	 * because some rows were written by a build that omitted it above the early
 	 * rungs, and those rows still play.
 	 */
@@ -292,7 +292,7 @@ export interface WordOrderChallenge extends ChallengeBase {
 	/**
 	 * The sentence to build, in the learner's native language. Generation always
 	 * writes it; whether the learner *sees* it is decided when the challenge is
-	 * served (`$lib/session/hints`), from how well the word is known — without
+	 * served (`$lib/session/support`), from how well the word is known — without
 	 * it the tiles alone are the puzzle. Optional only because some rows were
 	 * written by a build that omitted it above the early rungs, and those rows
 	 * still play.
@@ -348,7 +348,7 @@ export interface SpotErrorChallenge extends ChallengeBase {
 	/**
 	 * What the sentence is meant to say, in the learner's native language.
 	 * Generation always writes it; whether the learner *sees* it is decided when
-	 * the challenge is served (`$lib/session/hints`), from how well the word is
+	 * the challenge is served (`$lib/session/support`), from how well the word is
 	 * known — without it the error is spotted from the target-language sentence
 	 * alone. Optional only because some rows were written by a build that
 	 * omitted it above the early rungs, and those rows still play.

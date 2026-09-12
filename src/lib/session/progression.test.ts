@@ -30,6 +30,7 @@ import {
 	levelBandCentre,
 	levelForStrength,
 	maturityOf,
+	servedDemand,
 	weakestWordStrength,
 	type DifficultyLevel,
 	type Maturity
@@ -151,6 +152,45 @@ describe('demandOf', () => {
 		for (const variants of Object.values(samples)) {
 			for (const sample of variants) {
 				expect([0, 1, 2]).toContain(demandOf(challenge(sample)));
+			}
+		}
+	});
+});
+
+/* -------------------------------------------------------------------------- */
+
+describe('servedDemand', () => {
+	/** Comfortably past {@link LEVEL_5_FLOOR}: the rung a served cloze goes typed at. */
+	const MASTERED = 0.9;
+
+	it('reads a banked cloze at demand 1 for a rung-3 word, same as demandOf', () => {
+		const items = [item('learned', LEARNED)];
+		expect(demandOf(challenge(clozeBanked, ['learned']))).toBe(1);
+		expect(servedDemand(challenge(clozeBanked, ['learned']), items)).toBe(1);
+	});
+
+	it('reads a banked cloze at demand 2 for a rung-5 word, unlike demandOf', () => {
+		// `$lib/session/support`'s `bankSizeFor` shows no bank at all at the top
+		// rung — the row is answered exactly like a typed, demand-2 challenge —
+		// even though the stored row still carries its `wordBank` in full, which
+		// is what `demandOf` reads.
+		const items = [item('mastered', MASTERED)];
+		expect(demandOf(challenge(clozeBanked, ['mastered']))).toBe(1);
+		expect(servedDemand(challenge(clozeBanked, ['mastered']), items)).toBe(2);
+	});
+
+	it('leaves a legacy bankless cloze at demand 2 everywhere: nothing to reconcile', () => {
+		const items = [item('mastered', MASTERED)];
+		expect(servedDemand(challenge(clozeBankless, ['mastered']), items)).toBe(2);
+	});
+
+	it('is unaffected for every non-cloze type', () => {
+		const items = [item('mastered', MASTERED)];
+		for (const [type, variants] of Object.entries(samples)) {
+			if (type === 'cloze') continue;
+			for (const sample of variants) {
+				const c = challenge(sample, ['mastered']);
+				expect(servedDemand(c, items)).toBe(demandOf(c));
 			}
 		}
 	});

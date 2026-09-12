@@ -82,15 +82,6 @@ export interface ChallengeBase {
 export type DifficultyRung = 1 | 2 | 3 | 4 | 5;
 
 /**
- * The one fact besides the rung a def may size itself by: whether a cloze was
- * asked for with a word bank. Structurally a `ChallengeKind` minus its `type`,
- * which the def already knows about itself.
- */
-export interface SizingKind {
-	readonly bank?: boolean;
-}
-
-/**
  * The observable knobs one challenge is written to, as plain counts.
  *
  * This is what difficulty *is* on the wire. The model is never told a rung
@@ -203,7 +194,7 @@ export interface WireTypeDef<T extends WirePayload = WirePayload> {
 	 * never grows). The keys travel verbatim on each `items` entry, so a key
 	 * added here must be explained in {@link WireTypeDef.paramsSpec}.
 	 */
-	params(difficulty: DifficultyRung, kind: SizingKind): ChallengeParams;
+	params(difficulty: DifficultyRung): ChallengeParams;
 	/**
 	 * The one prompt line explaining exactly the keys {@link WireTypeDef.params}
 	 * returns, in the model's terms. Paid only on this type's own calls, which is

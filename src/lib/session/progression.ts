@@ -154,6 +154,46 @@ function demandForStrength(strength: number): Demand {
 }
 
 /**
+ * The rung at which a served cloze's word bank reads as empty — the one point
+ * where {@link servedDemand} diverges from the stored {@link demandOf}.
+ *
+ * A private mirror of `$lib/session/support`'s `CLOZE_BANK_LADDER` rather than
+ * an import of it: `support.ts` imports {@link levelForStrength} and
+ * {@link weakestWordStrength} from this module, so importing the other way
+ * back would close a cycle. The ladder's only fact that matters here is which
+ * rung goes to zero, and that is pinned against the real ladder by
+ * `support.test.ts`.
+ */
+const CLOZE_TYPED_LEVEL: DifficultyLevel = 5;
+
+/**
+ * The demand tier a *served* challenge actually asks of the learner — usually
+ * just {@link demandOf}, except for a cloze whose word bank a served view has
+ * trimmed away entirely.
+ *
+ * Every banked cloze is planned and stored at demand 1 (`$lib/llm`'s
+ * `PLANNABLE_KINDS`): the words are given, only which one fits is not. But
+ * `$lib/session/support`'s `bankSizeFor` shows no bank at all once the
+ * challenge's weakest word reaches {@link CLOZE_TYPED_LEVEL} — the row is
+ * answered exactly like a typed, demand-2 challenge from there, even though
+ * `demandOf` still reads 1 off the stored `wordBank`. `bearable` and
+ * `smoothDemand` (`$lib/session/engine`) both care what the learner is
+ * actually being asked to do, not what the row was planned as, which is what
+ * this function is for. A legacy row generated with no bank at all is
+ * unaffected: its `demandOf` is already 2, so there is nothing to reconcile.
+ */
+export function servedDemand(
+	challenge: Challenge,
+	items: KnowledgeItem[],
+	byId: ReadonlyMap<string, KnowledgeItem> = itemsById(items)
+): Demand {
+	const demand = demandOf(challenge);
+	if (challenge.type !== 'cloze' || demand !== 1) return demand;
+	const level = levelForStrength(weakestWordStrength(challenge, items, byId));
+	return level >= CLOZE_TYPED_LEVEL ? 2 : demand;
+}
+
+/**
  * The highest demand tier the weakest word this challenge exercises can bear
  * right now, 0..2.
  *
@@ -175,13 +215,20 @@ export function bearableDemand(
  * This is the serving permission used by `planSession` and the coverage
  * permission used by `planTopUp`: an above-level challenge is left for a later
  * rung instead of being served as a surprise difficulty jump.
+ *
+ * Reads {@link servedDemand} rather than the stored `demandOf` directly, so a
+ * banked cloze whose served view has already dropped to a typed one at the top
+ * rung is judged by what it actually asks — it was never unbearable, so this
+ * changes nothing about *when* a word may see one, only keeps the two numbers
+ * from disagreeing once one exists.
  */
 export function bearable(
 	challenge: Challenge,
 	items: KnowledgeItem[],
 	byId?: ReadonlyMap<string, KnowledgeItem>
 ): boolean {
-	return demandOf(challenge) <= bearableDemand(challenge, items, byId);
+	const index = byId ?? itemsById(items);
+	return servedDemand(challenge, items, index) <= bearableDemand(challenge, items, index);
 }
 
 /** How far along a word is, in three coarse steps — what the screens that colour a word by it read. */

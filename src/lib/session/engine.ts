@@ -36,7 +36,6 @@ import {
 } from '$lib/db';
 import type { ChallengeRow } from '$lib/db';
 import { challengeOf } from '$lib/db';
-import { demandOf } from '$lib/challenges/demand';
 import {
 	getBatch,
 	isActiveKind,
@@ -58,6 +57,7 @@ import {
 	itemsById,
 	levelBandCentre,
 	levelForStrength,
+	servedDemand,
 	weakestWordStrength,
 	type DifficultyLevel
 } from './progression';
@@ -708,17 +708,25 @@ export function planSession(
 		chosen.push(row);
 	}
 
-	return smoothDemand(chosen.map(challengeOf));
+	return smoothDemand(chosen.map(challengeOf), items);
 }
 
 /**
  * A minimal local repair, run once over `planSession`'s finished order:
- * wherever a challenge's demand tier ({@link demandOf}) is two above the one
- * right before it — straight from recognition into free production with no
- * constrained-production challenge in between — the nearest later challenge
- * at the missing middle tier is pulled forward to sit between them. Nothing
- * else moves, and if the plan has no such challenge left to pull, the jump is
- * left as it is.
+ * wherever a challenge's demand tier ({@link servedDemand}) is two above the
+ * one right before it — straight from recognition into free production with
+ * no constrained-production challenge in between — the nearest later
+ * challenge at the missing middle tier is pulled forward to sit between them.
+ * Nothing else moves, and if the plan has no such challenge left to pull, the
+ * jump is left as it is.
+ *
+ * Reads {@link servedDemand} rather than the stored `demandOf`: a banked
+ * cloze served at the top rung shows no bank at all and is answered exactly
+ * like a typed one, so a plan that put it right after a recognition challenge
+ * would otherwise read as smooth while the learner experiences the same jump
+ * this function exists to catch. `items` is what that reconciliation needs —
+ * `planSession` already has them, which is why they travel here rather than
+ * this staying a function of the challenges alone.
  *
  * Deliberately **not** a sort: due-first order is load-bearing (an early quit
  * must still have hit the most overdue words first), so this only ever pulls
@@ -727,14 +735,15 @@ export function planSession(
  * caller splices match rounds in afterwards), so a spliced-in round is never
  * itself treated as part of a demand jump.
  */
-export function smoothDemand(challenges: Challenge[]): Challenge[] {
+export function smoothDemand(challenges: Challenge[], items: KnowledgeItem[]): Challenge[] {
 	const result = [...challenges];
+	const demand = (challenge: Challenge) => servedDemand(challenge, items);
 	for (let i = 1; i < result.length; i++) {
-		const prev = demandOf(result[i - 1]);
-		const curr = demandOf(result[i]);
+		const prev = demand(result[i - 1]);
+		const curr = demand(result[i]);
 		if (curr - prev !== 2) continue;
 		const target = prev + 1;
-		const foundAt = result.findIndex((challenge, idx) => idx > i && demandOf(challenge) === target);
+		const foundAt = result.findIndex((challenge, idx) => idx > i && demand(challenge) === target);
 		if (foundAt === -1) continue;
 		const [pulled] = result.splice(foundAt, 1);
 		result.splice(i, 0, pulled);

@@ -109,7 +109,10 @@ function pooled(
 				direction: 'toTarget',
 				sentence: 'a ___ b',
 				acceptedAnswers: ['x'],
-				...(kind.bank ? { wordBank: ['x', 'y', 'z'] } : {})
+				// A generated cloze always carries a bank now; only stored demand
+				// (`clozeStoredDef.demand`) reads it, and a pooled row without one
+				// would be a legacy row this helper has no reason to build.
+				wordBank: ['x', 'y', 'z']
 			} as ChallengeRow;
 		case 'multi-cloze':
 			return {
@@ -149,10 +152,10 @@ function pooled(
 
 const RECOGNITION = PLANNABLE_KINDS.filter((kind) => kind.demand === 0);
 const CONSTRAINED = PLANNABLE_KINDS.filter((kind) => kind.demand === 1);
-const FREE = PLANNABLE_KINDS.filter((kind) => kind.demand === 2);
 const SPOT_ERROR = RECOGNITION.find((kind) => kind.type === 'spot-error')!;
 const CONTEXT_MC = RECOGNITION.find((kind) => kind.type === 'context-mc')!;
 const MULTI_CLOZE = CONSTRAINED.find((kind) => kind.type === 'multi-cloze')!;
+const CLOZE = CONSTRAINED.find((kind) => kind.type === 'cloze')!;
 
 const demandOfKind = (kind: ChallengeKind): number =>
 	PLANNABLE_KINDS.find((k) => kindKey(k) === kindKey(kind))?.demand ?? -1;
@@ -193,11 +196,14 @@ describe('planTopUp', () => {
 	it('wants two distinct production kinds at the top rung', () => {
 		const wants = planTopUp([], [strong('a')], NOW, { rng: cyclingRng() });
 
-		// At level 5 only multi-cloze and bankless cloze are active; the old
-		// recognition formats have deliberately aged out, but variety remains.
+		// At level 5 only multi-cloze and cloze are active; the old recognition
+		// formats have deliberately aged out, but variety remains. Cloze is
+		// planned at demand 1 even here — every want asks for the same banked
+		// exercise — even though a served row shows no bank at all at this rung
+		// (`$lib/session/support`, `$lib/session/progression`'s `servedDemand`).
 		expect(wants).toHaveLength(WANT_PER_WORD);
 		expect(wants.every((want) => want.difficulty === 5)).toBe(true);
-		expect(new Set(keysOf(wants))).toEqual(new Set([kindKey(MULTI_CLOZE), kindKey(FREE[0])]));
+		expect(new Set(keysOf(wants))).toEqual(new Set([kindKey(MULTI_CLOZE), kindKey(CLOZE)]));
 		expect(wants.every((want) => demandOfKind(want.kind) > 0)).toBe(true);
 	});
 
@@ -220,7 +226,7 @@ describe('planTopUp', () => {
 	});
 
 	it('wants nothing for a word the pool already covers', () => {
-		const pool = [pooled('p', FREE[0], ['a']), pooled('m', MULTI_CLOZE, ['a'])];
+		const pool = [pooled('p', CLOZE, ['a']), pooled('m', MULTI_CLOZE, ['a'])];
 		expect(planTopUp(pool, [strong('a')], NOW)).toEqual([]);
 	});
 
@@ -245,10 +251,10 @@ describe('planTopUp', () => {
 	});
 
 	it('does not count a challenge the word cannot bear as coverage', () => {
-		// A free-production row about a level-1 word: the session would never
-		// serve it, so it covers nothing, and the word still wants its two
-		// recognition kinds.
-		const pool = [pooled('p', FREE[0], ['a'])];
+		// A constrained-production row about a level-1 word: cloze's own ladder
+		// only starts at level 2, so the session would never serve it, and it
+		// covers nothing — the word still wants its two recognition kinds.
+		const pool = [pooled('p', CLOZE, ['a'])];
 		const wants = planTopUp(pool, [item('a')], NOW, { rng: cyclingRng() });
 		expect(wants).toHaveLength(WANT_PER_WORD);
 	});
@@ -398,7 +404,7 @@ describe('planTopUp', () => {
 
 describe('topUpCoverage', () => {
 	it('counts a fully covered vocabulary as covered, with nothing to write', () => {
-		const pool = [pooled('m', MULTI_CLOZE, ['a']), pooled('p', FREE[0], ['a'])];
+		const pool = [pooled('m', MULTI_CLOZE, ['a']), pooled('p', CLOZE, ['a'])];
 		expect(topUpCoverage(pool, [strong('a')], NOW)).toEqual({
 			upcoming: 1,
 			covered: 1,
