@@ -1,10 +1,11 @@
 /**
  * Public surface of the LLM layer.
  *
- * The UI should only ever need {@link getBatch}, {@link getEscalation} and
- * {@link makeMatchPairsChallenge}: they dispatch between the real OpenRouter
- * path and the offline mock automatically, based on whether a key is
- * configured.
+ * The UI should only ever need {@link getBatch} and {@link getEscalation}:
+ * they dispatch between the real OpenRouter path and the offline mock
+ * automatically, based on whether a key is configured. (The one zero-token
+ * challenge, `match-pairs`, is not built here at all — it lives in
+ * `$lib/challenges/local/match-pairs`.)
  *
  * Nothing in this layer touches the database. `getBatch` returns challenges and
  * nothing else — a lesson is written *about* the vocabulary it is handed and
@@ -78,7 +79,6 @@ export {
 	buildRequestPrompt,
 	correctiveInstructionFor,
 	generateBatch,
-	makeMatchPairsChallenge,
 	parseBatch,
 	resolveBatch,
 	stripFences,
@@ -90,7 +90,6 @@ export type {
 	BatchProfile,
 	BatchResult,
 	ChallengeMemberSchema,
-	MatchPairsOptions,
 	OnProgress,
 	ParsedBatch,
 	ProgressStep,

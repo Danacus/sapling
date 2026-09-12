@@ -26,7 +26,8 @@
 	import type { RomanizedToken } from '$lib/romanize';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 
-	import RubyText from '$lib/ui/RubyText.svelte';
+	import StoredReading from './StoredReading.svelte';
+	import TargetText from './TargetText.svelte';
 
 	let {
 		kicker,
@@ -88,10 +89,8 @@
 	<p class="prompt {size}" class:tight={showReading}>
 		{#if hidePrompt}
 			<span class="veiled" aria-hidden="true">· · ·</span>
-		{:else if showRuby}
-			<RubyText tokens={promptTokens ?? []} />
 		{:else}
-			<span>{prompt}</span>
+			<TargetText text={prompt} tokens={promptTokens} />
 		{/if}
 		{#if speakText !== ''}
 			<SpeakButton text={speakText} lang={speakLang} label={speakLabel} />
@@ -100,7 +99,7 @@
 {/if}
 
 {#if showReading}
-	<p class="rom prompt-rom">{reading}</p>
+	<StoredReading {reading} variant="loose" />
 {/if}
 
 <style>
@@ -124,8 +123,10 @@
 		overflow-wrap: anywhere;
 	}
 
-	/* Lets a long prompt shrink instead of pushing the speaker button off. */
-	.prompt > span {
+	/* Lets a long prompt shrink instead of pushing the speaker button off.
+	   Global because the prompt span and the ruby run now render inside
+	   `TargetText`; the `.prompt` ancestor still scopes it. */
+	.prompt > :global(span) {
 		min-width: 0;
 	}
 
@@ -140,11 +141,6 @@
 	/* A reading follows, and owns the trailing space instead. */
 	.prompt.tight {
 		margin-bottom: 0.2rem;
-	}
-
-	.prompt-rom {
-		margin: 0 0 1.3rem;
-		font-size: 1rem;
 	}
 
 	/* A placeholder with the prompt's own weight, so the reveal shifts nothing.

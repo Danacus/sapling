@@ -34,7 +34,7 @@
 <script lang="ts">
 	import type { RomanizedToken } from '$lib/romanize';
 
-	import RubyText from '$lib/ui/RubyText.svelte';
+	import TargetText from './TargetText.svelte';
 
 	let {
 		text,
@@ -111,14 +111,7 @@
 		<span class="key" aria-hidden="true">{badge}</span>
 	{/if}
 	<span class="label">
-		{#if tokens && tokens.length > 0}
-			<RubyText {tokens} />
-		{:else}
-			<span>{text}</span>
-			{#if reading !== ''}
-				<span class="rom">{reading}</span>
-			{/if}
-		{/if}
+		<TargetText {text} {reading} {tokens} />
 	</span>
 </button>
 
@@ -196,8 +189,10 @@
 	}
 
 	/* The reading sits under its own word, so a long sentence still lines up.
-	   Back to the body face: the reading is an annotation, not the specimen. */
-	.opt.inline .rom {
+	   Back to the body face: the reading is an annotation, not the specimen.
+	   Global because the `.rom` span lives in `TargetText` now — the class is
+	   still this component's to size. */
+	.opt.inline :global(.rom) {
 		font-family: var(--font);
 		font-size: 0.72rem;
 		font-weight: 500;

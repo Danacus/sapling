@@ -44,7 +44,7 @@ import {
 	MULTI_CLOZE_BANK_LADDER,
 	WORD_ORDER_DISTRACTOR_LADDER
 } from './ladders';
-import { levelForStrength, weakestWordStrength } from './progression';
+import { itemsById, levelForStrength, weakestWordStrength } from './progression';
 import { ALL_READINGS, planReadings, type ReadingPlan } from './reading';
 
 export {
@@ -108,19 +108,28 @@ export interface Presentation {
  * its own — so there is nothing to roll and nothing to memoise. Pure and
  * deterministic: no rng, no clock, no DB.
  */
-export function showNativeHint(challenge: Challenge, items: KnowledgeItem[]): boolean {
-	return levelForStrength(weakestWordStrength(challenge, items)) <= HINT_CEILING_LEVEL;
+export function showNativeHint(
+	challenge: Challenge,
+	items: KnowledgeItem[],
+	byId: ReadonlyMap<string, KnowledgeItem> = itemsById(items)
+): boolean {
+	return levelForStrength(weakestWordStrength(challenge, items, byId)) <= HINT_CEILING_LEVEL;
 }
 
 /**
  * How large a served cloze's or multi-cloze's word bank should read, answer(s)
  * included — never more than the stored bank actually has.
+ *
+ * `byId` is the optional pre-built {@link itemsById} index, so a caller asking
+ * about several facts of one challenge builds it once; omitted, it is rebuilt
+ * from `items` exactly as before.
  */
 export function bankSizeFor(
 	challenge: ClozeChallenge | MultiClozeChallenge,
-	items: KnowledgeItem[]
+	items: KnowledgeItem[],
+	byId: ReadonlyMap<string, KnowledgeItem> = itemsById(items)
 ): number {
-	const level = levelForStrength(weakestWordStrength(challenge, items));
+	const level = levelForStrength(weakestWordStrength(challenge, items, byId));
 	const stored = challenge.wordBank?.length ?? 0;
 	const ladder = challenge.type === 'cloze' ? CLOZE_BANK_LADDER : MULTI_CLOZE_BANK_LADDER;
 	return Math.min(stored, ladder[level - 1]);
@@ -129,9 +138,14 @@ export function bankSizeFor(
 /**
  * How many extra distractor tiles a served word-order challenge should show —
  * never more than the stored tray actually has beyond the sentence itself.
+ * Takes the same optional `byId` index as {@link bankSizeFor}.
  */
-export function distractorTilesFor(challenge: WordOrderChallenge, items: KnowledgeItem[]): number {
-	const level = levelForStrength(weakestWordStrength(challenge, items));
+export function distractorTilesFor(
+	challenge: WordOrderChallenge,
+	items: KnowledgeItem[],
+	byId: ReadonlyMap<string, KnowledgeItem> = itemsById(items)
+): number {
+	const level = levelForStrength(weakestWordStrength(challenge, items, byId));
 	const storedDistractors = Math.max(0, challenge.tiles.length - challenge.answerTokens.length);
 	return Math.min(storedDistractors, WORD_ORDER_DISTRACTOR_LADDER[level - 1]);
 }
@@ -233,6 +247,12 @@ export function visibleTiles(challenge: WordOrderChallenge, count: number): numb
  * challenge's weakest word grows. `rng` is forwarded to `planReadings` so a
  * deterministic draw can be injected in tests.
  *
+ * The `itemsById` index is built once here and threaded to every helper that
+ * needs the challenge's weakest word — each of them used to rebuild it through
+ * `weakestWordStrength`'s default, so one served challenge paid for the same
+ * map up to three times. The helpers still accept a bare `items` array; this is
+ * the optimisation, not the contract.
+ *
  * `bankSizeFor`/`distractorTilesFor` only mean something for the challenge
  * types that carry a bank or a tray; the other two fields read `0` for every
  * other type, which is harmless — a component that does not have a bank or a
@@ -243,14 +263,16 @@ export function presentationFor(
 	items: KnowledgeItem[],
 	opts: { romanizationMode: RomanizationMode; rng?: () => number }
 ): Presentation {
+	const byId = itemsById(items);
 	return {
-		showHint: showNativeHint(challenge, items),
+		showHint: showNativeHint(challenge, items, byId),
 		bankSize:
 			challenge.type === 'cloze' || challenge.type === 'multi-cloze'
-				? bankSizeFor(challenge, items)
+				? bankSizeFor(challenge, items, byId)
 				: 0,
-		distractorTiles: challenge.type === 'word-order' ? distractorTilesFor(challenge, items) : 0,
-		readings: planReadings(opts.romanizationMode, challenge, items, opts.rng)
+		distractorTiles:
+			challenge.type === 'word-order' ? distractorTilesFor(challenge, items, byId) : 0,
+		readings: planReadings(opts.romanizationMode, challenge, items, opts.rng, byId)
 	};
 }
 

@@ -23,8 +23,7 @@
 	import { choiceKeyAction } from '$lib/challenges/keyboard';
 	import type { ChallengeProps } from '$lib/challenges/props';
 	import { resolvedPresentation } from '$lib/challenges/serve/presentation';
-	import { rubyFor, storedReading } from '$lib/challenges/serve/reading';
-	import type { RomanizedToken } from '$lib/romanize';
+	import { readingSlot } from '$lib/challenges/serve/reading';
 	import type { SpotErrorChallenge } from '$lib/types';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
 	import CheckButton from './blocks/CheckButton.svelte';
@@ -60,16 +59,16 @@
 	 * below them is native). Each token is romanized on its own — which is as it
 	 * should be: the romanizer is handed one tile, so a wrong word gets the
 	 * reading it actually has rather than one smoothed over by the sentence it
-	 * does not belong in.
+	 * does not belong in. A tile that reproduces a tracked term fades on that
+	 * word's own roll, like every other slot.
 	 */
-	const ruby = $derived(rubyFor(tokenize, readings));
-
-	function tokensOf(index: number): RomanizedToken[] | null {
-		return ruby(challenge.tokens[index]);
-	}
-
-	function readingOf(index: number): string {
-		return storedReading(readings, challenge.tokensRomanization?.[index]);
+	function slotFor(index: number) {
+		return readingSlot(
+			tokenize,
+			readings,
+			challenge.tokens[index],
+			challenge.tokensRomanization?.[index]
+		);
 	}
 
 	function select(index: number): void {
@@ -114,10 +113,11 @@
 	<div class="sentence">
 		<TapRow align="end" role="radiogroup" label="Words in the sentence">
 			{#each challenge.tokens as token, index (index)}
+				{@const slot = slotFor(index)}
 				<TapOption
 					text={token}
-					reading={readingOf(index)}
-					tokens={tokensOf(index)}
+					reading={slot.reading}
+					tokens={slot.tokens}
 					size="inline"
 					selection="radio"
 					state={selected === index ? 'selected' : 'idle'}

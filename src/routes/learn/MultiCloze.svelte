@@ -7,13 +7,12 @@
 <script lang="ts">
 	import type { ChallengeProps } from '$lib/challenges/props';
 	import { resolvedPresentation, visibleBank } from '$lib/challenges/serve/presentation';
-	import { rubyFor, termReading } from '$lib/challenges/serve/reading';
+	import { readingSlot, rubyFor, storedReading } from '$lib/challenges/serve/reading';
 	import {
 		completedMultiClozePassage,
 		gradeMultiClozeAnswers,
 		serializeMultiClozeAnswers
 	} from '$lib/challenges/types/multi-cloze';
-	import type { RomanizedToken } from '$lib/romanize';
 	import type { MultiClozeChallenge } from '$lib/types';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import RubyText from '$lib/ui/RubyText.svelte';
@@ -21,7 +20,9 @@
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
 	import CheckButton from './blocks/CheckButton.svelte';
 	import PromptHeader from './blocks/PromptHeader.svelte';
+	import StoredReading from './blocks/StoredReading.svelte';
 	import TapOption from './blocks/TapOption.svelte';
+	import TargetText from './blocks/TargetText.svelte';
 	import WordBank from './blocks/WordBank.svelte';
 
 	let {
@@ -77,17 +78,8 @@
 		lock.locked ? completedPassage : challenge.passage.replace(/___\d+___/g, '…')
 	);
 
-	function tokensFor(text: string): RomanizedToken[] | null {
-		return ruby(text);
-	}
-
-	function readingFor(index: number): string {
-		return termReading(
-			readings,
-			bank[index],
-			challenge.wordBankRomanization?.[visibleIndices[index]]
-		);
-	}
+	/** The stored passage reading, gated by the plan; `''` when none shows. */
+	const storedPassageReading = $derived(storedReading(readings, challenge.passageRomanization));
 
 	function usedBy(index: number): number | undefined {
 		const gap = assignments.indexOf(index);
@@ -139,13 +131,10 @@
 	<p class="passage">
 		{#each passageParts as part, index (index)}
 			{#if 'text' in part}
-				{#if tokensFor(part.text)}
-					<RubyText tokens={tokensFor(part.text) ?? []} />
-				{:else}
-					<span>{part.text}</span>
-				{/if}
+				<TargetText text={part.text} tokens={ruby(part.text)} />
 			{:else}
 				{@const answer = answers[part.gap]}
+				{@const answerTokens = ruby(answer)}
 				<button
 					type="button"
 					class="gap"
@@ -157,8 +146,8 @@
 				>
 					{#if answer === ''}
 						<span aria-hidden="true">{part.gap + 1}</span>
-					{:else if tokensFor(answer)}
-						<RubyText tokens={tokensFor(answer) ?? []} />
+					{:else if answerTokens}
+						<RubyText tokens={answerTokens} />
 					{:else}
 						{answer}
 					{/if}
@@ -169,15 +158,21 @@
 	</p>
 
 	{#if readings.sentence && challenge.passageRomanization && !tokenize}
-		<p class="rom passage-rom">{challenge.passageRomanization}</p>
+		<StoredReading reading={storedPassageReading} variant="loose" />
 	{/if}
 
 	<WordBank label="Available words">
 		{#each bank as word, index (index)}
+			{@const slot = readingSlot(
+				tokenize,
+				readings,
+				word,
+				challenge.wordBankRomanization?.[visibleIndices[index]]
+			)}
 			<TapOption
 				text={word}
-				reading={readingFor(index)}
-				tokens={tokensFor(word)}
+				reading={slot.reading}
+				tokens={slot.tokens}
 				state={usedBy(index) === undefined ? 'idle' : 'spent'}
 				disabled={lock.locked}
 				label={usedBy(index) === undefined
@@ -254,11 +249,6 @@
 	.gap:disabled {
 		cursor: default;
 		opacity: 0.8;
-	}
-
-	.passage-rom {
-		margin: 0 0 1.3rem;
-		font-size: 1rem;
 	}
 
 	@media (max-width: 480px) {

@@ -36,20 +36,14 @@ import {
 } from '$lib/db';
 import type { ChallengeRow } from '$lib/db';
 import { challengeOf } from '$lib/db';
-import {
-	getBatch,
-	isActiveKind,
-	isKindAvailableAt,
-	isMockMode,
-	kindOf,
-	makeMatchPairsChallenge
-} from '$lib/llm';
+import { getBatch, isActiveKind, isKindAvailableAt, isMockMode, kindOf } from '$lib/llm';
 import type { BatchArgs, OnProgress, TokenUsage } from '$lib/llm';
 import { Grade, dueAt, gradeFromResult, isDue } from '$lib/srs';
 import { RESERVE_GAP, SESSION_LENGTH, isPlayable, isRested, knownItemIds } from './pool';
 import { planTopUp, topUpCoverage } from './topup';
 import type { PlanTopUpOptions, TopUpCoverage } from './topup';
 import { difficultyOf } from '$lib/challenges/difficulty';
+import { makeMatchPairsChallenge } from '$lib/challenges/local/match-pairs';
 import { storedDefFor } from '$lib/challenges/types';
 import type { Challenge, KnowledgeItem, Profile, Verdict } from '$lib/types';
 import {

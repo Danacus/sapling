@@ -27,7 +27,7 @@
 <script lang="ts">
 	import type { ChallengeProps } from '$lib/challenges/props';
 	import { resolvedPresentation } from '$lib/challenges/serve/presentation';
-	import { rubyFor, storedReading } from '$lib/challenges/serve/reading';
+	import { readingSlot, storedReading } from '$lib/challenges/serve/reading';
 	import { speak } from '$lib/tts';
 	import type { MatchPairsChallenge } from '$lib/types';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
@@ -46,11 +46,16 @@
 	const readings = $derived(served.readings);
 
 	/**
-	 * Ruby for the **left** column only. `a` is the term and `b` is its meaning
-	 * in the learner's own language — which is why only `aRom` is ever written —
-	 * so romanizing the right column would be annotating English with pinyin.
+	 * Reading decision for a **left** column tile only. `a` is the term and `b`
+	 * is its meaning in the learner's own language — which is why only `aRom` is
+	 * ever written — so the right column is never tokenized: romanizing it would
+	 * annotate English with pinyin. Its stored reading still goes through
+	 * `storedReading`, below. The left tile *is* the word, so it fades on its own
+	 * per-word roll.
 	 */
-	const ruby = $derived(rubyFor(tokenize, readings));
+	function leftSlot(text: string, rom: string | undefined) {
+		return readingSlot(tokenize, readings, text, rom);
+	}
 
 	/** Case/whitespace-insensitive text key, for matching tiles by content. */
 	function textKey(text: string): string {
@@ -251,10 +256,11 @@
 	<div class="columns">
 		<div class="column">
 			{#each left as tile (tile.pair)}
+				{@const slot = leftSlot(tile.text, tile.rom)}
 				<TapOption
 					text={tile.text}
-					reading={storedReading(readings, tile.rom)}
-					tokens={ruby(tile.text)}
+					reading={slot.reading}
+					tokens={slot.tokens}
 					fill
 					selection="toggle"
 					state={stateOf(

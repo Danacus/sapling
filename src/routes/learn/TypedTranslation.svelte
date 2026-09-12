@@ -9,7 +9,7 @@
 <script lang="ts">
 	import type { ChallengeProps } from '$lib/challenges/props';
 	import { resolvedPresentation } from '$lib/challenges/serve/presentation';
-	import { rubyFor, storedReading } from '$lib/challenges/serve/reading';
+	import { readingSlot } from '$lib/challenges/serve/reading';
 	import type { TypedTranslationChallenge } from '$lib/types';
 	import { validateAnswer } from '$lib/validate';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
@@ -59,9 +59,10 @@
 	 * condition the stored `promptRomanization` is written under. `null` falls
 	 * the whole line back to that stored string.
 	 */
-	const promptTokens = $derived(
-		promptIsTarget ? rubyFor(tokenize, readings)(challenge.prompt) : null
+	const promptSlot = $derived(
+		readingSlot(tokenize, readings, challenge.prompt, challenge.promptRomanization)
 	);
+	const promptTokens = $derived(promptIsTarget ? promptSlot.tokens : null);
 	const ready = $derived(typed.trim().length > 0 && !lock.locked);
 
 	function submit(): void {
@@ -90,7 +91,7 @@
 		kicker={asked}
 		prompt={challenge.prompt}
 		{promptTokens}
-		reading={storedReading(readings, challenge.promptRomanization)}
+		reading={promptSlot.reading}
 		speakText={promptIsTarget ? challenge.prompt : ''}
 		speakLang={targetLanguage}
 	/>

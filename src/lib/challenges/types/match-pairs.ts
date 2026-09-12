@@ -20,9 +20,9 @@ import type { StoredTypeDef } from './def';
 import { clamp01, nonEmpty, storedBase } from './primitives';
 
 /**
- * Pair count spanning the full 0..1 range. `$lib/llm/generate` builds three to
- * six pairs off the learner's ladder rung (`MATCH_PAIRS_LADDER`), or four to
- * five when it is given no rung — both comfortably inside this span, which is
+ * Pair count spanning the full 0..1 range. `$lib/challenges/local/match-pairs`
+ * builds three to six pairs off the learner's ladder rung (`MATCH_PAIRS_LADDER`),
+ * or four to five when it is given no rung — both comfortably inside this span, which is
  * the point: a ladder reaching past `MOST_PAIRS` would peg its top rungs to the
  * same stored difficulty.
  */

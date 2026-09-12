@@ -36,8 +36,7 @@
 <script lang="ts">
 	import type { ChallengeProps } from '$lib/challenges/props';
 	import { resolvedPresentation, visibleTiles } from '$lib/challenges/serve/presentation';
-	import { rubyFor, termReading } from '$lib/challenges/serve/reading';
-	import type { RomanizedToken } from '$lib/romanize';
+	import { readingSlot } from '$lib/challenges/serve/reading';
 	import { isPunctuationOnly, joinTokens } from '$lib/text';
 	import type { WordOrderChallenge } from '$lib/types';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
@@ -107,20 +106,14 @@
 
 	const askedIn = $derived(challenge.instruction ?? 'Put the words in order');
 
-	/**
-	 * Every tile is target-language text — the prompt is the native one — so a
-	 * tile is romanized wherever it appears, tray or bank, from its own index.
-	 * `null` means no local romanizer, and {@link readingOf}'s stored strings
-	 * carry the line instead.
-	 */
-	const ruby = $derived(rubyFor(tokenize, readings));
-
-	function tokensOf(index: number): RomanizedToken[] | null {
-		return ruby(challenge.tiles[index]);
-	}
-
-	function readingOf(index: number): string {
-		return termReading(readings, challenge.tiles[index], challenge.tilesRomanization?.[index]);
+	/** One tile's reading decision: its own word's roll, tray and bank both. */
+	function slotFor(index: number) {
+		return readingSlot(
+			tokenize,
+			readings,
+			challenge.tiles[index],
+			challenge.tilesRomanization?.[index]
+		);
 	}
 
 	function place(index: number): void {
@@ -172,10 +165,11 @@
 		aria-label={`Your sentence, ${placed.length} of ${challenge.answerTokens.length} words placed`}
 	>
 		{#each placed as index, position (position)}
+			{@const slot = slotFor(index)}
 			<TapOption
 				text={challenge.tiles[index]}
-				reading={readingOf(index)}
-				tokens={tokensOf(index)}
+				reading={slot.reading}
+				tokens={slot.tokens}
 				state="selected"
 				disabled={lock.locked}
 				label={`Remove ${challenge.tiles[index]}`}
@@ -189,10 +183,11 @@
 
 	<WordBank label="Available words">
 		{#each bank as tile (tile.index)}
+			{@const slot = slotFor(tile.index)}
 			<TapOption
 				text={tile.text}
-				reading={readingOf(tile.index)}
-				tokens={tokensOf(tile.index)}
+				reading={slot.reading}
+				tokens={slot.tokens}
 				disabled={lock.locked || full}
 				onclick={() => place(tile.index)}
 			/>

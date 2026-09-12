@@ -38,20 +38,22 @@
 import type { Challenge } from '$lib/types';
 import type { Demand } from './demand';
 import { demandOf } from './demand';
+import { LEVEL_BANDS } from './serve/progression';
 import { storedDefFor } from './types';
 
 /**
  * The `[start, end)` (closed at 1) span of word strength each demand tier
- * owns. Identical to the floors `$lib/challenges/serve/progression` gates
- * *serving* on (`CONSTRAINED_PRODUCTION_FLOOR` = 0.15,
- * `FREE_PRODUCTION_FLOOR` = 0.45): tier 0 is exactly level 1 of the five-rung
- * ladder, tier 1 is levels 2-3, tier 2 is levels 4-5. Restated rather than
- * imported, so a change to either has to keep both in view.
+ * owns. Read off `$lib/challenges/serve/progression`'s `LEVEL_BANDS`, the one
+ * geometry both sides share: tier 0 is exactly band 1, tier 1 is bands 2-3
+ * joined, tier 2 is bands 4-5 joined — so the floors `bearableDemand` gates
+ * *serving* on and the spans `difficultyOf` reports can never disagree. They
+ * used to be restated here, which was forced while `progression` lived in
+ * `$lib/session`; it is in this layer now, so the copy is gone.
  */
 const TIER_SPANS: Record<Demand, readonly [number, number]> = {
-	0: [0, 0.15],
-	1: [0.15, 0.45],
-	2: [0.45, 1]
+	0: LEVEL_BANDS[1],
+	1: [LEVEL_BANDS[2][0], LEVEL_BANDS[3][1]],
+	2: [LEVEL_BANDS[4][0], LEVEL_BANDS[5][1]]
 };
 
 /**

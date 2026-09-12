@@ -30,8 +30,7 @@
 	import type { ChallengeProps } from '$lib/challenges/props';
 	import { isListeningChallenge } from '$lib/challenges/serve/listening';
 	import { resolvedPresentation } from '$lib/challenges/serve/presentation';
-	import { rubyFor, storedReading } from '$lib/challenges/serve/reading';
-	import type { RomanizedToken } from '$lib/romanize';
+	import { readingSlot } from '$lib/challenges/serve/reading';
 	import { speak, ttsAvailable } from '$lib/tts';
 	import type { MultipleChoiceChallenge } from '$lib/types';
 	import { getListeningMode } from '$lib/ui/prefs';
@@ -134,24 +133,33 @@
 	const promptIsTarget = $derived(challenge.promptIsTarget ?? challenge.direction === 'toNative');
 
 	/**
-	 * Ruby for the two slots that carry target-language text, each in exactly one
-	 * direction — the same split the stored `promptRomanization` /
-	 * `optionsRomanization` fields already make. `null` from either means this
-	 * language has no local romanizer, and the stored strings below take over.
+	 * The prompt's reading decision: its own word's roll when it is one, the
+	 * whole-challenge roll otherwise. Its tokens only matter when the prompt is
+	 * target text; the other way round they are the learner's own language and
+	 * get discarded, exactly as before.
 	 *
 	 * Nothing special is done for listening mode: `PromptHeader` withholds the
 	 * tokens along with the prompt text, because ruby over a hidden prompt would
 	 * be the answer written in a second alphabet.
 	 */
-	const ruby = $derived(rubyFor(tokenize, readings));
-	const promptTokens = $derived(promptIsTarget ? ruby(challenge.prompt) : null);
+	const promptSlot = $derived(
+		readingSlot(tokenize, readings, challenge.prompt, challenge.promptRomanization)
+	);
+	const promptTokens = $derived(promptIsTarget ? promptSlot.tokens : null);
 
-	function tokensOf(index: number): RomanizedToken[] | null {
-		return promptIsTarget ? null : ruby(challenge.options[index]);
-	}
-
-	function readingOf(index: number): string {
-		return storedReading(readings, challenge.optionsRomanization?.[index]);
+	/**
+	 * One option's reading decision. Options are target text only when the
+	 * prompt is native; the other way round they are in the learner's language
+	 * and take no ruby.
+	 */
+	function optionSlot(index: number) {
+		const slot = readingSlot(
+			tokenize,
+			readings,
+			challenge.options[index],
+			challenge.optionsRomanization?.[index]
+		);
+		return promptIsTarget ? { tokens: null, reading: slot.reading } : slot;
 	}
 
 	function select(index: number): void {
@@ -189,7 +197,7 @@
 		kicker={askedIn}
 		prompt={challenge.prompt}
 		{promptTokens}
-		reading={storedReading(readings, challenge.promptRomanization)}
+		reading={promptSlot.reading}
 		hidePrompt={hidingPrompt}
 		speakText={promptIsTarget ? challenge.prompt : ''}
 		speakLang={targetLanguage}
@@ -212,10 +220,11 @@
 	<div class="options">
 		<TapRow role="radiogroup" label="Answer options">
 			{#each challenge.options as option, index (index)}
+				{@const slot = optionSlot(index)}
 				<TapOption
 					text={option}
-					reading={readingOf(index)}
-					tokens={tokensOf(index)}
+					reading={slot.reading}
+					tokens={slot.tokens}
 					badge={index + 1}
 					size="card"
 					align="start"

@@ -8,6 +8,7 @@ import {
 	challengeReadingStrength,
 	hideReadingProbability,
 	planReadings,
+	readingSlot,
 	shouldShowReading,
 	type ReadingPlan
 } from './reading';
@@ -307,5 +308,38 @@ describe('applyPlan', () => {
 		const input: RomanizedToken[] = [{ text: '猫', reading: 'māo' }];
 		applyPlan(input, plan(false));
 		expect(input[0].reading).toBe('māo');
+	});
+});
+
+describe('readingSlot', () => {
+	/** `perro` is hidden by its own per-word roll; the sentence roll is on. */
+	const readings: ReadingPlan = { sentence: true, byTerm: new Map([['perro', false]]) };
+	const tokenize = (text: string): RomanizedToken[] => [{ text, reading: 'perro-rom' }];
+
+	it('returns null tokens with no local romanizer, and the stored reading otherwise', () => {
+		const slot = readingSlot(null, readings, 'gato', 'gato-rom');
+		expect(slot.tokens).toBeNull();
+		expect(slot.reading).toBe('gato-rom');
+	});
+
+	it('takes tokens from the romanizer with the plan applied', () => {
+		expect(readingSlot(tokenize, readings, 'perro', 'perro-rom').tokens).toEqual([
+			{ text: 'perro', reading: null }
+		]);
+	});
+
+	it('gates a tracked term on its own roll, even where the sentence roll would show it', () => {
+		// The policy in one line: `perro`'s own roll hides it while the
+		// whole-challenge roll is on, and the slot follows the word, not the whole.
+		expect(readingSlot(null, readings, 'perro', 'perro-rom').reading).toBe('');
+	});
+
+	it('falls back to the sentence roll for text the plan never rolled for', () => {
+		expect(readingSlot(null, readings, 'gato', 'gato-rom').reading).toBe('gato-rom');
+	});
+
+	it('hides a non-term too when the sentence roll is off', () => {
+		const hidden: ReadingPlan = { sentence: false, byTerm: new Map() };
+		expect(readingSlot(null, hidden, 'gato', 'gato-rom').reading).toBe('');
 	});
 });

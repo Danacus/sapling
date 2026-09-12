@@ -11,7 +11,8 @@
  * source as an argument so a batch can be replayed exactly.
  */
 
-import { usesInterWordSpaces } from '$lib/text';
+import { shuffled } from '$lib/random';
+import { labelKey, usesInterWordSpaces } from '$lib/text';
 import type { ClozeChallenge } from '$lib/types';
 import { foldDiacritics } from '$lib/validate';
 import type { TargetText } from './challenge-types/primitives';
@@ -38,20 +39,23 @@ export function optionalString<K extends string>(
 /** The blank a cloze sentence is built around. */
 export const CLOZE_GAP = '___';
 
-/** Case- and whitespace-insensitive key used to detect colliding labels. */
-export function labelKey(value: string): string {
-	return value.trim().toLowerCase().replace(/\s+/g, ' ');
-}
+/**
+ * Case- and whitespace-insensitive key used to detect colliding labels.
+ *
+ * Re-exported from `$lib/text`, where it lives now: the local match-pairs
+ * builder needs the same key and must not reach into `$lib/llm` for it. The
+ * wire defs keep importing it from here, their kit.
+ */
+export { labelKey };
 
-/** Fisher-Yates over a copy; `rng` is injectable so shuffles can be replayed. */
-export function shuffled<T>(values: readonly T[], rng: () => number): T[] {
-	const out = [...values];
-	for (let i = out.length - 1; i > 0; i--) {
-		const j = Math.floor(rng() * (i + 1));
-		[out[i], out[j]] = [out[j], out[i]];
-	}
-	return out;
-}
+/**
+ * Fisher-Yates over a copy; `rng` is injectable so shuffles can be replayed.
+ *
+ * Re-exported from `$lib/random` for the same reason as {@link labelKey}: the
+ * local match-pairs builder (`$lib/challenges/local/match-pairs`) is its other
+ * caller and cannot import this module.
+ */
+export { shuffled };
 
 /** The trimmed Latin reading of a target-language slot, or `undefined`. */
 export function readingOf(value: { reading?: string | null }): string | undefined {

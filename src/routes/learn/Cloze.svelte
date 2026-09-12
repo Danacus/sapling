@@ -21,7 +21,7 @@
 <script lang="ts">
 	import type { ChallengeProps } from '$lib/challenges/props';
 	import { resolvedPresentation, visibleBank } from '$lib/challenges/serve/presentation';
-	import { rubyFor, termReading } from '$lib/challenges/serve/reading';
+	import { readingSlot, rubyFor, storedReading } from '$lib/challenges/serve/reading';
 	import type { RomanizedToken } from '$lib/romanize';
 	import type { ClozeChallenge } from '$lib/types';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
@@ -30,6 +30,7 @@
 	import CheckButton from './blocks/CheckButton.svelte';
 	import PromptHeader from './blocks/PromptHeader.svelte';
 	import RubyText from '$lib/ui/RubyText.svelte';
+	import StoredReading from './blocks/StoredReading.svelte';
 	import TapOption from './blocks/TapOption.svelte';
 	import WordBank from './blocks/WordBank.svelte';
 
@@ -152,10 +153,6 @@
 		lock.locked ? completedSentence : challenge.sentence.split(GAP).join('…')
 	);
 
-	function tokensOf(index: number): RomanizedToken[] | null {
-		return ruby(bank[index]);
-	}
-
 	/**
 	 * The picked word, as the same ruby tokens its bank chip wore — a word must
 	 * not lose its reading by being placed in the gap. `null` (no pick, or no
@@ -163,13 +160,8 @@
 	 */
 	const gapTokens = $derived(pickedIndex === null ? null : ruby(bank[pickedIndex]));
 
-	function readingOf(index: number): string {
-		return termReading(
-			readings,
-			bank[index],
-			challenge.wordBankRomanization?.[visibleIndices[index]]
-		);
-	}
+	/** The stored sentence reading, gated by the plan; `''` when none shows. */
+	const sentenceReading = $derived(storedReading(readings, challenge.sentenceRomanization));
 
 	function pick(index: number): void {
 		if (lock.locked) return;
@@ -236,8 +228,8 @@
 	</p>
 	<!-- The stored one-line romanization, only where ruby is not already
 	     carrying the readings word by word. -->
-	{#if !rubyParts && readings.sentence && challenge.sentenceRomanization}
-		<p class="rom sentence-rom">{challenge.sentenceRomanization}</p>
+	{#if !rubyParts && sentenceReading !== ''}
+		<StoredReading reading={sentenceReading} variant="tight" />
 	{/if}
 
 	<!-- The native line is always on the row; whether it shows is the serve-time
@@ -249,10 +241,16 @@
 	{#if usesBank}
 		<WordBank>
 			{#each bank as word, index (index)}
+				{@const slot = readingSlot(
+					tokenize,
+					readings,
+					word,
+					challenge.wordBankRomanization?.[visibleIndices[index]]
+				)}
 				<TapOption
 					text={word}
-					reading={readingOf(index)}
-					tokens={tokensOf(index)}
+					reading={slot.reading}
+					tokens={slot.tokens}
 					state={pickedIndex === index ? 'spent' : 'idle'}
 					disabled={lock.locked}
 					onclick={() => pick(index)}
@@ -344,11 +342,6 @@
 	.gap:disabled {
 		cursor: default;
 		opacity: 0.75;
-	}
-
-	.sentence-rom {
-		margin: 0 0 0.6rem;
-		font-size: 1rem;
 	}
 
 	/* The meaning, pencilled in the margin: a hairline rule to the left of it

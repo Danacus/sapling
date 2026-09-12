@@ -47,7 +47,7 @@ import type { RomanizedToken } from '$lib/romanize';
 import { strengthOf } from '$lib/srs';
 import type { Challenge, KnowledgeItem } from '$lib/types';
 import type { RomanizationMode } from '$lib/ui/prefs';
-import { weakestWordStrength } from './progression';
+import { itemsById, weakestWordStrength } from './progression';
 
 /**
  * Below this strength the reading always shows: the word is still being
@@ -115,11 +115,12 @@ export function shouldShowReading(
 	mode: RomanizationMode,
 	challenge: Challenge,
 	items: KnowledgeItem[],
-	rng: () => number = Math.random
+	rng: () => number = Math.random,
+	byId: ReadonlyMap<string, KnowledgeItem> = itemsById(items)
 ): boolean {
 	if (mode === 'on') return true;
 	if (mode === 'off') return false;
-	return rollShow(challengeReadingStrength(challenge, items), rng);
+	return rollShow(challengeReadingStrength(challenge, items, byId), rng);
 }
 
 /** Which readings a served challenge shows — one answer for the whole, one per word. */
@@ -181,15 +182,19 @@ export function planReadings(
 	mode: RomanizationMode,
 	challenge: Challenge,
 	items: KnowledgeItem[],
-	rng: () => number = Math.random
+	rng: () => number = Math.random,
+	byId: ReadonlyMap<string, KnowledgeItem> = itemsById(items)
 ): ReadingPlan {
 	if (mode === 'on') return { sentence: true, byTerm: NO_TERMS };
 	if (mode === 'off') return { sentence: false, byTerm: NO_TERMS };
 
 	// The whole-challenge roll first, so it draws the same number from an
 	// injected `rng` that `shouldShowReading` would have on its own.
-	const sentence = shouldShowReading(mode, challenge, items, rng);
+	const sentence = shouldShowReading(mode, challenge, items, rng, byId);
 
+	// The per-term loop reads `items`, not the index: every known word gets its
+	// own roll, and the index is only for the whole-challenge weakest-word
+	// question above. `byId` is an optimisation, never a filter.
 	const byTerm = new Map<string, boolean>();
 	const sorted = [...items].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 	for (const item of sorted) {
@@ -247,13 +252,18 @@ export function rubyFor(
 }
 
 /**
- * {@link rubyFor}'s other half: the stored, LLM-written `…Romanization` string a
- * component falls back to, gated by the learner's `sentence` preference and
- * normalized to `''` when it is switched off, absent or was never generated.
+ * {@link rubyFor}'s other half for a **flat line**: the stored, LLM-written
+ * `…Romanization` string that covers a whole sentence or passage, gated by the
+ * learner's `sentence` preference and normalized to `''` when it is switched
+ * off, absent or was never generated.
  *
- * Six components were spelling this out by hand — once per romanized slot,
- * eight times over — which made "does this respect the reading preference?" a
- * question you answered by reading every component instead of by construction.
+ * **Not {@link termReading}, deliberately.** A flat line is not one vocabulary
+ * slot — the string spans many words, so there is no single term to look up in
+ * `byTerm` and no per-word roll to follow; it takes the whole-challenge
+ * `sentence` roll however it reads. Use it only for the sentence/passage line
+ * under Cloze and MultiCloze, and for a match-pairs round's native right column
+ * (which is not target-language text and is never tokenized). A component's
+ * per-slot readings go through {@link readingSlot}, which is per-word.
  */
 export function storedReading(readings: ReadingPlan, stored: string | undefined | null): string {
 	return (readings.sentence ? stored : '') ?? '';
@@ -280,4 +290,32 @@ export function termReading(
 	stored: string | undefined | null
 ): string {
 	return (readings.byTerm.get(term) ?? readings.sentence) ? (stored ?? '') : '';
+}
+
+/**
+ * One target-text slot, decided: the ruby tokens to render when this language
+ * has a local romanizer, and the stored fallback reading, already gated by the
+ * plan.
+ *
+ * The policy a component used to spell out by hand — `rubyFor` plus a reading
+ * gate — lives here instead, so a component asks one question per slot and
+ * hands both answers straight to the leaf that draws them (`TargetText`).
+ *
+ * The policy is **per word, with the whole-challenge roll as fallback**: a
+ * rendered slot fades on its own tracked word's `byTerm` roll when the slot
+ * *is* that word, and on the `sentence` roll otherwise. That is exactly
+ * {@link termReading}, which subsumes the flat {@link storedReading} — a slot
+ * the plan never rolled for falls through to `sentence`. A flat stored sentence
+ * line is not one slot in this sense; it keeps `storedReading`.
+ */
+export function readingSlot(
+	tokenize: ((text: string) => RomanizedToken[]) | null,
+	readings: ReadingPlan,
+	text: string,
+	stored: string | undefined | null
+): { tokens: RomanizedToken[] | null; reading: string } {
+	return {
+		tokens: tokenize ? applyPlan(tokenize(text), readings) : null,
+		reading: termReading(readings, text, stored)
+	};
 }
