@@ -110,6 +110,18 @@ describe('WIRE_TYPE_DEFS', () => {
 		// `PLANNABLE_KINDS`), so being in the registry is not enough to be
 		// generated — a type no kind names is a type the model could be told
 		// about, shown an example of, and never asked for.
+		//
+		// A def opts in by carrying a `plannable` field; `translate-to-target` is
+		// the one retired type and the only def without one. `PLANNABLE_KINDS` is
+		// projected from those fields now, so this presence check plus the set
+		// equality below is what keeps the projection honest.
+		for (const def of WIRE_TYPE_DEFS) {
+			if (def.type === 'translate-to-target') {
+				expect(def.plannable, def.type).toBeUndefined();
+			} else {
+				expect(def.plannable, def.type).toBeDefined();
+			}
+		}
 		expect([...new Set(PLANNABLE_KINDS.map((kind) => kind.type))].sort()).toEqual(
 			WIRE_TYPE_DEFS.map((def) => def.type)
 				.filter((type) => type !== 'translate-to-target')

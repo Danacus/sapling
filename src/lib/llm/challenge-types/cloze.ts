@@ -56,6 +56,7 @@ export const clozeDef = {
 	type: 'cloze',
 	schema: generatedClozeSchema,
 	stored: { type: 'cloze', direction: 'toTarget' },
+	plannable: { demand: 1, levels: [2, 3, 4, 5] },
 	promptSpec:
 		'cloze — one target-language word missing from a target-language sentence. {before:TargetText, answer:TargetText, after:TargetText, hintNative, distractorWords:[5 TargetText]} e.g. {"type":"cloze","before":{"text":"你好，请给我一份","reading":"Nǐ hǎo, qǐng gěi wǒ yī fèn"},"answer":{"text":"菜单","reading":"càidān"},"after":{"text":"。","reading":"."},"hintNative":"Hello, could I have a menu, please?","distractorWords":[{"text":"筷子","reading":"kuàizi"},{"text":"茶","reading":"chá"},{"text":"水","reading":"shuǐ"},{"text":"咖啡","reading":"kāfēi"},{"text":"啤酒","reading":"píjiǔ"}],"itemIds":["i3"],"explanation":"份 (fèn) is the measure word for a menu or a portion."} — before and after carry their own spacing and punctuation and the app puts the blank between them; either may be {"text":"","reading":null}. hintNative is the whole sentence in the native language; always include it. Always write exactly five distractorWords, plausible target-language words that do not fit the blank — whether the learner ever sees them is decided later, not by you.',
 	rulesSpec:

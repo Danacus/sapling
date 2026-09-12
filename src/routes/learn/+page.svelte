@@ -29,6 +29,7 @@
 
 	import { audioTextsFor, correctAnswerText } from '$lib/challenges/display';
 	import { presentationFor, type Presentation } from '$lib/challenges/serve/presentation';
+	import { STORED_TYPE_DEFS, storedDefFor } from '$lib/challenges/types';
 	import { getDailyActivity, getProfile, streakFrom } from '$lib/db';
 	import { isMockMode } from '$lib/llm';
 	import { loadRomanizer, type Romanizer } from '$lib/romanize';
@@ -578,7 +579,9 @@
 	const totalSteps = $derived(Math.max(1, plannedSteps));
 	const stepsDone = $derived(answers.length);
 	/** Answered generated challenges: what `plannedLlm` is counted against. */
-	const llmAnswered = $derived(answers.filter((answer) => answer.type !== 'match-pairs').length);
+	const llmAnswered = $derived(
+		answers.filter((answer) => STORED_TYPE_DEFS[answer.type].reviewsSrs).length
+	);
 
 	async function advance(): Promise<void> {
 		feedback = null;
@@ -612,7 +615,9 @@
 		const challenge = current;
 		if (!challenge || feedback) return;
 
-		const isMatch = challenge.type === 'match-pairs';
+		// The challenge's own def answers "does this feed SRS?", so the session
+		// never names a type: a round that does not review carries no item ids.
+		const reviewsSrs = storedDefFor(challenge).reviewsSrs;
 
 		answers = [
 			...answers,
@@ -620,7 +625,7 @@
 				challengeId: challenge.id,
 				type: challenge.type,
 				verdict: event.verdict,
-				itemIds: isMatch ? [] : challenge.itemIds
+				itemIds: reviewsSrs ? challenge.itemIds : []
 			}
 		];
 
@@ -728,7 +733,7 @@
 	 */
 	function skipCurrent(): void {
 		const challenge = current;
-		if (!challenge || feedback || challenge.type === 'match-pairs') return;
+		if (!challenge || feedback || !storedDefFor(challenge).reviewsSrs) return;
 		handleAnswer({
 			answerGiven: SKIP_ANSWER,
 			verdict: 'wrong',
@@ -1251,7 +1256,7 @@
 								{tokenize}
 							/>
 
-							{#if current.type !== 'match-pairs' && !feedback}
+							{#if storedDefFor(current).reviewsSrs && !feedback}
 								<button type="button" class="btn btn-ghost skip-btn" onclick={skipCurrent}>
 									Skip
 								</button>

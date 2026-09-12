@@ -42,6 +42,8 @@ function canonicalAnswer(challenge: TypedTranslationChallenge): string {
 export const typedTranslationStoredDef = {
 	type: 'typed-translation',
 	schema: typedTranslationChallengeSchema,
+	reviewsSrs: true,
+	pooled: true,
 
 	check(challenge, answerGiven) {
 		return checkAnswer(answerGiven, challenge.acceptedAnswers);

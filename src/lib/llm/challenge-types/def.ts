@@ -18,6 +18,7 @@
  */
 
 import type { z } from 'zod';
+import type { Demand } from '$lib/challenges/types';
 import type { Challenge, ChallengeType, Direction } from '$lib/types';
 
 /**
@@ -167,6 +168,22 @@ export interface WireTypeDef<T extends WirePayload = WirePayload> {
 	 */
 	readonly stored: StoredShape;
 	/**
+	 * The demand tier its stored challenge reports, and the ladder rungs this
+	 * type may be generated at — the two facts `../requests`' `PLANNABLE_KINDS`
+	 * is a projection of.
+	 *
+	 * It lives here rather than in `../requests` because it is a fact about the
+	 * type, next to its schema and resolver, and `../requests` already reads
+	 * `$lib/challenges/types`' `Demand`, so the arrow stays one way. A def that
+	 * omits it is not plannable — `translate-to-target` is retired and carries
+	 * no field at all — and `registry.test.ts` pins that every other active def
+	 * has one.
+	 */
+	readonly plannable?: {
+		readonly demand: Demand;
+		readonly levels: readonly [DifficultyRung, ...DifficultyRung[]];
+	};
+	/**
 	 * This type's line in the prompt's `Types:` block — field list plus one
 	 * inline JSON example. Every token here is paid on every batch call, so it is
 	 * written to be terse, not friendly.
@@ -247,7 +264,7 @@ export interface WireTypeDef<T extends WirePayload = WirePayload> {
  * not typecheck. `./index` intersects this back in: the specs read as
  * `string | undefined` everywhere, and nothing else is widened.
  */
-export type OptionalSpecs = Pick<WireTypeDef, 'rulesSpec' | 'escalationSpec'>;
+export type OptionalSpecs = Pick<WireTypeDef, 'rulesSpec' | 'escalationSpec' | 'plannable'>;
 
 /** {@link OptionalSpecs} intersected into every element of a tuple of defs. */
 export type WithOptionalSpecs<T extends readonly unknown[]> = {

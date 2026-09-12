@@ -57,6 +57,8 @@ function completedSentence(challenge: ClozeChallenge): string {
 export const clozeStoredDef = {
 	type: 'cloze',
 	schema: clozeChallengeSchema,
+	reviewsSrs: true,
+	pooled: true,
 
 	check(challenge, answerGiven) {
 		return checkAnswer(answerGiven, challenge.acceptedAnswers);

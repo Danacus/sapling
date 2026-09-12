@@ -43,6 +43,8 @@ function correctOption(challenge: MultipleChoiceChallenge): string {
 export const multipleChoiceStoredDef = {
 	type: 'multiple-choice',
 	schema: multipleChoiceChallengeSchema,
+	reviewsSrs: true,
+	pooled: true,
 
 	check(challenge, answerGiven) {
 		const correctOption = challenge.options[challenge.correctIndex];

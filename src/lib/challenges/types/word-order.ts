@@ -43,6 +43,8 @@ export const wordOrderChallengeSchema = z.object({
 export const wordOrderStoredDef = {
 	type: 'word-order',
 	schema: wordOrderChallengeSchema,
+	reviewsSrs: true,
+	pooled: true,
 
 	check(challenge, answerGiven) {
 		return normalize(answerGiven) === normalize(challenge.answer) ? 'correct' : 'wrong';

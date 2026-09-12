@@ -41,6 +41,7 @@ export const contextMcDef = {
 	type: 'context-mc',
 	schema: generatedContextMcSchema,
 	stored: { type: 'multiple-choice', direction: 'toTarget', promptIsTarget: true },
+	plannable: { demand: 0, levels: [2, 3] },
 	promptSpec:
 		'context-mc — target-language context shown, target text picked. {prompt:TargetText, correct:TargetText, distractors:[3 TargetText], instruction} e.g. {"type":"context-mc","prompt":{"text":"Terminamos de comer y queremos pagar, así que le pedimos al camarero...","reading":null},"correct":{"text":"la cuenta","reading":null},"distractors":[{"text":"la carta","reading":null},{"text":"un café","reading":null},{"text":"la propina","reading":null}],"instruction":"Pick the word that fits","itemIds":["i2"],"explanation":null}',
 	correctiveSpec: 'context-mc {prompt,correct,distractors: exactly 3}',

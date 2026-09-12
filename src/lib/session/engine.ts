@@ -50,6 +50,7 @@ import { RESERVE_GAP, SESSION_LENGTH, isPlayable, isRested, knownItemIds } from 
 import { planTopUp, topUpCoverage } from './topup';
 import type { PlanTopUpOptions, TopUpCoverage } from './topup';
 import { difficultyOf } from '$lib/challenges/difficulty';
+import { storedDefFor } from '$lib/challenges/types';
 import type { Challenge, KnowledgeItem, Profile, Verdict } from '$lib/types';
 import {
 	bearable,
@@ -933,7 +934,7 @@ export async function startSession(opts: StartSessionOptions = {}): Promise<Sess
  * is a no-op (there is nothing to fix but the generator's item list).
  */
 export async function reportChallenge(challenge: Challenge): Promise<void> {
-	if (challenge.type === 'match-pairs') return;
+	if (!storedDefFor(challenge).pooled) return;
 	await flagChallengeReported(challenge.id);
 }
 
@@ -990,7 +991,7 @@ export async function applyResult(
 	const now = outcome.now ?? Date.now();
 	const reviewed = new Set<string>();
 
-	if (challenge.type !== 'match-pairs') {
+	if (storedDefFor(challenge).reviewsSrs) {
 		const verdictByItem = new Map(outcome.itemVerdicts?.map((item) => [item.itemId, item.verdict]));
 		for (const itemId of challenge.itemIds) {
 			const verdict = verdictByItem.get(itemId) ?? outcome.verdict;
@@ -1045,7 +1046,7 @@ export async function amendResult(
 	reviewed: ReadonlySet<string>,
 	now: number = Date.now()
 ): Promise<void> {
-	if (challenge.type === 'match-pairs') return;
+	if (!storedDefFor(challenge).reviewsSrs) return;
 
 	for (const itemId of challenge.itemIds) {
 		if (!reviewed.has(itemId)) continue;
@@ -1081,7 +1082,7 @@ export async function applyOverturn(
 	 */
 	wrongItemIds?: ReadonlySet<string>
 ): Promise<void> {
-	if (challenge.type === 'match-pairs') return;
+	if (!storedDefFor(challenge).reviewsSrs) return;
 
 	for (const itemId of challenge.itemIds) {
 		if (wrongItemIds && !wrongItemIds.has(itemId)) continue;

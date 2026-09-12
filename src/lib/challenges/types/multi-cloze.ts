@@ -116,6 +116,8 @@ export const multiClozeChallengeSchema = z
 export const multiClozeStoredDef = {
 	type: 'multi-cloze',
 	schema: multiClozeChallengeSchema,
+	reviewsSrs: true,
+	pooled: true,
 
 	check(challenge, answerGiven) {
 		return gradeMultiClozeAnswers(challenge, answersFromSerialized(answerGiven)).verdict;

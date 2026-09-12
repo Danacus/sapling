@@ -17,6 +17,7 @@
 	import { fly, slide } from 'svelte/transition';
 
 	import { answerReading, spokenAnswerFor } from '$lib/challenges/display';
+	import { storedDefFor } from '$lib/challenges/types';
 	import { getEscalation, LlmError } from '$lib/llm';
 	import { motionMs } from '$lib/session/motion';
 	import { Grade } from '$lib/srs';
@@ -109,11 +110,11 @@
 	/**
 	 * Only a clean `correct` is worth asking about. `almost` already means "you
 	 * fumbled it" (auto-Hard) and `wrong` means Again; a skip never tried; an
-	 * overturned answer was argued back, not recalled; and match rounds touch no
-	 * card at all.
+	 * overturned answer was argued back, not recalled; and a type that does not
+	 * feed SRS has no card to regrade at all.
 	 */
 	const canAssess = $derived(
-		verdict === 'correct' && !skipped && !overturned && challenge.type !== 'match-pairs'
+		verdict === 'correct' && !skipped && !overturned && storedDefFor(challenge).reviewsSrs
 	);
 
 	/**
@@ -391,7 +392,7 @@
 			<button type="button" class="btn btn-ghost explain-btn" onclick={toggleExplain}>
 				{showExplain ? 'Hide' : 'Explain'}
 			</button>
-			{#if onreport && challenge.type !== 'match-pairs'}
+			{#if onreport && storedDefFor(challenge).pooled}
 				<button
 					type="button"
 					class="btn btn-ghost report-btn"

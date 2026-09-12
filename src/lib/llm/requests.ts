@@ -25,7 +25,7 @@
 
 import type { Demand } from '$lib/challenges/types';
 import type { Challenge } from '$lib/types';
-import { WIRE_TYPE_DEFS } from './challenge-types';
+import { WIRE_TYPE_DEFS, byType } from './challenge-types';
 import type { DifficultyRung, WireType } from './challenge-types';
 
 /** A wire type the session may ask for. */
@@ -56,25 +56,47 @@ export interface PlannableKind extends ChallengeKind {
 }
 
 /**
- * Every active kind the session can ask for.
+ * The order {@link PLANNABLE_KINDS} is projected in.
+ *
+ * Written out rather than left to registry order because the order is
+ * observable: `$lib/session/topup` picks a kind by
+ * `from[Math.floor(rng() * from.length)]` over a filtered `PLANNABLE_KINDS`, so
+ * reordering this changes which kind a seeded top-up writes — and
+ * `topup.test.ts` pins one such pick. This is the order the literal list had
+ * before it was projected, kept so the seeded choice is unchanged. Membership
+ * is not left to this tuple either: `registry.test.ts` checks it covers every
+ * def that declares `plannable`.
+ */
+const PLAN_ORDER = [
+	'recognize-mc',
+	'produce-mc',
+	'context-mc',
+	'translate-to-native',
+	'spot-error',
+	'word-order',
+	'cloze',
+	'multi-cloze'
+] as const satisfies readonly WireType[];
+
+/**
+ * Every active kind the session can ask for, projected from each def's own
+ * `plannable` field in {@link PLAN_ORDER}.
  *
  * This is the membership list that matters for new generation: a wire type
- * registered in `./challenge-types` but named nowhere here remains parseable
- * for legacy rows while being excluded from prompts, coverage and serving. It
- * is pinned against the registry in `challenge-types/registry.test.ts`, and
- * adding an active wire type means adding it here too, with its demand tier and
- * available ladder rungs.
+ * registered in `./challenge-types` but with no `plannable` field remains
+ * parseable for legacy rows while being excluded from prompts, coverage and
+ * serving. It is pinned against the registry in
+ * `challenge-types/registry.test.ts`, so adding an active wire type means
+ * giving its def a `plannable` field — and, for a stable seeded pick, a place
+ * in {@link PLAN_ORDER}.
  */
-export const PLANNABLE_KINDS: readonly PlannableKind[] = [
-	{ type: 'recognize-mc', demand: 0, levels: [1, 2] },
-	{ type: 'produce-mc', demand: 0, levels: [1, 2] },
-	{ type: 'context-mc', demand: 0, levels: [2, 3] },
-	{ type: 'translate-to-native', demand: 0, levels: [1] },
-	{ type: 'spot-error', demand: 0, levels: [2, 3] },
-	{ type: 'word-order', demand: 1, levels: [2, 3, 4] },
-	{ type: 'cloze', demand: 1, levels: [2, 3, 4, 5] },
-	{ type: 'multi-cloze', demand: 1, levels: [3, 4, 5] }
-];
+export const PLANNABLE_KINDS: readonly PlannableKind[] = PLAN_ORDER.map((type) => {
+	const plannable = byType.get(type)?.plannable;
+	if (!plannable) {
+		throw new Error(`${type} is in PLAN_ORDER but its def declares no plannable`);
+	}
+	return { type, demand: plannable.demand, levels: plannable.levels };
+});
 
 /** Stable identity of a kind: the key a pool is grouped by and a plan cut on. */
 export function kindKey(kind: ChallengeKind): string {

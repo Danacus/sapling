@@ -59,6 +59,31 @@ export type Demand = 0 | 1 | 2;
  */
 export interface StoredTypeBehaviour<C extends Challenge> {
 	/**
+	 * Whether answering this challenge feeds SRS: a verdict here becomes reviews
+	 * on the items it cites.
+	 *
+	 * True of every generated type, and false for the one locally-built type,
+	 * `match-pairs` — a recognition warm-up assembled from words the learner
+	 * already has, where moving a card would inflate stability for a word that
+	 * was never actually recalled. The session reads this fact instead of naming
+	 * the type: `applyResult` skips the per-item review, `amendResult` and
+	 * `applyOverturn` no-op, the session screen logs no item ids, and no Skip is
+	 * offered. Part of the contract, not defaulted, so the registry's mapped type
+	 * makes a new type answer the question.
+	 */
+	readonly reviewsSrs: boolean;
+	/**
+	 * Whether challenges of this type are persistent pool rows — the thing
+	 * `reportChallenge` flags and the session plans from. True of every generated
+	 * type; false for `match-pairs`, which is built in the browser and never
+	 * written to the log.
+	 *
+	 * A separate field from {@link reviewsSrs} because they are separate
+	 * questions — a pooled row need not be an SRS review — even though every type
+	 * currently answers them the same way.
+	 */
+	readonly pooled: boolean;
+	/**
 	 * Grades an answer to this type.
 	 *
 	 * Every type is gradeable from a single string, including the tapped ones:

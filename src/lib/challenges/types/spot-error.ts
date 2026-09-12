@@ -49,6 +49,8 @@ export const spotErrorChallengeSchema = z.object({
 export const spotErrorStoredDef = {
 	type: 'spot-error',
 	schema: spotErrorChallengeSchema,
+	reviewsSrs: true,
+	pooled: true,
 
 	check(challenge, answerGiven) {
 		// The answer is the *wrong* word — the one the learner is asked to tap.

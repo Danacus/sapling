@@ -47,6 +47,10 @@ export const matchPairsChallengeSchema = z.object({
 export const matchPairsStoredDef = {
 	type: 'match-pairs',
 	schema: matchPairsChallengeSchema,
+	// The one exception on both counts: built locally, never pooled, never
+	// reviewed. Every other def says `true, true`.
+	reviewsSrs: false,
+	pooled: false,
 
 	check(challenge, answerGiven) {
 		// Match-pairs is normally graded interactively in the UI (each tap

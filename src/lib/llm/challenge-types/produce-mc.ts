@@ -37,6 +37,7 @@ export const produceMcDef = {
 	type: 'produce-mc',
 	schema: generatedProduceMcSchema,
 	stored: { type: 'multiple-choice', direction: 'toTarget' },
+	plannable: { demand: 0, levels: [1, 2] },
 	promptSpec:
 		'produce-mc — native prompt shown, target text picked. {promptNative, correct:TargetText, distractors:[3 TargetText], instruction} e.g. {"type":"produce-mc","promptNative":"to order (food in a restaurant)","correct":{"text":"pedir","reading":null},"distractors":[{"text":"pagar","reading":null},{"text":"probar","reading":null},{"text":"servir","reading":null}],"instruction":null,"itemIds":["i2"],"explanation":null}',
 	correctiveSpec: 'produce-mc {promptNative,correct,distractors: exactly 3}',
