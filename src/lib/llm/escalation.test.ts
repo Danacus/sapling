@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { Challenge } from '$lib/types';
+import type { Presentation } from '$lib/challenges/serve/presentation';
+import { ALL_READINGS } from '$lib/challenges/serve/reading';
+import type { Challenge, ClozeChallenge, WordOrderChallenge } from '$lib/types';
 import type { FetchLike } from './client';
 import {
 	ANSWER_WORD_LIMIT,
@@ -26,6 +28,40 @@ const base = {
 	targetLanguage: 'Spanish'
 };
 
+/** A served cloze with a full stored bank, for the trimmed-bank case below. */
+const clozeChallenge: ClozeChallenge = {
+	id: 'c2',
+	type: 'cloze',
+	direction: 'toTarget',
+	sentence: 'Nos trae la ___, por favor?',
+	acceptedAnswers: ['cuenta'],
+	wordBank: ['cuenta', 'carta', 'propina', 'mesa', 'servilleta'],
+	translationHint: 'Could you bring us the bill, please?',
+	itemIds: ['i2']
+};
+
+/** A served word-order row with two distractor tiles beyond the sentence. */
+const wordOrderChallenge: WordOrderChallenge = {
+	id: 'c3',
+	type: 'word-order',
+	direction: 'toTarget',
+	prompt: 'Could you bring us the bill, please?',
+	tiles: ['¿Nos', 'trae', 'la', 'cuenta,', 'por', 'favor?', 'carta', 'propina'],
+	answerTokens: ['¿Nos', 'trae', 'la', 'cuenta,', 'por', 'favor?'],
+	answer: '¿Nos trae la cuenta, por favor?',
+	itemIds: ['i2']
+};
+
+function presentationWith(fields: Partial<Presentation>): Presentation {
+	return {
+		showHint: true,
+		bankSize: 0,
+		distractorTiles: 0,
+		readings: ALL_READINGS,
+		...fields
+	};
+}
+
 describe('buildEscalationPrompt', () => {
 	it('pins the reply language, the word limit and the no-flattery rule', () => {
 		const [system] = buildEscalationPrompt(base);
@@ -49,11 +85,12 @@ describe('buildEscalationPrompt', () => {
 		expect(system.content).toMatch(/because the learner insists/i);
 	});
 
-	it('carries only the challenge, the answer and the verdict as context', () => {
+	it('carries only the challenge, the shown view, the answer and the verdict as context', () => {
 		const [, user] = buildEscalationPrompt(base);
 		const [payload, question] = user.content.split('\n');
 		expect(JSON.parse(payload)).toEqual({
 			challenge,
+			shown: { nativeLine: true },
 			answerGiven: 'el agua es fria',
 			verdict: 'wrong'
 		});
@@ -64,6 +101,61 @@ describe('buildEscalationPrompt', () => {
 		const [, user] = buildEscalationPrompt({ ...base, userQuestion: '  Why not "es"?  ' });
 		expect(user.content).toContain('Question: Why not "es"?');
 		expect(user.content).not.toContain(DEFAULT_QUESTION);
+	});
+
+	describe('shown', () => {
+		it('with no presentation, marks everything stored as shown — the pre-existing behaviour', () => {
+			const [, user] = buildEscalationPrompt({ ...base, challenge: clozeChallenge });
+			expect(JSON.parse(user.content.split('\n')[0]).shown).toEqual({
+				nativeLine: true,
+				wordBank: clozeChallenge.wordBank
+			});
+		});
+
+		it('marks the native line hidden when the served presentation hid it, and relaxes the overturn rule', () => {
+			const [system, user] = buildEscalationPrompt({
+				...base,
+				challenge: clozeChallenge,
+				presentation: presentationWith({
+					showHint: false,
+					bankSize: clozeChallenge.wordBank!.length
+				})
+			});
+			expect(JSON.parse(user.content.split('\n')[0]).shown.nativeLine).toBe(false);
+			// The relaxed rule only has teeth if it is actually in the prompt.
+			expect(system.content).toMatch(/"shown\.nativeLine" is false/);
+			expect(system.content).toMatch(/not the only right one/i);
+			expect(system.content).toMatch(/"shown\.nativeLine" is true/);
+		});
+
+		it('a trimmed cloze bank reports only the visible entries', () => {
+			const [, user] = buildEscalationPrompt({
+				...base,
+				challenge: clozeChallenge,
+				presentation: presentationWith({ bankSize: 2 })
+			});
+			// bankSizeFor/visibleBank keep the answer ('cuenta', bank position 0)
+			// first, then the first surviving distractors in stored order.
+			expect(JSON.parse(user.content.split('\n')[0]).shown.wordBank).toEqual(['cuenta', 'carta']);
+		});
+
+		it('a trimmed word-order tray reports only the visible tiles', () => {
+			const [, user] = buildEscalationPrompt({
+				...base,
+				challenge: wordOrderChallenge,
+				presentation: presentationWith({ distractorTiles: 1 })
+			});
+			// The sentence's own six tiles plus the first surviving distractor.
+			expect(JSON.parse(user.content.split('\n')[0]).shown.tiles).toEqual([
+				'¿Nos',
+				'trae',
+				'la',
+				'cuenta,',
+				'por',
+				'favor?',
+				'carta'
+			]);
+		});
 	});
 });
 

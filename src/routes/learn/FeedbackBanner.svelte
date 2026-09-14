@@ -17,6 +17,7 @@
 	import { fly, slide } from 'svelte/transition';
 
 	import { answerReading, spokenAnswerFor } from '$lib/challenges/display';
+	import type { Presentation } from '$lib/challenges/serve/presentation';
 	import { storedDefFor } from '$lib/challenges/types';
 	import { getEscalation, LlmError } from '$lib/llm';
 	import { motionMs } from '$lib/session/motion';
@@ -34,6 +35,7 @@
 		correctAnswer,
 		closestAccepted,
 		explanation,
+		presentation,
 		nativeLanguage,
 		targetLanguage,
 		skipped = false,
@@ -52,6 +54,13 @@
 		/** Nearest accepted form, for the "almost" nudge. */
 		closestAccepted?: string;
 		explanation?: string;
+		/**
+		 * The presentation this challenge was actually served with — absent for a
+		 * bare render (tests). Passed straight through to `getEscalation` so a
+		 * dispute is judged against what was on screen, not the full stored row;
+		 * see `EscalationArgs.presentation`.
+		 */
+		presentation?: Presentation;
 		nativeLanguage: string;
 		targetLanguage: string;
 		/**
@@ -234,6 +243,7 @@
 				verdict,
 				nativeLanguage,
 				targetLanguage,
+				...(presentation ? { presentation } : {}),
 				...(question.trim() ? { userQuestion: question.trim() } : {})
 			});
 			answer = result.answer;

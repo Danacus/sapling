@@ -94,6 +94,16 @@
 		explanation?: string;
 		/** An escalation overturned a `wrong` grade; see {@link overturnCurrent}. */
 		overturned?: boolean;
+		/**
+		 * The presentation this challenge was actually served with — captured off
+		 * `currentPresentation` the instant feedback is built, so a later challenge
+		 * swap (the queue has already moved on by the time the banner asks) can
+		 * never change what an escalation for *this* answer is judged against.
+		 * Threaded to `FeedbackBanner` and on to `getEscalation`
+		 * (`$lib/llm/escalation`), which needs it to know what the learner's screen
+		 * actually showed rather than assuming the full stored row was on it.
+		 */
+		presentation?: Presentation;
 	}
 
 	let phase = $state<Phase>('loading');
@@ -636,7 +646,8 @@
 			correctAnswer: correctAnswerText(challenge),
 			...(event.closestAccepted ? { closestAccepted: event.closestAccepted } : {}),
 			...(event.itemVerdicts ? { itemVerdicts: event.itemVerdicts } : {}),
-			...(challenge.explanation ? { explanation: challenge.explanation } : {})
+			...(challenge.explanation ? { explanation: challenge.explanation } : {}),
+			...(currentPresentation ? { presentation: currentPresentation } : {})
 		};
 
 		// Fire-and-follow: the banner animates now, the write lands underneath it.
@@ -1277,6 +1288,7 @@
 				correctAnswer={feedback.correctAnswer}
 				closestAccepted={feedback.closestAccepted}
 				explanation={feedback.explanation}
+				presentation={feedback.presentation}
 				skipped={feedback.answerGiven === SKIP_ANSWER}
 				{nativeLanguage}
 				{targetLanguage}

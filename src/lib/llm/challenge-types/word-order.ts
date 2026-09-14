@@ -68,14 +68,14 @@ export const wordOrderDef = {
 	promptSpec:
 		'word-order — build a target sentence out of tiles. {promptNative, words:[2+ TargetText — the sentence split into tiles, IN THE CORRECT ORDER], distractorWords:[3 TargetText] or null, instruction} e.g. {"type":"word-order","promptNative":"Could you bring us the bill, please?","words":[{"text":"¿Nos","reading":null},{"text":"trae","reading":null},{"text":"la","reading":null},{"text":"cuenta,","reading":null},{"text":"por","reading":null},{"text":"favor?","reading":null}],"distractorWords":[{"text":"carta","reading":null},{"text":"propina","reading":null},{"text":"mesa","reading":null}],"instruction":null,"itemIds":["i6"],"explanation":null} — the app shuffles the tiles, so never state an order anywhere else. promptNative is the sentence in the native language; always include it. Always write exactly 3 distractorWords.',
 	rulesSpec:
-		'- word-order sentences must have exactly one natural order: if the same tiles could be rearranged into a second correct sentence, rewrite it. 8 tiles is a hard limit; past it, shorten the sentence. distractorWords are plausible words that fit nowhere in the sentence, never a form of a word already in it.\n- Segmentation: one tile per WORD, never per character or syllable, and punctuation rides on the tile it touches — never a tile of its own ("吗？" is one tile, "？" alone is not a tile). For Chinese and Japanese split on word boundaries — 菜单 is one tile, not 菜 + 单. Each tile is a TargetText and carries its own reading under the usual rule.',
+		'- The tiles must determine the sentence uniquely, because a learner may be given only the tiles to work from: word-order sentences must have exactly one natural order — if the same tiles could be rearranged into a second correct sentence, rewrite it — and no distractorWord may be swapped in for one of the sentence tiles and still read as a natural sentence (that would make a second accepted answer the grader does not know about), never a form of a word already in the sentence. 8 tiles is a hard limit; past it, shorten the sentence.\n- Segmentation: one tile per WORD, never per character or syllable, and punctuation rides on the tile it touches — never a tile of its own ("吗？" is one tile, "？" alone is not a tile). For Chinese and Japanese split on word boundaries — 菜单 is one tile, not 菜 + 单. Each tile is a TargetText and carries its own reading under the usual rule.',
 	correctiveSpec: 'word-order {promptNative,words}',
 	paramsSpec: '- tiles: how many tiles the sentence itself should be cut into.',
 	params: (difficulty) => ({
 		tiles: SENTENCE_TILES[difficulty - 1]
 	}),
 	escalationSpec:
-		'"word-order": the learner arranged the shuffled "tiles" into a sentence, and "answerTokens" in that order (printed as "answer") is the only accepted arrangement.',
+		'"word-order": the learner arranged the shuffled "tiles" into a sentence; "answerTokens" in that order (printed as "answer") is the arrangement the local grader accepts — see the shown-line rule for when a different sentence built from the same tiles can still be right.',
 
 	fixtures: {
 		spanish: [
