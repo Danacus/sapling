@@ -40,8 +40,14 @@ export function clozeTypedLevel(): number {
 	return CLOZE_BANK_LADDER.indexOf(0) + 1;
 }
 
-/** Multi-cloze shared word-bank size by rung, answers included. */
-export const MULTI_CLOZE_BANK_LADDER = [5, 6, 7, 8, 9] as const;
+/**
+ * Multi-cloze extra distractor count by rung, beyond the row's own gaps — the
+ * bank is sized relative to how many answers it has to hold, not to an
+ * absolute count: a 3-gap row and a 2-gap row at the same rung differ by one
+ * chip, not by whatever the stronger row's bank happens to total. Mirrors
+ * {@link WORD_ORDER_DISTRACTOR_LADDER}, which is relative for the same reason.
+ */
+export const MULTI_CLOZE_DISTRACTOR_LADDER = [1, 1, 1, 2, 3] as const;
 
 /** Word-order distractor tile count by rung — the sentence's own tiles are always shown. */
 export const WORD_ORDER_DISTRACTOR_LADDER = [0, 0, 1, 2, 3] as const;

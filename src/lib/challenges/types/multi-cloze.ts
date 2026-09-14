@@ -66,7 +66,7 @@ function answersFromSerialized(answerGiven: string): string[] {
 	return answerGiven.split(' · ').map((entry) => entry.replace(/^\d+:\s*/, '').trim());
 }
 
-/** Four answers is the intentional top end of this format; nine is the bank's. */
+/** Four answers is the intentional top end of this format; seven is the bank's. */
 const MIN_GAPS = 2;
 const MAX_GAPS = 4;
 const MIN_BANK = 5;

@@ -23,7 +23,7 @@ export const generatedMultiClozeSchema = z.object({
 	gaps: z.array(generatedGapSchema).min(2).max(4),
 	/**
 	 * Wrong target-language choices only; answers enter the bank locally.
-	 * Always written large enough that the shared bank reaches nine entries —
+	 * Always written large enough that the shared bank reaches seven entries —
 	 * answers included; how much of it a served challenge shows is a
 	 * serve-time decision (`$lib/challenges/serve/presentation`), not this schema's.
 	 */
@@ -40,10 +40,13 @@ const GAP_COUNTS = [2, 2, 3, 3, 4] as const;
  * The shared bank's target size, answers included — constant, not a ladder:
  * which rung a word sits at no longer changes what is *written*, only what a
  * served challenge *shows* (`$lib/challenges/serve/presentation`'s
- * `bankSizeFor`/`visibleBank`). Nine is the top of the old ladder, so every
- * banked passage is written with the fullest bank the model can supply.
+ * `bankSizeFor`/`visibleBank`). Seven is the most a served bank ever shows —
+ * four gaps (the top of `GAP_COUNTS`) plus three extra distractors (the top of
+ * the serve-time `MULTI_CLOZE_DISTRACTOR_LADDER`) — so every banked passage is
+ * written with the fullest bank a served row could ever need, and not a word
+ * more the model has to invent and the resolver has to dedupe.
  */
-const BANK_ENTRIES = 9;
+const BANK_ENTRIES = 7;
 
 function marker(index: number): string {
 	return `___${index + 1}___`;
@@ -125,7 +128,7 @@ export const multiClozeDef = {
 	schema: generatedMultiClozeSchema,
 	stored: { type: 'multi-cloze', direction: 'toTarget' },
 	plannable: { demand: 1, levels: [3, 4, 5] },
-	promptSpec: `multi-cloze — 2-4 target-language sentences with 2-4 target-language gaps and one shared bank of ${BANK_ENTRIES}. {parts:[{text,reading}],gaps:[{itemId,answer:{text,reading}}],distractorWords:[{text,reading}],itemIds} e.g. {"type":"multi-cloze","parts":[{"text":"En el restaurante, pido ","reading":null},{"text":". Después pago la ","reading":null},{"text":".","reading":null}],"gaps":[{"itemId":"pedir","answer":{"text":"comida","reading":null}},{"itemId":"la cuenta","answer":{"text":"cuenta","reading":null}}],"distractorWords":[{"text":"mesa","reading":null},{"text":"carta","reading":null},{"text":"propina","reading":null},{"text":"botella","reading":null},{"text":"servilleta","reading":null},{"text":"copa","reading":null},{"text":"plato","reading":null}],"itemIds":["pedir","la cuenta"],"explanation":null} — parts are consecutive spans around gaps and must have exactly one more entry than gaps; gaps and itemIds are in the same order; all text is target-language. Write enough distractorWords that, together with the answers, the shared bank has ${BANK_ENTRIES} entries.`,
+	promptSpec: `multi-cloze — 2-4 target-language sentences with 2-4 target-language gaps and one shared bank of ${BANK_ENTRIES}. {parts:[{text,reading}],gaps:[{itemId,answer:{text,reading}}],distractorWords:[{text,reading}],itemIds} e.g. {"type":"multi-cloze","parts":[{"text":"En el restaurante, pido ","reading":null},{"text":". Después pago la ","reading":null},{"text":".","reading":null}],"gaps":[{"itemId":"pedir","answer":{"text":"comida","reading":null}},{"itemId":"la cuenta","answer":{"text":"cuenta","reading":null}}],"distractorWords":[{"text":"mesa","reading":null},{"text":"carta","reading":null},{"text":"propina","reading":null},{"text":"botella","reading":null},{"text":"servilleta","reading":null}],"itemIds":["pedir","la cuenta"],"explanation":null} — parts are consecutive spans around gaps and must have exactly one more entry than gaps; gaps and itemIds are in the same order; all text is target-language. Write enough distractorWords that, together with the answers, the shared bank has ${BANK_ENTRIES} entries.`,
 	rulesSpec:
 		'- Multi-cloze is target-language-only: do not include a native translation or hint. Write a coherent 2-4 sentence scene, use each itemId for exactly one gap, and make distractors plausible in the same context without making an answer ambiguous.',
 	correctiveSpec: 'multi-cloze {parts,gaps,distractorWords,itemIds}',

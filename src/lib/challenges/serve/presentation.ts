@@ -41,7 +41,7 @@ import type { RomanizationMode } from '$lib/ui/prefs';
 import {
 	CLOZE_BANK_LADDER,
 	HINT_CEILING_LEVEL,
-	MULTI_CLOZE_BANK_LADDER,
+	MULTI_CLOZE_DISTRACTOR_LADDER,
 	WORD_ORDER_DISTRACTOR_LADDER
 } from './ladders';
 import { itemsById, levelForStrength, weakestWordStrength } from './progression';
@@ -50,7 +50,7 @@ import { ALL_READINGS, planReadings, type ReadingPlan } from './reading';
 export {
 	CLOZE_BANK_LADDER,
 	HINT_CEILING_LEVEL,
-	MULTI_CLOZE_BANK_LADDER,
+	MULTI_CLOZE_DISTRACTOR_LADDER,
 	WORD_ORDER_DISTRACTOR_LADDER
 } from './ladders';
 
@@ -120,6 +120,15 @@ export function showNativeHint(
  * How large a served cloze's or multi-cloze's word bank should read, answer(s)
  * included — never more than the stored bank actually has.
  *
+ * A cloze's single answer makes an absolute ladder ({@link CLOZE_BANK_LADDER})
+ * fine, but multi-cloze's gap count varies row to row (2 to 4), so the same
+ * absolute size lands very differently on a 2-gap and a 4-gap row — an 8-entry
+ * bank is a mild extra on the latter and more than double the choices on the
+ * former. Multi-cloze is instead sized **relative to its own gap count**: the
+ * row's answers plus {@link MULTI_CLOZE_DISTRACTOR_LADDER}'s extra distractors
+ * for the rung, so a row's bank always reads as "this many words to fill, plus
+ * a few wrong ones" rather than a fixed total that happens to swamp a short row.
+ *
  * `byId` is the optional pre-built {@link itemsById} index, so a caller asking
  * about several facts of one challenge builds it once; omitted, it is rebuilt
  * from `items` exactly as before.
@@ -131,8 +140,9 @@ export function bankSizeFor(
 ): number {
 	const level = levelForStrength(weakestWordStrength(challenge, items, byId));
 	const stored = challenge.wordBank?.length ?? 0;
-	const ladder = challenge.type === 'cloze' ? CLOZE_BANK_LADDER : MULTI_CLOZE_BANK_LADDER;
-	return Math.min(stored, ladder[level - 1]);
+	if (challenge.type === 'cloze') return Math.min(stored, CLOZE_BANK_LADDER[level - 1]);
+	const gaps = challenge.gaps.length;
+	return Math.min(stored, gaps + MULTI_CLOZE_DISTRACTOR_LADDER[level - 1]);
 }
 
 /**

@@ -43,7 +43,8 @@ differs.
    cloze, multi-cloze and word-order all ask for a constant, full-size set
    whichever rung the want is written at (cloze always asks for exactly five
    `distractorWords`, a fixed line in its prompt rather than a parameter;
-   multi-cloze always writing enough to reach nine bank entries; word-order
+   multi-cloze always writing enough to reach seven bank entries — the most a
+   served row (four gaps) can ever show; word-order
    always asking for three distractor tiles), and `$lib/challenges/serve/presentation` sizes
    how much of that stored set a *served* challenge shows, from the word's
    current rung. Only a structural count — a sentence's length, a tile tray's

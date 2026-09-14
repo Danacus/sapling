@@ -9,7 +9,7 @@ import type {
 import {
 	CLOZE_BANK_LADDER,
 	HINT_CEILING_LEVEL,
-	MULTI_CLOZE_BANK_LADDER,
+	MULTI_CLOZE_DISTRACTOR_LADDER,
 	WORD_ORDER_DISTRACTOR_LADDER,
 	clozeTypedLevel
 } from './ladders';
@@ -97,15 +97,52 @@ describe('bankSizeFor', () => {
 		}
 	});
 
-	it('sizes a multi-cloze bank off MULTI_CLOZE_BANK_LADDER', () => {
-		const bigMultiBank = [...bigBank, 'canto', 'nado', 'salgo'];
+	it('sizes a multi-cloze bank relative to its own gap count, off MULTI_CLOZE_DISTRACTOR_LADDER', () => {
+		// A 3-gap row: the bank is the three answers plus that rung's extra
+		// distractors, never an absolute total that ignores how many gaps it has.
+		const answers = ['leo', 'como', 'bebo'];
+		const bigMultiBank = [...answers, 'd1', 'd2', 'd3', 'd4', 'd5'];
 		for (const level of [1, 2, 3, 4, 5] as const) {
-			const challenge = multiCloze(['w'], ['leo'], bigMultiBank);
-			const items = [item('w', strengthAt(level))];
+			const challenge = multiCloze(['a', 'b', 'c'], answers, bigMultiBank);
+			const items = ['a', 'b', 'c'].map((id) => item(id, strengthAt(level)));
 			expect(bankSizeFor(challenge, items), `rung ${level}`).toBe(
-				MULTI_CLOZE_BANK_LADDER[level - 1]
+				3 + MULTI_CLOZE_DISTRACTOR_LADDER[level - 1]
 			);
 		}
+	});
+
+	it('sizes a differently-gapped multi-cloze row differently at the same rung', () => {
+		// The bug this guards: a 3-gap row at rung 4 used to show the same
+		// absolute bank as any other rung-4 row (8 chips). It must not any more.
+		const answers2 = ['leo', 'como'];
+		const answers4 = ['leo', 'como', 'bebo', 'corro'];
+		const bank2 = [...answers2, 'd1', 'd2', 'd3', 'd4', 'd5'];
+		const bank4 = [...answers4, 'd1', 'd2', 'd3', 'd4', 'd5'];
+		const level = 4 as const;
+		const twoGap = multiCloze(['a', 'b'], answers2, bank2);
+		const fourGap = multiCloze(['a', 'b', 'c', 'd'], answers4, bank4);
+		const items2 = ['a', 'b'].map((id) => item(id, strengthAt(level)));
+		const items4 = ['a', 'b', 'c', 'd'].map((id) => item(id, strengthAt(level)));
+		expect(bankSizeFor(twoGap, items2)).toBe(2 + MULTI_CLOZE_DISTRACTOR_LADDER[level - 1]);
+		expect(bankSizeFor(fourGap, items4)).toBe(4 + MULTI_CLOZE_DISTRACTOR_LADDER[level - 1]);
+		expect(bankSizeFor(twoGap, items2)).not.toBe(bankSizeFor(fourGap, items4));
+	});
+
+	it('caps a multi-cloze bank at what is actually stored', () => {
+		const answers = ['leo', 'como'];
+		const challenge = multiCloze(['a', 'b'], answers, [...answers, 'd1']);
+		const items = ['a', 'b'].map((id) => item(id, strengthAt(5)));
+		// Rung 5 wants 2 + 3 = 5, but only 3 entries are stored.
+		expect(bankSizeFor(challenge, items)).toBe(3);
+	});
+
+	it('never shows a multi-cloze bank smaller than its own gap count', () => {
+		// No distractors survived resolution at all; the bank is exactly the
+		// answers, and every rung must still show all of them.
+		const answers = ['leo', 'como', 'bebo', 'corro'];
+		const challenge = multiCloze(['a', 'b', 'c', 'd'], answers, [...answers]);
+		const items = ['a', 'b', 'c', 'd'].map((id) => item(id, strengthAt(1)));
+		expect(bankSizeFor(challenge, items)).toBe(4);
 	});
 
 	it('never exceeds the stored bank, up to the rung where the ladder stops asking for one', () => {
@@ -137,7 +174,7 @@ describe('bankSizeFor', () => {
 	it('is decided by the weakest word the challenge exercises', () => {
 		const items = [item('owned', strengthAt(5)), item('new', strengthAt(1))];
 		const challenge = multiCloze(['owned', 'new'], ['leo', 'como'], [...'abcdefghi']);
-		expect(bankSizeFor(challenge, items)).toBe(MULTI_CLOZE_BANK_LADDER[0]);
+		expect(bankSizeFor(challenge, items)).toBe(2 + MULTI_CLOZE_DISTRACTOR_LADDER[0]);
 	});
 });
 
