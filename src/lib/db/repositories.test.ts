@@ -12,6 +12,7 @@ import {
 	addConversation,
 	addExchange,
 	addText,
+	createProfile,
 	deleteConversation,
 	deleteText,
 	getAllItems,
@@ -19,11 +20,15 @@ import {
 	getConversations,
 	getItem,
 	getKnownTerms,
+	getProfile,
 	getText,
 	getTexts,
+	listProfiles,
 	markWord,
 	poolSize,
 	recordLookup,
+	saveProfile,
+	setActiveProfile,
 	upsertItems
 } from '$lib/db';
 import { setBackendForTesting } from './backend';
@@ -66,6 +71,60 @@ const challenge = {
 	options: ['书', '水'],
 	answerIndex: 0
 } as unknown as Challenge;
+
+describe('language profiles', () => {
+	it('keeps each language library isolated and restores it when selected again', async () => {
+		await saveProfile({
+			nativeLanguage: 'English',
+			targetLanguage: 'Spanish',
+			level: 'beginner',
+			interests: [],
+			model: 'model',
+			createdAt: 1
+		});
+		await upsertItems([item('spanish', 'libro', 2)]);
+
+		const frenchId = await createProfile({
+			nativeLanguage: 'English',
+			targetLanguage: 'French',
+			level: 'beginner',
+			interests: [],
+			model: 'model',
+			createdAt: 3
+		});
+
+		expect((await getProfile())?.targetLanguage).toBe('French');
+		expect(await getAllItems()).toEqual([]);
+		await upsertItems([item('french', 'livre', 4)]);
+
+		const profiles = await listProfiles();
+		expect(profiles.map(({ targetLanguage, active }) => ({ targetLanguage, active }))).toEqual([
+			{ targetLanguage: 'Spanish', active: false },
+			{ targetLanguage: 'French', active: true }
+		]);
+
+		await setActiveProfile(profiles[0].id);
+		expect((await getAllItems()).map(({ id }) => id)).toEqual(['spanish']);
+
+		await setActiveProfile(frenchId);
+		expect((await getAllItems()).map(({ id }) => id)).toEqual(['french']);
+
+		const scoped = await store.query<{ type: string }>(
+			"SELECT type FROM events WHERE type = 'profileEvent'"
+		);
+		expect(scoped.length).toBeGreaterThan(0);
+
+		const restored = await makeTestBackend('other-device');
+		await restored.importData(await store.exportData());
+		const restoredProfiles = await restored.listProfiles();
+		expect(restoredProfiles.map(({ targetLanguage }) => targetLanguage)).toEqual([
+			'Spanish',
+			'French'
+		]);
+		await restored.setActiveProfile(frenchId);
+		expect((await restored.getAllItems()).map(({ id }) => id)).toEqual(['french']);
+	});
+});
 
 describe('poolSize', () => {
 	it('counts the pool without reading its rows', async () => {

@@ -59,6 +59,14 @@ export interface DailyActivity {
 	added: number;
 }
 
+/** One language library available to this device. */
+export interface LanguageProfile {
+	id: string;
+	nativeLanguage: string;
+	targetLanguage: string;
+	active: boolean;
+}
+
 /** Envelope version written by {@link Backend.exportData}. */
 export const EXPORT_VERSION = 3;
 
@@ -101,6 +109,12 @@ export interface Backend {
 
 	/** The stored profile, or `undefined` before onboarding completes. */
 	getProfile(): Promise<Profile | undefined>;
+	/** Every language library, in creation order. */
+	listProfiles(): Promise<LanguageProfile[]>;
+	/** Creates a separate language library, selects it, and returns its id. */
+	createProfile(profile: Profile): Promise<string>;
+	/** Selects a language library on this device. */
+	setActiveProfile(id: string): Promise<void>;
 	/** Creates or replaces the profile. */
 	saveProfile(profile: Profile, now?: number): Promise<void>;
 
@@ -297,6 +311,9 @@ export interface Backend {
  */
 export const BACKEND_METHODS = [
 	'getProfile',
+	'listProfiles',
+	'createProfile',
+	'setActiveProfile',
 	'saveProfile',
 	'getAllItems',
 	'getItem',

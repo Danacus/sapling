@@ -8,6 +8,12 @@ Envelope: `{ id, type, at, device, payload }`. `id` is the set-union key — an
 id already in the log is never re-applied. `at` is when the learner did the
 thing, and doubles as the last-write-wins input for the two overwrite types.
 
+The original language library keeps these event shapes unchanged. Facts for an
+additional language use the opaque `profileEvent` type, whose payload is
+`{ profileId, type, payload }`. A client that predates multiple languages keeps
+such a row in its log and syncs it onward, but cannot accidentally materialise
+it into its singleton library. The Worker remains payload-blind.
+
 Push and export carry log rows verbatim; only materialization interprets a
 payload, and a row it cannot read is skipped, never dropped from the log. So a
 row a newer build wrote — an unknown `type`, or a payload whose schema has
@@ -54,7 +60,11 @@ compiled to wasm and lent the Worker's database through `host.ts`) and
 forwarded by `client.ts`, one `postMessage` per call. `events` is the facts
 log; `items`, `reviews`, `challenges`, `results`, `tombstones`,
 `profile` are aggregates the materializer maintains — UI reads never touch
-`events`. The VFS is exclusive: a second tab gets "Sapling is already open in
+`events`. The log holds every language; the aggregate tables hold only the
+language selected on this device. Profiles form the small global index, and a
+switch rebuilds the other aggregates from that profile's events. The active
+profile id lives in local `meta`, so selecting a language does not switch other
+devices. The VFS is exclusive: a second tab gets "Sapling is already open in
 another tab." and stops; no leader election. Node tests run the same wasm
 build, DDL and materializer against an in-memory database
 (`backend.testing.ts`).

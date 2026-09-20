@@ -15,11 +15,12 @@ use crate::day::LocalDay;
 use crate::events::{
     typed_event, ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted,
     ItemAdded, ItemDeleted, ItemReviewed, ItemUpdated, Payload, RawEvent, ReviewAmended, SyncEvent,
-    TextDeleted, WordLookedUp, WordMarked, PATCHABLE_COLUMNS,
+    TextDeleted, WordLookedUp, WordMarked, PATCHABLE_COLUMNS, SCOPED_EVENT_TYPE,
 };
 use crate::js;
 use crate::schema::{
-    review_key, DDL, DERIVED_SCHEMA_VERSION, DERIVED_TABLES, PROFILE_ID, RECENT_GRADES_CAP,
+    review_key, ACTIVE_PROFILE_KEY, DDL, DERIVED_SCHEMA_VERSION, DERIVED_TABLES, PROFILE_ID,
+    RECENT_GRADES_CAP,
 };
 use crate::sql::{Error, Param, Result, Row, Sql};
 use crate::srs::{new_card_state, review_card, FsrsCardState, Grade, GOOD};
@@ -90,6 +91,18 @@ fn scheduler_error(message: String) -> Error {
 impl<'a> Materializer<'a> {
     pub fn new(sql: &'a dyn Sql, day: &'a dyn LocalDay) -> Materializer<'a> {
         Materializer { sql, day }
+    }
+
+    fn active_profile_id(&self) -> Result<String> {
+        Ok(self
+            .sql
+            .query(
+                "SELECT value FROM meta WHERE key = ?",
+                &[Param::text(ACTIVE_PROFILE_KEY)],
+            )?
+            .first()
+            .and_then(|row| row.opt_text("value").ok().flatten().map(str::to_owned))
+            .unwrap_or_else(|| PROFILE_ID.to_owned()))
     }
 
     fn exists(&self, sql: &str, params: &[Param]) -> Result<bool> {
@@ -255,17 +268,24 @@ impl<'a> Materializer<'a> {
     /// failing the fold: the log keeps rows a newer build wrote, and a rule
     /// that cannot apply must return, never throw.
     fn patches_of(&self, item_id: &str) -> Result<Vec<(f64, ItemUpdated)>> {
+        let active = self.active_profile_id()?;
         let rows = self.sql.query(
-            "SELECT at, device, payload FROM events
-		 WHERE type = 'itemUpdated' AND json_extract(payload, '$.itemId') = ?
-		 ORDER BY at, device",
-            &[Param::text(item_id)],
+            "SELECT id, type, at, device, payload FROM events
+		 WHERE type IN ('itemUpdated', 'profileEvent') ORDER BY at, device",
+            &[],
         )?;
         Ok(rows
             .iter()
             .filter_map(|row| {
                 let at = row.f64("at").ok()?;
-                Some((at, serde_json::from_str(row.text("payload").ok()?).ok()?))
+                let event = typed_event(&raw_from_row(row).ok()?)?;
+                if event.profile_id != active {
+                    return None;
+                }
+                match event.payload {
+                    Payload::ItemUpdated(p) if p.item_id == item_id => Some((at, p)),
+                    _ => None,
+                }
             })
             .collect())
     }
@@ -298,17 +318,26 @@ impl<'a> Materializer<'a> {
     /// the log may also hold one a newer build wrote, and a fold that cannot
     /// start returns rather than failing the transaction.
     fn refold_patches(&self, item_id: &str) -> Result<()> {
+        let active = self.active_profile_id()?;
         let base = self.sql.query(
             &format!(
-                "SELECT payload FROM events
-		 WHERE type = 'itemAdded' AND json_extract(payload, '$.id') = ?
-		 ORDER BY {LOG_ORDER}"
+                "SELECT id, type, at, device, payload FROM events
+		 WHERE type IN ('itemAdded', 'profileEvent') ORDER BY {LOG_ORDER}"
             ),
-            &[Param::text(item_id)],
+            &[],
         )?;
         let added: Option<ItemAdded> = base
             .iter()
-            .find_map(|row| serde_json::from_str(row.text("payload").ok()?).ok());
+            .filter_map(|row| typed_event(&raw_from_row(row).ok()?))
+            .find_map(|event| {
+                if event.profile_id != active {
+                    return None;
+                }
+                match event.payload {
+                    Payload::ItemAdded(p) if p.id == item_id => Some(p),
+                    _ => None,
+                }
+            });
         let Some(added) = added else {
             return Ok(());
         };
@@ -432,10 +461,10 @@ impl<'a> Materializer<'a> {
         )
     }
 
-    fn profile_updated(&self, at: f64, p: &Profile) -> Result<()> {
+    fn profile_updated(&self, profile_id: &str, at: f64, p: &Profile) -> Result<()> {
         let row = self.sql.query(
             "SELECT updatedAt FROM profile WHERE id = ?",
-            &[Param::text(PROFILE_ID)],
+            &[Param::text(profile_id)],
         )?;
         if let Some(row) = row.first() {
             if at < row.f64("updatedAt")? {
@@ -447,7 +476,7 @@ impl<'a> Materializer<'a> {
 			   (id, nativeLanguage, targetLanguage, level, interests, about, model, createdAt, updatedAt)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             &[
-                Param::text(PROFILE_ID),
+                Param::text(profile_id),
                 Param::text(&p.native_language),
                 Param::text(&p.target_language),
                 Param::text(p.level.as_str()),
@@ -594,6 +623,15 @@ impl<'a> Materializer<'a> {
 
     /// Applies one event's merge rule. Assumes the caller has already deduped by id.
     pub fn apply_event(&self, event: &SyncEvent) -> Result<()> {
+        // Profiles form the switcher's small global index. Everything else is
+        // the read model for just this device's active language.
+        if let Payload::ProfileUpdated(p) = &event.payload {
+            return self.profile_updated(&event.profile_id, event.at, p);
+        }
+        let active = self.active_profile_id()?;
+        if event.profile_id != active {
+            return Ok(());
+        }
         match &event.payload {
             Payload::ItemAdded(p) => self.item_added(p),
             Payload::ItemReviewed(p) => self.item_reviewed(p),
@@ -604,7 +642,7 @@ impl<'a> Materializer<'a> {
             Payload::ChallengeServed(p) => self.challenge_served(p),
             Payload::ChallengeReported(p) => self.challenge_reported(p),
             Payload::ResultLogged(p) => self.result_logged(&event.id, p),
-            Payload::ProfileUpdated(p) => self.profile_updated(event.at, p),
+            Payload::ProfileUpdated(_) => Ok(()),
             Payload::TextAdded(p) => self.text_added(p),
             Payload::TextDeleted(p) => self.text_deleted(p),
             Payload::WordMarked(p) => self.word_marked(event.at, p),
@@ -656,14 +694,17 @@ impl<'a> Materializer<'a> {
 
     /// Writes one event to the log and materialises it, once.
     pub fn ingest(&self, event: &SyncEvent, seq: Option<f64>) -> Result<()> {
-        let new = self.append(
-            &event.id,
-            event.kind.as_str(),
-            event.at,
-            &event.device,
-            &event.payload.to_json(),
-            seq,
-        )?;
+        let (kind, payload) = if event.profile_id == PROFILE_ID {
+            (event.kind.as_str(), event.payload.to_json())
+        } else {
+            let wrapped = json!({
+                "profileId": event.profile_id,
+                "type": event.kind.as_str(),
+                "payload": serde_json::to_value(&event.payload)?,
+            });
+            (SCOPED_EVENT_TYPE, js::stringify(&wrapped))
+        };
+        let new = self.append(&event.id, kind, event.at, &event.device, &payload, seq)?;
         if new {
             self.apply_event(event)?;
         }
@@ -677,28 +718,27 @@ impl<'a> Materializer<'a> {
     /// merge rule needs a type, so a payload that will not parse is stored as
     /// it came and applied to nothing.
     pub fn ingest_raw(&self, event: &RawEvent, seq: Option<f64>) -> Result<()> {
-        match typed_event(event) {
-            Some(typed) => self.ingest(&typed, seq),
-            None => {
-                self.append(
-                    &event.id,
-                    &event.kind,
-                    event.at,
-                    &event.device,
-                    &js::stringify(&event.payload),
-                    seq,
-                )?;
-                Ok(())
+        let new = self.append(
+            &event.id,
+            &event.kind,
+            event.at,
+            &event.device,
+            &js::stringify(&event.payload),
+            seq,
+        )?;
+        if new {
+            if let Some(typed) = typed_event(event) {
+                self.apply_event(&typed)?;
             }
         }
+        Ok(())
     }
 
     /// Inserts a row without materialising it — [`Materializer::rebuild`] is what applies it.
     pub fn insert_only(&self, event: &RawEvent) -> Result<()> {
-        let payload = match typed_event(event) {
-            Some(typed) => typed.payload.to_json(),
-            None => js::stringify(&event.payload),
-        };
+        // Import is a log union, so keep the wire payload byte-for-structure.
+        // In particular, a `profileEvent` must retain its scope wrapper.
+        let payload = js::stringify(&event.payload);
         self.sql.exec(
             "INSERT OR IGNORE INTO events (seq, id, type, at, device, payload) VALUES (NULL, ?, ?, ?, ?, ?)",
             &[

@@ -5,11 +5,14 @@
 		getAllItems,
 		getDailyActivity,
 		getProfile,
+		listProfiles,
 		localDay,
 		poolSize,
 		previousDay,
+		setActiveProfile,
 		streakFrom
 	} from '$lib/db';
+	import type { LanguageProfile } from '$lib/db';
 	import { maturityOf, type Maturity } from '$lib/challenges/serve/progression';
 	import { isDue } from '$lib/srs';
 	import type { KnowledgeItem, Profile } from '$lib/types';
@@ -21,6 +24,7 @@
 	let loading = $state(true);
 	let loadError = $state('');
 	let profile = $state<Profile | undefined>(undefined);
+	let profiles = $state<LanguageProfile[]>([]);
 	let items = $state<KnowledgeItem[]>([]);
 	/** Answers per local calendar day, oldest first — the strip and the streak. */
 	let activity = $state<{ day: string; count: number }[]>([]);
@@ -37,10 +41,11 @@
 		loading = true;
 		loadError = '';
 
-		Promise.all([getProfile(), getAllItems(), getDailyActivity(), poolSize()])
-			.then(([loadedProfile, loadedItems, days, count]) => {
+		Promise.all([getProfile(), listProfiles(), getAllItems(), getDailyActivity(), poolSize()])
+			.then(([loadedProfile, loadedProfiles, loadedItems, days, count]) => {
 				if (cancelled) return;
 				profile = loadedProfile;
+				profiles = loadedProfiles;
 				items = loadedItems;
 				activity = days;
 				streakDays = streakFrom(activity.map((entry) => entry.day));
@@ -58,6 +63,15 @@
 			cancelled = true;
 		};
 	});
+
+	async function switchProfile(event: Event) {
+		const id = (event.currentTarget as HTMLSelectElement).value;
+		if (!id || profiles.find((entry) => entry.id === id)?.active) return;
+		await setActiveProfile(id);
+		// Pages and long-running tasks may hold objects from the old language.
+		// A full navigation gives the newly materialised library a clean runtime.
+		window.location.assign('/');
+	}
 
 	const targetLanguage = $derived(profile?.targetLanguage?.trim() || 'your new language');
 	// `isDue` compares the schedule the *read* derived against this tick's `now`,
@@ -167,6 +181,21 @@
 				<div class="identity">
 					<p class="eyebrow">Learning</p>
 					<h1>{targetLanguage}</h1>
+					<div class="language-picker">
+						{#if profiles.length > 1}
+							<label>
+								<span class="sr-only">Active language</span>
+								<select onchange={(event) => void switchProfile(event)}>
+									{#each profiles as entry (entry.id)}
+										<option value={entry.id} selected={entry.active}>
+											{entry.targetLanguage} from {entry.nativeLanguage}
+										</option>
+									{/each}
+								</select>
+							</label>
+						{/if}
+						<a href="/onboarding?add=1">Add language</a>
+					</div>
 				</div>
 				<div class="topbar-actions">
 					<div class="streak" class:dimmed={streakDays === 0} title="Current streak">
@@ -438,6 +467,42 @@
 		font-size: clamp(1.75rem, 8vw, 2.3rem);
 		line-height: 1.05;
 		overflow-wrap: break-word;
+	}
+
+	.language-picker {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.45rem 0.7rem;
+		margin-top: 0.45rem;
+		font-size: 0.82rem;
+	}
+
+	.language-picker select {
+		max-width: min(16rem, 70vw);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		background: var(--surface);
+		color: var(--text);
+		font: inherit;
+		padding: 0.3rem 0.45rem;
+	}
+
+	.language-picker a {
+		color: var(--text-muted);
+		text-underline-offset: 0.18em;
+	}
+
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
 	}
 
 	.topbar-actions {

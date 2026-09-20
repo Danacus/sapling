@@ -21,12 +21,12 @@ use serde_json::{Map, Value};
 use crate::day::LocalDay;
 use crate::events::{
     parse_envelope, ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted,
-    ItemAdded, ItemDeleted, ItemFields, ItemReviewed, ItemUpdated, Payload, RawEvent,
+    EventType, ItemAdded, ItemDeleted, ItemFields, ItemReviewed, ItemUpdated, Payload, RawEvent,
     ReviewAmended, SyncEvent, TextDeleted, WordLookedUp, WordMarked,
 };
 use crate::js;
 use crate::materialize::{open_schema, raw_from_row, Materializer, LOG_ORDER};
-use crate::schema::{DERIVED_TABLES, PROFILE_ID};
+use crate::schema::{ACTIVE_PROFILE_KEY, DERIVED_TABLES, PROFILE_ID};
 use crate::sql::{Error, Param, Result, Row, Sql};
 use crate::srs::{item_srs, FsrsCardState};
 use crate::types::{
@@ -67,6 +67,17 @@ pub struct ExportEnvelope {
     pub version: f64,
     pub exported_at: f64,
     pub events: Vec<RawEvent>,
+}
+
+/// One row for the language switcher. The full active profile still comes
+/// through `getProfile`; this read stays deliberately small.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageProfile {
+    pub id: String,
+    pub native_language: String,
+    pub target_language: String,
+    pub active: bool,
 }
 
 /// The backend over an open, schema-applied database.
@@ -299,6 +310,7 @@ impl Core {
             return Ok(());
         }
         let at = (self.clock)();
+        let profile_id = self.active_profile_id()?;
         self.transaction(|| {
             let m = self.materializer();
             for payload in facts {
@@ -307,6 +319,7 @@ impl Core {
                     kind: payload.kind(),
                     at,
                     device: self.device_id.clone(),
+                    profile_id: profile_id.clone(),
                     payload,
                 };
                 m.ingest(&event, None)?;
@@ -327,10 +340,87 @@ impl Core {
 
     /* ---- Profile ------------------------------------------------------ */
 
+    fn active_profile_id(&self) -> Result<String> {
+        let rows = self.sql.query(
+            "SELECT value FROM meta WHERE key = ?",
+            &[Param::text(ACTIVE_PROFILE_KEY)],
+        )?;
+        Ok(rows
+            .first()
+            .and_then(|row| row.opt_text("value").ok().flatten())
+            .unwrap_or(PROFILE_ID)
+            .to_owned())
+    }
+
+    pub fn list_profiles(&self) -> Result<Vec<LanguageProfile>> {
+        let active = self.active_profile_id()?;
+        self.sql
+            .query(
+                "SELECT id, nativeLanguage, targetLanguage FROM profile ORDER BY createdAt, id",
+                &[],
+            )?
+            .iter()
+            .map(|row| {
+                Ok(LanguageProfile {
+                    id: row.text("id")?.to_owned(),
+                    native_language: row.text("nativeLanguage")?.to_owned(),
+                    target_language: row.text("targetLanguage")?.to_owned(),
+                    active: row.text("id")? == active,
+                })
+            })
+            .collect()
+    }
+
+    pub fn create_profile(&self, profile: &Profile) -> Result<String> {
+        let id = (self.ids)();
+        let at = (self.clock)();
+        self.transaction(|| {
+            self.sql.exec(
+                "INSERT INTO meta (key, value) VALUES (?, ?)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                &[Param::text(ACTIVE_PROFILE_KEY), Param::text(&id)],
+            )?;
+            let m = self.materializer();
+            m.rebuild()?;
+            m.ingest(
+                &SyncEvent {
+                    id: (self.ids)(),
+                    kind: EventType::ProfileUpdated,
+                    at,
+                    device: self.device_id.clone(),
+                    profile_id: id.clone(),
+                    payload: Payload::ProfileUpdated(profile.clone()),
+                },
+                None,
+            )?;
+            Ok(())
+        })?;
+        Ok(id)
+    }
+
+    pub fn set_active_profile(&self, id: &str) -> Result<()> {
+        if !self
+            .sql
+            .query("SELECT 1 FROM profile WHERE id = ?", &[Param::text(id)])?
+            .is_empty()
+        {
+            return self.transaction(|| {
+                self.sql.exec(
+                    "INSERT INTO meta (key, value) VALUES (?, ?)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    &[Param::text(ACTIVE_PROFILE_KEY), Param::text(id)],
+                )?;
+                self.materializer().rebuild()
+            });
+        }
+        Err(Error("That language profile does not exist.".into()))
+    }
+
     pub fn get_profile(&self) -> Result<Option<Profile>> {
+        let profile_id = self.active_profile_id()?;
         let rows = self.sql.query(
             "SELECT * FROM profile WHERE id = ?",
-            &[Param::text(PROFILE_ID)],
+            &[Param::text(&profile_id)],
         )?;
         let Some(row) = rows.first() else {
             return Ok(None);

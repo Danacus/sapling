@@ -209,7 +209,7 @@
 					</span>
 				</p>
 				<p class="hint">
-					Fixed once you start; change them by <a href="/settings">resetting in Settings</a>.
+					Fixed for this library. Add or switch languages from <a href="/">home</a>.
 				</p>
 			</section>
 		{/if}

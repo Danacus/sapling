@@ -25,8 +25,11 @@ use crate::js;
 use crate::sql::{Error, Result};
 
 /// Every `Backend` method, as `protocol.ts` names them.
-pub const METHODS: [&str; 36] = [
+pub const METHODS: [&str; 39] = [
     "getProfile",
+    "listProfiles",
+    "createProfile",
+    "setActiveProfile",
     "saveProfile",
     "getAllItems",
     "getItem",
@@ -121,6 +124,12 @@ pub fn dispatch(core: &Core, method: &str, args: &[Value]) -> Result<Option<Valu
     match method {
         /* ---- Profile ------------------------------------------------- */
         "getProfile" => maybe(core.get_profile()?),
+        "listProfiles" => some(core.list_profiles()?),
+        "createProfile" => some(core.create_profile(&required(method, args, 0)?)?),
+        "setActiveProfile" => {
+            core.set_active_profile(&required::<String>(method, args, 0)?)?;
+            none()
+        }
         "saveProfile" => {
             core.save_profile(&required(method, args, 0)?)?;
             none()

@@ -1,14 +1,23 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 
-	import { DEFAULT_MODEL, saveProfile, setApiKey, setModel } from '$lib/db';
+	import {
+		createProfile,
+		DEFAULT_MODEL,
+		getModel,
+		saveProfile,
+		setApiKey,
+		setModel
+	} from '$lib/db';
 	import { isSyncAvailable, isValidPhrase, normalizePhrase, pairDevice } from '$lib/sync';
 	import type { Level, Profile } from '$lib/types';
 	import InlineStatus from '$lib/ui/InlineStatus.svelte';
 	import InterestPicker from '$lib/ui/InterestPicker.svelte';
 	import LevelPicker from '$lib/ui/LevelPicker.svelte';
 
-	const TOTAL_STEPS = 3;
+	const adding = page.url.searchParams.has('add');
+	const TOTAL_STEPS = adding ? 2 : 3;
 
 	/** Datalist suggestions; learners may still type anything. */
 	const LANGUAGES = [
@@ -53,7 +62,7 @@
 	let level = $state<Level | undefined>(undefined);
 	let interests = $state<string[]>([]);
 	let apiKey = $state('');
-	let model = $state(DEFAULT_MODEL);
+	let model = $state(adding ? getModel() : DEFAULT_MODEL);
 
 	let saving = $state(false);
 	let error = $state('');
@@ -94,9 +103,13 @@
 				createdAt: Date.now()
 			};
 
-			await saveProfile(profile);
-			setModel(chosenModel);
-			if (apiKey.trim()) setApiKey(apiKey);
+			if (adding) {
+				await createProfile(profile);
+			} else {
+				await saveProfile(profile);
+				setModel(chosenModel);
+				if (apiKey.trim()) setApiKey(apiKey);
+			}
 
 			await goto('/');
 		} catch (cause) {
@@ -141,7 +154,7 @@
 </script>
 
 <svelte:head>
-	<title>Welcome</title>
+	<title>{adding ? 'Add a language' : 'Welcome'}</title>
 </svelte:head>
 
 <main class="shell">
@@ -166,7 +179,7 @@
 						<path d="M12 12.6c0-3.8 2-5.8 5.6-5.8 0 3.8-2 5.8-5.6 5.8Z" />
 					</svg>
 				</span>
-				<h1>Let's set you up</h1>
+				<h1>{adding ? 'Add a language' : "Let's set you up"}</h1>
 				<p class="sub">Which language are you bringing, and which one are you here for?</p>
 			</header>
 
@@ -293,19 +306,19 @@
 				</button>
 			{:else}
 				<button type="button" class="btn btn-primary grow" onclick={finish} disabled={saving}>
-					{saving ? 'Saving…' : 'Start learning'}
+					{saving ? 'Saving…' : adding ? 'Add language' : 'Start learning'}
 				</button>
 			{/if}
 		</footer>
 
-		{#if step === TOTAL_STEPS && !apiKey.trim()}
+		{#if !adding && step === TOTAL_STEPS && !apiKey.trim()}
 			<button type="button" class="skip" onclick={finish} disabled={saving}>Skip for now</button>
 		{/if}
 	</section>
 
 	<!-- Offered on the first step only: past it the learner has committed to
 	     setting up a new library, and a second door there is just noise. -->
-	{#if syncAvailable && step === 1}
+	{#if !adding && syncAvailable && step === 1}
 		<section class="card pair ll-rise" style="animation-delay: 90ms">
 			<h2>Already using Sapling on another device?</h2>
 			<p class="sub">Find its pairing phrase there under Settings → Sync.</p>

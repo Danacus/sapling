@@ -78,6 +78,10 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 /// The `profile` table holds exactly one row under this key.
 pub const PROFILE_ID: &str = "singleton";
 
+/// Device-local selection. It deliberately does not travel in the event log:
+/// choosing Japanese on a phone must not switch a laptop away from Spanish.
+pub const ACTIVE_PROFILE_KEY: &str = "activeProfile";
+
 /// How many recent reviews `items.recentGrades` keeps.
 pub const RECENT_GRADES_CAP: usize = 40;
 

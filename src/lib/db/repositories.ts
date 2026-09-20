@@ -21,7 +21,8 @@ export {
 	EXPORT_VERSION,
 	type ConversationSummary,
 	type DailyActivity,
-	type ExportEnvelope
+	type ExportEnvelope,
+	type LanguageProfile
 } from './protocol';
 
 function forward<M extends BackendMethod>(method: M): Backend[M] {
@@ -33,6 +34,9 @@ function forward<M extends BackendMethod>(method: M): Backend[M] {
 }
 
 export const getProfile = forward('getProfile');
+export const listProfiles = forward('listProfiles');
+export const createProfile = forward('createProfile');
+export const setActiveProfile = forward('setActiveProfile');
 export const saveProfile = forward('saveProfile');
 
 export const getAllItems = forward('getAllItems');

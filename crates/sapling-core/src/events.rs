@@ -389,8 +389,17 @@ pub struct SyncEvent {
     pub kind: EventType,
     pub at: f64,
     pub device: String,
+    /// The language library this fact belongs to. Legacy events all belong to
+    /// the reserved singleton library.
+    #[serde(skip)]
+    pub profile_id: String,
     pub payload: Payload,
 }
+
+/// Wire wrapper for profile-scoped facts. Keeping the scope inside a new event
+/// kind means an older client preserves the row but does not accidentally
+/// materialise it into its one legacy library.
+pub const SCOPED_EVENT_TYPE: &str = "profileEvent";
 
 /// Reads one row off the wire or out of an export file as far as the envelope,
 /// and no further.
@@ -416,13 +425,26 @@ pub fn parse_envelope(raw: &Value) -> Option<RawEvent> {
 /// type or payload shape this build does not know — which is a row to skip,
 /// never one to drop from the log.
 pub fn typed_event(raw: &RawEvent) -> Option<SyncEvent> {
-    let kind = EventType::from_name(&raw.kind)?;
+    let (profile_id, kind, payload) = if raw.kind == SCOPED_EVENT_TYPE {
+        let wrapper = raw.payload.as_object()?;
+        let profile_id = wrapper.get("profileId")?.as_str()?.to_owned();
+        let kind = EventType::from_name(wrapper.get("type")?.as_str()?)?;
+        let payload = wrapper.get("payload").cloned().unwrap_or(Value::Null);
+        (profile_id, kind, payload)
+    } else {
+        (
+            crate::schema::PROFILE_ID.to_owned(),
+            EventType::from_name(&raw.kind)?,
+            raw.payload.clone(),
+        )
+    };
     Some(SyncEvent {
         id: raw.id.clone(),
         kind,
         at: raw.at,
         device: raw.device.clone(),
-        payload: parse_payload(kind, &raw.payload)?,
+        profile_id,
+        payload: parse_payload(kind, &payload)?,
     })
 }
 
