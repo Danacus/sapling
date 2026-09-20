@@ -1,24 +1,24 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 
+	import { maturityOf, type Maturity } from '$lib/challenges/serve/progression';
 	import {
 		getAllItems,
+		getConversations,
 		getDailyActivity,
 		getProfile,
+		getTexts,
 		listProfiles,
 		localDay,
-		poolSize,
 		previousDay,
 		setActiveProfile,
 		streakFrom
 	} from '$lib/db';
-	import type { LanguageProfile } from '$lib/db';
-	import { maturityOf, type Maturity } from '$lib/challenges/serve/progression';
+	import type { ConversationSummary, LanguageProfile } from '$lib/db';
 	import { isDue } from '$lib/srs';
-	import type { KnowledgeItem, Profile } from '$lib/types';
+	import type { KnowledgeItem, Profile, ReadingText } from '$lib/types';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
-	/** Days in the activity strip, ending today. */
 	const STRIP_DAYS = 7;
 
 	let loading = $state(true);
@@ -27,36 +27,43 @@
 	let profiles = $state<LanguageProfile[]>([]);
 	let switchingProfile = $state(false);
 	let items = $state<KnowledgeItem[]>([]);
-	/** Answers per local calendar day, oldest first — the strip and the streak. */
 	let activity = $state<{ day: string; count: number }[]>([]);
-	/** The run of consecutive days with an answer in it, folded out of the log. */
+	let conversations = $state<ConversationSummary[]>([]);
+	let texts = $state<ReadingText[]>([]);
 	let streakDays = $state(0);
 	let now = $state(Date.now());
-	/** Challenges in the pool — an upper bound on what a session could draw from. */
-	let pooled = $state(0);
 
 	$effect(() => {
 		if (!browser) return;
-
 		let cancelled = false;
 		loading = true;
 		loadError = '';
 
-		Promise.all([getProfile(), listProfiles(), getAllItems(), getDailyActivity(), poolSize()])
-			.then(([loadedProfile, loadedProfiles, loadedItems, days, count]) => {
-				if (cancelled) return;
-				profile = loadedProfile;
-				profiles = loadedProfiles;
-				items = loadedItems;
-				activity = days;
-				streakDays = streakFrom(activity.map((entry) => entry.day));
-				pooled = count;
-				now = Date.now();
-				loading = false;
-			})
+		Promise.all([
+			getProfile(),
+			listProfiles(),
+			getAllItems(),
+			getDailyActivity(),
+			getConversations(),
+			getTexts()
+		])
+			.then(
+				([loadedProfile, loadedProfiles, loadedItems, days, loadedConversations, loadedTexts]) => {
+					if (cancelled) return;
+					profile = loadedProfile;
+					profiles = loadedProfiles;
+					items = loadedItems;
+					activity = days;
+					conversations = loadedConversations;
+					texts = loadedTexts;
+					streakDays = streakFrom(days.map((entry) => entry.day));
+					now = Date.now();
+					loading = false;
+				}
+			)
 			.catch((cause) => {
 				if (cancelled) return;
-				loadError = cause instanceof Error ? cause.message : 'Could not load your progress.';
+				loadError = cause instanceof Error ? cause.message : 'Could not load your day.';
 				loading = false;
 			});
 
@@ -70,8 +77,6 @@
 		switchingProfile = true;
 		try {
 			await setActiveProfile(id);
-			// Pages and long-running tasks may hold objects from the old language.
-			// A full navigation gives the newly materialised library a clean runtime.
 			window.location.assign('/');
 		} catch {
 			switchingProfile = false;
@@ -80,45 +85,86 @@
 
 	const targetLanguage = $derived(profile?.targetLanguage?.trim() || 'your new language');
 	const activeProfile = $derived(profiles.find((entry) => entry.active));
-	// `isDue` compares the schedule the *read* derived against this tick's `now`,
-	// so the count moves with the clock and snaps on the next load.
 	const dueCount = $derived(items.filter((item) => isDue(item, now)).length);
-
 	const today = $derived(localDay(now));
 	const reviewsToday = $derived(activity.find((entry) => entry.day === today)?.count ?? 0);
 
-	/**
-	 * The line under the headline. It is about *today*, so it has to stay
-	 * pleasant on the day nothing has happened yet — an empty log is a fine way
-	 * to be, and the card never scolds.
-	 */
-	const secondaryLine = $derived(
-		reviewsToday > 0
-			? `${reviewsToday} review${reviewsToday === 1 ? '' : 's'} done today`
-			: dueCount > 0
-				? 'Nothing answered yet today'
-				: 'Nothing waiting — more words ripen as the day goes on'
-	);
+	const recommendation = $derived.by(() => {
+		if (items.length === 0) {
+			return {
+				kicker: 'Start your garden',
+				title: `Plant your first ${targetLanguage} words`,
+				copy: 'Meet useful words in a conversation or a text. The ones you keep will return here for practice.',
+				label: 'Explore your language',
+				href: '/explore'
+			};
+		}
+		if (dueCount > 0) {
+			return {
+				kicker: 'Ready to tend',
+				title: `${dueCount} word${dueCount === 1 ? '' : 's'} ready`,
+				copy:
+					reviewsToday > 0
+						? `You have already completed ${reviewsToday} review${reviewsToday === 1 ? '' : 's'} today. These words are ready for another look.`
+						: 'A short practice session will focus on the words most likely to fade next.',
+				label: 'Practice now',
+				href: '/learn'
+			};
+		}
+		return {
+			kicker: 'All tended',
+			title: 'Your garden is caught up',
+			copy:
+				reviewsToday > 0
+					? `${reviewsToday} review${reviewsToday === 1 ? '' : 's'} completed today. Nothing else needs attention right now.`
+					: 'Nothing needs review right now. This is a good moment to encounter something new.',
+			label: 'Explore something new',
+			href: '/explore'
+		};
+	});
+
+	interface ContinueItem {
+		id: string;
+		title: string;
+		meta: string;
+		href: string;
+		at: number;
+		kind: 'conversation' | 'reading';
+	}
+
+	const continueItems = $derived.by((): ContinueItem[] => {
+		const rows: ContinueItem[] = [
+			...conversations.map((conversation) => ({
+				id: `conversation-${conversation.id}`,
+				title: conversation.topic?.trim() || conversation.scenario.setting,
+				meta: `${conversation.turnCount} turn${conversation.turnCount === 1 ? '' : 's'}`,
+				href: `/converse/${conversation.id}`,
+				at: conversation.lastTurnAt ?? conversation.createdAt,
+				kind: 'conversation' as const
+			})),
+			...texts.map((text) => ({
+				id: `reading-${text.id}`,
+				title: text.title,
+				meta: text.media ? 'Watch or read again' : 'Continue reading',
+				href: `/read/${text.id}`,
+				at: text.createdAt,
+				kind: 'reading' as const
+			}))
+		];
+		return rows.sort((a, b) => b.at - a.at).slice(0, 3);
+	});
 
 	interface DayCell {
 		day: string;
 		count: number;
-		/** Single-letter weekday label, in the reader's own locale. */
 		letter: string;
 		isToday: boolean;
 	}
 
-	/**
-	 * The last seven calendar days, oldest first. Built by walking `previousDay`
-	 * backwards from today rather than by slicing the log, so unplayed days are
-	 * present as zeroes instead of missing columns.
-	 */
 	const strip: DayCell[] = $derived.by(() => {
 		const counts = new Map(activity.map((entry) => [entry.day, entry.count]));
-
 		const days = [today];
 		while (days.length < STRIP_DAYS) days.unshift(previousDay(days[0]));
-
 		return days.map((day) => {
 			const [year, month, date] = day.split('-').map(Number);
 			return {
@@ -133,21 +179,10 @@
 	});
 
 	const stripPeak = $derived(Math.max(1, ...strip.map((cell) => cell.count)));
-
-	/**
-	 * Bar height as a percentage of the column. A day with answers never drops
-	 * below a readable stub, so a quiet day next to a heavy one still reads as
-	 * "something happened" rather than as nothing.
-	 */
 	function barHeight(count: number): number {
-		if (count === 0) return 0;
-		return Math.max(18, Math.round((count / stripPeak) * 100));
+		return count === 0 ? 0 : Math.max(18, Math.round((count / stripPeak) * 100));
 	}
 
-	/**
-	 * The garden's three beds. Botanical rather than clinical on purpose: this
-	 * card is about growth, so nothing here is coloured or worded as a problem.
-	 */
 	const BEDS: { maturity: Maturity; label: string }[] = [
 		{ maturity: 'new', label: 'sprouting' },
 		{ maturity: 'young', label: 'growing' },
@@ -169,290 +204,191 @@
 
 <main class="shell shell-broad">
 	{#if loading}
-		<div class="loading">
-			<Spinner />
-		</div>
+		<div class="loading"><Spinner /></div>
 	{:else if loadError}
-		<div class="card">
-			<p class="error" role="alert">{loadError}</p>
-		</div>
+		<div class="card"><p class="error" role="alert">{loadError}</p></div>
 	{:else}
-		<!-- A field journal opened wide is a spread: the topbar is the running
-		     head across both pages, then the *doing* (start a session, have a
-		     conversation) and the *state* (right now, the garden) split into
-		     facing columns. On a phone `.spread` collapses to one column, which
-		     reproduces the original stacking order exactly. -->
-		<div class="spread home-spread">
-			<header class="topbar spread-full ll-rise">
-				<div class="identity">
-					<p class="eyebrow">Learning</p>
-					<h1>{targetLanguage}</h1>
-					<details class="language-switcher">
-						<summary aria-label="Choose a language">
-							<span class="switch-mark" aria-hidden="true">
-								<svg class="ico" viewBox="0 0 24 24">
-									<path d="M12 21v-8.6" />
-									<path d="M12 16.2c-3.3 0-5.2-1.9-5.2-5.2 3.3 0 5.2 1.9 5.2 5.2Z" />
-									<path d="M12 12.6c0-3.8 2-5.8 5.6-5.8 0 3.8-2 5.8-5.6 5.8Z" />
-								</svg>
-							</span>
-							<span class="switch-copy">
-								<span class="switch-label">Language garden</span>
-								<span class="switch-pair">
-									{activeProfile?.nativeLanguage ?? profile?.nativeLanguage}
-									<span aria-hidden="true">→</span>
-									{activeProfile?.targetLanguage ?? profile?.targetLanguage}
-								</span>
-							</span>
-							<svg class="ico switch-chevron" viewBox="0 0 24 24" aria-hidden="true">
-								<path d="m7.5 9.5 4.5 4.5 4.5-4.5" />
-							</svg>
-						</summary>
+		<header class="today-header ll-rise">
+			<div class="identity">
+				<p class="eyebrow">Learning {targetLanguage}</p>
+				<h1>Today</h1>
+			</div>
 
-						<div class="language-menu">
-							<p class="menu-heading">Your language gardens</p>
-							<div class="language-list">
-								{#each profiles as entry (entry.id)}
-									<button
-										type="button"
-										class="language-option"
-										class:active={entry.active}
-										aria-current={entry.active ? 'true' : undefined}
-										disabled={entry.active || switchingProfile}
-										onclick={() => void switchProfile(entry.id)}
-									>
-										<span class="language-initial" aria-hidden="true">
-											{entry.targetLanguage.trim().charAt(0).toLocaleUpperCase()}
-										</span>
-										<span class="language-copy">
-											<strong>{entry.targetLanguage}</strong>
-											<small>from {entry.nativeLanguage}</small>
-										</span>
-										{#if entry.active}
-											<svg class="ico language-check" viewBox="0 0 24 24" aria-hidden="true">
-												<path d="m5.5 12.5 4 4 9-9" />
-											</svg>
-										{/if}
-									</button>
-								{/each}
-							</div>
-							<a class="add-language" href="/onboarding?add=1">
-								<span class="add-mark" aria-hidden="true">+</span>
-								<span>Add another language</span>
-							</a>
-						</div>
-					</details>
-				</div>
-				<div class="topbar-actions">
-					<div class="streak" class:dimmed={streakDays === 0} title="Current streak">
-						<svg class="ico sprout" viewBox="0 0 24 24" aria-hidden="true">
-							<path d="M12 21v-8.6" />
-							<path d="M12 16.2c-3.3 0-5.2-1.9-5.2-5.2 3.3 0 5.2 1.9 5.2 5.2Z" />
-							<path d="M12 12.6c0-3.8 2-5.8 5.6-5.8 0 3.8-2 5.8-5.6 5.8Z" />
-						</svg>
-						<span>{streakDays}</span>
-					</div>
-				</div>
-			</header>
-
-			<!-- Doing: the two ways to act right now. -->
-			<div class="col-do">
-				<section class="card start-card ll-rise" style="animation-delay: 120ms">
-					<svg class="watermark" viewBox="0 0 24 24" aria-hidden="true">
+			<div class="header-tools">
+				<div class="streak" class:quiet={streakDays === 0} aria-label={`${streakDays} day streak`}>
+					<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
 						<path d="M12 21v-8.6" />
 						<path d="M12 16.2c-3.3 0-5.2-1.9-5.2-5.2 3.3 0 5.2 1.9 5.2 5.2Z" />
 						<path d="M12 12.6c0-3.8 2-5.8 5.6-5.8 0 3.8-2 5.8-5.6 5.8Z" />
 					</svg>
-					<!-- A session only revisits words the learner already has, so on an empty
-					     garden "Start session" would open onto nothing. The card hands its
-					     primary button over to the two places words actually come from, and
-					     takes it back the moment there is something to review. -->
-					{#if items.length === 0}
-						<p class="start-lead">
-							Nothing planted yet — your first {targetLanguage} words come from talking.
-						</p>
-						<a class="btn btn-primary btn-block start-btn" href="/converse">Start a conversation</a>
-						<a class="btn btn-ghost btn-block ask-link" href="/chat">Or ask the assistant</a>
-					{:else}
-						<a class="btn btn-primary btn-block start-btn" href="/learn">Start session</a>
-						<!-- Only the empty pool speaks here. The due count is the card below's
-						     job, and a number stated twice on one screen invites the two to
-						     disagree. -->
-						{#if pooled === 0}
-							<p class="hint centered">No fresh challenges — write a new lesson first.</p>
-						{/if}
-					{/if}
+					<span>{streakDays}</span>
+				</div>
+
+				<details class="language-switcher">
+					<summary aria-label="Choose a language">
+						<span>{activeProfile?.targetLanguage ?? targetLanguage}</span>
+						<svg class="ico chevron" viewBox="0 0 24 24" aria-hidden="true">
+							<path d="m7.5 9.5 4.5 4.5 4.5-4.5" />
+						</svg>
+					</summary>
+					<div class="language-menu">
+						<p>Your language gardens</p>
+						{#each profiles as entry (entry.id)}
+							<button
+								type="button"
+								class:active={entry.active}
+								disabled={entry.active || switchingProfile}
+								onclick={() => void switchProfile(entry.id)}
+							>
+								<span class="language-initial" aria-hidden="true">
+									{entry.targetLanguage.trim().charAt(0).toLocaleUpperCase()}
+								</span>
+								<span class="language-copy">
+									<strong>{entry.targetLanguage}</strong>
+									<small>from {entry.nativeLanguage}</small>
+								</span>
+								{#if entry.active}<span class="check" aria-hidden="true">✓</span>{/if}
+							</button>
+						{/each}
+						<a href="/onboarding?add=1"><span class="add">+</span>Add another language</a>
+					</div>
+				</details>
+			</div>
+		</header>
+
+		<section class="hero ll-rise" style="animation-delay: 70ms">
+			<svg class="hero-sprout" viewBox="0 0 24 24" aria-hidden="true">
+				<path d="M12 21v-8.6" />
+				<path d="M12 16.2c-3.3 0-5.2-1.9-5.2-5.2 3.3 0 5.2 1.9 5.2 5.2Z" />
+				<path d="M12 12.6c0-3.8 2-5.8 5.6-5.8 0 3.8-2 5.8-5.6 5.8Z" />
+			</svg>
+			<div class="hero-copy">
+				<p class="hero-kicker">{recommendation.kicker}</p>
+				<h2>{recommendation.title}</h2>
+				<p>{recommendation.copy}</p>
+			</div>
+			<a class="btn btn-primary hero-action" href={recommendation.href}>
+				{recommendation.label}
+				<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+					<path d="M4.8 12h14" /><path d="m13.4 6.6 5.4 5.4-5.4 5.4" />
+				</svg>
+			</a>
+		</section>
+
+		<div class="today-grid" class:without-continue={continueItems.length === 0}>
+			{#if continueItems.length > 0}
+				<section class="card continue-card ll-rise" style="animation-delay: 130ms">
+					<div class="section-head">
+						<div>
+							<p class="eyebrow">Pick up where you left off</p>
+							<h2>Continue</h2>
+						</div>
+						<a href="/explore">All activities</a>
+					</div>
+					<div class="continue-list">
+						{#each continueItems as item (item.id)}
+							<a class="continue-row" href={item.href}>
+								<span class="continue-mark" aria-hidden="true">
+									{#if item.kind === 'conversation'}
+										<svg class="ico" viewBox="0 0 24 24"
+											><path d="M4.6 6.4h9.6v7.2H8.2l-3.6 3v-3H4.6Z" /><path
+												d="M10.6 9.4h8.8v6.2h-2.4v2.6l-3-2.6h-3.4Z"
+											/></svg
+										>
+									{:else}
+										<svg class="ico" viewBox="0 0 24 24"
+											><path d="M12 7.4C9.9 6 7 5.4 3.8 5.6v11.6c3.2-.2 6.1.4 8.2 1.8" /><path
+												d="M12 7.4c2.1-1.4 5-2 8.2-1.8v11.6c-3.2-.2-6.1.4-8.2 1.8"
+											/></svg
+										>
+									{/if}
+								</span>
+								<span class="continue-copy"
+									><strong>{item.title}</strong><small>{item.meta}</small></span
+								>
+								<svg class="ico row-arrow" viewBox="0 0 24 24" aria-hidden="true"
+									><path d="m9 5.5 6.5 6.5L9 18.5" /></svg
+								>
+							</a>
+						{/each}
+					</div>
+				</section>
+			{/if}
+
+			<div class="state-stack">
+				<section class="card garden-card ll-rise" style="animation-delay: 190ms">
+					<div class="section-head compact">
+						<div>
+							<p class="eyebrow">Your collection</p>
+							<h2>Garden</h2>
+						</div>
+						<a href="/words">View all</a>
+					</div>
+					<p class="garden-total">{items.length}<span>word{items.length === 1 ? '' : 's'}</span></p>
+					<div class="beds" role="img" aria-label={`Vocabulary: ${gardenLabel}`}>
+						{#each garden as bed (bed.maturity)}
+							{#if bed.count > 0}<span
+									class="bed bed-{bed.maturity}"
+									style={`flex-grow: ${bed.count}`}
+								></span>{/if}
+						{/each}
+					</div>
+					<ul class="legend">
+						{#each garden as bed (bed.maturity)}
+							<li>
+								<span class="dot bed-{bed.maturity}"></span><strong>{bed.count}</strong>
+								{bed.label}
+							</li>
+						{/each}
+					</ul>
 				</section>
 
-				<!-- The two other doors, directly under the drill because all three are
-				     peers with different jobs: a session revisits what is already
-				     growing, a conversation is where new words enter at all, and a text
-				     is what having words is *for*. Quieter than the start card by a whole
-				     background, but cards rather than topbar icons — the way vocabulary
-				     arrives cannot live in a corner.
-
-				     Both skipped on an empty garden: there the start card above is
-				     already the conversation door, and a text written from no words is
-				     not yet worth offering. -->
-				{#if items.length > 0}
-					<section class="card door-card ll-rise" style="animation-delay: 180ms">
-						<a class="door-link" href="/converse">
-							<span class="door-mark" aria-hidden="true">
-								<svg class="ico" viewBox="0 0 24 24">
-									<path d="M4.6 6.4h9.6v7.2H8.2l-3.6 3v-3H4.6Z" />
-									<path d="M10.6 9.4h8.8v6.2h-2.4v2.6l-3-2.6h-3.4Z" />
-								</svg>
-							</span>
-							<span class="door-body">
-								<span class="door-title">Have a conversation</span>
-								<span class="door-copy">A scene to talk through. New words come from here.</span>
-							</span>
-							<svg class="ico door-arrow" viewBox="0 0 24 24" aria-hidden="true">
-								<path d="M4.8 12h14" />
-								<path d="m13.4 6.6 5.4 5.4-5.4 5.4" />
-							</svg>
-						</a>
-					</section>
-
-					<section class="card door-card ll-rise" style="animation-delay: 210ms">
-						<a class="door-link" href="/read">
-							<span class="door-mark" aria-hidden="true">
-								<svg class="ico" viewBox="0 0 24 24">
-									<path d="M12 7.4C9.9 6 7 5.4 3.8 5.6v11.6c3.2-.2 6.1.4 8.2 1.8" />
-									<path d="M12 7.4c2.1-1.4 5-2 8.2-1.8v11.6c-3.2-.2-6.1.4-8.2 1.8" />
-									<path d="M12 7.4v11.6" />
-								</svg>
-							</span>
-							<span class="door-body">
-								<span class="door-title">Read or watch something</span>
-								<span class="door-copy">
-									A text, a song or a video, every word one tap from its meaning.
-								</span>
-							</span>
-							<svg class="ico door-arrow" viewBox="0 0 24 24" aria-hidden="true">
-								<path d="M4.8 12h14" />
-								<path d="m13.4 6.6 5.4 5.4-5.4 5.4" />
-							</svg>
-						</a>
-					</section>
-				{/if}
-			</div>
-
-			<!-- State: where things stand, read rather than acted on. -->
-			<div class="col-state">
-				<!-- "Right now", never "today": due counts move through the day as words
-				     fall due, so this card states a moment rather than scoring a day. -->
-				<section class="card now-card ll-rise" style="animation-delay: 240ms">
-					<p class="eyebrow">Right now</p>
-					<p class="now-headline">
-						{#if dueCount === 0}
-							You're all caught up
-						{:else}
-							{dueCount} word{dueCount === 1 ? '' : 's'} ready to review
-						{/if}
-					</p>
-					<p class="now-secondary">{secondaryLine}</p>
-
-					<hr class="stitch" />
-
+				<section class="card activity-card ll-rise" style="animation-delay: 250ms">
+					<div class="section-head compact">
+						<div>
+							<p class="eyebrow">Last seven days</p>
+							<h2>Activity</h2>
+						</div>
+						<a href="/activity">History</a>
+					</div>
 					<div
 						class="strip"
 						role="img"
-						aria-label={`Answers over the last ${STRIP_DAYS} days: ${strip.map((cell) => `${cell.day}, ${cell.count}`).join('; ')}`}
+						aria-label={`Reviews over seven days: ${strip.map((cell) => `${cell.day}, ${cell.count}`).join('; ')}`}
 					>
 						{#each strip as cell (cell.day)}
-							<div class="strip-col" class:is-today={cell.isToday}>
+							<div class="strip-col" class:today={cell.isToday}>
 								<div class="strip-track">
-									{#if cell.count > 0}
-										<div class="strip-bar" style="height: {barHeight(cell.count)}%"></div>
-									{:else}
-										<div class="strip-stub"></div>
-									{/if}
+									{#if cell.count > 0}<span
+											class="strip-bar"
+											style={`height: ${barHeight(cell.count)}%`}
+										></span>{/if}
 								</div>
-								<span class="strip-letter">{cell.letter}</span>
+								<span>{cell.letter}</span>
 							</div>
 						{/each}
 					</div>
-
-					<!-- The strip is a shape to glance at; the whole record is a page. -->
-					<a class="btn btn-ghost every-day" href="/activity">Every day</a>
+					<p class="activity-note">
+						{reviewsToday > 0 ? `${reviewsToday} reviewed today` : 'A quiet day so far'}
+					</p>
 				</section>
-
-				{#if items.length > 0}
-					<section class="card garden-card ll-rise" style="animation-delay: 300ms">
-						<div class="card-head">
-							<h2>Garden</h2>
-							<div class="card-tools">
-								<span class="card-count">{items.length} word{items.length === 1 ? '' : 's'}</span>
-								<a class="btn btn-ghost words-link" href="/words">Full garden</a>
-							</div>
-						</div>
-						<hr class="stitch" />
-
-						<div class="beds" role="img" aria-label={`Vocabulary: ${gardenLabel}`}>
-							{#each garden as bed (bed.maturity)}
-								{#if bed.count > 0}
-									<div class="bed bed-{bed.maturity}" style="flex-grow: {bed.count}"></div>
-								{/if}
-							{/each}
-						</div>
-
-						<ul class="legend">
-							{#each garden as bed (bed.maturity)}
-								<li class="legend-item">
-									<span class="dot bed-{bed.maturity}" aria-hidden="true"></span>
-									<span class="legend-count">{bed.count}</span>
-									<span class="legend-label">{bed.label}</span>
-								</li>
-							{/each}
-						</ul>
-					</section>
-				{/if}
 			</div>
 		</div>
 	{/if}
 </main>
 
 <style>
-	/* Width and horizontal padding are the global `.shell`'s job — the
-	   `.shell-broad` modifier in the markup caps this page at
-	   `--measure-broad`, room enough for the spread below. Only the vertical
-	   rhythm is this route's own. */
 	.shell {
-		padding-block: 2rem 4rem;
 		display: flex;
 		flex-direction: column;
 		gap: var(--gap);
+		padding-block: 2rem 4rem;
 	}
-
 	.loading {
 		display: grid;
 		place-items: center;
 		min-height: 60dvh;
 	}
-
-	/* Doing and state are ordinary flex stacks inside the spread's two grid
-	   columns — the grid only decides the arrangement, each side still
-	   controls its own card rhythm. */
-	.col-do,
-	.col-state {
-		display: flex;
-		flex-direction: column;
-		gap: var(--gap);
-	}
-
-	@media (min-width: 72rem) {
-		/* Full desktop: starting a session or a conversation is the louder,
-		   primary path through this page, so the doing column gets more of
-		   the extra width than the read-only state column opposite it. */
-		.home-spread {
-			grid-template-columns: 3fr 2fr;
-		}
-	}
-
-	/* Every icon on this screen is the same hand: 24-unit box, hairline stroke,
-	   round joins. The attributes live here rather than on each <svg> so the
-	   markup stays readable and the weight can never drift between icons. */
 	.ico {
 		width: 1.2rem;
 		height: 1.2rem;
@@ -463,162 +399,109 @@
 		stroke-linecap: round;
 		stroke-linejoin: round;
 	}
-
-	.topbar {
-		/* `.ll-rise` leaves every animated section in its own stacking context.
-		   Keep the header's context above the cards so its menu can cross them. */
+	.today-header {
 		position: relative;
 		z-index: 10;
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
-		gap: 0.75rem;
+		gap: 1rem;
 	}
-
 	.identity {
 		min-width: 0;
 	}
-
-	.eyebrow {
-		margin: 0 0 0.1rem;
-		font-size: 0.72rem;
-		font-weight: 700;
-		letter-spacing: 0.14em;
+	.eyebrow,
+	.hero-kicker {
+		margin: 0 0 0.15rem;
+		color: color-mix(in srgb, var(--accent) 68%, var(--text-muted));
+		font-size: 0.68rem;
+		font-weight: 750;
+		letter-spacing: 0.13em;
 		text-transform: uppercase;
-		color: color-mix(in srgb, var(--accent) 65%, var(--text-muted));
 	}
-
-	.topbar h1 {
+	.today-header h1 {
 		margin: 0;
-		font-size: clamp(1.75rem, 8vw, 2.3rem);
-		line-height: 1.05;
-		overflow-wrap: break-word;
+		font-size: clamp(2.2rem, 9vw, 3.5rem);
+		line-height: 1;
 	}
-
-	/* The active language reads as a pressed specimen label under the title.
-	   Its menu is a tiny garden index: each row is a separate bed, with the
-	   current one softly tinted instead of represented by a browser select. */
+	.header-tools {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+	}
+	.streak,
+	.language-switcher summary {
+		min-height: 2.5rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: var(--surface);
+	}
+	.streak {
+		display: flex;
+		align-items: center;
+		gap: 0.3rem;
+		padding: 0 0.65rem;
+		color: var(--primary-strong);
+		font-weight: 750;
+	}
+	.streak.quiet {
+		color: var(--text-muted);
+		opacity: 0.65;
+	}
 	.language-switcher {
 		position: relative;
-		width: fit-content;
-		max-width: min(20rem, calc(100vw - 2 * var(--gutter)));
-		margin-top: 0.65rem;
 	}
-
 	.language-switcher summary {
 		display: flex;
 		align-items: center;
-		gap: 0.55rem;
-		min-height: 2.75rem;
-		padding: 0.35rem 0.55rem 0.35rem 0.4rem;
-		border: 1px dashed var(--border-strong);
-		border-radius: var(--radius);
-		background: color-mix(in srgb, var(--primary-soft) 48%, var(--surface));
+		gap: 0.4rem;
+		max-width: 11rem;
+		padding: 0.45rem 0.6rem;
 		color: var(--text);
+		font-size: 0.82rem;
+		font-weight: 700;
 		cursor: pointer;
 		list-style: none;
-		user-select: none;
-		transition:
-			border-color 0.18s ease,
-			background 0.18s ease;
 	}
-
 	.language-switcher summary::-webkit-details-marker {
 		display: none;
 	}
-
-	.language-switcher summary:hover {
-		border-color: var(--primary);
-		background: color-mix(in srgb, var(--primary-soft) 72%, var(--surface));
+	.language-switcher summary > span {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
-
-	.language-switcher summary:focus-visible {
-		outline: none;
-		box-shadow: var(--ring);
-	}
-
-	.language-switcher[open] summary {
-		border-style: solid;
-		border-color: var(--primary);
-	}
-
-	.switch-mark {
-		display: grid;
-		place-items: center;
-		width: 2rem;
-		height: 2rem;
-		flex: 0 0 auto;
-		border-radius: var(--radius-sm);
-		background: var(--surface);
-		color: var(--primary-strong);
-		box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 24%, transparent);
-	}
-
-	.switch-copy,
-	.language-copy {
-		display: flex;
-		min-width: 0;
-		flex-direction: column;
-	}
-
-	.switch-label,
-	.menu-heading {
-		font-size: 0.65rem;
-		font-weight: 750;
-		letter-spacing: 0.1em;
-		text-transform: uppercase;
-		color: var(--text-muted);
-	}
-
-	.switch-pair {
-		display: flex;
-		align-items: baseline;
-		gap: 0.35rem;
-		font-size: 0.82rem;
-		font-weight: 650;
-		line-height: 1.25;
-	}
-
-	.switch-pair span {
-		color: var(--accent);
-	}
-
-	.switch-chevron {
-		margin-left: 0.2rem;
+	.chevron {
+		width: 0.9rem;
+		height: 0.9rem;
 		color: var(--text-muted);
 		transition: transform 0.18s ease;
 	}
-
-	.language-switcher[open] .switch-chevron {
+	.language-switcher[open] .chevron {
 		transform: rotate(180deg);
 	}
-
 	.language-menu {
 		position: absolute;
 		z-index: 20;
 		top: calc(100% + 0.45rem);
-		left: 0;
+		right: 0;
 		width: min(19rem, calc(100vw - 2 * var(--gutter)));
 		padding: 0.55rem;
 		border: 1px solid var(--border-strong);
 		border-radius: var(--radius);
 		background: var(--surface);
 		box-shadow: var(--shadow);
-		transform-origin: top left;
-		animation: menu-open 0.16s ease-out both;
 	}
-
-	.menu-heading {
-		margin: 0.15rem 0.45rem 0.45rem;
+	.language-menu > p {
+		margin: 0.15rem 0.45rem 0.4rem;
+		color: var(--text-muted);
+		font-size: 0.65rem;
+		font-weight: 750;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
 	}
-
-	.language-list {
-		display: grid;
-		gap: 0.2rem;
-	}
-
-	.language-option,
-	.add-language {
+	.language-menu button,
+	.language-menu a {
 		display: flex;
 		align-items: center;
 		width: 100%;
@@ -632,541 +515,363 @@
 		text-align: left;
 		text-decoration: none;
 	}
-
-	.language-option:not(:disabled) {
+	.language-menu button:not(:disabled) {
 		cursor: pointer;
 	}
-
-	.language-option:hover:not(:disabled),
-	.language-option:focus-visible,
-	.add-language:hover,
-	.add-language:focus-visible {
-		outline: none;
+	.language-menu button:hover:not(:disabled),
+	.language-menu a:hover {
 		background: var(--surface-alt);
 	}
-
-	.language-option.active {
-		background: color-mix(in srgb, var(--primary-soft) 58%, transparent);
-		color: var(--text);
+	.language-menu button.active {
+		background: color-mix(in srgb, var(--primary-soft) 60%, transparent);
 		opacity: 1;
 	}
-
 	.language-initial,
-	.add-mark {
+	.add {
 		display: grid;
 		place-items: center;
-		width: 2.15rem;
-		height: 2.15rem;
+		width: 2rem;
+		height: 2rem;
 		flex: 0 0 auto;
 		border: 1px solid var(--border);
 		border-radius: 50%;
 		background: var(--bg);
 		color: var(--primary-strong);
 		font-family: var(--font-display);
-		font-size: 0.9rem;
 		font-weight: 700;
 	}
-
-	.language-option.active .language-initial {
-		border-color: color-mix(in srgb, var(--primary) 50%, var(--border));
-		background: var(--primary-soft);
-	}
-
 	.language-copy {
+		display: flex;
+		min-width: 0;
 		flex: 1;
+		flex-direction: column;
 		line-height: 1.2;
 	}
-
-	.language-copy strong {
-		font-size: 0.92rem;
-	}
-
 	.language-copy small {
-		margin-top: 0.12rem;
 		color: var(--text-muted);
-		font-size: 0.75rem;
 	}
-
-	.language-check {
+	.check {
 		color: var(--primary-strong);
+		font-weight: 800;
 	}
-
-	.add-language {
-		margin-top: 0.45rem;
-		padding-top: 0.7rem;
-		border-top: 1px dashed var(--border-strong);
+	.language-menu a {
+		margin-top: 0.35rem;
+		border-top: 1px dashed var(--border);
 		border-radius: 0 0 var(--radius-sm) var(--radius-sm);
 		color: var(--primary-strong);
-		font-size: 0.86rem;
 		font-weight: 700;
 	}
-
-	.add-mark {
-		border-style: dashed;
+	.add {
 		border-radius: var(--radius-sm);
 		background: transparent;
-		font-family: inherit;
-		font-size: 1.15rem;
 	}
-
-	@keyframes menu-open {
-		from {
-			opacity: 0;
-			transform: translateY(-0.25rem) scale(0.98);
-		}
-		to {
-			opacity: 1;
-			transform: translateY(0) scale(1);
-		}
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.language-switcher summary,
-		.switch-chevron,
-		.language-menu {
-			transition: none;
-			animation: none;
-		}
-	}
-
-	.topbar-actions {
-		display: flex;
-		align-items: center;
-		gap: 0.35rem;
-		/* Optically aligned with the language name, not the eyebrow above it. */
-		padding-top: 0.15rem;
-	}
-
-	/* Topbar controls are label tabs, not pills: the same 2.25rem square with a
-	   hairline and a squared-off radius, so the streak count reads as one of
-	   the row rather than a badge stuck onto it. */
-	.streak {
-		height: 2.25rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		background: var(--surface);
-		color: var(--text);
-		transition:
-			border-color 0.15s ease,
-			background 0.15s ease,
-			color 0.15s ease;
-	}
-
-	.streak {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.3rem;
-		padding: 0 0.6rem;
-		font-weight: 700;
-		font-variant-numeric: tabular-nums;
-	}
-
-	.sprout {
-		color: var(--primary);
-	}
-
-	.streak.dimmed {
-		opacity: 0.5;
-		filter: grayscale(0.7);
-	}
-
-	/* Scoped to the spread — the column already bounds these, and below 48rem
-	   the shell can outgrow a card. The load-error card sits outside it and
-	   keeps the reading measure: one sentence has no use for 64rem. */
-	.spread .card {
-		max-width: none;
-	}
-
-	.card-head {
-		display: flex;
-		align-items: baseline;
-		justify-content: space-between;
-		gap: 0.75rem;
-		margin-bottom: 0.75rem;
-	}
-
-	.card-head h2 {
-		margin: 0;
-		font-size: 1.15rem;
-	}
-
-	.card-tools {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.card-count {
-		font-size: 0.82rem;
-		font-weight: 700;
-		font-variant-numeric: tabular-nums;
-		letter-spacing: 0.02em;
-		color: var(--text-muted);
-	}
-
-	.card-head + .stitch {
-		margin: 0 0 1rem;
-	}
-
-	.words-link {
-		padding: 0.28rem 0.7rem;
-		border-color: var(--border);
-		font-size: 0.78rem;
-		/* An anchor wearing .btn arrives underlined; the control must read as a
-		   button, not a link in a box. */
-		text-decoration: none;
-	}
-
-	.start-card {
+	.hero {
 		position: relative;
-		/* Own stacking context, so the watermark's `z-index: -1` lands behind
-		   the button and above the card's own background rather than escaping
-		   to the page. */
 		isolation: isolate;
+		display: grid;
+		gap: 1.5rem;
+		min-height: 20rem;
 		overflow: hidden;
-		text-align: center;
-		background:
-			linear-gradient(
-				160deg,
-				color-mix(in srgb, var(--primary-soft) 70%, var(--surface)),
-				var(--surface) 62%
-			),
-			var(--surface);
+		padding: clamp(1.5rem, 5vw, 3.25rem);
+		border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--border));
+		border-radius: calc(var(--radius-lg) + 4px);
+		background: linear-gradient(
+			140deg,
+			color-mix(in srgb, var(--primary-soft) 82%, var(--surface)),
+			var(--surface) 66%
+		);
+		box-shadow: var(--shadow);
 	}
-
-	/* The brand sprout, pressed faintly into the page behind the one button
-	   that matters. Used exactly once in the app — a watermark stops being a
-	   watermark the moment it repeats. */
-	.watermark {
+	.hero::after {
+		content: '';
 		position: absolute;
 		z-index: -1;
-		right: -1.4rem;
-		bottom: -2rem;
-		width: 9.5rem;
-		height: 9.5rem;
+		right: -8rem;
+		bottom: -12rem;
+		width: 25rem;
+		height: 25rem;
+		border: 1px dashed color-mix(in srgb, var(--primary) 24%, transparent);
+		border-radius: 50%;
+	}
+	.hero-sprout {
+		position: absolute;
+		z-index: -1;
+		right: clamp(1rem, 8vw, 6rem);
+		bottom: -1.5rem;
+		width: clamp(10rem, 25vw, 15rem);
+		height: clamp(10rem, 25vw, 15rem);
 		fill: none;
-		stroke: var(--primary);
-		stroke-width: 1.1;
+		stroke: color-mix(in srgb, var(--primary) 16%, transparent);
+		stroke-width: 1;
 		stroke-linecap: round;
 		stroke-linejoin: round;
-		opacity: 0.12;
-		pointer-events: none;
 	}
-
-	.start-btn {
-		font-size: 1.05rem;
-		padding: 1.05rem 1.5rem;
-		letter-spacing: 0.005em;
+	.hero-copy {
+		max-width: 36rem;
+		align-self: end;
 	}
-
-	.hint.centered {
-		margin: 0.9rem 0 0;
-		text-align: center;
+	.hero h2 {
+		max-width: 32rem;
+		margin: 0.25rem 0 0.75rem;
+		font-size: clamp(2rem, 7vw, 3.35rem);
+		line-height: 1.04;
 		text-wrap: balance;
 	}
-
-	/* The empty garden's line sits *above* its button, unlike the hints, because
-	   here it is the reason for the button rather than a footnote to it. */
-	.start-lead {
-		margin: 0 0 1rem;
-		font-family: var(--font-display);
-		font-size: 1.05rem;
-		font-weight: 700;
-		line-height: 1.3;
-		letter-spacing: -0.01em;
+	.hero-copy > p:last-child {
+		max-width: 32rem;
+		margin: 0;
+		color: var(--text-muted);
+		font-size: clamp(0.98rem, 2vw, 1.08rem);
+		line-height: 1.55;
 		text-wrap: balance;
 	}
-
-	.ask-link {
-		margin-top: 0.55rem;
-		font-size: 0.85rem;
-		/* An anchor wearing .btn arrives underlined. */
-		text-decoration: none;
-	}
-
-	/* The other doors ------------------------------------------------------ */
-
-	/* One skin, worn by every card that is just a way through to somewhere else.
-	   The whole card is the target — on a phone this should not require finding
-	   a button inside it — so the padding moves off the card and onto the link.
-	   They keep the plain surface while the start card above keeps the wash:
-	   same footprint, one step quieter. */
-	.door-card {
-		padding: 0;
-		overflow: hidden;
-	}
-
-	.door-link {
-		display: flex;
+	.hero-action {
+		justify-self: start;
+		align-self: end;
+		display: inline-flex;
 		align-items: center;
-		gap: 0.9rem;
-		padding: 1.15rem 1.25rem;
-		color: var(--text);
+		gap: 0.65rem;
+		padding: 0.9rem 1.2rem;
 		text-decoration: none;
-		transition: background 0.15s ease;
 	}
-
-	.door-link:hover {
-		background: var(--surface-alt);
-	}
-
-	.door-link:focus-visible {
-		outline: none;
-		box-shadow: var(--ring);
-	}
-
-	.door-mark {
+	.today-grid {
 		display: grid;
-		place-items: center;
-		flex: 0 0 auto;
-		width: 2.5rem;
-		height: 2.5rem;
-		border-radius: 50%;
-		background: var(--primary-soft);
-		color: var(--primary);
+		gap: var(--gap);
 	}
-
-	.door-mark .ico {
-		width: 1.35rem;
-		height: 1.35rem;
+	.state-stack {
+		display: grid;
+		gap: var(--gap);
 	}
-
-	.door-body {
-		min-width: 0;
+	.continue-card,
+	.garden-card,
+	.activity-card {
+		max-width: none;
 	}
-
-	.door-title {
-		display: block;
-		font-family: var(--font-display);
-		font-size: 1.05rem;
-		font-weight: 700;
-		letter-spacing: -0.01em;
-	}
-
-	.door-copy {
-		display: block;
-		margin-top: 0.15rem;
-		font-size: 0.85rem;
-		line-height: 1.4;
-		color: var(--text-muted);
-		text-wrap: balance;
-	}
-
-	.door-arrow {
-		margin-left: auto;
-		color: var(--text-muted);
-	}
-
-	/* Right now ---------------------------------------------------------- */
-
-	.now-headline {
-		margin: 0.15rem 0 0;
-		font-family: var(--font-display);
-		font-size: clamp(1.25rem, 5.5vw, 1.5rem);
-		font-weight: 700;
-		line-height: 1.2;
-		letter-spacing: -0.01em;
-		text-wrap: balance;
-	}
-
-	.now-secondary {
-		margin: 0.3rem 0 0;
-		font-size: 0.9rem;
-		color: var(--text-muted);
-		text-wrap: balance;
-	}
-
-	.now-card .stitch {
-		margin: 1.1rem 0 0.85rem;
-	}
-
-	/* Seven days of answers, drawn in the page's own ink. Deliberately unlabelled
-	   on the vertical axis: it is a shape to recognise at a glance, not a chart
-	   to read values off. */
-	.strip {
+	.section-head {
 		display: flex;
-		align-items: flex-end;
-		gap: 0.4rem;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 1rem;
+		margin-bottom: 1rem;
 	}
-
-	.strip-col {
-		flex: 1 1 0;
-		min-width: 0;
+	.section-head h2 {
+		margin: 0;
+		font-size: 1.45rem;
+	}
+	.section-head > a {
+		flex: 0 0 auto;
+		padding-top: 0.3rem;
+		color: var(--primary-strong);
+		font-size: 0.8rem;
+		font-weight: 700;
+		text-decoration: none;
+	}
+	.section-head > a:hover {
+		text-decoration: underline;
+	}
+	.continue-list {
 		display: flex;
 		flex-direction: column;
-		align-items: stretch;
-		gap: 0.35rem;
 	}
-
-	.strip-track {
-		display: flex;
-		align-items: flex-end;
-		height: 2.6rem;
-	}
-
-	@media (min-width: 48rem) {
-		/* The spread gives the "Right now" card a whole column to itself, so
-		   the strip can stand taller and read as less cramped. */
-		.strip-track {
-			height: 3.4rem;
-		}
-	}
-
-	.strip-bar {
-		width: 100%;
-		border-radius: var(--radius-sm);
-		background: color-mix(in srgb, var(--primary) 45%, var(--surface-alt));
-	}
-
-	/* A day with nothing in it is still a day: a hairline sitting on the
-	   baseline, not a gap. */
-	.strip-stub {
-		width: 100%;
-		height: 2px;
-		border-radius: 2px;
-		background: var(--border-strong);
-		opacity: 0.7;
-	}
-
-	.strip-letter {
-		text-align: center;
-		font-size: 0.68rem;
-		font-weight: 700;
-		letter-spacing: 0.04em;
-		color: var(--text-muted);
-	}
-
-	.strip-col.is-today .strip-bar {
-		background: var(--primary);
-	}
-
-	.strip-col.is-today .strip-stub {
-		background: var(--primary);
-		opacity: 0.55;
-	}
-
-	.strip-col.is-today .strip-letter {
+	.continue-row {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr) auto;
+		align-items: center;
+		gap: 0.8rem;
+		padding: 0.9rem 0;
 		color: var(--text);
-	}
-
-	/* The same quiet door the garden card wears, at the strip's foot. */
-	.every-day {
-		display: inline-flex;
-		margin-top: 0.85rem;
-		padding: 0.28rem 0.7rem;
-		border-color: var(--border);
-		font-size: 0.78rem;
 		text-decoration: none;
 	}
-
-	/* Garden ------------------------------------------------------------- */
-
-	/* One bar, three beds. Segment widths come from `flex-grow: count`, so they
-	   partition the bar exactly — percentages would have to be rounded, and
-	   rounded percentages do not add up to a whole garden. */
-	.beds {
+	.continue-row + .continue-row {
+		border-top: 1px solid var(--border);
+	}
+	.continue-row:hover .continue-copy strong {
+		color: var(--primary-strong);
+	}
+	.continue-mark {
+		display: grid;
+		place-items: center;
+		width: 2.5rem;
+		height: 2.5rem;
+		border-radius: var(--radius);
+		background: var(--primary-soft);
+		color: var(--primary-strong);
+	}
+	.continue-copy {
 		display: flex;
-		gap: 2px;
-		height: 0.85rem;
-		border-radius: 999px;
-		background: var(--surface-alt);
+		min-width: 0;
+		flex-direction: column;
+		gap: 0.15rem;
+	}
+	.continue-copy strong {
 		overflow: hidden;
+		font-family: var(--font-display);
+		font-size: 1.05rem;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		transition: color 0.15s ease;
 	}
-
-	@media (min-width: 48rem) {
-		/* Same reasoning as the activity strip above: a column of its own
-		   buys the garden bar a bit more presence. */
-		.beds {
-			height: 1.1rem;
-		}
-	}
-
-	.bed {
-		flex-basis: 0;
-		min-width: 3px;
-	}
-
-	.bed-new {
-		background: var(--accent);
-	}
-
-	.bed-young {
-		background: color-mix(in srgb, var(--primary) 55%, var(--amber));
-	}
-
-	.bed-solid {
-		background: var(--primary);
-	}
-
-	.legend {
-		list-style: none;
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.4rem 1.1rem;
-		margin: 0.85rem 0 0;
-		padding: 0;
-	}
-
-	.legend-item {
-		display: inline-flex;
-		align-items: baseline;
-		gap: 0.35rem;
-		font-size: 0.85rem;
-	}
-
-	.dot {
-		align-self: center;
-		width: 0.55rem;
-		height: 0.55rem;
-		border-radius: 50%;
-		flex: 0 0 auto;
-	}
-
-	.legend-count {
-		font-weight: 700;
-		font-variant-numeric: tabular-nums;
-	}
-
-	.legend-label {
+	.continue-copy small {
 		color: var(--text-muted);
 	}
-
+	.row-arrow {
+		width: 1rem;
+		height: 1rem;
+		color: var(--text-muted);
+	}
+	.garden-total {
+		display: flex;
+		align-items: baseline;
+		gap: 0.4rem;
+		margin: 0.25rem 0 1rem;
+		font-family: var(--font-display);
+		font-size: 2.5rem;
+		font-weight: 750;
+		line-height: 1;
+	}
+	.garden-total span {
+		color: var(--text-muted);
+		font-family: var(--font);
+		font-size: 0.75rem;
+		font-weight: 700;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+	}
+	.beds {
+		display: flex;
+		gap: 3px;
+		height: 0.65rem;
+		overflow: hidden;
+		border-radius: 999px;
+		background: var(--surface-alt);
+	}
+	.bed {
+		min-width: 0.3rem;
+	}
+	.bed-new {
+		background: var(--amber);
+	}
+	.bed-young {
+		background: var(--primary);
+	}
+	.bed-solid {
+		background: var(--primary-strong);
+	}
+	.legend {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.6rem 1rem;
+		margin: 0.85rem 0 0;
+		padding: 0;
+		color: var(--text-muted);
+		font-size: 0.75rem;
+		list-style: none;
+	}
+	.legend li {
+		display: flex;
+		align-items: center;
+		gap: 0.3rem;
+	}
+	.legend strong {
+		color: var(--text);
+	}
+	.dot {
+		width: 0.48rem;
+		height: 0.48rem;
+		border-radius: 50%;
+	}
+	.strip {
+		display: flex;
+		height: 6rem;
+		gap: 0.35rem;
+	}
+	.strip-col {
+		display: flex;
+		flex: 1;
+		min-width: 0;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.35rem;
+		color: var(--text-muted);
+		font-size: 0.68rem;
+		font-weight: 700;
+	}
+	.strip-col.today {
+		color: var(--primary-strong);
+	}
+	.strip-track {
+		display: flex;
+		width: 100%;
+		flex: 1;
+		align-items: flex-end;
+		justify-content: center;
+		overflow: hidden;
+		border-radius: 4px 4px 2px 2px;
+		background: color-mix(in srgb, var(--surface-alt) 60%, transparent);
+	}
+	.strip-bar {
+		width: 100%;
+		border-radius: 4px 4px 2px 2px;
+		background: var(--primary);
+	}
+	.strip-col.today .strip-bar {
+		background: var(--accent);
+	}
+	.activity-note {
+		margin: 0.75rem 0 0;
+		color: var(--text-muted);
+		font-size: 0.8rem;
+	}
 	.error {
 		margin: 0;
-		padding: 0.65rem 0.85rem;
-		border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
-		border-radius: var(--radius-sm);
-		background: color-mix(in srgb, var(--danger) 12%, transparent);
 		color: var(--danger);
 		font-weight: 700;
 	}
-
-	@media (max-width: 380px) {
-		/* At the narrowest phone the language name needs the whole line; the
-		   controls drop under it rather than squeezing the headline. */
-		.topbar {
-			flex-direction: column;
+	@media (min-width: 48rem) {
+		.shell {
+			padding-block: 3rem 5rem;
+		}
+		.hero {
+			grid-template-columns: minmax(0, 1fr) auto;
+			align-items: end;
+			min-height: 22rem;
+		}
+		.hero-action {
+			justify-self: end;
+		}
+		.today-grid {
+			grid-template-columns: minmax(0, 3fr) minmax(18rem, 2fr);
+			align-items: start;
+		}
+		.today-grid.without-continue {
+			grid-template-columns: 1fr;
+		}
+		.today-grid.without-continue .state-stack {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+	}
+	@media (max-width: 30rem) {
+		.today-header {
 			align-items: stretch;
+			flex-direction: column;
 		}
-
-		.topbar-actions {
-			padding-top: 0;
+		.header-tools {
+			justify-content: space-between;
 		}
-
-		/* The copy is what has to survive here, so the row gives back its own
-		   padding and gaps rather than squeezing the line to three words. */
-		.door-link {
-			gap: 0.7rem;
-			padding: 1rem;
+		.language-switcher {
+			margin-left: auto;
 		}
-
-		.door-mark {
-			width: 2.2rem;
-			height: 2.2rem;
+		.hero {
+			min-height: 23rem;
 		}
-
-		.legend {
-			gap: 0.35rem 0.8rem;
+		.hero-sprout {
+			right: -2rem;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.chevron,
+		.continue-copy strong {
+			transition: none;
 		}
 	}
 </style>
