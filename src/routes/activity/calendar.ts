@@ -1,20 +1,12 @@
 /**
  * The shape of the activity calendar, kept pure so the page is only markup.
  *
- * A calendar here is a run of whole weeks ending in the week that holds
- * today, Monday first — the journal reads left to right into the present, so
- * the newest column is the rightmost and the days after today in that column
- * are simply not yet. Everything is built from `YYYY-MM-DD` strings through
- * `$lib/db`'s local-day helpers, so a DST change never moves a cell.
+ * The journal uses one Monday-first month at a time. Everything is built from
+ * `YYYY-MM-DD` strings through `$lib/db`'s local-day helpers, so a DST change
+ * never moves a cell.
  */
 import { localDay, previousDay } from '$lib/db';
 import type { DailyActivity } from '$lib/db';
-
-/** Monday is 0. `Date.getDay` puts Sunday first, which is not how a week is read here. */
-function weekdayOf(day: string): number {
-	const [year, month, date] = day.split('-').map(Number);
-	return (new Date(year, month - 1, date).getDay() + 6) % 7;
-}
 
 /** The local calendar day after `day` (DST-safe: built from local parts). */
 export function nextDay(day: string): string {
@@ -22,53 +14,34 @@ export function nextDay(day: string): string {
 	return localDay(new Date(year, month - 1, date + 1).getTime());
 }
 
-/**
- * `weeks` columns of seven days, oldest column first, Monday at the top,
- * the last column being the week that holds `today`. Days past `today` are
- * present so the column keeps its shape; the page draws them as not yet.
- */
-export function calendarWeeks(today: string, weeks: number): string[][] {
-	const columns: string[][] = [];
-	let day = today;
-	for (let back = weekdayOf(today); back > 0; back--) day = previousDay(day);
-	for (let week = weeks - 1; week > 0; week--) for (let i = 0; i < 7; i++) day = previousDay(day);
+/** A stable `YYYY-MM` key for moving through the activity journal month by month. */
+export function monthKey(day: string): string {
+	return day.slice(0, 7);
+}
 
-	for (let week = 0; week < weeks; week++) {
-		const column: string[] = [];
-		for (let i = 0; i < 7; i++) {
-			column.push(day);
-			day = nextDay(day);
-		}
-		columns.push(column);
-	}
-	return columns;
+/** Move a `YYYY-MM` key by whole calendar months, including across year boundaries. */
+export function shiftMonth(month: string, offset: number): string {
+	const [year, index] = month.split('-').map(Number);
+	const date = new Date(year, index - 1 + offset, 1);
+	return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
 
 /**
- * Where a month begins along the columns: the column whose top cell is the
- * first Monday on or after the first of a month carries that month's label.
- * The first column is labelled only when its week starts in a month of its
- * own — a strip that opens mid-March would otherwise say "Mar" over a
- * column that is mostly February.
+ * A complete Monday-first calendar page for `month`. Days outside the month
+ * are `null`, keeping the familiar weekday columns without making adjacent
+ * months look selectable.
  */
-export function monthStarts(
-	weeks: string[][],
-	format: (day: string) => string
-): { column: number; label: string }[] {
-	const labels: { column: number; label: string }[] = [];
-	let previous = '';
-	for (const [column, week] of weeks.entries()) {
-		const month = week[0].slice(0, 7);
-		if (column === 0) {
-			previous = month;
-			// Only if the whole week already belongs to this month.
-			if (week[0].slice(8) <= '07') labels.push({ column, label: format(week[0]) });
-			continue;
-		}
-		if (month !== previous) labels.push({ column, label: format(week[0]) });
-		previous = month;
+export function monthCalendar(month: string): (string | null)[] {
+	const [year, index] = month.split('-').map(Number);
+	const daysInMonth = new Date(year, index, 0).getDate();
+	const leading = (new Date(year, index - 1, 1).getDay() + 6) % 7;
+	const cells: (string | null)[] = Array.from({ length: leading }, () => null);
+
+	for (let date = 1; date <= daysInMonth; date++) {
+		cells.push(`${month}-${String(date).padStart(2, '0')}`);
 	}
-	return labels;
+	while (cells.length % 7 !== 0) cells.push(null);
+	return cells;
 }
 
 /**

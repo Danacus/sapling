@@ -1,52 +1,37 @@
-<!--
-  Every day, on one page: the last half-year as a calendar of shaded cells,
-  one day opened beside it, and the days themselves as a ledger underneath.
-
-  The home screen's strip is a shape to glance at; this is where the shape is
-  read. Everything on it comes from one `getDailyActivity` read — the core
-  folds answers, reviews, lookups and added words into a row per day — and the
-  page only arranges: `calendar.ts` cuts the weeks, the rest is markup.
-
-  A day is the unit throughout. Tapping a cell or a ledger row opens that day
-  in the card beside the calendar, which is the spread's usual pairing: the
-  overview opposite the one thing being looked at. Nothing is stored — the
-  selected day is page state and the page opens on today.
--->
 <script lang="ts">
 	import { browser } from '$app/environment';
-
 	import { getDailyActivity, localDay, streakFrom } from '$lib/db';
 	import type { DailyActivity } from '$lib/db';
 	import BackLink from '$lib/ui/BackLink.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
-
-	import { activityOf, calendarWeeks, longestStreak, monthStarts, shadeOf } from './calendar';
-
-	/** Half a year of columns: what fits a card at the wide breakpoint without shrinking the cells. */
-	const WEEKS = 26;
-	/** Ledger rows shown before the rest is asked for. */
-	const LEDGER_PAGE = 42;
+	import {
+		activityOf,
+		longestStreak,
+		monthCalendar,
+		monthKey,
+		shadeOf,
+		shiftMonth
+	} from './calendar';
 
 	let loading = $state(true);
 	let loadError = $state('');
 	let activity = $state<DailyActivity[]>([]);
-	let today = $state(localDay(Date.now()));
-	let selected = $state('');
-	let showAll = $state(false);
-	let scroller = $state<HTMLDivElement | null>(null);
+	const initialToday = localDay(Date.now());
+	let today = $state(initialToday);
+	let visibleMonth = $state(monthKey(initialToday));
+	let selected = $state(initialToday);
 
 	$effect(() => {
 		if (!browser) return;
-
 		let cancelled = false;
 		loading = true;
 		loadError = '';
-
 		getDailyActivity()
 			.then((days) => {
 				if (cancelled) return;
 				activity = days;
 				today = localDay(Date.now());
+				visibleMonth = monthKey(today);
 				selected = today;
 				loading = false;
 			})
@@ -55,702 +40,727 @@
 				loadError = cause instanceof Error ? cause.message : 'Could not load your activity.';
 				loading = false;
 			});
-
 		return () => {
 			cancelled = true;
 		};
 	});
 
-	// The newest column is the rightmost, so on a phone the strip opens scrolled
-	// to the present rather than to six months ago.
-	$effect(() => {
-		if (scroller) scroller.scrollLeft = scroller.scrollWidth;
-	});
-
 	const byDay = $derived(new Map(activity.map((entry) => [entry.day, entry])));
-	const weeks = $derived(calendarWeeks(today, WEEKS));
-	const peak = $derived(Math.max(0, ...weeks.flat().map((day) => activityOf(byDay.get(day)))));
-
+	const cells = $derived(monthCalendar(visibleMonth));
+	const monthEntries = $derived(activity.filter((entry) => monthKey(entry.day) === visibleMonth));
+	const monthPeak = $derived(Math.max(0, ...monthEntries.map(activityOf)));
+	const current = $derived(byDay.get(selected));
+	const isCurrentMonth = $derived(visibleMonth === monthKey(today));
 	const streak = $derived(streakFrom(activity.map((entry) => entry.day)));
 	const longest = $derived(longestStreak(activity.map((entry) => entry.day)));
-	const answers = $derived(activity.reduce((sum, entry) => sum + entry.count, 0));
-
-	/** The ledger: every day something happened, newest first. */
-	const ledger = $derived([...activity].reverse());
-	const shown = $derived(showAll ? ledger : ledger.slice(0, LEDGER_PAGE));
-
-	const current = $derived(byDay.get(selected));
-
-	/* Dates ------------------------------------------------------------------ */
+	const totalAnswers = $derived(activity.reduce((sum, entry) => sum + entry.count, 0));
+	const monthTotals = $derived.by(() => ({
+		active: monthEntries.length,
+		answers: monthEntries.reduce((sum, entry) => sum + entry.count, 0),
+		reviewed: monthEntries.reduce((sum, entry) => sum + entry.reviewed, 0),
+		lookups: monthEntries.reduce((sum, entry) => sum + entry.lookups, 0),
+		added: monthEntries.reduce((sum, entry) => sum + entry.added, 0),
+		correct: monthEntries.reduce((sum, entry) => sum + entry.correct + entry.almost, 0)
+	}));
 
 	function dateOf(day: string): Date {
 		const [year, month, date] = day.split('-').map(Number);
 		return new Date(year, month - 1, date);
 	}
-
+	const monthTitle = $derived(
+		new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' }).format(
+			dateOf(`${visibleMonth}-01`)
+		)
+	);
 	const longDate = new Intl.DateTimeFormat(undefined, {
 		weekday: 'long',
 		day: 'numeric',
 		month: 'long'
 	});
-	const shortDate = new Intl.DateTimeFormat(undefined, {
-		weekday: 'short',
-		day: 'numeric',
-		month: 'short'
-	});
-	const monthName = new Intl.DateTimeFormat(undefined, { month: 'short' });
-
-	const months = $derived(monthStarts(weeks, (day) => monthName.format(dateOf(day))));
-
-	/** Single-letter weekday labels down the side, in the reader's own locale: Mon, Wed, Fri. */
-	const weekdayLetters = $derived(
-		[0, 2, 4].map((row) => ({
-			row,
-			letter: dateOf(weeks[0][row]).toLocaleDateString(undefined, { weekday: 'narrow' })
-		}))
+	const weekdays = Array.from({ length: 7 }, (_, index) =>
+		new Date(2024, 0, 1 + index).toLocaleDateString(undefined, { weekday: 'short' })
 	);
-
 	function titleOf(day: string): string {
-		if (day === today) return 'Today';
-		return longDate.format(dateOf(day));
+		return day === today ? 'Today' : longDate.format(dateOf(day));
 	}
-
-	/** What a cell says to a screen reader and on hover. */
 	function describe(day: string): string {
 		const entry = byDay.get(day);
-		const date = shortDate.format(dateOf(day));
-		if (!entry) return `${date}: nothing`;
-		const parts = [
-			entry.count > 0 ? `${entry.count} answer${entry.count === 1 ? '' : 's'}` : '',
-			entry.reviewed > 0 ? `${entry.reviewed} word${entry.reviewed === 1 ? '' : 's'} reviewed` : '',
-			entry.lookups > 0 ? `${entry.lookups} looked up` : '',
-			entry.added > 0 ? `${entry.added} added` : ''
-		].filter(Boolean);
-		return `${date}: ${parts.join(', ')}`;
+		const label = longDate.format(dateOf(day));
+		return entry
+			? `${label}: ${entry.count} answers, ${entry.reviewed} words reviewed, ${entry.added} words added`
+			: `${label}: no activity`;
 	}
-
 	function pct(part: number, whole: number): number {
 		return whole === 0 ? 0 : Math.round((part / whole) * 100);
 	}
+	function openMonth(offset: number) {
+		const next = shiftMonth(visibleMonth, offset);
+		if (next > monthKey(today)) return;
+		visibleMonth = next;
+		selected = activity.filter((entry) => monthKey(entry.day) === next).at(-1)?.day ?? `${next}-01`;
+	}
+	function returnToToday() {
+		visibleMonth = monthKey(today);
+		selected = today;
+	}
 </script>
 
-<svelte:head>
-	<title>Sapling · Activity</title>
-</svelte:head>
+<svelte:head><title>Sapling · Activity</title></svelte:head>
 
 <main class="shell shell-broad">
-	<header class="topbar ll-rise">
-		<BackLink href="/" label="Back to home" />
+	<header class="page-head ll-rise">
+		<BackLink href="/" label="Back to Today" />
 		<div class="identity">
-			<p class="eyebrow">Sapling</p>
+			<p class="eyebrow">Your growing rhythm</p>
 			<h1>Activity</h1>
+			<p>Look back at the days you showed up and the words you tended.</p>
 		</div>
 	</header>
 
 	{#if loading}
-		<div class="loading">
-			<Spinner />
-		</div>
+		<div class="loading"><Spinner /></div>
 	{:else if loadError}
-		<section class="card">
-			<p class="error" role="alert">{loadError}</p>
-		</section>
+		<section class="card"><p class="error" role="alert">{loadError}</p></section>
 	{:else}
-		<div class="summary ll-rise" style="animation-delay: 60ms">
-			<div class="tile">
-				<span class="tile-num" class:accented={streak > 0}>{streak}</span>
-				<span class="tile-label">Day streak</span>
+		<section class="streak-card ll-rise" style="animation-delay: 60ms">
+			<div class="streak-lead">
+				<div class="streak-mark" aria-hidden="true">
+					<svg viewBox="0 0 48 48"
+						><path
+							d="M24 42V21m0 8c-7 0-12-4-13-11 7 0 12 4 13 11Zm0-7c6 0 10-3 12-9-6 0-10 3-12 9Z"
+						/></svg
+					>
+				</div>
+				<div>
+					<span class="big-number">{streak}</span>
+					<p><strong>day streak</strong><br />Keep the garden growing.</p>
+				</div>
 			</div>
-			<div class="tile">
-				<span class="tile-num">{longest}</span>
-				<span class="tile-label">Longest</span>
+			<div class="lifetime-stats">
+				<div><strong>{longest}</strong><span>Longest streak</span></div>
+				<div><strong>{activity.length}</strong><span>Active days</span></div>
+				<div><strong>{totalAnswers.toLocaleString()}</strong><span>Answers</span></div>
 			</div>
-			<div class="tile">
-				<span class="tile-num">{activity.length}</span>
-				<span class="tile-label">Active days</span>
-			</div>
-			<div class="tile">
-				<span class="tile-num">{answers.toLocaleString()}</span>
-				<span class="tile-label">Answers</span>
-			</div>
-		</div>
+		</section>
 
-		<!-- The calendar. Weeks are columns, days run down them Monday to Sunday,
-		     and the shade is how much happened relative to the busiest day on
-		     screen. Every cell is a real button, so the keyboard can walk it. -->
-		<section class="card heat-card ll-rise" style="animation-delay: 120ms">
-			<div class="heat-scroll" bind:this={scroller}>
-				<div class="heat" style:--columns={WEEKS}>
-					<div class="months" aria-hidden="true">
-						{#each months as month (month.column)}
-							<span class="month" style:grid-column-start={month.column + 1}>{month.label}</span>
-						{/each}
+		<section class="calendar-card card ll-rise" style="animation-delay: 120ms">
+			<header class="calendar-head">
+				<div>
+					<p class="eyebrow">Month in view</p>
+					<h2>{monthTitle}</h2>
+				</div>
+				<div class="month-nav">
+					<button
+						type="button"
+						class="nav-button"
+						onclick={() => openMonth(-1)}
+						aria-label="Previous month">←</button
+					>
+					{#if !isCurrentMonth}<button type="button" class="today-button" onclick={returnToToday}
+							>Today</button
+						>{/if}
+					<button
+						type="button"
+						class="nav-button"
+						onclick={() => openMonth(1)}
+						disabled={isCurrentMonth}
+						aria-label="Next month">→</button
+					>
+				</div>
+			</header>
+
+			<div class="calendar-layout">
+				<div class="calendar-wrap">
+					<div class="weekday-row" aria-hidden="true">
+						{#each weekdays as weekday}<span>{weekday}</span>{/each}
 					</div>
-					<div class="weekdays" aria-hidden="true">
-						{#each weekdayLetters as { row, letter } (row)}
-							<span class="weekday" style:grid-row-start={row + 1}>{letter}</span>
-						{/each}
-					</div>
-					<div class="grid" role="group" aria-label="The last {WEEKS} weeks, one cell a day">
-						{#each weeks as week, column (week[0])}
-							{#each week as day (day)}
+					<div class="month-grid" role="grid" aria-label={monthTitle}>
+						{#each cells as day, index (day ?? `empty-${index}`)}
+							{#if day}
+								{@const entry = byDay.get(day)}
 								{@const future = day > today}
 								<button
 									type="button"
-									class="cell shade-{shadeOf(activityOf(byDay.get(day)), peak)}"
+									class="day shade-{shadeOf(activityOf(entry), monthPeak)}"
 									class:is-today={day === today}
 									class:is-selected={day === selected}
-									class:is-future={future}
-									style:grid-column-start={column + 1}
+									class:is-empty={!entry}
 									disabled={future}
 									aria-label={describe(day)}
 									aria-pressed={day === selected}
-									title={future ? undefined : describe(day)}
 									onclick={() => (selected = day)}
-								></button>
-							{/each}
+								>
+									<span class="date-number">{Number(day.slice(-2))}</span>
+									{#if entry}<span class="day-count">{activityOf(entry)}</span>{/if}
+								</button>
+							{:else}<span class="day-spacer"></span>{/if}
 						{/each}
 					</div>
+					<div class="calendar-key" aria-hidden="true">
+						<span>Quiet</span><i class="shade-1"></i><i class="shade-2"></i><i class="shade-3"
+						></i><i class="shade-4"></i><span>Full</span>
+					</div>
 				</div>
-			</div>
-			<p class="key" aria-hidden="true">
-				<span>Less</span>
-				<span class="cell shade-0"></span>
-				<span class="cell shade-1"></span>
-				<span class="cell shade-2"></span>
-				<span class="cell shade-3"></span>
-				<span class="cell shade-4"></span>
-				<span>More</span>
-			</p>
-		</section>
 
-		<div class="spread">
-			<!-- One day, opened. -->
-			<section class="card day-card ll-rise" style="animation-delay: 180ms">
-				<p class="eyebrow">{selected === today ? 'Today' : 'That day'}</p>
-				<h2 class="day-title">{titleOf(selected)}</h2>
-				<hr class="stitch" />
-
-				{#if !current}
-					<p class="nothing">Nothing yet.</p>
-				{:else}
-					<dl class="facts">
+				<aside class="day-detail" aria-live="polite">
+					<p class="eyebrow">{selected === today ? 'Today' : 'Selected day'}</p>
+					<h3>{titleOf(selected)}</h3>
+					{#if !current}
+						<div class="rest-day">
+							<span aria-hidden="true">○</span>
+							<p>A quiet day in the garden.</p>
+						</div>
+					{:else}
 						{#if current.count > 0}
-							<div class="fact">
-								<dt>Answers</dt>
-								<dd>
-									{current.count}
-									<span class="sub"
-										>{pct(current.correct + current.almost, current.count)}% right</span
-									>
-								</dd>
-								<!-- The verdicts as one bar in the banner's three inks: what the
-								     session felt like, without a number per colour. -->
-								<div
-									class="verdicts"
-									role="img"
-									aria-label="{current.correct} correct, {current.almost} almost, {current.wrong} wrong"
+							<div class="answer-score">
+								<strong>{current.count}</strong><span>answers</span><em
+									>{pct(current.correct + current.almost, current.count)}% right</em
 								>
-									{#if current.correct > 0}
-										<span class="v-correct" style="flex-grow: {current.correct}"></span>
-									{/if}
-									{#if current.almost > 0}
-										<span class="v-almost" style="flex-grow: {current.almost}"></span>
-									{/if}
-									{#if current.wrong > 0}
-										<span class="v-wrong" style="flex-grow: {current.wrong}"></span>
-									{/if}
-								</div>
+							</div>
+							<div
+								class="verdicts"
+								role="img"
+								aria-label={`${current.correct} correct, ${current.almost} almost, ${current.wrong} wrong`}
+							>
+								{#if current.correct}<span class="correct" style:flex-grow={current.correct}
+									></span>{/if}
+								{#if current.almost}<span class="almost" style:flex-grow={current.almost}
+									></span>{/if}
+								{#if current.wrong}<span class="wrong" style:flex-grow={current.wrong}></span>{/if}
 							</div>
 						{/if}
-						{#if current.reviewed > 0}
-							<div class="fact">
-								<dt>Words reviewed</dt>
+						<dl class="day-facts">
+							<div>
+								<dt>Reviewed</dt>
 								<dd>{current.reviewed}</dd>
 							</div>
-						{/if}
-						{#if current.lookups > 0}
-							<div class="fact">
+							<div>
 								<dt>Looked up</dt>
 								<dd>{current.lookups}</dd>
 							</div>
-						{/if}
-						{#if current.added > 0}
-							<div class="fact">
-								<dt>Words added</dt>
+							<div>
+								<dt>Added</dt>
 								<dd>{current.added}</dd>
 							</div>
-						{/if}
-					</dl>
-				{/if}
-			</section>
-
-			<!-- The ledger: the same days as rows, newest first, each a way to open it. -->
-			<section class="card ledger-card ll-rise" style="animation-delay: 240ms">
-				<div class="card-head">
-					<h2>Every day</h2>
-					<span class="entry-count">{ledger.length} day{ledger.length === 1 ? '' : 's'}</span>
-				</div>
-				<hr class="stitch" />
-
-				{#if ledger.length === 0}
-					<p class="nothing">Your first session writes the first day.</p>
-				{:else}
-					<ol class="ledger">
-						{#each shown as entry (entry.day)}
-							<li>
-								<button
-									type="button"
-									class="row"
-									class:is-selected={entry.day === selected}
-									aria-pressed={entry.day === selected}
-									onclick={() => (selected = entry.day)}
-								>
-									<span class="row-date">
-										{entry.day === today ? 'Today' : shortDate.format(dateOf(entry.day))}
-									</span>
-									<span class="row-facts">
-										{#if entry.count > 0}
-											<span class="row-fact">
-												<b>{entry.count}</b> answer{entry.count === 1 ? '' : 's'}
-											</span>
-										{/if}
-										{#if entry.reviewed > 0}
-											<span class="row-fact"><b>{entry.reviewed}</b> reviewed</span>
-										{/if}
-										{#if entry.lookups > 0}
-											<span class="row-fact"><b>{entry.lookups}</b> looked up</span>
-										{/if}
-										{#if entry.added > 0}
-											<span class="row-fact"><b>{entry.added}</b> added</span>
-										{/if}
-									</span>
-								</button>
-							</li>
-						{/each}
-					</ol>
-					{#if !showAll && ledger.length > LEDGER_PAGE}
-						<button type="button" class="btn btn-ghost more" onclick={() => (showAll = true)}>
-							Show all {ledger.length} days
-						</button>
+						</dl>
 					{/if}
-				{/if}
-			</section>
-		</div>
+				</aside>
+			</div>
+		</section>
+
+		<section class="month-summary ll-rise" style="animation-delay: 180ms">
+			<div class="summary-copy">
+				<p class="eyebrow">{monthTitle}</p>
+				<h2>
+					{monthTotals.active === 0
+						? 'A fresh page'
+						: `${monthTotals.active} active day${monthTotals.active === 1 ? '' : 's'}`}
+				</h2>
+				<p>
+					{monthTotals.active === 0
+						? 'There is no activity recorded in this month yet.'
+						: `${monthTotals.answers} answers with ${pct(monthTotals.correct, monthTotals.answers)}% marked right or almost right.`}
+				</p>
+			</div>
+			<div class="growth-grid">
+				<div class="growth-stat">
+					<span class="growth-icon">↻</span><strong>{monthTotals.reviewed}</strong><span
+						>words reviewed</span
+					>
+				</div>
+				<div class="growth-stat">
+					<span class="growth-icon">⌕</span><strong>{monthTotals.lookups}</strong><span
+						>words explored</span
+					>
+				</div>
+				<div class="growth-stat">
+					<span class="growth-icon">✦</span><strong>{monthTotals.added}</strong><span
+						>words planted</span
+					>
+				</div>
+			</div>
+		</section>
 	{/if}
 </main>
 
 <style>
-	/* Width and the side gutter are the global `.shell`/`.shell-broad` pair's;
-	   the calendar is the one wide thing here and scrolls inside its own card. */
 	.shell {
 		padding-block: 1.5rem 4rem;
 		display: flex;
 		flex-direction: column;
 		gap: var(--gap);
 	}
-
 	.loading {
 		display: grid;
 		place-items: center;
 		min-height: 60dvh;
 	}
-
-	.topbar {
+	.page-head {
 		display: flex;
-		align-items: center;
-		gap: 0.75rem;
+		align-items: flex-start;
+		gap: 0.85rem;
 	}
-
 	.identity {
 		min-width: 0;
 	}
-
+	.identity h1 {
+		margin-bottom: 0.2rem;
+		font-size: clamp(2rem, 5vw, 3rem);
+	}
+	.identity > p:last-child {
+		margin: 0;
+		max-width: 34rem;
+		color: var(--text-muted);
+	}
 	.eyebrow {
-		margin: 0 0 0.05rem;
+		margin: 0 0 0.12rem;
 		font-size: 0.7rem;
-		font-weight: 700;
+		font-weight: 800;
 		letter-spacing: 0.14em;
 		text-transform: uppercase;
-		color: color-mix(in srgb, var(--accent) 65%, var(--text-muted));
+		color: color-mix(in srgb, var(--accent) 70%, var(--text-muted));
 	}
-
-	.topbar h1 {
-		margin: 0;
-		font-size: 1.55rem;
-		line-height: 1.1;
-	}
-
-	/* The figures, in the garden's tiles. Not buttons here: nothing to filter. */
-	.summary {
+	.streak-card {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(5rem, 1fr));
-		gap: 0.5rem;
-	}
-
-	.tile {
-		display: flex;
-		flex-direction: column;
-		gap: 0.05rem;
-		padding: 0.55rem 0.6rem;
+		gap: 1rem;
+		padding: 1rem;
 		border: 1px solid var(--border);
-		border-bottom-width: 3px;
-		border-radius: var(--radius);
-		background: var(--surface);
+		border-bottom: 3px solid var(--border-strong);
+		border-radius: var(--radius-lg);
+		background: linear-gradient(125deg, var(--primary-soft), var(--surface) 62%);
 	}
-
-	.tile-num {
-		font-family: var(--font-display);
-		font-size: 1.3rem;
-		font-weight: 700;
-		font-variation-settings: 'SOFT' 26;
-		font-variant-numeric: tabular-nums;
-		line-height: 1.15;
-	}
-
-	.tile-num.accented {
-		color: var(--primary-strong);
-	}
-
-	.tile-label {
-		font-size: 0.63rem;
-		font-weight: 700;
-		letter-spacing: 0.09em;
-		text-transform: uppercase;
-		color: var(--text-muted);
-	}
-
-	/* The calendar --------------------------------------------------------- */
-
-	.heat-card {
-		max-width: none;
-		padding-block: 1.25rem 1rem;
-	}
-
-	/* Wide content scrolls inside its own container; the page never does. */
-	.heat-scroll {
-		overflow-x: auto;
-		padding-bottom: 0.25rem;
-		scrollbar-width: thin;
-	}
-
-	/* One cell size drives every track, so the month row, the weekday column
-	   and the grid line up by construction rather than by measurement. The
-	   1.625rem pitch gives each small day target at least 24 CSS pixels from
-	   the next target's centre, while the year still scrolls within its card. */
-	.heat {
-		--cell: 1.25rem;
-		--cell-gap: 0.375rem;
-		display: grid;
-		grid-template-columns: auto 1fr;
-		grid-template-rows: auto auto;
-		column-gap: 0.4rem;
-		row-gap: 0.3rem;
-		width: max-content;
-	}
-
-	.months {
-		grid-column: 2;
-		grid-row: 1;
-		display: grid;
-		grid-auto-flow: column;
-		grid-auto-columns: var(--cell);
-		gap: var(--cell-gap);
-		height: 1rem;
-	}
-
-	.month {
-		grid-row: 1;
-		font-size: 0.66rem;
-		font-weight: 700;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
-		color: var(--text-muted);
-		white-space: nowrap;
-	}
-
-	.weekdays {
-		grid-column: 1;
-		grid-row: 2;
-		display: grid;
-		grid-template-rows: repeat(7, var(--cell));
-		gap: var(--cell-gap);
-	}
-
-	.weekday {
+	.streak-lead {
 		display: flex;
 		align-items: center;
-		font-size: 0.62rem;
-		font-weight: 700;
+		gap: 0.8rem;
+	}
+	.streak-mark {
+		display: grid;
+		place-items: center;
+		width: 3.5rem;
+		height: 3.5rem;
+		border-radius: 50%;
+		background: var(--primary);
+		color: var(--text-inverse);
+	}
+	.streak-mark svg {
+		width: 2.15rem;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 2.5;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+	.big-number {
+		float: left;
+		margin-right: 0.55rem;
+		font-family: var(--font-display);
+		font-size: 2.8rem;
+		font-weight: 800;
+		line-height: 1;
+		color: var(--primary-strong);
+	}
+	.streak-lead p {
+		margin: 0.15rem 0 0;
+		color: var(--text-muted);
+		line-height: 1.25;
+	}
+	.streak-lead strong {
+		color: var(--text);
+	}
+	.lifetime-stats {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		border-top: 1px solid color-mix(in srgb, var(--border-strong) 55%, transparent);
+		padding-top: 0.8rem;
+	}
+	.lifetime-stats div {
+		display: flex;
+		flex-direction: column;
+		padding-inline: 0.6rem;
+		border-left: 1px solid var(--border);
+	}
+	.lifetime-stats div:first-child {
+		padding-left: 0;
+		border: 0;
+	}
+	.lifetime-stats strong {
+		font-family: var(--font-display);
+		font-size: 1.3rem;
+		font-variant-numeric: tabular-nums;
+	}
+	.lifetime-stats span {
+		font-size: 0.66rem;
+		font-weight: 800;
+		text-transform: uppercase;
+		letter-spacing: 0.07em;
 		color: var(--text-muted);
 	}
-
-	.grid {
-		grid-column: 2;
-		grid-row: 2;
-		display: grid;
-		grid-template-rows: repeat(7, var(--cell));
-		grid-template-columns: repeat(var(--columns), var(--cell));
-		grid-auto-flow: column;
-		gap: var(--cell-gap);
+	.calendar-card {
+		max-width: none;
+		padding: clamp(1rem, 3vw, 1.5rem);
 	}
-
-	/* A pressed specimen, not a pixel: hairline and a small radius, with the
-	   shade a mix of leaf green into the page. */
-	.cell {
-		display: block;
-		width: var(--cell);
-		height: var(--cell);
-		padding: 0;
-		border: 1px solid transparent;
-		border-radius: 3px;
+	.calendar-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		margin-bottom: 1.25rem;
+	}
+	.calendar-head h2 {
+		margin: 0;
+		font-size: clamp(1.45rem, 4vw, 2rem);
+	}
+	.month-nav {
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+	}
+	.nav-button,
+	.today-button {
+		min-width: 2.6rem;
+		height: 2.6rem;
+		padding: 0 0.75rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
 		background: var(--surface-alt);
+		color: var(--text);
+		font: inherit;
+		font-weight: 800;
 		cursor: pointer;
-		transition:
-			transform 0.08s ease,
-			box-shadow 0.15s ease;
 	}
-
-	.cell.shade-1 {
-		background: color-mix(in srgb, var(--primary) 30%, var(--surface-alt));
+	.nav-button {
+		font-size: 1.15rem;
 	}
-
-	.cell.shade-2 {
-		background: color-mix(in srgb, var(--primary) 52%, var(--surface-alt));
+	.nav-button:disabled {
+		opacity: 0.35;
+		cursor: default;
 	}
-
-	.cell.shade-3 {
-		background: color-mix(in srgb, var(--primary) 76%, var(--surface-alt));
-	}
-
-	.cell.shade-4 {
-		background: var(--primary-strong);
-	}
-
-	.cell:hover:not(:disabled) {
-		transform: scale(1.18);
-	}
-
-	.cell:focus-visible {
+	.nav-button:focus-visible,
+	.today-button:focus-visible,
+	.day:focus-visible {
 		outline: none;
 		box-shadow: var(--ring);
 	}
-
-	.cell.is-today {
-		border-color: var(--text);
-	}
-
-	.cell.is-selected {
-		box-shadow: 0 0 0 2px var(--accent);
-	}
-
-	.cell.is-future {
-		background: transparent;
-		border-color: var(--border);
-		border-style: dashed;
-		cursor: default;
-	}
-
-	.key {
-		display: flex;
-		align-items: center;
-		justify-content: flex-end;
-		gap: 0.25rem;
-		margin: 0.6rem 0 0;
-		font-size: 0.66rem;
-		font-weight: 700;
-		letter-spacing: 0.04em;
-		color: var(--text-muted);
-	}
-
-	.key .cell {
-		--cell: 0.65rem;
-		cursor: default;
-	}
-
-	.key span:first-child {
-		margin-right: 0.2rem;
-	}
-
-	.key span:last-child {
-		margin-left: 0.2rem;
-	}
-
-	/* One day --------------------------------------------------------------- */
-
-	.day-title {
-		margin: 0;
-		font-size: 1.3rem;
-	}
-
-	.nothing {
-		margin: 0;
-		color: var(--text-muted);
-	}
-
-	.facts {
+	.calendar-layout {
 		display: grid;
-		gap: 0.85rem;
-		margin: 0;
+		gap: 1.25rem;
 	}
-
-	.fact dt {
-		font-size: 0.7rem;
-		font-weight: 700;
-		letter-spacing: 0.09em;
+	.calendar-wrap {
+		min-width: 0;
+	}
+	.weekday-row,
+	.month-grid {
+		display: grid;
+		grid-template-columns: repeat(7, minmax(0, 1fr));
+		gap: 0.3rem;
+	}
+	.weekday-row {
+		margin-bottom: 0.4rem;
+	}
+	.weekday-row span {
+		text-align: center;
+		font-size: 0.66rem;
+		font-weight: 800;
 		text-transform: uppercase;
 		color: var(--text-muted);
 	}
-
-	.fact dd {
-		display: flex;
-		align-items: baseline;
-		gap: 0.5rem;
-		margin: 0.1rem 0 0;
-		font-family: var(--font-display);
-		font-size: 1.5rem;
-		font-weight: 700;
-		font-variation-settings: 'SOFT' 26;
-		font-variant-numeric: tabular-nums;
-		line-height: 1.15;
+	.day,
+	.day-spacer {
+		min-width: 0;
+		aspect-ratio: 1;
+		border-radius: clamp(5px, 1vw, 10px);
 	}
-
-	.fact .sub {
-		font-family: var(--font);
-		font-size: 0.85rem;
-		font-weight: 500;
+	.day {
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		justify-content: space-between;
+		padding: 0.32rem;
+		border: 1px solid transparent;
+		background: var(--surface-alt);
+		color: var(--text);
+		font: inherit;
+		cursor: pointer;
+		transition:
+			transform 0.1s ease,
+			box-shadow 0.15s ease;
+	}
+	.day:hover:not(:disabled) {
+		transform: translateY(-2px);
+	}
+	.day:disabled {
+		opacity: 0.28;
+		cursor: default;
+	}
+	.day.shade-1 {
+		background: color-mix(in srgb, var(--primary) 24%, var(--surface-alt));
+	}
+	.day.shade-2 {
+		background: color-mix(in srgb, var(--primary) 43%, var(--surface-alt));
+	}
+	.day.shade-3 {
+		background: color-mix(in srgb, var(--primary) 65%, var(--surface));
+	}
+	.day.shade-4 {
+		background: var(--primary);
+		color: var(--text-inverse);
+	}
+	.day.is-empty {
+		background: transparent;
+		border-color: color-mix(in srgb, var(--border) 75%, transparent);
+	}
+	.day.is-today {
+		border-color: var(--accent);
+	}
+	.day.is-selected {
+		box-shadow: 0 0 0 3px var(--accent);
+		z-index: 1;
+	}
+	.date-number {
+		font-size: 0.78rem;
+		font-weight: 800;
+		line-height: 1;
+	}
+	.day-count {
+		align-self: flex-end;
+		font-size: 0.65rem;
+		font-weight: 800;
+		opacity: 0.8;
+	}
+	.calendar-key {
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		gap: 0.3rem;
+		margin-top: 0.7rem;
+		font-size: 0.68rem;
+		font-weight: 700;
 		color: var(--text-muted);
 	}
-
+	.calendar-key i {
+		width: 0.8rem;
+		height: 0.8rem;
+		border-radius: 3px;
+		background: var(--surface-alt);
+	}
+	.calendar-key .shade-1 {
+		background: color-mix(in srgb, var(--primary) 24%, var(--surface-alt));
+	}
+	.calendar-key .shade-2 {
+		background: color-mix(in srgb, var(--primary) 43%, var(--surface-alt));
+	}
+	.calendar-key .shade-3 {
+		background: color-mix(in srgb, var(--primary) 65%, var(--surface));
+	}
+	.calendar-key .shade-4 {
+		background: var(--primary);
+	}
+	.day-detail {
+		padding: 1rem;
+		border-radius: var(--radius);
+		background: var(--surface-alt);
+	}
+	.day-detail h3 {
+		margin-bottom: 1rem;
+		font-size: 1.25rem;
+	}
+	.rest-day {
+		display: flex;
+		align-items: center;
+		gap: 0.65rem;
+		color: var(--text-muted);
+	}
+	.rest-day > span {
+		display: grid;
+		place-items: center;
+		width: 2rem;
+		height: 2rem;
+		border: 1px dashed var(--border-strong);
+		border-radius: 50%;
+	}
+	.rest-day p {
+		margin: 0;
+	}
+	.answer-score {
+		display: flex;
+		align-items: baseline;
+		gap: 0.4rem;
+	}
+	.answer-score strong {
+		font-family: var(--font-display);
+		font-size: 2.1rem;
+		line-height: 1;
+	}
+	.answer-score span {
+		color: var(--text-muted);
+	}
+	.answer-score em {
+		margin-left: auto;
+		font-size: 0.78rem;
+		font-style: normal;
+		font-weight: 800;
+		color: var(--primary-strong);
+	}
 	.verdicts {
 		display: flex;
 		gap: 2px;
-		height: 0.5rem;
-		margin-top: 0.45rem;
-		border-radius: 999px;
+		height: 0.45rem;
+		margin: 0.55rem 0 1rem;
 		overflow: hidden;
-		background: var(--surface-alt);
+		border-radius: 999px;
+		background: var(--border);
 	}
-
 	.verdicts span {
 		flex-basis: 0;
 		min-width: 3px;
 	}
-
-	.v-correct {
+	.correct {
 		background: var(--primary);
 	}
-
-	.v-almost {
+	.almost {
 		background: var(--amber);
 	}
-
-	.v-wrong {
+	.wrong {
 		background: var(--danger);
 	}
-
-	/* The ledger ----------------------------------------------------------- */
-
-	.card-head {
-		display: flex;
-		align-items: baseline;
-		justify-content: space-between;
-		gap: 0.75rem;
-	}
-
-	.card-head h2 {
+	.day-facts {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 0.4rem;
 		margin: 0;
-		font-size: 1.15rem;
 	}
-
-	.entry-count {
-		font-size: 0.82rem;
-		font-weight: 700;
-		font-variant-numeric: tabular-nums;
+	.day-facts div {
+		padding: 0.55rem;
+		border-radius: var(--radius-sm);
+		background: var(--surface);
+		text-align: center;
+	}
+	.day-facts dt {
+		font-size: 0.62rem;
+		font-weight: 800;
+		text-transform: uppercase;
 		color: var(--text-muted);
 	}
-
-	.ledger {
-		list-style: none;
+	.day-facts dd {
+		margin: 0.05rem 0 0;
+		font-family: var(--font-display);
+		font-size: 1.25rem;
+		font-weight: 800;
+	}
+	.month-summary {
+		display: grid;
+		gap: 1rem;
+		padding: clamp(1rem, 3vw, 1.5rem);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-lg);
+		background: var(--surface);
+	}
+	.summary-copy h2 {
+		margin-bottom: 0.25rem;
+	}
+	.summary-copy > p:last-child {
 		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
+		max-width: 30rem;
+		color: var(--text-muted);
 	}
-
-	.ledger li + li {
-		border-top: 1px dashed var(--border);
+	.growth-grid {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 0.5rem;
 	}
-
-	.row {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: baseline;
-		gap: 0.15rem 0.75rem;
-		width: 100%;
-		padding: 0.55rem 0.4rem;
-		border: 0;
-		border-radius: var(--radius-sm);
-		background: none;
-		color: var(--text);
-		font: inherit;
-		text-align: left;
-		cursor: pointer;
-		transition: background 0.15s ease;
-	}
-
-	.row:hover {
+	.growth-stat {
+		display: grid;
+		grid-template-columns: auto 1fr;
+		grid-template-rows: auto auto;
+		align-items: center;
+		gap: 0 0.5rem;
+		padding: 0.75rem;
+		border-radius: var(--radius);
 		background: var(--surface-alt);
 	}
-
-	.row:focus-visible {
-		outline: none;
-		box-shadow: var(--ring);
-	}
-
-	.row.is-selected {
+	.growth-icon {
+		grid-row: 1 / 3;
+		display: grid;
+		place-items: center;
+		width: 2rem;
+		height: 2rem;
+		border-radius: 50%;
 		background: var(--primary-soft);
+		color: var(--primary-strong);
+		font-weight: 900;
 	}
-
-	.row-date {
-		flex: 0 0 6.5rem;
-		font-weight: 700;
-		font-variant-numeric: tabular-nums;
+	.growth-stat strong {
+		font-family: var(--font-display);
+		font-size: 1.35rem;
+		line-height: 1;
 	}
-
-	.row-facts {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.15rem 0.7rem;
-		font-size: 0.85rem;
+	.growth-stat > span:last-child {
+		font-size: 0.68rem;
+		font-weight: 800;
 		color: var(--text-muted);
 	}
-
-	.row-fact b {
-		font-variant-numeric: tabular-nums;
-		color: var(--text);
-	}
-
-	.more {
-		width: 100%;
-		margin-top: 0.6rem;
-	}
-
 	.error {
 		margin: 0;
-		padding: 0.65rem 0.85rem;
-		border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
-		border-radius: var(--radius-sm);
-		background: color-mix(in srgb, var(--danger) 12%, transparent);
 		color: var(--danger);
 		font-weight: 700;
 	}
-
 	@media (min-width: 48rem) {
-		/* The spread's usual asymmetry: the one day is the smaller page, the
-		   ledger the longer one. */
-		.spread {
-			grid-template-columns: 2fr 3fr;
+		.streak-card {
+			grid-template-columns: minmax(15rem, 1fr) minmax(20rem, 1.3fr);
+			align-items: center;
+			padding: 1.25rem 1.5rem;
+		}
+		.lifetime-stats {
+			border-top: 0;
+			padding-top: 0;
+		}
+		.calendar-layout {
+			grid-template-columns: minmax(0, 2.2fr) minmax(14rem, 1fr);
+			align-items: stretch;
+		}
+		.day-detail {
+			padding: 1.25rem;
+		}
+		.month-summary {
+			grid-template-columns: minmax(14rem, 1fr) minmax(24rem, 1.4fr);
+			align-items: center;
+		}
+		.day {
+			padding: 0.45rem;
+		}
+		.date-number {
+			font-size: 0.9rem;
+		}
+	}
+	@media (max-width: 30rem) {
+		.identity > p:last-child {
+			display: none;
+		}
+		.lifetime-stats span {
+			font-size: 0.57rem;
+			letter-spacing: 0.04em;
+		}
+		.calendar-head {
+			align-items: flex-end;
+		}
+		.today-button {
+			display: none;
+		}
+		.weekday-row,
+		.month-grid {
+			gap: 0.2rem;
+		}
+		.growth-grid {
+			grid-template-columns: 1fr;
+		}
+		.growth-stat {
+			grid-template-columns: auto auto 1fr;
+			grid-template-rows: 1fr;
+		}
+		.growth-icon {
+			grid-row: auto;
 		}
 	}
 </style>

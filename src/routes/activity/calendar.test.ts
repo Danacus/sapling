@@ -2,68 +2,28 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	activityOf,
-	calendarWeeks,
 	longestStreak,
-	monthStarts,
+	monthCalendar,
+	monthKey,
 	nextDay,
+	shiftMonth,
 	shadeOf
 } from './calendar';
 
-describe('calendarWeeks', () => {
-	it('ends in the week holding today, Monday first, oldest column first', () => {
-		// 2024-03-13 is a Wednesday.
-		const weeks = calendarWeeks('2024-03-13', 2);
-		expect(weeks).toEqual([
-			[
-				'2024-03-04',
-				'2024-03-05',
-				'2024-03-06',
-				'2024-03-07',
-				'2024-03-08',
-				'2024-03-09',
-				'2024-03-10'
-			],
-			[
-				'2024-03-11',
-				'2024-03-12',
-				'2024-03-13',
-				'2024-03-14',
-				'2024-03-15',
-				'2024-03-16',
-				'2024-03-17'
-			]
-		]);
+describe('month calendar', () => {
+	it('builds a Monday-first page with empty cells around the month', () => {
+		const days = monthCalendar('2024-03');
+		expect(days).toHaveLength(35);
+		expect(days.slice(0, 4)).toEqual([null, null, null, null]);
+		expect(days[4]).toBe('2024-03-01');
+		expect(days.at(-1)).toBe('2024-03-31');
 	});
 
-	it('keeps a Monday and a Sunday in the same shape', () => {
-		expect(calendarWeeks('2024-03-11', 1)[0][0]).toBe('2024-03-11');
-		expect(calendarWeeks('2024-03-17', 1)[0][6]).toBe('2024-03-17');
-	});
-
-	it('crosses a month and a year boundary by local parts', () => {
-		const [week] = calendarWeeks('2024-01-03', 1);
-		expect(week[0]).toBe('2024-01-01');
-		expect(nextDay('2023-12-31')).toBe('2024-01-01');
+	it('moves cleanly across years and derives month keys from days', () => {
+		expect(monthKey('2024-03-13')).toBe('2024-03');
+		expect(shiftMonth('2024-01', -1)).toBe('2023-12');
+		expect(shiftMonth('2024-12', 1)).toBe('2025-01');
 		expect(nextDay('2024-02-29')).toBe('2024-03-01');
-	});
-});
-
-describe('monthStarts', () => {
-	const label = (day: string) => day.slice(0, 7);
-
-	it('labels the column where a month begins, and the first only when it owns its week', () => {
-		const weeks = calendarWeeks('2024-03-13', 6);
-		// Columns start 2024-02-05, 02-12, 02-19, 02-26, 03-04, 03-11.
-		expect(monthStarts(weeks, label)).toEqual([
-			{ column: 0, label: '2024-02' },
-			{ column: 4, label: '2024-03' }
-		]);
-	});
-
-	it('leaves the first column unlabelled when it opens mid-month', () => {
-		const weeks = calendarWeeks('2024-03-27', 3);
-		// Columns start 03-11, 03-18, 03-25: March began before the strip.
-		expect(monthStarts(weeks, label)).toEqual([]);
 	});
 });
 
