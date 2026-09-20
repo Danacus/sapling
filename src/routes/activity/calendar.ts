@@ -5,7 +5,7 @@
  * `YYYY-MM-DD` strings through `$lib/db`'s local-day helpers, so a DST change
  * never moves a cell.
  */
-import { localDay, previousDay } from '$lib/db';
+import { localDay } from '$lib/db';
 import type { DailyActivity } from '$lib/db';
 
 /** The local calendar day after `day` (DST-safe: built from local parts). */
@@ -62,16 +62,22 @@ export function shadeOf(value: number, peak: number): 0 | 1 | 2 | 3 | 4 {
 	return Math.min(4, Math.max(1, Math.ceil((4 * value) / peak))) as 1 | 2 | 3 | 4;
 }
 
-/** The longest run of consecutive days in `days`, in any order, duplicates allowed. */
+function dayNumber(day: string): number {
+	const [year, month, date] = day.split('-').map(Number);
+	return Date.UTC(year, month - 1, date) / 86_400_000;
+}
+
+/** The longest run of active days, allowing up to two inactive days between them. */
 export function longestStreak(days: string[]): number {
-	const present = new Set(days);
+	const present = [...new Set(days)].sort((a, b) => a.localeCompare(b));
 	let longest = 0;
+	let current = 0;
+	let previous: string | undefined;
 	for (const day of present) {
-		// Only count a run from its first day, so each run is walked once.
-		if (present.has(previousDay(day))) continue;
-		let length = 0;
-		for (let cursor = day; present.has(cursor); cursor = nextDay(cursor)) length++;
-		longest = Math.max(longest, length);
+		const missed = previous ? dayNumber(day) - dayNumber(previous) - 1 : 0;
+		current = previous && missed <= 2 ? current + 1 : 1;
+		longest = Math.max(longest, current);
+		previous = day;
 	}
 	return longest;
 }

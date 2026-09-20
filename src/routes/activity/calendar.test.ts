@@ -57,12 +57,12 @@ describe('shades', () => {
 });
 
 describe('longestStreak', () => {
-	it('finds the longest run however the days arrive', () => {
+	it('finds the longest run however the days arrive, with two grace days', () => {
 		expect(longestStreak([])).toBe(0);
 		expect(longestStreak(['2024-03-10'])).toBe(1);
 		expect(
 			longestStreak([
-				'2024-03-12',
+				'2024-03-14',
 				'2024-03-10',
 				'2024-03-11',
 				'2024-03-20',
@@ -70,6 +70,10 @@ describe('longestStreak', () => {
 				'2024-03-11'
 			])
 		).toBe(3);
+	});
+
+	it('breaks after three inactive days', () => {
+		expect(longestStreak(['2024-03-10', '2024-03-14'])).toBe(1);
 	});
 
 	it('runs across a month end', () => {

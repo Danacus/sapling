@@ -52,8 +52,14 @@ describe('streakFrom', () => {
 		expect(streakFrom(['2026-08-23', '2026-08-21', '2026-08-22'])).toBe(3);
 	});
 
-	it('breaks the streak on a missing day, counting only the trailing run', () => {
+	it('allows one or two inactive days between active days', () => {
+		expect(streakFrom(['2026-08-20', '2026-08-22', '2026-08-23'])).toBe(3);
+		expect(streakFrom(['2026-08-19', '2026-08-22', '2026-08-23'])).toBe(3);
+	});
+
+	it('breaks after three inactive days, counting only the trailing run', () => {
 		expect(streakFrom(['2026-08-01', '2026-08-02', '2026-08-22', '2026-08-23'])).toBe(2);
+		expect(streakFrom(['2026-08-19', '2026-08-23'])).toBe(1);
 	});
 
 	it('does not require today to be active', () => {

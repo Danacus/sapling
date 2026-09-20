@@ -39,11 +39,12 @@ export function activityByDay(results: { at: number }[]): { day: string; count: 
 }
 
 /**
- * The run of consecutive calendar days ending at the most recent active one.
+ * The run of active days ending at the most recent one, with a little grace.
  *
- * A skipped day breaks the run; today does **not** have to be active for the
- * streak to stand — a learner who played yesterday and has not played yet today
- * still has their streak, and loses it only once a whole day passes unplayed.
+ * Up to two inactive days may sit between active days without breaking the
+ * chain. Grace days do not increase the count: the streak remains a count of
+ * days on which the learner showed up. Today does **not** have to be active;
+ * this pure fold has no clock and ends at the newest activity it is given.
  */
 export function streakFrom(days: string[]): number {
 	if (days.length === 0) return 0;
@@ -51,7 +52,15 @@ export function streakFrom(days: string[]): number {
 	const present = new Set(days);
 	const lastActiveDay = [...present].sort((a, b) => a.localeCompare(b)).pop() as string;
 
-	let streak = 0;
-	for (let day = lastActiveDay; present.has(day); day = previousDay(day)) streak++;
+	let streak = 1;
+	let missed = 0;
+	for (let day = previousDay(lastActiveDay); missed <= 2; day = previousDay(day)) {
+		if (present.has(day)) {
+			streak++;
+			missed = 0;
+		} else {
+			missed++;
+		}
+	}
 	return streak;
 }
