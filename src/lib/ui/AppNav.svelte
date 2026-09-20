@@ -81,8 +81,36 @@
 		</div>
 
 		<div class="utilities">
-			<a href="/profile">Profile</a>
-			<a href="/settings">Settings</a>
+			<details class="utility-menu">
+				<summary class="utility-trigger" aria-label="Profile and settings">
+					<span class="nav-icon" aria-hidden="true">
+						<svg viewBox="0 0 24 24">
+							<circle cx="12" cy="12" r="1" />
+							<circle cx="5.5" cy="12" r="1" />
+							<circle cx="18.5" cy="12" r="1" />
+						</svg>
+					</span>
+					<span>More</span>
+				</summary>
+				<div class="utility-panel">
+					<p>Your Sapling</p>
+					<a href="/profile">
+						<svg viewBox="0 0 24 24" aria-hidden="true">
+							<circle cx="12" cy="8.4" r="3.4" />
+							<path d="M4.9 19.6c.7-3.4 3.5-5.5 7.1-5.5s6.4 2.1 7.1 5.5" />
+						</svg>
+						<span>Profile</span>
+					</a>
+					<a href="/settings">
+						<svg viewBox="0 0 24 24" aria-hidden="true">
+							<path d="M4 8.2h8.4M17.4 8.2H20M4 15.8h2.6M11.6 15.8H20" />
+							<circle cx="15" cy="8.2" r="2.3" />
+							<circle cx="9" cy="15.8" r="2.3" />
+						</svg>
+						<span>Settings</span>
+					</a>
+				</div>
+			</details>
 		</div>
 	</div>
 </nav>
@@ -100,6 +128,8 @@
 	}
 
 	.nav-inner {
+		display: grid;
+		grid-template-columns: minmax(0, 4fr) minmax(0, 1fr);
 		width: 100%;
 		max-width: var(--measure-full);
 		margin-inline: auto;
@@ -107,8 +137,7 @@
 			calc(0.35rem + env(safe-area-inset-bottom)) max(var(--gutter), env(safe-area-inset-left));
 	}
 
-	.brand,
-	.utilities {
+	.brand {
 		display: none;
 	}
 
@@ -116,6 +145,85 @@
 		display: grid;
 		grid-template-columns: repeat(4, minmax(0, 1fr));
 		gap: 0.2rem;
+	}
+
+	.utilities {
+		position: relative;
+		min-width: 0;
+	}
+
+	.utility-menu,
+	.utility-trigger {
+		height: 100%;
+	}
+
+	.utility-trigger {
+		display: flex;
+		min-height: 3.6rem;
+		align-items: center;
+		justify-content: center;
+		flex-direction: column;
+		gap: 0.15rem;
+		border-radius: var(--radius);
+		color: var(--text-muted);
+		font-size: 0.69rem;
+		font-weight: 700;
+		letter-spacing: 0.01em;
+		cursor: pointer;
+		list-style: none;
+	}
+
+	.utility-trigger::-webkit-details-marker {
+		display: none;
+	}
+
+	.utility-trigger:hover,
+	.utility-menu[open] .utility-trigger {
+		background: var(--surface-alt);
+		color: var(--text);
+	}
+
+	.utility-panel {
+		position: absolute;
+		right: 0;
+		bottom: calc(100% + 0.55rem);
+		width: 13rem;
+		padding: 0.5rem;
+		border: 1px solid var(--border-strong);
+		border-radius: var(--radius);
+		background: var(--surface);
+		box-shadow: var(--shadow);
+	}
+
+	.utility-panel p {
+		margin: 0.15rem 0.45rem 0.4rem;
+		color: var(--text-muted);
+		font-size: 0.65rem;
+		font-weight: 750;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+	}
+
+	.utility-panel a {
+		display: flex;
+		align-items: center;
+		gap: 0.65rem;
+		padding: 0.65rem;
+		border-radius: var(--radius-sm);
+		color: var(--text);
+		font-size: 0.88rem;
+		font-weight: 700;
+		text-decoration: none;
+	}
+
+	.utility-panel a:hover {
+		background: var(--surface-alt);
+	}
+
+	.utility-panel a svg {
+		width: 1.15rem;
+		height: 1.15rem;
+		color: var(--text-muted);
 	}
 
 	.destination {
@@ -141,7 +249,8 @@
 
 	.destination:focus-visible,
 	.brand:focus-visible,
-	.utilities a:focus-visible {
+	.utility-trigger:focus-visible,
+	.utility-panel a:focus-visible {
 		outline: none;
 		box-shadow: var(--ring);
 	}
@@ -220,23 +329,27 @@
 		}
 
 		.utilities {
-			display: flex;
-			justify-content: flex-end;
-			gap: 0.35rem;
+			display: block;
+			justify-self: end;
 		}
 
-		.utilities a {
-			padding: 0.45rem 0.55rem;
+		.utility-trigger {
+			min-height: 2.35rem;
+			padding: 0.25rem 0.7rem;
+			flex-direction: row;
+			gap: 0.4rem;
 			border-radius: var(--radius-sm);
-			color: var(--text-muted);
 			font-size: 0.78rem;
-			font-weight: 700;
-			text-decoration: none;
 		}
 
-		.utilities a:hover {
-			background: var(--surface-alt);
-			color: var(--text);
+		.utility-trigger .nav-icon {
+			width: 1rem;
+			height: 1rem;
+		}
+
+		.utility-panel {
+			top: calc(100% + 0.7rem);
+			bottom: auto;
 		}
 	}
 </style>

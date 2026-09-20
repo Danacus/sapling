@@ -1408,6 +1408,19 @@
 		gap: var(--gap);
 	}
 
+	/* On phones the flow is a real stack; column layout only takes over at the
+	   global wide breakpoint. Without this, adjacent cards shared one border. */
+	.spread-flow {
+		display: grid;
+		gap: var(--gap);
+	}
+
+	@media (min-width: 48rem) {
+		.spread-flow {
+			display: block;
+		}
+	}
+
 	.loading {
 		display: grid;
 		place-items: center;

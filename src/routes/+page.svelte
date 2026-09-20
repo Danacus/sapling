@@ -252,22 +252,6 @@
 						</svg>
 						<span>{streakDays}</span>
 					</div>
-					<!-- No conversation icon here: it has the card below. One of the two
-					     ways vocabulary enters the app does not belong in the corner row
-					     with settings. -->
-					<a class="gear" href="/profile" aria-label="Profile">
-						<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-							<circle cx="12" cy="8.4" r="3.4" />
-							<path d="M4.9 19.6c.7-3.4 3.5-5.5 7.1-5.5s6.4 2.1 7.1 5.5" />
-						</svg>
-					</a>
-					<a class="gear" href="/settings" aria-label="Settings">
-						<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-							<path d="M4 8.2h8.4M17.4 8.2H20M4 15.8h2.6M11.6 15.8H20" />
-							<circle cx="15" cy="8.2" r="2.3" />
-							<circle cx="9" cy="15.8" r="2.3" />
-						</svg>
-					</a>
 				</div>
 			</header>
 
@@ -756,8 +740,7 @@
 	/* Topbar controls are label tabs, not pills: the same 2.25rem square with a
 	   hairline and a squared-off radius, so the streak count reads as one of
 	   the row rather than a badge stuck onto it. */
-	.streak,
-	.gear {
+	.streak {
 		height: 2.25rem;
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
@@ -785,26 +768,6 @@
 	.streak.dimmed {
 		opacity: 0.5;
 		filter: grayscale(0.7);
-	}
-
-	.gear {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 2.25rem;
-		color: var(--text-muted);
-		text-decoration: none;
-	}
-
-	.gear:hover {
-		border-color: var(--border-strong);
-		background: var(--surface-alt);
-		color: var(--text);
-	}
-
-	.gear:focus-visible {
-		outline: none;
-		box-shadow: var(--ring);
 	}
 
 	/* Scoped to the spread — the column already bounds these, and below 48rem

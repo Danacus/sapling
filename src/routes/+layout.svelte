@@ -25,7 +25,7 @@
 	const showAppNav = $derived.by(() => {
 		const path = page.url.pathname;
 		const immersive =
-			path === '/learn' ||
+			path.startsWith('/learn/session') ||
 			path === '/chat' ||
 			/^\/read\/[^/]+/.test(path) ||
 			/^\/converse\/[^/]+/.test(path);
