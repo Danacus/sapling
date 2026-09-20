@@ -8,13 +8,11 @@
 		getDailyActivity,
 		getProfile,
 		getTexts,
-		listProfiles,
 		localDay,
 		previousDay,
-		setActiveProfile,
 		streakFrom
 	} from '$lib/db';
-	import type { ConversationSummary, LanguageProfile } from '$lib/db';
+	import type { ConversationSummary } from '$lib/db';
 	import { isDue } from '$lib/srs';
 	import type { KnowledgeItem, Profile, ReadingText } from '$lib/types';
 	import Spinner from '$lib/ui/Spinner.svelte';
@@ -24,8 +22,6 @@
 	let loading = $state(true);
 	let loadError = $state('');
 	let profile = $state<Profile | undefined>(undefined);
-	let profiles = $state<LanguageProfile[]>([]);
-	let switchingProfile = $state(false);
 	let items = $state<KnowledgeItem[]>([]);
 	let activity = $state<{ day: string; count: number }[]>([]);
 	let conversations = $state<ConversationSummary[]>([]);
@@ -39,28 +35,18 @@
 		loading = true;
 		loadError = '';
 
-		Promise.all([
-			getProfile(),
-			listProfiles(),
-			getAllItems(),
-			getDailyActivity(),
-			getConversations(),
-			getTexts()
-		])
-			.then(
-				([loadedProfile, loadedProfiles, loadedItems, days, loadedConversations, loadedTexts]) => {
-					if (cancelled) return;
-					profile = loadedProfile;
-					profiles = loadedProfiles;
-					items = loadedItems;
-					activity = days;
-					conversations = loadedConversations;
-					texts = loadedTexts;
-					streakDays = streakFrom(days.map((entry) => entry.day));
-					now = Date.now();
-					loading = false;
-				}
-			)
+		Promise.all([getProfile(), getAllItems(), getDailyActivity(), getConversations(), getTexts()])
+			.then(([loadedProfile, loadedItems, days, loadedConversations, loadedTexts]) => {
+				if (cancelled) return;
+				profile = loadedProfile;
+				items = loadedItems;
+				activity = days;
+				conversations = loadedConversations;
+				texts = loadedTexts;
+				streakDays = streakFrom(days.map((entry) => entry.day));
+				now = Date.now();
+				loading = false;
+			})
 			.catch((cause) => {
 				if (cancelled) return;
 				loadError = cause instanceof Error ? cause.message : 'Could not load your day.';
@@ -72,19 +58,7 @@
 		};
 	});
 
-	async function switchProfile(id: string) {
-		if (!id || profiles.find((entry) => entry.id === id)?.active) return;
-		switchingProfile = true;
-		try {
-			await setActiveProfile(id);
-			window.location.assign('/');
-		} catch {
-			switchingProfile = false;
-		}
-	}
-
 	const targetLanguage = $derived(profile?.targetLanguage?.trim() || 'your new language');
-	const activeProfile = $derived(profiles.find((entry) => entry.active));
 	const dueCount = $derived(items.filter((item) => isDue(item, now)).length);
 	const today = $derived(localDay(now));
 	const reviewsToday = $derived(activity.find((entry) => entry.day === today)?.count ?? 0);
@@ -223,36 +197,6 @@
 					</svg>
 					<span>{streakDays}</span>
 				</div>
-
-				<details class="language-switcher">
-					<summary aria-label="Choose a language">
-						<span>{activeProfile?.targetLanguage ?? targetLanguage}</span>
-						<svg class="ico chevron" viewBox="0 0 24 24" aria-hidden="true">
-							<path d="m7.5 9.5 4.5 4.5 4.5-4.5" />
-						</svg>
-					</summary>
-					<div class="language-menu">
-						<p>Your language gardens</p>
-						{#each profiles as entry (entry.id)}
-							<button
-								type="button"
-								class:active={entry.active}
-								disabled={entry.active || switchingProfile}
-								onclick={() => void switchProfile(entry.id)}
-							>
-								<span class="language-initial" aria-hidden="true">
-									{entry.targetLanguage.trim().charAt(0).toLocaleUpperCase()}
-								</span>
-								<span class="language-copy">
-									<strong>{entry.targetLanguage}</strong>
-									<small>from {entry.nativeLanguage}</small>
-								</span>
-								{#if entry.active}<span class="check" aria-hidden="true">✓</span>{/if}
-							</button>
-						{/each}
-						<a href="/onboarding?add=1"><span class="add">+</span>Add another language</a>
-					</div>
-				</details>
 			</div>
 		</header>
 
@@ -429,8 +373,7 @@
 		align-items: center;
 		gap: 0.4rem;
 	}
-	.streak,
-	.language-switcher summary {
+	.streak {
 		min-height: 2.5rem;
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
@@ -447,123 +390,6 @@
 	.streak.quiet {
 		color: var(--text-muted);
 		opacity: 0.65;
-	}
-	.language-switcher {
-		position: relative;
-	}
-	.language-switcher summary {
-		display: flex;
-		align-items: center;
-		gap: 0.4rem;
-		max-width: 11rem;
-		padding: 0.45rem 0.6rem;
-		color: var(--text);
-		font-size: 0.82rem;
-		font-weight: 700;
-		cursor: pointer;
-		list-style: none;
-	}
-	.language-switcher summary::-webkit-details-marker {
-		display: none;
-	}
-	.language-switcher summary > span {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.chevron {
-		width: 0.9rem;
-		height: 0.9rem;
-		color: var(--text-muted);
-		transition: transform 0.18s ease;
-	}
-	.language-switcher[open] .chevron {
-		transform: rotate(180deg);
-	}
-	.language-menu {
-		position: absolute;
-		z-index: 20;
-		top: calc(100% + 0.45rem);
-		right: 0;
-		width: min(19rem, calc(100vw - 2 * var(--gutter)));
-		padding: 0.55rem;
-		border: 1px solid var(--border-strong);
-		border-radius: var(--radius);
-		background: var(--surface);
-		box-shadow: var(--shadow);
-	}
-	.language-menu > p {
-		margin: 0.15rem 0.45rem 0.4rem;
-		color: var(--text-muted);
-		font-size: 0.65rem;
-		font-weight: 750;
-		letter-spacing: 0.1em;
-		text-transform: uppercase;
-	}
-	.language-menu button,
-	.language-menu a {
-		display: flex;
-		align-items: center;
-		width: 100%;
-		gap: 0.65rem;
-		padding: 0.55rem;
-		border: 0;
-		border-radius: var(--radius-sm);
-		background: transparent;
-		color: var(--text);
-		font: inherit;
-		text-align: left;
-		text-decoration: none;
-	}
-	.language-menu button:not(:disabled) {
-		cursor: pointer;
-	}
-	.language-menu button:hover:not(:disabled),
-	.language-menu a:hover {
-		background: var(--surface-alt);
-	}
-	.language-menu button.active {
-		background: color-mix(in srgb, var(--primary-soft) 60%, transparent);
-		opacity: 1;
-	}
-	.language-initial,
-	.add {
-		display: grid;
-		place-items: center;
-		width: 2rem;
-		height: 2rem;
-		flex: 0 0 auto;
-		border: 1px solid var(--border);
-		border-radius: 50%;
-		background: var(--bg);
-		color: var(--primary-strong);
-		font-family: var(--font-display);
-		font-weight: 700;
-	}
-	.language-copy {
-		display: flex;
-		min-width: 0;
-		flex: 1;
-		flex-direction: column;
-		line-height: 1.2;
-	}
-	.language-copy small {
-		color: var(--text-muted);
-	}
-	.check {
-		color: var(--primary-strong);
-		font-weight: 800;
-	}
-	.language-menu a {
-		margin-top: 0.35rem;
-		border-top: 1px dashed var(--border);
-		border-radius: 0 0 var(--radius-sm) var(--radius-sm);
-		color: var(--primary-strong);
-		font-weight: 700;
-	}
-	.add {
-		border-radius: var(--radius-sm);
-		background: transparent;
 	}
 	.hero {
 		position: relative;
@@ -858,9 +684,6 @@
 		.header-tools {
 			justify-content: space-between;
 		}
-		.language-switcher {
-			margin-left: auto;
-		}
 		.hero {
 			min-height: 23rem;
 		}
@@ -869,7 +692,6 @@
 		}
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.chevron,
 		.continue-copy strong {
 			transition: none;
 		}

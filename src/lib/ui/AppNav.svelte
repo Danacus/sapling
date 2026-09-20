@@ -1,5 +1,8 @@
 <script lang="ts">
+	import { browser } from '$app/environment';
 	import { page } from '$app/state';
+	import { listProfiles, setActiveProfile } from '$lib/db';
+	import type { LanguageProfile } from '$lib/db';
 
 	type Destination = 'today' | 'practice' | 'explore' | 'garden';
 
@@ -17,6 +20,37 @@
 	];
 
 	const path = $derived(page.url.pathname);
+	let profiles = $state<LanguageProfile[]>([]);
+	let switchingProfile = $state(false);
+	let menuView = $state<'root' | 'languages'>('root');
+	let menu = $state<HTMLDetailsElement | null>(null);
+	const activeProfile = $derived(profiles.find((entry) => entry.active));
+
+	$effect(() => {
+		if (!browser) return;
+		let cancelled = false;
+		listProfiles().then((loaded) => {
+			if (!cancelled) profiles = loaded;
+		});
+		return () => {
+			cancelled = true;
+		};
+	});
+
+	async function switchProfile(id: string) {
+		if (!id || profiles.find((entry) => entry.id === id)?.active) return;
+		switchingProfile = true;
+		try {
+			await setActiveProfile(id);
+			window.location.assign('/');
+		} catch {
+			switchingProfile = false;
+		}
+	}
+
+	function resetClosedMenu() {
+		if (!menu?.open) menuView = 'root';
+	}
 
 	const active = $derived.by((): Destination | undefined => {
 		if (path === '/' || path.startsWith('/activity')) return 'today';
@@ -81,7 +115,7 @@
 		</div>
 
 		<div class="utilities">
-			<details class="utility-menu">
+			<details class="utility-menu" bind:this={menu} ontoggle={resetClosedMenu}>
 				<summary class="utility-trigger" aria-label="Profile and settings">
 					<span class="nav-icon" aria-hidden="true">
 						<svg viewBox="0 0 24 24">
@@ -93,22 +127,87 @@
 					<span>More</span>
 				</summary>
 				<div class="utility-panel">
-					<p>Your Sapling</p>
-					<a href="/profile">
-						<svg viewBox="0 0 24 24" aria-hidden="true">
-							<circle cx="12" cy="8.4" r="3.4" />
-							<path d="M4.9 19.6c.7-3.4 3.5-5.5 7.1-5.5s6.4 2.1 7.1 5.5" />
-						</svg>
-						<span>Profile</span>
-					</a>
-					<a href="/settings">
-						<svg viewBox="0 0 24 24" aria-hidden="true">
-							<path d="M4 8.2h8.4M17.4 8.2H20M4 15.8h2.6M11.6 15.8H20" />
-							<circle cx="15" cy="8.2" r="2.3" />
-							<circle cx="9" cy="15.8" r="2.3" />
-						</svg>
-						<span>Settings</span>
-					</a>
+					{#key menuView}
+						<div class="panel-view" class:picker-enter={menuView === 'languages'}>
+							{#if menuView === 'root'}
+								<div class="panel-heading">
+									<p>Your Sapling</p>
+									<strong>More</strong>
+								</div>
+								<button
+									type="button"
+									class="menu-row garden-row"
+									onclick={() => (menuView = 'languages')}
+								>
+									<span class="language-initial" aria-hidden="true"
+										>{activeProfile?.targetLanguage.trim().charAt(0).toLocaleUpperCase() ||
+											'·'}</span
+									>
+									<span class="row-copy"
+										><small>Language garden</small><strong
+											>{activeProfile?.targetLanguage || 'Choose a language'}</strong
+										></span
+									>
+									<svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"
+										><path d="m9 6 6 6-6 6" /></svg
+									>
+								</button>
+								<div class="menu-divider"></div>
+								<a class="menu-row" href="/profile">
+									<svg viewBox="0 0 24 24" aria-hidden="true">
+										<circle cx="12" cy="8.4" r="3.4" />
+										<path d="M4.9 19.6c.7-3.4 3.5-5.5 7.1-5.5s6.4 2.1 7.1 5.5" />
+									</svg>
+									<span>Profile</span>
+								</a>
+								<a class="menu-row" href="/settings">
+									<svg viewBox="0 0 24 24" aria-hidden="true">
+										<path d="M4 8.2h8.4M17.4 8.2H20M4 15.8h2.6M11.6 15.8H20" />
+										<circle cx="15" cy="8.2" r="2.3" />
+										<circle cx="9" cy="15.8" r="2.3" />
+									</svg>
+									<span>Settings</span>
+								</a>
+							{:else}
+								<div class="picker-heading">
+									<button
+										type="button"
+										class="back-button"
+										onclick={() => (menuView = 'root')}
+										aria-label="Back to More">←</button
+									>
+									<div>
+										<p>Your gardens</p>
+										<strong>Choose a language</strong>
+									</div>
+								</div>
+								<div class="language-list">
+									{#each profiles as entry (entry.id)}
+										<button
+											type="button"
+											class="menu-row language-row"
+											class:active={entry.active}
+											disabled={entry.active || switchingProfile}
+											onclick={() => void switchProfile(entry.id)}
+										>
+											<span class="language-initial" aria-hidden="true"
+												>{entry.targetLanguage.trim().charAt(0).toLocaleUpperCase()}</span
+											>
+											<span class="row-copy"
+												><strong>{entry.targetLanguage}</strong><small
+													>from {entry.nativeLanguage}</small
+												></span
+											>
+											{#if entry.active}<span class="check" aria-hidden="true">✓</span>{/if}
+										</button>
+									{/each}
+								</div>
+								<a class="menu-row add-language" href="/onboarding?add=1"
+									><span class="add" aria-hidden="true">+</span><span>Add another language</span></a
+								>
+							{/if}
+						</div>
+					{/key}
 				</div>
 			</details>
 		</div>
@@ -184,19 +283,72 @@
 	}
 
 	.utility-panel {
-		position: absolute;
-		right: 0;
-		bottom: calc(100% + 0.55rem);
-		width: 13rem;
-		padding: 0.5rem;
+		position: fixed;
+		z-index: 2;
+		inset: auto 0.75rem calc(4.65rem + env(safe-area-inset-bottom));
+		max-height: min(31rem, calc(100dvh - 6.5rem));
+		overflow: hidden auto;
+		padding: 0.7rem;
 		border: 1px solid var(--border-strong);
-		border-radius: var(--radius);
+		border-radius: var(--radius-lg);
 		background: var(--surface);
-		box-shadow: var(--shadow);
+		box-shadow: 0 18px 50px rgb(38 48 31 / 24%);
 	}
 
-	.utility-panel p {
-		margin: 0.15rem 0.45rem 0.4rem;
+	.utility-menu[open] .utility-panel {
+		transform-origin: bottom right;
+		animation: menu-open 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+	}
+
+	.panel-view {
+		animation: view-from-left 170ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+	}
+
+	.panel-view.picker-enter {
+		animation-name: view-from-right;
+	}
+
+	@keyframes menu-open {
+		from {
+			opacity: 0;
+			transform: translateY(0.65rem) scale(0.97);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0) scale(1);
+		}
+	}
+
+	@keyframes view-from-right {
+		from {
+			opacity: 0;
+			transform: translateX(0.8rem);
+		}
+		to {
+			opacity: 1;
+			transform: translateX(0);
+		}
+	}
+
+	@keyframes view-from-left {
+		from {
+			opacity: 0;
+			transform: translateX(-0.8rem);
+		}
+		to {
+			opacity: 1;
+			transform: translateX(0);
+		}
+	}
+
+	.panel-heading,
+	.picker-heading {
+		padding: 0.25rem 0.4rem 0.7rem;
+	}
+
+	.panel-heading p,
+	.picker-heading p {
+		margin: 0;
 		color: var(--text-muted);
 		font-size: 0.65rem;
 		font-weight: 750;
@@ -204,26 +356,131 @@
 		text-transform: uppercase;
 	}
 
-	.utility-panel a {
-		display: flex;
-		align-items: center;
-		gap: 0.65rem;
-		padding: 0.65rem;
-		border-radius: var(--radius-sm);
-		color: var(--text);
-		font-size: 0.88rem;
-		font-weight: 700;
-		text-decoration: none;
+	.panel-heading strong,
+	.picker-heading strong {
+		font-family: var(--font-display);
+		font-size: 1.15rem;
 	}
 
-	.utility-panel a:hover {
+	.menu-row {
+		display: flex;
+		align-items: center;
+		width: 100%;
+		gap: 0.65rem;
+		padding: 0.65rem;
+		border: 0;
+		border-radius: var(--radius-sm);
+		background: transparent;
+		color: var(--text);
+		font: inherit;
+		font-size: 0.88rem;
+		font-weight: 700;
+		text-align: left;
+		text-decoration: none;
+		cursor: pointer;
+	}
+
+	.menu-row:hover:not(:disabled) {
 		background: var(--surface-alt);
 	}
 
-	.utility-panel a svg {
+	.menu-row > svg {
 		width: 1.15rem;
 		height: 1.15rem;
+		flex: 0 0 auto;
 		color: var(--text-muted);
+	}
+
+	.garden-row {
+		padding-block: 0.75rem;
+		background: color-mix(in srgb, var(--primary-soft) 55%, transparent);
+	}
+
+	.garden-row .chevron {
+		margin-left: auto;
+	}
+
+	.menu-divider {
+		height: 1px;
+		margin: 0.45rem 0.35rem;
+		background: var(--border);
+	}
+
+	.language-initial,
+	.add {
+		display: grid;
+		place-items: center;
+		width: 2.25rem;
+		height: 2.25rem;
+		flex: 0 0 auto;
+		border: 1px solid var(--border);
+		border-radius: 50%;
+		background: var(--surface);
+		color: var(--primary-strong);
+		font-family: var(--font-display);
+		font-size: 1rem;
+		font-weight: 800;
+	}
+
+	.row-copy {
+		display: flex;
+		min-width: 0;
+		flex: 1;
+		flex-direction: column;
+		line-height: 1.2;
+	}
+
+	.row-copy small {
+		color: var(--text-muted);
+		font-size: 0.72rem;
+		font-weight: 600;
+	}
+
+	.picker-heading {
+		display: flex;
+		align-items: center;
+		gap: 0.65rem;
+	}
+
+	.back-button {
+		display: grid;
+		place-items: center;
+		width: 2.3rem;
+		height: 2.3rem;
+		padding: 0;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		background: var(--surface-alt);
+		color: var(--text);
+		font: inherit;
+		font-size: 1.05rem;
+		cursor: pointer;
+	}
+
+	.language-row.active {
+		background: color-mix(in srgb, var(--primary-soft) 65%, transparent);
+		opacity: 1;
+	}
+
+	.language-row:disabled {
+		cursor: default;
+	}
+
+	.check {
+		color: var(--primary-strong);
+		font-weight: 900;
+	}
+
+	.add-language {
+		margin-top: 0.4rem;
+		border-top: 1px dashed var(--border);
+		border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+		color: var(--primary-strong);
+	}
+
+	.add {
+		border-radius: var(--radius-sm);
+		background: transparent;
 	}
 
 	.destination {
@@ -250,7 +507,8 @@
 	.destination:focus-visible,
 	.brand:focus-visible,
 	.utility-trigger:focus-visible,
-	.utility-panel a:focus-visible {
+	.menu-row:focus-visible,
+	.back-button:focus-visible {
 		outline: none;
 		box-shadow: var(--ring);
 	}
@@ -348,8 +606,25 @@
 		}
 
 		.utility-panel {
+			position: absolute;
 			top: calc(100% + 0.7rem);
+			right: 0;
 			bottom: auto;
+			left: auto;
+			width: 19rem;
+			max-height: min(31rem, calc(100dvh - 5.5rem));
+		}
+
+		.utility-menu[open] .utility-panel {
+			transform-origin: top right;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.utility-menu[open] .utility-panel,
+		.panel-view,
+		.panel-view.picker-enter {
+			animation: none;
 		}
 	}
 </style>
