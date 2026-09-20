@@ -154,7 +154,7 @@
 	<title>Sapling · Assistant</title>
 </svelte:head>
 
-<main class="shell shell-wide">
+<main class="shell shell-broad">
 	{#if loading}
 		<div class="loading">
 			<Spinner />
@@ -301,12 +301,13 @@
 
 <style>
 	/*
-	  Width and the horizontal gutter are the global `.shell`/`.shell-wide`
-	  pair's job now; what stays scoped is genuinely vertical — pinning the page
-	  to the viewport and stacking topbar, transcript and composer inside it.
+	  Width and the horizontal gutter are the global `.shell`/`.shell-broad`
+	  pair's job now, matching the rest of the primary app. What stays scoped is
+	  genuinely vertical — pinning the transcript and composer above the mobile
+	  navigation rather than letting the page itself scroll.
 	*/
 	.shell {
-		height: 100dvh;
+		height: calc(100dvh - 4.6rem - env(safe-area-inset-bottom));
 		padding-block: 1.25rem 0;
 		display: flex;
 		flex-direction: column;
@@ -504,7 +505,7 @@
 	  saturated fill anywhere, so a long thread still reads like a page.
 	*/
 	.bubble {
-		max-width: 84%;
+		max-width: min(84%, 38rem);
 		padding: 0.7rem 0.9rem;
 		border-radius: var(--radius);
 		font-size: 0.95rem;
@@ -717,6 +718,12 @@
 
 		.messages {
 			padding-left: 0.7rem;
+		}
+	}
+
+	@media (min-width: 48rem) {
+		.shell {
+			height: calc(100dvh - 3.55rem);
 		}
 	}
 </style>

@@ -26,7 +26,6 @@
 		const path = page.url.pathname;
 		const immersive =
 			path.startsWith('/learn/session') ||
-			path === '/chat' ||
 			/^\/read\/[^/]+/.test(path) ||
 			/^\/converse\/[^/]+/.test(path);
 		const outsideApp =
