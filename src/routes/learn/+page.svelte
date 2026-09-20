@@ -51,7 +51,7 @@
 	import { runSync } from '$lib/sync';
 	import { startTask } from '$lib/tasks';
 	import { taskStore } from '$lib/tasks/store.svelte';
-	import { getTtsEngine, kokoroSupports, preloadKokoro, warmSpeech } from '$lib/tts';
+	import { getTtsEngine, preloadVoice, sherpaSupports, warmSpeech } from '$lib/tts';
 	import type { Challenge, KnowledgeItem, Profile, Verdict } from '$lib/types';
 	import BackLink from '$lib/ui/BackLink.svelte';
 	import { addRecentTopic, getRecentTopics, getRomanizationMode } from '$lib/ui/prefs';
@@ -571,8 +571,8 @@
 	 * place in the session where they are waiting on audio with nothing to read.
 	 */
 	function bootSpeech(): void {
-		if (getTtsEngine() !== 'kokoro' || !kokoroSupports(targetLanguage)) return;
-		void preloadKokoro().catch(() => {
+		if (getTtsEngine() !== 'kokoro' || !sherpaSupports(targetLanguage)) return;
+		void preloadVoice(targetLanguage).catch(() => {
 			// A failed preload is not the learner's problem: `speak` falls back.
 		});
 	}

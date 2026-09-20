@@ -44,7 +44,7 @@ const NATIVE_STATUS = {
 const SYNTHESIS_ONLY_STATUS = { ...NATIVE_STATUS, playback: false };
 
 const native = {
-	nativeKokoro: {
+	nativeSherpa: {
 		init: vi.fn(async () => {}),
 		onProgress: vi.fn(() => () => {}),
 		synthesize: vi.fn(async () => new Blob(['native']))
@@ -143,13 +143,21 @@ afterEach(() => {
 });
 
 describe('choosing the host that speaks Kokoro', () => {
+	it('selects the Cantonese VITS model instead of falling back', async () => {
+		const { warmSpeech } = await loadTts();
+
+		await warmSpeech('今日天氣真係好好', 'Cantonese');
+
+		expect(sherpa.synthesize).toHaveBeenCalledWith('cantonese', '今日天氣真係好好', 0, 1);
+	});
+
 	it('synthesizes through the browser worker when there is no Tauri host', async () => {
 		const { warmSpeech } = await loadTts();
 
 		await warmSpeech('你好', MANDARIN);
 
-		expect(sherpa.synthesize).toHaveBeenCalledWith('你好', ZF_001, 1);
-		expect(native.nativeKokoro.synthesize).not.toHaveBeenCalled();
+		expect(sherpa.synthesize).toHaveBeenCalledWith('kokoro', '你好', ZF_001, 1);
+		expect(native.nativeSherpa.synthesize).not.toHaveBeenCalled();
 	});
 
 	it('synthesizes through the native host inside Tauri', async () => {
@@ -158,7 +166,7 @@ describe('choosing the host that speaks Kokoro', () => {
 
 		await warmSpeech('你好', MANDARIN);
 
-		expect(native.nativeKokoro.synthesize).toHaveBeenCalledWith('你好', ZF_001, 1);
+		expect(native.nativeSherpa.synthesize).toHaveBeenCalledWith('kokoro', '你好', ZF_001, 1);
 		expect(sherpa.synthesize).not.toHaveBeenCalled();
 	});
 
@@ -166,14 +174,22 @@ describe('choosing the host that speaks Kokoro', () => {
 		const browser = await loadTts();
 		await browser.preloadKokoro();
 		expect(sherpa.initSherpa).toHaveBeenCalledTimes(1);
-		expect(native.nativeKokoro.init).not.toHaveBeenCalled();
+		expect(native.nativeSherpa.init).not.toHaveBeenCalled();
 
 		pretendTauri();
 		const desktop = await loadTts();
 		await desktop.preloadKokoro();
-		expect(native.nativeKokoro.init).toHaveBeenCalledTimes(1);
+		expect(native.nativeSherpa.init).toHaveBeenCalledTimes(1);
 		// Still once, from the browser pass — the desktop never touched it.
 		expect(sherpa.initSherpa).toHaveBeenCalledTimes(1);
+	});
+
+	it('preloads the model selected by language', async () => {
+		const { preloadVoice } = await loadTts();
+
+		await preloadVoice('Cantonese');
+
+		expect(sherpa.initSherpa).toHaveBeenCalledWith('cantonese');
 	});
 
 	it('subscribes progress to the host that is downloading', async () => {
@@ -182,7 +198,7 @@ describe('choosing the host that speaks Kokoro', () => {
 
 		await preloadKokoro(() => {});
 
-		expect(native.nativeKokoro.onProgress).toHaveBeenCalledTimes(1);
+		expect(native.nativeSherpa.onProgress).toHaveBeenCalledTimes(1);
 		expect(sherpa.onSherpaProgress).not.toHaveBeenCalled();
 	});
 
@@ -190,6 +206,7 @@ describe('choosing the host that speaks Kokoro', () => {
 		const browser = await loadTts();
 		// The two mirrored runtime files, from `models.ts`.
 		expect(await browser.voiceDownloadBytes()).toBe(11903250 + 426654376);
+		expect(await browser.voiceDownloadBytes('Cantonese')).toBe(11903250 + 114426339);
 
 		pretendTauri();
 		const desktop = await loadTts();
@@ -217,7 +234,7 @@ describe('a Tauri host with no voice of its own', () => {
 		await speak('你好', MANDARIN);
 		await speak('再见', MANDARIN);
 
-		expect(native.nativeKokoro.synthesize).not.toHaveBeenCalled();
+		expect(native.nativeSherpa.synthesize).not.toHaveBeenCalled();
 		// Nothing was synthesized, so nothing was played — by the host or by an
 		// element. `speakWithWebSpeech` is what actually says the word.
 		expect(native.playOnHost).not.toHaveBeenCalled();
@@ -248,7 +265,7 @@ describe('a Tauri host with no voice of its own', () => {
 		const { preloadKokoro } = await loadTts();
 
 		await expect(preloadKokoro()).rejects.toThrow('no built-in voice');
-		expect(native.nativeKokoro.init).not.toHaveBeenCalled();
+		expect(native.nativeSherpa.init).not.toHaveBeenCalled();
 	});
 });
 
@@ -270,7 +287,7 @@ describe('a Tauri host that synthesizes but does not play', () => {
 
 		await warmSpeech('你好', MANDARIN);
 
-		expect(native.nativeKokoro.synthesize).toHaveBeenCalledWith('你好', ZF_001, 1);
+		expect(native.nativeSherpa.synthesize).toHaveBeenCalledWith('kokoro', '你好', ZF_001, 1);
 		expect(sherpa.synthesize).not.toHaveBeenCalled();
 	});
 
@@ -336,7 +353,7 @@ describe('the stored clip cache', () => {
 		await warmSpeech('你好', MANDARIN);
 		await warmSpeech('你好', MANDARIN);
 
-		expect(native.nativeKokoro.synthesize).toHaveBeenCalledTimes(1);
+		expect(native.nativeSherpa.synthesize).toHaveBeenCalledTimes(1);
 	});
 });
 

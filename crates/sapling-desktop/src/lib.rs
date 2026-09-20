@@ -243,11 +243,14 @@ fn report(app: &AppHandle, channel: &'static str, file: &str, loaded: u64, total
 /// at all, which `native.ts` sees as a rejected `invoke` like any other.
 #[cfg(feature = "speech")]
 #[tauri::command]
-async fn tts_status(tts: State<'_, Arc<TtsHandle>>) -> Result<tts::TtsStatus, String> {
+async fn tts_status(
+    tts: State<'_, Arc<TtsHandle>>,
+    model: String,
+) -> Result<tts::TtsStatus, String> {
     let handle = tts.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || handle.status())
+    tauri::async_runtime::spawn_blocking(move || handle.status_for(&model))
         .await
-        .map_err(|cause| format!("the voice status could not be read: {cause}"))
+        .map_err(|cause| format!("the voice status could not be read: {cause}"))?
 }
 
 /// Downloads and unpacks the voice model, reporting progress as it goes.
@@ -256,10 +259,14 @@ async fn tts_status(tts: State<'_, Arc<TtsHandle>>) -> Result<tts::TtsStatus, St
 /// this one runs for minutes. Idempotent — an installed model returns at once.
 #[cfg(feature = "speech")]
 #[tauri::command]
-async fn tts_download(app: AppHandle, tts: State<'_, Arc<TtsHandle>>) -> Result<(), String> {
+async fn tts_download(
+    app: AppHandle,
+    tts: State<'_, Arc<TtsHandle>>,
+    model: String,
+) -> Result<(), String> {
     let handle = tts.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        handle.install(&|file: &str, loaded: u64, total: u64| {
+        handle.install_for(&model, &|file: &str, loaded: u64, total: u64| {
             report(&app, TTS_PROGRESS_EVENT, file, loaded, total);
         })
     })
@@ -277,14 +284,17 @@ async fn tts_download(app: AppHandle, tts: State<'_, Arc<TtsHandle>>) -> Result<
 #[tauri::command]
 async fn tts_synthesize(
     tts: State<'_, Arc<TtsHandle>>,
+    model: String,
     text: String,
     sid: i32,
     speed: f32,
 ) -> Result<tauri::ipc::Response, String> {
     let handle = tts.inner().clone();
-    let wav = tauri::async_runtime::spawn_blocking(move || handle.synthesize(&text, sid, speed))
-        .await
-        .map_err(|cause| format!("the voice could not run: {cause}"))??;
+    let wav = tauri::async_runtime::spawn_blocking(move || {
+        handle.synthesize_for(&model, &text, sid, speed)
+    })
+    .await
+    .map_err(|cause| format!("the voice could not run: {cause}"))??;
     Ok(tauri::ipc::Response::new(wav))
 }
 

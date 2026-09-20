@@ -1,7 +1,7 @@
 /**
- * Where the sherpa-onnx runtime and the Kokoro model come from, and what they
- * should weigh. Pure data plus a couple of helpers, so the URL/size/cache-name
- * logic can be unit-tested in node without touching the network.
+ * Browser sherpa-onnx model registry: where each packaged model comes from,
+ * how it is configured, and what it should weigh. Pure data plus a couple of
+ * helpers, so URL/size/cache-name logic is unit-testable without a network.
  *
  * ## The two halves of the engine
  *
@@ -14,7 +14,7 @@
  * | `sherpa-onnx-tts.js` | vendored in `static/tts/` | 26 KB hand-written C-API wrapper |
  * | `sherpa-onnx-wasm-main-tts.js` | vendored in `static/tts/` | 121 KB Emscripten glue |
  * | `sherpa-onnx-wasm-main-tts.wasm` | fetched at runtime | 11.9 MB |
- * | `sherpa-onnx-wasm-main-tts.data` | fetched at runtime | 426.7 MB — the whole model |
+ * | `sherpa-onnx-wasm-main-tts.data` | fetched at runtime | the selected model package |
  *
  * The two JS files are small enough to live in git, which also pins the exact
  * loader code; the two big binaries are fetched on first use and kept in Cache
@@ -56,8 +56,8 @@ export const AUDIO_CACHE_NAME = 'll-tts-audio';
 /** The Hugging Face dataset holding the prebuilt WASM packs. */
 const BUNDLE_REPO = 'datasets/jiangzhuo9357/sherpa-onnx-tts-models';
 
-/** The pack inside that dataset: Kokoro v1.1 multi-lang, fp32 weights. */
-const BUNDLE_DIR = 'wasm-kokoro-fp32';
+/** A neural voice understood by both the browser and native providers. */
+export type TtsModelId = 'kokoro' | 'cantonese';
 
 /**
  * Pinned commit of that dataset. Never track `main`: a rebuild there would
@@ -68,6 +68,9 @@ export const BUNDLE_REVISION = 'c1285229a3298e283467dca880086b3ac59fb50d';
 /** Human-facing name of the model inside the bundle. */
 export const KOKORO_MODEL_ID = 'kokoro-multi-lang-v1_1 (fp32)';
 
+/** Human-facing name of the Cantonese model. */
+export const CANTONESE_MODEL_ID = 'vits-cantonese-hf-xiaomaiiwn';
+
 /** One runtime file we have to download before the engine can start. */
 export interface RuntimeArtifact {
 	/** File name, also the progress-reporting key. */
@@ -76,14 +79,86 @@ export interface RuntimeArtifact {
 	readonly bytes: number;
 }
 
+/** Everything the browser worker needs to boot one sherpa-onnx model. */
+export interface BrowserTtsModel {
+	readonly id: TtsModelId;
+	readonly label: string;
+	readonly bundleDir: string;
+	readonly artifacts: readonly RuntimeArtifact[];
+	readonly scripts: readonly string[];
+	readonly ttsConfig: Readonly<Record<string, unknown>>;
+}
+
+const SHERPA_WASM: RuntimeArtifact = {
+	file: 'sherpa-onnx-wasm-main-tts.wasm',
+	bytes: 11_903_250
+};
+
+/** Browser model registry. Adding a model should be data, not another provider. */
+export const BROWSER_TTS_MODELS: Readonly<Record<TtsModelId, BrowserTtsModel>> = {
+	kokoro: {
+		id: 'kokoro',
+		label: KOKORO_MODEL_ID,
+		bundleDir: 'wasm-kokoro-fp32',
+		artifacts: [SHERPA_WASM, { file: 'sherpa-onnx-wasm-main-tts.data', bytes: 426_654_376 }],
+		scripts: ['sherpa-onnx-tts.js', 'sherpa-onnx-wasm-main-tts.js'],
+		ttsConfig: {
+			offlineTtsModelConfig: {
+				offlineTtsKokoroModelConfig: {
+					model: './model.onnx',
+					voices: './voices.bin',
+					tokens: './tokens.txt',
+					dataDir: './espeak-ng-data',
+					lexicon: './lexicon-us-en.txt,./lexicon-zh.txt',
+					lang: '',
+					lengthScale: 1
+				},
+				numThreads: 1,
+				debug: 0,
+				provider: 'cpu'
+			},
+			ruleFsts: './date-zh.fst,./number-zh.fst',
+			ruleFars: '',
+			maxNumSentences: 1,
+			silenceScale: 0.2
+		}
+	},
+	cantonese: {
+		id: 'cantonese',
+		label: CANTONESE_MODEL_ID,
+		bundleDir: 'wasm-cantonese',
+		artifacts: [SHERPA_WASM, { file: 'sherpa-onnx-wasm-main-tts.data', bytes: 114_426_339 }],
+		scripts: ['sherpa-onnx-tts.js', 'models/cantonese/sherpa-onnx-wasm-main-tts.js'],
+		ttsConfig: {
+			offlineTtsModelConfig: {
+				offlineTtsVitsModelConfig: {
+					model: './vits-cantonese-hf-xiaomaiiwn.onnx',
+					lexicon: './lexicon.txt',
+					tokens: './tokens.txt',
+					dataDir: '',
+					noiseScale: 0.667,
+					noiseScaleW: 0.8,
+					lengthScale: 1
+				},
+				numThreads: 1,
+				debug: 0,
+				provider: 'cpu'
+			},
+			ruleFsts: './rule.fst',
+			ruleFars: '',
+			maxNumSentences: 1,
+			silenceScale: 0.2
+		}
+	}
+};
+
 /**
  * The two big files, in load order. Sizes are exact and are checked after
  * download — a partial response that somehow reached Cache Storage would
  * otherwise poison every later start-up.
  */
 export const RUNTIME_ARTIFACTS: readonly RuntimeArtifact[] = [
-	{ file: 'sherpa-onnx-wasm-main-tts.wasm', bytes: 11903250 },
-	{ file: 'sherpa-onnx-wasm-main-tts.data', bytes: 426654376 }
+	...BROWSER_TTS_MODELS.kokoro.artifacts
 ];
 
 /** Total first-run download, in bytes. */
@@ -97,10 +172,7 @@ export const RUNTIME_DOWNLOAD_BYTES = RUNTIME_ARTIFACTS.reduce(
  * first, because it must define `createOfflineTts` before the glue finishes
  * instantiating and calls `onRuntimeInitialized`.
  */
-export const RUNTIME_SCRIPT_FILES: readonly string[] = [
-	'sherpa-onnx-tts.js',
-	'sherpa-onnx-wasm-main-tts.js'
-];
+export const RUNTIME_SCRIPT_FILES: readonly string[] = [...BROWSER_TTS_MODELS.kokoro.scripts];
 
 /**
  * The worker itself. It lives in `static/` rather than `src/` because it must
@@ -123,8 +195,17 @@ export function ttsAssetUrl(file: string, base = ''): string {
 }
 
 /** Download URL for one artifact, pinned to {@link BUNDLE_REVISION}. */
-export function artifactUrl(file: string, revision: string = BUNDLE_REVISION): string {
-	return `https://huggingface.co/${BUNDLE_REPO}/resolve/${revision}/${BUNDLE_DIR}/${file}`;
+export function artifactUrl(
+	file: string,
+	revision: string = BUNDLE_REVISION,
+	model: TtsModelId = 'kokoro'
+): string {
+	return `https://huggingface.co/${BUNDLE_REPO}/resolve/${revision}/${BROWSER_TTS_MODELS[model].bundleDir}/${file}`;
+}
+
+/** First browser download for one model, including the shared sherpa runtime. */
+export function browserModelDownloadBytes(model: TtsModelId): number {
+	return BROWSER_TTS_MODELS[model].artifacts.reduce((total, artifact) => total + artifact.bytes, 0);
 }
 
 /**

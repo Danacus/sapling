@@ -18,7 +18,9 @@ type Tick = [file: string, loaded: number, total: number];
 
 const tts = {
 	voiceInstallPasses: vi.fn(() => 1),
-	preloadKokoro: vi.fn(async (_onProgress?: (progress: TtsProgress) => void) => {})
+	preloadVoice: vi.fn(
+		async (_language: string, _onProgress?: (progress: TtsProgress) => void) => {}
+	)
 };
 
 vi.mock('$lib/tts', () => tts);
@@ -32,7 +34,7 @@ const DATA = 426_654_376;
 /** Runs the task against a scripted progress stream; returns every bar it drew. */
 async function bars(passes: number, ticks: Tick[]): Promise<TaskProgress[]> {
 	tts.voiceInstallPasses.mockReturnValue(passes);
-	tts.preloadKokoro.mockImplementation(async (onProgress) => {
+	tts.preloadVoice.mockImplementation(async (_language, onProgress) => {
 		for (const [file, loaded, total] of ticks) {
 			onProgress?.({ file, loaded, total, progress: total > 0 ? (loaded / total) * 100 : 0 });
 		}
@@ -40,7 +42,7 @@ async function bars(passes: number, ticks: Tick[]): Promise<TaskProgress[]> {
 
 	const drawn: TaskProgress[] = [];
 	const { ttsModelTask } = await import('./tts-model');
-	await ttsModelTask.run(undefined, {
+	await ttsModelTask.run('Mandarin Chinese', {
 		signal: new AbortController().signal,
 		step: () => {},
 		progress: (done, total, unit) => drawn.push({ done, total, unit })

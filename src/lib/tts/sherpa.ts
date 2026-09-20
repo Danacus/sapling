@@ -16,10 +16,10 @@ import { base } from '$app/paths';
 
 import {
 	artifactUrl,
+	BROWSER_TTS_MODELS,
 	MODEL_CACHE_NAME,
-	RUNTIME_ARTIFACTS,
-	RUNTIME_SCRIPT_FILES,
 	ttsAssetUrl,
+	type TtsModelId,
 	WORKER_SCRIPT_FILE
 } from './models';
 import { encodeWav } from './wav';
@@ -35,6 +35,7 @@ export interface SherpaConfig {
 	artifacts: { file: string; url: string; bytes: number }[];
 	scripts: string[];
 	cacheName: string;
+	ttsConfig: Readonly<Record<string, unknown>>;
 }
 
 /** Main thread → worker. */
@@ -50,15 +51,17 @@ export type SherpaResponse =
 	| { type: 'failed'; id?: number; message: string };
 
 /** Resolves `models.ts` against the deployed base path, once per boot. */
-function workerConfig(): SherpaConfig {
+function workerConfig(modelId: TtsModelId): SherpaConfig {
+	const model = BROWSER_TTS_MODELS[modelId];
 	return {
-		artifacts: RUNTIME_ARTIFACTS.map((artifact) => ({
+		artifacts: model.artifacts.map((artifact) => ({
 			file: artifact.file,
-			url: artifactUrl(artifact.file),
+			url: artifactUrl(artifact.file, undefined, modelId),
 			bytes: artifact.bytes
 		})),
-		scripts: RUNTIME_SCRIPT_FILES.map((file) => ttsAssetUrl(file, base)),
-		cacheName: MODEL_CACHE_NAME
+		scripts: model.scripts.map((file) => ttsAssetUrl(file, base)),
+		cacheName: MODEL_CACHE_NAME,
+		ttsConfig: model.ttsConfig
 	};
 }
 
@@ -104,46 +107,66 @@ interface Pending {
 	reject: (cause: Error) => void;
 }
 
-let worker: Worker | null = null;
-let ready: Promise<void> | null = null;
-let readyResolve: (() => void) | null = null;
-let readyReject: ((cause: Error) => void) | null = null;
+interface ModelSession {
+	readonly modelId: TtsModelId;
+	worker: Worker | null;
+	ready: Promise<void> | null;
+	readyResolve: (() => void) | null;
+	readyReject: ((cause: Error) => void) | null;
+	readonly pending: Map<number, Pending>;
+}
 
-const pending = new Map<number, Pending>();
+const sessions = new Map<TtsModelId, ModelSession>();
 let nextRequestId = 1;
 
+function sessionFor(modelId: TtsModelId): ModelSession {
+	let session = sessions.get(modelId);
+	if (!session) {
+		session = {
+			modelId,
+			worker: null,
+			ready: null,
+			readyResolve: null,
+			readyReject: null,
+			pending: new Map()
+		};
+		sessions.set(modelId, session);
+	}
+	return session;
+}
+
 /** Wipes the worker so the next call starts from scratch. */
-function teardown(cause: Error): void {
-	for (const request of pending.values()) request.reject(cause);
-	pending.clear();
-	readyReject?.(cause);
-	readyResolve = null;
-	readyReject = null;
-	ready = null;
+function teardown(session: ModelSession, cause: Error): void {
+	for (const request of session.pending.values()) request.reject(cause);
+	session.pending.clear();
+	session.readyReject?.(cause);
+	session.readyResolve = null;
+	session.readyReject = null;
+	session.ready = null;
 	try {
-		worker?.terminate();
+		session.worker?.terminate();
 	} catch {
 		/* ignore */
 	}
-	worker = null;
+	session.worker = null;
 }
 
-function handle(message: SherpaResponse): void {
+function handle(session: ModelSession, message: SherpaResponse): void {
 	switch (message.type) {
 		case 'progress':
 			emitProgress(message.file, message.loaded, message.total);
 			return;
 		case 'ready':
 			console.info(
-				`[tts] Kokoro ready: ${message.numSpeakers} speakers at ${message.sampleRate} Hz.`
+				`[tts] ${BROWSER_TTS_MODELS[session.modelId].label} ready: ${message.numSpeakers} speakers at ${message.sampleRate} Hz.`
 			);
-			readyResolve?.();
-			readyResolve = null;
-			readyReject = null;
+			session.readyResolve?.();
+			session.readyResolve = null;
+			session.readyReject = null;
 			return;
 		case 'audio': {
-			const request = pending.get(message.id);
-			pending.delete(message.id);
+			const request = session.pending.get(message.id);
+			session.pending.delete(message.id);
 			request?.resolve({ samples: message.samples, sampleRate: message.sampleRate });
 			return;
 		}
@@ -152,11 +175,11 @@ function handle(message: SherpaResponse): void {
 			if (message.id === undefined) {
 				// A start-up failure: nothing loaded, so drop the worker entirely
 				// and let a later attempt rebuild it (the files are cached by then).
-				teardown(error);
+				teardown(session, error);
 				return;
 			}
-			const request = pending.get(message.id);
-			pending.delete(message.id);
+			const request = session.pending.get(message.id);
+			session.pending.delete(message.id);
 			request?.reject(error);
 			return;
 		}
@@ -167,43 +190,46 @@ function handle(message: SherpaResponse): void {
  * Boots the worker and waits for the model to be live. Repeated calls share
  * one boot; a failed boot is forgotten so the next call can retry.
  */
-export function initSherpa(): Promise<void> {
-	if (ready) return ready;
+export function initSherpa(modelId: TtsModelId = 'kokoro'): Promise<void> {
+	const session = sessionFor(modelId);
+	if (session.ready) return session.ready;
 
 	if (typeof Worker === 'undefined') {
 		return Promise.reject(new Error('This browser cannot run Web Workers.'));
 	}
 
-	ready = new Promise<void>((resolve, reject) => {
-		readyResolve = resolve;
-		readyReject = reject;
+	session.ready = new Promise<void>((resolve, reject) => {
+		session.readyResolve = resolve;
+		session.readyReject = reject;
 
 		try {
 			// A classic worker, served verbatim from static/ — deliberately not a
 			// Vite-bundled module worker; see the note on WORKER_SCRIPT_FILE.
-			worker = new Worker(ttsAssetUrl(WORKER_SCRIPT_FILE, base));
+			session.worker = new Worker(ttsAssetUrl(WORKER_SCRIPT_FILE, base));
 		} catch (cause) {
 			reject(cause instanceof Error ? cause : new Error(String(cause)));
-			ready = null;
+			session.ready = null;
 			return;
 		}
 
-		worker.onmessage = (event: MessageEvent) => handle(event.data as SherpaResponse);
-		worker.onerror = (event) => teardown(new Error(event.message || 'the speech worker crashed'));
-		post({ type: 'init', config: workerConfig() });
+		session.worker.onmessage = (event: MessageEvent) =>
+			handle(session, event.data as SherpaResponse);
+		session.worker.onerror = (event) =>
+			teardown(session, new Error(event.message || 'the speech worker crashed'));
+		post(session, { type: 'init', config: workerConfig(modelId) });
 	});
 
 	// Do not remember a failure forever: a dropped connection should not
 	// permanently disable speech.
-	ready.catch(() => {
-		ready = null;
+	session.ready.catch(() => {
+		session.ready = null;
 	});
 
-	return ready;
+	return session.ready;
 }
 
-function post(request: SherpaRequest): void {
-	worker?.postMessage(request);
+function post(session: ModelSession, request: SherpaRequest): void {
+	session.worker?.postMessage(request);
 }
 
 /**
@@ -213,14 +239,20 @@ function post(request: SherpaRequest): void {
  * multiplier (1 = as trained). Rejects if the engine cannot load or the model
  * returns nothing.
  */
-export async function synthesize(text: string, speakerId: number, speed = 1): Promise<Blob> {
-	await initSherpa();
+export async function synthesize(
+	modelId: TtsModelId,
+	text: string,
+	speakerId: number,
+	speed = 1
+): Promise<Blob> {
+	const session = sessionFor(modelId);
+	await initSherpa(modelId);
 
 	const id = nextRequestId++;
 	const audio = await new Promise<{ samples: Float32Array; sampleRate: number }>(
 		(resolve, reject) => {
-			pending.set(id, { resolve, reject });
-			post({ type: 'generate', id, text, speakerId, speed });
+			session.pending.set(id, { resolve, reject });
+			post(session, { type: 'generate', id, text, speakerId, speed });
 		}
 	);
 

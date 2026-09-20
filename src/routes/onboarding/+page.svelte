@@ -41,6 +41,7 @@
 		'Hebrew',
 		'Hindi',
 		'Mandarin Chinese',
+		'Cantonese',
 		'Japanese',
 		'Korean',
 		'Vietnamese',

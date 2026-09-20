@@ -6,7 +6,9 @@ import {
 	DEFAULT_MANDARIN_SPEAKER,
 	kokoroSpeakerFor,
 	kokoroSupports,
-	MANDARIN_SPEAKERS
+	MANDARIN_SPEAKERS,
+	sherpaSupports,
+	sherpaVoiceFor
 } from './languages';
 
 describe('bcp47For', () => {
@@ -32,6 +34,7 @@ describe('bcp47For', () => {
 			Hebrew: 'he',
 			Hindi: 'hi',
 			'Mandarin Chinese': 'zh-CN',
+			Cantonese: 'yue',
 			Japanese: 'ja',
 			Korean: 'ko',
 			Vietnamese: 'vi',
@@ -70,6 +73,23 @@ describe('bcp47For', () => {
 		expect(bcp47For('Klingon')).toBe(DEFAULT_LANGUAGE_TAG);
 		expect(bcp47For('')).toBe(DEFAULT_LANGUAGE_TAG);
 		expect(bcp47For(undefined)).toBe(DEFAULT_LANGUAGE_TAG);
+	});
+});
+
+describe('sherpaVoiceFor', () => {
+	it('routes Cantonese to the single-speaker VITS model', () => {
+		for (const language of ['Cantonese', 'yue']) {
+			expect(sherpaVoiceFor(language), language).toMatchObject({
+				model: 'cantonese',
+				id: 0
+			});
+			expect(sherpaSupports(language), language).toBe(true);
+		}
+	});
+
+	it('keeps Mandarin and English on Kokoro', () => {
+		expect(sherpaVoiceFor('Mandarin Chinese')?.model).toBe('kokoro');
+		expect(sherpaVoiceFor('English')?.model).toBe('kokoro');
 	});
 });
 

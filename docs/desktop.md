@@ -79,8 +79,9 @@ not a row because it is half of a review's identity and has to survive
 caches and local storage in the same directory, which is also where the API key
 and prefs end up — they are `localStorage` on both hosts, never in the store.
 
-Also inside it, once the voice has been downloaded: `tts/kokoro-multi-lang-v1_1/`,
-about 407 MB of ordinary files (see [Speech](#speech)).
+Also inside it, once their voices have been downloaded:
+`tts/kokoro-multi-lang-v1_1/` and/or
+`tts/vits-cantonese-hf-xiaomaiiwn/` (see [Speech](#speech)).
 
 Deleting the directory is a factory reset.
 
@@ -240,27 +241,29 @@ Nothing above the seam moved with it. `speak(text, lang)` is unchanged, the
 host provides it. The speaker ids in `languages.ts` are the same numbers
 because it is the same model.
 
-**The model.** `kokoro-multi-lang-v1_1`, fp32, taken from k2-fsa's own release
-assets rather than the third-party mirror the browser needs — native
-sherpa-onnx reads ordinary files, so there is no repackaged bundle in the trust
-path:
+**The models.** Each registered voice is taken from k2-fsa's own release assets
+rather than the third-party mirror the browser needs. Native sherpa-onnx reads
+ordinary files, so there is no repackaged bundle in the trust path:
 
 ```
 https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_1.tar.bz2
 364,816,464 B   sha256 a3f4c73d043860e3fd2e5b06f36795eb81de0fc8e8de6df703245edddd87dbad
+
+https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-cantonese-hf-xiaomaiiwn.tar.bz2
+107,995,442 B   sha256 bf3013cd4be34f531b7e514e708d835584dd60c9ad6eaf467ac1402005c04e46
 ```
 
-URL, size and hash are one constant, `KOKORO` in `src/models.rs` — the module
-both models share ([the model install](#the-model-install)).
+Each URL, size and hash is one `ModelSpec` in `src/models.rs` — the module all
+speech models share ([the model install](#the-model-install)).
 
 **The commands**, and there are eight — six on every target, the two players on
 desktop targets only ([speech on Android](#speech-on-android)):
 
 | command | answers |
 |---|---|
-| `tts_status()` | model name, installed, bytes on disk, bytes a fresh download costs, whether the engine is warm, **whether this host plays** |
-| `tts_download()` | nothing; idempotent, verifies, emits `tts://model-progress` |
-| `tts_synthesize(text, sid, speed)` | a complete WAV file as a binary IPC payload |
+| `tts_status(model)` | model name, installed, bytes on disk, bytes a fresh download costs, whether the engine is warm, **whether this host plays** |
+| `tts_download(model)` | nothing; idempotent, verifies, emits `tts://model-progress` |
+| `tts_synthesize(model, text, sid, speed)` | a complete WAV file as a binary IPC payload |
 | `tts_play(<raw body>)` | nothing, once the clip has finished playing or been stopped |
 | `tts_stop()` | nothing; cuts the clip off, which is what makes the pending `tts_play` return |
 | `asr_status()` | model name, installed, bytes on disk, bytes a fresh download costs, whether the recognizer is warm, **which languages it covers** |

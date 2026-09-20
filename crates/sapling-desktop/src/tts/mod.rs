@@ -92,6 +92,7 @@ pub mod kokoro;
 /// Chromium WebView can. See [`HOST_PLAYS_AUDIO`].
 #[cfg(desktop)]
 pub mod play;
+pub mod vits;
 pub mod wav;
 
 use std::path::{Path, PathBuf};
@@ -100,8 +101,9 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::Serialize;
 
-use crate::models::{self, available_threads, ModelSpec, KOKORO};
+use crate::models::{self, available_threads, ModelSpec, CANTONESE_VITS, KOKORO};
 use kokoro::{Kokoro, KokoroConfig};
+use vits::{Vits, VitsConfig};
 
 /// Directory holding every voice model, inside Tauri's app-data directory.
 pub const TTS_DIR: &str = "tts";
@@ -181,6 +183,16 @@ pub struct TtsHandle {
     /// [`load`](Self::load) — because the staging rename means a reader can
     /// never catch the model mid-write.
     installing: Mutex<()>,
+    /// The independently installed and loaded Cantonese model.
+    cantonese: VitsSlot,
+}
+
+struct VitsSlot {
+    spec: &'static ModelSpec,
+    engine: Mutex<Option<Vits>>,
+    loaded: AtomicBool,
+    installed: OnceLock<u64>,
+    installing: Mutex<()>,
 }
 
 impl TtsHandle {
@@ -194,6 +206,23 @@ impl TtsHandle {
             loaded: AtomicBool::new(false),
             installed: OnceLock::new(),
             installing: Mutex::new(()),
+            cantonese: VitsSlot {
+                spec: &CANTONESE_VITS,
+                engine: Mutex::new(None),
+                loaded: AtomicBool::new(false),
+                installed: OnceLock::new(),
+                installing: Mutex::new(()),
+            },
+        }
+    }
+
+    /// Status for a named model. The no-argument method remains the Kokoro
+    /// compatibility surface used by older callers and tests.
+    pub fn status_for(&self, model: &str) -> Result<TtsStatus, String> {
+        match model {
+            "kokoro" => Ok(self.status()),
+            "cantonese" => Ok(self.cantonese.status(&self.dir)),
+            _ => Err(format!("unknown TTS model: {model}")),
         }
     }
 
@@ -244,6 +273,18 @@ impl TtsHandle {
         self.spec.install(&self.dir, on_progress)
     }
 
+    pub fn install_for(
+        &self,
+        model: &str,
+        on_progress: models::OnProgress<'_>,
+    ) -> Result<(), String> {
+        match model {
+            "kokoro" => self.install(on_progress),
+            "cantonese" => self.cantonese.install(&self.dir, on_progress),
+            _ => Err(format!("unknown TTS model: {model}")),
+        }
+    }
+
     /// Synthesizes one phrase and returns a complete WAV file.
     ///
     /// `sid` indexes the model's 103 voices and `speed` is a multiplier
@@ -274,6 +315,20 @@ impl TtsHandle {
             return Err("the model produced silence (all-zero or NaN samples)".to_owned());
         }
         Ok(wav::encode_wav(&clip.samples, clip.sample_rate))
+    }
+
+    pub fn synthesize_for(
+        &self,
+        model: &str,
+        text: &str,
+        sid: i32,
+        speed: f32,
+    ) -> Result<Vec<u8>, String> {
+        match model {
+            "kokoro" => self.synthesize(text, sid, speed),
+            "cantonese" => self.cantonese.synthesize(&self.dir, text, sid, speed),
+            _ => Err(format!("unknown TTS model: {model}")),
+        }
     }
 
     /// Builds the engine over the installed files.
@@ -326,6 +381,88 @@ impl TtsHandle {
     }
 }
 
+impl VitsSlot {
+    fn installed_bytes(&self, models_dir: &Path) -> Option<u64> {
+        if let Some(bytes) = self.installed.get() {
+            return Some(*bytes);
+        }
+        if !self.spec.installed_in(models_dir) {
+            return None;
+        }
+        Some(
+            *self
+                .installed
+                .get_or_init(|| self.spec.bytes_in(models_dir)),
+        )
+    }
+
+    fn status(&self, models_dir: &Path) -> TtsStatus {
+        let installed = self.installed_bytes(models_dir);
+        TtsStatus {
+            model: self.spec.dir,
+            installed: installed.is_some(),
+            bytes: installed.unwrap_or(0),
+            download_bytes: self.spec.bytes,
+            loaded: self.loaded.load(Ordering::Relaxed),
+            playback: HOST_PLAYS_AUDIO,
+        }
+    }
+
+    fn install(
+        &self,
+        models_dir: &Path,
+        on_progress: models::OnProgress<'_>,
+    ) -> Result<(), String> {
+        let _guard = self
+            .installing
+            .lock()
+            .map_err(|_| "the previous voice-model download failed badly".to_owned())?;
+        self.spec.install(models_dir, on_progress)
+    }
+
+    fn synthesize(
+        &self,
+        models_dir: &Path,
+        text: &str,
+        sid: i32,
+        speed: f32,
+    ) -> Result<Vec<u8>, String> {
+        let mut engine = self
+            .engine
+            .lock()
+            .map_err(|_| "the voice engine failed and cannot be reused".to_owned())?;
+        if engine.is_none() {
+            if !self.spec.installed_in(models_dir) {
+                return Err("the voice model is not downloaded yet".to_owned());
+            }
+            let dir = self.spec.dir_in(models_dir);
+            let path = |file: &str| dir.join(file).to_string_lossy().into_owned();
+            *engine = Some(Vits::load(&VitsConfig {
+                model: path("vits-cantonese-hf-xiaomaiiwn.onnx"),
+                tokens: path("tokens.txt"),
+                lexicon: path("lexicon.txt"),
+                rule_fsts: path("rule.fst"),
+                num_threads: available_threads(),
+                max_num_sentences: MAX_NUM_SENTENCES,
+                silence_scale: SILENCE_SCALE,
+            })?);
+            self.loaded.store(true, Ordering::Relaxed);
+        }
+
+        let clip = engine
+            .as_mut()
+            .expect("the engine was just loaded")
+            .generate(text, sid, speed)?;
+        if clip.samples.is_empty() {
+            return Err("the model produced no samples".to_owned());
+        }
+        if !is_audible(&clip.samples) {
+            return Err("the model produced silence (all-zero or NaN samples)".to_owned());
+        }
+        Ok(wav::encode_wav(&clip.samples, clip.sample_rate))
+    }
+}
+
 /// Whether a clip carries any signal at all. One pass with an early exit, and
 /// NaN-safe by construction — see the module note.
 fn is_audible(samples: &[f32]) -> bool {
@@ -360,6 +497,17 @@ mod tests {
         // What the window branches its player on, and it is what was compiled
         // rather than anything this handle discovered.
         assert_eq!(status.playback, cfg!(desktop));
+    }
+
+    #[test]
+    fn cantonese_status_selects_its_own_model_spec() {
+        let handle = TtsHandle::new(Path::new("/nonexistent/sapling"));
+        let status = handle.status_for("cantonese").unwrap();
+
+        assert_eq!(status.model, CANTONESE_VITS.dir);
+        assert_eq!(status.download_bytes, CANTONESE_VITS.bytes);
+        assert!(!status.installed);
+        assert!(!status.loaded);
     }
 
     #[test]

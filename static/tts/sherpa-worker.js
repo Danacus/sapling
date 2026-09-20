@@ -42,42 +42,10 @@
  * CPU-only.
  *
  * @typedef {{ file: string, url: string, bytes: number }} Artifact
- * @typedef {{ artifacts: Artifact[], scripts: string[], cacheName: string }} InitConfig
+ * @typedef {{ artifacts: Artifact[], scripts: string[], cacheName: string, ttsConfig: object }} InitConfig
  */
 
 'use strict';
-
-/**
- * The model config. Mirrors k2-fsa's own `kokoro-tts-zh-en` example: two
- * lexicons (English + Chinese) and espeak-ng data for everything the lexicons
- * miss, plus the date/number FSTs that turn "2026" into 二零二六 rather than a
- * spelled-out mess. Paths are inside the Emscripten filesystem, which the
- * `.data` package populates.
- *
- * `dictDir` is intentionally absent: since sherpa-onnx v1.12.15 Kokoro word
- * segmentation uses a phrase matcher over the lexicon, and passing a dict dir
- * only logs a "not used" warning.
- */
-var TTS_CONFIG = {
-	offlineTtsModelConfig: {
-		offlineTtsKokoroModelConfig: {
-			model: './model.onnx',
-			voices: './voices.bin',
-			tokens: './tokens.txt',
-			dataDir: './espeak-ng-data',
-			lexicon: './lexicon-us-en.txt,./lexicon-zh.txt',
-			lang: '',
-			lengthScale: 1.0
-		},
-		numThreads: 1,
-		debug: 0,
-		provider: 'cpu'
-	},
-	ruleFsts: './date-zh.fst,./number-zh.fst',
-	ruleFars: '',
-	maxNumSentences: 1,
-	silenceScale: 0.2
-};
 
 /** @type {InitConfig | null} */
 var config = null;
@@ -278,7 +246,7 @@ function start() {
 							if (typeof createOfflineTts !== 'function') {
 								throw new Error('sherpa-onnx-tts.js did not define createOfflineTts');
 							}
-							var engine = createOfflineTts(module, TTS_CONFIG);
+							var engine = createOfflineTts(module, config.ttsConfig);
 							if (!engine.numSpeakers) throw new Error('the model reported zero speakers');
 							resolve(engine);
 						} catch (cause) {

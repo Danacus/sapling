@@ -13,7 +13,7 @@
 		isMandarin,
 		getTtsEngine,
 		getTtsVoice,
-		kokoroSupports,
+		sherpaSupports,
 		MANDARIN_SPEAKERS,
 		onVoiceProgress,
 		setTtsVoice,
@@ -94,7 +94,7 @@
 
 	const engineLabel = $derived.by(() => {
 		if (ttsEngine === 'off') return 'Off';
-		if (ttsEngine === 'kokoro' && kokoroSupports(language)) return 'Kokoro (neural)';
+		if (ttsEngine === 'kokoro' && sherpaSupports(language)) return 'Sherpa neural voice';
 		return 'Browser built-in';
 	});
 

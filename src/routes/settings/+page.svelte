@@ -56,7 +56,8 @@
 		formatMb,
 		getTtsEngine,
 		getTtsVoice,
-		kokoroSupports,
+		isMandarin,
+		sherpaSupports,
 		MANDARIN_SPEAKERS,
 		RUNTIME_DOWNLOAD_BYTES,
 		setTtsEngine,
@@ -260,7 +261,7 @@
 
 				// Crosses to the host on the desktop, and is already known on the
 				// web — either way it is not worth waiting for.
-				void voiceDownloadBytes().then((bytes) => {
+				void voiceDownloadBytes(loadedProfile?.targetLanguage).then((bytes) => {
 					if (!cancelled) downloadSize = formatMb(bytes);
 				});
 
@@ -295,11 +296,12 @@
 
 	/**
 	 * Whether Kokoro can actually pronounce what this learner is studying. It
-	 * speaks Mandarin and English; everyone else silently gets the browser's own
+	 * speaks Mandarin, Cantonese and English; everyone else gets the browser's own
 	 * voice — worth saying out loud rather than leaving them to wonder why the
 	 * download changed nothing.
 	 */
-	const kokoroCoversTarget = $derived(kokoroSupports(profile?.targetLanguage));
+	const sherpaCoversTarget = $derived(sherpaSupports(profile?.targetLanguage));
+	const mandarinTarget = $derived(isMandarin(profile?.targetLanguage));
 
 	/**
 	 * e.g. "439 MB" — never hard-coded, so the copy cannot drift.
@@ -488,7 +490,7 @@
 
 		// The task does the download and draws the progress bar; this only reports
 		// how it ended, in the same inline slot as every other action here.
-		const outcome = await startTask('tts-model', undefined).done;
+		const outcome = await startTask('tts-model', profile?.targetLanguage ?? 'English').done;
 		if (outcome.status === 'done') {
 			preloadMessage = 'Voice model ready';
 			flash((value) => (preloadStatus = value), 3000);
@@ -875,34 +877,38 @@
 						value={ttsEngine}
 						onchange={(event) => chooseEngine(event.currentTarget.value as TtsEngine)}
 					>
-						<option value="kokoro">Kokoro (neural)</option>
+						<option value="kokoro">Sherpa neural voices</option>
 						<option value="webspeech">Browser built-in</option>
 						<option value="off">Off</option>
 					</select>
-					{#if ttsEngine === 'kokoro' && profile && !kokoroCoversTarget}
+					{#if ttsEngine === 'kokoro' && profile && !sherpaCoversTarget}
 						<p class="hint">
-							Kokoro has no {profile.targetLanguage} voice; your browser speaks it instead.
+							Sherpa has no {profile.targetLanguage} voice; your browser speaks it instead.
 						</p>
 					{:else if ttsEngine === 'kokoro'}
-						<p class="hint">Mandarin and English; other languages use the browser voice.</p>
+						<p class="hint">
+							Mandarin, Cantonese, and English; other languages use the browser voice.
+						</p>
 					{/if}
 				</div>
 
 				{#if ttsEngine === 'kokoro'}
-					<div class="field">
-						<span class="label" id="tts-voice-label">Mandarin voice</span>
-						<select
-							class="input"
-							aria-labelledby="tts-voice-label"
-							value={ttsVoice}
-							onchange={(event) => chooseVoice(event.currentTarget.value as TtsVoice)}
-						>
-							<option value="auto">Default (zf_001, female)</option>
-							{#each MANDARIN_SPEAKERS as speaker (speaker.name)}
-								<option value={speaker.name}>{speaker.label}</option>
-							{/each}
-						</select>
-					</div>
+					{#if mandarinTarget}
+						<div class="field">
+							<span class="label" id="tts-voice-label">Mandarin voice</span>
+							<select
+								class="input"
+								aria-labelledby="tts-voice-label"
+								value={ttsVoice}
+								onchange={(event) => chooseVoice(event.currentTarget.value as TtsVoice)}
+							>
+								<option value="auto">Default (zf_001, female)</option>
+								{#each MANDARIN_SPEAKERS as speaker (speaker.name)}
+									<option value={speaker.name}>{speaker.label}</option>
+								{/each}
+							</select>
+						</div>
+					{/if}
 
 					<div class="field">
 						<div class="actions-row">

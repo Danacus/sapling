@@ -9,6 +9,8 @@ import {
 	RUNTIME_ARTIFACTS,
 	RUNTIME_DOWNLOAD_BYTES,
 	RUNTIME_SCRIPT_FILES,
+	BROWSER_TTS_MODELS,
+	browserModelDownloadBytes,
 	ttsAssetUrl,
 	WORKER_SCRIPT_FILE
 } from './models';
@@ -58,6 +60,19 @@ describe('runtime artifacts', () => {
 		// ONNX runtime (sherpa-onnx#2236), which is silence, not speech.
 		expect(KOKORO_MODEL_ID).toContain('kokoro-multi-lang-v1_1');
 		expect(KOKORO_MODEL_ID).toContain('fp32');
+	});
+});
+
+describe('browser model registry', () => {
+	it('describes the Cantonese VITS package independently of Kokoro', () => {
+		const model = BROWSER_TTS_MODELS.cantonese;
+		expect(model.bundleDir).toBe('wasm-cantonese');
+		expect(model.scripts[1]).toContain('models/cantonese');
+		expect(model.ttsConfig).toHaveProperty(
+			'offlineTtsModelConfig.offlineTtsVitsModelConfig.model',
+			'./vits-cantonese-hf-xiaomaiiwn.onnx'
+		);
+		expect(browserModelDownloadBytes('cantonese')).toBe(11_903_250 + 114_426_339);
 	});
 });
 

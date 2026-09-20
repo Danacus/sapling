@@ -14,17 +14,17 @@
  * model's honest coverage: 3 English voices, 100 Mandarin voices, and mixed
  * zh/en sentences handled per-run. It was trained on nothing else.
  *
- * So Mandarin and English route to Kokoro; every other language routes to the
- * Web Speech API, which at least uses a voice actually trained for it. Reading
- * Dutch or Japanese with a Mandarin/English frontend would produce confident
- * nonsense — the worst possible outcome for a pronunciation aid.
+ * Mandarin and English route to Kokoro, while Cantonese routes to its VITS
+ * model. Every other language uses Web Speech, which at least selects a voice
+ * trained for it. Reading Dutch or Japanese with a Chinese frontend would
+ * produce confident nonsense — the worst possible pronunciation aid.
  *
- * Cantonese (`yue`) and Traditional Chinese (`zh-TW`) deliberately do *not*
- * count as covered: the model is Mandarin, and `zh-TW` text is Traditional
- * script the lexicon does not contain.
+ * Cantonese (`yue`) and Traditional Chinese (`zh-TW`) do not count as covered
+ * by Kokoro itself; the model registry makes Cantonese a separate choice.
  */
 
 import { getTtsVoice, type TtsVoice } from './prefs';
+import type { TtsModelId } from './models';
 
 export { KOKORO_MODEL_ID } from './models';
 
@@ -46,6 +46,11 @@ export interface KokoroSpeaker {
 	readonly id: number;
 	/** What Settings shows. */
 	readonly label: string;
+}
+
+/** One concrete model/speaker choice produced by language routing. */
+export interface SherpaVoice extends KokoroSpeaker {
+	readonly model: TtsModelId;
 }
 
 /** American English female — the default English voice. */
@@ -240,4 +245,21 @@ export function isMandarin(language: string | undefined): boolean {
 /** Whether Kokoro covers this language at all. */
 export function kokoroSupports(language: string | undefined): boolean {
 	return kokoroSpeakerFor(language, 'auto') !== undefined;
+}
+
+/** The sherpa model and speaker that can honestly pronounce this language. */
+export function sherpaVoiceFor(
+	language: string | undefined,
+	voice: TtsVoice = getTtsVoice()
+): SherpaVoice | undefined {
+	if (bcp47For(language).toLowerCase().split('-')[0] === 'yue') {
+		return { model: 'cantonese', name: 'cantonese-xiaomaiiwn', id: 0, label: 'Cantonese' };
+	}
+	const speaker = kokoroSpeakerFor(language, voice);
+	return speaker ? { model: 'kokoro', ...speaker } : undefined;
+}
+
+/** Whether one of the installed-on-demand sherpa models covers this language. */
+export function sherpaSupports(language: string | undefined): boolean {
+	return sherpaVoiceFor(language, 'auto') !== undefined;
 }

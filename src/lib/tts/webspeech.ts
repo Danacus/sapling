@@ -1,7 +1,7 @@
 /**
  * The Web Speech API backend — the fallback, and the *only* engine for every
  * language Kokoro does not cover (see the note in `languages.ts`: that is
- * everything except Mandarin and English).
+ * every language without a registered sherpa model).
  *
  * Quality depends entirely on the voices the learner's OS ships, which is
  * exactly why it beats Kokoro there: a Dutch machine has a real Dutch voice,

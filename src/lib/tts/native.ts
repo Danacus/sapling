@@ -31,6 +31,7 @@
  */
 
 import type { TtsProgress } from './sherpa';
+import type { TtsModelId } from './models';
 
 /** Where the Rust host announces model-download progress. Named there too. */
 const PROGRESS_EVENT = 'tts://model-progress';
@@ -135,9 +136,9 @@ function ensureListening(): Promise<void> {
 // -- The provider -----------------------------------------------------------
 
 /** Model state without downloading anything. */
-export async function nativeVoiceStatus(): Promise<NativeVoiceStatus> {
+export async function nativeVoiceStatus(model: TtsModelId = 'kokoro'): Promise<NativeVoiceStatus> {
 	const { invoke } = await tauri();
-	return invoke<NativeVoiceStatus>('tts_status');
+	return invoke<NativeVoiceStatus>('tts_status', { model });
 }
 
 /**
@@ -145,7 +146,7 @@ export async function nativeVoiceStatus(): Promise<NativeVoiceStatus> {
  * Structurally identical to what `sherpa.ts` exports, which is what makes the
  * router a one-line choice rather than a branch per call site.
  */
-export const nativeKokoro = {
+export const nativeSherpa = {
 	/**
 	 * Makes the voice ready to speak: downloads and unpacks the model if it is
 	 * not already here, and returns at once if it is.
@@ -156,12 +157,12 @@ export const nativeKokoro = {
 	 * (`warmSpeech`) the moment a challenge is shown, well before anything is
 	 * played.
 	 */
-	async init(): Promise<void> {
+	async init(model: TtsModelId): Promise<void> {
 		// Subscribed before the download starts, or the first ticks are lost and
 		// the progress bar jumps in from the middle.
 		await ensureListening();
 		const { invoke } = await tauri();
-		await invoke<void>('tts_download');
+		await invoke<void>('tts_download', { model });
 	},
 
 	/** Subscribes to download progress; the returned function unsubscribes. */
@@ -178,9 +179,14 @@ export const nativeKokoro = {
 	 * `ArrayBuffer` and become a `Blob` without a parse step — a `Vec<u8>`
 	 * serialized as JSON would be megabytes of digits per sentence.
 	 */
-	async synthesize(text: string, speakerId: number, speed = 1): Promise<Blob> {
+	async synthesize(model: TtsModelId, text: string, speakerId: number, speed = 1): Promise<Blob> {
 		const { invoke } = await tauri();
-		const wav = await invoke<ArrayBuffer>('tts_synthesize', { text, sid: speakerId, speed });
+		const wav = await invoke<ArrayBuffer>('tts_synthesize', {
+			model,
+			text,
+			sid: speakerId,
+			speed
+		});
 		return new Blob([wav], { type: 'audio/wav' });
 	}
 };

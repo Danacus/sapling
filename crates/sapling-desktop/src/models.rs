@@ -92,6 +92,20 @@ pub const KOKORO: ModelSpec = ModelSpec {
     ],
 };
 
+/// Single-speaker Cantonese VITS model, converted and published by k2-fsa.
+pub const CANTONESE_VITS: ModelSpec = ModelSpec {
+    dir: "vits-cantonese-hf-xiaomaiiwn",
+    url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-cantonese-hf-xiaomaiiwn.tar.bz2",
+    bytes: 107_995_442,
+    sha256: "bf3013cd4be34f531b7e514e708d835584dd60c9ad6eaf467ac1402005c04e46",
+    files: &[
+        "vits-cantonese-hf-xiaomaiiwn.onnx",
+        "tokens.txt",
+        "lexicon.txt",
+        "rule.fst",
+    ],
+};
+
 /// SenseVoice small, int8 — the recognizer, covering zh, en, ja, ko and yue.
 ///
 /// **int8 here, and that is not a contradiction of [`KOKORO`].** The reason

@@ -20,7 +20,7 @@ mod common;
 use std::time::Instant;
 
 use common::app_data_dir;
-use sapling_desktop::models::KOKORO;
+use sapling_desktop::models::{CANTONESE_VITS, KOKORO};
 use sapling_desktop::tts::{TtsHandle, TTS_DIR};
 
 /// The handle, or `None` when there is no model to speak with.
@@ -32,6 +32,19 @@ fn installed_handle() -> Option<TtsHandle> {
             "skipping: no voice model under {}. Install it with \
              `cargo test -p sapling-desktop --test voice -- --ignored`.",
             dir.join(TTS_DIR).join(KOKORO.dir).display()
+        );
+        return None;
+    }
+    Some(handle)
+}
+
+fn installed_cantonese_handle() -> Option<TtsHandle> {
+    let dir = app_data_dir()?;
+    let handle = TtsHandle::new(&dir);
+    if !handle.status_for("cantonese").ok()?.installed {
+        eprintln!(
+            "skipping: no Cantonese voice model under {}",
+            dir.join(TTS_DIR).join(CANTONESE_VITS.dir).display()
         );
         return None;
     }
@@ -157,6 +170,29 @@ fn speaks_a_sentence_that_mixes_the_two() {
         .synthesize("我最喜欢的水果是 mango。", 3, 1.0)
         .expect("mixed synthesis");
     check(&wav, "mixed zh/en", started.elapsed());
+}
+
+#[test]
+fn speaks_cantonese_with_vits() {
+    let Some(handle) = installed_cantonese_handle() else {
+        return;
+    };
+
+    let started = Instant::now();
+    let wav = handle
+        .synthesize_for("cantonese", "你好！今日天氣真係好好。", 0, 1.0)
+        .expect("Cantonese synthesis");
+    let clip = parse_wav(&wav);
+    let seconds = clip.samples.len() as f32 / clip.sample_rate as f32;
+    let peak = clip.samples.iter().fold(0.0f32, |max, s| max.max(s.abs()));
+    eprintln!(
+        "cantonese: {seconds:.2}s at {} Hz in {:.2}s, peak {peak:.3}",
+        clip.sample_rate,
+        started.elapsed().as_secs_f32()
+    );
+    assert_eq!(clip.sample_rate, 22050, "the VITS model's rate");
+    assert!(peak > 0.01, "the Cantonese clip is silent");
+    assert!((0.5..30.0).contains(&seconds));
 }
 
 /// Not part of the suite: the one-off that puts the model on this machine, for

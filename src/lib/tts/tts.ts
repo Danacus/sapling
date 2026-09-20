@@ -5,19 +5,21 @@
  * autoplay or a half-downloaded model can never leave a learner stuck on a
  * challenge.
  *
- * Two engines, picked per call:
+ * Two engine families, picked per call:
  *
  * - **Kokoro** (Kokoro v1.1-zh) for Mandarin and English. Real Mandarin,
  *   including mixed zh/en sentences — see the note in `languages.ts` for
  *   exactly what it covers.
+ * - **Cantonese VITS** for Cantonese (`yue`). Both neural models run through
+ *   the same sherpa provider and differ only in their model descriptor.
  * - **Web Speech API** for every other language, and as the fallback whenever
- *   Kokoro is unavailable, still downloading, or fails.
+ *   the selected neural model is unavailable, still downloading, or fails.
  *
  * ## Kokoro comes from the host, and there are two hosts
  *
  * The `'kokoro'` preference has never named a *runtime* — it names the good,
  * downloaded, neural voice — and there are now two implementations of it
- * behind one shape (`KokoroProvider`): `sherpa.ts`, the sherpa-onnx WASM build
+ * behind one shape (`SherpaProvider`): `sherpa.ts`, the sherpa-onnx WASM build
  * in a Web Worker, and `native.ts`, the same model running natively in the
  * Tauri desktop host, which is the only way it can run there at all. The
  * speaker ids, the sample rate and the WAV framing are identical because it is
@@ -59,8 +61,8 @@ import { inTauri } from '$lib/platform';
 
 import { readClip, writeClip } from './audio-store';
 import { audioCacheKey, audioCacheUrl, LruCache } from './cache';
-import { bcp47For, kokoroSpeakerFor, kokoroSupports } from './languages';
-import { RUNTIME_DOWNLOAD_BYTES } from './models';
+import { bcp47For, sherpaSupports, sherpaVoiceFor, type SherpaVoice } from './languages';
+import { browserModelDownloadBytes, RUNTIME_DOWNLOAD_BYTES, type TtsModelId } from './models';
 // Type-only, so the browser bundle still never references the desktop module.
 import type { NativeVoiceStatus } from './native';
 import { initSherpa, onSherpaProgress, synthesize, type TtsProgress } from './sherpa';
@@ -83,6 +85,8 @@ export {
 	isMandarin,
 	kokoroSupports,
 	kokoroSpeakerFor,
+	sherpaSupports,
+	sherpaVoiceFor,
 	MANDARIN_SPEAKERS
 } from './languages';
 export { KOKORO_MODEL_ID, RUNTIME_DOWNLOAD_BYTES, formatMb } from './models';
@@ -100,7 +104,7 @@ const audioCache = new LruCache<Blob>(AUDIO_CACHE_SIZE);
  * synthesis call and the cache key from one place, so the two can never
  * disagree about what a stored clip sounds like.
  */
-const KOKORO_SPEED = 1;
+const NEURAL_SPEED = 1;
 
 /**
  * The clip currently playing and how to cut it off, or `null` for none.
@@ -133,18 +137,18 @@ let hostOutputWorks = true;
  * providers already had this shape; naming it is what lets the rest of the
  * module stop caring which one it got.
  */
-export interface KokoroProvider {
+export interface SherpaProvider {
 	/** Downloads whatever is missing and resolves when the voice can speak. */
-	init(): Promise<void>;
+	init(model: TtsModelId): Promise<void>;
 	/** Subscribes to download progress; the return value unsubscribes. */
 	onProgress(listener: (progress: TtsProgress) => void): () => void;
 	/** One phrase, as a WAV blob. */
-	synthesize(text: string, speakerId: number, speed?: number): Promise<Blob>;
+	synthesize(model: TtsModelId, text: string, speakerId: number, speed?: number): Promise<Blob>;
 }
 
 /** The browser's: sherpa-onnx compiled to WASM, in a Web Worker. */
-const sherpaProvider: KokoroProvider = {
-	init: initSherpa,
+const sherpaProvider: SherpaProvider = {
+	init: (model) => initSherpa(model),
 	onProgress: onSherpaProgress,
 	synthesize
 };
@@ -163,14 +167,14 @@ const NO_HOST_VOICE = 'this host has no built-in voice';
  * browser voice, which is what they would have heard before the model was
  * downloaded.
  */
-const voicelessHost: KokoroProvider = {
+const voicelessHost: SherpaProvider = {
 	init: () => Promise.reject(new Error(NO_HOST_VOICE)),
 	onProgress: () => () => {},
 	synthesize: () => Promise.reject(new Error(NO_HOST_VOICE))
 };
 
-let provider: Promise<KokoroProvider> | undefined;
-let hostStatus: Promise<NativeVoiceStatus | undefined> | undefined;
+let provider: Promise<SherpaProvider> | undefined;
+const hostStatuses = new Map<TtsModelId, Promise<NativeVoiceStatus | undefined>>();
 
 /**
  * What the desktop host says about its voice, asked once, or `undefined` when
@@ -193,17 +197,20 @@ let hostStatus: Promise<NativeVoiceStatus | undefined> | undefined;
  * Settings on Android. Awaiting the module first keeps the helper around the
  * import alone.
  */
-function hostVoice(): Promise<NativeVoiceStatus | undefined> {
-	hostStatus ??= probeHostVoice().catch((cause) => {
+function hostVoice(model: TtsModelId = 'kokoro'): Promise<NativeVoiceStatus | undefined> {
+	const existing = hostStatuses.get(model);
+	if (existing) return existing;
+	const status = probeHostVoice(model).catch((cause) => {
 		console.warn('[tts] This host has no voice of its own; the browser voice will speak.', cause);
 		return undefined;
 	});
-	return hostStatus;
+	hostStatuses.set(model, status);
+	return status;
 }
 
-async function probeHostVoice(): Promise<NativeVoiceStatus> {
+async function probeHostVoice(model: TtsModelId): Promise<NativeVoiceStatus> {
 	const module = await import('./native');
-	return module.nativeVoiceStatus();
+	return module.nativeVoiceStatus(model);
 }
 
 /**
@@ -217,10 +224,10 @@ async function probeHostVoice(): Promise<NativeVoiceStatus> {
  * before the first phrase, which is nothing beside the seconds the engine takes
  * to load, and it is paid once for the session.
  */
-function kokoro(): Promise<KokoroProvider> {
+function sherpa(): Promise<SherpaProvider> {
 	provider ??= inTauri()
-		? hostVoice().then(async (status) =>
-				status ? (await import('./native')).nativeKokoro : voicelessHost
+		? hostVoice('kokoro').then(async (status) =>
+				status ? (await import('./native')).nativeSherpa : voicelessHost
 			)
 		: Promise.resolve(sherpaProvider);
 	return provider;
@@ -252,7 +259,7 @@ function clipsWorthStoring(): boolean {
 export function onVoiceProgress(listener: (progress: TtsProgress) => void): () => void {
 	let cancelled = false;
 	let unsubscribe: (() => void) | undefined;
-	void kokoro().then((engine) => {
+	void sherpa().then((engine) => {
 		if (cancelled) return;
 		unsubscribe = engine.onProgress(listener);
 	});
@@ -271,9 +278,10 @@ export function onVoiceProgress(listener: (progress: TtsProgress) => void): () =
  * Never rejects: Settings fires this off without waiting for it
  * (`+page.svelte`), so a rejection here would be an unhandled one.
  */
-export async function voiceDownloadBytes(): Promise<number> {
-	if (!inTauri()) return RUNTIME_DOWNLOAD_BYTES;
-	return (await hostVoice())?.downloadBytes ?? 0;
+export async function voiceDownloadBytes(language?: string): Promise<number> {
+	const model = sherpaVoiceFor(language)?.model ?? 'kokoro';
+	if (!inTauri()) return browserModelDownloadBytes(model);
+	return (await hostVoice(model))?.downloadBytes ?? 0;
 }
 
 /**
@@ -344,7 +352,7 @@ export function stopSpeaking(): void {
 export function ttsAvailable(language: string | undefined): boolean {
 	const engine = getTtsEngine();
 	if (engine === 'off') return false;
-	if (engine === 'kokoro' && kokoroSupports(language)) return true;
+	if (engine === 'kokoro' && sherpaSupports(language)) return true;
 	return webSpeechAvailable();
 }
 
@@ -354,10 +362,19 @@ export function ttsAvailable(language: string | undefined): boolean {
  * show an error — `speak()` itself never surfaces this.
  */
 export async function preloadKokoro(onProgress?: (progress: TtsProgress) => void): Promise<void> {
-	const engine = await kokoro();
+	return preloadVoice('Mandarin Chinese', onProgress);
+}
+
+/** Downloads and warms the sherpa model selected for `language`. */
+export async function preloadVoice(
+	language: string,
+	onProgress?: (progress: TtsProgress) => void
+): Promise<void> {
+	const model = sherpaVoiceFor(language)?.model ?? 'kokoro';
+	const engine = await sherpa();
 	const unsubscribe = onProgress ? engine.onProgress(onProgress) : undefined;
 	try {
-		await engine.init();
+		await engine.init(model);
 	} finally {
 		unsubscribe?.();
 	}
@@ -380,8 +397,9 @@ const inflight = new Map<string, Promise<Blob>>();
  * {@link clipsWorthStoring} — leaving the memory LRU and the dedupe, which
  * both hosts want.
  */
-async function obtainClip(phrase: string, speaker: { id: number; name: string }): Promise<Blob> {
-	const key = audioCacheKey(phrase, speaker.name);
+async function obtainClip(phrase: string, speaker: SherpaVoice): Promise<Blob> {
+	const voiceKey = `${speaker.model}:${speaker.name}`;
+	const key = audioCacheKey(phrase, voiceKey);
 
 	const cached = audioCache.get(key);
 	if (cached) return cached;
@@ -390,11 +408,11 @@ async function obtainClip(phrase: string, speaker: { id: number; name: string })
 	if (pending) return pending;
 
 	const work = (async () => {
-		const url = audioCacheUrl(phrase, speaker.name, KOKORO_SPEED);
+		const url = audioCacheUrl(phrase, voiceKey, NEURAL_SPEED);
 		const stored = clipsWorthStoring();
 		let blob = stored ? await readClip(url) : undefined;
 		if (!blob) {
-			blob = await (await kokoro()).synthesize(phrase, speaker.id, KOKORO_SPEED);
+			blob = await (await sherpa()).synthesize(speaker.model, phrase, speaker.id, NEURAL_SPEED);
 			if (stored) void writeClip(url, blob);
 		}
 		audioCache.set(key, blob);
@@ -427,7 +445,7 @@ async function obtainClip(phrase: string, speaker: { id: number; name: string })
 export async function warmSpeech(text: string, language: string): Promise<void> {
 	const phrase = text?.trim();
 	if (!phrase || getTtsEngine() !== 'kokoro') return;
-	const speaker = kokoroSpeakerFor(language);
+	const speaker = sherpaVoiceFor(language);
 	if (!speaker) return;
 	try {
 		await obtainClip(phrase, speaker);
@@ -537,7 +555,7 @@ export async function speak(text: string, language: string): Promise<void> {
 	stopSpeaking();
 
 	if (engine === 'kokoro') {
-		const speaker = kokoroSpeakerFor(language);
+		const speaker = sherpaVoiceFor(language);
 		if (speaker) {
 			try {
 				// Memory → disk → synthesize (see `obtainClip`); the disk layer never
@@ -547,7 +565,7 @@ export async function speak(text: string, language: string): Promise<void> {
 				await playClip(await obtainClip(phrase, speaker));
 				return;
 			} catch (cause) {
-				console.warn('[tts] Kokoro failed; falling back to the browser voice.', cause);
+				console.warn('[tts] Neural voice failed; falling back to the browser voice.', cause);
 			}
 		}
 	}

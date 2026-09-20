@@ -21,7 +21,7 @@ const FAKE_INPUTS: { [K in TaskKind]: TaskInput<K> } = {
 	'read-generate': { profile, vocabulary: [], focus: [] },
 	'read-annotate': { profile, vocabulary: [], sentences: ['Hola.'] },
 	captions: { videoId: 'abcdefghijk', lang: 'ja', name: 'Japanese', auto: false },
-	'tts-model': undefined,
+	'tts-model': 'Mandarin Chinese',
 	'asr-model': undefined
 };
 
