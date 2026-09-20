@@ -25,6 +25,7 @@
 	let loadError = $state('');
 	let profile = $state<Profile | undefined>(undefined);
 	let profiles = $state<LanguageProfile[]>([]);
+	let switchingProfile = $state(false);
 	let items = $state<KnowledgeItem[]>([]);
 	/** Answers per local calendar day, oldest first — the strip and the streak. */
 	let activity = $state<{ day: string; count: number }[]>([]);
@@ -64,16 +65,21 @@
 		};
 	});
 
-	async function switchProfile(event: Event) {
-		const id = (event.currentTarget as HTMLSelectElement).value;
+	async function switchProfile(id: string) {
 		if (!id || profiles.find((entry) => entry.id === id)?.active) return;
-		await setActiveProfile(id);
-		// Pages and long-running tasks may hold objects from the old language.
-		// A full navigation gives the newly materialised library a clean runtime.
-		window.location.assign('/');
+		switchingProfile = true;
+		try {
+			await setActiveProfile(id);
+			// Pages and long-running tasks may hold objects from the old language.
+			// A full navigation gives the newly materialised library a clean runtime.
+			window.location.assign('/');
+		} catch {
+			switchingProfile = false;
+		}
 	}
 
 	const targetLanguage = $derived(profile?.targetLanguage?.trim() || 'your new language');
+	const activeProfile = $derived(profiles.find((entry) => entry.active));
 	// `isDue` compares the schedule the *read* derived against this tick's `now`,
 	// so the count moves with the clock and snaps on the next load.
 	const dueCount = $derived(items.filter((item) => isDue(item, now)).length);
@@ -181,21 +187,61 @@
 				<div class="identity">
 					<p class="eyebrow">Learning</p>
 					<h1>{targetLanguage}</h1>
-					<div class="language-picker">
-						{#if profiles.length > 1}
-							<label>
-								<span class="sr-only">Active language</span>
-								<select onchange={(event) => void switchProfile(event)}>
-									{#each profiles as entry (entry.id)}
-										<option value={entry.id} selected={entry.active}>
-											{entry.targetLanguage} from {entry.nativeLanguage}
-										</option>
-									{/each}
-								</select>
-							</label>
-						{/if}
-						<a href="/onboarding?add=1">Add language</a>
-					</div>
+					<details class="language-switcher">
+						<summary aria-label="Choose a language">
+							<span class="switch-mark" aria-hidden="true">
+								<svg class="ico" viewBox="0 0 24 24">
+									<path d="M12 21v-8.6" />
+									<path d="M12 16.2c-3.3 0-5.2-1.9-5.2-5.2 3.3 0 5.2 1.9 5.2 5.2Z" />
+									<path d="M12 12.6c0-3.8 2-5.8 5.6-5.8 0 3.8-2 5.8-5.6 5.8Z" />
+								</svg>
+							</span>
+							<span class="switch-copy">
+								<span class="switch-label">Language garden</span>
+								<span class="switch-pair">
+									{activeProfile?.nativeLanguage ?? profile?.nativeLanguage}
+									<span aria-hidden="true">→</span>
+									{activeProfile?.targetLanguage ?? profile?.targetLanguage}
+								</span>
+							</span>
+							<svg class="ico switch-chevron" viewBox="0 0 24 24" aria-hidden="true">
+								<path d="m7.5 9.5 4.5 4.5 4.5-4.5" />
+							</svg>
+						</summary>
+
+						<div class="language-menu">
+							<p class="menu-heading">Your language gardens</p>
+							<div class="language-list">
+								{#each profiles as entry (entry.id)}
+									<button
+										type="button"
+										class="language-option"
+										class:active={entry.active}
+										aria-current={entry.active ? 'true' : undefined}
+										disabled={entry.active || switchingProfile}
+										onclick={() => void switchProfile(entry.id)}
+									>
+										<span class="language-initial" aria-hidden="true">
+											{entry.targetLanguage.trim().charAt(0).toLocaleUpperCase()}
+										</span>
+										<span class="language-copy">
+											<strong>{entry.targetLanguage}</strong>
+											<small>from {entry.nativeLanguage}</small>
+										</span>
+										{#if entry.active}
+											<svg class="ico language-check" viewBox="0 0 24 24" aria-hidden="true">
+												<path d="m5.5 12.5 4 4 9-9" />
+											</svg>
+										{/if}
+									</button>
+								{/each}
+							</div>
+							<a class="add-language" href="/onboarding?add=1">
+								<span class="add-mark" aria-hidden="true">+</span>
+								<span>Add another language</span>
+							</a>
+						</div>
+					</details>
 				</div>
 				<div class="topbar-actions">
 					<div class="streak" class:dimmed={streakDays === 0} title="Current streak">
@@ -443,6 +489,10 @@
 	}
 
 	.topbar {
+		/* `.ll-rise` leaves every animated section in its own stacking context.
+		   Keep the header's context above the cards so its menu can cross them. */
+		position: relative;
+		z-index: 10;
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
@@ -469,40 +519,238 @@
 		overflow-wrap: break-word;
 	}
 
-	.language-picker {
+	/* The active language reads as a pressed specimen label under the title.
+	   Its menu is a tiny garden index: each row is a separate bed, with the
+	   current one softly tinted instead of represented by a browser select. */
+	.language-switcher {
+		position: relative;
+		width: fit-content;
+		max-width: min(20rem, calc(100vw - 2 * var(--gutter)));
+		margin-top: 0.65rem;
+	}
+
+	.language-switcher summary {
 		display: flex;
 		align-items: center;
-		flex-wrap: wrap;
-		gap: 0.45rem 0.7rem;
-		margin-top: 0.45rem;
-		font-size: 0.82rem;
+		gap: 0.55rem;
+		min-height: 2.75rem;
+		padding: 0.35rem 0.55rem 0.35rem 0.4rem;
+		border: 1px dashed var(--border-strong);
+		border-radius: var(--radius);
+		background: color-mix(in srgb, var(--primary-soft) 48%, var(--surface));
+		color: var(--text);
+		cursor: pointer;
+		list-style: none;
+		user-select: none;
+		transition:
+			border-color 0.18s ease,
+			background 0.18s ease;
 	}
 
-	.language-picker select {
-		max-width: min(16rem, 70vw);
-		border: 1px solid var(--border);
+	.language-switcher summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.language-switcher summary:hover {
+		border-color: var(--primary);
+		background: color-mix(in srgb, var(--primary-soft) 72%, var(--surface));
+	}
+
+	.language-switcher summary:focus-visible {
+		outline: none;
+		box-shadow: var(--ring);
+	}
+
+	.language-switcher[open] summary {
+		border-style: solid;
+		border-color: var(--primary);
+	}
+
+	.switch-mark {
+		display: grid;
+		place-items: center;
+		width: 2rem;
+		height: 2rem;
+		flex: 0 0 auto;
 		border-radius: var(--radius-sm);
 		background: var(--surface);
+		color: var(--primary-strong);
+		box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 24%, transparent);
+	}
+
+	.switch-copy,
+	.language-copy {
+		display: flex;
+		min-width: 0;
+		flex-direction: column;
+	}
+
+	.switch-label,
+	.menu-heading {
+		font-size: 0.65rem;
+		font-weight: 750;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--text-muted);
+	}
+
+	.switch-pair {
+		display: flex;
+		align-items: baseline;
+		gap: 0.35rem;
+		font-size: 0.82rem;
+		font-weight: 650;
+		line-height: 1.25;
+	}
+
+	.switch-pair span {
+		color: var(--accent);
+	}
+
+	.switch-chevron {
+		margin-left: 0.2rem;
+		color: var(--text-muted);
+		transition: transform 0.18s ease;
+	}
+
+	.language-switcher[open] .switch-chevron {
+		transform: rotate(180deg);
+	}
+
+	.language-menu {
+		position: absolute;
+		z-index: 20;
+		top: calc(100% + 0.45rem);
+		left: 0;
+		width: min(19rem, calc(100vw - 2 * var(--gutter)));
+		padding: 0.55rem;
+		border: 1px solid var(--border-strong);
+		border-radius: var(--radius);
+		background: var(--surface);
+		box-shadow: var(--shadow);
+		transform-origin: top left;
+		animation: menu-open 0.16s ease-out both;
+	}
+
+	.menu-heading {
+		margin: 0.15rem 0.45rem 0.45rem;
+	}
+
+	.language-list {
+		display: grid;
+		gap: 0.2rem;
+	}
+
+	.language-option,
+	.add-language {
+		display: flex;
+		align-items: center;
+		width: 100%;
+		gap: 0.65rem;
+		padding: 0.55rem;
+		border: 0;
+		border-radius: var(--radius-sm);
+		background: transparent;
 		color: var(--text);
 		font: inherit;
-		padding: 0.3rem 0.45rem;
+		text-align: left;
+		text-decoration: none;
 	}
 
-	.language-picker a {
+	.language-option:not(:disabled) {
+		cursor: pointer;
+	}
+
+	.language-option:hover:not(:disabled),
+	.language-option:focus-visible,
+	.add-language:hover,
+	.add-language:focus-visible {
+		outline: none;
+		background: var(--surface-alt);
+	}
+
+	.language-option.active {
+		background: color-mix(in srgb, var(--primary-soft) 58%, transparent);
+		color: var(--text);
+		opacity: 1;
+	}
+
+	.language-initial,
+	.add-mark {
+		display: grid;
+		place-items: center;
+		width: 2.15rem;
+		height: 2.15rem;
+		flex: 0 0 auto;
+		border: 1px solid var(--border);
+		border-radius: 50%;
+		background: var(--bg);
+		color: var(--primary-strong);
+		font-family: var(--font-display);
+		font-size: 0.9rem;
+		font-weight: 700;
+	}
+
+	.language-option.active .language-initial {
+		border-color: color-mix(in srgb, var(--primary) 50%, var(--border));
+		background: var(--primary-soft);
+	}
+
+	.language-copy {
+		flex: 1;
+		line-height: 1.2;
+	}
+
+	.language-copy strong {
+		font-size: 0.92rem;
+	}
+
+	.language-copy small {
+		margin-top: 0.12rem;
 		color: var(--text-muted);
-		text-underline-offset: 0.18em;
+		font-size: 0.75rem;
 	}
 
-	.sr-only {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		padding: 0;
-		margin: -1px;
-		overflow: hidden;
-		clip: rect(0, 0, 0, 0);
-		white-space: nowrap;
-		border: 0;
+	.language-check {
+		color: var(--primary-strong);
+	}
+
+	.add-language {
+		margin-top: 0.45rem;
+		padding-top: 0.7rem;
+		border-top: 1px dashed var(--border-strong);
+		border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+		color: var(--primary-strong);
+		font-size: 0.86rem;
+		font-weight: 700;
+	}
+
+	.add-mark {
+		border-style: dashed;
+		border-radius: var(--radius-sm);
+		background: transparent;
+		font-family: inherit;
+		font-size: 1.15rem;
+	}
+
+	@keyframes menu-open {
+		from {
+			opacity: 0;
+			transform: translateY(-0.25rem) scale(0.98);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0) scale(1);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.language-switcher summary,
+		.switch-chevron,
+		.language-menu {
+			transition: none;
+			animation: none;
+		}
 	}
 
 	.topbar-actions {
