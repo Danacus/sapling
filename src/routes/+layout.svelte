@@ -94,12 +94,14 @@
 	}
 
 	$effect(() => {
-		// Re-runs on every navigation: `page.url.pathname` is the tracked read.
+		// Re-runs on every navigation so a missing profile still redirects to
+		// onboarding. `checking` deliberately stays an initial-load gate: turning
+		// it back on here would unmount the app frame and flash away the persistent
+		// navigation while this asynchronous read completes.
 		const path = page.url.pathname;
 		if (!browser) return;
 
 		let cancelled = false;
-		checking = true;
 
 		resolveProfile()
 			.then((profile) => {
