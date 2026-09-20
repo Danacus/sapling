@@ -10,7 +10,7 @@ pnpm-lock.yaml
 
 # Vendored upstream artifacts — sherpa-onnx's own JS glue, never ours to
 # reformat. `sherpa-worker.js` beside them *is* project code and stays in.
-static/tts/sherpa-onnx-*.js
+static/tts/**/sherpa-onnx-*.js
 
 # Markdown is hand-wrapped prose here, and prettier rewrites *emphasis* to
 # _emphasis_ against the house style. Formatting is for code.
