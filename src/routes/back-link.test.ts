@@ -30,6 +30,8 @@ const ROUTES = dirname(fileURLToPath(import.meta.url));
  */
 const NO_PARENT: Record<string, string> = {
 	'/': 'the dashboard is the root — there is nothing above it',
+	'/explore': 'Explore is a primary destination in the persistent app navigation',
+	'/words': 'The Garden is a primary destination in the persistent app navigation',
 	'/onboarding':
 		'first run, before there is an app to go back to; steps 2+ carry their own in-form Back'
 };

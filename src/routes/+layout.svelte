@@ -7,6 +7,7 @@
 	import { getProfile } from '$lib/db';
 	import { isSyncEnabled, runSync } from '$lib/sync';
 	import { preloadReloadGuard } from '$lib/ui/preload-reload';
+	import AppNav from '$lib/ui/AppNav.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 	import TaskTray from '$lib/ui/TaskTray.svelte';
 
@@ -16,6 +17,25 @@
 
 	/** Blocks rendering until we know whether onboarding is still required. */
 	let checking = $state(browser);
+
+	/**
+	 * Full-screen activities keep their own small, explicit way out. The app map
+	 * belongs between destinations, not inside a lesson or live conversation.
+	 */
+	const showAppNav = $derived.by(() => {
+		const path = page.url.pathname;
+		const immersive =
+			path === '/learn' ||
+			path === '/chat' ||
+			/^\/read\/[^/]+/.test(path) ||
+			/^\/converse\/[^/]+/.test(path);
+		const outsideApp =
+			path.startsWith('/onboarding') ||
+			path.startsWith('/settings') ||
+			path.startsWith('/profile') ||
+			path.startsWith('/tts-test');
+		return !immersive && !outsideApp;
+	});
 
 	/** The database could not be opened at all — another tab holds it. */
 	let bootError = $state<string | undefined>(undefined);
@@ -123,12 +143,31 @@
 		<Spinner />
 	</div>
 {:else}
-	{@render children()}
+	<div class="app-frame" class:has-app-nav={showAppNav}>
+		{#if showAppNav}<AppNav />{/if}
+		<div class="app-content">
+			{@render children()}
+		</div>
+	</div>
 	<!-- Mounted once, here, so a job started on one route is still watchable on the next. -->
 	<TaskTray />
 {/if}
 
 <style>
+	/* Only routes on which AppNav actually renders reserve room for its fixed
+	   mobile bar. Immersive activities remain true full-screen views. */
+	@media (max-width: 47.999rem) {
+		.app-frame.has-app-nav .app-content {
+			padding-bottom: calc(4.6rem + env(safe-area-inset-bottom));
+		}
+
+		/* A collapsed background-task pill floats above the mobile navigation.
+		   Its open sheet still owns the bottom edge and covers the navigation. */
+		.app-frame.has-app-nav ~ :global(.tray) {
+			bottom: calc(5.2rem + env(safe-area-inset-bottom));
+		}
+	}
+
 	.boot {
 		display: grid;
 		place-items: center;

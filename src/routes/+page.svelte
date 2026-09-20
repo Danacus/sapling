@@ -252,14 +252,6 @@
 						</svg>
 						<span>{streakDays}</span>
 					</div>
-					<a class="gear" href="/chat" aria-label="Assistant">
-						<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-							<path
-								d="M20.3 12.2c0 4-3.7 7.2-8.2 7.2a9.4 9.4 0 0 1-2.5-.3L4.6 20.5l1.3-3.7a6.9 6.9 0 0 1-2.2-4.6C3.7 8.2 7.4 5 11.9 5s8.4 3.2 8.4 7.2Z"
-							/>
-							<path d="M9 11.9h.01M12 11.9h.01M15 11.9h.01" />
-						</svg>
-					</a>
 					<!-- No conversation icon here: it has the card below. One of the two
 					     ways vocabulary enters the app does not belong in the corner row
 					     with settings. -->

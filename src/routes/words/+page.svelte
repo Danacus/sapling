@@ -26,7 +26,6 @@
 	import type { Romanizer } from '$lib/romanize';
 	import { CardState } from '$lib/srs';
 	import type { KnowledgeItem, Profile } from '$lib/types';
-	import BackLink from '$lib/ui/BackLink.svelte';
 	import ProgressBar from '$lib/ui/ProgressBar.svelte';
 	import RubyText from '$lib/ui/RubyText.svelte';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
@@ -374,7 +373,6 @@
 
 <main class="shell shell-full">
 	<header class="topbar ll-rise">
-		<BackLink href="/" label="Back to home" />
 		<div class="identity">
 			<p class="eyebrow">Sapling</p>
 			<h1>Garden</h1>

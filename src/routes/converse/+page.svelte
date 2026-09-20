@@ -162,7 +162,7 @@
 		<!-- The way home comes with the error: a failed read is a screen the
 		     learner can be stuck on, and the desktop shell has no back arrow. -->
 		<header class="topbar">
-			<BackLink href="/" label="Back to home" />
+			<BackLink href="/explore" label="Back to explore" />
 		</header>
 		<div class="card">
 			<p class="error" role="alert">{loadError}</p>
@@ -170,7 +170,7 @@
 	{:else}
 		<div class="spread">
 			<header class="topbar spread-full ll-rise">
-				<BackLink href="/" label="Back to home" />
+				<BackLink href="/explore" label="Back to explore" />
 				<div class="identity">
 					<p class="eyebrow">Sapling</p>
 					<h1>Conversation</h1>
