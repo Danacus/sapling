@@ -8,6 +8,7 @@
 	import { isSyncEnabled, runSync } from '$lib/sync';
 	import { preloadReloadGuard } from '$lib/ui/preload-reload';
 	import AppNav from '$lib/ui/AppNav.svelte';
+	import { applyTheme, getThemeMode } from '$lib/ui/prefs';
 	import Spinner from '$lib/ui/Spinner.svelte';
 	import TaskTray from '$lib/ui/TaskTray.svelte';
 
@@ -74,6 +75,15 @@
 
 	/** Boot sync fires once, not on every navigation the effect below re-runs on. */
 	let syncKicked = false;
+
+	$effect(() => {
+		if (!browser) return;
+		const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
+		const refreshTheme = () => applyTheme(getThemeMode());
+		refreshTheme();
+		systemTheme.addEventListener('change', refreshTheme);
+		return () => systemTheme.removeEventListener('change', refreshTheme);
+	});
 
 	/**
 	 * The profile, pulling the log down first if this device has none and is

@@ -444,10 +444,8 @@
 		padding-bottom: env(safe-area-inset-bottom, 0);
 	}
 
-	@media (prefers-color-scheme: dark) {
-		.banner {
-			--scrim: var(--text-inverse);
-		}
+	:global(html[data-theme='dark']) .banner {
+		--scrim: var(--text-inverse);
 	}
 
 	/* Leaf green: the answer stands. */

@@ -1131,10 +1131,8 @@
 		background: color-mix(in srgb, var(--scrim) 62%, transparent);
 	}
 
-	@media (prefers-color-scheme: dark) {
-		.overlay {
-			--scrim: var(--text-inverse);
-		}
+	:global(html[data-theme='dark']) .overlay {
+		--scrim: var(--text-inverse);
 	}
 
 	.quit-card {

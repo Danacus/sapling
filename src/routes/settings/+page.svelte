@@ -70,11 +70,15 @@
 	import BackLink from '$lib/ui/BackLink.svelte';
 	import InlineStatus from '$lib/ui/InlineStatus.svelte';
 	import {
+		applyTheme,
 		getListeningMode,
 		getRomanizationMode,
+		getThemeMode,
 		setListeningMode,
 		setRomanizationMode,
-		type RomanizationMode
+		setThemeMode,
+		type RomanizationMode,
+		type ThemeMode
 	} from '$lib/ui/prefs';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
@@ -92,6 +96,11 @@
 		{ value: 'off', label: 'Off' },
 		{ value: 'on', label: 'On' },
 		{ value: 'adaptive', label: 'Adaptive' }
+	];
+	const THEME_MODES: { value: ThemeMode; label: string }[] = [
+		{ value: 'system', label: 'System' },
+		{ value: 'light', label: 'Light' },
+		{ value: 'dark', label: 'Dark' }
 	];
 	const REASONING_EFFORT_LABELS: Record<ReasoningEffort, string> = {
 		default: 'Provider default',
@@ -112,6 +121,7 @@
 	let mockMode = $state(false);
 
 	// Display -----------------------------------------------------------------------
+	let themeMode = $state<ThemeMode>('system');
 	let romanizationMode = $state<RomanizationMode>('on');
 	let listeningMode = $state(true);
 
@@ -242,6 +252,7 @@
 				requestItemsInput = storedItems === undefined ? '' : String(storedItems);
 				romanizationMode = getRomanizationMode();
 				listeningMode = getListeningMode();
+				themeMode = getThemeMode();
 
 				ttsEngine = getTtsEngine();
 				ttsVoice = getTtsVoice();
@@ -455,6 +466,12 @@
 	function setRomanization(mode: RomanizationMode) {
 		romanizationMode = mode;
 		setRomanizationMode(mode);
+	}
+
+	function chooseTheme(mode: ThemeMode) {
+		themeMode = mode;
+		setThemeMode(mode);
+		applyTheme(mode);
 	}
 
 	function chooseEngine(engine: TtsEngine) {
@@ -821,6 +838,24 @@
 					<h2>Display</h2>
 				</div>
 				<hr class="stitch" />
+				<div class="field">
+					<span class="label">Appearance</span>
+					<div class="preset-row" role="group" aria-label="Appearance">
+						{#each THEME_MODES as option (option.value)}
+							<button
+								type="button"
+								class="chip"
+								class:selected={themeMode === option.value}
+								aria-pressed={themeMode === option.value}
+								onclick={() => chooseTheme(option.value)}
+							>
+								{option.label}
+							</button>
+						{/each}
+					</div>
+					<p class="hint">System follows this device's appearance.</p>
+				</div>
+
 				<div class="field">
 					<span class="label">Pronunciation (romanization)</span>
 					<div class="preset-row" role="group" aria-label="Pronunciation (romanization)">

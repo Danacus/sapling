@@ -13,12 +13,52 @@ const ROMANIZATION_MODE_KEY = 'll.romanizationMode';
 const SHOW_ROMANIZATION_KEY = 'll.showRomanization';
 const LISTENING_MODE_KEY = 'll.listeningMode';
 const RECENT_TOPICS_KEY = 'll.recentTopics';
+const THEME_MODE_KEY = 'll.themeMode';
 
 /** At most this many recent topics are remembered. */
 export const MAX_RECENT_TOPICS = 5;
 
+export type ThemeMode = 'system' | 'light' | 'dark';
+const THEME_MODES: readonly ThemeMode[] = ['system', 'light', 'dark'];
+
 function hasStorage(): boolean {
 	return typeof localStorage !== 'undefined';
+}
+
+/** The chosen appearance. System preserves the app's original behaviour. */
+export function getThemeMode(): ThemeMode {
+	if (!hasStorage()) return 'system';
+	try {
+		const raw = localStorage.getItem(THEME_MODE_KEY);
+		return raw !== null && (THEME_MODES as readonly string[]).includes(raw)
+			? (raw as ThemeMode)
+			: 'system';
+	} catch {
+		return 'system';
+	}
+}
+
+/** Persists a device-local appearance choice. */
+export function setThemeMode(mode: ThemeMode): void {
+	if (!(THEME_MODES as readonly string[]).includes(mode) || !hasStorage()) return;
+	try {
+		localStorage.setItem(THEME_MODE_KEY, mode);
+	} catch {
+		/* ignore: storage unavailable */
+	}
+}
+
+/** Resolve System and apply a concrete palette to the document immediately. */
+export function applyTheme(mode: ThemeMode): void {
+	if (typeof document === 'undefined') return;
+	const dark =
+		mode === 'dark' ||
+		(mode === 'system' &&
+			typeof matchMedia !== 'undefined' &&
+			matchMedia('(prefers-color-scheme: dark)').matches);
+	document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+	const themeColor = document.querySelector<HTMLMetaElement>('#sapling-theme-color');
+	if (themeColor) themeColor.content = dark ? '#14180f' : '#f4efe4';
 }
 
 /**

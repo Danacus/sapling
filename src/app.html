@@ -8,15 +8,29 @@
 		<!--
 			Installable-PWA wiring. The manifest carries the install metadata and
 			icons; the two extras below are the platforms that ignore it:
-			- theme-color paints the Android/desktop title bar. The two palettes
-			  are warm paper and deep moss, so it takes one value each — the
-			  media-scoped pair below mirrors `--bg` in `app.css`.
+			- theme-color paints the Android/desktop title bar. The early theme
+			  resolver keeps it aligned with the manually selected palette.
 			- iOS never reads the manifest for the home-screen icon, so it needs
 			  its own apple-touch-icon link.
 		-->
 		<link rel="manifest" href="%sveltekit.assets%/manifest.webmanifest" />
-		<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4efe4" />
-		<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#14180f" />
+		<meta id="sapling-theme-color" name="theme-color" content="#f4efe4" />
+		<script>
+			// Resolve the saved palette before CSS paints, avoiding a light flash on
+			// reload. The layout takes over afterward and follows live system changes.
+			(() => {
+				let mode = 'system';
+				try {
+					mode = localStorage.getItem('ll.themeMode') || 'system';
+				} catch {}
+				const dark =
+					mode === 'dark' ||
+					(mode !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+				document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+				const themeColor = document.getElementById('sapling-theme-color');
+				if (themeColor) themeColor.setAttribute('content', dark ? '#14180f' : '#f4efe4');
+			})();
+		</script>
 		<link rel="icon" href="%sveltekit.assets%/icons/icon-192.png" type="image/png" />
 		<link rel="apple-touch-icon" href="%sveltekit.assets%/icons/apple-touch-icon.png" />
 		<meta name="apple-mobile-web-app-capable" content="yes" />
