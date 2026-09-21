@@ -31,7 +31,12 @@
 		}
 	},
 	"bundle": {
-		"active": false,
-		"icon": ["../../static/icons/icon-512.png"]
+		"active": true,
+		"icon": ["../../static/icons/icon-512.png"],
+		"linux": {
+			"appimage": {
+				"bundleMediaFramework": true
+			}
+		}
 	}
 }

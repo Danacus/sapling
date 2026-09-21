@@ -207,6 +207,35 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   samples and by a few samples of length (measured: 181454 vs 181442 bytes).
   Fine in practice — clips key on text, speaker and speed — but a test that
   asserts equal bytes will flake.
+- **`sherpa-onnx-sys` downloads its library at build time, and the nix sandbox
+  has no network (2026-09-21).** The crate's `build.rs` fetches
+  `sherpa-onnx-v<version>-linux-x64-static-lib.tar.bz2` from the GitHub release
+  of the same tag into `target/sherpa-onnx-prebuilt/`, which is fine in a shell
+  and impossible inside `nix build`. It honours `SHERPA_ONNX_LIB_DIR` (a
+  directory holding the `.a` files — the archive's `lib/`) and, alternatively,
+  `SHERPA_ONNX_ARCHIVE_DIR` (a directory holding the archive under its exact
+  name). `flake.nix` `fetchzip`s the archive and sets the first; the version is
+  read out of `Cargo.lock` so a bump of the `=1.13.8` pin fails the hash instead
+  of linking the old library under new bindings. The archive unpacks to a
+  single `lib/` directory, so `fetchzip`'s default `stripRoot` gives
+  `${sherpaLibs}/lib` directly.
+- **An AppImage must not be built under nix (2026-09-21).** A binary linked in
+  the `desktop` devShell has `/nix/store/...-glibc/lib/ld-linux-x86-64.so.2` as
+  its interpreter and every library on its RUNPATH under `/nix/store`, and
+  `linuxdeploy` does not rewrite the interpreter — so the image runs on a nix
+  machine and nowhere else, which is exactly backwards. The `appimage` CI job
+  builds the Rust half with rustup's cargo against Ubuntu 22.04's apt WebKitGTK,
+  and gets node and pnpm for the Tauri CLI from `nix shell nixpkgs#nodejs_22
+  nixpkgs#pnpm` (bin directories only) rather than `nix develop`, whose stdenv
+  puts nix's `cc` first on PATH and links nix's glibc all over again. The job's
+  check step `readelf`s the extracted image for `/nix/store` for this reason.
+- **`fetchPnpmDeps` needs `fetcherVersion = 4` with pnpm 11 (2026-09-21)**, and
+  its hash covers the whole pnpm store the lockfile describes, so it rots on
+  every `pnpm-lock.yaml` change: set it to `""`, build, copy the `got:` value
+  back. `pnpm.fetchDeps` is the deprecated spelling of the same fetcher; the
+  top-level `fetchPnpmDeps`/`pnpmConfigHook` are the current ones. The hook
+  installs with `--ignore-scripts`, so `workerd`'s postinstall (which wants the
+  network) never runs and `allowBuilds` is not consulted.
 
 ## Android (the same crate, built only in CI)
 

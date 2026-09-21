@@ -444,6 +444,20 @@ someone to run the check by hand.
   keep it rustfmt-clean — `cargo fmt --check` walks every member, default or
   not. New source files must be `git add`ed before nix can see them.
 
+- **Two Linux packagings, built by two toolchains on purpose.** The nix
+  package (`packages.<system>.sapling-desktop` in `flake.nix`) is the NixOS
+  path: it shares the `desktop` devShell's `desktopLibs`/`gst`/`desktopTools`
+  lists, lets `wrapGAppsHook3` write `GIO_EXTRA_MODULES`,
+  `GST_PLUGIN_SYSTEM_PATH_1_0` and `XDG_DATA_DIRS` into the wrapper, and
+  **prefetches the sherpa-onnx static archive** into `SHERPA_ONNX_LIB_DIR`,
+  because `sherpa-onnx-sys`'s build script would otherwise download it inside
+  the sandbox and fail. The AppImage (`pnpm desktop:appimage`, the `appimage`
+  CI job) is for every other Linux and is built with **Ubuntu's** toolchain
+  and apt WebKitGTK, never in the devShell — a binary linked under nix has a
+  `/nix/store` interpreter and runs nowhere else — with `bundleMediaFramework`
+  on so the GStreamer plugins travel in the image. `docs/desktop.md`,
+  "Packaging".
+
 - **The speech tests are skip-if-absent, and that is the contract.**
   `tests/voice.rs` synthesizes Mandarin, English and a mixed sentence against
   the *real* 365 MB model and asserts finite, audible samples of a plausible

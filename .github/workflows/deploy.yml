@@ -33,6 +33,21 @@
 # libraries, into the `target/` this job already caches. Like `desktop`, it runs
 # alongside `build` and gates nothing: the site does not ship in an APK.
 #
+# `appimage`: the same crate once more, as a Linux AppImage, uploaded as a
+# workflow artifact and gating nothing — the nix package in `flake.nix` is the
+# NixOS path, this is the one for every other Linux. It follows `android`'s
+# shape: the web bundle is built under nix first and `beforeBuildCommand` is
+# overridden away, and **the Rust half must not come from nix at all** — a
+# binary linked in the devShell has a `/nix/store` interpreter and `/nix/store`
+# libraries and runs on no machine but a nix one, which is the opposite of an
+# AppImage. So it is `ubuntu-22.04` (the oldest glibc a runner offers, which is
+# the oldest the AppImage can run on), rustup's cargo, Ubuntu's WebKitGTK and
+# GStreamer from apt, and `bundleMediaFramework` so the GStreamer plugins
+# WebKitGTK needs for any audio at all travel inside the image. Node and pnpm
+# for the Tauri CLI come from `nix shell`, never `nix develop` — the devShell
+# would put nix's `cc` in front of Ubuntu's and cargo would link against nix's
+# glibc again.
+#
 # The embed page (`embed/`) is a *third* artifact and its own Pages project. It
 # is the one document that talks to YouTube's IFrame API on behalf of the
 # desktop shell, which serves the app from `tauri://localhost` and therefore has
@@ -382,4 +397,131 @@ jobs:
         with:
           name: sapling-android-apk
           path: crates/sapling-desktop/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+          if-no-files-found: error
+
+  appimage:
+    # Pinned, not `ubuntu-latest`: an AppImage runs on any glibc at least as
+    # new as the one it was linked against, so the build wants the oldest
+    # runner there is. Bumping this raises the floor for every machine that
+    # runs the image.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: cachix/install-nix-action@v31
+
+      # The *default* devShell only, for the web bundle — the same key `build`
+      # and `android` use.
+      - name: Cache the nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 4G
+
+      - name: Cache the pnpm store
+        uses: actions/cache@v6
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      # Its own key: a fifth target set, linked against Ubuntu's libraries by a
+      # toolchain no other job uses. It carries `target/sherpa-onnx-prebuilt/`
+      # too, which `sherpa-onnx-sys` downloads on the first build.
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-appimage-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-appimage-${{ runner.os }}-
+
+      # Tauri's bundler downloads `linuxdeploy` and its GTK and GStreamer
+      # plugins here on first use.
+      - name: Cache the Tauri bundler's tools
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/tauri
+          key: tauri-bundler-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: tauri-bundler-${{ runner.os }}-
+
+      # Ubuntu's WebKitGTK stack, which is what the binary links and what the
+      # image expects to find on the host (WebKitGTK itself is never bundled).
+      # The GStreamer packages are for `bundleMediaFramework`: linuxdeploy's
+      # GStreamer plugin copies the *system's* plugins into the image, so they
+      # have to be installed for there to be anything to copy.
+      - name: Install Ubuntu's WebKitGTK and GStreamer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev librsvg2-dev patchelf \
+            libasound2-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad gstreamer1.0-libav
+
+      # The one toolchain the image can be linked with (see the header). No
+      # extra target: this is the runner's own triple.
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install
+        run: nix develop -c pnpm install --frozen-lockfile
+
+      # Inside the devShell, exactly as `android` does: `pnpm build` runs
+      # `core:wasm`, which needs the wasm32 target, `lld` and the pinned
+      # wasm-bindgen — none of which exist outside the flake. The AppImage step
+      # then tells Tauri not to build it again.
+      - name: Build the web bundle
+        env:
+          VITE_SYNC_URL: ${{ vars.VITE_SYNC_URL }}
+          VITE_YOUTUBE_EMBED_URL: ${{ vars.VITE_YOUTUBE_EMBED_URL }}
+        run: nix develop -c pnpm build
+
+      # `nix shell`, not `nix develop`: it puts only those two packages' `bin`
+      # on PATH, in front of everything else, and leaves the rest of the
+      # environment alone — so `cargo` is still rustup's, `cc` is still
+      # Ubuntu's, and the binary links Ubuntu's glibc and WebKitGTK. The
+      # devShell would bring nix's stdenv with it and undo all of that. The
+      # `node_modules` installed above under nix's node is reused as is: the
+      # Tauri CLI in it is a prebuilt native binary, not something node built.
+      - name: Build the AppImage
+        run: |
+          set -x
+          cargo --version
+          nix shell --inputs-from . nixpkgs#nodejs_22 nixpkgs#pnpm -c pnpm desktop:appimage
+
+      # What is checked is the image, not the build log: that it is a Linux
+      # binary rather than a nix one (an interpreter under `/nix/store` means
+      # the header's warning was ignored somewhere), and that the GStreamer
+      # plugins actually made it in — without them the first `<video>` takes
+      # the web process down (docs/desktop.md).
+      - name: Check the AppImage
+        run: |
+          set -eu
+          image=$(ls target/release/bundle/appimage/*.AppImage)
+          echo "--- $image"
+          ls -l "$image"
+          "$image" --appimage-extract > /dev/null
+          bin=squashfs-root/usr/bin/sapling-desktop
+          readelf -l "$bin" | grep interpreter
+          if readelf -l "$bin" | grep -q '/nix/store'; then
+            echo "The binary was linked under nix and will not run outside it." >&2
+            exit 1
+          fi
+          echo "--- GStreamer plugins in the image"
+          find squashfs-root -name 'libgst*.so' | head -n 20
+          n=$(find squashfs-root -name 'libgst*.so' | wc -l)
+          test "$n" -gt 0 || {
+            echo "No GStreamer plugins were bundled — bundleMediaFramework did nothing." >&2
+            exit 1
+          }
+          rm -rf squashfs-root
+
+      - name: Upload the AppImage
+        uses: actions/upload-artifact@v7
+        with:
+          name: sapling-linux-x86_64-appimage
+          path: target/release/bundle/appimage/*.AppImage
           if-no-files-found: error

@@ -37,9 +37,20 @@ nix develop .#desktop -c pnpm desktop:check   # clippy -D warnings + the crate's
 project by the `tauri.conf.json` beside its `Cargo.toml`, and there is no
 `src-tauri/` here) and Tauri's `beforeDevCommand` runs `pnpm dev` back at the
 repo root via the config's `cwd: "../.."`. `desktop:build` produces
-`target/release/sapling-desktop`; `bundle.active` is `false`, so there is no
-`.deb`/`.AppImage` and `--no-bundle` is passed — packaging is out of scope for a
-spike and would need a full icon set.
+`target/release/sapling-desktop` and passes `--no-bundle`: the binary is what a
+developer wants, and the two packaged forms are built elsewhere
+([Packaging](#packaging)):
+
+```sh
+nix build .#sapling-desktop      # the nix package -> result/bin/sapling-desktop
+nix run --impure .               # build it with .env's URLs and open the window
+pnpm desktop:appimage            # the AppImage — CI only, see below
+```
+
+The nix package needs no shell at all — it carries WebKitGTK, the GStreamer
+plugins, `glib-networking` and the gsettings schemas in its closure and writes
+them into the binary's wrapper — and a checkout that is not on NixOS can still
+`nix build` it, though the AppImage is the form meant for that machine.
 
 The two Android scripts are the exception and want the *default* shell plus a
 rustup toolchain, an SDK and an NDK, which is why the APK is only ever built in
@@ -963,7 +974,7 @@ else. That does mean the two models are another 647 MB of app data on the phone
 if the learner downloads both — which is why each is a separate button in
 Settings rather than one "download speech" step.
 
-`bundle.active` being `false` does not get in the way: it is read by
+`bundle.active` does not get in the way in either state: it is read by
 `tauri build` and `tauri info` only, and the APK comes out of Gradle either way.
 
 **Settings needed almost nothing.** The native-voice copy was already nearly
@@ -1078,6 +1089,17 @@ the build: `glib-networking` (`GIO_MODULE_DIR`), without which every `https://`
 request inside the webview fails, and GStreamer (`GST_PLUGIN_SYSTEM_PATH_1_0`),
 whose absence is the crash described above.
 
+The shell and the package share these lists — `desktopLibs`, `gst` and
+`desktopTools` in `flake.nix` — so a library added to one cannot be forgotten
+by the other. The package adds exactly one thing the shell does not need:
+`SHERPA_ONNX_LIB_DIR`. `sherpa-onnx-sys`'s build script downloads k2-fsa's
+prebuilt static archive for its own version, which the nix sandbox forbids, so
+`flake.nix` fetches `sherpa-onnx-v<version>-linux-x64-static-lib.tar.bz2` (and
+the aarch64 one) as a fixed-output derivation and points the variable at its
+unpacked `lib/`. The version is read out of `Cargo.lock`, so bumping the pin
+fails the archive's hash loudly instead of linking old libraries under new
+bindings; the two hashes beside it are the thing to update then.
+
 The voice adds exactly one: `alsa-lib`, which rodio's cpal backend runs
 pkg-config for at build time. It is the easy kind — it fails loudly at build
 time, and at *runtime* on NixOS nothing further is needed, because the ALSA
@@ -1100,20 +1122,82 @@ ordinary distribution's libstdc++ and a shared library's own dependencies are
 not resolved through the executable's `DT_RUNPATH`. Static linking made the
 question go away.
 
+## Packaging
+
+Two Linux forms exist, and they are built by different toolchains on purpose.
+
+**The nix package** — `packages.<system>.sapling-desktop` (also `default`) in
+`flake.nix` — is the NixOS path. It is a `buildRustPackage` over the flake's own
+source: `cargoLock` vendors from `Cargo.lock` (no hash to re-bless on a bump),
+`fetchPnpmDeps` (`fetcherVersion = 4`, and *its* hash does rot with
+`pnpm-lock.yaml` — set it to `""`, build, copy the `got:` value back), a
+`preBuild` that runs `pnpm build` so `frontendDist` exists before
+`generate_context!` embeds it, and `SHERPA_ONNX_LIB_DIR` above. `wrapGAppsHook3`
+turns the runtime-only traps into wrapper lines — `GIO_EXTRA_MODULES` for
+`glib-networking`, `GST_PLUGIN_SYSTEM_PATH_1_0` for the five GStreamer
+packages, `XDG_DATA_DIRS` for the gsettings schemas — and `yt-dlp` and `deno`
+are `--suffix`ed onto PATH, so the captions feature works out of the box and a
+copy the user installed still wins. It installs a `.desktop` entry and the
+512 px icon as `sapling`. The two web build variables are package arguments,
+and their defaults are read from the environment — `.envrc` loads `.env`, so
+`nix run --impure .` from the checkout builds with the same `VITE_SYNC_URL` and
+`VITE_YOUTUBE_EMBED_URL` that `pnpm dev` sees. A pure evaluation (CI, `nix run
+github:…`) gets neither, and `.override` sets them explicitly:
+
+```nix
+sapling-desktop.override { syncUrl = "https://sync.example.org"; youtubeEmbedUrl = "https://embed.example.org/youtube.html"; }
+```
+
+`doCheck` is off: the crate's tests are `pnpm desktop:check`'s job in CI's
+`desktop` job, and here they would only build the dependency graph a second
+time. `nix build` of it is long the first time (WebKitGTK from the cache, then
+a full release build of the crate with the workspace's LTO profile).
+
+**The AppImage** is for every other Linux and is built by the `appimage` job in
+`.github/workflows/deploy.yml`, never locally and **never under nix**: a binary
+linked in the devShell has a `/nix/store` interpreter and `/nix/store`
+libraries, and would run on a nix machine only — which is the one machine that
+does not need an AppImage. So the job is `ubuntu-22.04` (the oldest runner, so
+the oldest glibc the image will demand), rustup's cargo, and WebKitGTK,
+GStreamer and ALSA from apt. It follows the `android` job's shape: the web
+bundle is built first under `nix develop` (that is where `lld` and
+wasm-bindgen are), and `pnpm desktop:appimage` overrides `beforeBuildCommand`
+away so Tauri does not try to build it again under a toolchain that has
+neither. Node and pnpm for that step come from `nix shell nixpkgs#nodejs_22
+nixpkgs#pnpm` — bin directories only — rather than `nix develop`, whose stdenv
+would put nix's `cc` in front of Ubuntu's and link nix's glibc after all.
+`bundle.linux.appimage.bundleMediaFramework` is on, so the GStreamer plugins
+travel inside the image; without them the first `<video>` on a host that has
+none takes the web process down ([What the webview cannot
+do](#what-the-webview-cannot-do)). WebKitGTK itself is not bundled and never
+is — the host needs `libwebkit2gtk-4.1`. The job checks the extracted image for
+a non-nix interpreter and for bundled `libgst*.so` files, then uploads
+`target/release/bundle/appimage/*.AppImage` as `sapling-linux-x86_64-appimage`.
+`bundle.active` is `true` for it; `desktop:build`'s `--no-bundle` still skips
+bundling for the plain binary.
+
+The AppImage job has not run yet as of this writing. The first run is where the
+apt package names, the `nix shell` step's PATH and linuxdeploy's own needs get
+checked against reality.
+
 ## What a shipped version would still need
 
-Not done, and each is real work: bundling (icons, `.deb`/`.AppImage`/`.dmg`,
-signing), a CSP, SPA fallback for deep routes,
-a native menu and window-state persistence, auto-update, and a decision about
-whether the desktop build syncs at all — it uses the same `VITE_SYNC_URL` the
-web build does, and nothing about that was exercised. A CSP here would have to
-allow framing the embed host as well as the two YouTube origins, since a shipped
-desktop build reaches YouTube only through that frame.
+Not done, and each is real work: the rest of bundling (`.deb`, `.dmg`,
+Windows, signing of any of them — the nix package and the AppImage above are
+unsigned), the `devtools` feature switched off in `Cargo.toml` (it is still on;
+a shipped build should not be inspectable by anyone with a cable), a CSP, SPA
+fallback for deep routes, a native menu and window-state persistence,
+auto-update, and a decision about whether the desktop build syncs at all — it
+uses the same `VITE_SYNC_URL` the web build does, and nothing about that was
+exercised. A CSP here would have to allow framing the embed host as well as
+the two YouTube origins, since a shipped desktop build reaches YouTube only
+through that frame.
 
 For the voice specifically: a `cancellable: true` for the `tts-model` task (the
 download does not watch for an abort, so the tray still says "Stop watching"),
 and macOS/Windows, where none of the linking above has been tried. Shipping
 sherpa-onnx has come off this list on desktop targets — it is linked statically
-into the binary — but `cargo build` still needs the network once per checkout
-to fetch the prebuilt archive into `target/sherpa-onnx-prebuilt/`, and on
-Android the two `.so` files are packaged rather than linked in.
+into the binary — but a shell `cargo build` still needs the network once per
+checkout to fetch the prebuilt archive into `target/sherpa-onnx-prebuilt/` (the
+nix package prefetches it instead, [Packaging](#packaging)), and on Android the
+two `.so` files are packaged rather than linked in.
