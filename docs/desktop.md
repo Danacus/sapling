@@ -1169,15 +1169,21 @@ would put nix's `cc` in front of Ubuntu's and link nix's glibc after all.
 travel inside the image; without them the first `<video>` on a host that has
 none takes the web process down ([What the webview cannot
 do](#what-the-webview-cannot-do)). WebKitGTK itself is not bundled and never
-is — the host needs `libwebkit2gtk-4.1`. The job checks the extracted image for
-a non-nix interpreter and for bundled `libgst*.so` files, then uploads
-`target/release/bundle/appimage/*.AppImage` as `sapling-linux-x86_64-appimage`.
-`bundle.active` is `true` for it; `desktop:build`'s `--no-bundle` still skips
-bundling for the plain binary.
+is — the host needs `libwebkit2gtk-4.1`. One library linuxdeploy *would*
+bundle is kept out on purpose: Ubuntu 22.04's `libwayland-*`, which on a host
+with a newer mesa (NixOS under `appimage-run`, measured 2026-09-21) makes
+WebKit abort with `Could not create default EGL display: EGL_BAD_PARAMETER` —
+a window that never paints. Tauri hands linuxdeploy a fixed argument list, so
+the job puts a wrapper at the path Tauri runs it from that adds
+`--exclude-library "libwayland-*"`. The job checks the extracted image for a
+non-nix interpreter, for no `libwayland-*` and for bundled `libgst*.so` files,
+then uploads `target/release/bundle/appimage/*.AppImage` as
+`sapling-linux-x86_64-appimage`. `bundle.active` is `true` for it;
+`desktop:build`'s `--no-bundle` still skips bundling for the plain binary.
 
-The AppImage job has not run yet as of this writing. The first run is where the
-apt package names, the `nix shell` step's PATH and linuxdeploy's own needs get
-checked against reality.
+On NixOS the image runs under `appimage-run`; the nix package is the better
+fit there, but the AppImage is what a NixOS machine can use to check what
+every other Linux will get.
 
 ## What a shipped version would still need
 

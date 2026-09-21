@@ -239,6 +239,18 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   nixpkgs#pnpm` (bin directories only) rather than `nix develop`, whose stdenv
   puts nix's `cc` first on PATH and links nix's glibc all over again. The job's
   check step `readelf`s the extracted image for `/nix/store` for this reason.
+- **The AppImage must not carry `libwayland-*` (2026-09-21).** linuxdeploy's
+  GTK plugin bundles Ubuntu 22.04's four `libwayland-*.so`, and on a host whose
+  mesa is newer than they are (NixOS under `appimage-run`) WebKit aborts its
+  web process with `Could not create default EGL display: EGL_BAD_PARAMETER`
+  — a window that opens and never paints. `WEBKIT_DISABLE_DMABUF_RENDERER`,
+  `WEBKIT_DISABLE_COMPOSITING_MODE`, `LIBGL_ALWAYS_SOFTWARE` and `EGL_PLATFORM`
+  change nothing; deleting the four libraries from the extracted AppDir fixes
+  it outright (`appimage-run -w <dir>`). Tauri passes linuxdeploy a fixed
+  argument list, so the `appimage` job puts a wrapper at
+  `~/.cache/tauri/linuxdeploy-x86_64.AppImage` that adds
+  `--exclude-library "libwayland-*"`, and the check step fails if any made it
+  in.
 - **`fetchPnpmDeps` needs `fetcherVersion = 4` with pnpm 11 (2026-09-21)**, and
   its hash covers the whole pnpm store the lockfile describes, so it rots on
   every `pnpm-lock.yaml` change: set it to `""`, build, copy the `got:` value
