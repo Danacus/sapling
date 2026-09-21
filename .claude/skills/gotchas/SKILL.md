@@ -247,10 +247,13 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   `WEBKIT_DISABLE_COMPOSITING_MODE`, `LIBGL_ALWAYS_SOFTWARE` and `EGL_PLATFORM`
   change nothing; deleting the four libraries from the extracted AppDir fixes
   it outright (`appimage-run -w <dir>`). Tauri passes linuxdeploy a fixed
-  argument list, so the `appimage` job puts a wrapper at
-  `~/.cache/tauri/linuxdeploy-x86_64.AppImage` that adds
-  `--exclude-library "libwayland-*"`, and the check step fails if any made it
-  in.
+  argument list, and **a wrapper script at its
+  `~/.cache/tauri/linuxdeploy-x86_64.AppImage` path fails Tauri's spawn with a
+  bare `No such file or directory`** even though the same script runs from
+  bash — so the `appimage` job unpacks the finished image, deletes the four
+  files and packs it again with the `linuxdeploy-plugin-appimage.AppImage`
+  Tauri caches beside it (appimagetool over the same AppDir), and the check
+  step fails if any made it back in.
 - **`fetchPnpmDeps` needs `fetcherVersion = 4` with pnpm 11 (2026-09-21)**, and
   its hash covers the whole pnpm store the lockfile describes, so it rots on
   every `pnpm-lock.yaml` change: set it to `""`, build, copy the `got:` value
