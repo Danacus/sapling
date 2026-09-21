@@ -499,6 +499,12 @@ jobs:
       # devShell would bring nix's stdenv with it and undo all of that. The
       # `node_modules` installed above under nix's node is reused as is: the
       # Tauri CLI in it is a prebuilt native binary, not something node built.
+      - name: Build the AppImage
+        run: |
+          set -x
+          cargo --version
+          nix shell --inputs-from . nixpkgs#nodejs_22 nixpkgs#pnpm -c pnpm desktop:appimage
+
       # linuxdeploy's GTK plugin copies Ubuntu 22.04's `libwayland-*` into the
       # image, and a host whose mesa is newer than that libwayland (NixOS,
       # measured 2026-09-21) gets `Could not create default EGL display:
@@ -506,35 +512,28 @@ jobs:
       # renders. Every host with a GL stack has its own libwayland, so the
       # image must not carry one — the same reason linuxdeploy already
       # excludes libEGL and libGL themselves. Tauri gives linuxdeploy a fixed
-      # argument list, so the exclusion goes in through the one seam there
-      # is: the binary Tauri runs is whatever sits at this path in its tool
-      # cache, and a wrapper there adds the flag and execs the real one.
-      - name: Exclude libwayland from the bundle
+      # argument list and its spawn refuses a wrapper script (ENOENT, tried),
+      # so the image is unpacked, pruned and packed again with the same
+      # appimage plugin Tauri just downloaded into its tool cache — which is
+      # appimagetool with the AppDir it already made, so nothing else changes.
+      - name: Drop libwayland from the AppImage
         run: |
-          tools=~/.cache/tauri
-          real=$tools/linuxdeploy-x86_64.real
-          mkdir -p "$tools"
-          [ -x "$real" ] || curl -fsSL -o "$real" \
-            https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy/linuxdeploy-x86_64.AppImage
-          chmod +x "$real"
-          printf '#!/bin/sh\nexec "%s" --exclude-library "libwayland-*" "$@"\n' "$real" \
-            > "$tools/linuxdeploy-x86_64.AppImage"
-          chmod +x "$tools/linuxdeploy-x86_64.AppImage"
-          ls -la "$tools"
-          cat "$tools/linuxdeploy-x86_64.AppImage"
-          APPIMAGE_EXTRACT_AND_RUN=1 "$tools/linuxdeploy-x86_64.AppImage" --appimage-extract-and-run --list-plugins
-
-      - name: Build the AppImage
-        run: |
-          set -x
-          cargo --version
-          nix shell --inputs-from . nixpkgs#nodejs_22 nixpkgs#pnpm -c pnpm desktop:appimage --verbose
+          set -eux
+          image=$(ls target/release/bundle/appimage/*.AppImage)
+          "$image" --appimage-extract > /dev/null
+          rm -v squashfs-root/usr/lib/libwayland-*.so*
+          rm "$image"
+          APPIMAGE_EXTRACT_AND_RUN=1 OUTPUT="$image" ARCH=x86_64 \
+            ~/.cache/tauri/linuxdeploy-plugin-appimage.AppImage --appdir squashfs-root
+          rm -rf squashfs-root
+          ls -l "$image"
 
       # What is checked is the image, not the build log: that it is a Linux
       # binary rather than a nix one (an interpreter under `/nix/store` means
-      # the header's warning was ignored somewhere), and that the GStreamer
-      # plugins actually made it in — without them the first `<video>` takes
-      # the web process down (docs/desktop.md).
+      # the header's warning was ignored somewhere), that the libwayland
+      # pruning above held, and that the GStreamer plugins actually made it
+      # in — without them the first `<video>` takes the web process down
+      # (docs/desktop.md).
       - name: Check the AppImage
         run: |
           set -eu
@@ -549,7 +548,7 @@ jobs:
             exit 1
           fi
           if find squashfs-root -name 'libwayland-*.so*' | grep .; then
-            echo "libwayland was bundled — the linuxdeploy wrapper above did not take." >&2
+            echo "libwayland is still in the image — the pruning step above did not take." >&2
             exit 1
           fi
           echo "--- GStreamer plugins in the image"
