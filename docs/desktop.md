@@ -43,7 +43,7 @@ developer wants, and the two packaged forms are built elsewhere
 
 ```sh
 nix build .#sapling-desktop      # the nix package -> result/bin/sapling-desktop
-nix run --impure .               # build it with .env's URLs and open the window
+nix run .                        # build it and open the window
 pnpm desktop:appimage            # the AppImage — CI only, see below
 ```
 
@@ -1138,11 +1138,10 @@ turns the runtime-only traps into wrapper lines — `GIO_EXTRA_MODULES` for
 packages, `XDG_DATA_DIRS` for the gsettings schemas — and `yt-dlp` and `deno`
 are `--suffix`ed onto PATH, so the captions feature works out of the box and a
 copy the user installed still wins. It installs a `.desktop` entry and the
-512 px icon as `sapling`. The two web build variables are package arguments,
-and their defaults are read from the environment — `.envrc` loads `.env`, so
-`nix run --impure .` from the checkout builds with the same `VITE_SYNC_URL` and
-`VITE_YOUTUBE_EMBED_URL` that `pnpm dev` sees. A pure evaluation (CI, `nix run
-github:…`) gets neither, and `.override` sets them explicitly:
+512 px icon as `sapling`. The two web build variables are package arguments
+whose defaults are this deployment's own sync Worker and embed page, so
+`nix run .` is the app as deployed; `.override` points it elsewhere (`null`
+means not configured):
 
 ```nix
 sapling-desktop.override { syncUrl = "https://sync.example.org"; youtubeEmbedUrl = "https://embed.example.org/youtube.html"; }

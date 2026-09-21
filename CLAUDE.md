@@ -24,7 +24,7 @@ pnpm embed:build                        # embed/ -> embed/dist/, its own Pages p
 pnpm desktop:dev                        # vite dev + the desktop window
 pnpm desktop:build                      # pnpm build + target/release/sapling-desktop
 pnpm desktop:check                      # clippy -D warnings + the desktop crate's test
-nix run --impure .                      # the nix package (NixOS path), built with .env's URLs; `nix build .#sapling-desktop` for result/
+nix run .                               # the nix package (NixOS path), sync + embed URLs baked in; `nix build .#sapling-desktop` for result/
 pnpm desktop:appimage                   # the Linux AppImage — CI only (`appimage` job), Ubuntu toolchain, never under nix
 # The same crate as an Android app. CI builds the APK (the `android` job); both want
 # the *default* shell plus rustup, an SDK and an NDK, which no devShell provides.

@@ -165,10 +165,6 @@
           inherit (sherpaArchives.${system}) hash;
         };
 
-        # "" is what `builtins.getEnv` answers for unset *and* under pure
-        # evaluation; both mean "not configured".
-        fromEnv = name: let v = builtins.getEnv name; in if v == "" then null else v;
-
         tauriConf = builtins.fromJSON (builtins.readFile ./crates/sapling-desktop/tauri.conf.json);
 
         # The desktop app as a nix package — the NixOS way to run it, and the
@@ -181,14 +177,14 @@
         # and is deliberately *not* built under nix — see docs/desktop.md.
         #
         # `syncUrl` and `youtubeEmbedUrl` are the two build-time variables the
-        # web bundle reads (`VITE_SYNC_URL`, `VITE_YOUTUBE_EMBED_URL`); both
-        # unset is a supported configuration, and `.override` sets them. Their
-        # defaults come from the environment, which nix only exposes under
-        # `--impure`: `.envrc` loads `.env` into the shell, so `nix run
-        # --impure .` builds with the same two values `pnpm dev` uses, and a
-        # pure build (CI, `nix run github:…`) gets neither.
+        # web bundle reads (`VITE_SYNC_URL`, `VITE_YOUTUBE_EMBED_URL`). The
+        # defaults are this deployment's own Worker and embed page, so `nix
+        # run .` is the app as deployed; `.override` points it elsewhere, and
+        # `null` for either is the supported "not configured" case.
         sapling-desktop = pkgs.callPackage
-          ({ syncUrl ? fromEnv "VITE_SYNC_URL", youtubeEmbedUrl ? fromEnv "VITE_YOUTUBE_EMBED_URL" }:
+          ({ syncUrl ? "https://sapling-sync.vanoverloop.xyz"
+           , youtubeEmbedUrl ? "https://sapling-embed.vanoverloop.xyz/youtube.html"
+           }:
             pkgs.rustPlatform.buildRustPackage (finalAttrs: {
               pname = "sapling-desktop";
               version = tauriConf.version;
