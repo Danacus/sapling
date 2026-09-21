@@ -47,7 +47,7 @@ export function clozeTypedLevel(): number {
  * chip, not by whatever the stronger row's bank happens to total. Mirrors
  * {@link WORD_ORDER_DISTRACTOR_LADDER}, which is relative for the same reason.
  */
-export const MULTI_CLOZE_DISTRACTOR_LADDER = [1, 1, 1, 2, 3] as const;
+export const MULTI_CLOZE_DISTRACTOR_LADDER = [0, 0, 0, 1, 2] as const;
 
 /** Word-order distractor tile count by rung — the sentence's own tiles are always shown. */
 export const WORD_ORDER_DISTRACTOR_LADDER = [0, 0, 1, 2, 3] as const;

@@ -111,6 +111,19 @@ describe('bankSizeFor', () => {
 		}
 	});
 
+	it('starts multi-cloze with an answer-only bank and adds distractors on later live rungs', () => {
+		const answers = ['leo', 'como'];
+		const challenge = multiCloze(['a', 'b'], answers, [...answers, 'd1', 'd2', 'd3']);
+		for (const [level, expected] of [
+			[3, 2],
+			[4, 3],
+			[5, 4]
+		] as const) {
+			const items = ['a', 'b'].map((id) => item(id, strengthAt(level)));
+			expect(bankSizeFor(challenge, items), `rung ${level}`).toBe(expected);
+		}
+	});
+
 	it('sizes a differently-gapped multi-cloze row differently at the same rung', () => {
 		// The bug this guards: a 3-gap row at rung 4 used to show the same
 		// absolute bank as any other rung-4 row (8 chips). It must not any more.
@@ -132,7 +145,7 @@ describe('bankSizeFor', () => {
 		const answers = ['leo', 'como'];
 		const challenge = multiCloze(['a', 'b'], answers, [...answers, 'd1']);
 		const items = ['a', 'b'].map((id) => item(id, strengthAt(5)));
-		// Rung 5 wants 2 + 3 = 5, but only 3 entries are stored.
+		// Rung 5 wants 2 + 2 = 4, but only 3 entries are stored.
 		expect(bankSizeFor(challenge, items)).toBe(3);
 	});
 

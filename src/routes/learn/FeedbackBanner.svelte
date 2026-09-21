@@ -34,6 +34,7 @@
 		answerGiven,
 		correctAnswer,
 		closestAccepted,
+		itemVerdicts,
 		explanation,
 		presentation,
 		nativeLanguage,
@@ -53,6 +54,8 @@
 		correctAnswer: string;
 		/** Nearest accepted form, for the "almost" nudge. */
 		closestAccepted?: string;
+		/** Per-gap results for a multi-cloze, used to make partial success visible. */
+		itemVerdicts?: readonly { itemId: string; verdict: Verdict }[];
 		explanation?: string;
 		/**
 		 * The presentation this challenge was actually served with — absent for a
@@ -158,6 +161,12 @@
 
 	/** What the banner paints as, once a dispute has been won. */
 	const shownVerdict = $derived(overturned ? 'correct' : verdict);
+	const correctParts = $derived(
+		itemVerdicts?.filter((item) => item.verdict === 'correct').length ?? 0
+	);
+	const hasPartialSuccess = $derived(
+		verdict === 'wrong' && correctParts > 0 && correctParts < (itemVerdicts?.length ?? 0)
+	);
 
 	const headline = $derived(
 		overturned
@@ -166,11 +175,13 @@
 				? correctAnswer
 					? 'Skipped — the answer was:'
 					: 'Skipped.'
-				: verdict === 'correct'
-					? 'Correct!'
-					: verdict === 'almost'
-						? 'Almost — we counted it.'
-						: 'Not quite.'
+				: hasPartialSuccess
+					? `${correctParts} of ${itemVerdicts?.length ?? 0} blanks correct.`
+					: verdict === 'correct'
+						? 'Correct!'
+						: verdict === 'almost'
+							? 'Almost — we counted it.'
+							: 'Not quite.'
 	);
 
 	const detail = $derived.by(() => {

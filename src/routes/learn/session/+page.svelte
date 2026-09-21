@@ -837,6 +837,7 @@
 				answerGiven={feedback.answerGiven}
 				correctAnswer={feedback.correctAnswer}
 				closestAccepted={feedback.closestAccepted}
+				itemVerdicts={feedback.itemVerdicts}
 				explanation={feedback.explanation}
 				presentation={feedback.presentation}
 				skipped={feedback.answerGiven === SKIP_ANSWER}

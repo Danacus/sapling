@@ -66,7 +66,7 @@ function answersFromSerialized(answerGiven: string): string[] {
 	return answerGiven.split(' · ').map((entry) => entry.replace(/^\d+:\s*/, '').trim());
 }
 
-/** Four answers is the intentional top end of this format; seven is the bank's. */
+/** Four answers is the intentional top end of this format; six is the bank's. */
 const MIN_GAPS = 2;
 const MAX_GAPS = 4;
 const MIN_BANK = 5;
@@ -129,16 +129,28 @@ export const multiClozeStoredDef = {
 		return 1;
 	},
 
-	// Passage length and number of decisions climb together; the bank is no
+	// Passage length and placement complexity climb together; the bank is no
 	// longer one of them. Every generated passage now carries the fullest
 	// shared bank the model can supply regardless of rung, so bank size stopped
 	// being a difficulty knob — how much of it a served challenge shows is a
 	// serve-time decision (`$lib/challenges/serve/presentation`), not a fact about the row.
 	difficulty(challenge) {
-		const gaps = clamp01((challenge.gaps.length - MIN_GAPS) / (MAX_GAPS - MIN_GAPS));
+		// Several gaps are not several independent multiple-choice questions: the
+		// same bank chips must be assigned to distinct positions. Even before any
+		// distractors show, that creates gaps! possible placements (2, 6, 24), so
+		// score the format on that curve rather than treating each added gap as one
+		// equal step. Serve-time distractors add support-dependent complexity on top.
+		const factorial = (n: number): number => {
+			let result = 1;
+			for (let value = 2; value <= n; value++) result *= value;
+			return result;
+		};
+		const placements = clamp01(
+			Math.log(factorial(challenge.gaps.length)) / Math.log(factorial(MAX_GAPS))
+		);
 		const words = wordCount(challenge.passage.replace(/___\d+___/g, ' '));
 		const passage = clamp01((words - MIN_PASSAGE_WORDS) / (MAX_PASSAGE_WORDS - MIN_PASSAGE_WORDS));
-		return withBase(0.45, gaps * 0.55 + passage * 0.45);
+		return withBase(0.45, placements * 0.65 + passage * 0.35);
 	},
 
 	correctAnswerText(challenge) {

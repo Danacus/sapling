@@ -113,6 +113,39 @@ describe('difficultyOf', () => {
 		});
 	});
 
+	describe('multi-cloze', () => {
+		const multiCloze = (gaps: number, passageWords: number) => ({
+			type: 'multi-cloze',
+			direction: 'toTarget',
+			passage: Array.from({ length: passageWords }, (_, index) =>
+				index < gaps ? `___${index + 1}___` : `w${index}`
+			).join(' '),
+			gaps: Array.from({ length: gaps }, (_, index) => ({
+				itemId: `i${index}`,
+				acceptedAnswers: [`a${index}`]
+			})),
+			wordBank: Array.from({ length: 6 }, (_, index) => `a${index}`)
+		});
+
+		it('grows with the factorial placement cost of additional gaps', () => {
+			const two = difficultyOf(challenge(multiCloze(2, 10)));
+			const three = difficultyOf(challenge(multiCloze(3, 10)));
+			const four = difficultyOf(challenge(multiCloze(4, 10)));
+
+			expect(two).toBeLessThan(three);
+			expect(three).toBeLessThan(four);
+			expect(three - two).toBeLessThan(four - three);
+		});
+
+		it('grows with passage length and stays in constrained production', () => {
+			const short = difficultyOf(challenge(multiCloze(2, 8)));
+			const long = difficultyOf(challenge(multiCloze(2, 18)));
+			expect(short).toBeLessThan(long);
+			expect(short).toBeGreaterThanOrEqual(0.15);
+			expect(long).toBeLessThanOrEqual(0.45);
+		});
+	});
+
 	describe('word-order', () => {
 		const wordOrder = (tileCount: number, distractors: number) => {
 			const answerTokens = Array.from({ length: tileCount }, (_, i) => `w${i}`);

@@ -33,20 +33,24 @@ export const generatedMultiClozeSchema = z.object({
 
 export type GeneratedMultiCloze = z.infer<typeof generatedMultiClozeSchema>;
 
-const PASSAGE_WORDS = [8, 11, 14, 17, 20] as const;
-const GAP_COUNTS = [2, 2, 3, 3, 4] as const;
+// Multi-cloze only enters the planner at rung 3, so that rung must still be an
+// introduction to the format rather than the midpoint of an otherwise unused
+// five-step curve. Rungs 1 and 2 remain defined for the shared params contract;
+// the live progression is 10/2 -> 14/3 -> 18/4.
+const PASSAGE_WORDS = [8, 9, 10, 14, 18] as const;
+const GAP_COUNTS = [2, 2, 2, 3, 4] as const;
 
 /**
  * The shared bank's target size, answers included — constant, not a ladder:
  * which rung a word sits at no longer changes what is *written*, only what a
  * served challenge *shows* (`$lib/challenges/serve/presentation`'s
- * `bankSizeFor`/`visibleBank`). Seven is the most a served bank ever shows —
- * four gaps (the top of `GAP_COUNTS`) plus three extra distractors (the top of
+ * `bankSizeFor`/`visibleBank`). Six is the most a served bank ever shows —
+ * four gaps (the top of `GAP_COUNTS`) plus two extra distractors (the top of
  * the serve-time `MULTI_CLOZE_DISTRACTOR_LADDER`) — so every banked passage is
  * written with the fullest bank a served row could ever need, and not a word
  * more the model has to invent and the resolver has to dedupe.
  */
-const BANK_ENTRIES = 7;
+const BANK_ENTRIES = 6;
 
 function marker(index: number): string {
 	return `___${index + 1}___`;
@@ -128,7 +132,7 @@ export const multiClozeDef = {
 	schema: generatedMultiClozeSchema,
 	stored: { type: 'multi-cloze', direction: 'toTarget' },
 	plannable: { demand: 1, levels: [3, 4, 5] },
-	promptSpec: `multi-cloze — 2-4 target-language sentences with 2-4 target-language gaps and one shared bank of ${BANK_ENTRIES}. {parts:[{text,reading}],gaps:[{itemId,answer:{text,reading}}],distractorWords:[{text,reading}],itemIds} e.g. {"type":"multi-cloze","parts":[{"text":"En el restaurante, pido ","reading":null},{"text":". Después pago la ","reading":null},{"text":".","reading":null}],"gaps":[{"itemId":"pedir","answer":{"text":"comida","reading":null}},{"itemId":"la cuenta","answer":{"text":"cuenta","reading":null}}],"distractorWords":[{"text":"mesa","reading":null},{"text":"carta","reading":null},{"text":"propina","reading":null},{"text":"botella","reading":null},{"text":"servilleta","reading":null}],"itemIds":["pedir","la cuenta"],"explanation":null} — parts are consecutive spans around gaps and must have exactly one more entry than gaps; gaps and itemIds are in the same order; all text is target-language. Write enough distractorWords that, together with the answers, the shared bank has ${BANK_ENTRIES} entries.`,
+	promptSpec: `multi-cloze — 2-4 target-language sentences with 2-4 target-language gaps and one shared bank of ${BANK_ENTRIES}. {parts:[{text,reading}],gaps:[{itemId,answer:{text,reading}}],distractorWords:[{text,reading}],itemIds} e.g. {"type":"multi-cloze","parts":[{"text":"En el restaurante, pido ","reading":null},{"text":". Después pago la ","reading":null},{"text":".","reading":null}],"gaps":[{"itemId":"pedir","answer":{"text":"comida","reading":null}},{"itemId":"la cuenta","answer":{"text":"cuenta","reading":null}}],"distractorWords":[{"text":"mesa","reading":null},{"text":"carta","reading":null},{"text":"propina","reading":null},{"text":"botella","reading":null}],"itemIds":["pedir","la cuenta"],"explanation":null} — parts are consecutive spans around gaps and must have exactly one more entry than gaps; gaps and itemIds are in the same order; all text is target-language. Write enough distractorWords that, together with the answers, the shared bank has ${BANK_ENTRIES} entries.`,
 	rulesSpec:
 		'- Multi-cloze is target-language-only: do not include a native translation or hint. Write a coherent 2-4 sentence scene, use each itemId for exactly one gap, and make distractors plausible in the same context without making an answer ambiguous.',
 	correctiveSpec: 'multi-cloze {parts,gaps,distractorWords,itemIds}',

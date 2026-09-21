@@ -31,6 +31,12 @@ const context = {
 };
 
 describe('multi-cloze resolver', () => {
+	it('introduces the live format with two short gaps before climbing to the four-gap top rung', () => {
+		expect(multiClozeDef.params(3)).toEqual({ words: 10, gaps: 2 });
+		expect(multiClozeDef.params(4)).toEqual({ words: 14, gaps: 3 });
+		expect(multiClozeDef.params(5)).toEqual({ words: 18, gaps: 4 });
+	});
+
 	it('puts every distinct answer into the shared bank, whole, and preserves the gap bindings', () => {
 		const resolved = multiClozeDef.resolve(generated, context);
 		expect(resolved).toMatchObject({
