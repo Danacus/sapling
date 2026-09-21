@@ -109,8 +109,9 @@ serde_json = { version = "1", features = ["preserve_order"] }
 #
 # On Android the same crate fetches `sherpa-onnx-v1.13.8-android.tar.bz2` and
 # links **shared** (the `static` feature is ignored there — the sys crate forces
-# shared on Android and iOS). Gradle's Rust task copies the two `.so` files into
-# the APK after Cargo has finished extracting them.
+# shared on Android and iOS). The Android command uses a crate-local target
+# directory so the sys crate finds `tauri.conf.json` and copies its `.so` files
+# into the APK itself.
 sherpa-onnx = { version = "=1.13.8", optional = true }
 # The model downloads (`src/models.rs`, shared by both). `default-features =
 # false` drops ureq's transparent gzip: an archive is pinned by byte size and

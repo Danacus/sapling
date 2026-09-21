@@ -910,35 +910,32 @@ platform test on the web side; everything else about the host is asked of the
 host. A shell built with `--no-default-features` has no speech commands at all,
 and that still degrades the way a failed synthesis does.
 
-**Getting sherpa-onnx into the APK is the one real piece of work**, and it falls
-to the generated Gradle `BuildTask.kt`. `sherpa-onnx-sys` links *shared* on
+**Getting sherpa-onnx into the APK is the one real piece of work.**
+`sherpa-onnx-sys` links *shared* on
 Android (the `static` feature is ignored there) and downloads
 `sherpa-onnx-v1.13.8-android.tar.bz2` into
 `target/sherpa-onnx-prebuilt/jniLibs/<abi>/` — or is *told* where they are
-through `SHERPA_ONNX_LIB_DIR` — but nothing packages what it finds: Tauri's
-Gradle `RustPlugin` copies exactly one file, the crate's own
-`libsapling_desktop.so`. Immediately after Tauri's Cargo invocation returns,
-the task copies `libsherpa-onnx-c-api.so` (4.5 MB) and `libonnxruntime.so`
-(21.7 MB) into `gen/android/app/src/main/jniLibs/arm64-v8a/`, which the
+through `SHERPA_ONNX_LIB_DIR`. Its own build script then copies the archive's
+shared libraries into `gen/android/app/src/main/jniLibs/arm64-v8a/`, which the
 generated project's own `.gitignore` already covers
-(`/src/main/jniLibs/**/*.so`). Four things about that are worth knowing:
+(`/src/main/jniLibs/**/*.so`). Three things about that are worth knowing:
 
-- **It is in Gradle rather than in CI** so that any `pnpm desktop:android`,
-  anywhere, produces an APK that runs.
-- **The ordering is real.** A crate's build script can run before a normal
-  dependency's build script has finished, even when the dependency declares
-  `links`; the first 1.13.8 CI run exposed exactly that race on a cold cache.
-  Gradle calls the copy only after Tauri's Cargo process returns, and its JNI
-  merge task already depends on that Rust task.
-- **No third library.** `readelf -d` on both lists `libandroid`, `liblog`,
+- **The Android command uses a crate-local Cargo target directory.** The sys
+  crate finds Tauri as `<cargo target dir>/../tauri.conf.json`; the workspace's
+  default root `target/` points that lookup at the repository root and makes it
+  skip the copy. `CARGO_TARGET_DIR="$PWD/target"` beside this crate's
+  `tauri.conf.json` gives it the same layout as upstream's standalone example.
+- **Only two are used by this host.** They are `libsherpa-onnx-c-api.so`
+  (4.5 MB) and `libonnxruntime.so` (21.7 MB); the upstream copier also includes
+  the archive's unused `libsherpa-onnx-jni.so`. `readelf -d` on the required two lists `libandroid`, `liblog`,
   `libm`, `libdl`, `libc` and (for the c-api one) `libonnxruntime` — nothing
   else, so the C++ runtime is statically linked inside them and there is no
   `libc++_shared.so` to fetch from the NDK. Android's loader resolves
   `DT_NEEDED` against the APK's own lib directory, so `libonnxruntime.so` is
   found with no rpath. Both are built with 16 KB `LOAD` alignment, so they are
   fine on Android 15's 16 KB-page devices.
-- **The APK is what is checked, not the build script.** Whether cargo reran a
-  build script is cargo's business, so a `Check sherpa-onnx reached the APK`
+- **The APK is what is checked, not the build log.** A
+  `Check sherpa-onnx reached the APK`
   step greps the finished APK for all three `lib/arm64-v8a/*.so` and fails if
   one is missing, after printing the jniLibs listing and the `readelf` output.
 

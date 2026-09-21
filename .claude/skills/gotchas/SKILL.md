@@ -310,27 +310,20 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   feature, no second configuration to keep in step. `cargo tree -p
   sapling-desktop --target aarch64-linux-android` is how to check what a target
   actually gets.
-- **Nothing packages a dependency's Android `.so` files for you.** Tauri's
-  Gradle `RustPlugin` copies exactly one library into the APK, the crate's own
-  `libsapling_desktop.so`. `sherpa-onnx-sys` links shared on Android and *does*
-  have a `copy_to_tauri_android_jnilibs` of its own — but it locates the project
-  as `<cargo target dir>/../tauri.conf.json`, which in a workspace is the repo
-  root and not `crates/sapling-desktop`, so it finds nothing and prints
-  "Tauri jniLibs directory not found; skipping". The generated Gradle
-  `BuildTask.kt` does the copy after Cargo returns instead. Symptom if it is ever
-  lost: the APK installs, boots and dies on the first spoken word.
+- **`sherpa-onnx-sys` packages its Android `.so` files only when Cargo's target
+  directory is beside `tauri.conf.json`.** Its lookup is `<cargo target
+  dir>/../tauri.conf.json`; with the workspace default that is the repository
+  root, so it prints "Tauri jniLibs directory not found; skipping". Keep
+  `desktop:android`'s absolute, crate-local `CARGO_TARGET_DIR`: it recreates the
+  standalone layout upstream's Tauri example uses and lets the sys crate copy
+  directly into `gen/android`. Symptom if it is lost: the APK installs, boots
+  and dies on the first spoken word.
 - **Cargo does *not* finish a normal dependency's build script before yours,
   and `links` does not provide that ordering.** The first 1.13.8 Android CI run
   proved it: this crate's build script tried to copy the sherpa archive while
   `sherpa-onnx-sys` was still extracting it. A warm cache hid the race. The copy
-  belongs after Cargo returns in Gradle's Rust task; Gradle's JNI merge already
-  depends on that task.
-- **A `links` crate passes nothing to you unless it prints it.** `DEP_<LINKS>_*`
-  carries only the `cargo:<key>=<value>` lines the dependency emits, and
-  `sherpa-onnx-sys` emits none — its `SHERPA_ONNX_LIB_DIR` is an `env::set_var`
-  inside its own process. So Gradle's Rust task reconstructs the crate's
-  `<target>/sherpa-onnx-prebuilt/jniLibs/<abi>` cache path and honours the same
-  override itself.
+  must not be done in this crate's build script; let the dependency finish its
+  own extraction and copy.
 - **`sherpa-onnx-sys` 1.13.7 could not use the Android archive it downloaded
   (fixed in 1.13.8).** Its build script unpacked the tarball into
   `target/sherpa-onnx-prebuilt/` and then looked for `<archive stem>/jniLibs/<abi>`,
@@ -340,8 +333,7 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   archive. Upstream fixed it in k2-fsa/sherpa-onnx@a24dad69b4 ("Fix releasing
   (#3911)"), and the published 1.13.8 `build.rs` contains the
   `android_lib_dir_alt` check for `cache_root/jniLibs/`. The CI workaround is
-  gone; Gradle's Rust task still honours `SHERPA_ONNX_LIB_DIR` for explicit
-  local libraries and otherwise copies from that cache-root layout.
+  gone; its built-in Tauri copy now consumes that cache-root layout directly.
 - **The prebuilt sherpa Android libraries need no `libc++_shared.so`.** `readelf
   -d` lists `libandroid`, `liblog`, `libm`, `libdl`, `libc` and (for the c-api
   one) `libonnxruntime` — the C++ runtime is static inside them. Their `LOAD`

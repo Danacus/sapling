@@ -211,10 +211,10 @@ jobs:
 
       # Its own, unlike the two above: this is a fourth target set
       # (`aarch64-linux-android`), built by a toolchain no other job uses. It
-      # also carries the ~45 MB sherpa-onnx Android archive, which
-      # `sherpa-onnx-sys` downloads into `target/sherpa-onnx-prebuilt/` — no
-      # separate cache step for it, and a `Cargo.lock` bump (which is where the
-      # sherpa tag lives) refetches.
+      # also carries the sherpa-onnx Android archive. The Android command gives
+      # that build a crate-local target directory so sherpa-onnx-sys can find
+      # the Tauri project and package its own libraries; cache it beside the
+      # workspace target used by the preceding web build.
       - name: Cache cargo
         uses: actions/cache@v6
         with:
@@ -222,6 +222,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
+            crates/sapling-desktop/target
           key: cargo-android-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
           restore-keys: cargo-android-${{ runner.os }}-
 
@@ -335,10 +336,9 @@ jobs:
 
       # Speech's own gate, both directions — the voice and the recognizer run on
       # these same two libraries, so the recognition model needed nothing added
-      # here. Gradle's Rust task copies sherpa-onnx's two Android `.so` files
-      # into the project's `jniLibs/` after the cargo build, because
-      # nothing else does — Tauri's Gradle plugin packages exactly one library,
-      # the crate's own. Whether a build script ran is cargo's business, so what
+      # here. `sherpa-onnx-sys` copies its two Android `.so` files into the
+      # project's `jniLibs/`; `desktop:android` gives Cargo the crate-local
+      # target directory that lets its Tauri-project lookup work. What
       # is checked here is the *APK*: a phone that installed a speechless one
       # would be a much later discovery. The `readelf` list is printed because it
       # is the answer to "does this also need libc++_shared?" — it does not, and

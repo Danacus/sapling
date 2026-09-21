@@ -29,24 +29,19 @@ open class BuildTask : DefaultTask() {
                 )
                 
                 var lastException: Exception = e
-                var built = false
                 for (fallback in fallbacks) {
                     try {
                         runTauriCli(fallback)
-                        built = true
-                        break
+                        return
                     } catch (fallbackException: Exception) {
                         lastException = fallbackException
                     }
                 }
-                if (!built) {
-                    throw lastException
-                }
+                throw lastException
             } else {
                 throw e;
             }
         }
-        packageSherpaLibraries()
     }
 
     fun runTauriCli(executable: String) {
@@ -71,49 +66,4 @@ open class BuildTask : DefaultTask() {
         }.assertNormalExitValue()
     }
 
-    private fun packageSherpaLibraries() {
-        val rootDirRel = rootDirRel ?: throw GradleException("rootDirRel cannot be null")
-        val target = target ?: throw GradleException("target cannot be null")
-        val abi = when (target) {
-            "aarch64" -> "arm64-v8a"
-            "armv7" -> "armeabi-v7a"
-            "i686" -> "x86"
-            "x86_64" -> "x86_64"
-            else -> throw GradleException("no Android ABI is known for Rust target $target")
-        }
-        val rustProjectDir = File(project.projectDir, rootDirRel).canonicalFile
-        val workspaceDir = rustProjectDir.parentFile.parentFile
-        val configuredTargetDir = System.getenv("CARGO_TARGET_DIR")
-        val cargoTargetDir = if (configuredTargetDir == null) {
-            File(workspaceDir, "target")
-        } else {
-            File(configuredTargetDir).let {
-                if (it.isAbsolute) it else File(rustProjectDir, configuredTargetDir)
-            }
-        }
-        val overriddenLibDir = System.getenv("SHERPA_ONNX_LIB_DIR")
-        val sourceDir = if (overriddenLibDir == null) {
-            File(cargoTargetDir, "sherpa-onnx-prebuilt/jniLibs/$abi")
-        } else {
-            File(overriddenLibDir).let {
-                if (it.isAbsolute) it else File(rustProjectDir, overriddenLibDir)
-            }
-        }
-        val destinationDir = File(project.projectDir, "src/main/jniLibs/$abi")
-        destinationDir.mkdirs()
-
-        listOf("libsherpa-onnx-c-api.so", "libonnxruntime.so").forEach { name ->
-            val source = File(sourceDir, name)
-            if (!source.isFile) {
-                throw GradleException(
-                    "speech needs $name in the APK and it is not at ${source.absolutePath}"
-                )
-            }
-            val destination = File(destinationDir, name)
-            source.copyTo(destination, overwrite = true)
-            logger.lifecycle(
-                "sapling: packaged $name (${source.length()} bytes) into ${destination.absolutePath}"
-            )
-        }
-    }
 }

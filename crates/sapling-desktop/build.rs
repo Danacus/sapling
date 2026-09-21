@@ -7,11 +7,9 @@
 //! statically on desktop targets and that whole class of problem is gone.
 //!
 //! Android is the exception, and not by choice: `sherpa-onnx-sys` forces shared
-//! linking there. The generated Gradle [`BuildTask.kt`](gen/android/buildSrc/src/main/java/app/sapling/desktop/kotlin/BuildTask.kt)
-//! packages those libraries *after* Cargo returns. It cannot happen here:
-//! Cargo may run this build script before a normal dependency's build script
-//! has finished, so copying the archive that `sherpa-onnx-sys` extracts would
-//! race on a cold cache.
+//! linking there and packages those libraries itself. It finds a Tauri project
+//! beside Cargo's target directory, so the Android command gives this workspace
+//! member its own `target/` beside `tauri.conf.json`; see `package.json`.
 
 fn main() {
     tauri_build::build();
