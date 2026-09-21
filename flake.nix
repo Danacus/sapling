@@ -198,6 +198,12 @@
               # re-blessed here. `Cargo.lock` has no git dependencies.
               cargoLock.lockFile = ./Cargo.lock;
               cargoBuildFlags = [ "-p" "sapling-desktop" ];
+              # What `cargo tauri build` passes and a bare `cargo build` does
+              # not: without it Tauri is in *dev* mode regardless of profile
+              # (`tauri/build.rs`: `dev = !custom_protocol`) and the window
+              # loads `devUrl` — a white page and 503s from localhost:5173 —
+              # instead of the embedded `frontendDist`.
+              buildFeatures = [ "tauri/custom-protocol" ];
 
               # This one *does* rot: it is the hash of the whole pnpm store the
               # lockfile describes. After a `pnpm-lock.yaml` change, set it to

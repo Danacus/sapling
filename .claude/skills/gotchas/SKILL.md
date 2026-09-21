@@ -147,6 +147,16 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   way, because the wasm host's `JsSql` holds a `js_sys::Function`. Adding
   `+ Send` to the core's bounds would break the browser build. `host.rs` gives
   the core its own thread and posts closures to it instead.
+- **A bare `cargo build --release` of the desktop crate is still a Tauri *dev*
+  build (2026-09-21).** Tauri's dev/release switch is not the profile: `tauri`'s
+  `build.rs` sets `dev = !custom_protocol`, so without the `tauri/custom-protocol`
+  feature — which `cargo tauri build` passes and nothing else does — the
+  window loads `devUrl` and shows a white page with 503s from
+  `localhost:5173`. The nix package passes it via `buildFeatures`; and it *is*
+  `buildFeatures`, not `cargoBuildFeatures` — `buildRustPackage` overwrites the
+  latter with the former, so the wrong name evaluates to `[ ]` without a
+  warning (`nix eval .#sapling-desktop.cargoBuildFeatures` shows what cargo
+  will get).
 - **In a nix `let`, a binding shadows a `with`.** `gstreamer = with
   pkgs.gst_all_1; [ gstreamer ... ]` refers to *itself* and fails with
   `error: stack overflow; max-call-depth exceeded`, which reads like a nixpkgs
