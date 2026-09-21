@@ -335,8 +335,8 @@ jobs:
 
       # Speech's own gate, both directions — the voice and the recognizer run on
       # these same two libraries, so the recognition model needed nothing added
-      # here. `crates/sapling-desktop/build.rs` copies sherpa-onnx's two Android
-      # `.so` files into the project's `jniLibs/` during the cargo build, because
+      # here. Gradle's Rust task copies sherpa-onnx's two Android `.so` files
+      # into the project's `jniLibs/` after the cargo build, because
       # nothing else does — Tauri's Gradle plugin packages exactly one library,
       # the crate's own. Whether a build script ran is cargo's business, so what
       # is checked here is the *APK*: a phone that installed a speechless one

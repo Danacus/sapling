@@ -911,24 +911,25 @@ host. A shell built with `--no-default-features` has no speech commands at all,
 and that still degrades the way a failed synthesis does.
 
 **Getting sherpa-onnx into the APK is the one real piece of work**, and it falls
-to `crates/sapling-desktop/build.rs`. `sherpa-onnx-sys` links *shared* on
+to the generated Gradle `BuildTask.kt`. `sherpa-onnx-sys` links *shared* on
 Android (the `static` feature is ignored there) and downloads
 `sherpa-onnx-v1.13.8-android.tar.bz2` into
 `target/sherpa-onnx-prebuilt/jniLibs/<abi>/` — or is *told* where they are
-through `SHERPA_ONNX_LIB_DIR` — but
-nothing packages what it finds: Tauri's Gradle `RustPlugin` copies exactly one file, the crate's own
-`libsapling_desktop.so`. So when `CARGO_CFG_TARGET_OS` is `android`, `build.rs`
-copies `libsherpa-onnx-c-api.so` (4.5 MB) and `libonnxruntime.so` (21.7 MB) into
-`gen/android/app/src/main/jniLibs/arm64-v8a/`, which the generated project's own
-`.gitignore` already covers (`/src/main/jniLibs/**/*.so`). Four things about
-that are worth knowing:
+through `SHERPA_ONNX_LIB_DIR` — but nothing packages what it finds: Tauri's
+Gradle `RustPlugin` copies exactly one file, the crate's own
+`libsapling_desktop.so`. Immediately after Tauri's Cargo invocation returns,
+the task copies `libsherpa-onnx-c-api.so` (4.5 MB) and `libonnxruntime.so`
+(21.7 MB) into `gen/android/app/src/main/jniLibs/arm64-v8a/`, which the
+generated project's own `.gitignore` already covers
+(`/src/main/jniLibs/**/*.so`). Four things about that are worth knowing:
 
-- **It is in `build.rs` rather than in CI** so that any `pnpm desktop:android`,
+- **It is in Gradle rather than in CI** so that any `pnpm desktop:android`,
   anywhere, produces an APK that runs.
-- **The ordering is not luck.** `sherpa-onnx-sys` declares
-  `links = "sherpa-onnx"`, and cargo runs a `links` dependency's build script
-  before that of the crate depending on it. Without that key the two build
-  scripts would race and a cold cache would lose.
+- **The ordering is real.** A crate's build script can run before a normal
+  dependency's build script has finished, even when the dependency declares
+  `links`; the first 1.13.8 CI run exposed exactly that race on a cold cache.
+  Gradle calls the copy only after Tauri's Cargo process returns, and its JNI
+  merge task already depends on that Rust task.
 - **No third library.** `readelf -d` on both lists `libandroid`, `liblog`,
   `libm`, `libdl`, `libc` and (for the c-api one) `libonnxruntime` — nothing
   else, so the C++ runtime is statically linked inside them and there is no

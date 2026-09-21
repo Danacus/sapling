@@ -374,17 +374,17 @@ someone to run the check by hand.
   the dangerous `RECORD_AUDIO` or the whole grant fails silently. Both are in the
   committed `AndroidManifest.xml`, with a comment, because that is a file a
   regeneration overwrites.
-- **The two sherpa `.so` files reach the APK from `build.rs`, and nothing else
-  puts them there.** `sherpa-onnx-sys` links shared on Android and Tauri's
-  Gradle plugin packages exactly one library, the crate's own — so `build.rs`
-  copies `libsherpa-onnx-c-api.so` and `libonnxruntime.so` out of
+- **The two sherpa `.so` files reach the APK from Gradle's `BuildTask.kt`, and
+  nothing else puts them there.** `sherpa-onnx-sys` links shared on Android and
+  Tauri's Gradle plugin packages exactly one library, the crate's own — so the
+  task copies `libsherpa-onnx-c-api.so` and `libonnxruntime.so` out of
   `<target>/sherpa-onnx-prebuilt/jniLibs/<abi>/` into
   `gen/android/app/src/main/jniLibs/<abi>/` (gitignored by the generated
-  project) whenever `CARGO_CFG_TARGET_OS` is `android`. It must read
-  `CARGO_CFG_TARGET_OS` and never `cfg!(target_os)`, which on a build script is
-  the *host's*. The ordering is safe because `sherpa-onnx-sys` declares
-  `links = "sherpa-onnx"`, which is what makes cargo run its build script first;
-  without that key the two would race on a cold cache. No third library is
+  project) after Tauri's Cargo invocation returns. That sequencing matters:
+  Cargo can run this crate's build script before a normal dependency's has
+  finished even when the dependency declares `links`; the old build-script
+  copy raced on a cold cache. Gradle's JNI merge tasks depend on the Rust task,
+  so this copy is after extraction and before packaging. No third library is
   needed — `readelf -d` on both lists only `libandroid`, `liblog`, `libm`,
   `libdl`, `libc` and `libonnxruntime`, so there is no `libc++_shared.so` to
   ship, and Android's loader resolves `DT_NEEDED` against the APK's own lib
