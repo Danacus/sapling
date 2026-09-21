@@ -347,6 +347,15 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   standalone layout upstream's Tauri example uses and lets the sys crate copy
   directly into `gen/android`. Symptom if it is lost: the APK installs, boots
   and dies on the first spoken word.
+- **A warm cargo cache skips `sherpa-onnx-sys`'s build script, and the build
+  script is what copies the `.so` files into `jniLibs` (2026-09-21).** The
+  `android` job passed on a `Cargo.lock` change (cache miss, cold build) and
+  failed on the next two pushes with "libsherpa-onnx-c-api.so is not in the
+  APK": the restored `target/` said the script was fresh, so it never ran, and
+  the fresh checkout's `gen/android/.../jniLibs` had only the app's own
+  library. The job now `rm -rf`s
+  `target/aarch64-linux-android/release/build/sherpa-onnx-sys-*` before the
+  build so the script reruns from the cached archive.
 - **Cargo does *not* finish a normal dependency's build script before yours,
   and `links` does not provide that ordering.** The first 1.13.8 Android CI run
   proved it: this crate's build script tried to copy the sherpa archive while

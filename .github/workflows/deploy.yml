@@ -346,8 +346,19 @@ jobs:
       # on the PATH this inherits — which is exactly why the prepend happens
       # inside the devShell rather than around it. The quotes are single on
       # purpose: `$PATH` must be the one nix has just set, not the one out here.
+      #
+      # The `rm` first: `sherpa-onnx-sys` copies its two `.so` files into
+      # `gen/android/.../jniLibs` from its *build script*, which cargo only
+      # reruns when its inputs changed. On an exact cache hit the script is
+      # "fresh", the checkout's `jniLibs` is empty, and the APK ships without
+      # speech — which is how the first run after a cache save failed. Dropping
+      # the script's output from the restored `target` makes it rerun; the
+      # archive it needs stays cached in `sherpa-onnx-prebuilt/`, so it costs
+      # seconds and no download.
       - name: Build the release APK
-        run: nix develop -c bash -c 'set -x; PATH="$RUSTUP_BIN:$PATH" pnpm desktop:android'
+        run: |
+          rm -rf crates/sapling-desktop/target/aarch64-linux-android/release/build/sherpa-onnx-sys-*
+          nix develop -c bash -c 'set -x; PATH="$RUSTUP_BIN:$PATH" pnpm desktop:android'
 
       # Speech's own gate, both directions — the voice and the recognizer run on
       # these same two libraries, so the recognition model needed nothing added
@@ -452,13 +463,15 @@ jobs:
       # image expects to find on the host (WebKitGTK itself is never bundled).
       # The GStreamer packages are for `bundleMediaFramework`: linuxdeploy's
       # GStreamer plugin copies the *system's* plugins into the image, so they
-      # have to be installed for there to be anything to copy.
+      # have to be installed for there to be anything to copy. Runtime
+      # packages only — nothing here links GStreamer, and the `-dev` one drags
+      # in `libunwind-dev`, which conflicts with the runner image's
+      # `libunwind-14-dev` and fails the whole apt step.
       - name: Install Ubuntu's WebKitGTK and GStreamer
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev librsvg2-dev patchelf \
-            libasound2-dev libgstreamer-plugins-base1.0-dev \
+            libwebkit2gtk-4.1-dev librsvg2-dev patchelf libasound2-dev \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-plugins-bad gstreamer1.0-libav
 
