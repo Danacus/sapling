@@ -520,12 +520,15 @@ jobs:
           printf '#!/bin/sh\nexec "%s" --exclude-library "libwayland-*" "$@"\n' "$real" \
             > "$tools/linuxdeploy-x86_64.AppImage"
           chmod +x "$tools/linuxdeploy-x86_64.AppImage"
+          ls -la "$tools"
+          cat "$tools/linuxdeploy-x86_64.AppImage"
+          APPIMAGE_EXTRACT_AND_RUN=1 "$tools/linuxdeploy-x86_64.AppImage" --appimage-extract-and-run --list-plugins
 
       - name: Build the AppImage
         run: |
           set -x
           cargo --version
-          nix shell --inputs-from . nixpkgs#nodejs_22 nixpkgs#pnpm -c pnpm desktop:appimage
+          nix shell --inputs-from . nixpkgs#nodejs_22 nixpkgs#pnpm -c pnpm desktop:appimage --verbose
 
       # What is checked is the image, not the build log: that it is a Linux
       # binary rather than a nix one (an interpreter under `/nix/store` means
