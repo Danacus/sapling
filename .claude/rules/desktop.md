@@ -378,7 +378,7 @@ someone to run the check by hand.
   puts them there.** `sherpa-onnx-sys` links shared on Android and Tauri's
   Gradle plugin packages exactly one library, the crate's own — so `build.rs`
   copies `libsherpa-onnx-c-api.so` and `libonnxruntime.so` out of
-  `<target>/sherpa-onnx-prebuilt/…/jniLibs/<abi>/` into
+  `<target>/sherpa-onnx-prebuilt/jniLibs/<abi>/` into
   `gen/android/app/src/main/jniLibs/<abi>/` (gitignored by the generated
   project) whenever `CARGO_CFG_TARGET_OS` is `android`. It must read
   `CARGO_CFG_TARGET_OS` and never `cfg!(target_os)`, which on a build script is

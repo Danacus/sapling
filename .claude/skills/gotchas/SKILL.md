@@ -328,22 +328,20 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
 - **A `links` crate passes nothing to you unless it prints it.** `DEP_<LINKS>_*`
   carries only the `cargo:<key>=<value>` lines the dependency emits, and
   `sherpa-onnx-sys` emits none — its `SHERPA_ONNX_LIB_DIR` is an `env::set_var`
-  inside its own process. So the path has to be reconstructed, which is why
-  `build.rs` reads the pinned version out of `Cargo.toml` rather than repeating
-  it.
-- **`sherpa-onnx-sys` 1.13.7 cannot use the Android archive it downloads
-  (2026-09-07).** Its build script unpacks the tarball into
-  `target/sherpa-onnx-prebuilt/` and then looks for `<archive stem>/jniLibs/<abi>`,
+  inside its own process. So `build.rs` reconstructs the crate's
+  `<target>/sherpa-onnx-prebuilt/jniLibs/<abi>` cache path and honours the same
+  override itself.
+- **`sherpa-onnx-sys` 1.13.7 could not use the Android archive it downloaded
+  (fixed in 1.13.8).** Its build script unpacked the tarball into
+  `target/sherpa-onnx-prebuilt/` and then looked for `<archive stem>/jniLibs/<abi>`,
   but k2-fsa's Android archive has `./jniLibs/` at its *root* and no stem
-  directory, so it fails with "Downloaded archive did not contain a lib
+  directory, so it failed with "Downloaded archive did not contain a lib
   directory" on every Android build. Verified by `tar tjf` on the 1.13.7
-  archive. The way through is `SHERPA_ONNX_LIB_DIR`, which both that crate and
-  our `build.rs` honour: the `android` job fetches the same archive itself,
-  extracts `jniLibs/arm64-v8a`, and exports the variable. **Upstream fixed it the day
-  after the release**, in k2-fsa/sherpa-onnx@a24dad69b4 ("Fix releasing
-  (#3911)"): the build script now also checks `cache_root/jniLibs/`. Not in a
-  published crate yet. Issue #24 says how the step goes when the pin moves past
-  1.13.7 — check the published `build.rs` for `android_lib_dir_alt` first.
+  archive. Upstream fixed it in k2-fsa/sherpa-onnx@a24dad69b4 ("Fix releasing
+  (#3911)"), and the published 1.13.8 `build.rs` contains the
+  `android_lib_dir_alt` check for `cache_root/jniLibs/`. The CI workaround is
+  gone; our `build.rs` still honours `SHERPA_ONNX_LIB_DIR` for explicit local
+  libraries and otherwise copies from that cache-root layout.
 - **The prebuilt sherpa Android libraries need no `libc++_shared.so`.** `readelf
   -d` lists `libandroid`, `liblog`, `libm`, `libdl`, `libc` and (for the c-api
   one) `libonnxruntime` — the C++ runtime is static inside them. Their `LOAD`

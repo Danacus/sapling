@@ -516,10 +516,10 @@ filtering a stream it never wanted.
 **How sherpa-onnx is linked, and whose crate it is.** `sherpa-onnx` — the safe
 Rust wrapper k2-fsa publishes from the sherpa-onnx repository itself, over its
 own `sherpa-onnx-sys`. The version *is* the sherpa-onnx tag: `sherpa-onnx-sys`
-1.13.7's build script downloads `sherpa-onnx-v1.13.7-<platform>-lib.tar.bz2`
+1.13.8's build script downloads `sherpa-onnx-v1.13.8-<platform>-lib.tar.bz2`
 from the release of that name into `target/sherpa-onnx-prebuilt/`, so the
 pregenerated bindings and the library they call can never come from two
-different tags. **The dependency is therefore pinned `=1.13.7`**, not `^`: a
+different tags. **The dependency is therefore pinned `=1.13.8`**, not `^`: a
 config struct that grew a member between tags is a silent ABI mismatch rather
 than a compile error, and a lockfile update must not be able to cause one. The
 same reason still rules out pointing it at nixpkgs' `sherpa-onnx`, which tracks
@@ -913,10 +913,9 @@ and that still degrades the way a failed synthesis does.
 **Getting sherpa-onnx into the APK is the one real piece of work**, and it falls
 to `crates/sapling-desktop/build.rs`. `sherpa-onnx-sys` links *shared* on
 Android (the `static` feature is ignored there) and downloads
-`sherpa-onnx-v1.13.7-android.tar.bz2` into
-`target/sherpa-onnx-prebuilt/…/jniLibs/<abi>/` — or is *told* where they are
-through `SHERPA_ONNX_LIB_DIR`, which is what CI does, because that crate's own
-unpacking of the Android archive is broken in 1.13.7 (see the gotchas) — but
+`sherpa-onnx-v1.13.8-android.tar.bz2` into
+`target/sherpa-onnx-prebuilt/jniLibs/<abi>/` — or is *told* where they are
+through `SHERPA_ONNX_LIB_DIR` — but
 nothing packages what it finds: Tauri's Gradle `RustPlugin` copies exactly one file, the crate's own
 `libsapling_desktop.so`. So when `CARGO_CFG_TARGET_OS` is `android`, `build.rs`
 copies `libsherpa-onnx-c-api.so` (4.5 MB) and `libonnxruntime.so` (21.7 MB) into

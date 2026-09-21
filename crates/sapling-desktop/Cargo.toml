@@ -107,11 +107,11 @@ serde_json = { version = "1", features = ["preserve_order"] }
 # under a lockfile update, and a config struct that grew a member is a silent
 # ABI mismatch rather than a compile error.
 #
-# On Android the same crate fetches `sherpa-onnx-v1.13.7-android.tar.bz2` and
+# On Android the same crate fetches `sherpa-onnx-v1.13.8-android.tar.bz2` and
 # links **shared** (the `static` feature is ignored there — the sys crate forces
 # shared on Android and iOS), which is why `build.rs` has an Android half: the
 # two `.so` files have to reach the APK.
-sherpa-onnx = { version = "=1.13.7", optional = true }
+sherpa-onnx = { version = "=1.13.8", optional = true }
 # The model downloads (`src/models.rs`, shared by both). `default-features =
 # false` drops ureq's transparent gzip: an archive is pinned by byte size and
 # sha256, and a decoding layer between the socket and the hasher is exactly what

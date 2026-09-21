@@ -90,7 +90,7 @@ fn package_sherpa_into_the_apk() {
         );
     }
 
-    // The version this reads and the override it honours. Whether this script
+    // The dependency pin and the override it honours. Whether this script
     // reruns at all is cargo's business and not a thing to bet an APK on, so
     // the workflow checks the finished APK for these two libraries rather than
     // trusting that the copy happened.
@@ -103,10 +103,9 @@ fn package_sherpa_into_the_apk() {
 /// Derived rather than asked for: that crate sets `SHERPA_ONNX_LIB_DIR` only
 /// inside its *own* build script process, and a `links` crate passes metadata
 /// on only if it prints `cargo:<key>=<value>`, which it does not. So the layout
-/// is reproduced here — `<target-dir>/sherpa-onnx-prebuilt/sherpa-onnx-v<the
-/// pinned version>-android/jniLibs/<abi>` — with the same `SHERPA_ONNX_LIB_DIR`
-/// override honoured, so a machine pointing the sys crate at its own libraries
-/// points this at them too.
+/// is reproduced here — `<target-dir>/sherpa-onnx-prebuilt/jniLibs/<abi>` —
+/// with the same `SHERPA_ONNX_LIB_DIR` override honoured, so a machine pointing
+/// the sys crate at its own libraries points this at them too.
 fn sherpa_android_lib_dir(abi: &str) -> PathBuf {
     if let Some(overridden) = env::var_os("SHERPA_ONNX_LIB_DIR") {
         return PathBuf::from(overridden);
@@ -114,7 +113,6 @@ fn sherpa_android_lib_dir(abi: &str) -> PathBuf {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("cargo sets this"));
     cargo_target_dir(&out_dir)
         .join("sherpa-onnx-prebuilt")
-        .join(format!("sherpa-onnx-v{}-android", pinned_sherpa_version()))
         .join("jniLibs")
         .join(abi)
 }
@@ -130,24 +128,6 @@ fn cargo_target_dir(out_dir: &Path) -> PathBuf {
         .find(|path| path.file_name() == Some(std::ffi::OsStr::new("target")))
         .unwrap_or(out_dir)
         .to_path_buf()
-}
-
-/// The `sherpa-onnx` version this crate pins, read out of the manifest beside
-/// this file.
-///
-/// **The version is the sherpa-onnx release tag**, which is why it is read
-/// rather than repeated: the archive is named after it, so a copy here could go
-/// stale against `Cargo.toml` and send this looking in a directory that will
-/// never exist. Requires the dependency to be one line starting at column 0,
-/// which is what rustfmt-adjacent tooling leaves it as; the panic says so.
-fn pinned_sherpa_version() -> String {
-    include_str!("Cargo.toml")
-        .lines()
-        .find_map(|line| line.strip_prefix("sherpa-onnx = "))
-        .and_then(|rest| rest.split_once("version = \""))
-        .and_then(|(_, rest)| rest.split('"').next())
-        .map(|version| version.trim_start_matches('=').to_owned())
-        .expect("Cargo.toml declares `sherpa-onnx = { version = \"=x.y.z\", … }` on one line")
 }
 
 /// Rust's target architecture as the ABI directory Android names it, which is
