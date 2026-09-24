@@ -280,6 +280,21 @@ describe('cuesToSentences', () => {
 		]);
 	});
 
+	it('falls back to one sentence per cue when only a stray cue is punctuated', () => {
+		// A real zh-Hant YouTube track: 1 of 96 lines ended in 。, and the join
+		// turned the whole video into three sentences, one over three minutes.
+		const cues = [
+			{ start: 0, end: 1000, text: '简单分享这个字' },
+			{ start: 1000, end: 2000, text: '如果你是第一次接触我们' },
+			{ start: 2000, end: 3000, text: '不妨订阅我们。' },
+			{ start: 3000, end: 4000, text: '我们一开始先讲解它的发音' },
+			{ start: 4000, end: 5000, text: '这个字有三个读音' }
+		];
+		expect(cuesToSentences(cues)).toEqual(
+			cues.map(({ start, end, text }) => ({ text, start, end }))
+		);
+	});
+
 	it('drops empty cues and has nothing to say about an empty file', () => {
 		expect(cuesToSentences([{ start: 0, end: 1, text: '   ' }])).toEqual([]);
 		expect(cuesToSentences([])).toEqual([]);

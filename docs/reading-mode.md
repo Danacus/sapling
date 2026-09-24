@@ -186,9 +186,11 @@ empty is dropped. `cuesToSentences` then undoes the cueing — cue texts joined
 with a space, or with nothing between two CJK characters, `splitSentences` over
 the join, and each sentence's offsets recovered with a cursor and `indexOf` and
 mapped back to the cues holding its first and last character. The separator is
-deliberately not a newline, which `splitSentences` splits on. A transcript with
-no sentence-final mark anywhere — the common auto-caption case — degrades to one
-sentence per cue rather than one sentence per video. The timings land on
+deliberately not a newline, which `splitSentences` splits on. A transcript in
+which fewer than a quarter of the cues *end* in a sentence-final mark — the
+common auto-caption case has none at all, and a single stray 。 must not undo the
+fallback — degrades to one sentence per cue rather than one sentence per video
+(`PUNCTUATED_SHARE`). The timings land on
 `ReadingSentence.start`/`end` (milliseconds into the media, both or neither),
 zipped on by the page so the module never learns where the text came from. What
 reads them is the reader's follow view, through `$lib/media`.
