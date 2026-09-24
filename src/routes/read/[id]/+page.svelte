@@ -325,6 +325,12 @@
 	 * the text stays readable, "Read as text" still works.
 	 */
 	const playable = $derived(isYouTube ? mediaError === '' : mediaSrc !== '');
+	/**
+	 * Whether the spoken line is drawn on the picture as a caption. Only while
+	 * there is a picture to draw on: a failed or not-yet-chosen recording keeps
+	 * the line in the column, where it has always been.
+	 */
+	const onScreen = $derived(following && playable);
 
 	/** Whichever of the three is in the stage. Rounded — a subpixel width is noise here. */
 	const captionWidth = $derived(
@@ -1239,8 +1245,12 @@
 								<p class="stage-fail">{mediaError}</p>
 							{:else}
 								<!-- Empty on purpose: `$lib/media` puts the iframe in here and
-								     owns everything inside it. -->
-								<div class="yt-frame" bind:this={frameEl} bind:clientWidth={frameWidth}></div>
+								     owns everything inside it — so the caption is its sibling in
+								     `.screen`, never its child. -->
+								<div class="screen">
+									<div class="yt-frame" bind:this={frameEl} bind:clientWidth={frameWidth}></div>
+									{@render caption()}
+								</div>
 							{/if}
 						{:else if mediaSrc}
 							<!-- svelte-ignore a11y_media_has_caption -->
@@ -1249,14 +1259,17 @@
 							     ones a video does not have — the ones that know where a line
 							     begins. The caption track a11y rule is answered by the text
 							     beside it, which is the subtitles, annotated. -->
-							<video
-								bind:this={videoEl}
-								bind:clientWidth={filmWidth}
-								class="film"
-								src={mediaSrc}
-								controls
-								playsinline
-							></video>
+							<div class="screen">
+								<video
+									bind:this={videoEl}
+									bind:clientWidth={filmWidth}
+									class="film"
+									src={mediaSrc}
+									controls
+									playsinline
+								></video>
+								{@render caption()}
+							</div>
 						{:else}
 							<div class="pick" bind:clientWidth={pickWidth}>
 								<p class="pick-copy">
@@ -1299,8 +1312,7 @@
 					</button>
 				{/if}
 
-				<p class="prose">
-					{#each pageLines as line, l (pageRange.start + l)}{@const s =
+				{#snippet lineWords()}{#each pageLines as line, l (pageRange.start + l)}{@const s =
 							pageRange.start + l}{#if l > 0}{gap}{/if}<span class="sentence"
 							>{#each line.words as word, w (w)}{#if word.key === undefined}{word.text}{:else}<button
 										type="button"
@@ -1310,8 +1322,19 @@
 										>{#if word.reading}<ruby>{word.text}<rt>{word.reading}</rt></ruby
 											>{:else}{word.text}{/if}</button
 									>{/if}{/each}</span
-						>{/each}
-				</p>
+						>{/each}{/snippet}
+				<!-- Following a playable recording, the same words are a caption on the
+				     picture (rendered inside `.screen` above) rather than a paragraph
+				     under it: the eye stays on the speaker and the line, not between
+				     them. Same markup, same taps, same word card. -->
+				{#snippet caption()}{#if pageLines.length > 0}<p class="prose caption">
+							{@render lineWords()}
+						</p>{/if}{/snippet}
+				{#if !onScreen}
+					<p class="prose">
+						{@render lineWords()}
+					</p>
+				{/if}
 
 				<!-- The neighbours are plain text, not annotated: they are context, and a
 				     tappable word in a line nobody is reading is a word tapped by
@@ -1867,6 +1890,64 @@
 		width: 100%;
 		height: 100%;
 		border: 0;
+	}
+
+	/*
+	  The box the caption sits in. The picture keeps its own sizing rules on
+	  `.film` / `.yt-frame`; this only positions the caption over it.
+	*/
+	.screen {
+		position: relative;
+		display: flex;
+		justify-content: center;
+		height: 100%;
+		max-width: 100%;
+	}
+
+	/*
+	  The spoken line on the picture. `bottom` clears the player's own control bar,
+	  which a caption must never cover — the seek bar is the one control a learner
+	  reaches for mid-line. A dark plate rather than a text shadow, because ruby
+	  and the underlines need a ground to read against.
+	*/
+	.prose.caption {
+		position: absolute;
+		left: 50%;
+		bottom: 3.6rem;
+		transform: translateX(-50%);
+		width: max-content;
+		max-width: 92%;
+		min-height: 0;
+		padding: 0.1em 0.6em;
+		border-radius: 6px;
+		background: rgb(0 0 0 / 0.66);
+		color: #fff;
+		text-align: center;
+		font-size: clamp(1rem, 2.2vw, 1.45rem);
+		line-height: 1.8;
+	}
+
+	.caption .w rt {
+		color: rgb(255 255 255 / 0.78);
+	}
+
+	/* The page's softened underlines vanish on black; the caption wears them at
+	   full strength, same hues. */
+	.caption .w-new:not(.w-tracked),
+	.caption .w-tracked.w-new {
+		text-decoration-color: var(--accent);
+	}
+
+	.caption .w-tracked.w-young {
+		text-decoration-color: color-mix(in srgb, var(--primary) 55%, var(--amber));
+	}
+
+	.caption .w-tracked.w-solid {
+		text-decoration-color: var(--primary);
+	}
+
+	.caption .w.is-open {
+		background: rgb(255 255 255 / 0.22);
 	}
 
 	/* The API never turned up. One line, in the picture's place, in the picture's
