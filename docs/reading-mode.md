@@ -539,6 +539,21 @@ next sentences stay under the picture as context. A recording that failed or has
 not been chosen yet has no picture to caption, so the line stays in the column
 exactly as described above (`onScreen` in the page).
 
+**Fullscreen is the reader's, not the player's.** A player's fullscreen takes the
+picture alone, which would leave the caption and the word card behind — the two
+things fullscreen is for here. So YouTube's button is off (`fs: 0`), the native
+`<video>` one too (`controlslist="nofullscreen"`, and a double-click does
+nothing), and a **Fullscreen** control in the transport, or **F**, takes the whole
+spread fullscreen instead. Under `.is-fs` only the stage and an open card show:
+the picture fills the screen on black, the caption grows a notch, and the word
+card floats top right *over* the picture rather than beside it, since a second
+column would shrink the picture back to what fullscreen was asked to escape. An
+exit control sits on the picture; Esc works as everywhere. Leaving the follow view
+leaves fullscreen. Where element fullscreen does not exist (iPhone Safari,
+`document.fullscreenEnabled` false) the control is not offered and the view is
+as before; Firefox ignores `controlslist`,
+so a local file's own button still shows there.
+
 At ≥72rem the follow view **drops the 64rem cap** — `.shell-follow` on `<main>`,
 a new modifier rather than a scoped `.shell` override — and spends the viewport
 on the video column, with the transcript held to `minmax(20rem, 28rem)`. This is

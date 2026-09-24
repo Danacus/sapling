@@ -28,8 +28,10 @@
  *
  * The host is `youtube-nocookie.com`: same API, same player, and no cookie
  * planted on a learner who is here to read subtitles. Native controls stay on
- * for the reason `<video controls>` does — scrubbing, volume and fullscreen are
- * free and better than anything written here.
+ * for the reason `<video controls>` does — scrubbing and volume are free and
+ * better than anything written here. Fullscreen is the exception: the player's
+ * own would fullscreen the picture without the caption, so the reader has its
+ * own and `fs: 0` hides this one.
  *
  * **The keyboard is YouTube's once the iframe has focus.** A click inside the
  * player gives the iframe the keyboard, and Space and the arrows then go to
@@ -254,7 +256,9 @@ export function youtubePlayer(
 				// the screen — the text beside it is the point. `rel: 0` keeps the
 				// end-card suggestions to this channel, which is as far as YouTube
 				// lets anyone turn them off.
-				playerVars: { playsinline: 1, rel: 0, controls: 1 },
+				// `fs: 0`: the reader's own fullscreen keeps the caption and the word card;
+				// the player's would fullscreen the picture alone.
+				playerVars: { playsinline: 1, rel: 0, controls: 1, fs: 0 },
 				events: {
 					onReady: () => {
 						if (destroyed || !yt) return;

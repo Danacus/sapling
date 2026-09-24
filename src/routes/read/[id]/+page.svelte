@@ -190,6 +190,38 @@
 	 * holding the hosted player the desktop shell needs — and owns it.
 	 */
 	let frameEl = $state<HTMLDivElement | null>(null);
+
+	/*
+	  Fullscreen is the reader's, not the player's. YouTube's button and the
+	  native `<video>` one fullscreen only the picture, which drops the caption
+	  and the word card — the two things fullscreen is for here — so both are
+	  switched off and the whole spread goes fullscreen instead. CSS under `.is-fs`
+	  makes the picture fill the screen and floats the card over it.
+	*/
+	let spreadEl = $state<HTMLDivElement | null>(null);
+	let fullscreen = $state(false);
+	/** Element fullscreen exists at all — not on iPhone Safari, where the control is not offered. */
+	let canFullscreen = $state(false);
+
+	function toggleFullscreen(): void {
+		if (!canFullscreen) return;
+		if (document.fullscreenElement) void document.exitFullscreen();
+		else void spreadEl?.requestFullscreen();
+	}
+
+	$effect(() => {
+		canFullscreen = document.fullscreenEnabled === true;
+	});
+
+	$effect(() => {
+		const sync = () => (fullscreen = spreadEl !== null && document.fullscreenElement === spreadEl);
+		document.addEventListener('fullscreenchange', sync);
+		return () => document.removeEventListener('fullscreenchange', sync);
+	});
+
+	$effect(() => {
+		if (!following && fullscreen) void document.exitFullscreen();
+	});
 	/**
 	 * The player could not be loaded — offline, or blocked. One line in the
 	 * video's place and the text is still there: "Read as text" is the answer, and
@@ -1135,6 +1167,9 @@
 		} else if (event.key === 'ArrowRight') {
 			event.preventDefault();
 			seekTo(nextIndex);
+		} else if (event.key === 'f' && playable) {
+			event.preventDefault();
+			toggleFullscreen();
 		}
 	}}
 />
@@ -1176,6 +1211,8 @@
 			class="spread reader-spread"
 			class:is-following={following}
 			class:has-error={pageError !== ''}
+			class:is-fs={fullscreen}
+			bind:this={spreadEl}
 		>
 			<header class="topbar spread-full ll-rise">
 				<BackLink href="/read" label="Back to your media" />
@@ -1254,8 +1291,9 @@
 							{/if}
 						{:else if mediaSrc}
 							<!-- svelte-ignore a11y_media_has_caption -->
-							<!-- The native controls stay on: scrubbing, volume and fullscreen
-							     are free and better than anything written here. Ours are the
+							<!-- The native controls stay on: scrubbing and volume are free and
+							     better than anything written here. Fullscreen is not — it would
+							     drop the caption — so the reader's own replaces it. Ours are the
 							     ones a video does not have — the ones that know where a line
 							     begins. The caption track a11y rule is answered by the text
 							     beside it, which is the subtitles, annotated. -->
@@ -1266,6 +1304,8 @@
 									class="film"
 									src={mediaSrc}
 									controls
+									controlslist="nofullscreen"
+									ondblclick={(event) => event.preventDefault()}
 									playsinline
 								></video>
 								{@render caption()}
@@ -1329,7 +1369,12 @@
 				     them. Same markup, same taps, same word card. -->
 				{#snippet caption()}{#if pageLines.length > 0}<p class="prose caption">
 							{@render lineWords()}
-						</p>{/if}{/snippet}
+						</p>{/if}{#if fullscreen}<button
+							type="button"
+							class="fs-exit"
+							title="Exit fullscreen (Esc)"
+							onclick={toggleFullscreen}>Exit fullscreen</button
+						>{/if}{/snippet}
 				{#if !onScreen}
 					<p class="prose">
 						{@render lineWords()}
@@ -1426,6 +1471,17 @@
 							<input type="checkbox" bind:checked={autoPause} disabled={!playable} />
 							Stop at the end of each line
 						</label>
+						{#if canFullscreen}
+							<button
+								type="button"
+								class="btn btn-ghost tool"
+								title="Fullscreen with captions (F)"
+								disabled={!playable}
+								onclick={toggleFullscreen}
+							>
+								Fullscreen
+							</button>
+						{/if}
 						<!-- Said rather than fought: once the learner clicks inside YouTube's
 						     iframe it owns the keyboard, and Space and the arrows go to its
 						     shortcuts instead of ours. Stealing focus back from a player
@@ -1948,6 +2004,83 @@
 
 	.caption .w.is-open {
 		background: rgb(255 255 255 / 0.22);
+	}
+
+	.fs-exit {
+		position: absolute;
+		top: 0.75rem;
+		right: 0.75rem;
+		padding: 0.35rem 0.8rem;
+		border: 0;
+		border-radius: 6px;
+		background: rgb(0 0 0 / 0.55);
+		color: #fff;
+		font: inherit;
+		font-size: 0.85rem;
+		cursor: pointer;
+	}
+
+	/*
+	  The spread in fullscreen. Only the stage and an open card are shown: the
+	  picture fills the screen and the card floats top right, over the picture
+	  rather than beside it, because a second column would shrink the picture back
+	  to the size fullscreen was asked to escape. Selectors carry `.reader-spread`
+	  so they outrank the media-query layout rules.
+	*/
+	.reader-spread.is-fs {
+		background: #000;
+	}
+
+	.reader-spread.is-fs > :not(.text-col):not(.card-col),
+	.reader-spread.is-fs .text-col > :not(.stage),
+	.reader-spread.is-fs .card-col:not(.is-open) {
+		display: none;
+	}
+
+	.reader-spread.is-fs .stage {
+		position: fixed;
+		inset: 0;
+		z-index: 1;
+		margin: 0;
+		padding: 0;
+		height: 100vh;
+		background: #000;
+	}
+
+	.reader-spread.is-fs .screen {
+		width: 100%;
+		height: 100%;
+	}
+
+	.reader-spread.is-fs .yt-frame,
+	.reader-spread.is-fs .film {
+		width: auto;
+		height: 100%;
+		max-width: 100%;
+		aspect-ratio: 16 / 9;
+		border-radius: 0;
+		object-fit: contain;
+	}
+
+	.reader-spread.is-fs .prose.caption {
+		bottom: 4.2rem;
+		font-size: clamp(1.25rem, 2.6vw, 2.2rem);
+	}
+
+	.reader-spread.is-fs .card-col.is-open {
+		position: fixed;
+		top: 3.5rem;
+		right: 1rem;
+		bottom: auto;
+		left: auto;
+		z-index: 10;
+		width: min(24rem, 40vw);
+		max-height: calc(100vh - 8rem);
+		overflow: auto;
+		border-radius: var(--radius);
+		background: var(--surface);
+		box-shadow: 0 8px 32px rgb(0 0 0 / 0.5);
+		transform: none;
 	}
 
 	/* The API never turned up. One line, in the picture's place, in the picture's
