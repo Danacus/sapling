@@ -451,7 +451,7 @@ export function parseSubtitles(text: string): Cue[] {
 }
 
 /**
- * One sentence per cue — the fallback for a transcript with no punctuation.
+ * One sentence per cue — the fallback for a transcript with too little punctuation.
  *
  * Automatic captions frequently carry no sentence-final mark anywhere, and
  * joining those cues would hand `./sentences` one unbroken string and get one
@@ -462,6 +462,26 @@ export function parseSubtitles(text: string): Cue[] {
  */
 function sentencePerCue(cues: readonly Cue[]): TimedSentence[] {
 	return cues.map((cue) => ({ text: cue.text, start: cue.start, end: cue.end }));
+}
+
+/**
+ * Below this share of cues that *end* a sentence, a track counts as unpunctuated.
+ *
+ * "A mark anywhere" is too weak a test: one stray 。 in 96 lines of a real zh-Hant
+ * track joined the whole video into three sentences, one over three minutes long,
+ * and a `.` inside a number or an English word does the same. Tracks that
+ * punctuate by sentence rather than by line — a sentence spread over two or three
+ * cues — measured 39% and still join as they should.
+ */
+const PUNCTUATED_SHARE = 0.25;
+
+/** Closing quotes and brackets that may follow a sentence-final mark. */
+const CLOSERS = /[\s"'”’」』）)》〉\]]+$/u;
+
+/** Whether the cue's last mark, past any closers, ends a sentence. */
+function endsSentence(text: string): boolean {
+	const trimmed = text.replace(CLOSERS, '');
+	return trimmed !== '' && hasSentenceEnd(trimmed[trimmed.length - 1]);
 }
 
 /**
@@ -481,7 +501,8 @@ function sentencePerCue(cues: readonly Cue[]): TimedSentence[] {
 export function cuesToSentences(cues: readonly Cue[]): TimedSentence[] {
 	const usable = cues.filter((cue) => cue.text.trim() !== '');
 	if (usable.length === 0) return [];
-	if (!usable.some((cue) => hasSentenceEnd(cue.text))) return sentencePerCue(usable);
+	const ending = usable.filter((cue) => endsSentence(cue.text)).length;
+	if (ending < usable.length * PUNCTUATED_SHARE) return sentencePerCue(usable);
 
 	// Where each cue's text ends in the joined string. Separators fall in the
 	// gaps between the spans and belong to no cue — which is safe, because
