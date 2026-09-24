@@ -190,6 +190,38 @@
 	 * holding the hosted player the desktop shell needs — and owns it.
 	 */
 	let frameEl = $state<HTMLDivElement | null>(null);
+
+	/*
+	  Fullscreen is the reader's, not the player's. YouTube's button and the
+	  native `<video>` one fullscreen only the picture, which drops the caption
+	  and the word card — the two things fullscreen is for here — so both are
+	  switched off and the whole spread goes fullscreen instead. CSS under `.is-fs`
+	  makes the picture fill the screen and floats the card over it.
+	*/
+	let spreadEl = $state<HTMLDivElement | null>(null);
+	let fullscreen = $state(false);
+	/** Element fullscreen exists at all — not on iPhone Safari, where the control is not offered. */
+	let canFullscreen = $state(false);
+
+	function toggleFullscreen(): void {
+		if (!canFullscreen) return;
+		if (document.fullscreenElement) void document.exitFullscreen();
+		else void spreadEl?.requestFullscreen();
+	}
+
+	$effect(() => {
+		canFullscreen = document.fullscreenEnabled === true;
+	});
+
+	$effect(() => {
+		const sync = () => (fullscreen = spreadEl !== null && document.fullscreenElement === spreadEl);
+		document.addEventListener('fullscreenchange', sync);
+		return () => document.removeEventListener('fullscreenchange', sync);
+	});
+
+	$effect(() => {
+		if (!following && fullscreen) void document.exitFullscreen();
+	});
 	/**
 	 * The player could not be loaded — offline, or blocked. One line in the
 	 * video's place and the text is still there: "Read as text" is the answer, and
@@ -325,6 +357,12 @@
 	 * the text stays readable, "Read as text" still works.
 	 */
 	const playable = $derived(isYouTube ? mediaError === '' : mediaSrc !== '');
+	/**
+	 * Whether the spoken line is drawn on the picture as a caption. Only while
+	 * there is a picture to draw on: a failed or not-yet-chosen recording keeps
+	 * the line in the column, where it has always been.
+	 */
+	const onScreen = $derived(following && playable);
 
 	/** Whichever of the three is in the stage. Rounded — a subpixel width is noise here. */
 	const captionWidth = $derived(
@@ -1129,6 +1167,9 @@
 		} else if (event.key === 'ArrowRight') {
 			event.preventDefault();
 			seekTo(nextIndex);
+		} else if (event.key === 'f' && playable) {
+			event.preventDefault();
+			toggleFullscreen();
 		}
 	}}
 />
@@ -1170,6 +1211,8 @@
 			class="spread reader-spread"
 			class:is-following={following}
 			class:has-error={pageError !== ''}
+			class:is-fs={fullscreen}
+			bind:this={spreadEl}
 		>
 			<header class="topbar spread-full ll-rise">
 				<BackLink href="/read" label="Back to your media" />
@@ -1239,24 +1282,34 @@
 								<p class="stage-fail">{mediaError}</p>
 							{:else}
 								<!-- Empty on purpose: `$lib/media` puts the iframe in here and
-								     owns everything inside it. -->
-								<div class="yt-frame" bind:this={frameEl} bind:clientWidth={frameWidth}></div>
+								     owns everything inside it — so the caption is its sibling in
+								     `.screen`, never its child. -->
+								<div class="screen">
+									<div class="yt-frame" bind:this={frameEl} bind:clientWidth={frameWidth}></div>
+									{@render caption()}
+								</div>
 							{/if}
 						{:else if mediaSrc}
 							<!-- svelte-ignore a11y_media_has_caption -->
-							<!-- The native controls stay on: scrubbing, volume and fullscreen
-							     are free and better than anything written here. Ours are the
+							<!-- The native controls stay on: scrubbing and volume are free and
+							     better than anything written here. Fullscreen is not — it would
+							     drop the caption — so the reader's own replaces it. Ours are the
 							     ones a video does not have — the ones that know where a line
 							     begins. The caption track a11y rule is answered by the text
 							     beside it, which is the subtitles, annotated. -->
-							<video
-								bind:this={videoEl}
-								bind:clientWidth={filmWidth}
-								class="film"
-								src={mediaSrc}
-								controls
-								playsinline
-							></video>
+							<div class="screen">
+								<video
+									bind:this={videoEl}
+									bind:clientWidth={filmWidth}
+									class="film"
+									src={mediaSrc}
+									controls
+									controlslist="nofullscreen"
+									ondblclick={(event) => event.preventDefault()}
+									playsinline
+								></video>
+								{@render caption()}
+							</div>
 						{:else}
 							<div class="pick" bind:clientWidth={pickWidth}>
 								<p class="pick-copy">
@@ -1299,8 +1352,7 @@
 					</button>
 				{/if}
 
-				<p class="prose">
-					{#each pageLines as line, l (pageRange.start + l)}{@const s =
+				{#snippet lineWords()}{#each pageLines as line, l (pageRange.start + l)}{@const s =
 							pageRange.start + l}{#if l > 0}{gap}{/if}<span class="sentence"
 							>{#each line.words as word, w (w)}{#if word.key === undefined}{word.text}{:else}<button
 										type="button"
@@ -1310,8 +1362,24 @@
 										>{#if word.reading}<ruby>{word.text}<rt>{word.reading}</rt></ruby
 											>{:else}{word.text}{/if}</button
 									>{/if}{/each}</span
-						>{/each}
-				</p>
+						>{/each}{/snippet}
+				<!-- Following a playable recording, the same words are a caption on the
+				     picture (rendered inside `.screen` above) rather than a paragraph
+				     under it: the eye stays on the speaker and the line, not between
+				     them. Same markup, same taps, same word card. -->
+				{#snippet caption()}{#if pageLines.length > 0}<p class="prose caption">
+							{@render lineWords()}
+						</p>{/if}{#if fullscreen}<button
+							type="button"
+							class="fs-exit"
+							title="Exit fullscreen (Esc)"
+							onclick={toggleFullscreen}>Exit fullscreen</button
+						>{/if}{/snippet}
+				{#if !onScreen}
+					<p class="prose">
+						{@render lineWords()}
+					</p>
+				{/if}
 
 				<!-- The neighbours are plain text, not annotated: they are context, and a
 				     tappable word in a line nobody is reading is a word tapped by
@@ -1403,6 +1471,17 @@
 							<input type="checkbox" bind:checked={autoPause} disabled={!playable} />
 							Stop at the end of each line
 						</label>
+						{#if canFullscreen}
+							<button
+								type="button"
+								class="btn btn-ghost tool"
+								title="Fullscreen with captions (F)"
+								disabled={!playable}
+								onclick={toggleFullscreen}
+							>
+								Fullscreen
+							</button>
+						{/if}
 						<!-- Said rather than fought: once the learner clicks inside YouTube's
 						     iframe it owns the keyboard, and Space and the arrows go to its
 						     shortcuts instead of ours. Stealing focus back from a player
@@ -1867,6 +1946,141 @@
 		width: 100%;
 		height: 100%;
 		border: 0;
+	}
+
+	/*
+	  The box the caption sits in. The picture keeps its own sizing rules on
+	  `.film` / `.yt-frame`; this only positions the caption over it.
+	*/
+	.screen {
+		position: relative;
+		display: flex;
+		justify-content: center;
+		height: 100%;
+		max-width: 100%;
+	}
+
+	/*
+	  The spoken line on the picture. `bottom` clears the player's own control bar,
+	  which a caption must never cover — the seek bar is the one control a learner
+	  reaches for mid-line. A dark plate rather than a text shadow, because ruby
+	  and the underlines need a ground to read against.
+	*/
+	.prose.caption {
+		position: absolute;
+		left: 50%;
+		bottom: 3.6rem;
+		transform: translateX(-50%);
+		width: max-content;
+		max-width: 92%;
+		min-height: 0;
+		padding: 0.1em 0.6em;
+		border-radius: 6px;
+		background: rgb(0 0 0 / 0.66);
+		color: #fff;
+		text-align: center;
+		font-size: clamp(1rem, 2.2vw, 1.45rem);
+		line-height: 1.8;
+	}
+
+	.caption .w rt {
+		color: rgb(255 255 255 / 0.78);
+	}
+
+	/* The page's softened underlines vanish on black; the caption wears them at
+	   full strength, same hues. */
+	.caption .w-new:not(.w-tracked),
+	.caption .w-tracked.w-new {
+		text-decoration-color: var(--accent);
+	}
+
+	.caption .w-tracked.w-young {
+		text-decoration-color: color-mix(in srgb, var(--primary) 55%, var(--amber));
+	}
+
+	.caption .w-tracked.w-solid {
+		text-decoration-color: var(--primary);
+	}
+
+	.caption .w.is-open {
+		background: rgb(255 255 255 / 0.22);
+	}
+
+	.fs-exit {
+		position: absolute;
+		top: 0.75rem;
+		right: 0.75rem;
+		padding: 0.35rem 0.8rem;
+		border: 0;
+		border-radius: 6px;
+		background: rgb(0 0 0 / 0.55);
+		color: #fff;
+		font: inherit;
+		font-size: 0.85rem;
+		cursor: pointer;
+	}
+
+	/*
+	  The spread in fullscreen. Only the stage and an open card are shown: the
+	  picture fills the screen and the card floats top right, over the picture
+	  rather than beside it, because a second column would shrink the picture back
+	  to the size fullscreen was asked to escape. Selectors carry `.reader-spread`
+	  so they outrank the media-query layout rules.
+	*/
+	.reader-spread.is-fs {
+		background: #000;
+	}
+
+	.reader-spread.is-fs > :not(.text-col):not(.card-col),
+	.reader-spread.is-fs .text-col > :not(.stage),
+	.reader-spread.is-fs .card-col:not(.is-open) {
+		display: none;
+	}
+
+	.reader-spread.is-fs .stage {
+		position: fixed;
+		inset: 0;
+		z-index: 1;
+		margin: 0;
+		padding: 0;
+		height: 100vh;
+		background: #000;
+	}
+
+	.reader-spread.is-fs .screen {
+		width: 100%;
+		height: 100%;
+	}
+
+	.reader-spread.is-fs .yt-frame,
+	.reader-spread.is-fs .film {
+		width: auto;
+		height: 100%;
+		max-width: 100%;
+		aspect-ratio: 16 / 9;
+		border-radius: 0;
+		object-fit: contain;
+	}
+
+	.reader-spread.is-fs .prose.caption {
+		bottom: 4.2rem;
+		font-size: clamp(1.25rem, 2.6vw, 2.2rem);
+	}
+
+	.reader-spread.is-fs .card-col.is-open {
+		position: fixed;
+		top: 3.5rem;
+		right: 1rem;
+		bottom: auto;
+		left: auto;
+		z-index: 10;
+		width: min(24rem, 40vw);
+		max-height: calc(100vh - 8rem);
+		overflow: auto;
+		border-radius: var(--radius);
+		background: var(--surface);
+		box-shadow: 0 8px 32px rgb(0 0 0 / 0.5);
+		transform: none;
 	}
 
 	/* The API never turned up. One line, in the picture's place, in the picture's
