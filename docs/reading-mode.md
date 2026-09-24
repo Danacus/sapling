@@ -544,7 +544,12 @@ Native `<video controls>` stays on — scrubbing, volume and fullscreen are free
 and our buttons add only what a video does not have: the operations that know
 where a line begins. Auto-pause is off by default and never remembered, since it
 turns a video into a drill. The keyboard mirrors the controls (Space, ←, →) and
-stands down whenever focus is somewhere that wants those keys itself. Position is
+stands down whenever focus is somewhere that wants those keys itself. The same
+line operations also sit on letters, on the keys Language Reactor uses — **A**
+previous line, **S** replay, **D** next line, **Q** auto-pause — and those keep
+working with a word or a button focused, since a letter presses no button and
+moves no caret; only a text field or the player's own frame silences them. A
+**Previous line** control joins the row so that A has a button too. Position is
 not stored: a text opens at 0, for the same reason it opens on page 1.
 
 One thing had to be repaired on the way: `textAdded`'s zod payload named neither

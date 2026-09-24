@@ -1116,9 +1116,33 @@
 		// focus its own document gets the keystrokes and this handler is not called
 		// at all. Standing down while it is merely the active element costs nothing
 		// and is the honest description of who owns the keyboard.
-		if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON' || tag === 'VIDEO') return;
-		if (tag === 'IFRAME') return;
+		if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'IFRAME') return;
 		if (focused instanceof HTMLElement && focused.isContentEditable) return;
+
+		// The line keys as letters, on the keys Language Reactor uses — A back a
+		// line, S replay, D on, Q the auto-pause switch. A letter presses no button
+		// and moves no caret, so unlike Space and the arrows these keep working with
+		// a word or a control focused, which is where focus is after every tap.
+		const letter = event.key.toLowerCase();
+		if (letter === 'a' && playable && prevIndex >= 0) {
+			event.preventDefault();
+			seekTo(prevIndex);
+			return;
+		} else if (letter === 's' && playable) {
+			event.preventDefault();
+			replayLine();
+			return;
+		} else if (letter === 'd' && playable && nextIndex >= 0) {
+			event.preventDefault();
+			seekTo(nextIndex);
+			return;
+		} else if (letter === 'q' && playable) {
+			event.preventDefault();
+			autoPause = !autoPause;
+			return;
+		}
+
+		if (tag === 'BUTTON' || tag === 'VIDEO') return;
 
 		if (event.key === ' ') {
 			event.preventDefault();
@@ -1374,7 +1398,16 @@
 							<button
 								type="button"
 								class="btn btn-ghost tool"
-								title="Replay line (←)"
+								title="Previous line (A)"
+								disabled={!playable || prevIndex < 0}
+								onclick={() => seekTo(prevIndex)}
+							>
+								Previous line
+							</button>
+							<button
+								type="button"
+								class="btn btn-ghost tool"
+								title="Replay line (S or ←)"
 								disabled={!playable}
 								onclick={replayLine}
 							>
@@ -1392,14 +1425,14 @@
 							<button
 								type="button"
 								class="btn btn-ghost tool"
-								title="Next line (→)"
+								title="Next line (D or →)"
 								disabled={!playable || nextIndex < 0}
 								onclick={() => seekTo(nextIndex)}
 							>
 								Next line
 							</button>
 						</div>
-						<label class="transport-opt">
+						<label class="transport-opt" title="Toggle with Q">
 							<input type="checkbox" bind:checked={autoPause} disabled={!playable} />
 							Stop at the end of each line
 						</label>
