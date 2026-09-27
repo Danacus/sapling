@@ -40,6 +40,9 @@ code, its tests and its contracts agree and the gates are green — not before.
 - **Never commit.** Leave the work in the tree; the main agent commits.
 - `pnpm`, never `npm`/`yarn`. Toolchain comes from the flake via direnv; if a
   binary is missing, prefix that one command with `nix develop -c`.
+- **Never run `nix build` as a check** — it caches nothing and takes ages. When
+  a change needs a full desktop build, run `nix develop .#desktop -c pnpm
+  desktop:build`.
 - Node tests are always in mock mode; no network, no browser APIs. The data
   layer is tested against the real in-memory store (`db/backend.testing.ts`).
   An LLM call is tested with a fake `fetchFn`, never a mock of the module.
