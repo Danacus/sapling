@@ -1,15 +1,20 @@
 //! Spaced repetition: the `fsrs` crate's FSRS-6 memory model, driven through
 //! the scheduler shape ts-fsrs gave this app.
 //!
-//! The split is deliberate. **The crate owns the formulas** — stability,
+//! A crate of its own so that it stays a function of a card, a grade and a
+//! time: it knows nothing of events, SQL or Sapling's schema. `sapling-core`
+//! calls it from the merge rules and stores what it returns; the dependency
+//! only ever points that way.
+//!
+//! The split is deliberate. **The `fsrs` crate owns the formulas** — stability,
 //! difficulty and the interval a stability implies, all of it FSRS-6 with the
 //! default parameters and `desired_retention` 0.9, maintained upstream by the
-//! same people who write ts-fsrs. **This module owns the card**: the
+//! same people who write ts-fsrs. **This crate owns the card**: the
 //! New/Learning/Review/Relearning machine, the learning steps `1m`/`10m` and
 //! the relearning step `10m`, `reps`, `lapses`, `elapsed_days`,
 //! `scheduled_days`, `due`, the hard < good < easy ordering rule, and the
-//! `FsrsCardState` JSON the materializer stores. `fsrs::FSRS::next_states`
-//! knows nothing about any of that.
+//! `FsrsCardState` shape a host stores. `fsrs::FSRS::next_states` knows nothing
+//! about any of that.
 //!
 //! It is not a port any more, so it is not bit-comparable with ts-fsrs — and it
 //! does not have to be, because **there is no other FSRS anywhere**. The
@@ -28,7 +33,7 @@
 //! at `f32` no rounding can both keep the value and hide the gap. So a card is
 //! widened to `f64` and cut to eight decimals — about all the precision an
 //! `f32` carries, and enough to keep the JSON short and stable *per host* — and
-//! `tests/golden.rs` is where the tolerance lives instead. It covers
+//! `sapling-core`'s `tests/golden.rs` is where the tolerance lives instead. It covers
 //! [`ItemSrs`]'s two floats for the same reason, since they are read off that
 //! same `f32` model. Nothing downstream reads any of it that closely: `due` and
 //! `scheduled_days` are whole minutes and days, and [`word_strength`] is a log.
@@ -41,7 +46,11 @@ use std::sync::OnceLock;
 use fsrs::{ItemState, MemoryState, NextStates, FSRS, FSRS6_DEFAULT_DECAY};
 use serde::{Deserialize, Serialize};
 
-use crate::js::{round, round_to};
+/// `x` to `decimals` places, halves away from zero.
+fn round_to(x: f64, decimals: i32) -> f64 {
+    let factor = 10f64.powi(decimals);
+    (x * factor).round() / factor
+}
 
 /// ts-fsrs `Rating`, minus `Manual`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -64,10 +73,7 @@ impl Grade {
         } else if grade == 4.0 {
             Ok(Grade::Easy)
         } else {
-            Err(format!(
-                "Invalid grade \"{}\",expected 1-4",
-                crate::js::number_to_string(grade)
-            ))
+            Err(format!("Invalid grade \"{grade}\",expected 1-4"))
         }
     }
 }
@@ -85,8 +91,7 @@ pub const RELEARNING: i64 = 3;
 ///
 /// Field order is the JSON order `fromFsrsCard` writes. The integral fields
 /// are integers because ts-fsrs only ever assigns them rounded values; `due`
-/// stays a double because it is a `Date.getTime()`, and JavaScript prints it
-/// the same either way.
+/// stays a double because the timestamps a host passes in are.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FsrsCardState {
     pub due: f64,
@@ -161,8 +166,7 @@ fn next_states(card: &FsrsCardState, elapsed_days: i64) -> Result<NextStates, St
         .map_err(|err| {
             format!(
                 "Invalid memory state {{ difficulty: {}, stability: {} }}: {err}",
-                crate::js::number_to_string(card.difficulty),
-                crate::js::number_to_string(card.stability)
+                card.difficulty, card.stability
             )
         })
 }
@@ -176,17 +180,16 @@ fn state_for(states: &NextStates, grade: Grade) -> &ItemState {
     }
 }
 
-/// The crate's `f32` as this module stores it: widened, then cut to eight
-/// decimals so an `f32`'s binary tail never reaches `js.rs` or the fixtures.
+/// The model's `f32` as a card stores it: widened, then cut to eight decimals
+/// so an `f32`'s binary tail never reaches the stored JSON or the fixtures.
 fn store(value: f32) -> f64 {
     round_to(value as f64, 8)
 }
 
-/// The crate's interval as a whole number of days, clamped the way ts-fsrs
-/// clamps it. `round` is `Math.round`, because the same value is printed by a
-/// JavaScript host.
+/// The model's interval as a whole number of days, clamped the way ts-fsrs
+/// clamps it.
 fn interval_days(state: &ItemState) -> f64 {
-    round(state.interval as f64).clamp(1.0, MAXIMUM_INTERVAL)
+    (state.interval as f64).round().clamp(1.0, MAXIMUM_INTERVAL)
 }
 
 /* ---- BasicScheduler --------------------------------------------------------- */
@@ -224,16 +227,16 @@ fn learning_step(state: i64, cur_step: i64, grade: Grade) -> Option<(f64, i64)> 
         Grade::Again => Some((steps[0], 0)),
         Grade::Hard => {
             let minutes = if steps.len() == 1 {
-                round(steps[0] * 1.5)
+                (steps[0] * 1.5).round()
             } else {
-                round((steps[0] + steps[1]) / 2.0)
+                ((steps[0] + steps[1]) / 2.0).round()
             };
             Some((minutes, cur_step))
         }
         Grade::Good => steps
             .get((cur_step + 1) as usize)
             .filter(|minutes| **minutes != 0.0)
-            .map(|minutes| (round(*minutes), cur_step + 1)),
+            .map(|minutes| (minutes.round(), cur_step + 1)),
         Grade::Easy => None,
     }
 }
@@ -310,12 +313,12 @@ impl Scheduler {
             next.learning_steps = next_steps;
             next.scheduled_days = 0;
             next.state = to_state;
-            next.due = self.review_time + round(scheduled_minutes) * MINUTE;
+            next.due = self.review_time + scheduled_minutes.round() * MINUTE;
         } else {
             next.state = REVIEW;
             if scheduled_minutes >= 1440.0 {
                 next.learning_steps = next_steps;
-                next.due = self.review_time + round(scheduled_minutes) * MINUTE;
+                next.due = self.review_time + scheduled_minutes.round() * MINUTE;
                 next.scheduled_days = (scheduled_minutes / 1440.0).floor() as i64;
             } else {
                 next.learning_steps = 0;
@@ -470,9 +473,9 @@ mod tests {
 
     #[test]
     fn the_crate_ships_the_weights_ts_fsrs_generates() {
-        // Both sides are FSRS-6 with the published defaults, and the TypeScript
-        // reads `retrievability` and `wordStrength` off cards this module wrote.
-        // If these ever diverge, those two readings start lying.
+        // FSRS-6 with the published defaults. Pinned so an upstream refit of
+        // the weights arrives as a failing test and a `DERIVED_SCHEMA_VERSION`
+        // bump in `sapling-core`, not as cards that quietly fold differently.
         assert_eq!(
             fsrs::DEFAULT_PARAMETERS,
             [
@@ -487,7 +490,7 @@ mod tests {
         // `broad`: item-ni, introduced at T0, Good nine minutes later, then Hard
         // ninety seconds after that — the card `expected.json` records. These
         // are this host's numbers; the fixture's are the wasm build's, and
-        // `tests/golden.rs` is the check that the two stay close.
+        // `sapling-core`'s `tests/golden.rs` is the check that the two stay close.
         let good = review_card(&new_card_state(T0), Grade::Good, T0 + 540_000.0).unwrap();
         assert_eq!(good.stability, 2.30649996);
         assert_eq!(good.difficulty, 2.11810398);

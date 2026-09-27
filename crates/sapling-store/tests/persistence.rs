@@ -41,7 +41,27 @@ fn read_json(path: PathBuf) -> Value {
 fn read(core: &CoreHandle, method: &str, args: Value) -> Option<Value> {
     core.dispatch(method.to_owned(), args.to_string())
         .unwrap_or_else(|error| panic!("{method}: {error}"))
-        .map(|answer| serde_json::from_str(&answer).expect("the answer is JSON"))
+        .map(|answer| integral(serde_json::from_str(&answer).expect("the answer is JSON")))
+}
+
+/// `value` with every whole-valued number as an integer. The core prints an
+/// `f64` field as `1.0` and `expected.json` (written by JavaScript) as `1`;
+/// the comparison is about values, the way `tests/golden.rs` makes it.
+fn integral(value: Value) -> Value {
+    match value {
+        Value::Number(n) => match n.as_f64() {
+            Some(f) if f.fract() == 0.0 && f.abs() < 9e15 => Value::from(f as i64),
+            _ => Value::Number(n),
+        },
+        Value::Array(items) => Value::Array(items.into_iter().map(integral).collect()),
+        Value::Object(entries) => Value::Object(
+            entries
+                .into_iter()
+                .map(|(key, item)| (key, integral(item)))
+                .collect(),
+        ),
+        other => other,
+    }
 }
 
 /// `getAllItems`, both ways, sorted by id — the shape `expected.json` records.

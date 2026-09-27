@@ -25,11 +25,6 @@
 //! synthesized clip is never synced, never replayed and never diffed, only
 //! played once and cached in memory on the host that made it. A one-LSB
 //! difference between the two encoders is inaudible and reaches nothing.
-//!
-//! The load-bearing JavaScript parity lives in `crates/sapling-core/src/js.rs`,
-//! where number formatting really is the contract, because every device
-//! replays the same event log and must derive the same bytes. That is a
-//! different problem and this file is not part of it.
 
 use std::io::Cursor;
 

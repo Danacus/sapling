@@ -2,7 +2,7 @@
  * Spaced repetition, as the frontend sees it.
  *
  * **There is no FSRS here.** The one implementation lives in
- * `crates/sapling-core/src/srs.rs`, which runs the `fsrs` crate beside SQLite:
+ * `crates/sapling-srs`, which the core runs the `fsrs` crate through beside SQLite:
  * it folds the review log into the stored card, and it derives the numbers a
  * screen reads — `due`, `retrievability`, `strength` — attaching them to every
  * item a `Backend` read returns as {@link KnowledgeItem.srs}. What is left on

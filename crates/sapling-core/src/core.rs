@@ -1,12 +1,12 @@
 //! The backend, implemented: every `Backend` method as one synchronous pass
-//! over SQLite — `src/lib/db/core.ts`.
+//! over SQLite.
 //!
 //! Every write is an event: `commit` mints an envelope and hands it to the
 //! materializer's `ingest`, so there is no row-then-event pair to keep in
 //! agreement. Each method is one transaction.
 //!
-//! The four things the TypeScript reads from its runtime arrive here as
-//! arguments instead, because a crate has none of them: the device id (a
+//! Four runtime facts arrive here as arguments, because a crate has none of
+//! them: the device id (a
 //! `localStorage` fact), the clock, an id generator (`crypto.randomUUID`), and
 //! the calendar ([`LocalDay`]). A host supplies all four; the golden fixtures
 //! pin them.
@@ -24,16 +24,15 @@ use crate::events::{
     EventType, ItemAdded, ItemDeleted, ItemFields, ItemReviewed, ItemUpdated, Payload, RawEvent,
     ReviewAmended, SyncEvent, TextDeleted, WordLookedUp, WordMarked,
 };
-use crate::js;
 use crate::materialize::{open_schema, raw_from_row, Materializer, LOG_ORDER};
 use crate::schema::{ACTIVE_PROFILE_KEY, DERIVED_TABLES, PROFILE_ID};
 use crate::sql::{Error, Param, Result, Row, Sql};
-use crate::srs::{item_srs, FsrsCardState};
 use crate::types::{
     ChallengeResult, Conversation, ConversationDetail, ConversationExchange,
     ConversationLearnerTurn, ConversationSummary, ConversationTeacherTurn, DailyActivity,
     GradeEntry, HistoryEntry, KnowledgeItem, Profile, ReadingText, Verdict,
 };
+use sapling_srs::{item_srs, FsrsCardState};
 
 /// Envelope version `export_data` writes and a v3 `import_data` reads.
 pub const EXPORT_VERSION: f64 = 3.0;
@@ -52,7 +51,7 @@ const ITEM_COLUMNS_LEAN: &str =
 ///
 /// `card` is read back after the commit rather than predicted, because
 /// predicting it is exactly what the frontend no longer can: there is one FSRS
-/// and it lives in `srs.rs`. Both are `null` for an item that is not there.
+/// and it lives in `sapling-srs`. Both are `null` for an item that is not there.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ReviewOutcome {
     pub existed: bool,
@@ -960,7 +959,7 @@ impl Core {
                 &[],
             )?,
         };
-        Ok(js::stringify_pretty(&serde_json::to_value(&envelope)?, 2))
+        Ok(serde_json::to_string_pretty(&envelope)?)
     }
 
     /// Restores a dump: a v3 file is unioned into the log and the read model
@@ -993,7 +992,7 @@ impl Core {
                 "Import failed: unsupported export version {}.",
                 object
                     .get("version")
-                    .map(js::stringify)
+                    .map(Value::to_string)
                     .unwrap_or_else(|| "undefined".into())
             ))),
         }
@@ -1115,7 +1114,7 @@ impl Core {
 				 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             &[
                 Param::text(PULL_CURSOR_KEY),
-                Param::text(js::number_to_string(cursor)),
+                Param::text(cursor.to_string()),
             ],
         )
     }
@@ -1199,7 +1198,7 @@ mod tests {
                       "payload": { "itemId": "i1" } },
                 ]
             });
-            core.import_data(&js::stringify(&file)).expect("import");
+            core.import_data(&file.to_string()).expect("import");
             core
         }
 

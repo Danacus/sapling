@@ -325,9 +325,9 @@ impl Payload {
         }
     }
 
-    /// The payload as the log stores it: `JSON.stringify` of the parsed value.
+    /// The payload as the log stores it.
     pub fn to_json(&self) -> String {
-        crate::js::stringify(&serde_json::to_value(self).expect("payloads serialise"))
+        serde_json::to_string(self).expect("payloads serialise")
     }
 }
 
@@ -550,16 +550,33 @@ mod tests {
         }
     }
 
+    /// `value` with every whole-valued number as an integer. serde_json keeps
+    /// `1` and `1.0` apart and an `f64` field writes the second; the round trip
+    /// is about fields and values, not about how a number prints.
+    fn integral(value: Value) -> Value {
+        match value {
+            Value::Number(n) => match n.as_f64() {
+                Some(f) if f.fract() == 0.0 && f.abs() < 9e15 => Value::from(f as i64),
+                _ => Value::Number(n),
+            },
+            Value::Array(items) => Value::Array(items.into_iter().map(integral).collect()),
+            Value::Object(entries) => {
+                Value::Object(entries.into_iter().map(|(k, v)| (k, integral(v))).collect())
+            }
+            other => other,
+        }
+    }
+
     #[test]
     fn parse_event_round_trips_every_field() {
+        // The raw rows are integer-valued, as the old JavaScript core wrote
+        // them and as every device's log still holds them: they must parse.
         for (kind, payload) in full_payloads() {
             let raw = json!({ "id": "e", "type": kind.as_str(), "at": 1, "device": "d", "payload": payload });
             let event = parse_event(&raw).unwrap_or_else(|| panic!("{kind:?} did not parse"));
-            let back: Value = serde_json::from_str(&crate::js::stringify(
-                &serde_json::to_value(&event).unwrap(),
-            ))
-            .unwrap();
-            assert_eq!(back, raw, "{kind:?} lost or changed a field");
+            let back: Value =
+                serde_json::from_str(&serde_json::to_string(&event).unwrap()).unwrap();
+            assert_eq!(integral(back), raw, "{kind:?} lost or changed a field");
             assert_eq!(event.kind, kind);
             assert_eq!(event.payload.kind(), kind);
         }

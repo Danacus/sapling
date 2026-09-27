@@ -12,7 +12,7 @@
  * the core derives `srs.strength` when the row is read, and this module does
  * arithmetic on the number rather than on a card. What produces the number —
  * log-stability × retrievability, and how it sags as a word is left alone — is
- * pinned in `crates/sapling-core/src/srs.rs`.
+ * pinned in `crates/sapling-srs`.
  */
 
 import { describe, expect, it } from 'vitest';

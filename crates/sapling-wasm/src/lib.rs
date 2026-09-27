@@ -13,7 +13,7 @@
 //! core `Error` carrying its message.
 
 use js_sys::Function;
-use sapling_core::{dispatch, js, Core, Error, LocalDay, Param, Result, Row, Sql, SqlValue};
+use sapling_core::{dispatch, Core, Error, LocalDay, Param, Result, Row, Sql, SqlValue};
 use serde_json::{Map, Value};
 use wasm_bindgen::prelude::*;
 
@@ -41,7 +41,7 @@ fn params_json(params: &[Param]) -> String {
             Param::Text(s) => Value::String(s.clone()),
         })
         .collect();
-    js::stringify(&Value::Array(values))
+    Value::Array(values).to_string()
 }
 
 /// A cell as sqlite-wasm's `rowMode: 'object'` handed it to `JSON.stringify`.

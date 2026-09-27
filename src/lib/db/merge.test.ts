@@ -187,13 +187,14 @@ describe('items', () => {
 		expect(state.items[0]).toMatchObject({
 			reviewCount: 3,
 			correctCount: 2,
-			lastReviewedAt: 3500,
-			recentGrades: JSON.stringify([
-				{ at: 1500, grade: 3 },
-				{ at: 2500, grade: 1 },
-				{ at: 3500, grade: 4 }
-			])
+			lastReviewedAt: 3500
 		});
+		// The column is JSON text; its value is the contract, not how it prints.
+		expect(JSON.parse(state.items[0].recentGrades)).toEqual([
+			{ at: 1500, grade: 3 },
+			{ at: 2500, grade: 1 },
+			{ at: 3500, grade: 4 }
+		]);
 		// And they are the fold of the rows themselves, in `(at, device)` order.
 		expect(state.reviews.map(({ at, grade }) => ({ at, grade }))).toEqual(
 			JSON.parse(state.items[0].recentGrades)

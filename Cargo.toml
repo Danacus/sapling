@@ -1,5 +1,6 @@
 [workspace]
 members = [
+	"crates/sapling-srs",
 	"crates/sapling-core",
 	"crates/sapling-wasm",
 	"crates/sapling-store",
@@ -21,6 +22,7 @@ members = [
 # default members turns it on, so feature unification cannot pull ALSA in here;
 # `desktop:check` builds it alongside `sapling-desktop`, which does.
 default-members = [
+	"crates/sapling-srs",
 	"crates/sapling-core",
 	"crates/sapling-wasm",
 	"crates/sapling-store",

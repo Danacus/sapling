@@ -1,13 +1,10 @@
-//! The merge rules: one event in, read-model rows out — `src/lib/db/materialize.ts`.
+//! The merge rules: one event in, read-model rows out.
 //!
 //! Dedupe happens at the log ([`Materializer::ingest`]): an event whose id is
 //! already in `events` is never materialised twice. Everything here is total —
 //! a rule that cannot apply returns instead of failing — because the
 //! alternative is an import or a sync page that stops halfway. The one thing
-//! that does fail is a card the scheduler cannot fold, which the TypeScript
-//! throws on too.
-//!
-//! The SQL text is the TypeScript's, statement for statement.
+//! that does fail is a card the scheduler cannot fold.
 
 use serde_json::{json, Value};
 
@@ -17,17 +14,17 @@ use crate::events::{
     ItemAdded, ItemDeleted, ItemReviewed, ItemUpdated, Payload, RawEvent, ReviewAmended, SyncEvent,
     TextDeleted, WordLookedUp, WordMarked, PATCHABLE_COLUMNS, SCOPED_EVENT_TYPE,
 };
-use crate::js;
 use crate::schema::{
     review_key, ACTIVE_PROFILE_KEY, DDL, DERIVED_SCHEMA_VERSION, DERIVED_TABLES, PROFILE_ID,
     RECENT_GRADES_CAP,
 };
 use crate::sql::{Error, Param, Result, Row, Sql};
-use crate::srs::{new_card_state, review_card, FsrsCardState, Grade, GOOD};
 use crate::types::{ChallengeResult, Conversation, ConversationExchange, Profile, ReadingText};
+use sapling_srs::{new_card_state, review_card, FsrsCardState, Grade, GOOD};
 
 /// Replay order: the backend's `seq`, then local insertion order for whatever
-/// this device has not pushed yet. Not `at` — see the TypeScript for why.
+/// this device has not pushed yet. Not `at`: that is one device's clock, and
+/// `seq` is the order every device agrees on.
 pub const LOG_ORDER: &str = "seq IS NULL, seq, rowid";
 
 /// The challenge types this build knows how to play; an unknown type costs one
@@ -73,11 +70,11 @@ fn aggregates(rows: &[ReviewFold]) -> (i64, String) {
         .skip(rows.len().saturating_sub(RECENT_GRADES_CAP))
         .map(|row| json!({ "at": row.at, "grade": row.grade }))
         .collect();
-    (correct, js::stringify(&Value::Array(recent)))
+    (correct, Value::Array(recent).to_string())
 }
 
 fn card_json(card: &FsrsCardState) -> Result<String> {
-    Ok(js::stringify(&serde_json::to_value(card)?))
+    Ok(serde_json::to_string(card)?)
 }
 
 fn parse_card(text: &str) -> Result<FsrsCardState> {
@@ -232,7 +229,7 @@ impl<'a> Materializer<'a> {
                 &[
                     Param::text(card_json(&card)?),
                     Param::Integer(if p.grade >= GOOD { 1 } else { 0 }),
-                    Param::text(js::stringify(&Value::Array(recent))),
+                    Param::text(Value::Array(recent).to_string()),
                     Param::number(p.at),
                     Param::text(&p.item_id),
                 ],
@@ -418,7 +415,7 @@ impl<'a> Materializer<'a> {
 		 VALUES (?, ?, ?, ?, 0, 0, NULL)",
             &[
                 Param::text(id),
-                Param::text(js::stringify(p.challenge.as_ref().unwrap_or(&Value::Null))),
+                Param::text(p.challenge.as_ref().unwrap_or(&Value::Null).to_string()),
                 Param::number(p.generated_at),
                 Param::opt_text(p.topic.as_deref()),
             ],
@@ -480,7 +477,7 @@ impl<'a> Materializer<'a> {
                 Param::text(&p.native_language),
                 Param::text(&p.target_language),
                 Param::text(p.level.as_str()),
-                Param::text(js::stringify(&serde_json::to_value(&p.interests)?)),
+                Param::text(serde_json::to_string(&p.interests)?),
                 Param::opt_text(p.about.as_deref()),
                 Param::text(&p.model),
                 Param::number(p.created_at),
@@ -497,7 +494,7 @@ impl<'a> Materializer<'a> {
             return Ok(());
         }
         let media = match &p.media {
-            Some(media) => Param::text(js::stringify(&serde_json::to_value(media)?)),
+            Some(media) => Param::text(serde_json::to_string(media)?),
             None => Param::Null,
         };
         self.sql.exec(
@@ -508,8 +505,8 @@ impl<'a> Materializer<'a> {
                 Param::text(&p.title),
                 Param::text(p.source.as_str()),
                 Param::opt_text(p.topic.as_deref()),
-                Param::text(js::stringify(&serde_json::to_value(&p.sentences)?)),
-                Param::text(js::stringify(&serde_json::to_value(&p.glossary)?)),
+                Param::text(serde_json::to_string(&p.sentences)?),
+                Param::text(serde_json::to_string(&p.glossary)?),
                 media,
                 Param::number(p.created_at),
             ],
@@ -574,7 +571,7 @@ impl<'a> Materializer<'a> {
             "INSERT OR IGNORE INTO conversations (id, scenario, topic, createdAt) VALUES (?, ?, ?, ?)",
             &[
                 Param::text(&p.id),
-                Param::text(js::stringify(&serde_json::to_value(&p.scenario)?)),
+                Param::text(serde_json::to_string(&p.scenario)?),
                 Param::opt_text(p.topic.as_deref()),
                 Param::number(p.created_at),
             ],
@@ -589,7 +586,7 @@ impl<'a> Materializer<'a> {
             return Ok(());
         }
         let learner = match &p.learner {
-            Some(learner) => Param::text(js::stringify(&serde_json::to_value(learner)?)),
+            Some(learner) => Param::text(serde_json::to_string(learner)?),
             None => Param::Null,
         };
         self.sql.exec(
@@ -599,7 +596,7 @@ impl<'a> Materializer<'a> {
                 Param::text(&p.conversation_id),
                 Param::number(p.index),
                 learner,
-                Param::text(js::stringify(&serde_json::to_value(&p.teacher)?)),
+                Param::text(serde_json::to_string(&p.teacher)?),
                 Param::number(at),
             ],
         )
@@ -702,7 +699,7 @@ impl<'a> Materializer<'a> {
                 "type": event.kind.as_str(),
                 "payload": serde_json::to_value(&event.payload)?,
             });
-            (SCOPED_EVENT_TYPE, js::stringify(&wrapped))
+            (SCOPED_EVENT_TYPE, wrapped.to_string())
         };
         let new = self.append(&event.id, kind, event.at, &event.device, &payload, seq)?;
         if new {
@@ -723,7 +720,7 @@ impl<'a> Materializer<'a> {
             &event.kind,
             event.at,
             &event.device,
-            &js::stringify(&event.payload),
+            &event.payload.to_string(),
             seq,
         )?;
         if new {
@@ -738,7 +735,7 @@ impl<'a> Materializer<'a> {
     pub fn insert_only(&self, event: &RawEvent) -> Result<()> {
         // Import is a log union, so keep the wire payload byte-for-structure.
         // In particular, a `profileEvent` must retain its scope wrapper.
-        let payload = js::stringify(&event.payload);
+        let payload = event.payload.to_string();
         self.sql.exec(
             "INSERT OR IGNORE INTO events (seq, id, type, at, device, payload) VALUES (NULL, ?, ?, ?, ?, ?)",
             &[

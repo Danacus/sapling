@@ -3248,10 +3248,9 @@ dependencies = [
 name = "sapling-core"
 version = "0.1.0"
 dependencies = [
- "fsrs",
- "getrandom 0.4.3",
  "rusqlite",
  "sapling-core",
+ "sapling-srs",
  "serde",
  "serde_json",
 ]
@@ -3290,6 +3289,15 @@ dependencies = [
  "sapling-models",
  "serde",
  "sherpa-onnx",
+]
+
+[[package]]
+name = "sapling-srs"
+version = "0.1.0"
+dependencies = [
+ "fsrs",
+ "getrandom 0.4.3",
+ "serde",
 ]
 
 [[package]]

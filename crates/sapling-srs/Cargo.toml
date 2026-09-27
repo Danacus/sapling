@@ -1,0 +1,18 @@
+[package]
+name = "sapling-srs"
+version = "0.1.0"
+edition = "2021"
+description = "Sapling's spaced repetition: the fsrs crate's FSRS-6 model behind a card, a scheduler and the numbers a screen reads off it."
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# FSRS itself, from the team that also writes ts-fsrs. `default-features = false`
+# is not worth spelling: the only default feature is the experimental cost model,
+# and turning it off still leaves `rand`/`rayon` in the tree (neither is reachable
+# from `next_states`).
+fsrs = "6.6.2"
+# Never called: `fsrs` pulls `rand` in for its optimizer, `rand` pulls `getrandom`,
+# and `getrandom` refuses to compile for wasm32 until something turns this feature
+# on. A direct dependency is how a leaf crate's feature gets unified in.
+getrandom = { version = "0.4", features = ["wasm_js"] }

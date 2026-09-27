@@ -1,9 +1,7 @@
-//! The whole local database, as one DDL string — `src/lib/db/schema.ts`.
+//! The whole local database, as one DDL string.
 //!
 //! Two layers: `events` is the facts log, everything under it an aggregate the
-//! materializer maintains. The text is the TypeScript's verbatim so the two
-//! cores can be diffed statement for statement, and so a database one of them
-//! created opens under the other.
+//! materializer maintains.
 
 pub const DDL: &str = "
 CREATE TABLE IF NOT EXISTS events (
@@ -87,11 +85,17 @@ pub const RECENT_GRADES_CAP: usize = 40;
 
 /// Identity of one review: `(itemId, at, device)` — not the event id, so two
 /// devices that recorded the same review collapse to one row.
+///
+/// The string is what every device has to agree on, and `at` is a whole
+/// millisecond: `f64`'s `Display` prints it without a fraction
+/// (`1700000000000`, never `1700000000000.0`), which is also what the old
+/// JavaScript core wrote into the rows a device already holds.
 pub fn review_key(item_id: &str, at: f64, device: &str) -> String {
-    format!("{item_id}|{}|{device}", crate::js::number_to_string(at))
+    format!("{item_id}|{at}|{device}")
 }
 
-/// The shape of the read tables, as a number to bump. Must match the TypeScript.
+/// The shape of the read tables, as a number to bump. The host reads it off the
+/// core (`WasmCore.derivedSchemaVersion`), so there is no second copy.
 ///
 /// Bumped for 4 when the SRS moved from the ts-fsrs port to the `fsrs` crate:
 /// the numbers a review folds to changed, and a device that kept its stored
@@ -126,7 +130,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn review_key_prints_the_timestamp_as_javascript_does() {
+    fn review_key_prints_a_whole_millisecond_without_a_fraction() {
+        // The cross-device identity of a review: a `.0` here would split every
+        // review this build writes from the same review an older build wrote.
         assert_eq!(review_key("i", 1710061260000.0, "d"), "i|1710061260000|d");
+        assert_eq!(review_key("i", 1700000000000.0, "d"), "i|1700000000000|d");
+        assert_eq!(review_key("i", 0.0, "d"), "i|0|d");
     }
 }

@@ -5,8 +5,10 @@
 //! them), and the same four extra checks: idempotence, an export imported into
 //! a fresh core, the exported log equalling the input log, and reverse arrival
 //! order where the fixture says its rules are order-free. Every read is
-//! canonicalised through `js::stringify` and re-parsed before comparing, which
-//! is what `JSON.parse(JSON.stringify(...))` does on the TypeScript side.
+//! canonicalised before comparing: a whole-valued number becomes an integer,
+//! because `expected.json` is written by JavaScript (where `1` and `1.0` are
+//! one number) and serde_json keeps the two apart. The fixtures compare values;
+//! how the core prints a number is not part of the contract.
 //!
 //! A few values in a fixture are not compared exactly, and only here: a card's
 //! `stability` and `difficulty`, and the `srs.retrievability` and `srs.strength`
@@ -30,7 +32,7 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 use sapling_core::rusqlite_sql::RusqliteSql;
-use sapling_core::{js, Core, Utc};
+use sapling_core::{Core, Utc};
 
 const RECENT_LIMIT: i64 = 5;
 const PENDING_LIMIT: i64 = 100;
@@ -188,9 +190,23 @@ fn by_key<T: serde::Serialize>(ids: &[String], read: impl Fn(&str) -> Option<T>)
     Value::Object(map)
 }
 
-/// `JSON.parse(JSON.stringify(value))`, with JavaScript's number formatting.
+/// `value` with every whole-valued number as an integer — the one number
+/// JavaScript would read out of either `1` or `1.0`.
 fn canonical(value: Value) -> Value {
-    serde_json::from_str(&js::stringify(&value)).expect("canonical JSON re-parses")
+    match value {
+        Value::Number(n) => match n.as_f64() {
+            Some(f) if f.fract() == 0.0 && f.abs() < 9e15 => Value::from(f as i64),
+            _ => Value::Number(n),
+        },
+        Value::Array(items) => Value::Array(items.into_iter().map(canonical).collect()),
+        Value::Object(entries) => Value::Object(
+            entries
+                .into_iter()
+                .map(|(key, item)| (key, canonical(item)))
+                .collect(),
+        ),
+        other => other,
+    }
 }
 
 fn probe(core: &Core, events: &[Value]) -> Value {
@@ -293,11 +309,7 @@ fn first_difference(a: &Value, b: &Value, path: &str) -> Option<String> {
                 .find_map(|(i, (p, q))| first_difference(p, q, &format!("{path}[{i}]")))
         }
         _ if a == b => None,
-        _ => Some(format!(
-            "{path}: {} vs {}",
-            js::stringify(a),
-            js::stringify(b)
-        )),
+        _ => Some(format!("{path}: {a} vs {b}")),
     }
 }
 

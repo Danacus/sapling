@@ -6,7 +6,7 @@
 //! database Worker, a native shell, a server) parses nothing itself — it hands
 //! the method name and the argument array here as JSON and gets JSON back, so
 //! every transport shares one argument convention and one formatting of the
-//! answer (`js::stringify`, so the text is what the TypeScript core printed).
+//! answer (serde_json's compact form).
 //!
 //! `None` is JavaScript's `undefined`: what a `void` method answers, and what a
 //! read answers for a row that is not there. JSON has no `undefined`, so an
@@ -21,7 +21,6 @@ use serde_json::{Map, Value};
 
 use crate::core::Core;
 use crate::events::{parse_payload, EventType, Payload};
-use crate::js;
 use crate::sql::{Error, Result};
 
 /// Every `Backend` method, as `protocol.ts` names them.
@@ -278,11 +277,13 @@ pub fn dispatch(core: &Core, method: &str, args: &[Value]) -> Result<Option<Valu
 }
 
 /// [`dispatch`] over the wire: `args_json` is the argument array, the answer
-/// is `JSON.stringify` of the result, or `None` for `undefined`.
+/// is the result as JSON, or `None` for `undefined`.
 pub fn dispatch_json(core: &Core, method: &str, args_json: &str) -> Result<Option<String>> {
     let args: Vec<Value> = serde_json::from_str(args_json)
         .map_err(|e| Error(format!("{method}: arguments are not a JSON array: {e}")))?;
-    Ok(dispatch(core, method, &args)?.as_ref().map(js::stringify))
+    Ok(dispatch(core, method, &args)?
+        .as_ref()
+        .map(Value::to_string))
 }
 
 /// Appends local facts from their wire shape — `[{ type, payload }, ...]`, the
@@ -382,10 +383,8 @@ mod tests {
             Some("[]".to_owned())
         );
         assert_eq!(dispatch_json(&core, "getProfile", "[]").unwrap(), None);
-        assert_eq!(
-            dispatch_json(&core, "poolSize", "[]").unwrap(),
-            Some("0".to_owned())
-        );
+        let pool_size = dispatch_json(&core, "poolSize", "[]").unwrap().unwrap();
+        assert_eq!(serde_json::from_str::<f64>(&pool_size).unwrap(), 0.0);
     }
 
     #[test]

@@ -8,9 +8,9 @@
  * back into the {@link Backend} methods `protocol.ts` names.
  *
  * JSON strings cross the boundary in both directions, on purpose: the core
- * formats every answer as `JSON.stringify` would, so nothing here has to agree
- * with it about how a number prints, and the rows the database hands back go
- * through `JSON.stringify` untouched. An `undefined` answer stays `undefined`
+ * formats every answer itself and `JSON.parse` reads it, so nothing here has
+ * to agree with it about how a number prints, and the rows the database hands
+ * back go through `JSON.stringify` untouched. An `undefined` answer stays `undefined`
  * — the core returns no string at all — because JSON cannot say it.
  */
 import type { Database } from '@sqlite.org/sqlite-wasm';
