@@ -1998,8 +1998,12 @@
 	  which a caption must never cover — the seek bar is the one control a learner
 	  reaches for mid-line. A dark plate rather than a text shadow, because ruby
 	  and the underlines need a ground to read against.
+
+	  `.screen` in the selector so it outranks `.is-following .prose`, whose
+	  two-line `min-height` and picture-wide `width` are for the paragraph under
+	  the video — on a caption they make the plate two lines tall and full width.
 	*/
-	.prose.caption {
+	.screen .prose.caption {
 		position: absolute;
 		left: 50%;
 		bottom: 3.6rem;
@@ -2759,27 +2763,33 @@
 		  definite height, so `height: 100%` resolves against it and the aspect
 		  ratio decides the rest. That is what keeps the picture as big as the room
 		  allows without the column ever growing past the frame.
-		*/
-		.is-following .film {
-			height: 100%;
-			width: auto;
-			max-width: 100%;
-			object-fit: contain;
-		}
 
-		/*
-		  The same trade for YouTube, with the ratio doing the work the video's own
-		  dimensions do above: a definite height from the stage, `width: auto`, and
-		  `aspect-ratio` derives the width — which is what `bind:clientWidth` then
-		  measures for the caption. `max-width` is what keeps a short, wide window
-		  from pushing the picture out of the column; the ratio holds and the height
-		  gives instead.
+		  The sizing sits on `.screen`, the stage's flex item, and the picture
+		  fills it. On the picture itself it would be a percentage height inside
+		  a shrink-to-fit box, which WebKit (so the Tauri webview) resolves as
+		  auto while sizing `.screen` — and the picture collapses to a sliver.
+		  `max-width` keeps a short, wide window from pushing the picture out of
+		  the column. The ratio is 16:9 for YouTube and the file alike, as the
+		  base rules declare; `object-fit` letterboxes a file that is not.
 		*/
-		.is-following .yt-frame {
+		.is-following .screen {
 			height: 100%;
 			width: auto;
 			max-width: 100%;
 			aspect-ratio: 16 / 9;
+		}
+
+		.is-following .film {
+			width: 100%;
+			height: 100%;
+			object-fit: contain;
+		}
+
+		/* YouTube's box fills `.screen` too — its width is what `bind:clientWidth`
+		   measures for the caption rows. */
+		.is-following .yt-frame {
+			width: 100%;
+			height: 100%;
 		}
 
 		.is-following .pick,
