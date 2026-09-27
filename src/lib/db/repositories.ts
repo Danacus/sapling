@@ -68,6 +68,12 @@ export const deleteText = forward('deleteText');
 export const markWord = forward('markWord');
 export const getKnownTerms = forward('getKnownTerms');
 export const recordLookup = forward('recordLookup');
+/**
+ * What an imported text is and the sentences it cuts into — subtitles re-cut
+ * with their timings, prose split. Answered by the Rust core without touching
+ * a table; it goes through here because that is where the window reaches Rust.
+ */
+export const importSource = forward('importSource');
 
 export const addConversation = forward('addConversation');
 export const addExchange = forward('addExchange');

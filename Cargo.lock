@@ -3283,6 +3283,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sapling-import"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "ts-rs",
+]
+
+[[package]]
 name = "sapling-models"
 version = "0.0.1"
 dependencies = [
@@ -3298,6 +3307,7 @@ version = "0.1.0"
 dependencies = [
  "sapling-db",
  "sapling-domain",
+ "sapling-import",
  "sapling-srs",
  "serde",
  "serde_json",

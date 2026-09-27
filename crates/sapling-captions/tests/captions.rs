@@ -123,7 +123,7 @@ fn lists_and_fetches_a_real_video() {
         .expect("yt-dlp writes the track");
 
     println!("{} ({}): {} bytes", track.name, track.lang, text.len());
-    // Not parsed here — that is `src/lib/reading/subtitles.ts`'s job, and this
+    // Not parsed here — that is `sapling-import`'s job, and this
     // only checks that what crossed is the shape it reads.
     assert!(text.contains("\"events\""), "json3 carries an events array");
     assert!(text.contains("tStartMs"), "and its events carry offsets");

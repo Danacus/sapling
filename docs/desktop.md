@@ -622,9 +622,9 @@ argument vectors need no scope file, and a plugin would put configuration
 between this module and the one program it runs.
 
 **The host does not parse a caption file.** `captions_fetch` hands back yt-dlp's
-bytes as they were written, and `src/lib/reading/subtitles.ts` — which already
-reads SRT, VTT and a copied transcript panel, and is pure and tested — reads
-`json3` as a fourth format. One parser in the repo, not a window one and a host
+bytes as they were written, and `crates/sapling-import` — which reads SRT,
+VTT and a copied transcript panel, and is pure and tested — reads `json3` as a
+fourth format. One parser in the repo, not a window one and a host
 one that drift. `json3` is the format asked for because its offsets are
 milliseconds already and it has no rolling window to undo, and because every
 YouTube track has one.

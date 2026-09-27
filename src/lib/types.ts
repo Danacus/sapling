@@ -3,7 +3,7 @@
  *
  * Everything (db, srs, validate, llm, ui) depends on this module. The types
  * that cross the persistence wire are generated from the Rust structs
- * (`crates/sapling-domain`, `crates/sapling-srs`) into `$lib/db/generated/`
+ * (`crates/sapling-domain`, `crates/sapling-srs`, `crates/sapling-import`) into `$lib/db/generated/`
  * at build time and re-exported here, so a field changes by changing the
  * struct. What stays written here is
  * what Rust treats as opaque JSON — the challenge union, whose shape the
@@ -25,6 +25,7 @@ export type {
 	GlossEntry,
 	GradeEntry,
 	HistoryEntry,
+	ImportedSource,
 	ItemKind,
 	ItemSrs,
 	KnowledgeItem,
@@ -33,7 +34,9 @@ export type {
 	ReadingMedia,
 	ReadingSentence,
 	ReadingText,
+	SubtitleFormat,
 	TextSource,
+	Timing,
 	Verdict
 } from './db/generated/index';
 import type { ConversationLearnerTurn, ConversationTeacherTurn } from './db/generated/index';

@@ -21,6 +21,9 @@
 //! `null` and is read as absent; the arguments after a `;` are the optional
 //! ones, `name?: T` in TypeScript and `Option<T>` in the body.
 //!
+//! A method may also answer without the database: `importSource` is
+//! `sapling-import`'s, and ignores `core`.
+//!
 //! Where Rust treats a value as opaque JSON because TypeScript owns its shape —
 //! a challenge, a pool row, a raw pulled event — the entry says which
 //! TypeScript type it is with `as "..."`.
@@ -41,6 +44,7 @@ use sapling_domain::types::{
     ChallengeResult, Conversation, ConversationDetail, ConversationExchange, ConversationSummary,
     DailyActivity, GradeEntry, KnowledgeItem, Profile, ReadingText,
 };
+use sapling_import::ImportedSource;
 
 #[cfg(test)]
 mod typescript;
@@ -417,6 +421,15 @@ backend! {
             core.record_lookup(&term, &textId, itemId.as_deref())
         }
 
+        /// Recognises an imported text and cuts it into sentences: subtitles
+        /// (SRT, VTT, json3, a copied transcript panel) are cleaned into cues
+        /// and re-cut into sentences that keep their timings; anything else is
+        /// prose, split on sentence-final punctuation and hard newlines. A pure
+        /// function of `text` — it touches no table.
+        importSource(text: String) -> ImportedSource {
+            Ok::<_, Error>(sapling_import::import_source(&text))
+        }
+
         /* ---- Conversations ---------------------------------------------- */
 
         /// Opens a conversation: the scene, and nothing else. Immutable once
@@ -596,6 +609,16 @@ mod tests {
         assert!(dispatch_json(&core, "getAllItems", "[null]").is_ok());
         assert!(dispatch_json(&core, "getAllItems", "[{\"withRecentGrades\": true}]").is_ok());
         assert!(dispatch_json(&core, "recordServe", "[\"c\", null]").is_ok());
+    }
+
+    #[test]
+    fn import_source_answers_without_the_database() {
+        let answer = dispatch_json(&silent_core(), "importSource", r#"["Hola. Adiós."]"#)
+            .unwrap()
+            .unwrap();
+        let value: Value = serde_json::from_str(&answer).unwrap();
+        assert_eq!(value["sentences"], serde_json::json!(["Hola.", "Adiós."]));
+        assert!(value.get("format").is_none());
     }
 
     #[test]

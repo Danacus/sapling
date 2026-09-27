@@ -132,8 +132,9 @@ stemmer, no dictionary:
   "already known" and skips the entry.
 
 **Annotate** (`annotate.ts`). For a pasted text. Sentences are split
-**locally** (`sentences.ts`: sentence-final punctuation `.!?。！？` and hard
-newlines; pure, tested) so the text on screen is exactly what was pasted; the
+**locally**, before anything is sent — by the Rust core's `importSource`
+(`crates/sapling-import`: sentence-final punctuation `.!?。！？…` and hard
+newlines; pure, tested) — so the text on screen is exactly what was pasted; the
 model receives the numbered sentences and returns, index-aligned:
 
 ```
@@ -161,38 +162,42 @@ ceiling, about ten calls — and is enforced by the page;
 `importCallCount(sentences)` is what it shows ("about N calls") before spending
 anything. `ReadingOptions.onProgress(done, total)` fires once per chunk.
 
-**Subtitles** (`subtitles.ts`, pure, dependency-free, tested). The learner's
+**Subtitles** (`crates/sapling-import`, pure, tested). The learner's
 route to a text is usually a video, and the subtitle file is the one artefact of
 it they can get. **In the desktop app they no longer have to get it**: the shell
 runs yt-dlp itself and a YouTube link becomes a track through this same door
 (§7, `.claude/rules/desktop.md`). Everywhere else they still bring one —
 `yt-dlp --write-subs --write-auto-subs --sub-format vtt` at a terminal, a yt-dlp
 app such as YTDLnis on a phone, or the "Show transcript" panel copied.
-`detectSubtitleFormat` recognises SRT, VTT, `json3` and the panel and returns
-`undefined` for prose, so the composer keeps **one
-door**. **`json3` is YouTube's own format and the one the desktop host asks for**:
+There is **one door**: the page hands whatever it has to the protocol's
+`importSource`, which recognises SRT, VTT, `json3` and the panel (its `format`,
+absent for prose) and answers the sentences either way — the only `Backend`
+method that touches no table. The window reaches Rust only through the protocol,
+so `$lib/reading` never calls it; the page and the `captions` task do. **`json3` is YouTube's own format and the one the desktop host asks for**:
 its offsets are already milliseconds, and it does not roll, so there is no
 repetition to undo. Its events are read as cues — a cue's `segs` joined with
 nothing (they carry their own spacing), the header event and the newline-only
 separators dropped, and an event with no `dDurationMs` ending where the next one
 starts. A real auto-generated file is about half separators, which is what makes
-that last rule load-bearing rather than defensive. `parseSubtitles` cleans a file to `Cue { start, end, text }` — BOM,
+that last rule load-bearing rather than defensive. The parser cleans a file to `Cue { start, end, text }` — BOM,
 CRLF, `NOTE`/`STYLE`/`REGION`, cue identifiers and settings, every `<...>` tag
 (including the per-word `<00:00:01.240>` timestamps), the named entities — and
 de-duplicates YouTube's *rolling* auto-captions, where each cue repeats the line
 above it with a ten-millisecond transition cue between every pair: a line is
 emitted the first time it is seen and keeps that cue's timing, and a cue left
-empty is dropped. `cuesToSentences` then undoes the cueing — cue texts joined
-with a space, or with nothing between two CJK characters, `splitSentences` over
+empty is dropped. `cues_to_sentences` then undoes the cueing — cue texts joined
+with a space, or with nothing between two CJK characters (a character-block
+test, not Unicode script data), the sentence split over
 the join, and each sentence's offsets recovered with a cursor and `indexOf` and
 mapped back to the cues holding its first and last character. The separator is
-deliberately not a newline, which `splitSentences` splits on. A transcript in
+deliberately not a newline, which the sentence split splits on. A transcript in
 which fewer than a quarter of the cues *end* in a sentence-final mark — the
 common auto-caption case has none at all, and a single stray 。 must not undo the
 fallback — degrades to one sentence per cue rather than one sentence per video
-(`PUNCTUATED_SHARE`). The timings land on
+(`PUNCTUATED_SHARE`). `importSource` answers `{ format?, cues, durationMs,
+sentences, timings? }`, `timings` index-aligned with `sentences`; they land on
 `ReadingSentence.start`/`end` (milliseconds into the media, both or neither),
-zipped on by the page so the module never learns where the text came from. What
+zipped on by the page so `$lib/reading` never learns where the text came from. What
 reads them is the reader's follow view, through `$lib/media`.
 
 Both return `{ title, sentences, glossary, usage }`; the page mints `id`
@@ -335,14 +340,15 @@ under the same condition.
   recording section that only existed once a paste happened to validate — and
   was restructured into *what the text is*, *what it will cost*, *what it plays
   alongside*. A file the learner uploads is recognised by its **content, not its
-  extension**: anything `detectSubtitleFormat` knows becomes a card in the
+  extension**: anything `importSource` gives a `format` becomes a card in the
   textarea's place stating what it holds (`SRT subtitles · 214 cues · 89
   sentences · 12:34 · about 4 calls`) with a × that gives the box back, and
   anything else *is* a paste and lands in the box, where it can still be read
   and edited. Exactly one of the two is on screen, which is how the page says
   which is the source; `pasted` survives underneath a card. `plan` stays a
-  single `$derived`, now over `sourceFile?.text ?? pasted`, so the card, the
-  counter, the disabled button and the import cannot disagree. The cost row sits
+  single derivation over one `importSource` answer for `sourceFile?.text ??
+  pasted` (an effect drops an answer whose source has since changed), so the
+  card, the counter, the disabled button and the import cannot disagree. The cost row sits
   before the button whichever source is in play, and the two states that disable
   the button — over the cap, nothing readable in the file — say so there, since
   a dead control cannot explain itself. The **recording group is always

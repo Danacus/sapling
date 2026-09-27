@@ -2,6 +2,7 @@
 members = [
 	"crates/sapling-srs",
 	"crates/sapling-domain",
+	"crates/sapling-import",
 	"crates/sapling-db",
 	"crates/sapling-protocol",
 	"crates/sapling-wasm",
@@ -26,6 +27,7 @@ members = [
 default-members = [
 	"crates/sapling-srs",
 	"crates/sapling-domain",
+	"crates/sapling-import",
 	"crates/sapling-db",
 	"crates/sapling-protocol",
 	"crates/sapling-wasm",

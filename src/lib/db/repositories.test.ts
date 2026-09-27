@@ -23,6 +23,7 @@ import {
 	getProfile,
 	getText,
 	getTexts,
+	importSource,
 	listProfiles,
 	markWord,
 	poolSize,
@@ -264,6 +265,34 @@ describe('reading texts', () => {
 
 		const loaded = await getText('t1');
 		expect(loaded && 'media' in loaded).toBe(false);
+	});
+});
+
+describe('importSource', () => {
+	it('splits prose and leaves it untimed', async () => {
+		const source = await importSource('Fuimos al restaurante. Pedí sopa.\nLa cuenta no era cara.');
+		expect(source).toEqual({
+			cues: 0,
+			durationMs: 0,
+			sentences: ['Fuimos al restaurante.', 'Pedí sopa.', 'La cuenta no era cara.']
+		});
+	});
+
+	it('recognises subtitles and gives every sentence its timing', async () => {
+		const source = await importSource(
+			'1\n00:00:01,000 --> 00:00:03,500\nHola. Adiós.\n\n2\n00:00:03,500 --> 00:00:06,000\nBien.\n'
+		);
+		expect(source).toEqual({
+			format: 'srt',
+			cues: 2,
+			durationMs: 6000,
+			sentences: ['Hola.', 'Adiós.', 'Bien.'],
+			timings: [
+				{ start: 1000, end: 3500 },
+				{ start: 1000, end: 3500 },
+				{ start: 3500, end: 6000 }
+			]
+		});
 	});
 });
 

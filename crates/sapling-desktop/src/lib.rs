@@ -437,8 +437,8 @@ fn tts_stop(player: State<'_, Arc<PlayerHandle>>) {
 // there is no engine to keep warm and no lock to take — each one runs a program
 // and reads what it wrote. Everything about *which* track is worth fetching and
 // what a transcript then becomes stays in `src/lib/media/captions.ts` and
-// `src/lib/reading/subtitles.ts`, which are the same modules the web build
-// runs; this host does not parse a caption file and must not learn how.
+// `sapling-import` (reached through the protocol, like every other build);
+// these commands do not parse a caption file and must not learn how.
 
 /// Whether yt-dlp and Deno are on this machine's PATH, and at what versions.
 ///
@@ -469,9 +469,9 @@ async fn captions_list(url: String) -> Result<captions::CaptionsListing, String>
 
 /// One track, as raw `json3` text.
 ///
-/// The host does not parse it: `src/lib/reading/subtitles.ts` already reads SRT
-/// and VTT and is tested, and a second parser here would be one that silently
-/// disagrees with the first. So this is text in the return value, not a typed
+/// The command does not parse it: `sapling-import` reads it through the
+/// protocol's `importSource`, beside SRT and VTT, and a second parser here would
+/// be one that silently disagrees with the first. So this is text in the return value, not a typed
 /// cue list — and unlike audio it is small enough that JSON is the right
 /// carrier: a long transcript is a few hundred kilobytes of the string it
 /// already is, with nothing to re-encode.

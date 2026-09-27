@@ -13,13 +13,7 @@ import { clearApiKey, setApiKey } from '$lib/db/settings';
 import { isMockMode } from '$lib/llm';
 import type { BatchProfile, FetchLike } from '$lib/llm';
 import { MAX_IMPORT_CHARS } from './annotate-call';
-import {
-	annotateReadingText,
-	generateReadingText,
-	importCallCount,
-	lookUpWord,
-	splitSentences
-} from './index';
+import { annotateReadingText, generateReadingText, importCallCount, lookUpWord } from './index';
 
 const profile: BatchProfile = {
 	nativeLanguage: 'English',
@@ -42,8 +36,7 @@ describe('the reading entry points', () => {
 	});
 
 	it('annotateReadingText annotates a locally split text without changing it', async () => {
-		const pasted = 'Fuimos al restaurante. Pedí sopa.\nLa cuenta no era cara.';
-		const sentences = splitSentences(pasted);
+		const sentences = ['Fuimos al restaurante.', 'Pedí sopa.', 'La cuenta no era cara.'];
 
 		const text = await annotateReadingText({ profile, vocabulary: [], sentences });
 

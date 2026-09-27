@@ -1,0 +1,14 @@
+[package]
+name = "sapling-import"
+version = "0.1.0"
+edition = "2021"
+description = "Sapling's reading import, the deterministic half: subtitle detection and parsing, the sentence split, and cues re-cut into timed sentences."
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# Only to read a json3 document; nothing here writes JSON.
+serde_json = "1"
+# The TypeScript side of the wire is generated from these types (`pnpm core:types`,
+# see `sapling-protocol`'s `typescript` tests). The derive is inert outside that.
+ts-rs = { version = "12.0.1", features = ["no-serde-warnings"] }

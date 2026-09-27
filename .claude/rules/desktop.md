@@ -86,8 +86,8 @@ someone to run the check by hand.
   **No process crate**: `std::process::Command` and `serde_json`, and
   deliberately not `tauri-plugin-shell` — three fixed argument
   vectors need no scope file. **The host never parses a caption file**: the
-  window has one subtitle parser (`src/lib/reading/subtitles.ts`, where `json3`
-  is now a format beside SRT and VTT), and a second one here would be one that
+  app has one subtitle parser (`crates/sapling-import`, where `json3` is a
+  format beside SRT and VTT, reached through the protocol's `importSource`), and a second one here would be one that
   silently disagrees. **Android never meets it** — no yt-dlp and no PATH to look
   on — and it is a *target gate* rather than a Cargo feature because there is
   nothing to link and nothing to make optional. That costs a phone nothing:

@@ -12,7 +12,7 @@
 //! It passes the same test persistence and speech pass: a platform primitive
 //! with no domain knowledge in it. A URL in and a caption file out. **The host
 //! does not parse captions** — `captions_fetch` hands back yt-dlp's `json3`
-//! bytes verbatim, because parsing them is `src/lib/reading/subtitles.ts`'s
+//! bytes verbatim, because parsing them is `sapling-import`'s
 //! job, where the SRT and VTT parsers already live and are tested, and a second
 //! implementation here would be the kind of thing that silently disagrees with
 //! the first.
@@ -333,7 +333,7 @@ fn parse_listing(json: &str) -> Result<CaptionsListing, String> {
     let title = root.get("title").and_then(Value::as_str).unwrap_or(id);
 
     // Manual first, deliberately: a track a person wrote is punctuated, and
-    // punctuation is what lets `cuesToSentences` cut the transcript into
+    // punctuation is what lets `cues_to_sentences` cut the transcript into
     // sentences instead of falling back to one sentence per cue.
     let mut tracks = tracks_from(root.get("subtitles"), false);
     tracks.extend(tracks_from(root.get("automatic_captions"), true));

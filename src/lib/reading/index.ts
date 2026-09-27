@@ -7,12 +7,12 @@
  * stores. {@link lookUpWord} is the third paid call and the only one that runs
  * *while* reading: one word the glossary missed, explained in the sentence it
  * stands in, which the page merges into the glossary for the rest of that open.
- * Everything else is local: `parseSubtitles` turns a `.srt`/`.vtt` file into
- * cues, `splitSentences` cuts an import before it is ever sent, `chunkSentences`
- * decides how many calls it takes, `paginate` decides where the pages break,
- * and `tokenizeByTerms` and
+ * Everything else is local: `chunkSentences` decides how many calls an import
+ * takes, `paginate` decides where the pages break, and `tokenizeByTerms` and
  * `annotateSentence` decide what the reader sees — none of which costs a token
- * or a round trip.
+ * or a round trip. Cutting an import into sentences in the first place (and
+ * recognising subtitles) is the Rust core's `importSource`, which the *caller*
+ * reaches through `$lib/db` — this module never does.
  *
  * Stateless, like `$lib/conversation`: **nothing here imports `$lib/db`.** The
  * caller passes the vocabulary in and persists what comes out, which is what
@@ -214,11 +214,6 @@ export {
 	lookedUpWordJsonSchema
 } from './schemas';
 export type { ReadingTextDraft } from './schemas';
-
-export { hasSentenceEnd, splitSentences } from './sentences';
-
-export { cuesToSentences, detectSubtitleFormat, parseSubtitles } from './subtitles';
-export type { Cue, SubtitleFormat, TimedSentence } from './subtitles';
 
 export { tokenizeByTerms, wordKey } from './tokenize';
 

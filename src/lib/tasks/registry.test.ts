@@ -70,15 +70,13 @@ describe('top-up summary', () => {
 });
 
 describe('captions summary and title', () => {
-	const line = { text: '我们去了饭馆。', start: 0, end: 1000 };
-
 	it('counts the lines the track cut into', () => {
-		expect(captionsTask.summary({ name: 'Japanese', text: '{}', sentences: [line] })).toBe(
+		expect(captionsTask.summary({ name: 'Japanese', text: '{}', sentences: 1 })).toBe(
 			'1 line from Japanese'
 		);
-		expect(
-			captionsTask.summary({ name: 'Japanese', text: '{}', sentences: [line, line, line] })
-		).toBe('3 lines from Japanese');
+		expect(captionsTask.summary({ name: 'Japanese', text: '{}', sentences: 3 })).toBe(
+			'3 lines from Japanese'
+		);
 	});
 
 	it('titles by the track, which is what the learner picked', () => {

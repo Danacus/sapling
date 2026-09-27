@@ -11,11 +11,10 @@
  * `crates/sapling-captions/src/lib.rs` is the other end.
  *
  * **What comes back is a file, not a parse.** {@link fetchCaptions} answers raw
- * `json3` text and nothing more, and the caller hands it to
- * `$lib/reading`'s `detectSubtitleFormat`/`parseSubtitles` — the same door an
- * uploaded `.srt` goes through. That is deliberate: there is one subtitle parser
- * in this repo, it is pure and tested, and the host has no business growing a
- * second one.
+ * `json3` text and nothing more, and the caller hands it to the core's
+ * `importSource` (`crates/sapling-import`) — the same door an uploaded `.srt`
+ * goes through. That is deliberate: there is one subtitle parser in this repo,
+ * and the yt-dlp host has no business growing a second one.
  *
  * **This is the second place in `$lib/media` that asks `inTauri()`** (the first
  * is `youtube-host.ts`, which picks the player), and it asks for the same
@@ -42,7 +41,7 @@ export interface CaptionTrack {
 	/**
 	 * Machine-generated rather than written by a person. Worth a mark in the
 	 * list: an automatic track is usually unpunctuated, which is exactly what
-	 * makes `cuesToSentences` fall back to one sentence per cue.
+	 * makes the import fall back to one sentence per cue.
 	 */
 	auto: boolean;
 }

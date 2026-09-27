@@ -9,22 +9,21 @@
  *
  * **The result carries the file, not a parse of it.** What comes back from the
  * host is raw `json3`, and this def hands the composer exactly that — because
- * `json3` is an *import format* (`$lib/reading/subtitles.ts`), so the fetched
+ * `json3` is an *import format* (the core's `importSource`), so the fetched
  * text enters the identical path an uploaded `.srt` does: one `sourceFile`, one
  * `plan` derivation behind the card, the counter, the button and the import. A
  * parsed cue list would have been a second, parallel source of truth for the
  * one thing that composer deliberately derives once.
  *
- * The sentences are in the result too, and they are the reason this def parses
- * at all: a track that yields nothing readable is a failure worth reporting in
- * the tray rather than a dead Add button the learner has to work out for
- * themselves, and their count is what the summary says.
+ * The sentence count is in the result too, and it is the reason this def
+ * parses at all: a track that yields nothing readable is a failure worth
+ * reporting in the tray rather than a dead Add button the learner has to work
+ * out for themselves, and the count is what the summary says.
  */
 
 import { fetchCaptions } from '$lib/media';
 import type { CaptionTrack } from '$lib/media';
-import { cuesToSentences, parseSubtitles } from '$lib/reading';
-import type { TimedSentence } from '$lib/reading';
+import { importSource } from '$lib/db';
 import type { TaskKindDef } from '../types';
 
 /**
@@ -41,8 +40,8 @@ export interface CaptionsResult {
 	name: string;
 	/** The track exactly as yt-dlp wrote it: `json3`, for the composer to import. */
 	text: string;
-	/** What it cuts into — counted by {@link captionsTask.summary}. */
-	sentences: TimedSentence[];
+	/** How many sentences it cuts into — what {@link captionsTask.summary} says. */
+	sentences: number;
 }
 
 export const captionsTask = {
@@ -68,16 +67,16 @@ export const captionsTask = {
 		const text = await fetchCaptions(input.videoId, input);
 
 		ctx.step('read', `Reading ${input.name}`);
-		const sentences = cuesToSentences(parseSubtitles(text));
+		const { sentences } = await importSource(text);
 		if (sentences.length === 0) {
 			throw new Error(`There is nothing readable in the ${input.name} track.`);
 		}
 
-		return { name: input.name, text, sentences };
+		return { name: input.name, text, sentences: sentences.length };
 	},
 
 	summary(result) {
-		const lines = result.sentences.length;
+		const lines = result.sentences;
 		return `${lines} line${lines === 1 ? '' : 's'} from ${result.name}`;
 	}
 } satisfies TaskKindDef<CaptionsInput, CaptionsResult>;

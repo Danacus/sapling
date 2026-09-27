@@ -10,8 +10,8 @@
   The two doors cost the same round trip and differ only in what the model is
   asked for: `generateReadingText` writes a text out of the garden, while
   `annotateReadingText` takes a text the learner imported and only annotates it —
-  the sentences are cut here, locally, so what lands on the reader is exactly
-  what was pasted. Both come back as a draft; this page mints the id and the
+  the sentences are cut locally first (the core's `importSource`), so what lands
+  on the reader is exactly what was pasted. Both come back as a draft; this page mints the id and the
   timestamp and stores it, which is the whole reason `$lib/reading` can stay
   stateless.
 
@@ -64,7 +64,7 @@
 	import { goto } from '$app/navigation';
 	import { onDestroy } from 'svelte';
 
-	import { getAllItems, getKnownTerms, getProfile, getTexts } from '$lib/db';
+	import { getAllItems, getKnownTerms, getProfile, getTexts, importSource } from '$lib/db';
 	import { isMockMode } from '$lib/llm';
 	import { captionsAvailable, listCaptions, videoIdFrom } from '$lib/media';
 	import type { CaptionsTools, CaptionTrack } from '$lib/media';
@@ -72,18 +72,20 @@
 		MAX_FOCUS_WORDS,
 		MAX_IMPORT_TOTAL_CHARS,
 		MAX_TOPIC_CHARS,
-		cuesToSentences,
-		detectSubtitleFormat,
-		importCallCount,
-		parseSubtitles,
-		splitSentences
+		importCallCount
 	} from '$lib/reading';
-	import type { SubtitleFormat } from '$lib/reading';
 	import { selectSessionItems } from '$lib/srs';
 	import { SETTLED, rootOf, startTask, taskOutcome } from '$lib/tasks';
 	import type { Task } from '$lib/tasks';
 	import { taskStore } from '$lib/tasks/store.svelte';
-	import type { KnowledgeItem, Profile, ReadingMedia, ReadingText } from '$lib/types';
+	import type {
+		ImportedSource,
+		KnowledgeItem,
+		Profile,
+		ReadingMedia,
+		ReadingText,
+		SubtitleFormat
+	} from '$lib/types';
 	import BackLink from '$lib/ui/BackLink.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
@@ -278,56 +280,53 @@
 	 * line that describes it and by the button that spends the money.
 	 *
 	 * There is one door, not two: the learner pastes or uploads whatever they have
-	 * and the page recognises it. A subtitle file is un-cued back into sentences
-	 * (`cuesToSentences`) and keeps its timings; anything else is prose and is
-	 * simply split. **One `$derived` over one source**, which is what keeps the
-	 * card, the counter, the button's disabled state and the import from ever
-	 * disagreeing about what is being sent — the source is the uploaded file if
-	 * there is one and the box otherwise, and nothing downstream asks which.
+	 * and the page recognises it. The core's `importSource` does the recognising
+	 * and the cutting — a subtitle file is un-cued back into sentences that keep
+	 * their timings, anything else is prose and is simply split. **One answer over
+	 * one source**, which is what keeps the card, the counter, the button's
+	 * disabled state and the import from ever disagreeing about what is being
+	 * sent — the source is the uploaded file if there is one and the box
+	 * otherwise, and nothing downstream asks which.
+	 *
+	 * The answer is a round trip, so it lands in `$state` from an effect, and an
+	 * answer for a source that has since changed is dropped rather than shown.
 	 */
-	interface ImportPlan {
-		/** Absent for ordinary prose — the existing path. */
-		format?: SubtitleFormat;
-		cues: number;
-		/** How much media the cues span, in milliseconds. Zero without cues. */
-		durationMs: number;
-		sentences: string[];
-		/** Index-aligned with `sentences`; absent unless this came from subtitles. */
-		timings?: { start: number; end: number }[];
+	let imported = $state<{ source: string; result: ImportedSource }>({
+		source: '',
+		result: { cues: 0, durationMs: 0, sentences: [] }
+	});
+
+	$effect(() => {
+		const source = sourceFile?.text ?? pasted;
+		let stale = false;
+		importSource(source).then(
+			(result) => {
+				if (!stale) imported = { source, result };
+			},
+			() => {}
+		);
+		return () => {
+			stale = true;
+		};
+	});
+
+	/** {@link ImportedSource}, plus what the import will cost. */
+	interface ImportPlan extends ImportedSource {
 		/** What counts against the ceiling: the text that will be sent. */
 		chars: number;
 		calls: number;
 	}
 
 	const plan = $derived.by((): ImportPlan => {
-		const source = sourceFile?.text ?? pasted;
-		const format = detectSubtitleFormat(source);
-
-		if (format) {
-			const cues = parseSubtitles(source);
-			const timed = cuesToSentences(cues);
-			const sentences = timed.map((sentence) => sentence.text);
-			return {
-				format,
-				cues: cues.length,
-				// The furthest point any cue reaches rather than the last cue's end:
-				// the two are the same in every well-formed file, and a `reduce` says
-				// so without trusting the order.
-				durationMs: cues.reduce((furthest, cue) => Math.max(furthest, cue.end), 0),
-				sentences,
-				timings: timed.map(({ start, end }) => ({ start, end })),
-				chars: sentences.reduce((total, sentence) => total + sentence.length, 0),
-				calls: importCallCount(sentences)
-			};
-		}
-
-		const sentences = splitSentences(source);
+		const { source, result } = imported;
 		return {
-			cues: 0,
-			durationMs: 0,
-			sentences,
-			chars: source.length,
-			calls: importCallCount(sentences)
+			...result,
+			// For subtitles, the sentence text rather than the file: the cue soup
+			// is never sent.
+			chars: result.format
+				? result.sentences.reduce((total, sentence) => total + sentence.length, 0)
+				: source.length,
+			calls: importCallCount(result.sentences)
 		};
 	});
 
@@ -472,7 +471,7 @@
 		composeError = '';
 		try {
 			const text = await file.text();
-			if (detectSubtitleFormat(text)) sourceFile = { name: file.name, text };
+			if ((await importSource(text)).format) sourceFile = { name: file.name, text };
 			else {
 				// Prose: the box is where it belongs, and it replaces whatever object
 				// was standing in for it.
@@ -597,7 +596,10 @@
 	async function add() {
 		if (!profile || busy) return;
 
-		const { sentences, timings } = plan;
+		// The effect's answer can trail a keystroke; never import a stale cut.
+		const source = sourceFile?.text ?? pasted;
+		const { sentences, timings } =
+			imported.source === source ? imported.result : await importSource(source);
 		if (sentences.length === 0) {
 			composeError = 'There is nothing to read in that yet.';
 			return;
