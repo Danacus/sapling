@@ -45,13 +45,8 @@ export const upsertItems = forward('upsertItems');
 export const deleteItem = forward('deleteItem');
 /**
  * Folds a review into an item — {@link Backend.reviewItem} under the name its
- * callers have always used.
- *
- * It used to take a `nextCard` callback that computed the resulting card with
- * ts-fsrs; the backend never consulted it, because the card the materializer
- * folds is the one source of truth. It is gone along with ts-fsrs itself: a
- * review is `{at, grade}`, and a caller that wants the resulting card reads it
- * off the answer.
+ * callers use. A review is `{at, grade}`; a caller that wants the resulting
+ * card reads it off the answer.
  */
 export const updateItemAfterReview = forward('reviewItem');
 

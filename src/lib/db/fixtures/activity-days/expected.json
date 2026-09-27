@@ -10,8 +10,8 @@
 				"introducedAt": 1710061200000,
 				"fsrsCard": {
 					"due": 1710062280000,
-					"stability": 2.30649996,
-					"difficulty": 4.75285816,
+					"stability": 2.3065,
+					"difficulty": 4.752858,
 					"elapsed_days": 0,
 					"scheduled_days": 0,
 					"learning_steps": 1,
@@ -22,8 +22,8 @@
 				},
 				"srs": {
 					"due": 1710062280000,
-					"retrievability": 0.90949321,
-					"strength": 0.31673212
+					"retrievability": 0.9094932079315186,
+					"strength": 0.3167321144806818
 				},
 				"reviewCount": 2,
 				"correctCount": 1,
@@ -39,7 +39,7 @@
 				"fsrsCard": {
 					"due": 1710151320000,
 					"stability": 0.1008859,
-					"difficulty": 8.80630398,
+					"difficulty": 8.806304,
 					"elapsed_days": 1,
 					"scheduled_days": 0,
 					"learning_steps": 0,
@@ -50,8 +50,8 @@
 				},
 				"srs": {
 					"due": 1710151320000,
-					"retrievability": 0.69368184,
-					"strength": 0.01941573
+					"retrievability": 0.6936818361282349,
+					"strength": 0.019415733519403986
 				},
 				"reviewCount": 2,
 				"correctCount": 0,
@@ -96,8 +96,8 @@
 				"introducedAt": 1710061200000,
 				"fsrsCard": {
 					"due": 1710062280000,
-					"stability": 2.30649996,
-					"difficulty": 4.75285816,
+					"stability": 2.3065,
+					"difficulty": 4.752858,
 					"elapsed_days": 0,
 					"scheduled_days": 0,
 					"learning_steps": 1,
@@ -108,8 +108,8 @@
 				},
 				"srs": {
 					"due": 1710062280000,
-					"retrievability": 0.90949321,
-					"strength": 0.31673212
+					"retrievability": 0.9094932079315186,
+					"strength": 0.3167321144806818
 				},
 				"reviewCount": 2,
 				"correctCount": 1,
@@ -135,7 +135,7 @@
 				"fsrsCard": {
 					"due": 1710151320000,
 					"stability": 0.1008859,
-					"difficulty": 8.80630398,
+					"difficulty": 8.806304,
 					"elapsed_days": 1,
 					"scheduled_days": 0,
 					"learning_steps": 0,
@@ -146,8 +146,8 @@
 				},
 				"srs": {
 					"due": 1710151320000,
-					"retrievability": 0.69368184,
-					"strength": 0.01941573
+					"retrievability": 0.6936818361282349,
+					"strength": 0.019415733519403986
 				},
 				"reviewCount": 2,
 				"correctCount": 0,
@@ -204,8 +204,8 @@
 			"introducedAt": 1710061200000,
 			"fsrsCard": {
 				"due": 1710062280000,
-				"stability": 2.30649996,
-				"difficulty": 4.75285816,
+				"stability": 2.3065,
+				"difficulty": 4.752858,
 				"elapsed_days": 0,
 				"scheduled_days": 0,
 				"learning_steps": 1,
@@ -216,8 +216,8 @@
 			},
 			"srs": {
 				"due": 1710062280000,
-				"retrievability": 0.90949321,
-				"strength": 0.31673212
+				"retrievability": 0.9094932079315186,
+				"strength": 0.3167321144806818
 			},
 			"reviewCount": 2,
 			"correctCount": 1,
@@ -255,7 +255,7 @@
 			"fsrsCard": {
 				"due": 1710151320000,
 				"stability": 0.1008859,
-				"difficulty": 8.80630398,
+				"difficulty": 8.806304,
 				"elapsed_days": 1,
 				"scheduled_days": 0,
 				"learning_steps": 0,
@@ -266,8 +266,8 @@
 			},
 			"srs": {
 				"due": 1710151320000,
-				"retrievability": 0.69368184,
-				"strength": 0.01941573
+				"retrievability": 0.6936818361282349,
+				"strength": 0.019415733519403986
 			},
 			"reviewCount": 2,
 			"correctCount": 0,

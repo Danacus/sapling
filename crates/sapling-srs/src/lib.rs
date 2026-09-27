@@ -1,59 +1,17 @@
-//! Spaced repetition: the `fsrs` crate's FSRS-6 memory model, driven through
-//! the scheduler shape ts-fsrs gave this app.
+//! Spaced repetition. The `fsrs` crate supplies the FSRS-6 memory model; this
+//! crate owns the card around it — the New/Learning/Review/Relearning states,
+//! the learning and relearning steps, the hard < good < easy ordering and
+//! lapses — and the numbers a screen reads off a card ([`ItemSrs`]). It knows
+//! nothing of events or SQL, and reads no clock: every function takes `now`.
 //!
-//! A crate of its own so that it stays a function of a card, a grade and a
-//! time: it knows nothing of events, SQL or Sapling's schema. `sapling-db`
-//! calls it from the merge rules and stores what it returns, and
-//! `sapling-domain` carries its [`ItemSrs`] on a read; the dependency only ever
-//! points that way.
-//!
-//! The split is deliberate. **The `fsrs` crate owns the formulas** — stability,
-//! difficulty and the interval a stability implies, all of it FSRS-6 with the
-//! default parameters and `desired_retention` 0.9, maintained upstream by the
-//! same people who write ts-fsrs. **This crate owns the card**: the
-//! New/Learning/Review/Relearning machine, the learning steps `1m`/`10m` and
-//! the relearning step `10m`, `reps`, `lapses`, `elapsed_days`,
-//! `scheduled_days`, `due`, the hard < good < easy ordering rule, and the
-//! `FsrsCardState` shape a host stores. `fsrs::FSRS::next_states` knows nothing
-//! about any of that.
-//!
-//! It is not a port any more, so it is not bit-comparable with ts-fsrs — and it
-//! does not have to be, because **there is no other FSRS anywhere**. The
-//! frontend dropped ts-fsrs entirely: it holds grades, opaque cards and
-//! timestamps, and the numbers it draws off a card — [`ItemSrs`], attached to
-//! every item a read returns — are computed here, from the same model that
-//! wrote the card. One implementation, so there is nothing left to keep
-//! agreeing.
-//!
-//! **A card is not bit-comparable across hosts either, and cannot be made so.**
-//! The crate computes in `f32`, and `f32`'s `exp` and `powf` come from the
-//! host's libm natively and from Rust's `libm` port on wasm32; those disagree by
-//! an ulp or two, which a chain of them turns into a difference around the
-//! seventh significant digit. The old port avoided this by working in `f64`,
-//! where eight-decimal rounding sat eight orders of magnitude above the noise;
-//! at `f32` no rounding can both keep the value and hide the gap. So a card is
-//! widened to `f64` and cut to eight decimals — about all the precision an
-//! `f32` carries, and enough to keep the JSON short and stable *per host* — and
-//! `sapling-db`'s `tests/golden.rs` is where the tolerance lives instead. It covers
-//! [`ItemSrs`]'s two floats for the same reason, since they are read off that
-//! same `f32` model. Nothing downstream reads any of it that closely: `due` and
-//! `scheduled_days` are whole minutes and days, and [`word_strength`] is a log.
-//!
-//! Nothing here reads a clock or an RNG: `next_states` takes the elapsed days
-//! explicitly and the crate's randomness lives only in its optimizer.
+//! The model computes in `f32`, whose `exp`/`powf` differ slightly between the
+//! native and wasm builds, so compare its outputs with a tolerance.
 
 use std::sync::OnceLock;
 
 use fsrs::{ItemState, MemoryState, NextStates, FSRS, FSRS6_DEFAULT_DECAY};
 use serde::{Deserialize, Serialize};
 
-/// `x` to `decimals` places, halves away from zero.
-fn round_to(x: f64, decimals: i32) -> f64 {
-    let factor = 10f64.powi(decimals);
-    (x * factor).round() / factor
-}
-
-/// ts-fsrs `Rating`, minus `Manual`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Grade {
     Again = 1,
@@ -63,18 +21,14 @@ pub enum Grade {
 }
 
 impl Grade {
-    /// A stored grade back to the enum; anything but 1–4 is what ts-fsrs throws on.
+    /// A stored grade back to the enum.
     pub fn from_f64(grade: f64) -> Result<Grade, String> {
-        if grade == 1.0 {
-            Ok(Grade::Again)
-        } else if grade == 2.0 {
-            Ok(Grade::Hard)
-        } else if grade == 3.0 {
-            Ok(Grade::Good)
-        } else if grade == 4.0 {
-            Ok(Grade::Easy)
-        } else {
-            Err(format!("Invalid grade \"{grade}\",expected 1-4"))
+        match grade {
+            1.0 => Ok(Grade::Again),
+            2.0 => Ok(Grade::Hard),
+            3.0 => Ok(Grade::Good),
+            4.0 => Ok(Grade::Easy),
+            _ => Err(format!("invalid grade {grade}, expected 1-4")),
         }
     }
 }
@@ -82,22 +36,18 @@ impl Grade {
 /// The grade at or above which a review counts as correct.
 pub const GOOD: f64 = 3.0;
 
-/// ts-fsrs `State`.
 pub const NEW: i64 = 0;
 pub const LEARNING: i64 = 1;
 pub const REVIEW: i64 = 2;
 pub const RELEARNING: i64 = 3;
 
-/// A ts-fsrs `Card` with its dates as epoch milliseconds — `FsrsCardState`.
-///
-/// Field order is the JSON order `fromFsrsCard` writes. The integral fields
-/// are integers because ts-fsrs only ever assigns them rounded values; `due`
-/// stays a double because the timestamps a host passes in are.
+/// A card, with its dates as epoch milliseconds. `stability` and `difficulty`
+/// are the model's own `f32`s, which also keeps their JSON short.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FsrsCardState {
     pub due: f64,
-    pub stability: f64,
-    pub difficulty: f64,
+    pub stability: f32,
+    pub difficulty: f32,
     pub elapsed_days: i64,
     pub scheduled_days: i64,
     pub learning_steps: i64,
@@ -107,10 +57,10 @@ pub struct FsrsCardState {
     pub last_review: Option<f64>,
 }
 
-/// State for a freshly introduced item, due immediately — `createEmptyCard(now)`.
+/// A freshly introduced item, due immediately.
 pub fn new_card_state(now: f64) -> FsrsCardState {
     FsrsCardState {
-        due: date(now),
+        due: now,
         stability: 0.0,
         difficulty: 0.0,
         elapsed_days: 0,
@@ -123,41 +73,30 @@ pub fn new_card_state(now: f64) -> FsrsCardState {
     }
 }
 
-/// `new Date(ms).getTime()`: the time clip truncates towards zero.
-fn date(ms: f64) -> f64 {
-    ms.trunc()
-}
+/* ---- The model -------------------------------------------------------------- */
 
-/* ---- The model: everything below this line comes from the crate ------------- */
-
-/// ts-fsrs's `request_retention`, which the crate calls `desired_retention`.
 const DESIRED_RETENTION: f32 = 0.9;
 
-/// The longest interval ts-fsrs will schedule. The crate has no such cap; it is
-/// a scheduler policy, so it stays here.
+/// The longest interval ever scheduled. The model has no cap; this is policy.
 const MAXIMUM_INTERVAL: f64 = 36500.0;
 
-/// The model, with `DEFAULT_PARAMETERS` — FSRS-6's, the same 21 weights
-/// `generatorParameters()` hands ts-fsrs. Built once: `FSRS::new` validates and
-/// clips the parameter vector, and the answer never changes.
+/// FSRS-6 with `DEFAULT_PARAMETERS`, built once: `FSRS::new` validates the
+/// parameter vector, and the answer never changes.
 fn model() -> &'static FSRS {
     static MODEL: OnceLock<FSRS> = OnceLock::new();
     MODEL.get_or_init(FSRS::default)
 }
 
 /// The memory states and intervals for all four grades after `elapsed_days`.
-///
-/// `None` is how the crate is told to initialise rather than step, and a card
-/// whose memory is still zero is exactly the card the model has never seen —
-/// the same test the ported `next_state` made before returning the initial
-/// difficulty and stability.
+/// A card whose memory is still zero is one the model has never seen, and
+/// `None` asks the model for initial states rather than a step.
 fn next_states(card: &FsrsCardState, elapsed_days: i64) -> Result<NextStates, String> {
     let memory = if card.stability == 0.0 && card.difficulty == 0.0 {
         None
     } else {
         Some(MemoryState {
-            stability: card.stability as f32,
-            difficulty: card.difficulty as f32,
+            stability: card.stability,
+            difficulty: card.difficulty,
         })
     };
     // A negative elapsed time means a clock that went backwards between two
@@ -166,7 +105,7 @@ fn next_states(card: &FsrsCardState, elapsed_days: i64) -> Result<NextStates, St
         .next_states(memory, DESIRED_RETENTION, elapsed_days.max(0) as u32)
         .map_err(|err| {
             format!(
-                "Invalid memory state {{ difficulty: {}, stability: {} }}: {err}",
+                "invalid memory state (difficulty {}, stability {}): {err}",
                 card.difficulty, card.stability
             )
         })
@@ -181,19 +120,12 @@ fn state_for(states: &NextStates, grade: Grade) -> &ItemState {
     }
 }
 
-/// The model's `f32` as a card stores it: widened, then cut to eight decimals
-/// so an `f32`'s binary tail never reaches the stored JSON or the fixtures.
-fn store(value: f32) -> f64 {
-    round_to(value as f64, 8)
-}
-
-/// The model's interval as a whole number of days, clamped the way ts-fsrs
-/// clamps it.
+/// The model's interval as a whole number of days, within [1, MAXIMUM_INTERVAL].
 fn interval_days(state: &ItemState) -> f64 {
     (state.interval as f64).round().clamp(1.0, MAXIMUM_INTERVAL)
 }
 
-/* ---- BasicScheduler --------------------------------------------------------- */
+/* ---- The scheduler ---------------------------------------------------------- */
 
 const LEARNING_STEPS_MINUTES: [f64; 2] = [1.0, 10.0];
 const RELEARNING_STEPS_MINUTES: [f64; 1] = [10.0];
@@ -201,13 +133,14 @@ const RELEARNING_STEPS_MINUTES: [f64; 1] = [10.0];
 const MINUTE: f64 = 60.0 * 1e3;
 const DAY: f64 = 24.0 * 60.0 * 60.0 * 1e3;
 
-/// `dateDiffInDays`: whole UTC calendar days from `last` to `cur`.
+/// Whole UTC calendar days from `last` to `cur`.
 fn date_diff_in_days(last: f64, cur: f64) -> i64 {
     let day = |ms: f64| (ms / DAY).floor();
     (day(cur) - day(last)) as i64
 }
 
-/// `BasicLearningStepsStrategy` for one grade: `(scheduled_minutes, next_step)`.
+/// The learning step one grade moves a card to: `(scheduled_minutes, next_step)`,
+/// or `None` when the grade leaves the steps.
 fn learning_step(state: i64, cur_step: i64, grade: Grade) -> Option<(f64, i64)> {
     let steps: &[f64] = if state == RELEARNING || state == REVIEW {
         &RELEARNING_STEPS_MINUTES
@@ -250,23 +183,19 @@ struct Scheduler {
 }
 
 impl Scheduler {
-    /// `AbstractScheduler`'s constructor and `init()`.
     fn new(card: &FsrsCardState, now: f64) -> Scheduler {
-        let review_time = date(now);
-        let mut current = card.clone();
         let interval = match (card.state, card.last_review) {
-            (state, Some(last_review)) if state != NEW => {
-                date_diff_in_days(last_review, review_time)
-            }
+            (state, Some(last_review)) if state != NEW => date_diff_in_days(last_review, now),
             _ => 0,
         };
-        current.last_review = Some(review_time);
+        let mut current = card.clone();
+        current.last_review = Some(now);
         current.elapsed_days = interval;
         current.reps += 1;
         Scheduler {
             last: card.clone(),
             current,
-            review_time,
+            review_time: now,
             elapsed_days: interval,
         }
     }
@@ -277,7 +206,7 @@ impl Scheduler {
             NEW => Ok(self.learning(&states, grade, LEARNING)),
             LEARNING | RELEARNING => Ok(self.learning(&states, grade, self.last.state)),
             REVIEW => Ok(self.review_state(&states, grade)),
-            state => Err(format!("Invalid state:[{state}]")),
+            state => Err(format!("invalid card state {state}")),
         }
     }
 
@@ -285,8 +214,8 @@ impl Scheduler {
     fn next_ds(&self, states: &NextStates, grade: Grade) -> FsrsCardState {
         let memory = state_for(states, grade).memory;
         let mut card = self.current.clone();
-        card.difficulty = store(memory.difficulty);
-        card.stability = store(memory.stability);
+        card.difficulty = memory.difficulty;
+        card.stability = memory.stability;
         card
     }
 
@@ -371,7 +300,7 @@ impl Scheduler {
     }
 }
 
-/// `reviewCard`: the state after grading `state` at `now`.
+/// The card after grading `state` at `now`.
 pub fn review_card(state: &FsrsCardState, grade: Grade, now: f64) -> Result<FsrsCardState, String> {
     Scheduler::new(state, now).review(grade)
 }
@@ -397,24 +326,18 @@ pub struct ItemSrs {
     pub strength: f64,
 }
 
-/// FSRS-6's decay, which is `DEFAULT_PARAMETERS[20]` under its own name.
-const DECAY: f32 = FSRS6_DEFAULT_DECAY;
-
 /// Stability (in days) treated as "this word is mature" by [`word_strength`].
 const MATURE_STABILITY_DAYS: f64 = 30.0;
 
-/// `date_diff(now, last, 'days')`: whole elapsed 24-hour periods, floored, never
-/// negative. Not the calendar-day difference [`date_diff_in_days`] takes — this
-/// is the axis the forgetting curve is drawn on, and ts-fsrs reads it the same
-/// way in `get_retrievability`.
+/// Whole elapsed 24-hour periods, floored, never negative. Not the calendar-day
+/// difference [`date_diff_in_days`] takes — this is the axis the forgetting
+/// curve is drawn on.
 fn elapsed_since(last_review: f64, now: f64) -> f64 {
     (((now - last_review) / DAY).floor()).max(0.0)
 }
 
-/// Probability of recall (0..1) at `now` — ts-fsrs's `get_retrievability`.
-///
-/// A card the model has never seen has no curve: ts-fsrs answers 0 for a `New`
-/// card rather than dividing by a stability of zero, and so does this.
+/// Probability of recall (0..1) at `now`. A card the model has never seen has
+/// no curve, so it reads 0 rather than dividing by a stability of zero.
 pub fn current_retrievability(card: &FsrsCardState, now: f64) -> f64 {
     let Some(last_review) = card.last_review else {
         return 0.0;
@@ -423,11 +346,11 @@ pub fn current_retrievability(card: &FsrsCardState, now: f64) -> f64 {
         return 0.0;
     }
     let state = MemoryState {
-        stability: card.stability as f32,
-        difficulty: card.difficulty as f32,
+        stability: card.stability,
+        difficulty: card.difficulty,
     };
-    let r = fsrs::current_retrievability(state, elapsed_since(last_review, now) as f32, DECAY);
-    round_to(r as f64, 8)
+    let elapsed = elapsed_since(last_review, now) as f32;
+    fsrs::current_retrievability(state, elapsed, FSRS6_DEFAULT_DECAY) as f64
 }
 
 /// How well a word is known, 0..1 — the number behind the strength bars.
@@ -445,8 +368,9 @@ pub fn current_retrievability(card: &FsrsCardState, now: f64) -> f64 {
 /// mature word left unreviewed for a month visibly sags below the same word
 /// reviewed yesterday, which is exactly the word the learner should go find.
 pub fn word_strength(card: &FsrsCardState, now: f64) -> f64 {
-    let maturity = (card.stability.max(0.0).ln_1p() / MATURE_STABILITY_DAYS.ln_1p()).min(1.0);
-    round_to(maturity * current_retrievability(card, now), 8)
+    let stability = (card.stability as f64).max(0.0);
+    let maturity = (stability.ln_1p() / MATURE_STABILITY_DAYS.ln_1p()).min(1.0);
+    maturity * current_retrievability(card, now)
 }
 
 /// The three derived numbers for one card, as of `now`.
@@ -464,6 +388,11 @@ mod tests {
 
     const T0: f64 = 1710061260000.0;
 
+    /// Relative closeness: the model's floats are never compared exactly.
+    fn close(a: f32, b: f32) -> bool {
+        (a - b).abs() <= 1e-4 * a.abs().max(b.abs())
+    }
+
     #[test]
     fn a_fresh_card_is_due_now() {
         let card = new_card_state(T0);
@@ -473,57 +402,53 @@ mod tests {
     }
 
     #[test]
-    fn the_crate_ships_the_weights_ts_fsrs_generates() {
-        // FSRS-6 with the published defaults. Pinned so an upstream refit of
-        // the weights arrives as a failing test and a `DERIVED_SCHEMA_VERSION`
-        // bump in `sapling-db`, not as cards that quietly fold differently.
-        assert_eq!(
-            fsrs::DEFAULT_PARAMETERS,
-            [
-                0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 1e-3, 1.8722, 0.1666, 0.796,
-                1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542,
-            ]
-        );
+    fn the_crate_ships_the_fsrs6_default_weights() {
+        // Pinned so an upstream refit of the weights arrives as a failing test
+        // and a `DERIVED_SCHEMA_VERSION` bump in `sapling-db`, not as cards that
+        // quietly fold differently.
+        let expected = [
+            0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 1e-3, 1.8722, 0.1666, 0.796,
+            1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542,
+        ];
+        assert_eq!(fsrs::DEFAULT_PARAMETERS.len(), expected.len());
+        for (actual, expected) in fsrs::DEFAULT_PARAMETERS.iter().zip(expected) {
+            assert!(close(*actual, expected), "{actual} vs {expected}");
+        }
     }
 
     #[test]
     fn the_broad_fixture_card_is_what_expected_json_records() {
         // `broad`: item-ni, introduced at T0, Good nine minutes later, then Hard
-        // ninety seconds after that — the card `expected.json` records. These
-        // are this host's numbers; the fixture's are the wasm build's, and
-        // `sapling-db`'s `tests/golden.rs` is the check that the two stay close.
+        // ninety seconds after that — the card `expected.json` records.
         let good = review_card(&new_card_state(T0), Grade::Good, T0 + 540_000.0).unwrap();
-        assert_eq!(good.stability, 2.30649996);
-        assert_eq!(good.difficulty, 2.11810398);
+        assert!(close(good.stability, 2.3065), "{}", good.stability);
+        assert!(close(good.difficulty, 2.118104), "{}", good.difficulty);
         assert_eq!(good.state, LEARNING);
         assert_eq!(good.learning_steps, 1);
         assert_eq!(good.due, T0 + 540_000.0 + 10.0 * MINUTE);
 
         let hard = review_card(&good, Grade::Hard, T0 + 630_000.0).unwrap();
-        assert_eq!(
-            hard,
-            FsrsCardState {
-                due: 1710062250000.0,
-                stability: 2.30649996,
-                difficulty: 4.75285816,
-                elapsed_days: 0,
-                scheduled_days: 0,
-                learning_steps: 1,
-                reps: 2,
-                lapses: 0,
-                state: LEARNING,
-                last_review: Some(T0 + 630_000.0),
-            }
-        );
+        assert!(close(hard.stability, 2.3065), "{}", hard.stability);
+        assert!(close(hard.difficulty, 4.752858), "{}", hard.difficulty);
+        assert_eq!(hard.due, 1710062250000.0);
+        assert_eq!(hard.elapsed_days, 0);
+        assert_eq!(hard.scheduled_days, 0);
+        assert_eq!(hard.learning_steps, 1);
+        assert_eq!(hard.reps, 2);
+        assert_eq!(hard.lapses, 0);
+        assert_eq!(hard.state, LEARNING);
+        assert_eq!(hard.last_review, Some(T0 + 630_000.0));
     }
 
     #[test]
-    fn a_stored_card_carries_eight_decimals_and_no_more() {
-        // The crate computes in `f32`; what lands in the JSON must not.
-        let card = review_card(&new_card_state(T0), Grade::Hard, T0).unwrap();
-        for value in [card.stability, card.difficulty] {
-            assert_eq!(value, round_to(value, 8));
-        }
+    fn a_card_stored_with_f64_numbers_still_reads() {
+        let card: FsrsCardState = serde_json::from_str(
+            r#"{"due":1,"stability":2.30649996,"difficulty":4.75285816,"elapsed_days":0,
+            "scheduled_days":0,"learning_steps":1,"reps":2,"lapses":0,"state":1,"last_review":1}"#,
+        )
+        .unwrap();
+        assert!(close(card.stability, 2.3065));
+        assert!(close(card.difficulty, 4.752858));
     }
 
     #[test]
@@ -583,11 +508,19 @@ mod tests {
         let mut card = review_card(&new_card_state(T0), Grade::Easy, T0).unwrap();
         for n in 1..=10 {
             card = review_card(&card, Grade::Again, T0 + n as f64 * DAY).unwrap();
-            assert!(card.difficulty <= 10.0, "difficulty {}", card.difficulty);
+            assert!(
+                card.difficulty <= 10.0 + 1e-4,
+                "difficulty {}",
+                card.difficulty
+            );
         }
         for n in 11..=20 {
             card = review_card(&card, Grade::Easy, T0 + n as f64 * DAY).unwrap();
-            assert!(card.difficulty >= 1.0, "difficulty {}", card.difficulty);
+            assert!(
+                card.difficulty >= 1.0 - 1e-4,
+                "difficulty {}",
+                card.difficulty
+            );
         }
         // Only the first failure landed on a graduated card; the rest were
         // already relearning, and relearning does not lapse again.
@@ -596,18 +529,18 @@ mod tests {
 
     #[test]
     fn a_clock_that_went_backwards_reads_as_today() {
-        // Two devices, one of them wrong: `elapsed_days` is recorded as ts-fsrs
-        // computes it, but the model is asked about zero days, not minus three.
+        // Two devices, one of them wrong: `elapsed_days` records the negative
+        // gap, but the model is asked about zero days, not minus three.
         let card = review_card(&new_card_state(T0), Grade::Easy, T0 + 10.0 * DAY).unwrap();
         let backwards = review_card(&card, Grade::Good, T0 + 7.0 * DAY).unwrap();
         let same_day = review_card(&card, Grade::Good, T0 + 10.0 * DAY).unwrap();
         assert_eq!(backwards.elapsed_days, -3);
-        assert_eq!(backwards.stability, same_day.stability);
-        assert_eq!(backwards.difficulty, same_day.difficulty);
+        assert!(close(backwards.stability, same_day.stability));
+        assert!(close(backwards.difficulty, same_day.difficulty));
     }
 
     #[test]
-    fn rejects_a_grade_ts_fsrs_would_throw_on() {
+    fn rejects_a_grade_outside_one_to_four() {
         assert!(Grade::from_f64(0.0).is_err());
         assert!(Grade::from_f64(2.5).is_err());
         assert_eq!(Grade::from_f64(4.0), Ok(Grade::Easy));
@@ -622,17 +555,15 @@ mod tests {
 
     /* ---- The reading side ------------------------------------------------ */
     //
-    // These moved off `scheduler.test.ts` when the frontend stopped running
-    // ts-fsrs. They are shaped as properties rather than as pinned decimals on
-    // purpose: the numbers are the crate's, so an upstream refit of the model
-    // may move every one of them, and what the app actually depends on is the
-    // shape of the two curves — retrievability falls with time, strength
-    // separates a young card from a mature one where retrievability cannot.
+    // Shaped as properties rather than pinned decimals: the numbers are the
+    // model's, and what the app depends on is the shape of the two curves —
+    // retrievability falls with time, strength separates a young card from a
+    // mature one where retrievability cannot.
 
     /// A card of a given stability, reviewed at `reviewed_at`.
-    fn mature(stability: f64, reviewed_at: f64) -> FsrsCardState {
+    fn mature(stability: f32, reviewed_at: f64) -> FsrsCardState {
         FsrsCardState {
-            due: reviewed_at + stability * DAY,
+            due: reviewed_at + stability as f64 * DAY,
             stability,
             difficulty: 5.0,
             state: REVIEW,
@@ -664,8 +595,6 @@ mod tests {
 
     #[test]
     fn a_card_the_model_has_never_seen_has_no_curve() {
-        // ts-fsrs answers 0 for a New card rather than dividing by a stability
-        // of zero, and the strength bar reads 0 for the same word.
         let fresh = new_card_state(T0);
         assert_eq!(current_retrievability(&fresh, T0), 0.0);
         assert_eq!(word_strength(&fresh, T0), 0.0);
@@ -677,7 +606,7 @@ mod tests {
         for stability in [30.0, 90.0] {
             let strength = word_strength(&mature(stability, T0), T0);
             assert!(strength > 0.99, "stability {stability}: {strength}");
-            assert!(strength <= 1.0);
+            assert!(strength <= 1.0 + 1e-6);
         }
     }
 
@@ -701,14 +630,15 @@ mod tests {
     #[test]
     fn the_curve_reads_whole_elapsed_days_never_a_negative_one() {
         // A clock that went backwards, and the hours inside a day: both read as
-        // "reviewed today", which is where ts-fsrs's floor-and-clamp puts them.
+        // "reviewed today".
         let card = mature(10.0, T0);
         let at_review = current_retrievability(&card, T0);
-        assert_eq!(current_retrievability(&card, T0 - 3.0 * DAY), at_review);
-        assert_eq!(
-            current_retrievability(&card, T0 + 23.0 * 60.0 * MINUTE),
-            at_review
-        );
+        let near = |r: f64| (r - at_review).abs() <= 1e-4 * at_review;
+        assert!(near(current_retrievability(&card, T0 - 3.0 * DAY)));
+        assert!(near(current_retrievability(
+            &card,
+            T0 + 23.0 * 60.0 * MINUTE
+        )));
         assert!(current_retrievability(&card, T0 + DAY) < at_review);
     }
 }

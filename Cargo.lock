@@ -3317,6 +3317,7 @@ dependencies = [
  "fsrs",
  "getrandom 0.4.3",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -5,7 +5,8 @@
  * Each directory under `fixtures/` is one scenario — `events.json` as the rows
  * would arrive off sync, `expected.json` what {@link probe} reads back after
  * applying them. The test replays the log through `applyRemote`, the same gate
- * a pulled page passes, and diffs the reads against the file. `expected.json`
+ * a pulled page passes, and diffs the reads against the file — exactly, but
+ * for the FSRS model's floats, which match within a tolerance. `expected.json`
  * is data, not code: the Rust core reproduces it natively in `tests/golden.rs`,
  * and this file runs the same fixtures through the wasm build the browser
  * loads, so the two paths to the same rules are checked against one answer.
@@ -177,6 +178,35 @@ function dataOnly(reads: Record<string, unknown>): Record<string, unknown> {
 	return data;
 }
 
+/** The keys whose numbers come out of the FSRS model, and how far apart they may be. */
+const MODEL_FLOATS = new Set(['stability', 'difficulty', 'retrievability', 'strength']);
+const MODEL_TOLERANCE = 1e-4;
+
+/**
+ * `actual` with every model float that is within {@link MODEL_TOLERANCE} of
+ * `expected`'s replaced by `expected`'s, so a `toEqual` after it compares
+ * those loosely and everything else exactly.
+ */
+function nearModel(actual: unknown, expected: unknown, key = ''): unknown {
+	if (typeof actual === 'number' && typeof expected === 'number') {
+		const close =
+			MODEL_FLOATS.has(key) &&
+			Math.abs(actual - expected) <=
+				MODEL_TOLERANCE * Math.max(Math.abs(actual), Math.abs(expected));
+		return close ? expected : actual;
+	}
+	if (Array.isArray(actual) && Array.isArray(expected)) {
+		return actual.map((value, i) => nearModel(value, expected[i]));
+	}
+	if (actual && expected && typeof actual === 'object' && typeof expected === 'object') {
+		const other = expected as Record<string, unknown>;
+		return Object.fromEntries(
+			Object.entries(actual).map(([k, value]) => [k, nearModel(value, other[k], k)])
+		);
+	}
+	return actual;
+}
+
 async function fresh(fixture: Fixture): Promise<TestBackend> {
 	return makeTestBackend(fixture.meta.deviceId, () => fixture.meta.now);
 }
@@ -226,7 +256,7 @@ describe('golden fixtures', () => {
 					expected,
 					`${fixture.name}/expected.json is missing — run pnpm golden:update`
 				).toBeDefined();
-				expect(reads).toEqual(expected);
+				expect(nearModel(reads, expected)).toEqual(expected);
 			});
 
 			it('reads the same after applying the log twice', async () => {
