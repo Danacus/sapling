@@ -1,7 +1,9 @@
 [workspace]
 members = [
 	"crates/sapling-srs",
-	"crates/sapling-core",
+	"crates/sapling-domain",
+	"crates/sapling-db",
+	"crates/sapling-protocol",
 	"crates/sapling-wasm",
 	"crates/sapling-store",
 	"crates/sapling-models",
@@ -23,7 +25,9 @@ members = [
 # `desktop:check` builds it alongside `sapling-desktop`, which does.
 default-members = [
 	"crates/sapling-srs",
-	"crates/sapling-core",
+	"crates/sapling-domain",
+	"crates/sapling-db",
+	"crates/sapling-protocol",
 	"crates/sapling-wasm",
 	"crates/sapling-store",
 	"crates/sapling-models",

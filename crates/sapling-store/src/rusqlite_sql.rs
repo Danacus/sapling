@@ -1,15 +1,16 @@
-//! The [`Sql`] seam over rusqlite — the adapter a native host uses, and the
-//! one the crate's own tests run the golden fixtures through.
+//! `sapling-db`'s [`Sql`] seam over rusqlite — the adapter a native host uses,
+//! and the one `sapling-db`'s own tests run the golden fixtures through.
 //!
-//! Behind the `sqlite` feature, so a wasm build that borrows the browser's
-//! sqlite-wasm through its own adapter never links a second SQLite.
+//! It lives here rather than in `sapling-db` so the database crate never
+//! mentions rusqlite, and a wasm build that borrows the browser's sqlite-wasm
+//! through its own adapter never links a second SQLite.
 
 use std::sync::Arc;
 
 use rusqlite::types::{ToSqlOutput, ValueRef};
 use rusqlite::{params_from_iter, Connection};
 
-use crate::sql::{Error, Param, Result, Row, Sql, SqlValue};
+use sapling_db::{Error, Param, Result, Row, Sql, SqlValue};
 
 /// How many compiled statements the connection keeps.
 ///

@@ -48,7 +48,7 @@ Where the rest lives:
 - `src/lib/session/` — `engine.ts` (orchestrator, all play-time DB writes), `progression.ts`, `romanization.ts`
 - `src/lib/srs/` — grades and the accessors for the schedule the core derives onto each item (`isDue`, `strengthOf`); no FSRS, no ts-fsrs
 - `src/lib/db/` — repositories, the only store access; `protocol.ts` is the `Backend` boundary, `client.ts` + `sqlite.worker.ts` the transport, `host.ts` the glue that lends the Rust core sqlite-wasm; `events.ts` is types only; `database.ts` keeps only `ChallengeRow`/`challengeOf`
-- `crates/sapling-core/` — the persistence core itself: `events.rs` (payload schemas), `schema.rs` (DDL), `materialize.rs` (merge rules), `core.rs` (every `Backend` method), `dispatch.rs` (by name, over JSON); `crates/sapling-srs/` is the SRS it calls; `crates/sapling-wasm/` wraps it for the browser
+- The persistence core: `crates/sapling-domain/` (`events.rs` payload schemas, `types.rs`, `day.rs`), `crates/sapling-db/` (`schema.rs` DDL, `materialize.rs` merge rules, `core.rs` every `Backend` method, `sql.rs` the seam), `crates/sapling-protocol/` (the methods by name, over JSON), `crates/sapling-srs/` (the SRS); `crates/sapling-wasm/` wraps db and protocol for the browser, `crates/sapling-store/` (with `rusqlite_sql.rs`) for native hosts
 - `src/lib/romanize/`, `src/lib/tts/`, `src/lib/validate/`
 - `src/routes/learn/` — the six challenge components + `ChallengeHost.svelte` (an `{#if}` dispatch chain); shared UI in `blocks/`
 - `src/routes/` — `chat/`, `words/`, `settings/`, and the dashboard

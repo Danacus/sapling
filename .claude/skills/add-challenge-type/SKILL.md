@@ -116,7 +116,7 @@ rather than checking by eye.
 3. **Component** in `src/routes/learn/`, composed from `blocks/`, plus a branch
    in `ChallengeHost.svelte`'s `{#if}` chain.
    *Forget it:* the `{:else}` `unhandledChallenge(challenge: never)` fails `pnpm check`.
-4. **`CHALLENGE_TYPES` in `crates/sapling-core/src/materialize.rs`** — the
+4. **`CHALLENGE_TYPES` in `crates/sapling-db/src/materialize.rs`** — the
    allow-list the pool materializer checks before storing a challenge. It is a
    Rust array of wire names, so nothing in `pnpm check` notices a missing one.
    *Forget it:* silent — challenges of the new type are written to the log and

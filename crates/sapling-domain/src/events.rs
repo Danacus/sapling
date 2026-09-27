@@ -401,6 +401,10 @@ pub struct SyncEvent {
 /// materialise it into its one legacy library.
 pub const SCOPED_EVENT_TYPE: &str = "profileEvent";
 
+/// The profile an unscoped event belongs to: every event from before profiles
+/// existed, and the key the `profile` table's one legacy row is stored under.
+pub const PROFILE_ID: &str = "singleton";
+
 /// Reads one row off the wire or out of an export file as far as the envelope,
 /// and no further.
 ///
@@ -433,7 +437,7 @@ pub fn typed_event(raw: &RawEvent) -> Option<SyncEvent> {
         (profile_id, kind, payload)
     } else {
         (
-            crate::schema::PROFILE_ID.to_owned(),
+            PROFILE_ID.to_owned(),
             EventType::from_name(&raw.kind)?,
             raw.payload.clone(),
         )

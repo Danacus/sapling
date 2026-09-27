@@ -1,10 +1,11 @@
-//! What a native host lends `sapling-core`, and where it keeps it.
+//! What a native host lends `sapling-db`, and where it keeps it.
 //!
 //! The core owns no database, clock, calendar or id generator (see `core.md`);
 //! the browser lends those through `src/lib/db/host.ts`, and this crate is the
 //! same four facts read off an operating system instead: a SQLite *file* in a
-//! directory through the core's own rusqlite adapter, the system clock, the
-//! system time zone, and UUID v4.
+//! directory through [`rusqlite_sql`] (the only rusqlite adapter, and the only
+//! crate that links rusqlite), the system clock, the system time zone, and
+//! UUID v4.
 //!
 //! It is its own crate, and free of Tauri, so that anything native opens the
 //! database the same way: `sapling-desktop` hands it Tauri's app-data
@@ -55,6 +56,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod rusqlite_sql;
+
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -64,8 +67,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{Local, TimeZone};
 use rusqlite::Connection;
-use sapling_core::rusqlite_sql::RusqliteSql;
-use sapling_core::{dispatch, Core, LocalDay, Utc};
+use sapling_db::Core;
+use sapling_domain::{LocalDay, Utc};
+
+use crate::rusqlite_sql::RusqliteSql;
 use uuid::Uuid;
 
 /// The database, inside the app-data directory.
@@ -230,13 +235,15 @@ impl CoreHandle {
     /// answer as JSON — `None` where the method answers nothing.
     pub fn dispatch(&self, method: String, args: String) -> Result<Option<String>, String> {
         self.run(move |core| {
-            dispatch::dispatch_json(core, &method, &args).map_err(|error| error.0)
+            sapling_protocol::dispatch_json(core, &method, &args).map_err(|error| error.0)
         })?
     }
 
     /// Appends local facts, `[{ type, payload }, ...]`, in one transaction.
     pub fn commit_all(&self, facts: String) -> Result<(), String> {
-        self.run(move |core| dispatch::commit_facts_json(core, &facts).map_err(|error| error.0))?
+        self.run(move |core| {
+            sapling_protocol::commit_facts_json(core, &facts).map_err(|error| error.0)
+        })?
     }
 }
 

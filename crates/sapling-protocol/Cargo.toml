@@ -1,0 +1,13 @@
+[package]
+name = "sapling-protocol"
+version = "0.1.0"
+edition = "2021"
+description = "Sapling's Backend protocol by name: a method name and a JSON argument array in, a JSON answer out, over sapling-db's Core."
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# `preserve_order` so an object round-trips with its keys where its writer put them.
+serde_json = { version = "1", features = ["preserve_order"] }
+sapling-db = { path = "../sapling-db" }
+sapling-domain = { path = "../sapling-domain" }

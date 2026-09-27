@@ -1,7 +1,7 @@
 /**
  * The host side of the Rust core: what the wasm build borrows from JavaScript.
  *
- * `crates/sapling-core` is written against a four-line `Sql` seam and owns no
+ * `crates/sapling-db` is written against a four-line `Sql` seam and owns no
  * database, clock, id generator or calendar. This module lends it all four
  * over sqlite-wasm's synchronous `oo1` API — inside the database Worker in the
  * browser, in-process in node tests — and turns its `dispatch(method, argsJson)`

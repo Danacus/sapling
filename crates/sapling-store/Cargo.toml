@@ -2,13 +2,15 @@
 name = "sapling-store"
 version = "0.0.1"
 edition = "2021"
-description = "Sapling's database in a directory: sapling-core over a SQLite file, with the device id, the system clock and the system time zone a native host lends it."
+description = "Sapling's database in a directory: sapling-db over a SQLite file through rusqlite, with the device id, the system clock and the system time zone a native host lends it."
 publish = false
 
 [dependencies]
-sapling-core = { path = "../sapling-core", features = ["sqlite"] }
-# The store opens the file, so it needs the driver the core's adapter wraps.
-# The version must match `sapling-core`'s or two SQLite builds link at once.
+sapling-db = { path = "../sapling-db" }
+sapling-domain = { path = "../sapling-domain" }
+sapling-protocol = { path = "../sapling-protocol" }
+# The only crate that links SQLite natively: `rusqlite_sql` is the `Sql` adapter
+# over it, and the store opens the file.
 rusqlite = { version = "0.40", features = ["bundled"] }
 # `localDay` is the only place a time zone exists (see `core.md`), and on a
 # native host that zone is the operating system's.

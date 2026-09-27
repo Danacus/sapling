@@ -2,11 +2,13 @@
 //! answer out.
 //!
 //! `src/lib/db/protocol.ts` fixes the method names and their argument lists;
-//! this module is the other end of that wire. A host (the wasm build inside the
-//! database Worker, a native shell, a server) parses nothing itself — it hands
-//! the method name and the argument array here as JSON and gets JSON back, so
-//! every transport shares one argument convention and one formatting of the
-//! answer (serde_json's compact form).
+//! this crate is the other end of that wire, and its only job is to turn a
+//! method name and a JSON argument array into a call on `sapling-db`'s
+//! [`Core`]. A host (the wasm build inside the database Worker, a native
+//! shell, a server) parses nothing itself — it hands the method name and the
+//! argument array here as JSON and gets JSON back, so every transport shares
+//! one argument convention and one formatting of the answer (serde_json's
+//! compact form).
 //!
 //! `None` is JavaScript's `undefined`: what a `void` method answers, and what a
 //! read answers for a row that is not there. JSON has no `undefined`, so an
@@ -16,12 +18,13 @@
 //! bottom reads that file and checks — and every name in it must have an arm
 //! in [`dispatch`], or a method added on one side silently fails on the other.
 
+#![forbid(unsafe_code)]
+
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
-use crate::core::Core;
-use crate::events::{parse_payload, EventType, Payload};
-use crate::sql::{Error, Result};
+use sapling_db::{Core, Error, Result};
+use sapling_domain::events::{parse_payload, EventType, Payload};
 
 /// Every `Backend` method, as `protocol.ts` names them.
 pub const METHODS: [&str; 39] = [
@@ -310,8 +313,8 @@ pub fn commit_facts_json(core: &Core, facts_json: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::day::Utc;
-    use crate::sql::{Param, Row, Sql};
+    use sapling_db::{Param, Row, Sql};
+    use sapling_domain::Utc;
     use std::collections::BTreeSet;
 
     /// A database that answers nothing: enough to tell "unknown method" from

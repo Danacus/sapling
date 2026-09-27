@@ -3,7 +3,7 @@
  *
  * {@link Backend} is the whole surface the window thread may ask of persistence:
  * every method speaks `$lib/types`, none speaks SQL. The Rust core
- * (`crates/sapling-core`, compiled to wasm) implements it beside SQLite —
+ * (`crates/sapling-db`, compiled to wasm) implements it beside SQLite —
  * inside the database Worker in the browser, in-process in node tests, both
  * through `host.ts` — and `client.ts` forwards it over `postMessage`. Fixing
  * the boundary here, rather than at the SQL, is what let the implementation
@@ -11,7 +11,7 @@
  * transport (a native shell, a remote host) the same way.
  *
  * Adding a method means adding it to the interface **and** to
- * {@link BACKEND_METHODS} **and** to `dispatch.rs`; leaving one out fails a
+ * {@link BACKEND_METHODS} **and** to `sapling-protocol`'s `dispatch`; leaving one out fails a
  * gate: {@link _everyMethodListed} must stay `never` for `pnpm check`, and
  * `cargo test` reads this file and compares the list to the Rust arms.
  */

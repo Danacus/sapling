@@ -1,0 +1,19 @@
+[package]
+name = "sapling-db"
+version = "0.1.0"
+edition = "2021"
+description = "Sapling's database: the event log's DDL, its merge rules and every Backend method, over a SQLite seam."
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# `preserve_order` so an object round-trips with its keys where its writer put them.
+serde_json = { version = "1", features = ["preserve_order"] }
+sapling-domain = { path = "../sapling-domain" }
+sapling-srs = { path = "../sapling-srs" }
+
+[dev-dependencies]
+# The integration tests run against a real SQLite, through the store's rusqlite
+# adapter. The store depends on this crate, so this is a cycle cargo allows only
+# for `tests/`: a unit test under `src/` would link a second copy of the crate.
+sapling-store = { path = "../sapling-store" }

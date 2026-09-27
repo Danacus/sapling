@@ -1,7 +1,7 @@
 /**
  * Cross-check: the Rust allow-list and the stored registry name the same types.
  *
- * `crates/sapling-core/src/materialize.rs`'s `CHALLENGE_TYPES` is the list the
+ * `crates/sapling-db/src/materialize.rs`'s `CHALLENGE_TYPES` is the list the
  * materializer checks before storing a challenge. A name missing from it costs
  * one silently skipped row — the event stays in the log, the challenge never
  * reaches the pool — and only the `broad` golden fixture would notice. The two
@@ -23,7 +23,7 @@ import { STORED_TYPE_ORDER } from './index';
 const TYPES_DIR = dirname(fileURLToPath(import.meta.url));
 /** `src/lib/challenges/types` → the repo root. */
 const REPO_ROOT = join(TYPES_DIR, '..', '..', '..', '..');
-const MATERIALIZE_RS = join(REPO_ROOT, 'crates', 'sapling-core', 'src', 'materialize.rs');
+const MATERIALIZE_RS = join(REPO_ROOT, 'crates', 'sapling-db', 'src', 'materialize.rs');
 
 /**
  * The types named by `CHALLENGE_TYPES`, and the length its declaration pins.

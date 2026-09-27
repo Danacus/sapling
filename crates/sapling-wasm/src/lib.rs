@@ -1,11 +1,11 @@
-//! `sapling-core` for a JavaScript host.
+//! `sapling-db` for a JavaScript host.
 //!
 //! The database stays on the JavaScript side — sqlite-wasm's synchronous `oo1`
 //! API, inside the Worker — and comes across as two callbacks, `exec` and
 //! `query`, that speak JSON strings. The core's three other runtime facts
 //! arrive the same way: `localDay` (the host's calendar, which is the only
 //! place a time zone exists), `now` and `newId`. Nothing here parses an
-//! argument or formats an answer; `sapling_core::dispatch` does both, so the
+//! argument or formats an answer; `sapling-protocol` does both, so the
 //! Worker forwards `(method, argsJson)` verbatim and posts the string back.
 //!
 //! Errors cross as strings: a `Result::Err` from the core becomes a thrown
@@ -13,7 +13,8 @@
 //! core `Error` carrying its message.
 
 use js_sys::Function;
-use sapling_core::{dispatch, Core, Error, LocalDay, Param, Result, Row, Sql, SqlValue};
+use sapling_db::{Core, Error, Param, Result, Row, Sql, SqlValue};
+use sapling_domain::LocalDay;
 use serde_json::{Map, Value};
 use wasm_bindgen::prelude::*;
 
@@ -169,19 +170,19 @@ impl WasmCore {
         method: &str,
         args_json: &str,
     ) -> std::result::Result<Option<String>, JsValue> {
-        dispatch::dispatch_json(&self.core, method, args_json).map_err(to_js)
+        sapling_protocol::dispatch_json(&self.core, method, args_json).map_err(to_js)
     }
 
     /// Appends local facts, `[{ type, payload }, ...]`, in one transaction.
     /// What the node test rig seeds a store with; the app has no use for it.
     #[wasm_bindgen(js_name = commitAll)]
     pub fn commit_all(&self, facts_json: &str) -> std::result::Result<(), JsValue> {
-        dispatch::commit_facts_json(&self.core, facts_json).map_err(to_js)
+        sapling_protocol::commit_facts_json(&self.core, facts_json).map_err(to_js)
     }
 
     /// The read-table shape this build expects — the version `meta` records.
     #[wasm_bindgen(js_name = derivedSchemaVersion)]
     pub fn derived_schema_version() -> u32 {
-        sapling_core::schema::DERIVED_SCHEMA_VERSION
+        sapling_db::schema::DERIVED_SCHEMA_VERSION
     }
 }

@@ -1,0 +1,13 @@
+[package]
+name = "sapling-domain"
+version = "0.1.0"
+edition = "2021"
+description = "Sapling's event log as a contract: the event and payload schemas, the domain types they carry, and the calendar seam."
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# `preserve_order` so an object round-trips with its keys where its writer put them.
+serde_json = { version = "1", features = ["preserve_order"] }
+# `types.rs`'s `KnowledgeItem.srs` is the SRS's read-side numbers.
+sapling-srs = { path = "../sapling-srs" }

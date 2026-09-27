@@ -35,7 +35,7 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   artefact runs stale merge rules silently — the golden tests are what notice.
 - **`undefined` does not cross the wasm boundary; `null` does.** `host.ts`
   sends arguments as a JSON array, so a trailing `undefined` becomes `null` and
-  `dispatch.rs` reads `null` as "absent" — which is why no `Backend` argument
+  `sapling-protocol` reads `null` as "absent" — which is why no `Backend` argument
   may mean something by being `null`. Answers go the other way: a method that
   returns nothing, or a read of a missing row, returns no string at all and the
   host hands back `undefined`, matching the TypeScript signatures.

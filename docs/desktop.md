@@ -112,7 +112,7 @@ printed to stderr for the terminal that launched the binary.
 ## What is native and what still goes through the webview
 
 **Native: persistence, synthesis, playback, recognition and a video's captions.**
-`crates/sapling-desktop` opens the file, lends `sapling-core` the four runtime
+`crates/sapling-desktop` opens the file, lends `sapling-db` the four runtime
 facts (`deviceId`, the system clock, `localDay` from the system time zone, UUID
 v4 ids) and exposes exactly the three commands `WasmCore` exposes to the
 database Worker — `dispatch`, `commit_all`, `derived_schema_version`.

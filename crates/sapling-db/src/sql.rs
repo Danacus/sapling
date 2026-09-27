@@ -2,8 +2,8 @@
 //!
 //! Every rule in this crate is written against [`Sql`] and nothing else. The
 //! crate never opens a database; a host hands it one, and a host is free to
-//! back it with sqlite-wasm, rusqlite (see `rusqlite_sql`), or anything that
-//! speaks SQLite's dialect.
+//! back it with sqlite-wasm, rusqlite (`sapling-store`'s `rusqlite_sql`), or
+//! anything that speaks SQLite's dialect.
 //!
 //! Numbers bind the way sqlite-wasm binds a JavaScript `number`: an integral
 //! value as an `INTEGER`, anything else as a `REAL`. That keeps the stored

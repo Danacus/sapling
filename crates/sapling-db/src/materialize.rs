@@ -8,18 +8,19 @@
 
 use serde_json::{json, Value};
 
-use crate::day::LocalDay;
-use crate::events::{
-    typed_event, ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted,
-    ItemAdded, ItemDeleted, ItemReviewed, ItemUpdated, Payload, RawEvent, ReviewAmended, SyncEvent,
-    TextDeleted, WordLookedUp, WordMarked, PATCHABLE_COLUMNS, SCOPED_EVENT_TYPE,
-};
 use crate::schema::{
-    review_key, ACTIVE_PROFILE_KEY, DDL, DERIVED_SCHEMA_VERSION, DERIVED_TABLES, PROFILE_ID,
-    RECENT_GRADES_CAP,
+    review_key, ACTIVE_PROFILE_KEY, DDL, DERIVED_SCHEMA_VERSION, DERIVED_TABLES, RECENT_GRADES_CAP,
 };
 use crate::sql::{Error, Param, Result, Row, Sql};
-use crate::types::{ChallengeResult, Conversation, ConversationExchange, Profile, ReadingText};
+use sapling_domain::day::LocalDay;
+use sapling_domain::events::{
+    typed_event, ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted,
+    ItemAdded, ItemDeleted, ItemReviewed, ItemUpdated, Payload, RawEvent, ReviewAmended, SyncEvent,
+    TextDeleted, WordLookedUp, WordMarked, PATCHABLE_COLUMNS, PROFILE_ID, SCOPED_EVENT_TYPE,
+};
+use sapling_domain::types::{
+    ChallengeResult, Conversation, ConversationExchange, Profile, ReadingText,
+};
 use sapling_srs::{new_card_state, review_card, FsrsCardState, Grade, GOOD};
 
 /// Replay order: the backend's `seq`, then local insertion order for whatever

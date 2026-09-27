@@ -9,7 +9,7 @@
  *
  * The RPC is the domain protocol (`protocol.ts`): one message names a
  * {@link Backend} method and carries its arguments, and the Rust core —
- * `crates/sapling-core`, compiled to wasm and lent this thread's database
+ * `crates/sapling-db`, compiled to wasm and lent this thread's database
  * through `host.ts` — answers it. Nothing SQL-shaped crosses this boundary, so
  * the window never learns how the data is laid out.
  */

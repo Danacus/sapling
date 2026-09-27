@@ -1,4 +1,4 @@
-//! Sapling on the desktop: a Tauri v2 shell around `sapling-core`.
+//! Sapling on the desktop: a Tauri v2 shell around `sapling-db`.
 //!
 //! The app is the same SvelteKit SPA the web ships, loaded into a webview; the
 //! only thing that changes is where persistence lives. In the browser the core
@@ -17,7 +17,7 @@
 //! Tauri glue because it answers a WebKitGTK signal. The persistence commands
 //! below are the exact surface `WasmCore` exposes to the Worker, name for name,
 //! so neither side can grow a method the other lacks; every merge rule, every
-//! read and every line of SQL against the read tables stays in `sapling-core`.
+//! read and every line of SQL against the read tables stays in `sapling-db`.
 //!
 //! Every command that waits for anything is `async` and hands its work to
 //! `spawn_blocking`, because a synchronous Tauri command runs on the main
@@ -176,7 +176,7 @@ async fn commit_all(db: State<'_, Arc<Database>>, facts: String) -> Result<(), S
 /// cheapest place to answer it from.
 #[tauri::command]
 fn derived_schema_version() -> u32 {
-    sapling_core::schema::DERIVED_SCHEMA_VERSION
+    sapling_db::schema::DERIVED_SCHEMA_VERSION
 }
 
 // -- Native speech ----------------------------------------------------------

@@ -2,9 +2,10 @@
 //! the scheduler shape ts-fsrs gave this app.
 //!
 //! A crate of its own so that it stays a function of a card, a grade and a
-//! time: it knows nothing of events, SQL or Sapling's schema. `sapling-core`
-//! calls it from the merge rules and stores what it returns; the dependency
-//! only ever points that way.
+//! time: it knows nothing of events, SQL or Sapling's schema. `sapling-db`
+//! calls it from the merge rules and stores what it returns, and
+//! `sapling-domain` carries its [`ItemSrs`] on a read; the dependency only ever
+//! points that way.
 //!
 //! The split is deliberate. **The `fsrs` crate owns the formulas** — stability,
 //! difficulty and the interval a stability implies, all of it FSRS-6 with the
@@ -33,7 +34,7 @@
 //! at `f32` no rounding can both keep the value and hide the gap. So a card is
 //! widened to `f64` and cut to eight decimals — about all the precision an
 //! `f32` carries, and enough to keep the JSON short and stable *per host* — and
-//! `sapling-core`'s `tests/golden.rs` is where the tolerance lives instead. It covers
+//! `sapling-db`'s `tests/golden.rs` is where the tolerance lives instead. It covers
 //! [`ItemSrs`]'s two floats for the same reason, since they are read off that
 //! same `f32` model. Nothing downstream reads any of it that closely: `due` and
 //! `scheduled_days` are whole minutes and days, and [`word_strength`] is a log.
@@ -475,7 +476,7 @@ mod tests {
     fn the_crate_ships_the_weights_ts_fsrs_generates() {
         // FSRS-6 with the published defaults. Pinned so an upstream refit of
         // the weights arrives as a failing test and a `DERIVED_SCHEMA_VERSION`
-        // bump in `sapling-core`, not as cards that quietly fold differently.
+        // bump in `sapling-db`, not as cards that quietly fold differently.
         assert_eq!(
             fsrs::DEFAULT_PARAMETERS,
             [
@@ -490,7 +491,7 @@ mod tests {
         // `broad`: item-ni, introduced at T0, Good nine minutes later, then Hard
         // ninety seconds after that — the card `expected.json` records. These
         // are this host's numbers; the fixture's are the wasm build's, and
-        // `sapling-core`'s `tests/golden.rs` is the check that the two stay close.
+        // `sapling-db`'s `tests/golden.rs` is the check that the two stay close.
         let good = review_card(&new_card_state(T0), Grade::Good, T0 + 540_000.0).unwrap();
         assert_eq!(good.stability, 2.30649996);
         assert_eq!(good.difficulty, 2.11810398);

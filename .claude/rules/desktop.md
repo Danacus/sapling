@@ -24,7 +24,8 @@ someone to run the check by hand.
   `commands!` arms, `setup`) and `permissions.rs`, and nothing else. What it
   lends lives beside it, free of Tauri so a CLI or another app can reuse it:
   **`sapling-store`** opens the database in a directory (`CoreHandle`,
-  `Database`, the device-id file, the clock, `localDay` through chrono);
+  `Database`, `rusqlite_sql` — the only rusqlite in the tree — the device-id
+  file, the clock, `localDay` through chrono);
   **`sapling-models`** is the pinned-archive install (`ModelSpec`, download,
   verify, stage, rename, `available_threads`) and knows nothing about speech;
   **`sapling-speech`** is the voice and dictation on sherpa-onnx, features `tts`
@@ -37,7 +38,7 @@ someone to run the check by hand.
 - **`crates/sapling-desktop` is a host, and that is all it is.** It owns a file
   (`sapling.db` in Tauri's app-data directory), a device id, the system clock
   and the system time zone — through `sapling-store` — and hands all four to
-  `sapling-core` through the
+  `sapling-db` through the
   `Sql`/`LocalDay` seams `core.md` describes. It contains **no merge rule, no
   read, and no SQL against the read tables** — the only statements it issues are
   two pragmas, `journal_mode = WAL` and `synchronous = NORMAL`, which are
@@ -166,7 +167,7 @@ someone to run the check by hand.
   `dispatch(method, args) -> Result<Option<String>, String>`, `commit_all`,
   `derived_schema_version`. No fourth one, and no new `Backend` method that the
   browser does not also have — the protocol is `src/lib/db/protocol.ts` and
-  `dispatch.rs`, and adding to it is still the three edits `core.md` names.
+  `sapling-protocol`, and adding to it is still the three edits `core.md` names.
   **Speech adds exactly eight more, and captions three** — `tts_status`, `tts_download`,
   `tts_synthesize`, `asr_status`, `asr_download`, `asr_transcribe` on every
   target, `tts_play`, `tts_stop` on desktop targets only, and

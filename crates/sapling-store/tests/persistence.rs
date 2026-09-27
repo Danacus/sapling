@@ -1,6 +1,6 @@
 //! The one thing the desktop host adds that no other host has: a file.
 //!
-//! The merge rules are already proven twice over — `crates/sapling-core`'s
+//! The merge rules are already proven twice over — `crates/sapling-db`'s
 //! `tests/golden.rs` runs every fixture natively and `src/lib/db/golden.test.ts`
 //! runs the same files through the wasm build. What is new here is that the
 //! database outlives the process, so this test proves exactly that and nothing

@@ -55,7 +55,7 @@ SQLite-WASM (OPFS, SAH-pool VFS) in one dedicated module Worker
 (`sqlite.worker.ts`). The window talks to it in domain terms, never SQL: the
 `Backend` interface in `protocol.ts` — the repository functions, the sync
 operations (`pendingEvents`, `markPushed`, `applyRemote`, the pull cursor) and
-export/import — is implemented by the Rust core (`crates/sapling-core`,
+export/import — is implemented by the Rust core (`crates/sapling-db`,
 compiled to wasm and lent the Worker's database through `host.ts`) and
 forwarded by `client.ts`, one `postMessage` per call. `events` is the facts
 log; `items`, `reviews`, `challenges`, `results`, `tombstones`,

@@ -11,7 +11,7 @@
  *
  * These are types only. The schemas that *enforce* them — the gate every event
  * off sync or out of a backup file passes through — live with the merge rules
- * in `crates/sapling-core/src/events.rs`, and the golden fixtures pin that
+ * in `crates/sapling-domain/src/events.rs`, and the golden fixtures pin that
  * `parseEvent(raw)` equals `raw` for every type. A type here that names a field
  * the Rust struct does not is a bug on the device that receives it, so the two
  * are kept field for field.

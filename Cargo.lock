@@ -3245,12 +3245,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "sapling-core"
+name = "sapling-db"
 version = "0.1.0"
 dependencies = [
- "rusqlite",
- "sapling-core",
+ "sapling-domain",
  "sapling-srs",
+ "sapling-store",
  "serde",
  "serde_json",
 ]
@@ -3260,7 +3260,7 @@ name = "sapling-desktop"
 version = "0.0.1"
 dependencies = [
  "sapling-captions",
- "sapling-core",
+ "sapling-db",
  "sapling-speech",
  "sapling-store",
  "serde",
@@ -3271,6 +3271,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sapling-domain"
+version = "0.1.0"
+dependencies = [
+ "sapling-srs",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "sapling-models"
 version = "0.0.1"
 dependencies = [
@@ -3278,6 +3287,16 @@ dependencies = [
  "sha2",
  "tar",
  "ureq 3.4.0",
+]
+
+[[package]]
+name = "sapling-protocol"
+version = "0.1.0"
+dependencies = [
+ "sapling-db",
+ "sapling-domain",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3306,7 +3325,9 @@ version = "0.0.1"
 dependencies = [
  "chrono",
  "rusqlite",
- "sapling-core",
+ "sapling-db",
+ "sapling-domain",
+ "sapling-protocol",
  "serde_json",
  "uuid",
 ]
@@ -3316,7 +3337,9 @@ name = "sapling-wasm"
 version = "0.1.0"
 dependencies = [
  "js-sys",
- "sapling-core",
+ "sapling-db",
+ "sapling-domain",
+ "sapling-protocol",
  "serde_json",
  "wasm-bindgen",
 ]

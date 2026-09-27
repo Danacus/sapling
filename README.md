@@ -154,8 +154,10 @@ src/lib/db/           Repositories: the only sanctioned way to touch storage,
                       of the tables are a projection of it, produced by a
                       materializer. Device secrets live in localStorage
                       (settings.ts), never in the database.
-crates/sapling-core/  That materializer, the SRS and every backend method, in
-                      Rust over a SQLite seam; compiled to wasm by
+crates/sapling-db/    That materializer and every backend method, in Rust
+                      over a SQLite seam, beside sapling-domain (the event
+                      schemas), sapling-protocol (the methods by name) and
+                      sapling-srs (the SRS); compiled to wasm by
                       `pnpm core:wasm` and run inside the database Worker.
 src/lib/srs/          Spaced repetition as the frontend sees it: grades, opaque
                       cards, timestamps. No FSRS — the core folds the card and
