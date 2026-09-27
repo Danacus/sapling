@@ -46,8 +46,10 @@ code, its tests and its contracts agree and the gates are green — not before.
 - Node tests are always in mock mode; no network, no browser APIs. The data
   layer is tested against the real in-memory store (`db/backend.testing.ts`).
   An LLM call is tested with a fake `fetchFn`, never a mock of the module.
-- The invariants that bite most: `src/lib/types.ts` is frozen (additive optional
-  fields only); `src/lib/llm/`, `src/lib/reading/`, `src/lib/conversation/`
+- The invariants that bite most: the wire types in `src/lib/types.ts` and the
+  `Backend` interface are generated from Rust at build time, never committed
+  (change the struct or the method table), and the hand-written challenge union
+  takes additive optional fields only; `src/lib/llm/`, `src/lib/reading/`, `src/lib/conversation/`
   never import `$lib/db`; repositories are the only store access and every
   write is an event; every registry member is registered or a gate fails;
   mobile-first with exactly two `min-width` breakpoints (48rem, 72rem).

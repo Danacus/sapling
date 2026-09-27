@@ -1,129 +1,45 @@
 /**
  * Shared domain types for the whole app.
  *
- * Everything (db, srs, validate, llm, ui) depends on this module, so keep it
- * dependency-free: no imports, no runtime values other than plain type aliases.
+ * Everything (db, srs, validate, llm, ui) depends on this module. The types
+ * that cross the persistence wire are generated from the Rust structs
+ * (`crates/sapling-domain`, `crates/sapling-srs`) into `$lib/db/generated/`
+ * at build time and re-exported here, so a field changes by changing the
+ * struct. What stays written here is
+ * what Rust treats as opaque JSON — the challenge union, whose shape the
+ * generator and the zod mirrors own — and TypeScript-only helpers over the
+ * generated types. No runtime values: types only.
  */
 
-/** CEFR-ish proficiency buckets used to steer generation difficulty. */
-export type Level = 'beginner' | 'elementary' | 'intermediate' | 'advanced';
+export type {
+	ChallengeResult,
+	Conversation,
+	ConversationAction,
+	ConversationCorrection,
+	ConversationExchange,
+	ConversationLearnerTurn,
+	ConversationLine,
+	ConversationScenario,
+	ConversationTeacherTurn,
+	FsrsCardState,
+	GlossEntry,
+	GradeEntry,
+	HistoryEntry,
+	ItemKind,
+	ItemSrs,
+	KnowledgeItem,
+	Level,
+	Profile,
+	ReadingMedia,
+	ReadingSentence,
+	ReadingText,
+	TextSource,
+	Verdict
+} from './db/generated/index';
+import type { ConversationLearnerTurn, ConversationTeacherTurn } from './db/generated/index';
 
 /** Which way a challenge is exercised. */
 export type Direction = 'toTarget' | 'toNative';
-
-/** Grading outcome for a single answered challenge. */
-export type Verdict = 'correct' | 'almost' | 'wrong';
-
-/** The learner's configuration, captured during onboarding. */
-export interface Profile {
-	/** Language the learner already speaks, e.g. `'nl'` or `'English'`. */
-	nativeLanguage: string;
-	/** Language being learned. */
-	targetLanguage: string;
-	level: Level;
-	/** Free-form topics used to personalize generated content. */
-	interests: string[];
-	/**
-	 * The learner describing themselves in their own words — job, city, family,
-	 * tastes, whatever they care to say. Written on the profile page and sent
-	 * (capped, see `MAX_ABOUT_CHARS` in `$lib/llm`) with every generation request,
-	 * so scenarios can be set in their actual life instead of a generic one.
-	 * Never required: absent or blank simply personalizes nothing.
-	 */
-	about?: string;
-	/** OpenRouter model id, e.g. `'openai/gpt-4o-mini'`. */
-	model: string;
-	/** Epoch milliseconds. */
-	createdAt: number;
-}
-
-/**
- * What the schedule says about one word, derived when the row was read.
- *
- * The frontend runs no FSRS — the core does, and hands these three numbers down
- * with every item it returns. `due` is a plain timestamp, so "is it due" stays a
- * comparison the caller makes against its own `now`; `retrievability` (0..1) is
- * the forgetting curve and `strength` (0..1) the number behind the strength
- * bars, and both need the model and its weights, which is why they are computed
- * over there.
- *
- * **Taken at fetch time.** A page left open across a due date shows the
- * schedule as of its last read until something refetches it.
- */
-export interface ItemSrs {
-	due: number;
-	retrievability: number;
-	strength: number;
-}
-
-/**
- * One learnable atom (a word, phrase or grammar point) tracked by the SRS.
- *
- * `fsrsCard` holds the FSRS card the core stores; it is typed as `unknown` here
- * so this module stays dependency-free, and the frontend treats it as opaque —
- * the shape is `FsrsCardState` in `src/lib/srs/`, and nothing outside the words
- * ledger reads a field of it. What screens read is {@link srs}.
- */
-export interface KnowledgeItem {
-	id: string;
-	kind: 'vocab' | 'grammar';
-	/** The item as it appears in the target language. */
-	term: string;
-	/** The meaning in the learner's native language. */
-	meaning: string;
-	/**
-	 * Latin-script reading of `term`, for target languages that are not written
-	 * in the Latin script (pinyin, romaji, revised romanization, ...).
-	 *
-	 * Absent for Latin-script languages — the generator is told to omit it, so
-	 * those learners never pay tokens for a field they cannot use.
-	 */
-	romanization?: string;
-	/** Optional usage notes, gender, conjugation hints, etc. */
-	notes?: string;
-	/** The stored FSRS card. Opaque: only the core reads inside it. */
-	fsrsCard: unknown;
-	/**
-	 * The schedule as of the moment this item was read — see {@link ItemSrs}.
-	 *
-	 * Every `Backend` read that returns items attaches it. Absent on an item
-	 * built by hand (an argument to `upsertItems`, an import), so every reader
-	 * falls back to "brand new".
-	 */
-	srs?: ItemSrs;
-	/** Epoch milliseconds. */
-	introducedAt: number;
-	/**
-	 * Review log, newest last. `grade` is the FSRS `Rating`.
-	 *
-	 * `device` is stamped by `$lib/device`'s stable per-browser id, and it is
-	 * what makes a merged history dedupe exactly: an entry's identity is
-	 * `(itemId, at, device)`, so two devices reviewing the same word in the
-	 * same millisecond stay two reviews rather than collapsing into one.
-	 * Entries without it predate the id and are attributed to a constant by
-	 * the Dexie migration, so that both devices name them identically.
-	 */
-	history: { at: number; grade: number; device?: string }[];
-	/**
-	 * Folds of `history` the store maintains, so a bulk read never carries it.
-	 *
-	 * `getAllItems()` returns these with an empty `history`; `getItem()` returns
-	 * both. Optional because anything that builds a `KnowledgeItem` by hand — a
-	 * test, an import, the assistant — supplies `history` alone, so every read
-	 * site falls back to it.
-	 */
-	reviewCount?: number;
-	/** How many of the reviews were graded Good or better. */
-	correctCount?: number;
-	/**
-	 * The most recent reviews, oldest first — what the ledger's tick strip shows.
-	 *
-	 * Absent unless the caller asked for it: `getAllItems({ withRecentGrades: true })`
-	 * or `getItem()`. The plain `getAllItems()` bulk read leaves it out — it is up
-	 * to `RECENT_GRADES_CAP` entries (~1 KB) per item and nothing else reads it.
-	 */
-	recentGrades?: { at: number; grade: number }[];
-}
 
 /**
  * Fields shared by every challenge variant.
@@ -370,237 +286,5 @@ export type Challenge =
 /** Narrowing helper: the `type` tag of a `Challenge`. */
 export type ChallengeType = Challenge['type'];
 
-/** The learner's answer to a single challenge. */
-export interface ChallengeResult {
-	challengeId: string;
-	verdict: Verdict;
-	/** Raw input, kept for review screens and analytics. */
-	answerGiven: string;
-	/** Epoch milliseconds. */
-	at: number;
-}
-
-/* -------------------------------------------------------------------------- */
-/* Reading (comprehension) mode                                                */
-/* -------------------------------------------------------------------------- */
-
-/** One sentence of a {@link ReadingText}. */
-export interface ReadingSentence {
-	/** The sentence in the target language, verbatim. */
-	text: string;
-	/**
-	 * Latin-script reading of `text`, for targets not written in the Latin
-	 * script. The sentence-wide fallback for languages with no local romanizer
-	 * (`$lib/romanize`); absent for Latin-script targets.
-	 */
-	reading?: string;
-	/** The sentence in the learner's native language. */
-	translation?: string;
-	/**
-	 * When this sentence is spoken, in milliseconds from the start of the media
-	 * it was imported from — present only for a text imported as subtitles.
-	 *
-	 * Not a clock: these are offsets into a recording, so they mean nothing
-	 * without it and are deliberately not epoch times. Kept now because the
-	 * subtitle file is the only place they exist and re-deriving them later would
-	 * mean asking the learner for the file again; the player that follows them is
-	 * a later slice, and until it lands nothing reads these.
-	 *
-	 * Both or neither: a sentence with a start and no end is not a fact anything
-	 * downstream can use.
-	 */
-	start?: number;
-	/** End of {@link start}'s span, same units and the same all-or-nothing rule. */
-	end?: number;
-}
-
-/**
- * One glossed word: a word the text uses that is *not* in the learner's
- * vocabulary, with what it means. Never a knowledge item by itself — a word
- * enters the collection only when the learner adds it from the reader.
- *
- * For scripts written without spaces the glossary doubles as the segmentation
- * dictionary: the tokenizer groups characters around these terms, so a glossed
- * word renders as one cell rather than one per character.
- */
-export interface GlossEntry {
-	/**
-	 * Exactly as it appears in the text, inflection and all: matching is
-	 * `wordKey` and nothing else, so a base form matches nothing.
-	 */
-	term: string;
-	/** Latin reading of `term`; absent for Latin-script targets. */
-	reading?: string;
-	/** Meaning in the learner's native language. */
-	meaning: string;
-}
-
-/**
- * What a text's sentence timings are timings *into*: the recording the learner
- * imported the subtitles from.
- *
- * A reference, never the media itself. A video is hundreds of megabytes and
- * lives on the learner's disk or on somebody's servers; nothing about it is
- * small enough or ours enough to put in an append-only log that syncs to every
- * paired device. So a `file` keeps only the name, which is all that is needed to
- * ask "is this the one?" the next time the text is opened, and a `youtube` keeps
- * the id, which is the whole address.
- *
- * Both variants exist from the start so the shape is settled before the second
- * one is played: this type is frozen like the rest of the file, and a reader
- * that already handles the union cannot be broken by the slice that fills it in.
- */
-export type ReadingMedia =
-	| { kind: 'youtube'; videoId: string }
-	| {
-			kind: 'file';
-			/** The file's name as the learner's disk spells it, for the "choose it again" prompt. */
-			name: string;
-			/** Its MIME type when the browser offered one — a hint for the picker, nothing more. */
-			type?: string;
-	  };
-
-/**
- * A text the learner reads (or listens to) for comprehension — written by the
- * model from their vocabulary, or pasted in from elsewhere and annotated.
- *
- * Immutable once stored, like a challenge: the annotations are what the model
- * produced at creation time, and everything adaptive (which readings show, which
- * words are highlighted) is derived at render time from the vocabulary and the
- * learner's marks — so old texts pick up new knowledge for free.
- */
-export interface ReadingText {
-	id: string;
-	/** Short, in the target language. */
-	title: string;
-	/** `'generated'` by the model from the vocabulary, or `'imported'` by the learner. */
-	source: 'generated' | 'imported';
-	/** The learner's topic, when a generated text was asked for one. */
-	topic?: string;
-	sentences: ReadingSentence[];
-	glossary: GlossEntry[];
-	/**
-	 * What the sentence timings belong to, when the text was imported from
-	 * subtitles and the learner said which recording they came from.
-	 *
-	 * Attached at import and never afterwards, like everything else here: a text
-	 * is immutable, and a media reference bolted on later would be a second fact
-	 * about the same object with no rule for which one wins.
-	 */
-	media?: ReadingMedia;
-	/** Epoch milliseconds. */
-	createdAt: number;
-}
-
-/* -------------------------------------------------------------------------- */
-/* Conversations                                                               */
-/* -------------------------------------------------------------------------- */
-
-/**
- * The stored side of conversation mode, mirroring `$lib/conversation`'s
- * `Scenario`, `TargetLine`, `Correction`, `LearnerTurn` and `TeacherTurn`
- * **structurally** rather than importing them.
- *
- * This module is deliberately dependency-free (see the file header) and
- * `$lib/conversation` imports it for `Profile`, so importing back would close a
- * cycle. Structural identity is what keeps the duplication harmless: TypeScript
- * assigns these to the conversation module's types and back with no conversion
- * anywhere, so the page hands `sendTurn`'s output straight to `addExchange` and
- * a stored transcript straight to the turn renderer. The two definitions have to
- * stay in step; a drift fails `pnpm check` at the page, which is where both
- * sides meet.
- */
-
-/** One line of the target language with its Latin reading. Mirrors `TargetLine`. */
-export interface ConversationLine {
-	text: string;
-	/** Absent for targets already written in the Latin script. */
-	reading?: string;
-}
-
-/** The scene both sides play, fixed for a conversation's whole life. */
-export interface ConversationScenario {
-	/** Native language: the setup has to be understood before the target language starts. */
-	setting: string;
-	teacherRole: string;
-	learnerRole: string;
-	firstSpeaker: 'teacher' | 'learner';
-	/** The teacher's opening line — present exactly when it speaks first. */
-	opener?: ConversationLine;
-	openerTranslation?: string;
-}
-
-/** The learner's whole message rewritten, with an optional note. Mirrors `Correction`. */
-export interface ConversationCorrection {
-	corrected: ConversationLine;
-	note?: string;
-}
-
-/** One tool the teacher ran on a turn — `add_words`, in practice. Mirrors `ActionNote`. */
-export interface ConversationAction {
-	tool: string;
-	summary: string;
-	ok: boolean;
-}
-
-/**
- * What the learner wrote, with what came back *about* it.
- *
- * `heard` and `correction` arrive with the *next* teacher turn and belong to
- * this bubble, so they are stored on it — which is also the pairing the turn
- * model is shown when the dialogue is replayed.
- */
-export interface ConversationLearnerTurn {
-	role: 'learner';
-	/** Exactly what they typed, never the corrected version. */
-	text: string;
-	heard?: ConversationLine;
-	correction?: ConversationCorrection;
-}
-
-/** One teacher line, with whatever it filed away while writing it. */
-export interface ConversationTeacherTurn {
-	role: 'teacher';
-	reply: ConversationLine;
-	translation?: string;
-	actions: ConversationAction[];
-}
-
 /** One row of a stored transcript. */
 export type StoredConversationTurn = ConversationLearnerTurn | ConversationTeacherTurn;
-
-/**
- * A role-played conversation, as the library lists it.
- *
- * The scene is immutable — it is decided once, before the first line — so the
- * only thing that ever grows is the transcript, one {@link ConversationExchange}
- * at a time.
- */
-export interface Conversation {
-	id: string;
-	scenario: ConversationScenario;
-	/** What the learner asked to talk about, when they asked for anything. */
-	topic?: string;
-	/** Epoch milliseconds. */
-	createdAt: number;
-}
-
-/**
- * The unit of persistence: one learner message and the teacher turn that
- * answered it.
- *
- * The pair is stored together because that is the only state the turn loop can
- * resume from — a learner message whose reply never came back is not history,
- * it is a failed send. `learner` is absent only at index 0, where the scenario's
- * opener seeds the transcript with a teacher line nobody prompted.
- *
- * Identity is `(conversationId, index)`, which is derived from the content and
- * so is the same on every device.
- */
-export interface ConversationExchange {
-	conversationId: string;
-	/** Position in the transcript, from 0. */
-	index: number;
-	learner?: ConversationLearnerTurn;
-	teacher: ConversationTeacherTurn;
-}

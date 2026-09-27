@@ -1,7 +1,7 @@
 /**
- * The protocol is a list and an interface that must agree, and a dispatcher
- * that must reach the method it names. The type-level check is in
- * `protocol.ts`; these pin the runtime half against the real core.
+ * The protocol's list and interface are generated from one Rust table, so they
+ * agree by construction; these pin the runtime half against the real core —
+ * that every listed name reaches a method and answers as the signature says.
  */
 import { describe, expect, it } from 'vitest';
 

@@ -11,6 +11,7 @@ use std::sync::OnceLock;
 
 use fsrs::{ItemState, MemoryState, NextStates, FSRS, FSRS6_DEFAULT_DECAY};
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Grade {
@@ -43,7 +44,12 @@ pub const RELEARNING: i64 = 3;
 
 /// A card, with its dates as epoch milliseconds. `stability` and `difficulty`
 /// are the model's own `f32`s, which also keeps their JSON short.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// The frontend treats it as opaque (`KnowledgeItem.fsrsCard` is `unknown`):
+/// only the words ledger names its fields, to put them in columns. `state` is
+/// one of `NEW`, `LEARNING`, `REVIEW`, `RELEARNING`, and `last_review` is
+/// `null` until the first review.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct FsrsCardState {
     pub due: f64,
     pub stability: f32,
@@ -319,7 +325,7 @@ pub fn review_card(state: &FsrsCardState, grade: Grade, now: f64) -> Result<Fsrs
 /// **These are computed when the row is fetched**, not when it is looked at. A
 /// page left open across a due date shows the schedule as of its last read until
 /// something refetches; the word list and the home page refetch on navigation.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct ItemSrs {
     pub due: f64,
     pub retrievability: f64,

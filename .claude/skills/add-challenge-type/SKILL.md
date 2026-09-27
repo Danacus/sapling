@@ -140,7 +140,9 @@ rather than checking by eye.
   the six components drifted apart before.
 - `ChallengeHost` is an `{#if}` chain on purpose; a component map loses the
   narrowing.
-- Extend `src/lib/types.ts` with **additive optional fields only**.
+- Extend `src/lib/types.ts` with **additive optional fields only**. The
+  challenge union stays hand-written there: Rust stores a challenge as opaque
+  JSON, so nothing about it is generated and `pnpm core:types` is not involved.
 
 ## Completion criteria
 

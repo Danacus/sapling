@@ -147,7 +147,8 @@ schema will work.
 ## Architecture
 
 ```
-src/lib/types.ts      Domain types. Dependency-free; everything imports it.
+src/lib/types.ts      Domain types; everything imports it. The wire types are
+                      generated from the Rust structs (`pnpm core:types`).
 src/lib/db/           Repositories: the only sanctioned way to touch storage,
                       and every write is an event. An append-only events log
                       (SQLite-WASM in OPFS) is the source of truth; the rest

@@ -48,6 +48,10 @@ result-*
 # writes it, every `pnpm dev|build|test|check` runs that first.
 /src/lib/db/wasm/
 
+# The wire's TypeScript types, generated from the Rust crates by
+# `pnpm core:types`, which runs right after `core:wasm` in the same scripts.
+/src/lib/db/generated/
+
 # Tauri's generated ACL schemas, written by `tauri-build` on every desktop build.
 # Its sibling `gen/android` *is* committed — it carries an icon set and an
 # edge-to-edge fix that only exist as edits to the generated project, and it

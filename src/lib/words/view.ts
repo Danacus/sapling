@@ -49,7 +49,8 @@ export function toWordRow(item: KnowledgeItem, now: number): WordRow {
 	return {
 		item,
 		card,
-		state: card.state,
+		// The wire says `number`; the core's card machine only ever writes one of the four.
+		state: card.state as CardState,
 		due: isDue(item, now),
 		strength: strengthOf(item),
 		retrievability: retrievabilityOf(item),

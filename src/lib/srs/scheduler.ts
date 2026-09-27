@@ -51,28 +51,13 @@ export const CardState = {
 export type CardState = (typeof CardState)[keyof typeof CardState];
 
 /**
- * The stored card's shape — **owned by the core**, mirrored here only so the
- * words ledger can name the fields it puts in columns.
- *
- * Nothing in the app computes one, and nothing but that ledger should read one:
- * the derived numbers every other screen wants are on
- * {@link KnowledgeItem.srs}. Dates are epoch-ms numbers (`null` in place of
- * `undefined` for `last_review`) so the whole thing stays plain-JSON-safe across
- * `postMessage`, the export file and the sync log.
+ * The stored card's shape — **owned by the core** (`crates/sapling-srs`) and
+ * generated from it, re-exported here only so the words ledger can name the
+ * fields it puts in columns. Nothing in the app computes one, and nothing but
+ * that ledger should read one: the derived numbers every other screen wants are
+ * on {@link KnowledgeItem.srs}. Its `state` is a {@link CardState}.
  */
-export interface FsrsCardState {
-	due: number;
-	stability: number;
-	difficulty: number;
-	/** @deprecated kept only because the FSRS `Card` shape still has it. */
-	elapsed_days: number;
-	scheduled_days: number;
-	learning_steps: number;
-	reps: number;
-	lapses: number;
-	state: CardState;
-	last_review: number | null;
-}
+export type { FsrsCardState } from '$lib/types';
 
 /**
  * Maps a validation verdict onto an FSRS grade.

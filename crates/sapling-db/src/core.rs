@@ -17,6 +17,7 @@ use serde::de::value::{Error as EnumError, StrDeserializer};
 use serde::de::IntoDeserializer;
 use serde::Serialize;
 use serde_json::{Map, Value};
+use ts_rs::TS;
 
 use crate::materialize::{open_schema, raw_from_row, Materializer, LOG_ORDER};
 use crate::schema::{ACTIVE_PROFILE_KEY, DERIVED_TABLES};
@@ -50,17 +51,20 @@ const ITEM_COLUMNS_LEAN: &str =
 /// the card this review folded to.
 ///
 /// `card` is read back after the commit rather than predicted, because
-/// predicting it is exactly what the frontend no longer can: there is one FSRS
-/// and it lives in `sapling-srs`. Both are `null` for an item that is not there.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+/// predicting it is exactly what the frontend cannot: there is one FSRS and it
+/// lives in `sapling-srs`. Both cards are opaque, and both are `null` for an
+/// item that is not there.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
 pub struct ReviewOutcome {
     pub existed: bool,
+    #[ts(type = "unknown")]
     pub prior: Value,
+    #[ts(type = "unknown")]
     pub card: Value,
 }
 
-/// Shape of the JSON `export_data` produces.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+/// Shape of the JSON `exportData` produces: the whole log, in log order.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportEnvelope {
     pub version: f64,
@@ -68,9 +72,10 @@ pub struct ExportEnvelope {
     pub events: Vec<RawEvent>,
 }
 
-/// One row for the language switcher. The full active profile still comes
-/// through `getProfile`; this read stays deliberately small.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+/// One language library available to this device, as the language switcher
+/// lists it. The full active profile still comes through `getProfile`; this
+/// read stays deliberately small.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageProfile {
     pub id: String,

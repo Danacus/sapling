@@ -1,7 +1,15 @@
 //! The event model: seventeen immutable facts, and the only thing sync moves.
 //!
-//! `src/lib/db/events.ts`, with serde standing in for zod. The rules are the
-//! same: the envelope is `{ id, type, at, device, payload }`, unknown fields
+//! The envelope `id` is the set-union key — an id already in `events` is never
+//! materialised twice — so no payload carries an id of its own. `at` is when
+//! the learner did the thing, and doubles as the last-write-wins input for the
+//! two overwrites (`profileUpdated`, `wordMarked`) and the per-field fold of
+//! `itemUpdated`; every other rule is order-independent by construction.
+//! Payload shapes are what v3 export files on disk contain.
+//!
+//! These structs are the schemas, with serde standing in for zod, and the
+//! source of `src/lib/db/events.ts`'s types (`pnpm core:types`; a payload is
+//! `<Name>Payload` there). The envelope is `{ id, type, at, device, payload }`, unknown fields
 //! inside a payload are stripped, and an optional field that is present must
 //! have a value — `null` is not `undefined`. [`parse_event`] is the gate every
 //! row off sync or out of a backup file passes *into the merge rules*; a local
@@ -16,16 +24,19 @@
 //! **A payload struct must name every optional field of the type it carries.**
 //! Serde drops what a struct does not declare exactly as zod does, and the
 //! field then works on the device that wrote it and vanishes on the one it
-//! arrives at. `parse_event(raw) == raw`, field for field, is the test.
+//! arrives at. `parse_event(raw) == raw`, field for field, is the test; the
+//! TypeScript type follows the struct because it is generated from it.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use ts_rs::TS;
 
 use crate::types::{
     absent_or, ChallengeResult, Conversation, ConversationExchange, ItemKind, Profile, ReadingText,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Every kind of fact the log holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum EventType {
     ItemAdded,
@@ -102,7 +113,8 @@ impl EventType {
 /* -------------------------------------------------------------------------- */
 
 /// Item content only. The card is computed from the reviews that follow.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(rename = "ItemAddedPayload")]
 #[serde(rename_all = "camelCase")]
 pub struct ItemAdded {
     pub id: String,
@@ -114,18 +126,21 @@ pub struct ItemAdded {
         deserialize_with = "absent_or",
         skip_serializing_if = "Option::is_none"
     )]
+    #[ts(optional)]
     pub romanization: Option<String>,
     #[serde(
         default,
         deserialize_with = "absent_or",
         skip_serializing_if = "Option::is_none"
     )]
+    #[ts(optional)]
     pub notes: Option<String>,
     pub introduced_at: f64,
 }
 
 /// One review. Identity is `(itemId, at, device)`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(rename = "ItemReviewedPayload")]
 #[serde(rename_all = "camelCase")]
 pub struct ItemReviewed {
     pub device: String,
@@ -135,7 +150,10 @@ pub struct ItemReviewed {
 }
 
 /// A re-grade. `replaces` names the `at` of the review it displaced.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// The same fields as `ItemReviewed`, and so the same identity.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(rename = "ReviewAmendedPayload")]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewAmended {
     pub device: String,
@@ -147,35 +165,41 @@ pub struct ReviewAmended {
         deserialize_with = "absent_or",
         skip_serializing_if = "Option::is_none"
     )]
+    #[ts(optional)]
     pub replaces: Option<f64>,
 }
 
 /// The mutable fields of an item; identity and birth date are not among them.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+/// A patch names only the fields it sets.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
 pub struct ItemFields {
     #[serde(
         default,
         deserialize_with = "absent_or",
         skip_serializing_if = "Option::is_none"
     )]
+    #[ts(optional)]
     pub term: Option<String>,
     #[serde(
         default,
         deserialize_with = "absent_or",
         skip_serializing_if = "Option::is_none"
     )]
+    #[ts(optional)]
     pub meaning: Option<String>,
     #[serde(
         default,
         deserialize_with = "absent_or",
         skip_serializing_if = "Option::is_none"
     )]
+    #[ts(optional)]
     pub romanization: Option<String>,
     #[serde(
         default,
         deserialize_with = "absent_or",
         skip_serializing_if = "Option::is_none"
     )]
+    #[ts(optional)]
     pub notes: Option<String>,
 }
 
@@ -197,14 +221,18 @@ impl ItemFields {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// A patch of the mutable fields, folded per field by `(at, device)`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(rename = "ItemUpdatedPayload")]
 #[serde(rename_all = "camelCase")]
 pub struct ItemUpdated {
     pub item_id: String,
     pub fields: ItemFields,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Tombstone. The item and its reviews go, and the id can never come back.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(rename = "ItemDeletedPayload")]
 #[serde(rename_all = "camelCase")]
 pub struct ItemDeleted {
     pub item_id: String,
@@ -216,7 +244,8 @@ pub struct ItemDeleted {
 /// validated it at generation time, and a schema here would strip the fields it
 /// did not know. `z.unknown()` also accepts an absent key, which is why this is
 /// an `Option` rather than a required `Value`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(rename = "ChallengeAddedPayload")]
 #[serde(rename_all = "camelCase")]
 pub struct ChallengeAdded {
     #[serde(
@@ -224,6 +253,8 @@ pub struct ChallengeAdded {
         deserialize_with = "absent_or",
         skip_serializing_if = "Option::is_none"
     )]
+    #[ts(optional)]
+    #[ts(type = "unknown")]
     pub challenge: Option<Value>,
     pub generated_at: f64,
     #[serde(
@@ -231,36 +262,51 @@ pub struct ChallengeAdded {
         deserialize_with = "absent_or",
         skip_serializing_if = "Option::is_none"
     )]
+    #[ts(optional)]
     pub topic: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// One serve. `timesServed` counts distinct such events.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(rename = "ChallengeServedPayload")]
 #[serde(rename_all = "camelCase")]
 pub struct ChallengeServed {
     pub challenge_id: String,
     pub at: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Permanent exclusion. A sticky boolean, so it needs no ordering data.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(rename = "ChallengeReportedPayload")]
 #[serde(rename_all = "camelCase")]
 pub struct ChallengeReported {
     pub challenge_id: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Tombstone. The text goes, and the id can never come back.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(rename = "TextDeletedPayload")]
 #[serde(rename_all = "camelCase")]
 pub struct TextDeleted {
     pub text_id: String,
 }
 
 /// "I know this word" / "I don't". Last write by the envelope `at` wins, per term.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(rename = "WordMarkedPayload")]
 pub struct WordMarked {
     pub term: String,
     pub known: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// The learner opened a word's card in a text — "I don't understand this".
+///
+/// Recorded although nothing reads it yet: a lookup on a *tracked* word is FSRS
+/// evidence, and it is the one thing about a reading session that cannot be
+/// reconstructed afterwards. `itemId` is present when the word was already in
+/// the garden.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(rename = "WordLookedUpPayload")]
 #[serde(rename_all = "camelCase")]
 pub struct WordLookedUp {
     pub term: String,
@@ -269,11 +315,14 @@ pub struct WordLookedUp {
         deserialize_with = "absent_or",
         skip_serializing_if = "Option::is_none"
     )]
+    #[ts(optional)]
     pub item_id: Option<String>,
     pub text_id: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Tombstone. The conversation and its turns go, and the id can never come back.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(rename = "ConversationDeletedPayload")]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationDeleted {
     pub conversation_id: String,
@@ -367,16 +416,18 @@ pub fn parse_payload(kind: EventType, raw: &Value) -> Option<Payload> {
 /// Neither sync nor export may require that *this* build understands a row. A
 /// kind a newer build writes, or a payload whose schema has since widened, has
 /// to survive a round trip through an older device rather than be dropped on
-/// the floor — so `kind` is a plain string here and `payload` an opaque
-/// [`Value`]. Only [`typed_event`], and the merge rules behind it, ever
+/// the floor — so `type` is a plain string here, not an `EventType`, and
+/// `payload` is opaque. Only `typed_event`, and the merge rules behind it, ever
 /// interpret one.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(rename = "LogRow")]
 pub struct RawEvent {
     pub id: String,
     #[serde(rename = "type")]
     pub kind: String,
     pub at: f64,
     pub device: String,
+    #[ts(type = "unknown")]
     pub payload: Value,
 }
 

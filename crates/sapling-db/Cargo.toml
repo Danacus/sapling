@@ -11,6 +11,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sapling-domain = { path = "../sapling-domain" }
 sapling-srs = { path = "../sapling-srs" }
+# The TypeScript side of the wire is generated from these types (`pnpm core:types`,
+# see `sapling-protocol`'s `typescript` tests). The derive is inert outside that.
+ts-rs = { version = "12.0.1", features = ["no-serde-warnings"] }
 
 [dev-dependencies]
 # The integration tests run against a real SQLite, through the store's rusqlite
