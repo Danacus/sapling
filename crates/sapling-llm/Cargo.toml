@@ -1,0 +1,16 @@
+[package]
+name = "sapling-llm"
+version = "0.1.0"
+edition = "2021"
+description = "Sapling's model calls: the OpenRouter chat client over an injected transport, the prompts, the reply schemas and parsers, and mock mode."
+publish = false
+
+[dependencies]
+sapling-domain = { path = "../sapling-domain" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+schemars = "1"
+ts-rs = { version = "12.0.1", features = ["no-serde-warnings"] }
+
+[dev-dependencies]
+pollster = "0.4"

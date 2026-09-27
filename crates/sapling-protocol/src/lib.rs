@@ -22,7 +22,8 @@
 //! ones, `name?: T` in TypeScript and `Option<T>` in the body.
 //!
 //! A method may also answer without the database: `importSource` is
-//! `sapling-import`'s, and ignores `core`.
+//! `sapling-import`'s, and ignores `core`. The model calls are a second,
+//! async table in [`llm`], run on the window thread rather than in the Worker.
 //!
 //! Where Rust treats a value as opaque JSON because TypeScript owns its shape —
 //! a challenge, a pool row, a raw pulled event — the entry says which
@@ -46,8 +47,11 @@ use sapling_domain::types::{
 };
 use sapling_import::ImportedSource;
 
+pub mod llm;
 #[cfg(test)]
 mod typescript;
+
+pub use llm::{dispatch_llm, dispatch_llm_json, LlmFailure};
 
 /// `getAllItems`' options.
 #[derive(Debug, Default, Deserialize, TS)]

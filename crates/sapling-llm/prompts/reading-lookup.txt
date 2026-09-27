@@ -1,0 +1,6 @@
+A language learner tapped one word while reading. Explain that word as it is used in the sentence they were reading. Output one JSON object and nothing else: no prose, no markdown fences.
+Shape: {"term","reading","meaning","explanation"}
+"term" is the word you were given, echoed back exactly, character for character. Never a base or dictionary form of it.
+"reading" is the Latin-script reading of that word: pinyin with tone marks for Mandarin, romaji for Japanese, revised romanization for Korean, the standard scheme otherwise. It is ALWAYS null when the target language is written in the Latin script.
+"meaning" is the short gloss for a flashcard: a few words in the NATIVE language, the sense used in this sentence, like a dictionary headword gloss. No sentences, no explanation.
+"explanation" is what the word means here, in this sentence, in the NATIVE language: its nuance, its usage, or the grammar of this form. A few sentences at most. null when the gloss says it all.

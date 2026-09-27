@@ -62,14 +62,15 @@ function sanitize(n: unknown): number {
 }
 
 /**
- * Adds one completion's usage to the running totals and bumps the request
- * counter. Called from the real client path; mock mode never records.
+ * Adds one call's usage to the running totals and bumps the request counter —
+ * by `requests` when the Rust core counted several, else by one. Called from
+ * the real client path; mock mode never records.
  */
-export function recordUsage(usage: TokenUsage): void {
+export function recordUsage(usage: TokenUsage & { requests?: number }): void {
 	if (!hasStorage()) return;
 	writeNumber(PROMPT_KEY, readNumber(PROMPT_KEY) + sanitize(usage?.promptTokens));
 	writeNumber(COMPLETION_KEY, readNumber(COMPLETION_KEY) + sanitize(usage?.completionTokens));
-	writeNumber(REQUESTS_KEY, readNumber(REQUESTS_KEY) + 1);
+	writeNumber(REQUESTS_KEY, readNumber(REQUESTS_KEY) + (sanitize(usage?.requests) || 1));
 }
 
 /** Lifetime totals. All zeroes when storage is unavailable or never written. */

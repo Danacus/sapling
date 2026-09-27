@@ -5,8 +5,9 @@
 //! Every type is `ts-rs`'s own export, one file per type, integers as `number`.
 //! Written here by hand are only what `ts-rs` cannot derive: `backend.ts` (the
 //! `Backend` interface, `BACKEND_METHODS` and `EXPORT_VERSION`, from the method
-//! table in `lib.rs`), `Payloads.ts` (each event type's payload) and
-//! `index.ts`, which re-exports every type file.
+//! table in `lib.rs`), `llm.ts` (the `Llm` interface, `LLM_METHODS` and the
+//! reading caps, from the table in `llm.rs`), `Payloads.ts` (each event type's
+//! payload) and `index.ts`, which re-exports every type file.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -21,8 +22,11 @@ use sapling_domain::events::{
 use sapling_domain::types::{
     ChallengeResult, Conversation, ConversationExchange, Profile, ReadingText,
 };
+use sapling_llm::reading::{MAX_FOCUS_WORDS, MAX_TOPIC_CHARS};
+use sapling_llm::{Endpoint, LlmError, TokenUsage};
 use sapling_srs::FsrsCardState;
 
+use crate::llm::{llm_methods, visit_llm_types};
 use crate::{methods, visit_method_types, INTERFACE_DOCS};
 
 /// One `Backend` method, as the table declares it.
@@ -89,24 +93,9 @@ fn payloads(cfg: &Config) -> String {
     format!("{imports}\nexport type Payloads = {{\n{map}}};\n")
 }
 
-/// `backend.ts`: the method table as a TypeScript interface.
-fn backend(names: &[String]) -> String {
-    let cfg = Config::new().with_large_int("number");
-    let mut out = String::from(
-        "import type { Challenge } from '../../types';\nimport type { ChallengeRow } from '../database';\n",
-    );
-    let _ = writeln!(
-        out,
-        "import type {{ {} }} from './index';\n",
-        names.join(", ")
-    );
-    out.push_str("/**\n");
-    for line in INTERFACE_DOCS {
-        let _ = writeln!(out, " *{line}");
-    }
-    out.push_str(" */\nexport interface Backend {\n");
-    let methods = methods(&cfg);
-    for method in &methods {
+/// One interface member per method.
+fn members(out: &mut String, methods: &[Method]) {
+    for method in methods {
         out.push_str("  /**\n");
         for line in method.docs {
             let _ = writeln!(out, "   *{line}");
@@ -124,6 +113,46 @@ fn backend(names: &[String]) -> String {
             method.returns
         );
     }
+}
+
+/// `llm.ts`: the model calls' table as a TypeScript interface.
+fn llm(names: &[String]) -> String {
+    let cfg = Config::new().with_large_int("number");
+    let methods = llm_methods(&cfg);
+    let mut out = format!(
+        "import type {{ {} }} from './index';\n\n/** The model calls, run on the window thread over `fetch`. */\nexport interface Llm {{\n",
+        names.join(", ")
+    );
+    members(&mut out, &methods);
+    out.push_str("}\n\nexport const LLM_METHODS = [\n");
+    for method in &methods {
+        let _ = writeln!(out, "  '{}',", method.name);
+    }
+    let _ = writeln!(
+        out,
+        "] as const;\n\nexport const MAX_FOCUS_WORDS = {MAX_FOCUS_WORDS};\nexport const MAX_TOPIC_CHARS = {MAX_TOPIC_CHARS};"
+    );
+    out
+}
+
+/// `backend.ts`: the method table as a TypeScript interface.
+fn backend(names: &[String]) -> String {
+    let cfg = Config::new().with_large_int("number");
+    let mut out = String::from(
+        "import type { Challenge } from '../../types';\nimport type { ChallengeRow } from '../database';\n",
+    );
+    let _ = writeln!(
+        out,
+        "import type {{ {} }} from './index';\n",
+        names.join(", ")
+    );
+    out.push_str("/**\n");
+    for line in INTERFACE_DOCS {
+        let _ = writeln!(out, " *{line}");
+    }
+    out.push_str(" */\nexport interface Backend {\n");
+    let methods = methods(&cfg);
+    members(&mut out, &methods);
     out.push_str("}\n\nexport const BACKEND_METHODS = [\n");
     for method in &methods {
         let _ = writeln!(out, "  '{}',", method.name);
@@ -148,6 +177,10 @@ fn typescript() {
     EventType::export_all(&cfg).expect("export");
     ExportEnvelope::export_all(&cfg).expect("export");
     FsrsCardState::export_all(&cfg).expect("export");
+    visit_llm_types(&mut Export(&cfg));
+    Endpoint::export_all(&cfg).expect("export");
+    LlmError::export_all(&cfg).expect("export");
+    TokenUsage::export_all(&cfg).expect("export");
     std::fs::write(dir.join("Payloads.ts"), payloads(&cfg)).expect("write");
 
     let mut names: Vec<String> = std::fs::read_dir(&dir)
@@ -162,4 +195,5 @@ fn typescript() {
         .collect();
     std::fs::write(dir.join("index.ts"), index).expect("write");
     std::fs::write(dir.join("backend.ts"), backend(&names)).expect("write");
+    std::fs::write(dir.join("llm.ts"), llm(&names)).expect("write");
 }

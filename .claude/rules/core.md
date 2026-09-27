@@ -3,6 +3,7 @@ paths:
   - 'crates/sapling-domain/**'
   - 'crates/sapling-db/**'
   - 'crates/sapling-import/**'
+  - 'crates/sapling-llm/**'
   - 'crates/sapling-protocol/**'
   - 'crates/sapling-srs/**'
   - 'crates/sapling-wasm/**'
@@ -11,6 +12,7 @@ paths:
   - 'src/lib/db/host.ts'
   - 'src/lib/db/sqlite.worker.ts'
   - 'src/lib/db/backend.testing.ts'
+  - 'src/lib/llm/core.ts'
 ---
 
 # The Rust core
@@ -21,8 +23,9 @@ The persistence core is a stack of crates, one job each, and the dependencies on
 - **`sapling-domain`** — the event log as a contract: the event and payload schemas (`events.rs`), the domain types they and the reads carry (`types.rs`), the `LocalDay` calendar seam (`day.rs`) and `PROFILE_ID`. serde only; it knows nothing of SQL, so anything that reads, writes or ships events can depend on it alone.
 - **`sapling-db`** — the database: the `Sql` trait (`sql.rs`), the DDL and read-table constants (`schema.rs`), the merge rules (`materialize.rs`) and `Core`, every `Backend` method (`core.rs`). It never opens a database and never mentions rusqlite.
 - **`sapling-import`** — the reading import, whole: subtitle detection and parsing (SRT, VTT, json3, a copied transcript panel) into **one timed segment per cue** — never joined, never re-cut into sentences — and prose into **one untimed segment per paragraph**. Its output is `sapling-domain`'s `Segment` itself (its one workspace dependency), so what `importSource` answers is what `addText` stores. A plain library beside the stack rather than in it — no SQL, no `Core`, no I/O, a function of the text alone — exposed as `importSource`, the one method in the table that ignores `core`. The CJK test that decides whether a cue's lines join with a space is Unicode block ranges, not script data, to keep a table out of the wasm build.
-- **`sapling-protocol`** — the `Backend` protocol by name: the `backend!` method table, the `dispatch` and `dispatch_json` it expands into (a method name and a JSON argument array in, JSON out, over `Core`), and the generator of the TypeScript wire types.
-- **`sapling-wasm`** wraps db and protocol for a JavaScript host; that build runs inside the database Worker in the browser and in-process in node tests. **`sapling-store`** is the native host: it opens `Core` over a SQLite file in a directory through its own `rusqlite_sql` (the only crate that links rusqlite), with the device id, clock and time zone an OS lends (`desktop.md`), and hands it out on its own thread through `CoreHandle::run` — a closure gets the `Core` itself. It speaks no protocol: `sapling-desktop` calls `sapling-protocol` inside that closure, and a CLI would call `Core` methods directly. Tauri-free so anything native opens the same database the same way.
+- **`sapling-llm`** — the model calls, stateless: the OpenRouter chat client (`client.rs`: error kinds, tool calling, usage, one retry without `response_format` when an endpoint rejects structured outputs), strict reply schemas from `schemars` derives (`json.rs`), and the calls themselves (`reading.rs` so far). **Prompts and mock fixtures are data** (`prompts/*.txt`, `fixtures/*.json`, `include_str!`); mock mode is `Llm` with no `Endpoint`, and a mock reply goes through the same parser as a live one. The HTTP POST is a `Transport` the host injects — tests use fakes, the wasm build the window's `fetch`. No SQL, no `Core`.
+- **`sapling-protocol`** — the `Backend` protocol by name: the `backend!` method table, the `dispatch` and `dispatch_json` it expands into (a method name and a JSON argument array in, JSON out, over `Core`), and the generator of the TypeScript wire types. Beside it, `llm.rs`'s `llm!` table: the model calls by name, async, one argument object each, over an `Llm` rather than `Core`; `dispatch_llm_json` answers `{result, usage?}` and fails with the `LlmError` as JSON. It generates `llm.ts` (`Llm`, `LLM_METHODS`, the reading caps).
+- **`sapling-wasm`** wraps db and protocol for a JavaScript host; that build runs inside the database Worker in the browser and in-process in node tests. Its free `llm(method, argsJson, endpointJson?, post)` export needs no database and runs on the **window** thread (`src/lib/llm/core.ts`): the settings it needs live in `localStorage`, and the desktop shell has no Worker to send it to. **`sapling-store`** is the native host: it opens `Core` over a SQLite file in a directory through its own `rusqlite_sql` (the only crate that links rusqlite), with the device id, clock and time zone an OS lends (`desktop.md`), and hands it out on its own thread through `CoreHandle::run` — a closure gets the `Core` itself. It speaks no protocol: `sapling-desktop` calls `sapling-protocol` inside that closure, and a CLI would call `Core` methods directly. Tauri-free so anything native opens the same database the same way.
 
 There is no TypeScript implementation any more, and `src/lib/db/` keeps only the protocol, the transport and the host glue. A hosted instance would run the same crates over a different `Sql`.
 

@@ -1,0 +1,3 @@
+A language learner is reading a text and asked for a translation of one line. Output one JSON object and nothing else: no prose, no markdown fences.
+Shape: {"translation"}
+"translation" is "text" translated into the NATIVE language: faithful and natural, keeping its meaning, tone and register, close enough to the original that the learner can match its parts. Only the translation — no notes, no alternatives, no explanation.
