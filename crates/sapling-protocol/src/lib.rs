@@ -421,11 +421,11 @@ backend! {
             core.record_lookup(&term, &textId, itemId.as_deref())
         }
 
-        /// Recognises an imported text and cuts it into sentences: subtitles
-        /// (SRT, VTT, json3, a copied transcript panel) are cleaned into cues
-        /// and re-cut into sentences that keep their timings; anything else is
-        /// prose, split on sentence-final punctuation and hard newlines. A pure
-        /// function of `text` — it touches no table.
+        /// Recognises an imported text and cuts it into the segments it is
+        /// stored as: subtitles (SRT, VTT, json3, a copied transcript panel)
+        /// are cleaned into cues, one timed segment each; anything else is
+        /// prose, one untimed segment per paragraph. A pure function of `text`
+        /// — it touches no table.
         importSource(text: String) -> ImportedSource {
             Ok::<_, Error>(sapling_import::import_source(&text))
         }
@@ -613,11 +613,14 @@ mod tests {
 
     #[test]
     fn import_source_answers_without_the_database() {
-        let answer = dispatch_json(&silent_core(), "importSource", r#"["Hola. Adiós."]"#)
+        let answer = dispatch_json(&silent_core(), "importSource", r#"["Hola.\n\nAdiós."]"#)
             .unwrap()
             .unwrap();
         let value: Value = serde_json::from_str(&answer).unwrap();
-        assert_eq!(value["sentences"], serde_json::json!(["Hola.", "Adiós."]));
+        assert_eq!(
+            value["segments"],
+            serde_json::json!([{ "text": "Hola." }, { "text": "Adiós." }])
+        );
         assert!(value.get("format").is_none());
     }
 

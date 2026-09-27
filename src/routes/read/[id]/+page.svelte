@@ -2,28 +2,30 @@
   The reader: one stored text, a page at a time, with every word one tap from its
   meaning.
 
-  The text itself is immutable — the sentences, the readings and the glossary are
-  what the model wrote the day it was made. Everything the learner *sees* is
-  decided here on every open, by `annotateSentence` against the garden and the
-  marks as they stand today, which is why a text written last month shows this
-  month's knowledge. The roll map that decides which tracked readings fade is
-  created once per component instance and kept across re-annotations, so a word
-  reads the same in sentence two and sentence nine — which is also why `lines`
+  The text itself is immutable, and it is only the text — its segments, one per
+  subtitle cue or paragraph, as the source cut them. Everything the learner
+  *sees* is decided here on every open, by `annotateSentence` against the garden
+  and the marks as they stand today, which is why a text written last month
+  shows this month's knowledge. The roll map that decides which tracked readings
+  fade is created once per component instance and kept across re-annotations,
+  so a word reads the same in line two and line nine — which is also why `lines`
   stays the annotation of the *whole* text and only the rendering is paged.
 
-  Pages are `paginate`'s ranges over those sentences and the current one is
-  `?p=` in the URL, clamped. Nothing about the position is stored: a text
-  reopened from the library starts at page 1, deliberately, because a stored
-  bookmark is a fact to sync and a page is cheap to skip past.
+  `paginate` turns the segments into pieces (a segment, or one sentence of a
+  segment too long for a page — a cut made on screen and never stored) and
+  packs the pieces into pages; the current page is `?p=` in the URL, clamped.
+  Nothing about the position is stored: a text reopened from the library starts
+  at page 1, deliberately, because a stored bookmark is a fact to sync and a
+  page is cheap to skip past.
 
   A text imported from subtitles with a recording attached opens in the **follow
   view** instead, and it is a view rather than a route because everything below
   is the same: the same annotation of the same whole text, the same whole-text
   `selected`, the same card. Only the page is different — in follow view *the
-  page is the current sentence*, `pageRange` cut from the clock rather than from
-  `paginate`, so the translation, the stored reading and Listen all follow the
-  line being spoken without a word of it knowing about a video. `?view=text` is
-  the way back to the paged reader.
+  page is the current segment*, `pageRange` cut from the clock rather than from
+  `paginate`, so the words on screen follow the line being spoken without a
+  word of the annotation knowing about a video. `?view=text` is the way back to
+  the paged reader.
 
   **The clock turns no grades.** Page grading is the learner saying "I have read
   this", and a video that keeps playing while they look out of the window says
@@ -41,19 +43,31 @@
   survives a reload and agrees with the drill.
 
   The card offers what the word's status leaves open: a tracked word only its
-  bed, a known one Unmark, and everything else "Add to my words" and "I know
-  this" — plus, on a word nobody has glossed, a typed meaning or **Look it up**,
-  the one paid call the reader makes. Its answer lands in `extraGlossary`, which
-  is merged into the annotate context, so the word turns `new` for the rest of
-  this open; it is not stored, because the text is immutable and what is worth
-  keeping is the word the learner then adds.
+  bed, a known one Unmark, and a word nobody has said anything about **"What
+  does this mean?"** first — a paid lookup sent with the sentence the word
+  stands in — then editable meaning and reading fields that the answer fills
+  and the learner may correct or type without asking, "Add to my words" and "I
+  know this". The answer is two things: a short gloss that fills the Meaning
+  field, and a longer explanation shown read-only above it, which is never
+  filed with the word. The answer lands in `extraGlossary`, which the card reads for
+  every occurrence of that word for the rest of this open; it is not stored,
+  because the text is immutable and what is worth keeping is the word the
+  learner then adds. A failed lookup leaves the fields empty and editable and
+  never stands between the learner and Add.
+
+  **Translate** is the other paid call: one segment into the native language,
+  on a press — the current line in the follow view, every segment on the page in
+  the paged one, a few at a time. Answers are kept in a `Map` keyed by segment
+  index for this open only and shown under their segment until hidden; the
+  segment is the unit because it is what the source cut, so nothing has to be
+  aligned.
 -->
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { untrack } from 'svelte';
-	import { SvelteSet } from 'svelte/reactivity';
+	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 
 	import { addWordsTool, defaultToolContext } from '$lib/assistant/tools';
 	import {
@@ -74,8 +88,7 @@
 		objectUrl,
 		prevTimed,
 		rememberFile,
-		sentenceAt,
-		sentenceRangeAt,
+		segmentAt,
 		startOf,
 		takeFile,
 		videoPlayer,
@@ -85,18 +98,22 @@
 	import {
 		annotateSentence,
 		lookUpWord,
+		lookedUpGloss,
 		paginate,
-		showSentenceReading,
+		pieceOffset,
+		piecesOfSegment,
+		sentenceAt,
 		tokenizeByTerms,
+		translateLine,
 		wordKey
 	} from '$lib/reading';
-	import type { AnnotateContext, ReadingWord, TokenizeFn } from '$lib/reading';
+	import type { AnnotateContext, GlossEntry, ReadingWord, TokenizeFn } from '$lib/reading';
 	import { hasLocalRomanizer, loadRomanizer } from '$lib/romanize';
 	import type { Maturity } from '$lib/challenges/serve/progression';
 	import { Grade } from '$lib/srs';
-	import { cardKey, joinTokens, usesInterWordSpaces } from '$lib/text';
+	import { cardKey, usesInterWordSpaces } from '$lib/text';
 	import { speak, stopSpeaking, ttsAvailable, warmSpeech } from '$lib/tts';
-	import type { GlossEntry, KnowledgeItem, Profile, ReadingText } from '$lib/types';
+	import type { KnowledgeItem, Profile, ReadingText } from '$lib/types';
 	import { getRomanizationMode } from '$lib/ui/prefs';
 	import BackLink from '$lib/ui/BackLink.svelte';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
@@ -130,31 +147,58 @@
 	 */
 	const rolls = new Map<string, boolean>();
 	/**
-	 * Words looked up from the card, on top of the text's own glossary — for this
-	 * open only.
+	 * Words looked up from the card — for this open only.
 	 *
-	 * A text is immutable, so a lookup cannot be written into its glossary; but a
-	 * word the model missed is `plain` everywhere it appears, and answering it
-	 * once should answer it everywhere. So the answers live here and are merged
-	 * into the annotate context, which turns the word `new` — underline, gloss,
-	 * and "Add to my words" filled in from the meaning — for the rest of the
-	 * session. Nothing is lost by not persisting it: if the word mattered, the
-	 * learner adds it, and *that* is a fact worth syncing.
+	 * A text carries no meanings and is immutable, so a lookup cannot be written
+	 * into it; but a word looked up once should be answered everywhere it
+	 * appears. So the answers live here and the card reads them
+	 * (`lookedUpGloss`) — gloss, and "Add to my words" filled in from the
+	 * meaning — for the rest of the session. Nothing is lost by not persisting
+	 * it: if the word mattered, the learner adds it, and *that* is a fact worth
+	 * syncing.
 	 */
 	let extraGlossary = $state<GlossEntry[]>([]);
+
+	/**
+	 * Segment translations, for this open only — keyed by segment index, which is
+	 * what makes alignment trivial: a translation belongs to the segment it was
+	 * asked for, and the segment is what the source cut and the reader already
+	 * indexes. Never stored, for the same reason `extraGlossary` is not.
+	 *
+	 * Which ones are *shown* is a separate set, so hiding a translation keeps the
+	 * answer and showing it again costs nothing.
+	 */
+	type Translation =
+		{ state: 'loading' } | { state: 'done'; text: string } | { state: 'error'; message: string };
+	const translations = new SvelteMap<number, Translation>();
+	const shownTranslations = new SvelteSet<number>();
+	/**
+	 * How many segment translations are in flight at once when a whole page is
+	 * asked for. One call per segment keeps every answer on its own segment with
+	 * no reply to split; a small bound keeps a long page from firing a burst the
+	 * provider rate-limits, and the same figure the lesson batch uses.
+	 */
+	const TRANSLATE_CONCURRENCY = 3;
 	/** Read once — the setting lives in Settings, not mid-text. */
 	const mode = getRomanizationMode();
 	let now = $state(Date.now());
 
 	/** Which word's card is open, by position — so a write refreshes it in place. */
 	let selected = $state<{ line: number; word: number } | null>(null);
-	/** The whole-text translation and the stored reading are each one decision. */
-	let showTranslation = $state(false);
-	let showReading = $state(false);
-	/** The meaning typed for a word nobody has glossed. */
+	/**
+	 * What "Add to my words" will file for an untracked word: its meaning and its
+	 * reading, filled from a lookup (or from one made earlier this open) and
+	 * editable either way — a model's gloss is a suggestion, and a learner who
+	 * already knows the word should not have to spend a call to add it.
+	 */
 	let meaningDraft = $state('');
+	let readingDraft = $state('');
 	let writing = $state(false);
-	/** A lookup in flight. Its own flag, because it is the card's only paid wait. */
+	/**
+	 * A lookup in flight. Its own flag, because it is the card's only paid wait —
+	 * and it disables only the button that fired it: the fields and Add stay live,
+	 * because a slow or failed call must never stand between the learner and Add.
+	 */
 	let lookingUp = $state(false);
 	let cardError = $state('');
 	let pageError = $state('');
@@ -274,40 +318,30 @@
 	 * the grade it already carries today.
 	 */
 	const tapped = new SvelteSet<string>();
-	/** Every word tapped while this text was open, by key — a tapped word was not known. */
-	const lookedUp = new SvelteSet<string>();
 	/** Set once Finished has written; the panel then shows the receipt. */
 	let finished = $state(false);
 	let summary = $state('');
-	/**
-	 * Whether Finished also marks the un-tapped `new` words known. Off by default
-	 * and never remembered: a word becoming "known" because the learner did not
-	 * happen to tap it is LingQ's most-resented mechanic, so here it is a box
-	 * ticked on purpose, every time.
-	 */
-	let markFresh = $state(false);
 
 	const lang = $derived(profile?.targetLanguage ?? '');
 
-	const ctx: AnnotateContext = $derived({
-		items,
-		knownTerms,
-		// The text's own glossary plus whatever was looked up since it opened. The
-		// annotator cannot tell the two apart, which is the point: a looked-up word
-		// is `new` exactly like a glossed one, everywhere it appears.
-		glossary: [...(text?.glossary ?? []), ...extraGlossary],
-		mode,
-		rolls
-	});
+	const ctx: AnnotateContext = $derived({ items, knownTerms, mode, rolls });
 
-	/** The stored sentences: what the clock is indexed against, and what pages are cut from. */
-	const sentences = $derived(text?.sentences ?? []);
+	/** The stored segments: what the clock is indexed against, and what pages are cut from. */
+	const segments = $derived(text?.segments ?? []);
 
-	/** The whole text, annotated. Re-runs whenever the vocabulary or the marks move. */
+	/**
+	 * The segments as the reader renders them, and where the pages break.
+	 * Derived from the stored text, never from the annotation: a break must not
+	 * move because the learner added a word.
+	 */
+	const pagination = $derived(paginate(segments));
+	const pieces = $derived(pagination.pieces);
+
+	/** The whole text, annotated, a piece at a time. Re-runs whenever the vocabulary or the marks move. */
 	const lines = $derived(
-		sentences.map((sentence) => ({
-			sentence,
-			words: annotateSentence(sentence.text, tokenize, ctx)
+		pieces.map((piece) => ({
+			piece,
+			words: annotateSentence(piece.text, tokenize, ctx)
 		}))
 	);
 
@@ -316,10 +350,10 @@
 	 *
 	 * A media of either kind — both are playable now, and which one it is decides
 	 * nothing beyond what gets mounted in the stage — and at least one timed
-	 * sentence, because a player with nothing to highlight is a video in the wrong
+	 * segment, because a player with nothing to highlight is a video in the wrong
 	 * app.
 	 */
-	const followable = $derived(text?.media !== undefined && firstTimed(sentences) >= 0);
+	const followable = $derived(text?.media !== undefined && firstTimed(segments) >= 0);
 
 	/** Which player the stage builds. The only place in the page that asks. */
 	const isYouTube = $derived(text?.media?.kind === 'youtube');
@@ -338,13 +372,12 @@
 	 * Everything about *which* line is `$lib/media/follow`'s, which is pure: this
 	 * is only the clock reading it is asked about.
 	 */
-	const currentIndex = $derived(following ? sentenceAt(sentences, currentMs) : -1);
-	const currentRange = $derived(
-		following ? sentenceRangeAt(sentences, currentMs) : { start: 0, end: 0 }
-	);
-	const prevIndex = $derived(prevTimed(sentences, currentRange.start));
+	const currentIndex = $derived(following ? segmentAt(segments, currentMs) : -1);
+	/** The pieces the current segment became — one, for any cue that fits a page. */
+	const currentRange = $derived(piecesOfSegment(pieces, currentIndex));
+	const prevIndex = $derived(prevTimed(segments, currentIndex));
 	/** From `-1` this is the first timed line, which is what "next" means before the first cue. */
-	const nextIndex = $derived(nextTimed(sentences, currentRange.end - 1));
+	const nextIndex = $derived(nextTimed(segments, currentIndex));
 
 	/** What to ask for by name when the file is not in hand. */
 	const mediaName = $derived(text?.media?.kind === 'file' ? text.media.name : '');
@@ -369,12 +402,8 @@
 		Math.round(isYouTube ? frameWidth : mediaSrc ? filmWidth : pickWidth)
 	);
 
-	/**
-	 * Where the pages break. Derived from the stored sentences, never from the
-	 * annotation: a break must not move because the learner added a word.
-	 */
-	const pages = $derived(paginate(sentences));
-	/** One page even for a text with no sentences, so the reader always has a frame. */
+	const pages = $derived(pagination.pages);
+	/** One page even for a text with no segments, so the reader always has a frame. */
 	const pageCount = $derived(Math.max(1, pages.length));
 
 	/**
@@ -388,13 +417,12 @@
 		return Math.min(Math.max(Math.trunc(asked) - 1, 0), pageCount - 1);
 	});
 	/**
-	 * What is on screen, as a range of sentences — and the whole of the difference
+	 * What is on screen, as a range of pieces — and the whole of the difference
 	 * between the two views.
 	 *
 	 * Following, the page *is* the current line, so everything downstream that was
-	 * written for a page (the translation, the stored reading, Listen, and the
-	 * whole-text indices the word buttons carry) follows the clock with no idea
-	 * that it is doing so. Before the first cue the range is empty, which is the
+	 * written for a page (Listen, and the whole-text indices the word buttons
+	 * carry) follows the clock with no idea that it is doing so. Before the first cue the range is empty, which is the
 	 * honest answer: nothing is being spoken yet.
 	 */
 	const pageRange = $derived(following ? currentRange : (pages[pageIndex] ?? { start: 0, end: 0 }));
@@ -404,37 +432,33 @@
 	const pageLines = $derived(lines.slice(pageRange.start, pageRange.end));
 
 	/**
-	 * What sits between two sentences on the page: the script's own rule, decided
-	 * from the whole text — a space for Spanish, nothing for Chinese. Whole text
-	 * rather than page, so a page of dialogue does not space differently from the
-	 * one before it.
+	 * What sits between two timed segments — two cues — on the page: the script's
+	 * own rule, decided from the whole text — a space for Spanish, nothing for
+	 * Chinese. Whole text rather than page, so a page of dialogue does not space
+	 * differently from the one before it. Untimed segments are paragraphs and
+	 * break instead; the pieces of one segment need nothing, since they
+	 * concatenate back to it.
 	 */
 	const gap = $derived(
-		usesInterWordSpaces(lines.map((line) => line.sentence.text).join('')) ? ' ' : ''
-	);
-
-	/** True once the romanizer's tokenizer is in — every reading is then ruby. */
-	const localReadings = $derived(tokenize !== tokenizeByTerms);
-
-	/** The page's translation, not the text's: it sits under the page it explains. */
-	const translation = $derived(
-		joinTokens(pageLines.map((line) => line.sentence.translation ?? '').filter(Boolean))
+		usesInterWordSpaces(segments.map((segment) => segment.text).join('')) ? ' ' : ''
 	);
 
 	/**
-	 * The stored, sentence-wide readings as one block: the fallback for a language
-	 * with no local romanizer. Never offered beside ruby — that would print every
-	 * reading twice — and never under `'off'`.
+	 * Whether piece `i` is the last of its segment on this page — where that
+	 * segment's translation goes. A segment cut across a page break shows its
+	 * translation on both pages, under the part each one holds.
 	 */
-	const storedReading = $derived(
-		localReadings || mode === 'off'
-			? ''
-			: joinTokens(
-					pageLines
-						.filter((line) => line.sentence.reading && showSentenceReading(line.words, mode))
-						.map((line) => line.sentence.reading ?? '')
-				)
-	);
+	function endsSegment(i: number): boolean {
+		return i === pageRange.end - 1 || pieces[i + 1]?.segment !== pieces[i]?.segment;
+	}
+
+	/** What goes before piece `i` of the text: nothing, a gap, or a paragraph break. */
+	function joinBefore(i: number): 'none' | 'gap' | 'paragraph' {
+		const piece = pieces[i];
+		const previous = pieces[i - 1];
+		if (!piece || !previous || previous.segment === piece.segment) return 'none';
+		return segments[piece.segment]?.start === undefined ? 'paragraph' : 'gap';
+	}
 
 	/**
 	 * The open word, read back out of `lines` rather than captured on tap: after a
@@ -442,6 +466,21 @@
 	 * the one that was true when it was opened.
 	 */
 	const card = $derived(selected ? (lines[selected.line]?.words[selected.word] ?? null) : null);
+
+	/**
+	 * What the card says the word means: the garden item's own gloss, or else an
+	 * answer looked up this open. A text carries no meanings of its own.
+	 */
+	const cardGloss = $derived(card ? (card.gloss ?? lookedUpGloss(card, extraGlossary)) : undefined);
+
+	/**
+	 * The lookup's longer answer, when the card's word has one. Only a looked-up
+	 * word carries it — a garden item's gloss is what the learner filed — and it
+	 * is read here and nowhere else: never filed with the word, never stored.
+	 */
+	const cardExplanation = $derived(
+		card && !card.gloss ? lookedUpGloss(card, extraGlossary)?.explanation : undefined
+	);
 
 	/**
 	 * Whether the panel is holding anything — a word card, or a confirmation.
@@ -456,14 +495,32 @@
 	 * The reading shown on the card.
 	 *
 	 * The token's first — a local romanizer knows this occurrence's reading, and
-	 * the glossary only knows the term's. Unlike the prose it ignores the fading
+	 * a gloss only knows the term's. Unlike the prose it ignores the fading
 	 * rule: opening a card is the learner asking to have this word explained, and
 	 * an answer with a piece held back is not an answer.
 	 */
-	const cardReading = $derived(card?.reading ?? card?.gloss?.reading ?? '');
+	const cardReading = $derived(card?.reading ?? cardGloss?.reading ?? '');
 
-	/** What "Add to my words" would file — the gloss, or what the learner typed. */
-	const draftMeaning = $derived((card?.gloss?.meaning ?? meaningDraft).trim());
+	/** What "Add to my words" would file: the meaning field, as the learner left it. */
+	const draftMeaning = $derived(meaningDraft.trim());
+
+	/**
+	 * Whether the card offers a reading field: for a word written in a script
+	 * other than Latin, decided by the word's own letters rather than the
+	 * profile's free-text language name, the way `$lib/text/script` decides
+	 * spacing. A Latin-script word has no reading to file; a token of digits has
+	 * no letters and asks for none either.
+	 */
+	const offersReading = $derived(
+		card !== null && /\p{L}/u.test(card.text) && !/\p{Script=Latin}/u.test(card.text)
+	);
+
+	/** The segments on the current page, once each, in order — what "Translate" asks about. */
+	const pageSegments = $derived([...new Set(pageLines.map((line) => line.piece.segment))]);
+	/** Every segment on the page is showing its translation — the header button then hides them. */
+	const pageTranslated = $derived(
+		pageSegments.length > 0 && pageSegments.every((i) => shownTranslations.has(i))
+	);
 
 	/**
 	 * Whether the facing page shows the transcript: following, wide enough for a
@@ -507,6 +564,12 @@
 		loading = true;
 		loadError = '';
 		missing = false;
+		// Keyed by segment index, so they belong to one text: a different text in
+		// the same component instance must not inherit them.
+		untrack(() => {
+			translations.clear();
+			shownTranslations.clear();
+		});
 
 		// `withRecentGrades`: the page's whole review state is folded out of the
 		// last grade each word got today, so the entries have to come along.
@@ -645,8 +708,8 @@
 				// The line that was running at the previous sample: at the moment of a
 				// crossing the next one has not started, so this is still the line
 				// whose end was just passed.
-				const running = sentenceAt(sentences, before);
-				if (running >= 0 && crossedEnd(sentences, running, before, ms)) built.pause();
+				const running = segmentAt(segments, before);
+				if (running >= 0 && crossedEnd(segments, running, before, ms)) built.pause();
 			})
 		);
 
@@ -660,7 +723,7 @@
 	/**
 	 * Whether the spread is open, asked of the viewport rather than of CSS.
 	 *
-	 * The transcript is a list of every sentence in the text, and hiding a
+	 * The transcript is a list of every segment in the text, and hiding a
 	 * thousand buttons with `display: none` still builds a thousand buttons. So
 	 * the phone does not render it at all, and the same 48rem the stylesheet uses
 	 * is repeated here — as `layout.md` says it must be, since a custom property
@@ -684,9 +747,7 @@
 	 */
 	const transcriptRows: (HTMLElement | null)[] = [];
 	$effect(() => {
-		if (currentRange.start < currentRange.end) {
-			transcriptRows[currentRange.start]?.scrollIntoView({ block: 'nearest' });
-		}
+		if (currentIndex >= 0) transcriptRows[currentIndex]?.scrollIntoView({ block: 'nearest' });
 	});
 
 	/** The file, chosen again on an open that did not inherit it. */
@@ -711,14 +772,14 @@
 	}
 
 	/**
-	 * Puts the clock at the start of sentence `i`.
+	 * Puts the clock at the start of segment `i`.
 	 *
 	 * `currentMs` is set here as well as awaited from the player, because a seek
 	 * on a paused element still takes a turn of the event loop to report back and
 	 * the highlight should move under the finger, not after it.
 	 */
 	function seekTo(i: number, andPlay = false) {
-		const at = startOf(sentences, i);
+		const at = startOf(segments, i);
 		if (!player || at === undefined) return;
 		player.seek(at);
 		lastMs = at;
@@ -729,7 +790,7 @@
 
 	/** Replay the line: back to its start, playing. From nowhere, the first line. */
 	function replayLine() {
-		seekTo(currentIndex >= 0 ? currentIndex : firstTimed(sentences), true);
+		seekTo(currentIndex >= 0 ? currentIndex : firstTimed(segments), true);
 	}
 
 	/** Switches between the follow view and the paged reader, in the URL. */
@@ -757,7 +818,6 @@
 	$effect(() => {
 		void pageIndex;
 		tapped.clear();
-		markFresh = false;
 		finished = false;
 		summary = '';
 		selected = null;
@@ -788,7 +848,6 @@
 		}
 		if (word.status === 'tracked') return `In your garden · ${BEDS[word.maturity ?? 'new']}`;
 		if (word.status === 'known') return 'Marked known';
-		if (word.status === 'new') return 'New word';
 		return 'Not in your garden';
 	}
 
@@ -826,8 +885,14 @@
 
 		selected = { line, word: index };
 		panel = null;
-		meaningDraft = '';
 		cardError = '';
+		// The fields start from whatever is already known about the word — a
+		// lookup made on another occurrence this open, and the token's own reading
+		// (the local romanizer knows this occurrence's, which a gloss does not) —
+		// so re-opening a word shows its answer without another call.
+		const known = target.gloss ?? lookedUpGloss(target, extraGlossary);
+		meaningDraft = known?.meaning ?? '';
+		readingDraft = target.reading ?? known?.reading ?? '';
 
 		// A word tapped in a video that keeps running is a word the learner reads
 		// while missing the next line. Stopping is what they would do themselves,
@@ -838,7 +903,6 @@
 		// one thing about a reading session that cannot be recovered afterwards.
 		// Once per open, never awaited: a card must not wait on a write.
 		void recordLookup(target.text, text.id, target.itemId);
-		lookedUp.add(target.key);
 		// Before the add, so a second tap on the same page is not a second grade:
 		// `gradedToday` only catches up once the write has been read back.
 		const again = target.status === 'tracked' && target.itemId && !tapped.has(target.key);
@@ -868,7 +932,6 @@
 	const finishPlan = $derived.by(() => {
 		const read = new Map<string, string>();
 		const looked = new Set<string>();
-		const fresh = new Map<string, string>();
 		for (const line of pageLines) {
 			for (const word of line.words) {
 				if (!word.key) continue;
@@ -883,15 +946,10 @@
 					} else if (gradedToday.get(word.itemId) !== Grade.Good) {
 						read.set(word.itemId, word.text);
 					}
-				} else if (word.status === 'new' && !lookedUp.has(word.key)) {
-					// A tapped new word is one the learner needed explained — the last
-					// thing to call known — and that stays true across the whole text,
-					// not just this page.
-					fresh.set(word.key, word.gloss?.term ?? word.text);
 				}
 			}
 		}
-		return { read: [...read.keys()], looked: [...looked], fresh: [...fresh.values()] };
+		return { read: [...read.keys()], looked: [...looked] };
 	});
 
 	/**
@@ -903,16 +961,15 @@
 	 * page-turn effect: it is text-wide, and a plain object because nothing
 	 * renders it until it is folded into `summary`.
 	 */
-	const counted = { read: new Set<string>(), looked: new Set<string>(), fresh: new Set<string>() };
+	const counted = { read: new Set<string>(), looked: new Set<string>() };
 
 	/**
 	 * Confirming a page: the reading counted, then on to the next one.
 	 *
 	 * Not looking a garden word up is the implicit `Good` — recall in context —
-	 * but only at this explicit moment, never by scrolling past. The `new` words
-	 * read without a tap can be marked known too — LingQ's paging — but only
-	 * with `markFresh` ticked for this press. `plain` words are left alone —
-	 * unglossed, they are as likely to be a segmenter's slip as a word.
+	 * but only at this explicit moment, never by scrolling past. `plain` words are
+	 * left alone — nobody has said anything about them, and they are as likely to
+	 * be a segmenter's slip as a word.
 	 *
 	 * On the last page this is "Finished reading" and the receipt takes the
 	 * button's place; on any other it is "Next page" and the writing happens
@@ -921,23 +978,19 @@
 	async function finishPage() {
 		if (!text || writing || finished) return;
 		const { read, looked } = finishPlan;
-		const fresh = markFresh ? finishPlan.fresh : [];
 		const last = lastPage;
 
 		writing = true;
 		pageError = '';
 		try {
 			for (const itemId of read) await review(itemId, Grade.Good);
-			for (const term of fresh) await markWord(term, true);
 			await refresh();
 			for (const itemId of read) counted.read.add(itemId);
 			for (const itemId of looked) counted.looked.add(itemId);
-			for (const term of fresh) counted.fresh.add(term);
 			if (last) {
 				// The receipt is for the whole read, not the page it happens to sit on.
 				const fine = counted.read.size;
 				const lost = counted.looked.size;
-				const marked = counted.fresh.size;
 				const parts =
 					fine === 0 && lost === 0
 						? ['every garden word here was already reviewed today']
@@ -945,7 +998,6 @@
 								`${fine} garden word${fine === 1 ? '' : 's'} read fine`,
 								...(lost > 0 ? [`${lost} forgotten`] : [])
 							];
-				if (marked > 0) parts.push(`${marked} new marked known`);
 				summary = parts.join(' · ');
 				finished = true;
 			} else {
@@ -959,19 +1011,37 @@
 	}
 
 	/**
-	 * "Look it up": one paid call for a word the glossary missed.
+	 * The sentence the word at `at` stands in — the context a lookup travels with.
+	 *
+	 * The sentence and not the piece or the segment: a paragraph can hold five
+	 * senses of one word, and the model should see the one being asked about.
+	 * Found by the word's character offset into its segment (the piece's own
+	 * offset, plus the tokens before it — both exact, since pieces concatenate
+	 * back to the segment and tokens back to the piece) and ICU's sentence cut,
+	 * the same one `paginate` uses; a host without it gets the whole segment.
+	 */
+	function sentenceFor(at: { line: number; word: number }): string {
+		const line = lines[at.line];
+		if (!line) return '';
+		let offset = pieceOffset(pieces, at.line);
+		for (let w = 0; w < at.word; w++) offset += line.words[w]?.text.length ?? 0;
+		return sentenceAt(segments[line.piece.segment]?.text ?? line.piece.text, offset);
+	}
+
+	/**
+	 * "What does this mean?": one paid call for a word with no meaning behind it.
 	 *
 	 * Fired by the button and by nothing else — a tap is free and has to stay
-	 * free, and this is the only thing in the reader that spends. The whole
-	 * sentence travels with the word, so a word with several senses comes back in
-	 * the one it is being used in; the answer joins `extraGlossary` and the word
-	 * turns `new` wherever it appears, which also fills "Add to my words" in with
-	 * the meaning, exactly as it is filled for a word the model glossed.
+	 * free. The sentence the word stands in travels with it, so a word with
+	 * several senses comes back in the one it is being used in; the answer joins
+	 * `extraGlossary`, so every occurrence of the word opens with it, and fills
+	 * whichever of the card's fields the learner has not already typed into.
+	 * A failure only says so: the fields stay as they were, empty and editable.
 	 */
 	async function lookUp() {
 		const at = selected;
 		const target = card;
-		if (!at || !target?.key || !text || !profile || writing || lookingUp) return;
+		if (!at || !target?.key || !text || !profile || lookingUp) return;
 
 		lookingUp = true;
 		cardError = '';
@@ -979,23 +1049,87 @@
 			const entry = await lookUpWord({
 				profile,
 				term: target.text,
-				sentence: lines[at.line]?.sentence.text ?? target.text,
+				sentence: sentenceFor(at) || target.text,
 				title: text.title
 			});
 			// There is nothing to look up twice — the button is gone the moment the
-			// word stops being `plain` — so this only catches an answer that arrives
-			// under a spelling something already covers. By `cardKey`, the same rule
-			// the text's own glossary dedupes under, so a homograph looked up in two
-			// sentences keeps both senses.
+			// card has a meaning — so this only catches an answer that arrives under
+			// a spelling something already covers. By `cardKey`, so a homograph
+			// looked up in two lines keeps both senses.
 			const key = cardKey(entry.term, entry.reading);
 			if (!extraGlossary.some((known) => cardKey(known.term, known.reading) === key)) {
 				extraGlossary.push(entry);
 			}
+			// Only into the card that asked, and only into a field still empty: an
+			// answer that lands after the learner moved on, or typed their own, must
+			// not overwrite anything.
+			if (selected === at) {
+				if (meaningDraft.trim() === '') meaningDraft = entry.meaning;
+				if (readingDraft.trim() === '' && entry.reading) readingDraft = entry.reading;
+			}
 		} catch (cause) {
-			cardError = cause instanceof Error ? cause.message : 'Could not look that word up.';
+			if (selected === at) {
+				cardError = cause instanceof Error ? cause.message : 'Could not look that word up.';
+			}
 		} finally {
 			lookingUp = false;
 		}
+	}
+
+	/**
+	 * Translates segments `indices` and shows them, a few calls at a time.
+	 *
+	 * One call per segment rather than one for the page: each answer is already
+	 * the translation of exactly one segment, so nothing has to be split or
+	 * matched back. A segment already translated, or on its way, is only shown;
+	 * one that failed is asked again. Each failure stays on its own segment —
+	 * the rest of the page still arrives.
+	 */
+	async function translateSegments(indices: readonly number[]) {
+		const current = text;
+		const who = profile;
+		if (!current || !who) return;
+		for (const i of indices) shownTranslations.add(i);
+
+		const queue = indices.filter((i) => {
+			const had = translations.get(i);
+			return (!had || had.state === 'error') && (segments[i]?.text.trim() ?? '') !== '';
+		});
+		for (const i of queue) translations.set(i, { state: 'loading' });
+
+		const worker = async () => {
+			for (let i = queue.shift(); i !== undefined; i = queue.shift()) {
+				try {
+					const translation = await translateLine({
+						profile: who,
+						text: segments[i]?.text ?? '',
+						title: current.title
+					});
+					if (text === current) translations.set(i, { state: 'done', text: translation });
+				} catch (cause) {
+					if (text !== current) continue;
+					translations.set(i, {
+						state: 'error',
+						message: cause instanceof Error ? cause.message : 'Could not translate that line.'
+					});
+				}
+			}
+		};
+		await Promise.all(
+			Array.from({ length: Math.min(TRANSLATE_CONCURRENCY, queue.length) }, worker)
+		);
+	}
+
+	/** Shows the translations of `indices`, or hides them if they are all showing. */
+	function toggleTranslations(indices: readonly number[]) {
+		if (indices.length > 0 && indices.every((i) => shownTranslations.has(i))) {
+			for (const i of indices) shownTranslations.delete(i);
+			return;
+		}
+		// Following, a learner who asks what a line means is reading, not
+		// listening — the same beat a tapped word pauses on.
+		if (following) player?.pause();
+		void translateSegments(indices);
 	}
 
 	/** `add_words`, verbatim: the one route by which vocabulary enters the garden. */
@@ -1006,7 +1140,9 @@
 		writing = true;
 		cardError = '';
 		try {
-			const reading = cardReading;
+			// The reading field as the learner left it — prefilled from the token or
+			// the lookup, and theirs to correct.
+			const reading = readingDraft.trim();
 			// The outcome is not inspected: `add_words` skips a word already in the
 			// list rather than failing, and either way the card re-reads its status
 			// from the refreshed garden — which is a better receipt than a sentence.
@@ -1054,16 +1190,16 @@
 	}
 
 	/**
-	 * Reads the current page aloud, sentence by sentence.
+	 * Reads the current page aloud, a piece at a time.
 	 *
 	 * Sequential on purpose — `speak` resolves when playback finishes, so awaiting
 	 * it *is* the pacing. Pressing again cuts the current clip off; the loop then
-	 * sees `playing` go false and stops rather than starting the next sentence.
+	 * sees `playing` go false and stops rather than starting the next piece.
 	 *
-	 * Synthesis runs *ahead* of playback: a second walk warms every sentence into
-	 * the clip cache in order (Kokoro takes a second or two per sentence — as long
+	 * Synthesis runs *ahead* of playback: a second walk warms every piece into
+	 * the clip cache in order (Kokoro takes a second or two per piece — as long
 	 * as the gap the learner used to hear between them), so by the time the loop
-	 * reaches a sentence its clip is local and the only pause left is the one a
+	 * reaches a piece its clip is local and the only pause left is the one a
 	 * full stop deserves. The same trick the session screen plays for its
 	 * feedback audio; warming is an optimisation only and every failure inside it
 	 * is swallowed. One clip for the whole text was tried and sounded the same,
@@ -1079,18 +1215,18 @@
 		}
 
 		playing = true;
-		const sentences = pageLines.map((line) => line.sentence.text);
+		const chunks = pageLines.map((line) => line.piece.text);
 		void (async () => {
-			for (const sentence of sentences) {
+			for (const chunk of chunks) {
 				if (!playing) break;
-				await warmSpeech(sentence, lang);
+				await warmSpeech(chunk, lang);
 			}
 		})();
 
 		try {
-			for (const sentence of sentences) {
+			for (const chunk of chunks) {
 				if (!playing) break;
-				await speak(sentence, lang);
+				await speak(chunk, lang);
 			}
 		} finally {
 			playing = false;
@@ -1113,11 +1249,7 @@
 		}
 	}
 
-	/**
-	 * The status and maturity classes the colours hang off. `w-new` means two
-	 * things — a glossed stranger and a freshly planted word — so the CSS tells
-	 * them apart by whether `w-tracked` is there too.
-	 */
+	/** The status and maturity classes the colours hang off. */
 	function wordClass(word: ReadingWord): string {
 		const lapse = isLapsed(word) ? ' w-lapsed' : '';
 		return `w w-${word.status}${word.maturity ? ` w-${word.maturity}` : ''}${lapse}`;
@@ -1265,6 +1397,18 @@
 						>
 							{playing ? 'Stop' : 'Listen'}
 						</button>
+						<!-- The page's segments into the native language, each shown
+						     under its own segment. Following, the control is on the line
+						     instead, beside the thing it translates. -->
+						<button
+							type="button"
+							class="btn btn-ghost tool"
+							class:is-active={pageTranslated}
+							disabled={pageSegments.length === 0}
+							onclick={() => toggleTranslations(pageSegments)}
+						>
+							{pageTranslated ? 'Hide translation' : 'Translate'}
+						</button>
 					{/if}
 					<!-- Confirmation lives in the panel, never here: the header's shape
 					     stays the same whatever the learner is deciding. -->
@@ -1358,26 +1502,32 @@
 					<li><span class="swatch sw-known" aria-hidden="true"></span>known</li>
 				</ul>
 
-				<!-- One continuous body, not a list of sentences: the model returns
-				     sentences because the annotation is keyed on them, but the learner
-				     reads a text. Written without whitespace between the tokens — they
-				     reproduce the sentence character for character, so a newline in the
-				     template would land as a rendered space between every pair of them —
-				     and the sentences are joined by `gap`, the script's own rule.
+				<!-- One continuous body, not a list of pieces: the annotation is keyed
+				     on pieces, but the learner reads a text. Written without whitespace
+				     between the tokens — they reproduce the piece character for
+				     character, so a newline in the template would land as a rendered
+				     space between every pair of them. Pieces of one segment run straight
+				     on (they concatenate back to it), two cues are joined by `gap`, the
+				     script's own rule, and two paragraphs by a break.
 				     Only this page's slice is rendered, but the indices stay the whole
 				     text's, so `selected` still points into `lines` and a card survives
 				     a re-annotation.
-				     Following, `pageRange` is the line being spoken — one sentence, or
-				     the few that share a cue — and this same loop renders it, which is
-				     the whole reason the follow view is a view and not a route. -->
+				     Following, `pageRange` is the segment being spoken and this same
+				     loop renders it, which is the whole reason the follow view is a view
+				     and not a route. -->
 				{#if following && prevIndex >= 0}
 					<button type="button" class="neighbour" onclick={() => seekTo(prevIndex)}>
-						{sentences[prevIndex]?.text}
+						{segments[prevIndex]?.text}
 					</button>
 				{/if}
 
 				{#snippet lineWords()}{#each pageLines as line, l (pageRange.start + l)}{@const s =
-							pageRange.start + l}{#if l > 0}{gap}{/if}<span class="sentence"
+							pageRange.start + l}{@const join =
+							l > 0
+								? joinBefore(s)
+								: 'none'}{#if join === 'gap'}{gap}{:else if join === 'paragraph'}<span
+								class="para-break"
+							></span>{/if}<span class="piece"
 							>{#each line.words as word, w (w)}{#if word.key === undefined}{word.text}{:else}<button
 										type="button"
 										class={wordClass(word)}
@@ -1386,7 +1536,19 @@
 										>{#if word.reading}<ruby>{word.text}<rt>{word.reading}</rt></ruby
 											>{:else}{word.text}{/if}</button
 									>{/if}{/each}</span
-						>{/each}{/snippet}
+						>{#if !following && endsSegment(s) && shownTranslations.has(line.piece.segment)}{@render translationOf(
+								line.piece.segment
+							)}{/if}{/each}{/snippet}
+				<!-- A segment's translation, under the segment: a block inside the
+				     prose so it sits between two runs of the text rather than beside
+				     one, in the body face and a size down — it is a gloss on the line,
+				     not more of the text. -->
+				{#snippet translationOf(i: number)}{@const t = translations.get(i)}<span
+						class="seg-translation"
+						class:is-error={t?.state === 'error'}
+						aria-live="polite"
+						>{#if t?.state === 'done'}{t.text}{:else if t?.state === 'error'}{t.message}{:else}Translating…{/if}</span
+					>{/snippet}
 				<!-- Following a playable recording, the same words are a caption on the
 				     picture (rendered inside `.screen` above) rather than a paragraph
 				     under it: the eye stays on the speaker and the line, not between
@@ -1409,6 +1571,22 @@
 				     tappable word in a line nobody is reading is a word tapped by
 				     accident. Each is a seek, which is what "I want to hear that again"
 				     and "get on with it" both mean here. -->
+				<!-- The current line's translation, on a press: under the line (or,
+				     with the line drawn on the picture, directly under the picture), so
+				     it reads as a gloss of what is being spoken. Per segment, like
+				     everything here — the next line starts untranslated, and the
+				     answer is kept if the learner comes back to this one. -->
+				{#if following && currentIndex >= 0}
+					<div class="line-translation">
+						{#if shownTranslations.has(currentIndex)}
+							{@render translationOf(currentIndex)}
+						{/if}
+						<button type="button" class="reveal" onclick={() => toggleTranslations([currentIndex])}>
+							{shownTranslations.has(currentIndex) ? 'Hide translation' : 'Translate line'}
+						</button>
+					</div>
+				{/if}
+
 				{#if following && currentIndex < 0}
 					<p class="hint waiting">
 						Nothing is being spoken yet — press play, or tap the line below.
@@ -1417,38 +1595,8 @@
 
 				{#if following && nextIndex >= 0}
 					<button type="button" class="neighbour" onclick={() => seekTo(nextIndex)}>
-						{sentences[nextIndex]?.text}
+						{segments[nextIndex]?.text}
 					</button>
-				{/if}
-
-				<!-- Reading the translation stays a decision, as in conversation mode;
-				     so does the stored reading, which only exists here when there is no
-				     ruby to carry it. -->
-				{#if translation || storedReading}
-					<div class="text-tools">
-						{#if storedReading}
-							<button type="button" class="reveal" onclick={() => (showReading = !showReading)}>
-								{showReading ? 'Hide reading' : 'Reading'}
-							</button>
-						{/if}
-						{#if translation}
-							<button
-								type="button"
-								class="reveal"
-								onclick={() => (showTranslation = !showTranslation)}
-							>
-								{showTranslation ? 'Hide translation' : 'Translation'}
-							</button>
-						{/if}
-					</div>
-				{/if}
-
-				{#if showReading && storedReading}
-					<p class="rom reading-block">{storedReading}</p>
-				{/if}
-
-				{#if showTranslation && translation}
-					<p class="translation">{translation}</p>
 				{/if}
 
 				<!--
@@ -1615,15 +1763,6 @@
 									</p>
 								{/if}
 							{/if}
-							{#if finishPlan.fresh.length > 0}
-								<label class="finish-opt">
-									<input type="checkbox" bind:checked={markFresh} />
-									Also mark {finishPlan.fresh.length} untapped new word{finishPlan.fresh.length ===
-									1
-										? ''
-										: 's'} as known
-								</label>
-							{/if}
 							<hr class="stitch" />
 							<div class="word-actions">
 								<button
@@ -1685,8 +1824,18 @@
 
 						<p class="word-status">{statusLine(card)}</p>
 
-						{#if card.gloss}
-							<p class="word-meaning">{card.gloss.meaning}</p>
+						<!-- An untracked word's meaning is in its field below, where it can be
+						     corrected before it is filed; shown here too, it would be said
+						     twice. -->
+						{#if cardGloss && card.status !== 'plain'}
+							<p class="word-meaning">{cardGloss.meaning}</p>
+						{/if}
+
+						<!-- The lookup's longer answer: read-only, under the word and above
+						     the Meaning field it explains, which holds only the short gloss
+						     that gets filed. -->
+						{#if cardExplanation}
+							<p class="word-explanation">{cardExplanation}</p>
 						{/if}
 
 						<!-- A tracked word has no actions here: the garden is where it is
@@ -1705,47 +1854,72 @@
 								Unmark
 							</button>
 						{:else}
-							{#if !card.gloss}
+							<!-- The card's main action while the word has no meaning behind
+							     it — and only on a press, because it is paid. Primary until
+							     the learner has a meaning of their own in the field, when Add
+							     takes over. Gone once answered: the answer is in the fields,
+							     and on every later open of this word. -->
+							{#if !cardGloss}
+								<button
+									type="button"
+									class="btn btn-block ask"
+									class:btn-primary={draftMeaning === ''}
+									class:btn-ghost={draftMeaning !== ''}
+									disabled={lookingUp}
+									aria-busy={lookingUp}
+									onclick={() => void lookUp()}
+								>
+									{lookingUp ? 'Looking it up…' : 'What does this mean?'}
+								</button>
+							{/if}
+							<!-- Always editable, lookup or not, in flight or failed: the
+							     answer is a suggestion, and a learner who knows the word
+							     types it and adds it without spending a call. -->
+							<div class="word-fields">
 								<label class="field">
-									<span class="label">What does it mean?</span>
+									<span class="label">Meaning</span>
 									<input
 										class="input"
 										type="text"
 										placeholder="In {profile?.nativeLanguage ?? 'your language'}"
-										disabled={writing || lookingUp}
+										disabled={writing}
 										bind:value={meaningDraft}
 										onkeydown={(event) => {
 											if (event.key === 'Enter') void addWord();
 										}}
 									/>
 								</label>
-							{/if}
+								{#if offersReading}
+									<label class="field">
+										<span class="label">Reading</span>
+										<input
+											class="input"
+											type="text"
+											placeholder="In Latin letters"
+											disabled={writing}
+											bind:value={readingDraft}
+											onkeydown={(event) => {
+												if (event.key === 'Enter') void addWord();
+											}}
+										/>
+									</label>
+								{/if}
+							</div>
 							<div class="word-actions">
 								<button
 									type="button"
-									class="btn btn-primary"
-									disabled={writing || lookingUp || draftMeaning === ''}
+									class="btn"
+									class:btn-primary={draftMeaning !== ''}
+									class:btn-ghost={draftMeaning === ''}
+									disabled={writing || draftMeaning === ''}
 									onclick={() => void addWord()}
 								>
 									Add to my words
 								</button>
-								<!-- Only where nobody has said anything about the word — and only
-								     on a press, because it is the one thing in the reader that
-								     costs. A word with a gloss already has its answer. -->
-								{#if !card.gloss}
-									<button
-										type="button"
-										class="btn btn-ghost"
-										disabled={writing || lookingUp}
-										onclick={() => void lookUp()}
-									>
-										{lookingUp ? 'Looking up…' : 'Look it up'}
-									</button>
-								{/if}
 								<button
 									type="button"
 									class="btn btn-ghost"
-									disabled={writing || lookingUp}
+									disabled={writing}
 									onclick={() => void mark(true)}
 								>
 									I know this
@@ -1758,24 +1932,24 @@
 						{/if}
 					</div>
 				{:else if showTranscript}
-					<!-- The whole text as a list, opposite the line being spoken: the
-					     spread's usual pairing, one thing on each page. Rendered only
-					     where there *is* a facing page — a phone would be building a
-					     button per sentence to hide every one of them. -->
+					<!-- The whole text as a list, one row per segment, opposite the line
+					     being spoken: the spread's usual pairing, one thing on each page.
+					     Rendered only where there *is* a facing page — a phone would be
+					     building a button per line to hide every one of them. -->
 					<div class="transcript">
 						<p class="panel-title">Transcript</p>
 						<ol class="transcript-list">
-							{#each sentences as sentence, i (i)}
+							{#each segments as segment, i (i)}
 								<li>
 									<button
 										type="button"
 										class="t-line"
-										class:is-now={i >= currentRange.start && i < currentRange.end}
+										class:is-now={i === currentIndex}
 										bind:this={transcriptRows[i]}
-										disabled={sentence.start === undefined}
+										disabled={segment.start === undefined}
 										onclick={() => seekTo(i, true)}
 									>
-										{sentence.text}
+										{segment.text}
 									</button>
 								</li>
 							{/each}
@@ -2026,7 +2200,6 @@
 
 	/* The page's softened underlines vanish on black; the caption wears them at
 	   full strength, same hues. */
-	.caption .w-new:not(.w-tracked),
 	.caption .w-tracked.w-new {
 		text-decoration-color: var(--accent);
 	}
@@ -2319,10 +2492,52 @@
 		min-height: 2lh;
 	}
 
-	/* A sentence is a run inside the paragraph, not a block of its own — the
-	   span exists so a later slice can mark or play one, not to break the text. */
-	.sentence {
+	/* A piece is a run inside the paragraph, not a block of its own. Its own line
+	   breaks are kept — a song or a poem is laid out in them. */
+	.piece {
 		display: inline;
+		white-space: pre-line;
+	}
+
+	/*
+	  A segment's translation, under the segment. A block inside the prose, so the
+	  text resumes on the next line; in the body face, muted and a size down,
+	  because it glosses the line rather than continuing it — and at body line
+	  height, since it carries no ruby. `white-space: normal`, because a model's
+	  reply has no line breaks worth keeping.
+	*/
+	.seg-translation {
+		display: block;
+		margin: 0.15em 0 0.55em;
+		font-family: var(--font);
+		font-size: 0.92rem;
+		line-height: 1.5;
+		white-space: normal;
+		color: var(--text-muted);
+	}
+
+	.seg-translation.is-error {
+		color: var(--danger);
+	}
+
+	/* Following, the translation and its control sit as one row under the line. */
+	.line-translation {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.2rem;
+		margin: 0.35rem 0 0.25rem;
+	}
+
+	.line-translation .seg-translation {
+		margin: 0;
+	}
+
+	/* Between two paragraphs of prose: an empty block, so the next piece starts
+	   a new line with a paragraph's worth of air above it. */
+	.para-break {
+		display: block;
+		height: 0.7em;
 	}
 
 	/*
@@ -2369,19 +2584,6 @@
 		user-select: none;
 	}
 
-	/*
-	  A word the text glosses: an accent underline, the loudest mark on the page,
-	  because it is the one the reader most likely needs. `:not(.w-tracked)`
-	  because a freshly planted word is `w-tracked w-new` and belongs to the beds
-	  below, not here.
-	*/
-	.w-new:not(.w-tracked) {
-		text-decoration: underline;
-		text-decoration-color: var(--accent);
-		text-decoration-thickness: 2px;
-		text-underline-offset: 0.22em;
-	}
-
 	/* Tracked words wear the garden's own bed colours, softened: this is a text,
 	   not a progress bar, and three saturated underlines would read as errors. */
 	.w-tracked {
@@ -2421,19 +2623,7 @@
 		background: var(--primary-soft);
 	}
 
-	.text-tools {
-		display: flex;
-		align-items: center;
-		gap: 1rem;
-		margin-top: 0.9rem;
-	}
-
-	.reading-block {
-		margin: 0.6rem 0 0;
-		line-height: 1.6;
-	}
-
-	/* Reading the translation stays a decision, as it is in conversation mode. */
+	/* The quiet links: the other view, the previous page. */
 	.reveal {
 		padding: 0;
 		border: 0;
@@ -2453,13 +2643,6 @@
 	.reveal:focus-visible {
 		outline: none;
 		box-shadow: var(--ring);
-	}
-
-	.translation {
-		margin: 0.6rem 0 0;
-		color: var(--text-muted);
-		font-size: 0.95rem;
-		line-height: 1.6;
 	}
 
 	/* The word card ------------------------------------------------------- */
@@ -2553,8 +2736,35 @@
 		line-height: 1.45;
 	}
 
+	/* Prose, so it keeps the card's column and a reading line-height; muted a
+	   step so the editable gloss below stays the thing to act on. */
+	.word-explanation {
+		margin: 0.5rem 0 0;
+		font-size: 0.95rem;
+		line-height: 1.5;
+		color: var(--text-muted);
+	}
+
 	.word-card .stitch {
 		margin: 0.9rem 0;
+	}
+
+	/* The card's question, a full row of its own above the fields it fills. */
+	.ask {
+		margin-bottom: 0.85rem;
+		padding: 0.7rem 1rem;
+	}
+
+	/* Meaning and reading stacked on a phone; the card is one column at every
+	   width, so no breakpoint. */
+	.word-fields {
+		display: grid;
+		gap: 0.6rem;
+		margin-bottom: 0.85rem;
+	}
+
+	.word-fields .field {
+		margin: 0;
 	}
 
 	.word-actions {
@@ -2629,20 +2839,6 @@
 	.panel-copy + .panel-copy {
 		margin-top: 0.3rem;
 		font-size: 0.88rem;
-	}
-
-	.finish-opt {
-		display: flex;
-		align-items: flex-start;
-		gap: 0.5rem;
-		margin-top: 0.75rem;
-		font-size: 0.92rem;
-		line-height: 1.4;
-		cursor: pointer;
-	}
-
-	.finish-opt input {
-		accent-color: var(--primary);
 	}
 
 	.error {
@@ -2817,10 +3013,8 @@
 		.is-following .legend,
 		.is-following .neighbour,
 		.is-following .prose,
+		.is-following .line-translation,
 		.is-following .waiting,
-		.is-following .text-tools,
-		.is-following .reading-block,
-		.is-following .translation,
 		.is-following .transport {
 			flex: 0 0 auto;
 			width: min(100%, max(var(--film-width, var(--measure)), var(--measure)));
@@ -2922,7 +3116,7 @@
 			box-shadow: var(--ring);
 		}
 
-		/* An untimed sentence — prose spliced into a transcript — is still shown,
+		/* An untimed segment — prose spliced into a transcript — is still shown,
 		   because it is part of the text; it just has nowhere to seek to. */
 		.t-line:disabled {
 			cursor: default;

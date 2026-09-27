@@ -321,30 +321,17 @@ pub struct DailyActivity {
 /* Reading                                                                     */
 /* -------------------------------------------------------------------------- */
 
-/// One sentence of a `ReadingText`.
+/// One unit of a `ReadingText`, as its source cut it: a subtitle cue, or a
+/// paragraph of prose.
+///
+/// Stored as the source had it and never re-cut: a cue keeps the span it was
+/// shown for, and sentences exist only on screen, where the reader splits a
+/// segment too long for one page (`$lib/reading`'s `paginate`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-pub struct ReadingSentence {
-    /// The sentence in the target language, verbatim.
+pub struct Segment {
+    /// The segment in the target language, verbatim apart from trimming.
     pub text: String,
-    /// Latin-script reading of `text`, for targets not written in the Latin
-    /// script — the sentence-wide fallback for languages with no local
-    /// romanizer (`$lib/romanize`).
-    #[serde(
-        default,
-        deserialize_with = "absent_or",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[ts(optional)]
-    pub reading: Option<String>,
-    /// The sentence in the learner's native language.
-    #[serde(
-        default,
-        deserialize_with = "absent_or",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[ts(optional)]
-    pub translation: Option<String>,
-    /// When this sentence is spoken, in milliseconds from the start of the
+    /// When this segment is spoken, in milliseconds from the start of the
     /// media it was imported from — present only for a text imported as
     /// subtitles. Offsets into a recording, not epoch times. Both or neither
     /// with `end`.
@@ -365,30 +352,7 @@ pub struct ReadingSentence {
     pub end: Option<f64>,
 }
 
-/// One glossed word: a word the text uses that is *not* in the learner's
-/// vocabulary, with what it means. Never a knowledge item by itself.
-///
-/// For scripts written without spaces the glossary doubles as the
-/// segmentation dictionary: the tokenizer groups characters around these
-/// terms, so a glossed word renders as one cell rather than one per character.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-pub struct GlossEntry {
-    /// Exactly as it appears in the text, inflection and all: matching is
-    /// `wordKey` and nothing else, so a base form matches nothing.
-    pub term: String,
-    /// Latin reading of `term`; absent for Latin-script targets.
-    #[serde(
-        default,
-        deserialize_with = "absent_or",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[ts(optional)]
-    pub reading: Option<String>,
-    /// Meaning in the learner's native language.
-    pub meaning: String,
-}
-
-/// What a text's sentence timings are timings *into*: the recording the
+/// What a text's segment timings are timings *into*: the recording the
 /// learner imported the subtitles from.
 ///
 /// A reference, never the media itself — nothing about a video is small enough
@@ -419,12 +383,17 @@ pub enum ReadingMedia {
 }
 
 /// A text the learner reads (or listens to) for comprehension — written by the
-/// model from their vocabulary, or pasted in and annotated.
+/// model from their vocabulary, or imported from a paste, a file or a video's
+/// subtitles.
 ///
-/// Immutable once stored: the annotations are what the model produced at
-/// creation time, and everything adaptive (which readings show, which words are
-/// highlighted) is derived at render time from the vocabulary and the learner's
-/// marks.
+/// Immutable once stored, and only the text: no readings, no translations, no
+/// glossary. Everything the reader shows about a word (its status, its reading,
+/// whether it is highlighted) is derived at render time from the vocabulary and
+/// the learner's marks.
+///
+/// A `textAdded` written before segments were the stored unit carries
+/// `sentences` with a `reading`, a `translation` and a `glossary` beside them;
+/// `sentences` reads as `segments` and the rest is dropped on the way in.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadingText {
@@ -440,9 +409,10 @@ pub struct ReadingText {
     )]
     #[ts(optional)]
     pub topic: Option<String>,
-    pub sentences: Vec<ReadingSentence>,
-    pub glossary: Vec<GlossEntry>,
-    /// What the sentence timings belong to, when the text was imported from
+    /// The text as its source cut it — one per cue, or one per paragraph.
+    #[serde(alias = "sentences")]
+    pub segments: Vec<Segment>,
+    /// What the segment timings belong to, when the text was imported from
     /// subtitles and the learner said which recording they came from. Attached
     /// at import and never afterwards.
     #[serde(
@@ -635,22 +605,42 @@ mod tests {
 
     #[test]
     fn optional_rejects_null_and_omits_absent() {
-        let ok: ReadingSentence = serde_json::from_value(json!({ "text": "a" })).unwrap();
-        assert_eq!(ok.reading, None);
+        let ok: Segment = serde_json::from_value(json!({ "text": "a" })).unwrap();
+        assert_eq!(ok.start, None);
         assert_eq!(serde_json::to_value(&ok).unwrap(), json!({ "text": "a" }));
 
-        let null =
-            serde_json::from_value::<ReadingSentence>(json!({ "text": "a", "reading": null }));
+        let null = serde_json::from_value::<Segment>(json!({ "text": "a", "start": null }));
         assert!(null.is_err(), "zod's .optional() does not accept null");
     }
 
     #[test]
     fn unknown_fields_are_stripped() {
-        let entry: GlossEntry =
-            serde_json::from_value(json!({ "term": "t", "meaning": "m", "extra": 1 })).unwrap();
+        let segment: Segment = serde_json::from_value(json!({ "text": "t", "extra": 1 })).unwrap();
         assert_eq!(
-            serde_json::to_value(&entry).unwrap(),
-            json!({ "term": "t", "meaning": "m" })
+            serde_json::to_value(&segment).unwrap(),
+            json!({ "text": "t" })
+        );
+    }
+
+    #[test]
+    fn an_old_text_reads_as_segments_and_loses_its_annotations() {
+        let text: ReadingText = serde_json::from_value(json!({
+            "id": "t", "title": "T", "source": "imported",
+            "sentences": [
+                { "text": "Hola.", "reading": "r", "translation": "Hi.", "start": 0, "end": 1200 },
+                { "text": "Adiós.", "translation": "Bye." }
+            ],
+            "glossary": [{ "term": "hola", "meaning": "hi" }],
+            "createdAt": 9
+        }))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(&text).unwrap(),
+            json!({
+                "id": "t", "title": "T", "source": "imported",
+                "segments": [{ "text": "Hola.", "start": 0.0, "end": 1200.0 }, { "text": "Adiós." }],
+                "createdAt": 9.0
+            })
         );
     }
 

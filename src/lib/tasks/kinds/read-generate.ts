@@ -54,8 +54,7 @@ export const readGenerateTask = {
 			title: draft.title,
 			source: 'generated',
 			...(input.topic ? { topic: input.topic } : {}),
-			sentences: draft.sentences,
-			glossary: draft.glossary,
+			segments: draft.segments,
 			id: newUuid(),
 			createdAt: Date.now()
 		};

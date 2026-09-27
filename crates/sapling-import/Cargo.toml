@@ -2,10 +2,12 @@
 name = "sapling-import"
 version = "0.1.0"
 edition = "2021"
-description = "Sapling's reading import, the deterministic half: subtitle detection and parsing, the sentence split, and cues re-cut into timed sentences."
+description = "Sapling's reading import: subtitle detection and parsing into timed segments, and prose cut into paragraphs."
 publish = false
 
 [dependencies]
+# The output is the stored `Segment` itself, so the import hands the store its own shape.
+sapling-domain = { path = "../sapling-domain" }
 serde = { version = "1", features = ["derive"] }
 # Only to read a json3 document; nothing here writes JSON.
 serde_json = "1"

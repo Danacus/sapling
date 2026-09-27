@@ -19,7 +19,6 @@ const FAKE_INPUTS: { [K in TaskKind]: TaskInput<K> } = {
 	'top-up': { profile, topic: 'at the market' },
 	readings: { targetLanguage: 'Chinese', free: [], fromModel: [] },
 	'read-generate': { profile, vocabulary: [], focus: [] },
-	'read-annotate': { profile, vocabulary: [], sentences: ['Hola.'] },
 	captions: { videoId: 'abcdefghijk', lang: 'ja', name: 'Japanese', auto: false },
 	'tts-model': 'Mandarin Chinese',
 	'asr-model': undefined
@@ -71,10 +70,10 @@ describe('top-up summary', () => {
 
 describe('captions summary and title', () => {
 	it('counts the lines the track cut into', () => {
-		expect(captionsTask.summary({ name: 'Japanese', text: '{}', sentences: 1 })).toBe(
+		expect(captionsTask.summary({ name: 'Japanese', text: '{}', lines: 1 })).toBe(
 			'1 line from Japanese'
 		);
-		expect(captionsTask.summary({ name: 'Japanese', text: '{}', sentences: 3 })).toBe(
+		expect(captionsTask.summary({ name: 'Japanese', text: '{}', lines: 3 })).toBe(
 			'3 lines from Japanese'
 		);
 	});

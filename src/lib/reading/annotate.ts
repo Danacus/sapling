@@ -1,8 +1,8 @@
 /**
  * Render-time annotation: what the learner actually sees when a text is opened.
  *
- * A stored text is immutable — the sentences, the readings and the glossary are
- * what the model produced the day it was made. Everything *adaptive* is decided
+ * A stored text is immutable, and it is only the text — its segments, as the
+ * source cut them. Everything else the reader shows is decided
  * here, on every open, from the vocabulary and the marks as they stand today.
  * That is the whole trick of the mode: a text written last month shows this
  * month's knowledge, because a word's status is not a colour painted onto the
@@ -22,9 +22,9 @@
  *
  * Under `'adaptive'` a tracked word's reading is a weighted coin flip against
  * its strength (`$lib/challenges/serve/reading`). A challenge rolls once at serve
- * time because it is one screen; a text is many sentences and the same word
- * turns up in several of them, and a word that showed its pinyin in sentence
- * two and hid it in sentence five reads as a bug. So the roll is memoised by
+ * time because it is one screen; a text is many lines and the same word
+ * turns up in several of them, and a word that showed its pinyin in line two
+ * and hid it in line five reads as a bug. So the roll is memoised by
  * card key in a `Map` the *caller* holds — one per text open — which is also
  * what makes "re-annotate after the learner added a word" cheap: the map
  * survives, and only the new word rolls.
@@ -32,8 +32,8 @@
  * ## Why a spelling is not a word
  *
  * 长 is `cháng` ("long") and `zhǎng` ("to grow"), and a learner may hold both as
- * separate cards with separate schedules. So the item and glossary lookups are
- * spelling → *list*, and the token's own reading — which `$lib/romanize` derived
+ * separate cards with separate schedules. So the item lookup is spelling →
+ * *list*, and the token's own reading — which `$lib/romanize` derived
  * from the whole sentence, the one thing that gets polyphones right — decides
  * which of the list this occurrence is. No reading anywhere (a language with no
  * local romanizer, a card written without one) falls back to the first
@@ -46,7 +46,8 @@ import type { Maturity } from '$lib/challenges/serve/progression';
 import type { RomanizedToken } from '$lib/romanize';
 import { strengthOf } from '$lib/srs';
 import { cardKey, isPunctuationOnly, readingKey } from '$lib/text';
-import type { GlossEntry, KnowledgeItem } from '$lib/types';
+import type { KnowledgeItem } from '$lib/types';
+import type { GlossEntry } from './schemas';
 import type { RomanizationMode } from '$lib/ui/prefs';
 import { wordKey } from './tokenize';
 
@@ -55,15 +56,15 @@ import { wordKey } from './tokenize';
  *
  * `'tracked'` — in the garden, with an FSRS card behind it. `'known'` — marked
  * known by the learner, which is a claim about them rather than a schedule.
- * `'new'` — the glossary explains it, so the model expected it to be unfamiliar.
  * `'plain'` — everything else: punctuation and whitespace, and words nobody has
- * said anything about, which are still tappable so the learner can add one.
+ * said anything about, which are still tappable so the learner can look one up
+ * or add it.
  */
-export type WordStatus = 'tracked' | 'known' | 'new' | 'plain';
+export type WordStatus = 'tracked' | 'known' | 'plain';
 
 /** One rendered word: the text, its reading after the visibility decision, and why. */
 export interface ReadingWord {
-	/** Verbatim. Concatenating a sentence's words reproduces it exactly. */
+	/** Verbatim. Concatenating a line's words reproduces it exactly. */
 	text: string;
 	/** `null` when there never was one, and when the mode took it away. */
 	reading: string | null;
@@ -74,18 +75,8 @@ export interface ReadingWord {
 	itemId?: string;
 	/** `tracked` only — how far along the word is, for the garden's bed colours. */
 	maturity?: Maturity;
-	/** `tracked` (from the item) or `new` (from the glossary). */
+	/** `tracked` only — the item's own term, meaning and reading. */
 	gloss?: { term: string; meaning: string; reading?: string };
-	/**
-	 * True when the mode took this word's reading away, as opposed to there never
-	 * having been one.
-	 *
-	 * The two are indistinguishable from `reading: null` alone, and the sentence's
-	 * stored reading — the fallback for a language with no local romanizer, where
-	 * *no* word has a per-word reading — has to tell them apart to know whether to
-	 * render. See {@link showSentenceReading}.
-	 */
-	readingHidden?: boolean;
 }
 
 /** A romanizer's `tokenize`, or `tokenizeByTerms`. */
@@ -97,8 +88,6 @@ export interface AnnotateContext {
 	items: KnowledgeItem[];
 	/** Terms the learner has marked known: understood, but not being scheduled. */
 	knownTerms: string[];
-	/** The text's own glossary — the `new` words. */
-	glossary: GlossEntry[];
 	mode: RomanizationMode;
 	/**
 	 * Per-card adaptive decisions, memoised across the whole text — keyed by
@@ -112,10 +101,9 @@ export interface AnnotateContext {
 }
 
 /**
- * The term list handed to the tokenizer: vocabulary, glossary and known terms
- * together.
+ * The term list handed to the tokenizer: vocabulary and known terms together.
  *
- * All three, because all three are words the reader should meet as one cell
+ * Both, because both are words the reader should meet as one cell
  * with one card behind it — and in an unspaced script this list is what
  * overrides the dictionary's own split, which does not know that 自行车 is a
  * word the learner is studying. Deduped by key, first spelling wins; the
@@ -134,7 +122,6 @@ export function termsFor(ctx: AnnotateContext): string[] {
 	};
 
 	for (const item of ctx.items) add(item.term);
-	for (const entry of ctx.glossary) add(entry.term);
 	for (const term of ctx.knownTerms) add(term);
 	return out;
 }
@@ -214,16 +201,16 @@ function showsReading(item: KnowledgeItem, ctx: AnnotateContext): boolean {
 }
 
 /**
- * Annotates one sentence.
+ * Annotates one line — a segment, or a sentence of a long one.
  *
- * The tokenizer is called with {@link termsFor}'s list, so a tracked or glossed
+ * The tokenizer is called with {@link termsFor}'s list, so a tracked or known
  * word comes back as one token whose text *is* the term — which is what makes
  * every lookup below a map hit rather than a search.
  *
  * Visibility, under the learner's mode: `'on'` keeps every reading the tokenizer
  * produced, `'off'` keeps none. `'adaptive'` is the interesting one — a `known`
  * word never needs the crutch, a `tracked` word fades it out on its own schedule
- * (memoised, see the module note), and `new`/`plain` words keep theirs, because
+ * (memoised, see the module note), and `plain` words keep theirs, because
  * a word the learner has never met is precisely the one that needs it.
  */
 export function annotateSentence(
@@ -233,7 +220,6 @@ export function annotateSentence(
 ): ReadingWord[] {
 	const tokens = tokenize(text, termsFor(ctx));
 	const items = byKey(ctx.items, (item) => item.term);
-	const glossary = byKey(ctx.glossary, (entry) => entry.term);
 	const known = new Set(ctx.knownTerms.map(wordKey).filter(Boolean));
 
 	return tokens.map((token) => {
@@ -245,15 +231,8 @@ export function annotateSentence(
 
 		const key = wordKey(token.text);
 		const item = pickByReading(items.get(key), (row) => row.romanization, token.reading);
-		const entry = pickByReading(glossary.get(key), (row) => row.reading, token.reading);
 
-		const status: WordStatus = item
-			? 'tracked'
-			: known.has(key)
-				? 'known'
-				: entry
-					? 'new'
-					: 'plain';
+		const status: WordStatus = item ? 'tracked' : known.has(key) ? 'known' : 'plain';
 
 		const hidden =
 			ctx.mode === 'off'
@@ -272,13 +251,7 @@ export function annotateSentence(
 					meaning: item.meaning,
 					...(item.romanization ? { reading: item.romanization } : {})
 				}
-			: entry
-				? {
-						term: entry.term,
-						meaning: entry.meaning,
-						...(entry.reading ? { reading: entry.reading } : {})
-					}
-				: undefined;
+			: undefined;
 
 		return {
 			text: token.text,
@@ -286,25 +259,25 @@ export function annotateSentence(
 			key,
 			status,
 			...(item ? { itemId: item.id, maturity: maturityOf(item) } : {}),
-			...(gloss ? { gloss } : {}),
-			...(hidden ? { readingHidden: true } : {})
+			...(gloss ? { gloss } : {})
 		} satisfies ReadingWord;
 	});
 }
 
 /**
- * Whether a sentence's *stored* reading — the flat, sentence-wide string the
- * model wrote — should render under the sentence.
+ * The looked-up answer for `word`, out of the entries the reader has fetched
+ * this open — or `undefined` when nobody has looked it up.
  *
- * It is the fallback for every language without a local romanizer, so the test
- * cannot be "did any word keep a reading": in that case no word ever had one.
- * The question is whether any word still *deserves* one. Under `'adaptive'` that
- * is every word the fading rule did not touch — a new word, an untracked one, a
- * tracked one whose roll came out show — and the line disappears only once the
- * whole sentence is made of words the learner has outgrown.
+ * A text carries no glossary, so this is the only other place a meaning comes
+ * from: the reader's `extraGlossary`, which the card reads when the word itself
+ * brings no gloss. Matched by `wordKey`, and between several entries for one
+ * spelling by the token's own reading, exactly as a garden item is.
  */
-export function showSentenceReading(words: ReadingWord[], mode: RomanizationMode): boolean {
-	if (mode === 'on') return true;
-	if (mode === 'off') return false;
-	return words.some((word) => word.key !== undefined && !word.readingHidden);
+export function lookedUpGloss(
+	word: ReadingWord,
+	entries: readonly GlossEntry[]
+): GlossEntry | undefined {
+	if (!word.key) return undefined;
+	const candidates = entries.filter((entry) => wordKey(entry.term) === word.key);
+	return pickByReading(candidates, (entry) => entry.reading, word.reading);
 }

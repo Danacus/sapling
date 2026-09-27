@@ -196,8 +196,7 @@ fn text_from(row: &Row) -> Result<ReadingText> {
         title: row.text("title")?.to_owned(),
         source: parse_enum(row.text("source")?)?,
         topic: row.opt_text("topic")?.map(str::to_owned),
-        sentences: parse_json(row.text("sentences")?)?,
-        glossary: parse_json(row.text("glossary")?)?,
+        segments: parse_json(row.text("segments")?)?,
         media: match row.opt_text("media")? {
             Some(media) => Some(parse_json(media)?),
             None => None,

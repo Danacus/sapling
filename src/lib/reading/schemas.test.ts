@@ -6,87 +6,79 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-	annotatedTextJsonSchema,
-	annotatedTextSchema,
 	generatedTextJsonSchema,
-	generatedTextSchema
+	generatedTextSchema,
+	glossEntrySchema,
+	lineTranslationJsonSchema,
+	lineTranslationSchema,
+	lookedUpWordJsonSchema
 } from './schemas';
 
 describe('generatedTextSchema', () => {
-	it('accepts a text whose optional annotations are null', () => {
+	it('accepts a title and its paragraphs', () => {
 		const parsed = generatedTextSchema.safeParse({
 			title: 'Una mesa',
-			sentences: [{ text: 'Hola.', reading: null, translation: null }],
-			glossary: [{ term: 'hola', reading: null, meaning: 'hello' }]
+			paragraphs: ['Hola. Adiós.', 'Bien.']
 		});
 		expect(parsed.success).toBe(true);
 	});
 
-	it('accepts them missing entirely, which is the other thing models do', () => {
-		const parsed = generatedTextSchema.safeParse({
+	it('has no place for readings, translations or a glossary: a text is only the text', () => {
+		const parsed = generatedTextSchema.parse({
 			title: 'Una mesa',
-			sentences: [{ text: 'Hola.' }],
-			glossary: []
+			paragraphs: ['Hola.'],
+			glossary: [{ term: 'hola', meaning: 'hello' }]
 		});
-		expect(parsed.success).toBe(true);
+		expect(parsed).not.toHaveProperty('glossary');
 	});
 
-	it('refuses a sentence with no text and a text with no title', () => {
-		expect(
-			generatedTextSchema.safeParse({ title: 'T', sentences: [{ text: '' }], glossary: [] }).success
-		).toBe(false);
-		expect(generatedTextSchema.safeParse({ title: '', sentences: [], glossary: [] }).success).toBe(
-			false
+	it('refuses a text with no title or no paragraph list', () => {
+		expect(generatedTextSchema.safeParse({ title: '', paragraphs: [] }).success).toBe(false);
+		expect(generatedTextSchema.safeParse({ title: 'T' }).success).toBe(false);
+	});
+});
+
+describe('glossEntrySchema', () => {
+	it('accepts a null reading, as a Latin-script word has', () => {
+		expect(glossEntrySchema.safeParse({ term: 'hola', reading: null, meaning: 'hi' }).success).toBe(
+			true
 		);
 	});
 });
 
-describe('annotatedTextSchema', () => {
-	it('lets the model decline the title the learner already gave', () => {
-		const parsed = annotatedTextSchema.safeParse({
-			title: null,
-			sentences: [{ reading: null, translation: 'Hello.' }],
-			glossary: []
-		});
-		expect(parsed.success).toBe(true);
+describe('lineTranslationSchema', () => {
+	it('is one translation and nothing about it', () => {
+		const parsed = lineTranslationSchema.parse({ translation: 'Hello.', notes: 'informal' });
+		expect(parsed).toEqual({ translation: 'Hello.' });
 	});
 
-	it('has no place for the sentence text: that never comes back', () => {
-		const parsed = annotatedTextSchema.parse({
-			title: null,
-			sentences: [{ reading: null, translation: 'Hello.', text: 'Hola.' }],
-			glossary: []
-		});
-		expect(parsed.sentences[0]).not.toHaveProperty('text');
+	it('refuses an empty translation', () => {
+		expect(lineTranslationSchema.safeParse({ translation: '' }).success).toBe(false);
 	});
 });
 
 describe('the JSON Schema projections', () => {
 	it('lists every property as required, as strict structured outputs want', () => {
 		const schema = generatedTextJsonSchema();
-		expect(schema.required).toEqual(['title', 'sentences', 'glossary']);
+		expect(schema.required).toEqual(['title', 'paragraphs']);
 		expect(schema.additionalProperties).toBe(false);
 	});
 
-	it('reaches into array items too', () => {
-		const properties = generatedTextJsonSchema().properties as Record<
-			string,
-			{ items?: Record<string, unknown> }
-		>;
-		expect(properties.sentences.items?.required).toEqual(['text', 'reading', 'translation']);
-		expect(properties.sentences.items?.additionalProperties).toBe(false);
-		expect(properties.glossary.items?.required).toEqual(['term', 'reading', 'meaning']);
+	it('does the same for the lookup envelope', () => {
+		const schema = lookedUpWordJsonSchema();
+		expect(schema.required).toEqual(['term', 'reading', 'meaning', 'explanation']);
+		expect(schema.additionalProperties).toBe(false);
 	});
 
-	it('does the same for the annotate envelope', () => {
-		const schema = annotatedTextJsonSchema();
-		expect(schema.required).toEqual(['title', 'sentences', 'glossary']);
-		const properties = schema.properties as Record<string, { items?: Record<string, unknown> }>;
-		expect(properties.sentences.items?.required).toEqual(['reading', 'translation']);
+	it('does the same for the translate envelope', () => {
+		const schema = lineTranslationJsonSchema();
+		expect(schema.required).toEqual(['translation']);
+		expect(schema.additionalProperties).toBe(false);
 	});
 
 	it('drops $schema, which providers reject', () => {
 		expect(generatedTextJsonSchema()).not.toHaveProperty('$schema');
-		expect(annotatedTextJsonSchema()).not.toHaveProperty('$schema');
+		expect(lookedUpWordJsonSchema()).not.toHaveProperty('$schema');
+		expect(lineTranslationJsonSchema()).not.toHaveProperty('$schema');
 	});
 });

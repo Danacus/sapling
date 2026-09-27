@@ -69,8 +69,8 @@ export const markWord = forward('markWord');
 export const getKnownTerms = forward('getKnownTerms');
 export const recordLookup = forward('recordLookup');
 /**
- * What an imported text is and the sentences it cuts into — subtitles re-cut
- * with their timings, prose split. Answered by the Rust core without touching
+ * What an imported text is and the segments it is stored as — one timed
+ * segment per subtitle cue, one untimed segment per paragraph of prose. Answered by the Rust core without touching
  * a table; it goes through here because that is where the window reaches Rust.
  */
 export const importSource = forward('importSource');

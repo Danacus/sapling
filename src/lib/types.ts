@@ -22,7 +22,6 @@ export type {
 	ConversationScenario,
 	ConversationTeacherTurn,
 	FsrsCardState,
-	GlossEntry,
 	GradeEntry,
 	HistoryEntry,
 	ImportedSource,
@@ -32,11 +31,10 @@ export type {
 	Level,
 	Profile,
 	ReadingMedia,
-	ReadingSentence,
 	ReadingText,
+	Segment,
 	SubtitleFormat,
 	TextSource,
-	Timing,
 	Verdict
 } from './db/generated/index';
 import type { ConversationLearnerTurn, ConversationTeacherTurn } from './db/generated/index';

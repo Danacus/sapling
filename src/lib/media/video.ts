@@ -5,7 +5,7 @@
  *
  * Thin on purpose, and it is the one file in the app that knows a media clock
  * is measured in **seconds**. Everything above it — the follow logic, the
- * sentence timings, the reader's state — is milliseconds, so the conversion
+ * segment timings, the reader's state — is milliseconds, so the conversion
  * lives here at the boundary and nowhere else.
  *
  * The events it listens to are what makes `onTime` trustworthy: `timeupdate`

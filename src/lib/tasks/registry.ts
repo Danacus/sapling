@@ -15,7 +15,6 @@
 
 import { asrModelTask } from './kinds/asr-model';
 import { captionsTask } from './kinds/captions';
-import { readAnnotateTask } from './kinds/read-annotate';
 import { readGenerateTask } from './kinds/read-generate';
 import { readingsTask } from './kinds/readings';
 import { topUpTask } from './kinds/top-up';
@@ -27,7 +26,6 @@ export const TASK_KINDS = {
 	'top-up': topUpTask,
 	readings: readingsTask,
 	'read-generate': readGenerateTask,
-	'read-annotate': readAnnotateTask,
 	captions: captionsTask,
 	'tts-model': ttsModelTask,
 	'asr-model': asrModelTask

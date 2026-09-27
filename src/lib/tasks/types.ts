@@ -2,7 +2,7 @@
  * The shapes every background task shares, whatever it does.
  *
  * A task is one long job the learner started and does not have to watch: a
- * lesson top-up, a text being written or annotated, a readings backfill, the
+ * lesson top-up, a text being written, a readings backfill, the
  * voice model download. The runner (`./runner`) gives each the same lifecycle
  * — `queued` → `running` → `done` | `failed` | `cancelled` — and the same two
  * ways of saying how far it has got: **steps**, a ledger of named phases with

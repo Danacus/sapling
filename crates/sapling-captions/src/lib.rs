@@ -332,9 +332,8 @@ fn parse_listing(json: &str) -> Result<CaptionsListing, String> {
     // learner can see which link they pasted.
     let title = root.get("title").and_then(Value::as_str).unwrap_or(id);
 
-    // Manual first, deliberately: a track a person wrote is punctuated, and
-    // punctuation is what lets `cues_to_sentences` cut the transcript into
-    // sentences instead of falling back to one sentence per cue.
+    // Manual first, deliberately: a track a person wrote is punctuated and
+    // cued at sensible breaks, where an automatic one rolls word by word.
     let mut tracks = tracks_from(root.get("subtitles"), false);
     tracks.extend(tracks_from(root.get("automatic_captions"), true));
 

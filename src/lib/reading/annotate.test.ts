@@ -10,8 +10,8 @@
 
 import { describe, expect, it } from 'vitest';
 
-import type { GlossEntry, KnowledgeItem } from '$lib/types';
-import { annotateSentence, showSentenceReading, termsFor } from './annotate';
+import type { KnowledgeItem } from '$lib/types';
+import { annotateSentence, lookedUpGloss, termsFor } from './annotate';
 import type { AnnotateContext, ReadingWord } from './annotate';
 import { tokenizeByTerms } from './tokenize';
 
@@ -52,7 +52,6 @@ function ctx(overrides: Partial<AnnotateContext> = {}): AnnotateContext {
 	return {
 		items: [],
 		knownTerms: [],
-		glossary: [],
 		mode: 'on',
 		rolls: new Map(),
 		...overrides
@@ -64,19 +63,15 @@ function statusOf(words: ReadingWord[], text: string): ReadingWord | undefined {
 }
 
 describe('termsFor', () => {
-	it('unions vocabulary, glossary and known terms, deduped by key', () => {
+	it('unions vocabulary and known terms, deduped by key', () => {
 		expect(
 			termsFor(
 				ctx({
 					items: [item('mesa'), item('sopa')],
-					glossary: [
-						{ term: 'cuenta', meaning: 'the bill' },
-						{ term: 'MESA', meaning: 'table' }
-					],
-					knownTerms: ['  sopa  ', 'hola']
+					knownTerms: ['  sopa  ', 'MESA', 'hola']
 				})
 			)
-		).toEqual(['mesa', 'sopa', 'cuenta', 'hola']);
+		).toEqual(['mesa', 'sopa', 'hola']);
 	});
 });
 
@@ -87,15 +82,14 @@ describe('annotateSentence', () => {
 			tokenizeByTerms,
 			ctx({
 				items: [item('mesa')],
-				knownTerms: ['la'],
-				glossary: [{ term: 'cuenta', meaning: 'the bill' }]
+				knownTerms: ['la']
 			})
 		);
 
 		expect(statusOf(words, 'mesa')?.status).toBe('tracked');
 		expect(statusOf(words, 'La')?.status).toBe('known');
-		expect(statusOf(words, 'cuenta')?.status).toBe('new');
-		expect(statusOf(words, 'silla')?.status).toBe('plain');
+		expect(statusOf(words, 'cuenta')?.status).toBe('plain');
+		expect(statusOf(words, 'cuenta')).not.toHaveProperty('gloss');
 	});
 
 	it('matches case-insensitively, on the one normalization', () => {
@@ -103,27 +97,14 @@ describe('annotateSentence', () => {
 		expect(words[0]).toMatchObject({ status: 'tracked', key: 'mesa', itemId: 'id-mesa' });
 	});
 
-	it("takes a tracked word's gloss from the item, not the glossary", () => {
+	it("takes a tracked word's gloss from the item", () => {
 		const words = annotateSentence(
 			'mesa',
 			tokenizeByTerms,
-			ctx({
-				items: [item('mesa', 0, 'me-sa')],
-				glossary: [{ term: 'mesa', meaning: 'the glossary is wrong here' }]
-			})
+			ctx({ items: [item('mesa', 0, 'me-sa')] })
 		);
 		expect(words[0].gloss).toEqual({ term: 'mesa', meaning: 'meaning of mesa', reading: 'me-sa' });
 		expect(words[0].maturity).toBe('new');
-	});
-
-	it("takes a new word's gloss from the glossary, reading included", () => {
-		const glossary: GlossEntry[] = [{ term: '饭馆', reading: 'fàn guǎn', meaning: 'restaurant' }];
-		const words = annotateSentence('去饭馆', tokenizeByTerms, ctx({ glossary }));
-		expect(statusOf(words, '饭馆')?.gloss).toEqual({
-			term: '饭馆',
-			meaning: 'restaurant',
-			reading: 'fàn guǎn'
-		});
 	});
 
 	it('reports maturity for a tracked word, from the same floors the planner uses', () => {
@@ -209,35 +190,26 @@ describe('annotateSentence', () => {
 	});
 });
 
-describe('showSentenceReading', () => {
-	const words = (mode: AnnotateContext['mode'], overrides: Partial<AnnotateContext> = {}) =>
-		annotateSentence('mesa silla', withReadings, ctx({ mode, ...overrides }));
-
-	it('always shows under "on" and never under "off"', () => {
-		expect(showSentenceReading(words('on'), 'on')).toBe(true);
-		expect(showSentenceReading(words('off'), 'off')).toBe(false);
+describe('lookedUpGloss', () => {
+	it("finds the reader's looked-up answer for a word by key", () => {
+		const [word] = annotateSentence('Cuenta', tokenizeByTerms, ctx());
+		expect(lookedUpGloss(word, [{ term: 'cuenta', meaning: 'the bill' }])).toEqual({
+			term: 'cuenta',
+			meaning: 'the bill'
+		});
+		expect(lookedUpGloss(word, [{ term: 'mesa', meaning: 'table' }])).toBeUndefined();
 	});
 
-	it('shows while any word still deserves the crutch', () => {
-		const some = words('adaptive', { items: [item('mesa', 1)], rng: () => 0.99 });
-		expect(showSentenceReading(some, 'adaptive')).toBe(true);
+	it('hands back the explanation with it, so reopening the word costs no call', () => {
+		const [word] = annotateSentence('cuenta', tokenizeByTerms, ctx());
+		const entry = { term: 'cuenta', meaning: 'the bill', explanation: 'The restaurant bill.' };
+		expect(lookedUpGloss(word, [entry])?.explanation).toBe('The restaurant bill.');
 	});
 
-	it('goes away once the whole sentence is words the learner has outgrown', () => {
-		const outgrown = words('adaptive', { knownTerms: ['mesa', 'silla'] });
-		expect(showSentenceReading(outgrown, 'adaptive')).toBe(false);
-	});
-
-	it('does not depend on a local romanizer existing', () => {
-		// `tokenizeByTerms` produces no readings at all — the very case the stored
-		// sentence reading is the fallback for.
-		const bare = annotateSentence(
-			'mesa silla',
-			tokenizeByTerms,
-			ctx({ mode: 'adaptive', knownTerms: ['mesa'] })
-		);
-		expect(bare.every((word) => word.reading === null)).toBe(true);
-		expect(showSentenceReading(bare, 'adaptive')).toBe(true);
+	it('has nothing for punctuation', () => {
+		const words = annotateSentence('mesa, silla', tokenizeByTerms, ctx());
+		const gap = words.find((word) => word.key === undefined);
+		expect(gap && lookedUpGloss(gap, [{ term: ', ', meaning: 'comma' }])).toBeUndefined();
 	});
 });
 
@@ -296,15 +268,15 @@ describe('homographs', () => {
 		expect(words[0].gloss?.reading).toBe('cháng');
 	});
 
-	it('picks between two glossary entries the same way', () => {
-		const glossary: GlossEntry[] = [
+	it('picks between two looked-up answers the same way', () => {
+		const entries = [
 			{ term: '长', meaning: 'long', reading: 'cháng' },
 			{ term: '长', meaning: 'to grow', reading: 'zhǎng' }
 		];
-		const words = annotateSentence('长长', reading(['zhǎng', 'cháng']), ctx({ glossary }));
+		const words = annotateSentence('长长', reading(['zhǎng', 'cháng']), ctx());
 
-		expect(words.map((word) => word.status)).toEqual(['new', 'new']);
-		expect(words.map((word) => word.gloss?.meaning)).toEqual(['to grow', 'long']);
+		expect(words.map((word) => word.status)).toEqual(['plain', 'plain']);
+		expect(words.map((word) => lookedUpGloss(word, entries)?.meaning)).toEqual(['to grow', 'long']);
 	});
 
 	it('fades the two cards independently, on their own strengths', () => {

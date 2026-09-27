@@ -205,10 +205,7 @@ function text(id: string, title: string, createdAt: number, topic?: string): Rea
 		title,
 		source: 'generated',
 		...(topic === undefined ? {} : { topic }),
-		sentences: [
-			{ text: '我想买书。', reading: 'wǒ xiǎng mǎi shū.', translation: 'I want a book.' }
-		],
-		glossary: [{ term: '书', reading: 'shū', meaning: 'book' }],
+		segments: [{ text: '我想买书。' }, { text: '好的。' }],
 		createdAt
 	};
 }
@@ -246,11 +243,10 @@ describe('reading texts', () => {
 			id: 't3',
 			title: '一课',
 			source: 'imported',
-			sentences: [
-				{ text: '我想买书。', translation: 'I want a book.', start: 1200, end: 3400 },
-				{ text: '好的。', translation: 'All right.', start: 3400, end: 4000 }
+			segments: [
+				{ text: '我想买书。', start: 1200, end: 3400 },
+				{ text: '好的。', start: 3400, end: 4000 }
 			],
-			glossary: [],
 			media: { kind: 'file', name: 'lesson.mp4', type: 'video/mp4' },
 			createdAt: 5000
 		};
@@ -269,16 +265,18 @@ describe('reading texts', () => {
 });
 
 describe('importSource', () => {
-	it('splits prose and leaves it untimed', async () => {
-		const source = await importSource('Fuimos al restaurante. Pedí sopa.\nLa cuenta no era cara.');
+	it('cuts prose into untimed paragraphs', async () => {
+		const source = await importSource(
+			'Fuimos al restaurante. Pedí sopa.\n\nLa cuenta no era cara.'
+		);
 		expect(source).toEqual({
 			cues: 0,
 			durationMs: 0,
-			sentences: ['Fuimos al restaurante.', 'Pedí sopa.', 'La cuenta no era cara.']
+			segments: [{ text: 'Fuimos al restaurante. Pedí sopa.' }, { text: 'La cuenta no era cara.' }]
 		});
 	});
 
-	it('recognises subtitles and gives every sentence its timing', async () => {
+	it('recognises subtitles and keeps every cue as one timed segment', async () => {
 		const source = await importSource(
 			'1\n00:00:01,000 --> 00:00:03,500\nHola. Adiós.\n\n2\n00:00:03,500 --> 00:00:06,000\nBien.\n'
 		);
@@ -286,11 +284,9 @@ describe('importSource', () => {
 			format: 'srt',
 			cues: 2,
 			durationMs: 6000,
-			sentences: ['Hola.', 'Adiós.', 'Bien.'],
-			timings: [
-				{ start: 1000, end: 3500 },
-				{ start: 1000, end: 3500 },
-				{ start: 3500, end: 6000 }
+			segments: [
+				{ text: 'Hola. Adiós.', start: 1000, end: 3500 },
+				{ text: 'Bien.', start: 3500, end: 6000 }
 			]
 		});
 	});

@@ -3286,6 +3286,7 @@ dependencies = [
 name = "sapling-import"
 version = "0.1.0"
 dependencies = [
+ "sapling-domain",
  "serde",
  "serde_json",
  "ts-rs",

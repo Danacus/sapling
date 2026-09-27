@@ -40,8 +40,8 @@ export interface CaptionTrack {
 	name: string;
 	/**
 	 * Machine-generated rather than written by a person. Worth a mark in the
-	 * list: an automatic track is usually unpunctuated, which is exactly what
-	 * makes the import fall back to one sentence per cue.
+	 * list: an automatic track is usually unpunctuated and cued word by word,
+	 * so its lines read as fragments rather than sentences.
 	 */
 	auto: boolean;
 }

@@ -733,7 +733,7 @@
 			"id": "text-2",
 			"title": "Subtitles",
 			"source": "imported",
-			"sentences": [
+			"segments": [
 				{
 					"text": "你好吗？",
 					"start": 0,
@@ -745,7 +745,6 @@
 					"end": 3200
 				}
 			],
-			"glossary": [],
 			"media": {
 				"kind": "youtube",
 				"videoId": "dQw4w9WgXcQ"
@@ -757,22 +756,12 @@
 			"title": "早餐",
 			"source": "generated",
 			"topic": "food",
-			"sentences": [
+			"segments": [
 				{
-					"text": "我吃早餐。",
-					"reading": "wǒ chī zǎocān.",
-					"translation": "I eat breakfast."
+					"text": "我吃早餐。"
 				},
 				{
-					"text": "很好吃。",
-					"translation": "Delicious."
-				}
-			],
-			"glossary": [
-				{
-					"term": "早餐",
-					"reading": "zǎocān",
-					"meaning": "breakfast"
+					"text": "很好吃。"
 				}
 			],
 			"createdAt": 1710064800000
@@ -784,22 +773,12 @@
 			"title": "早餐",
 			"source": "generated",
 			"topic": "food",
-			"sentences": [
+			"segments": [
 				{
-					"text": "我吃早餐。",
-					"reading": "wǒ chī zǎocān.",
-					"translation": "I eat breakfast."
+					"text": "我吃早餐。"
 				},
 				{
-					"text": "很好吃。",
-					"translation": "Delicious."
-				}
-			],
-			"glossary": [
-				{
-					"term": "早餐",
-					"reading": "zǎocān",
-					"meaning": "breakfast"
+					"text": "很好吃。"
 				}
 			],
 			"createdAt": 1710064800000
@@ -808,7 +787,7 @@
 			"id": "text-2",
 			"title": "Subtitles",
 			"source": "imported",
-			"sentences": [
+			"segments": [
 				{
 					"text": "你好吗？",
 					"start": 0,
@@ -820,7 +799,6 @@
 					"end": 3200
 				}
 			],
-			"glossary": [],
 			"media": {
 				"kind": "youtube",
 				"videoId": "dQw4w9WgXcQ"

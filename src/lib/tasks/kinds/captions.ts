@@ -15,8 +15,8 @@
  * parsed cue list would have been a second, parallel source of truth for the
  * one thing that composer deliberately derives once.
  *
- * The sentence count is in the result too, and it is the reason this def
- * parses at all: a track that yields nothing readable is a failure worth
+ * The line count is in the result too, and it is the reason this def parses at
+ * all: a track that yields nothing readable is a failure worth
  * reporting in the tray rather than a dead Add button the learner has to work
  * out for themselves, and the count is what the summary says.
  */
@@ -40,8 +40,8 @@ export interface CaptionsResult {
 	name: string;
 	/** The track exactly as yt-dlp wrote it: `json3`, for the composer to import. */
 	text: string;
-	/** How many sentences it cuts into — what {@link captionsTask.summary} says. */
-	sentences: number;
+	/** How many lines (cues) it holds — what {@link captionsTask.summary} says. */
+	lines: number;
 }
 
 export const captionsTask = {
@@ -67,16 +67,16 @@ export const captionsTask = {
 		const text = await fetchCaptions(input.videoId, input);
 
 		ctx.step('read', `Reading ${input.name}`);
-		const { sentences } = await importSource(text);
-		if (sentences.length === 0) {
+		const { segments } = await importSource(text);
+		if (segments.length === 0) {
 			throw new Error(`There is nothing readable in the ${input.name} track.`);
 		}
 
-		return { name: input.name, text, sentences: sentences.length };
+		return { name: input.name, text, lines: segments.length };
 	},
 
 	summary(result) {
-		const lines = result.sentences;
+		const lines = result.lines;
 		return `${lines} line${lines === 1 ? '' : 's'} from ${result.name}`;
 	}
 } satisfies TaskKindDef<CaptionsInput, CaptionsResult>;

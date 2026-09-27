@@ -1,20 +1,18 @@
 //! Subtitles as an import format: a `.srt`/`.vtt`/`.json3` file, or the
-//! transcript panel off a video page, turned into sentences that carry when
-//! they are spoken.
+//! transcript panel off a video page, turned into cues that carry when they
+//! are spoken.
 //!
-//! What arrives is not prose: it is a hundred fragments cut to fit a screen for
-//! two seconds each, and the cut has nothing to do with where the sentences
-//! are. So this module does the opposite of what a subtitle renderer does — it
-//! *undoes* the cueing, joins the text back into a running one, hands it to
-//! [`split_sentences`] to be split the way any pasted text is, and then hands
-//! each sentence back the timings of the cues its characters came from. Those
-//! timings are recovered here because this is the only moment they exist: the
-//! file is gone as soon as the import finishes.
+//! A cue is what the text is stored as: one segment per cue, its span kept
+//! exactly. What this module removes is only what is presentation or
+//! repetition — markup, entities, line breaks inside a cue, and the rolling
+//! repeats of auto-generated captions. It never joins cues or re-cuts them into
+//! sentences: a sentence spread over two cues is two segments, each with the
+//! span it was shown for, which is what the follow view needs to highlight the
+//! line actually on screen. The timings are recovered here because this is the
+//! only moment they exist: the file is gone as soon as the import finishes.
 
 use serde_json::Value;
 use ts_rs::TS;
-
-use crate::sentences::{has_sentence_end, split_sentences};
 
 /// The four shapes a learner actually turns up with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, TS)]
@@ -37,27 +35,10 @@ pub struct Cue {
     pub text: String,
 }
 
-/// One sentence of the finished import, with the span of media it covers.
-#[derive(Debug, Clone, PartialEq)]
-pub struct TimedSentence {
-    pub text: String,
-    pub start: f64,
-    pub end: f64,
-}
-
 /// How long a cue with nothing after it to end it is assumed to last: the last
 /// line of a transcript panel, or a final json3 event with no duration. Four
 /// seconds is a spoken sentence.
 const LAST_CUE_MS: f64 = 4000.0;
-
-/// Below this share of cues that *end* a sentence, a track counts as
-/// unpunctuated and becomes one sentence per cue.
-///
-/// "A mark anywhere" is too weak a test: one stray 。 in 96 lines of a real
-/// zh-Hant track joined the whole video into three sentences, one over three
-/// minutes long. Tracks that punctuate by sentence rather than by line — a
-/// sentence spread over two or three cues — measured 39% and still join.
-const PUNCTUATED_SHARE: f64 = 0.25;
 
 /// A character that sets its own spacing, so joining across it must not
 /// insert a space: Han, kana, Hangul, and the CJK and fullwidth punctuation
@@ -106,7 +87,7 @@ fn push_joined(out: &mut String, piece: &str) {
 }
 
 /// Drops the byte-order mark a downloaded file arrives wearing, and CRLF / CR.
-fn normalize_newlines(text: &str) -> String {
+pub(crate) fn normalize_newlines(text: &str) -> String {
     text.strip_prefix('\u{FEFF}')
         .unwrap_or(text)
         .replace("\r\n", "\n")
@@ -487,90 +468,6 @@ pub fn parse_subtitles(text: &str) -> Option<(SubtitleFormat, Vec<Cue>)> {
     Some((format, dedupe_rolling(raw)))
 }
 
-/// Whether the cue's last mark, past any closing quotes, brackets and space,
-/// ends a sentence.
-fn ends_sentence(text: &str) -> bool {
-    let trimmed = text.trim_end_matches(|c: char| {
-        c.is_whitespace()
-            || matches!(
-                c,
-                '"' | '\'' | '”' | '’' | '」' | '』' | '）' | ')' | '》' | '〉' | ']'
-            )
-    });
-    trimmed
-        .chars()
-        .next_back()
-        .is_some_and(|c| has_sentence_end(c.encode_utf8(&mut [0; 4])))
-}
-
-/// Cues joined back into a running text, cut into sentences, and given back
-/// their timings.
-///
-/// The join is a space (or nothing between CJK characters), **not a newline**:
-/// [`split_sentences`] splits on every newline and would simply reinstate the
-/// cueing. Sentence boundaries are then recovered by position — the split is a
-/// cut, so every sentence is a contiguous substring of the join, in order, and
-/// a cursor finds each. A sentence starts at the cue holding its first
-/// character and ends at the one holding its last.
-///
-/// A track where fewer than [`PUNCTUATED_SHARE`] of the cues end a sentence —
-/// the common auto-caption case — is one sentence per cue instead: joined, it
-/// would be a whole video as one unreadable line.
-pub fn cues_to_sentences(cues: &[Cue]) -> Vec<TimedSentence> {
-    let usable: Vec<&Cue> = cues
-        .iter()
-        .filter(|cue| !cue.text.trim().is_empty())
-        .collect();
-    if usable.is_empty() {
-        return Vec::new();
-    }
-    let ending = usable.iter().filter(|cue| ends_sentence(&cue.text)).count();
-    if (ending as f64) < usable.len() as f64 * PUNCTUATED_SHARE {
-        return usable
-            .iter()
-            .map(|cue| TimedSentence {
-                text: cue.text.clone(),
-                start: cue.start,
-                end: cue.end,
-            })
-            .collect();
-    }
-
-    // Where each cue's text ends in the join. Separators fall between the spans
-    // and belong to no cue, which is safe because the split trims.
-    let mut joined = String::new();
-    let mut ends = Vec::with_capacity(usable.len());
-    for cue in &usable {
-        push_joined(&mut joined, &cue.text);
-        ends.push(joined.len());
-    }
-
-    let last_cue = usable.len() - 1;
-    let mut out = Vec::new();
-    let mut cursor = 0;
-    let mut first = 0;
-    for sentence in split_sentences(&joined) {
-        let Some(offset) = joined[cursor..].find(sentence) else {
-            continue;
-        };
-        let at = cursor + offset;
-        cursor = at + sentence.len();
-        while first < last_cue && ends[first] <= at {
-            first += 1;
-        }
-        let mut last = first;
-        while last < last_cue && ends[last] < cursor {
-            last += 1;
-        }
-        out.push(TimedSentence {
-            text: sentence.to_owned(),
-            start: usable[first].start,
-            end: usable[last].end.max(usable[first].start),
-        });
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -655,14 +552,6 @@ Language: zh
             start,
             end,
             text: text.to_owned(),
-        }
-    }
-
-    fn timed(text: &str, start: f64, end: f64) -> TimedSentence {
-        TimedSentence {
-            text: text.to_owned(),
-            start,
-            end,
         }
     }
 
@@ -803,18 +692,6 @@ Language: zh
     }
 
     #[test]
-    fn re_cuts_json3_into_sentences_with_their_timings() {
-        assert_eq!(
-            cues_to_sentences(&cues(JSON3)),
-            [
-                timed("我们去了饭馆。", 1000.0, 3000.0),
-                timed("我点了汤。", 3000.0, 5000.0),
-                timed("她点了鱼和米饭。", 5000.0, 6500.0),
-            ]
-        );
-    }
-
-    #[test]
     fn emits_every_rolling_line_exactly_once_with_the_timing_it_first_appeared_in() {
         // The first line is the one a blank-line split would have orphaned;
         // the transition cues are gone.
@@ -826,83 +703,5 @@ Language: zh
                 cue(6150.0, 9000.0, "今天我们聊聊"),
             ]
         );
-    }
-
-    /* ---- cues_to_sentences -------------------------------------------------- */
-
-    #[test]
-    fn re_cuts_the_cues_into_sentences_and_times_each_one() {
-        assert_eq!(
-            cues_to_sentences(&cues(SRT)),
-            [
-                timed("Fuimos al restaurante y pedimos sopa.", 1000.0, 3500.0),
-                timed("La cuenta no era cara.", 3500.0, 6000.0),
-                timed("Dejamos una propina.", 3500.0, 6000.0),
-            ]
-        );
-    }
-
-    #[test]
-    fn spans_a_sentence_that_runs_across_two_cues_from_the_first_to_the_last() {
-        let cues = [
-            cue(1000.0, 3000.0, "Fuimos al restaurante"),
-            cue(3000.0, 5000.0, "y pedimos sopa."),
-        ];
-        assert_eq!(
-            cues_to_sentences(&cues),
-            [timed(
-                "Fuimos al restaurante y pedimos sopa.",
-                1000.0,
-                5000.0
-            )]
-        );
-    }
-
-    #[test]
-    fn joins_cjk_cues_without_inventing_a_space() {
-        assert_eq!(
-            cues_to_sentences(&cues(VTT)),
-            [
-                timed("我们去了饭馆。", 1000.0, 3000.0),
-                timed("我点了汤。", 1000.0, 3000.0),
-                timed("她点了鱼和米饭。", 3000.0, 5000.0),
-            ]
-        );
-    }
-
-    #[test]
-    fn falls_back_to_one_sentence_per_cue_when_nothing_is_punctuated() {
-        assert_eq!(
-            cues_to_sentences(&cues(ROLLING_VTT)),
-            [
-                timed("大家好欢迎来到", 30.0, 3270.0),
-                timed("我的频道", 3280.0, 6140.0),
-                timed("今天我们聊聊", 6150.0, 9000.0),
-            ]
-        );
-    }
-
-    #[test]
-    fn falls_back_to_one_sentence_per_cue_when_only_a_stray_cue_is_punctuated() {
-        // A real zh-Hant track: 1 of 96 lines ended in 。, and the join turned
-        // the whole video into three sentences.
-        let cues = [
-            cue(0.0, 1000.0, "简单分享这个字"),
-            cue(1000.0, 2000.0, "如果你是第一次接触我们"),
-            cue(2000.0, 3000.0, "不妨订阅我们。"),
-            cue(3000.0, 4000.0, "我们一开始先讲解它的发音"),
-            cue(4000.0, 5000.0, "这个字有三个读音"),
-        ];
-        let expected: Vec<TimedSentence> = cues
-            .iter()
-            .map(|c| timed(&c.text, c.start, c.end))
-            .collect();
-        assert_eq!(cues_to_sentences(&cues), expected);
-    }
-
-    #[test]
-    fn drops_empty_cues_and_has_nothing_to_say_about_an_empty_file() {
-        assert!(cues_to_sentences(&[cue(0.0, 1.0, "   ")]).is_empty());
-        assert!(cues_to_sentences(&[]).is_empty());
     }
 }

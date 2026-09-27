@@ -13,7 +13,7 @@
  *
  * **Serial per kind, concurrent across kinds.** A kind that says `serial`
  * runs one task at a time and later ones wait as `queued`: two top-ups would
- * ask for the same wants twice, and two annotations would trip the same rate
+ * ask for the same wants twice, and two generated texts would trip the same rate
  * limit. Different kinds have nothing to do with one another and run
  * together.
  *

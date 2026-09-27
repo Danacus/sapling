@@ -8,7 +8,7 @@
  * (`./follow`) is pure and takes numbers; what renders is a page; and what
  * plays is whichever of these was built for the text at hand.
  *
- * **Milliseconds everywhere.** `ReadingSentence.start`/`end` are milliseconds
+ * **Milliseconds everywhere.** `Segment.start`/`end` are milliseconds
  * because a subtitle file's are, and a `<video>`'s `currentTime` is seconds
  * because the DOM's is, as is YouTube's `getCurrentTime` — that conversion
  * belongs in the implementations (`./video`, `./youtube`) and appears nowhere

@@ -21,8 +21,7 @@
 
 import { LlmError, MAX_ABOUT_CHARS, chatCompletion, stripFences } from '$lib/llm';
 import type { BatchProfile, ChatMessage, FetchLike } from '$lib/llm';
-import { cardKey } from '$lib/text';
-import type { GlossEntry, Level, ReadingSentence } from '$lib/types';
+import type { Level, Segment } from '$lib/types';
 import {
 	GENERATED_TEXT_SCHEMA_NAME,
 	generatedTextJsonSchema,
@@ -61,15 +60,6 @@ export interface ReadingOptions {
 	fetchFn?: FetchLike;
 	apiKey?: string;
 	model?: string;
-	/**
-	 * How far a chunked import has got, called once per chunk as it lands.
-	 *
-	 * Only `annotateReadingText` ever calls it — it is the one entry point that
-	 * may make more than one round trip, and a learner who pasted an article is
-	 * owed a number rather than a spinner that sits still for a minute. The
-	 * single-call paths ignore it, so passing it is always harmless.
-	 */
-	onProgress?: (done: number, total: number) => void;
 }
 
 /**
@@ -108,65 +98,34 @@ export const SENTENCES_BY_LEVEL = {
 } as const satisfies Record<Level, number>;
 
 /**
- * The glossary rules, shared verbatim with `./annotate-call`.
- *
- * Both calls fill the same field for the same consumer, so the two prompts say
- * the same thing by construction rather than by whoever edits one remembering
- * the other. Still a static string on both sides, so nothing about prompt
- * caching changes.
- *
- * The two rules after the first are what make the glossary *land*. Matching is
- * `wordKey` — trimmed, NFC, lower-cased, spaces collapsed — and nothing else: no
- * stemmer, no dictionary, no base-form lookup (the entry's `reading` only ever
- * chooses *between* entries that already match). So a gloss for the base form of a word the
- * text uses inflected matches nothing, and the learner taps a word the app has
- * no answer for. And a model told "never gloss what is already in vocabulary"
- * will happily read 朋友 in the list as covering 小朋友, or 学 as covering 学习,
- * because to a reader it does — but not to a character-for-character match.
- * Both defects arrive as the same symptom (a `plain` word with nothing behind
- * it), and both are prompt bugs, so they are fixed here.
- */
-export const GLOSSARY_RULES = [
-	'- glossary: every word the text uses that is NOT in "vocabulary" gets an entry, with its "reading" under the rule above and its "meaning" in the NATIVE language.',
-	'- "term" is the form the text actually uses, character for character — never a base or dictionary form. The app matches it against the text literally, so an inflected or conjugated word is glossed as it stands; name the base form in "meaning" if that helps.',
-	'- A word is in "vocabulary" only when the identical term is listed there. A longer word that merely contains one, or a derived or inflected form of one, is a different word and gets its own entry (学 does not cover 学习; "walk" does not cover "walked").',
-	'- For a language written WITHOUT spaces between words (Chinese, Japanese, Thai, Lao, Khmer) the glossary is also how the app splits the text into words, so a multi-character word left out of it is a word the learner cannot tap. Be complete.'
-];
-
-/**
- * The system prompt: static, terse, and carrying the four rules that decide
- * whether the result is readable.
+ * The system prompt: static, terse, and carrying the rules that decide whether
+ * the result is readable.
  *
  * - **Built from the vocabulary.** Left to itself the model writes at the level
  *   it thinks "beginner" means, which is its own vocabulary shrunk, not the
  *   learner's. The whole premise of the feature is that the app knows which
  *   words those are.
- * - **A few new words, and all of them glossed.** Comprehensible input is
- *   *slightly* beyond what you have; a text with nothing new in it teaches
- *   nothing, and one with an unglossed stranger in it stops the reader dead.
- *   The glossary is what makes the strangers affordable.
- * - **The glossary is also the segmenter.** For Chinese, Japanese and their
- *   neighbours there are no spaces to split on, so the terms the model lists are
- *   literally how the app cuts the text into tappable words (`./tokenize`). A
- *   missing entry there is not a missing gloss, it is a word rendered one
- *   character at a time.
- * - **Reading and translation.** The `TargetText` rule the rest of the app
- *   already runs on: the Latin reading travels with the string it annotates, and
- *   is `null` for languages written in the Latin script.
+ * - **A few new words, one at a time.** Comprehensible input is *slightly*
+ *   beyond what you have; a text with nothing new in it teaches nothing, and a
+ *   sentence with two strangers in it stops the reader dead. The learner looks a
+ *   stranger up in the reader (`./lookup-call`).
+ * - **Only the text.** No readings, translations or glossary: a stored text is
+ *   only the text, readings come from `$lib/romanize` token by token, and a
+ *   meaning is looked up when the learner asks for it.
+ * - **Paragraphs.** The unit a writer produces and the unit an import is stored
+ *   in, so a generated text is one segment per paragraph exactly as a pasted one
+ *   is — and a dialogue is a paragraph per line, which is how it is laid out.
  */
 const SYSTEM_PROMPT = [
 	'You write short reading texts for language learners. Output one JSON object and nothing else: no prose, no markdown fences.',
-	'Shape: {"title","sentences":[{"text","reading","translation"}],"glossary":[{"term","reading","meaning"}]}',
-	'"text" is one sentence of the piece, in the TARGET language. One array entry per sentence, in reading order, exactly "sentenceCount" of them.',
-	'"reading" is the Latin-script reading of that sentence: pinyin with tone marks for Mandarin, romaji for Japanese, revised romanization for Korean, the standard scheme otherwise. It is ALWAYS null when the target language is written in the Latin script.',
-	'"translation" is that same sentence in the NATIVE language.',
+	'Shape: {"title","paragraphs":["..."]}',
+	'"paragraphs" is the piece in the TARGET language, one entry per paragraph, in reading order: about "sentenceCount" sentences in all. A dialogue gets one entry per line of speech. Target-language script only — no readings, no translations, no notes.',
 	'"title" is short — a few words — and in the TARGET language.',
 	'Rules:',
 	'- One coherent piece: a story, a dialogue, a note, a short article. Not a list of unrelated example sentences. It has a beginning and an end, and the last sentence finishes it.',
 	'- "vocabulary" is everything the learner can already read, and it is what you build with: most of the text is made of those words.',
 	'- Every word in "focus" appears at least once, used naturally. They are what this text is for.',
 	'- A few words outside "vocabulary" are welcome and wanted — this is comprehension practice, not a drill — but a sentence should never have more than one of them.',
-	...GLOSSARY_RULES,
 	'- Write at the learner\'s "level": sentence length, tense range and register all follow it.',
 	'- With a "topic", the whole piece is about it, and "interests" then only colour the details. With no topic, take the subject from "interests".',
 	'- "about" is the learner in their own words. Set the piece in their life where it fits; never recite it back to them and never contradict it.',
@@ -220,61 +179,13 @@ export function buildGeneratePrompt(args: GenerateTextArgs): ChatMessage[] {
 	];
 }
 
-/** `null`/blank normalized away, so a missing annotation is one state, not three. */
-function trimmed(value: string | null | undefined): string | undefined {
-	const text = value?.trim();
-	return text ? text : undefined;
-}
-
-/**
- * Turns one glossary row into a {@link GlossEntry}, or `undefined` when it says
- * nothing. Blank rows are dropped rather than rejected: a gloss the model
- * fumbled costs that word its card, never the text.
- */
-export function toGlossEntry(raw: {
-	term: string;
-	reading?: string | null;
-	meaning: string;
-}): GlossEntry | undefined {
-	const term = raw.term.trim();
-	const meaning = trimmed(raw.meaning);
-	if (!term || !meaning) return undefined;
-	const reading = trimmed(raw.reading);
-	return { term, meaning, ...(reading ? { reading } : {}) };
-}
-
-/**
- * The glossary, cleaned and deduped by {@link cardKey}. Shared with
- * `./annotate-call`.
- *
- * By card rather than by term, so a text that uses both readings of a homograph
- * can carry both glosses — 长 as `cháng` and 长 as `zhǎng` are two entries, and
- * `./annotate` picks between them with the reading the tokenizer derived from
- * the sentence. An entry with no reading still keys as its bare term, which
- * keeps the old rule exactly where nothing distinguishes two rows: first wins.
- */
-export function toGlossary(
-	rows: readonly { term: string; reading?: string | null; meaning: string }[]
-): GlossEntry[] {
-	const seen = new Set<string>();
-	const out: GlossEntry[] = [];
-	for (const row of rows) {
-		const entry = toGlossEntry(row);
-		if (!entry) continue;
-		const key = cardKey(entry.term, entry.reading);
-		if (seen.has(key)) continue;
-		seen.add(key);
-		out.push(entry);
-	}
-	return out;
-}
-
 /**
  * Reads one write completion.
  *
  * Strict about the envelope and forgiving inside it, the split the rest of the
- * app makes: a text with no sentences is nothing to read and throws, while a
- * sentence that lost its translation is still a sentence and keeps its place.
+ * app makes: a text with no paragraphs is nothing to read and throws, while a
+ * blank paragraph is simply dropped. Each paragraph becomes one untimed
+ * segment, trimmed.
  */
 export function parseGeneratedText(raw: string): ReadingTextDraft {
 	let json: unknown;
@@ -289,28 +200,16 @@ export function parseGeneratedText(raw: string): ReadingTextDraft {
 		throw new LlmError('bad-response', 'The model returned a text in an unexpected shape.');
 	}
 
-	const sentences: ReadingSentence[] = [];
-	for (const raw of parsed.data.sentences) {
-		const text = raw.text.trim();
-		if (!text) continue;
-		const reading = trimmed(raw.reading);
-		const translation = trimmed(raw.translation);
-		sentences.push({
-			text,
-			...(reading ? { reading } : {}),
-			...(translation ? { translation } : {})
-		});
+	const segments: Segment[] = parsed.data.paragraphs
+		.map((paragraph) => paragraph.trim())
+		.filter(Boolean)
+		.map((text) => ({ text }));
+
+	if (segments.length === 0) {
+		throw new LlmError('bad-response', 'The model returned an empty text. Try again.');
 	}
 
-	if (sentences.length === 0) {
-		throw new LlmError('bad-response', 'The model returned a text with no sentences. Try again.');
-	}
-
-	return {
-		title: parsed.data.title.trim(),
-		sentences,
-		glossary: toGlossary(parsed.data.glossary)
-	};
+	return { title: parsed.data.title.trim(), segments };
 }
 
 /** The real write call; {@link generateReadingText} in `./index` picks it or the mock. */

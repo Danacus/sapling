@@ -560,8 +560,7 @@ mod tests {
                 EventType::TextAdded,
                 json!({
                     "id": "t", "title": "T", "source": "imported", "topic": "x",
-                    "sentences": [{ "text": "s", "reading": "r", "translation": "tr", "start": 0, "end": 1200 }],
-                    "glossary": [{ "term": "g", "reading": "gr", "meaning": "gm" }],
+                    "segments": [{ "text": "s", "start": 0, "end": 1200 }],
                     "media": { "kind": "file", "name": "a.mp4", "type": "video/mp4" },
                     "createdAt": 9
                 }),

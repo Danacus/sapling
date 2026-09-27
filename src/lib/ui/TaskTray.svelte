@@ -1,6 +1,6 @@
 <!--
   The one place to watch every background job from — a lesson being written,
-  a text being annotated, the voice model downloading — wherever the learner
+  a text being written, the voice model downloading — wherever the learner
   happens to be.
 
   Renders nothing until there is a task to show. Then a small pill sits at

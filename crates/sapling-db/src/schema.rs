@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS profile (
 
 CREATE TABLE IF NOT EXISTS texts (
   id TEXT PRIMARY KEY, title TEXT NOT NULL, source TEXT NOT NULL, topic TEXT,
-  sentences TEXT NOT NULL, glossary TEXT NOT NULL, media TEXT,
+  segments TEXT NOT NULL, media TEXT,
   createdAt INTEGER NOT NULL);
 
 CREATE TABLE IF NOT EXISTS textTombstones (textId TEXT PRIMARY KEY);
@@ -98,7 +98,11 @@ pub fn review_key(item_id: &str, at: f64, device: &str) -> String {
 /// the numbers a review folds to changed, and a device that kept its stored
 /// cards would carry old ones beside new ones, item by item, forever. Rebuilding
 /// from the log is what makes every device agree again.
-pub const DERIVED_SCHEMA_VERSION: u32 = 4;
+///
+/// Bumped for 5 when `texts` traded its `sentences` and `glossary` columns for
+/// one `segments` column: the rebuild replays every `textAdded`, old shape
+/// included, into the new table.
+pub const DERIVED_SCHEMA_VERSION: u32 = 5;
 
 /// Every read table the materializer owns; `events` and `meta` survive a rebuild.
 ///

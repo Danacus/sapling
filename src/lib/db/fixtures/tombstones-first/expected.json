@@ -128,12 +128,11 @@
 			"id": "text-k",
 			"title": "Kept",
 			"source": "generated",
-			"sentences": [
+			"segments": [
 				{
 					"text": "k"
 				}
 			],
-			"glossary": [],
 			"createdAt": 1710064920000
 		}
 	],
@@ -142,12 +141,11 @@
 			"id": "text-k",
 			"title": "Kept",
 			"source": "generated",
-			"sentences": [
+			"segments": [
 				{
 					"text": "k"
 				}
 			],
-			"glossary": [],
 			"createdAt": 1710064920000
 		},
 		"text-z": null

@@ -48,7 +48,13 @@ function fakeOpenRouter(content: string): { fetchFn: FetchLike; calls: Call[] } 
 }
 
 function glossJson(overrides: Record<string, unknown> = {}): string {
-	return JSON.stringify({ term: 'cuenta', reading: null, meaning: 'the bill', ...overrides });
+	return JSON.stringify({
+		term: 'cuenta',
+		reading: null,
+		meaning: 'the bill',
+		explanation: 'Here "cuenta" is the restaurant bill, not an account.',
+		...overrides
+	});
 }
 
 describe('buildLookupPrompt', () => {
@@ -75,6 +81,12 @@ describe('buildLookupPrompt', () => {
 		expect(system.content).toContain('NATIVE language');
 	});
 
+	it('asks for a short gloss and a separate explanation', () => {
+		const [system] = buildLookupPrompt(args);
+		expect(system.content).toContain('{"term","reading","meaning","explanation"}');
+		expect(system.content).toContain('No sentences, no explanation.');
+	});
+
 	it('keeps the system message free of learner facts, so it caches', () => {
 		const [mine] = buildLookupPrompt(args);
 		const [theirs] = buildLookupPrompt({
@@ -87,8 +99,20 @@ describe('buildLookupPrompt', () => {
 });
 
 describe('parseLookedUpWord', () => {
-	it('reads one gloss, null reading normalized away', () => {
+	it('reads one gloss and its explanation, null reading normalized away', () => {
 		expect(parseLookedUpWord(glossJson(), 'cuenta')).toEqual({
+			term: 'cuenta',
+			meaning: 'the bill',
+			explanation: 'Here "cuenta" is the restaurant bill, not an account.'
+		});
+	});
+
+	it('keeps a gloss whose explanation is null or blank', () => {
+		expect(parseLookedUpWord(glossJson({ explanation: null }), 'cuenta')).toEqual({
+			term: 'cuenta',
+			meaning: 'the bill'
+		});
+		expect(parseLookedUpWord(glossJson({ explanation: '  ' }), 'cuenta')).toEqual({
 			term: 'cuenta',
 			meaning: 'the bill'
 		});
@@ -124,12 +148,16 @@ describe('parseLookedUpWord', () => {
 });
 
 describe('requestLookedUpWord', () => {
-	it('pins the envelope and returns one glossary row', async () => {
+	it('pins the envelope and returns one explained word', async () => {
 		const { fetchFn, calls } = fakeOpenRouter(glossJson());
 
 		const entry = await requestLookedUpWord(args, { apiKey: 'test', fetchFn });
 
 		expect(calls[0].response_format?.json_schema?.name).toBe('reading_lookup');
-		expect(entry).toEqual({ term: 'cuenta', meaning: 'the bill' });
+		expect(entry).toEqual({
+			term: 'cuenta',
+			meaning: 'the bill',
+			explanation: 'Here "cuenta" is the restaurant bill, not an account.'
+		});
 	});
 });

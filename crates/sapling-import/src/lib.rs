@@ -1,32 +1,26 @@
-//! The deterministic half of the reading import: what a pasted or uploaded
-//! text *is*, and the sentences it cuts into — before anything is sent to a
-//! model.
+//! The reading import: what a pasted or uploaded text *is*, and the segments
+//! it is stored as.
 //!
 //! A plain library: no SQL, no clock, no I/O. Everything here is a function of
 //! the text's own bytes. [`import_source`] is the one entry point the protocol
-//! exposes (`importSource`); [`sentences`] and [`subtitles`] are its halves.
+//! exposes (`importSource`); [`subtitles`] and [`paragraphs`] are its halves.
+//! What comes out is the stored shape itself — `sapling-domain`'s [`Segment`] —
+//! so the caller hands it to `addText` untouched: there is no model call and no
+//! re-cutting between the import and the store.
 
 #![forbid(unsafe_code)]
 
+use sapling_domain::types::Segment;
 use serde::Serialize;
 use ts_rs::TS;
 
-pub mod sentences;
+pub mod paragraphs;
 pub mod subtitles;
 
-pub use sentences::{has_sentence_end, split_sentences};
-pub use subtitles::{
-    cues_to_sentences, detect_subtitle_format, parse_subtitles, Cue, SubtitleFormat, TimedSentence,
-};
+pub use paragraphs::split_paragraphs;
+pub use subtitles::{detect_subtitle_format, parse_subtitles, Cue, SubtitleFormat};
 
-/// When one sentence is spoken, in milliseconds from the start of the media.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, TS)]
-pub struct Timing {
-    pub start: f64,
-    pub end: f64,
-}
-
-/// A text on its way in, recognised and cut into sentences.
+/// A text on its way in, recognised and cut into the segments it is stored as.
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportedSource {
@@ -38,47 +32,43 @@ pub struct ImportedSource {
     pub cues: usize,
     /// The furthest point any cue reaches, in milliseconds; `0` for prose.
     pub duration_ms: f64,
-    /// The sentences, verbatim substrings of the text.
-    pub sentences: Vec<String>,
-    /// Index-aligned with `sentences`; present only for subtitles.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub timings: Option<Vec<Timing>>,
+    /// One per cue, timed, for subtitles; one per paragraph, untimed, for prose.
+    pub segments: Vec<Segment>,
 }
 
-/// Recognises `text` and cuts it into sentences.
+/// Recognises `text` and cuts it into segments.
 ///
-/// Subtitles are cleaned into cues and re-cut with [`cues_to_sentences`], each
-/// sentence keeping its timing; anything else is prose and is split with
-/// [`split_sentences`], untimed. The content decides, never a file name.
+/// Subtitles are cleaned into cues and each cue becomes a segment with its own
+/// span; anything else is prose and becomes one untimed segment per paragraph.
+/// The content decides, never a file name.
 pub fn import_source(text: &str) -> ImportedSource {
     let Some((format, cues)) = parse_subtitles(text) else {
         return ImportedSource {
             format: None,
             cues: 0,
             duration_ms: 0.0,
-            sentences: split_sentences(text)
+            segments: split_paragraphs(text)
                 .into_iter()
-                .map(str::to_owned)
+                .map(|text| Segment {
+                    text,
+                    start: None,
+                    end: None,
+                })
                 .collect(),
-            timings: None,
         };
     };
-    let timed = cues_to_sentences(&cues);
     ImportedSource {
         format: Some(format),
         cues: cues.len(),
         duration_ms: cues.iter().fold(0.0, |furthest, cue| cue.end.max(furthest)),
-        timings: Some(
-            timed
-                .iter()
-                .map(|s| Timing {
-                    start: s.start,
-                    end: s.end,
-                })
-                .collect(),
-        ),
-        sentences: timed.into_iter().map(|s| s.text).collect(),
+        segments: cues
+            .into_iter()
+            .map(|cue| Segment {
+                text: cue.text,
+                start: Some(cue.start),
+                end: Some(cue.end),
+            })
+            .collect(),
     }
 }
 
@@ -86,35 +76,63 @@ pub fn import_source(text: &str) -> ImportedSource {
 mod tests {
     use super::*;
 
+    fn untimed(text: &str) -> Segment {
+        Segment {
+            text: text.into(),
+            start: None,
+            end: None,
+        }
+    }
+
     #[test]
-    fn prose_is_split_and_untimed() {
-        let source = import_source("Fuimos al restaurante. Pedí sopa.\nLa cuenta no era cara.");
+    fn prose_is_one_untimed_segment_per_paragraph() {
+        let source = import_source("Fuimos al restaurante. Pedí sopa.\n\nLa cuenta no era cara.");
         assert_eq!(
             source,
             ImportedSource {
                 format: None,
                 cues: 0,
                 duration_ms: 0.0,
-                sentences: vec![
-                    "Fuimos al restaurante.".into(),
-                    "Pedí sopa.".into(),
-                    "La cuenta no era cara.".into()
+                segments: vec![
+                    untimed("Fuimos al restaurante. Pedí sopa."),
+                    untimed("La cuenta no era cara."),
                 ],
-                timings: None,
             }
         );
     }
 
     #[test]
-    fn subtitles_are_recut_and_keep_their_timings() {
-        let source =
-            import_source("1\n00:00:01,000 --> 00:00:03,500\nHola. Adiós.\n\n2\n00:00:03,500 --> 00:00:06,000\nBien.\n");
+    fn subtitles_are_one_segment_per_cue_with_its_own_span() {
+        let source = import_source(
+            "1\n00:00:01,000 --> 00:00:03,500\nHola. Adiós.\n\n2\n00:00:03,500 --> 00:00:06,000\nBien.\n",
+        );
         assert_eq!(source.format, Some(SubtitleFormat::Srt));
         assert_eq!(source.cues, 2);
         assert_eq!(source.duration_ms, 6000.0);
-        assert_eq!(source.sentences, ["Hola.", "Adiós.", "Bien."]);
-        let starts: Vec<f64> = source.timings.unwrap().iter().map(|t| t.start).collect();
-        assert_eq!(starts, [1000.0, 1000.0, 3500.0]);
+        assert_eq!(
+            source.segments,
+            [
+                Segment {
+                    text: "Hola. Adiós.".into(),
+                    start: Some(1000.0),
+                    end: Some(3500.0),
+                },
+                Segment {
+                    text: "Bien.".into(),
+                    start: Some(3500.0),
+                    end: Some(6000.0),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn never_joins_a_sentence_that_runs_across_two_cues() {
+        let source = import_source(
+            "1\n00:00:01,000 --> 00:00:03,000\nFuimos al restaurante\n\n2\n00:00:03,000 --> 00:00:05,000\ny pedimos sopa.\n",
+        );
+        let texts: Vec<&str> = source.segments.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(texts, ["Fuimos al restaurante", "y pedimos sopa."]);
     }
 
     #[test]
@@ -122,9 +140,13 @@ mod tests {
         let prose = serde_json::to_value(import_source("Hola.")).unwrap();
         assert_eq!(
             prose,
-            serde_json::json!({ "cues": 0, "durationMs": 0.0, "sentences": ["Hola."] })
+            serde_json::json!({ "cues": 0, "durationMs": 0.0, "segments": [{ "text": "Hola." }] })
         );
         let panel = serde_json::to_value(import_source("0:00\nUno.\n0:04\nDos.")).unwrap();
         assert_eq!(panel["format"], "youtube-transcript");
+        assert_eq!(
+            panel["segments"][0],
+            serde_json::json!({ "text": "Uno.", "start": 0.0, "end": 4000.0 })
+        );
     }
 }

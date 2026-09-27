@@ -7,17 +7,19 @@
   the composer comes first, because an empty shelf is the common case on the day
   someone finds this page.
 
-  The two doors cost the same round trip and differ only in what the model is
-  asked for: `generateReadingText` writes a text out of the garden, while
-  `annotateReadingText` takes a text the learner imported and only annotates it —
-  the sentences are cut locally first (the core's `importSource`), so what lands
-  on the reader is exactly what was pasted. Both come back as a draft; this page mints the id and the
-  timestamp and stores it, which is the whole reason `$lib/reading` can stay
-  stateless.
+  The two doors are not alike in cost. *Write one for me* is a paid call —
+  `generateReadingText` writes a text out of the garden, and the `read-generate`
+  task makes the call and the save. *Import your own* is free and local: the
+  core's `importSource` cuts what was pasted or uploaded into the segments it is
+  stored as (one per subtitle cue, one per paragraph), and `add()` stores them
+  with `addText` straight away and opens the text — no model, no task, nothing
+  to wait for. Word meanings come later, one word at a time, from the reader's
+  lookup.
 
   **The import door has three parts, in the order the questions arise**: what the
-  text is, what it will cost, and what it should play alongside — and then a
-  title, last, because it is the one thing the learner may leave to the model.
+  text is, how much of it there is, and what it should play alongside — and then
+  a title, last, because it is the one field the learner may leave as it comes
+  (the file's name, or the text's first line).
   The door explains nothing in prose: every control is labelled by what it does,
   and the only lines of copy are the ones a control cannot say for itself (why
   it is disabled, what is attached, that a file is kept by name alone).
@@ -32,9 +34,9 @@
   the card, anything else is a paste and lands in the box, where it can still be
   read and edited.
 
-  *What it costs* is one quiet line under the source, whichever source it is:
-  sentences, the call count only when it is more than one, and the character
-  counter. Silent while the box is empty; red where the button below is dead.
+  *How much* is one quiet line under the source, whichever source it is: the
+  lines of a subtitle file, the paragraphs of prose. Silent while the box is
+  empty; red where the button below is dead.
 
   *What it plays alongside* is a group that is **always there**, disabled rather
   than absent while the text has no timings — a control that materialises only
@@ -56,7 +58,7 @@
   recording with no subtitles to follow is still a reference nothing can use.
   What the fetch produces is a `json3` file and it is handed to `sourceFile`
   exactly as an upload is, so there is still one derivation behind the card, the
-  counter, the button and the import. Nothing about any of this renders in a
+  count, the button and the import. Nothing about any of this renders in a
   browser: the probe answers `undefined` there and every branch below is gone.
 -->
 <script lang="ts">
@@ -64,16 +66,12 @@
 	import { goto } from '$app/navigation';
 	import { onDestroy } from 'svelte';
 
-	import { getAllItems, getKnownTerms, getProfile, getTexts, importSource } from '$lib/db';
+	import { addText, getAllItems, getKnownTerms, getProfile, getTexts, importSource } from '$lib/db';
+	import { newUuid } from '$lib/device';
 	import { isMockMode } from '$lib/llm';
-	import { captionsAvailable, listCaptions, videoIdFrom } from '$lib/media';
+	import { captionsAvailable, listCaptions, rememberFile, videoIdFrom } from '$lib/media';
 	import type { CaptionsTools, CaptionTrack } from '$lib/media';
-	import {
-		MAX_FOCUS_WORDS,
-		MAX_IMPORT_TOTAL_CHARS,
-		MAX_TOPIC_CHARS,
-		importCallCount
-	} from '$lib/reading';
+	import { MAX_FOCUS_WORDS, MAX_TOPIC_CHARS } from '$lib/reading';
 	import { selectSessionItems } from '$lib/srs';
 	import { SETTLED, rootOf, startTask, taskOutcome } from '$lib/tasks';
 	import type { Task } from '$lib/tasks';
@@ -84,6 +82,7 @@
 		Profile,
 		ReadingMedia,
 		ReadingText,
+		Segment,
 		SubtitleFormat
 	} from '$lib/types';
 	import BackLink from '$lib/ui/BackLink.svelte';
@@ -91,6 +90,12 @@
 
 	/** Nudges, not choices — the same shape `/converse` offers over its topic box. */
 	const EXAMPLE_TOPICS = ['A morning at the market', 'A letter from home', 'Something spooky'];
+
+	/**
+	 * How long a title taken from a text's first line may run. A title is a
+	 * shelf label, and a first line can be a whole paragraph.
+	 */
+	const TITLE_CHARS = 60;
 
 	/** Which composer is open. Not a mode: the two write the same kind of text. */
 	type Door = 'write' | 'paste';
@@ -166,18 +171,19 @@
 	/** The captions door's own failure line, kept apart from the import's. */
 	let captionsError = $state('');
 	/**
-	 * The composer's job in flight, if any — read from the task runner rather
-	 * than kept here, so it is still right after the learner has left and come
-	 * back, and so the tray can show the same job elsewhere.
+	 * A text being written, if any — read from the task runner rather than kept
+	 * here, so it is still right after the learner has left and come back, and so
+	 * the tray can show the same job elsewhere.
 	 */
-	const composing = $derived(
-		taskStore.running.find((task) => task.kind === 'read-generate' || task.kind === 'read-annotate')
-	);
-	/** One flag for both doors — a page that is mid-call has nothing else to do. */
-	const busy = $derived(composing !== undefined);
+	const busy = $derived(taskStore.running.some((task) => task.kind === 'read-generate'));
+	/**
+	 * An import being saved. Page state and not a task: it is one local write the
+	 * page awaits before it opens the text, over in a moment.
+	 */
+	let adding = $state(false);
 	/**
 	 * A captions fetch in flight, read from the runner for the reason
-	 * {@link composing} is. Kept separate from `busy` because it disables a
+	 * {@link busy} is. Kept separate from `busy` because it disables a
 	 * different set of things: the import is not running, but the source it would
 	 * import is about to be replaced.
 	 */
@@ -281,11 +287,11 @@
 	 *
 	 * There is one door, not two: the learner pastes or uploads whatever they have
 	 * and the page recognises it. The core's `importSource` does the recognising
-	 * and the cutting — a subtitle file is un-cued back into sentences that keep
-	 * their timings, anything else is prose and is simply split. **One answer over
-	 * one source**, which is what keeps the card, the counter, the button's
+	 * and the cutting — a subtitle file becomes one timed segment per cue,
+	 * anything else is prose and becomes one segment per paragraph. **One answer
+	 * over one source**, which is what keeps the card, the count, the button's
 	 * disabled state and the import from ever disagreeing about what is being
-	 * sent — the source is the uploaded file if there is one and the box
+	 * stored — the source is the uploaded file if there is one and the box
 	 * otherwise, and nothing downstream asks which.
 	 *
 	 * The answer is a round trip, so it lands in `$state` from an effect, and an
@@ -293,7 +299,7 @@
 	 */
 	let imported = $state<{ source: string; result: ImportedSource }>({
 		source: '',
-		result: { cues: 0, durationMs: 0, sentences: [] }
+		result: { cues: 0, durationMs: 0, segments: [] }
 	});
 
 	$effect(() => {
@@ -310,27 +316,35 @@
 		};
 	});
 
-	/** {@link ImportedSource}, plus what the import will cost. */
-	interface ImportPlan extends ImportedSource {
-		/** What counts against the ceiling: the text that will be sent. */
-		chars: number;
-		calls: number;
+	const plan = $derived(imported.result);
+
+	/**
+	 * What the text is called if the learner names nothing: an uploaded or
+	 * fetched file's name without its extension, or else the first line of the
+	 * text, cut to {@link TITLE_CHARS}. Shown as the title field's placeholder,
+	 * so the learner sees it before it is used and can type over it.
+	 */
+	const defaultTitle = $derived(
+		sourceFile ? sourceFile.name.replace(/\.[^./\\]+$/, '') : firstLine(plan.segments)
+	);
+
+	/** The first non-blank line of the first segment, shortened to a label. */
+	function firstLine(segments: readonly Segment[]): string {
+		const line = (segments[0]?.text ?? '')
+			.split('\n')
+			.map((part) => part.trim())
+			.find(Boolean);
+		if (!line) return '';
+		const chars = [...line];
+		return chars.length > TITLE_CHARS ? `${chars.slice(0, TITLE_CHARS).join('').trimEnd()}…` : line;
 	}
 
-	const plan = $derived.by((): ImportPlan => {
-		const { source, result } = imported;
-		return {
-			...result,
-			// For subtitles, the sentence text rather than the file: the cue soup
-			// is never sent.
-			chars: result.format
-				? result.sentences.reduce((total, sentence) => total + sentence.length, 0)
-				: source.length,
-			calls: importCallCount(result.sentences)
-		};
-	});
-
-	const overCap = $derived(plan.chars > MAX_IMPORT_TOTAL_CHARS);
+	/** "12 lines" for subtitles, "3 paragraphs" for prose — what the text holds. */
+	function extent(segments: readonly Segment[]): string {
+		const n = segments.length;
+		const timed = segments.some((segment) => segment.start !== undefined);
+		return `${n} ${timed ? 'line' : 'paragraph'}${n === 1 ? '' : 's'}`;
+	}
 
 	/**
 	 * The video the link names, if it names one.
@@ -405,7 +419,7 @@
 			return;
 		}
 
-		if (task.kind !== 'read-generate' && task.kind !== 'read-annotate') return;
+		if (task.kind !== 'read-generate') return;
 		const outcome = await taskOutcome(task.kind, task.id);
 		if (!outcome || left) return;
 		if (outcome.status === 'failed') {
@@ -592,41 +606,37 @@
 		mine.add(id);
 	}
 
-	/** Door two: a text the learner imported, cut here and annotated there. */
+	/**
+	 * Door two: a text the learner imported, cut by the core and stored as it is.
+	 *
+	 * No model and no task: the segments `importSource` produced are the stored
+	 * text, so this is one `addText` and a `goto`. The recording, when it is a
+	 * file, goes into `$lib/media`'s session cache against the new id first, so
+	 * the reader opening a moment later already has it.
+	 */
 	async function add() {
-		if (!profile || busy) return;
+		if (!profile || adding || busy) return;
 
 		// The effect's answer can trail a keystroke; never import a stale cut.
 		const source = sourceFile?.text ?? pasted;
-		const { sentences, timings } =
-			imported.source === source ? imported.result : await importSource(source);
-		if (sentences.length === 0) {
+		const { segments } = imported.source === source ? imported.result : await importSource(source);
+		if (segments.length === 0) {
 			composeError = 'There is nothing to read in that yet.';
-			return;
-		}
-		if (overCap) {
-			composeError = 'That is more than one import can carry — import a shorter piece.';
 			return;
 		}
 
 		composeError = '';
 		const own = title.trim();
-
-		let vocabulary: string[];
-		try {
-			vocabulary = await vocabularyNow();
-		} catch (cause) {
-			composeError = cause instanceof Error ? cause.message : 'Could not annotate that text.';
-			return;
-		}
+		const name = own || (sourceFile ? defaultTitle : firstLine(segments)) || 'Untitled';
 
 		// A reference and never the thing itself: an id for YouTube, and for a
 		// file only its name and type — the file never leaves this tab. Guarded
-		// on `timings` as well, because a media reference on a text whose
-		// sentences have no offsets would point at a recording nothing could
-		// follow. The link wins where both are somehow set; the two inputs clear
-		// each other, so that is a tie that should not arise.
-		const media: ReadingMedia | undefined = !timings
+		// on timings as well, because a media reference on a text whose segments
+		// have no offsets would point at a recording nothing could follow. The
+		// link wins where both are somehow set; the two inputs clear each other,
+		// so that is a tie that should not arise.
+		const timed = segments.some((segment) => segment.start !== undefined);
+		const media: ReadingMedia | undefined = !timed
 			? undefined
 			: linkId
 				? { kind: 'youtube', videoId: linkId }
@@ -638,18 +648,25 @@
 						}
 					: undefined;
 
-		// The task zips the timings back on and does the saving; the recording
-		// rides along so it can be remembered against the id the task mints.
-		const { id } = startTask('read-annotate', {
-			profile,
-			vocabulary,
-			sentences,
-			...(timings ? { timings } : {}),
-			...(own ? { title: own } : {}),
+		const text: ReadingText = {
+			id: newUuid(),
+			title: name,
+			source: 'imported',
+			segments,
 			...(media ? { media } : {}),
-			...(media?.kind === 'file' && mediaFile ? { file: mediaFile } : {})
-		});
-		mine.add(id);
+			createdAt: Date.now()
+		};
+
+		adding = true;
+		try {
+			await addText(text);
+			if (media?.kind === 'file' && mediaFile) rememberFile(text.id, mediaFile);
+			if (!left) await goto(`/read/${text.id}`);
+		} catch (cause) {
+			composeError = cause instanceof Error ? cause.message : 'Could not import that text.';
+		} finally {
+			adding = false;
+		}
 	}
 </script>
 
@@ -689,8 +706,8 @@
 						<path d="M12 16.1h.01" />
 					</svg>
 					<span>
-						No API key configured — texts come from a fixed offline sample, and a pasted one gets
-						placeholder translations.
+						No API key configured — written texts come from a fixed offline sample, and a word you
+						look up gets a placeholder meaning.
 					</span>
 				</p>
 			{/if}
@@ -704,7 +721,7 @@
 						class="door"
 						class:is-on={door === 'write'}
 						aria-pressed={door === 'write'}
-						disabled={busy}
+						disabled={busy || adding}
 						onclick={() => pickDoor('write')}
 					>
 						Write one for me
@@ -714,7 +731,7 @@
 						class="door"
 						class:is-on={door === 'paste'}
 						aria-pressed={door === 'paste'}
-						disabled={busy}
+						disabled={busy || adding}
 						onclick={() => pickDoor('paste')}
 					>
 						Import your own
@@ -798,7 +815,7 @@
 									type="button"
 									class="source-drop"
 									aria-label="Remove {sourceFile.name}"
-									disabled={busy}
+									disabled={adding}
 									onclick={dropSource}
 								>
 									<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
@@ -814,7 +831,7 @@
 								class="input paste-input"
 								rows="8"
 								placeholder="Paste an article, a song, a transcript…"
-								disabled={busy}
+								disabled={adding}
 								bind:value={pasted}></textarea>
 						</label>
 
@@ -828,7 +845,7 @@
 								class="file-real"
 								type="file"
 								accept=".srt,.vtt,.txt,.json3,.json"
-								disabled={busy}
+								disabled={adding}
 								onchange={(event) => void uploadFile(event)}
 							/>
 							<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
@@ -840,32 +857,15 @@
 						</label>
 					{/if}
 
-					<!-- What is about to be sent and what it costs, whichever source it
-					     came from. Silent while the box is empty; one call is the ordinary
-					     case and goes unmentioned. The two things that disable the button
-					     are said here, because a dead control cannot explain itself. -->
-					{#if plan.chars > 0}
+					<!-- How much text is about to be stored, whichever source it came
+					     from. Silent while there is nothing; a file with nothing readable in
+					     it says so here, because the dead button cannot explain itself. -->
+					{#if plan.segments.length > 0 || sourceFile}
 						<p class="cost">
-							<span class="plan" class:trouble={sourceFile && plan.sentences.length === 0}>
-								{#if plan.sentences.length > 0}
-									{plan.sentences.length} sentence{plan.sentences.length === 1
-										? ''
-										: 's'}{plan.calls > 1 ? ` · ${plan.calls} calls` : ''}
-								{:else if sourceFile}
-									Nothing to read in that file
-								{/if}
-							</span>
-							<span
-								class="counter"
-								class:near={plan.chars > MAX_IMPORT_TOTAL_CHARS * 0.9}
-								class:over={overCap}
-							>
-								{plan.chars.toLocaleString()} / {MAX_IMPORT_TOTAL_CHARS.toLocaleString()}
+							<span class="plan" class:trouble={plan.segments.length === 0}>
+								{plan.segments.length > 0 ? extent(plan.segments) : 'Nothing to read in that file'}
 							</span>
 						</p>
-					{/if}
-					{#if overCap}
-						<p class="hint over-note">Too long for one import — cut it down.</p>
 					{/if}
 
 					<!--
@@ -883,7 +883,7 @@
 					-->
 					<fieldset
 						class="group"
-						disabled={busy || fetchingCaptions || (!plan.format && !canFetchCaptions)}
+						disabled={adding || fetchingCaptions || (!plan.format && !canFetchCaptions)}
 					>
 						<legend class="group-legend">
 							Recording
@@ -998,8 +998,8 @@
 						<input
 							class="input"
 							type="text"
-							placeholder="Leave it blank and I'll name it"
-							disabled={busy}
+							placeholder={defaultTitle || 'Named after its first line'}
+							disabled={adding}
 							bind:value={title}
 						/>
 					</label>
@@ -1007,11 +1007,11 @@
 					<button
 						type="button"
 						class="btn btn-primary btn-block go"
-						disabled={busy || fetchingCaptions || overCap || plan.sentences.length === 0}
+						disabled={adding || busy || fetchingCaptions || plan.segments.length === 0}
 						onclick={() => void add()}
 					>
-						{#if busy}
-							Annotating…
+						{#if adding}
+							Adding…
 						{:else if fetchingCaptions}
 							Fetching captions…
 						{:else if composeError}
@@ -1045,11 +1045,7 @@
 											{text.source === 'generated' ? 'written' : 'imported'}
 										</span>
 										<span>{dates.format(text.createdAt)}</span>
-										<span
-											>{text.sentences.length} sentence{text.sentences.length === 1
-												? ''
-												: 's'}</span
-										>
+										<span>{extent(text.segments)}</span>
 									</span>
 								</a>
 							</li>
@@ -1593,33 +1589,6 @@
 		justify-content: space-between;
 		gap: 0.2rem 1rem;
 		margin-bottom: 0.9rem;
-	}
-
-	/* Tucked under the box's right edge, where a word count belongs. */
-	.counter {
-		margin: 0 0 0 auto;
-		text-align: right;
-		font-size: 0.78rem;
-		font-variant-numeric: tabular-nums;
-		color: var(--text-muted);
-	}
-
-	.counter.near {
-		color: var(--accent);
-		font-weight: 700;
-	}
-
-	.counter.over {
-		color: var(--danger);
-		font-weight: 700;
-	}
-
-	/* Says why the button below is dead, which is the only thing a disabled
-	   control cannot say for itself. */
-	.over-note {
-		margin: -0.5rem 0 0.9rem;
-		color: var(--danger);
-		font-weight: 700;
 	}
 
 	/* What the paste was recognised as. A note, not a warning: it is the same

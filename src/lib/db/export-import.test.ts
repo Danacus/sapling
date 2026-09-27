@@ -80,8 +80,7 @@ const text: ReadingText = {
 	title: '买书',
 	source: 'generated',
 	topic: 'shopping',
-	sentences: [{ text: '我想买书。', reading: 'wǒ xiǎng mǎi shū.', translation: 'I want a book.' }],
-	glossary: [{ term: '书', reading: 'shū', meaning: 'book' }],
+	segments: [{ text: '我想买书。' }],
 	createdAt: 6000
 };
 

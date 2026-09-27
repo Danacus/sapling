@@ -499,15 +499,14 @@ impl<'a> Materializer<'a> {
             None => Param::Null,
         };
         self.sql.exec(
-            "INSERT OR IGNORE INTO texts (id, title, source, topic, sentences, glossary, media, createdAt)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO texts (id, title, source, topic, segments, media, createdAt)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)",
             &[
                 Param::text(&p.id),
                 Param::text(&p.title),
                 Param::text(p.source.as_str()),
                 Param::opt_text(p.topic.as_deref()),
-                Param::text(serde_json::to_string(&p.sentences)?),
-                Param::text(serde_json::to_string(&p.glossary)?),
+                Param::text(serde_json::to_string(&p.segments)?),
                 media,
                 Param::number(p.created_at),
             ],

@@ -60,7 +60,7 @@ async function snapshot(store: TestBackend) {
 		profile: await store.query<{ model: string; about: string | null; interests: string }>(
 			'SELECT * FROM profile'
 		),
-		texts: await store.query<{ title: string; topic: string | null; sentences: string }>(
+		texts: await store.query<{ title: string; topic: string | null; segments: string }>(
 			'SELECT * FROM texts ORDER BY id'
 		),
 		textTombstones: await store.query('SELECT * FROM textTombstones ORDER BY textId'),
@@ -416,10 +416,7 @@ describe('reading texts and word marks', () => {
 			id,
 			title: '买书',
 			source: 'generated',
-			sentences: [
-				{ text: '我想买书。', reading: 'wǒ xiǎng mǎi shū.', translation: 'I want a book.' }
-			],
-			glossary: [{ term: '书', reading: 'shū', meaning: 'book' }],
+			segments: [{ text: '我想买书。' }, { text: '好的。' }],
 			createdAt: 6000
 		}
 	});
@@ -443,13 +440,43 @@ describe('reading texts and word marks', () => {
 		expect(state.texts).toHaveLength(1);
 	});
 
-	it('keeps sentences and glossary verbatim', async () => {
+	it('keeps the segments verbatim', async () => {
 		const state = await apply([addText('t1')]);
-		expect(JSON.parse(state.texts[0].sentences)).toEqual([
-			{ text: '我想买书。', reading: 'wǒ xiǎng mǎi shū.', translation: 'I want a book.' }
+		expect(JSON.parse(state.texts[0].segments)).toEqual([
+			{ text: '我想买书。' },
+			{ text: '好的。' }
 		]);
 		// An absent topic is a NULL column, not the string "undefined".
 		expect(state.texts[0].topic).toBeNull();
+	});
+
+	// Every log from before segments carries this shape, and a rebuild replays
+	// all of it: each sentence becomes a segment with its timings, and the
+	// readings, translations and glossary are dropped.
+	it('reads an old sentences-and-glossary text as segments', async () => {
+		const state = await apply([
+			{
+				id: 'text:old',
+				type: 'textAdded',
+				at: 6000,
+				payload: {
+					id: 't1',
+					title: '一课',
+					source: 'imported',
+					sentences: [
+						{ text: '我想买书。', reading: 'wǒ xiǎng mǎi shū.', translation: 'I want a book.' },
+						{ text: '好的。', translation: 'All right.', start: 3400, end: 4000 }
+					],
+					glossary: [{ term: '书', reading: 'shū', meaning: 'book' }],
+					createdAt: 6000
+				}
+			}
+		]);
+		expect(JSON.parse(state.texts[0].segments)).toEqual([
+			{ text: '我想买书。' },
+			{ text: '好的。', start: 3400, end: 4000 }
+		]);
+		expect(state.texts[0]).not.toHaveProperty('glossary');
 	});
 
 	it('refuses a text deleted anywhere, whenever it arrives', async () => {
@@ -574,8 +601,7 @@ describe('unknown events', () => {
 				id: 't1',
 				title: '一课',
 				source: 'imported',
-				sentences: [{ text: '我想买书。', translation: 'I want a book.', start: 1200, end: 3400 }],
-				glossary: [],
+				segments: [{ text: '我想买书。', start: 1200, end: 3400 }],
 				media: { kind: 'file', name: 'lesson.mp4', type: 'video/mp4' },
 				createdAt: 5000
 			}
@@ -593,8 +619,7 @@ describe('unknown events', () => {
 				id: 't1',
 				title: '一课',
 				source: 'imported',
-				sentences: [{ text: '好的。', start: 0, end: 900 }],
-				glossary: [],
+				segments: [{ text: '好的。', start: 0, end: 900 }],
 				media: { kind: 'youtube', videoId: 'abc123' },
 				createdAt: 5000
 			}
