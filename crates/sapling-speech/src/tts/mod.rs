@@ -18,7 +18,8 @@
 //! **That half is WebKitGTK's problem and nobody else's.** The same crate built
 //! for Android synthesizes exactly like this one and does not play anything:
 //! that WebView is Chromium, where an `<audio>` element over a blob is the
-//! ordinary path. So `play` is compiled for desktop targets only, and
+//! ordinary path. So `play` is compiled only with the `playback` feature, which
+//! `sapling-desktop` turns on for desktop targets alone, and
 //! [`HOST_PLAYS_AUDIO`] — which rides out on [`TtsStatus::playback`] — is how
 //! the window learns which host it got, instead of asking what platform it is
 //! on.
@@ -42,7 +43,7 @@
 //! Nothing here runs on the main thread. Tauri executes a synchronous command
 //! there, and a second of inference on the main thread is a frozen window — as
 //! is a clip's whole playing time — so every long command is `async` and hands
-//! its work to `spawn_blocking` (`lib.rs`).
+//! its work to `spawn_blocking` (`sapling-desktop`'s `lib.rs`).
 //!
 //! ## Status waits for nothing, and that is the point
 //!
@@ -62,8 +63,8 @@
 //! ## A model on the live path is a whole model
 //!
 //! Nothing above would be safe if an install could be seen half-done, and none
-//! of it defends against that. [`crate::models`] does, one layer down — the
-//! module the recognizer shares with the voice: an install unpacks into a
+//! of it defends against that. [`sapling_models`] does, one layer down — the
+//! crate the recognizer shares with the voice: an install unpacks into a
 //! `.partial` directory and reaches the live path by a single `rename`, so at
 //! every instant that path is either absent or a complete model. That is what
 //! lets [`TtsHandle::status`] latch a size without ever consulting the install
@@ -87,10 +88,10 @@
 //! loudly here is what makes `tts.ts` fall back to the browser voice.
 
 pub mod kokoro;
-/// Desktop only, and it is the *only* part of the voice that is: rodio over an
-/// output device exists because WebKitGTK cannot play a clip, and Android's
-/// Chromium WebView can. See [`HOST_PLAYS_AUDIO`].
-#[cfg(desktop)]
+/// The `playback` feature's, and it is the *only* part of the voice that is:
+/// rodio over an output device exists because WebKitGTK cannot play a clip, and
+/// Android's Chromium WebView can. See [`HOST_PLAYS_AUDIO`].
+#[cfg(feature = "playback")]
 pub mod play;
 pub mod vits;
 pub mod wav;
@@ -101,11 +102,12 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::Serialize;
 
-use crate::models::{self, available_threads, ModelSpec, CANTONESE_VITS, KOKORO};
+use crate::specs::{CANTONESE_VITS, KOKORO};
 use kokoro::{Kokoro, KokoroConfig};
+use sapling_models::{self as models, available_threads, ModelSpec};
 use vits::{Vits, VitsConfig};
 
-/// Directory holding every voice model, inside Tauri's app-data directory.
+/// Directory holding every voice model, inside the host's app-data directory.
 pub const TTS_DIR: &str = "tts";
 
 /// Sentences per generate call. One, matching the worker: the app speaks a
@@ -125,8 +127,9 @@ const AUDIBLE_THRESHOLD: f32 = 1e-4;
 
 /// Whether this host *plays* a clip as well as making one.
 ///
-/// It is not a preference and not a runtime probe — it is what was compiled.
-/// [`play`] is rodio over an output device, and it exists for one measured
+/// It is not a preference and not a runtime probe — it is what was compiled:
+/// the `playback` feature, which `sapling-desktop` enables on desktop targets
+/// and nowhere else. `play` is rodio over an output device, and it exists for one measured
 /// reason: WebKitGTK builds a fresh GStreamer pipeline per `<audio>` clip, so a
 /// spoken word starts about a second late, and its Web Audio output is unusable
 /// besides. Android's WebView is Chromium, where an `<audio>` element over a
@@ -138,7 +141,7 @@ const AUDIBLE_THRESHOLD: f32 = 1e-4;
 /// memoised probe it already makes. A host that answers `false` never attempts
 /// `tts_play`, so there is no per-clip failure to warn about and no
 /// "no output device" to latch.
-pub const HOST_PLAYS_AUDIO: bool = cfg!(desktop);
+pub const HOST_PLAYS_AUDIO: bool = cfg!(feature = "playback");
 
 /// What `tts_status` answers. Serialized camelCase because it is read by
 /// TypeScript, and the field names are `native.ts`'s `NativeTtsStatus`.
@@ -496,7 +499,7 @@ mod tests {
         assert_eq!(status.model, KOKORO.dir);
         // What the window branches its player on, and it is what was compiled
         // rather than anything this handle discovered.
-        assert_eq!(status.playback, cfg!(desktop));
+        assert_eq!(status.playback, cfg!(feature = "playback"));
     }
 
     #[test]

@@ -3237,6 +3237,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sapling-captions"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "sapling-core"
 version = "0.1.0"
 dependencies = [
@@ -3252,22 +3260,47 @@ dependencies = [
 name = "sapling-desktop"
 version = "0.0.1"
 dependencies = [
- "bzip2 0.6.1",
- "chrono",
- "hound",
- "rodio",
- "rusqlite",
+ "sapling-captions",
  "sapling-core",
+ "sapling-speech",
+ "sapling-store",
  "serde",
  "serde_json",
- "sha2",
- "sherpa-onnx",
- "tar",
  "tauri",
  "tauri-build",
- "ureq 3.4.0",
- "uuid",
  "webkit2gtk",
+]
+
+[[package]]
+name = "sapling-models"
+version = "0.0.1"
+dependencies = [
+ "bzip2 0.6.1",
+ "sha2",
+ "tar",
+ "ureq 3.4.0",
+]
+
+[[package]]
+name = "sapling-speech"
+version = "0.0.1"
+dependencies = [
+ "hound",
+ "rodio",
+ "sapling-models",
+ "serde",
+ "sherpa-onnx",
+]
+
+[[package]]
+name = "sapling-store"
+version = "0.0.1"
+dependencies = [
+ "chrono",
+ "rusqlite",
+ "sapling-core",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]

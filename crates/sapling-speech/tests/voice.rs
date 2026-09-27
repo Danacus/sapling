@@ -9,7 +9,7 @@
 //! To make it run, install the model once:
 //!
 //! ```sh
-//! nix develop .#desktop -c cargo test -p sapling-desktop --test voice -- --ignored --nocapture
+//! nix develop .#desktop -c cargo test -p sapling-speech --test voice -- --ignored --nocapture
 //! ```
 //!
 //! which downloads it into the same place the app does, so the app has it too.
@@ -20,8 +20,8 @@ mod common;
 use std::time::Instant;
 
 use common::app_data_dir;
-use sapling_desktop::models::{CANTONESE_VITS, KOKORO};
-use sapling_desktop::tts::{TtsHandle, TTS_DIR};
+use sapling_speech::specs::{CANTONESE_VITS, KOKORO};
+use sapling_speech::tts::{TtsHandle, TTS_DIR};
 
 /// The handle, or `None` when there is no model to speak with.
 fn installed_handle() -> Option<TtsHandle> {
@@ -30,7 +30,7 @@ fn installed_handle() -> Option<TtsHandle> {
     if !handle.status().installed {
         eprintln!(
             "skipping: no voice model under {}. Install it with \
-             `cargo test -p sapling-desktop --test voice -- --ignored`.",
+             `cargo test -p sapling-speech --test voice -- --ignored`.",
             dir.join(TTS_DIR).join(KOKORO.dir).display()
         );
         return None;

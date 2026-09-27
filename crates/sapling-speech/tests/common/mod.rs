@@ -9,8 +9,8 @@
 use std::path::PathBuf;
 
 /// Tauri's app-data directory for `app.sapling.desktop` — the same path
-/// `lib.rs` gets from `app.path().app_data_dir()`. `SAPLING_APP_DATA`
-/// overrides it.
+/// `sapling-desktop`'s `lib.rs` gets from `app.path().app_data_dir()`.
+/// `SAPLING_APP_DATA` overrides it.
 pub fn app_data_dir() -> Option<PathBuf> {
     const IDENTIFIER: &str = "app.sapling.desktop";
 

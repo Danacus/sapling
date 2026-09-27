@@ -1,8 +1,10 @@
 # Desktop (Tauri v2) — a spike
 
 Contracts: `.claude/rules/desktop.md`, `.claude/rules/core.md`.
-Code: `crates/sapling-desktop/`, `src/lib/db/tauri.ts`, `src/lib/tts/native.ts`,
-`src/lib/platform.ts`.
+Code: `crates/sapling-desktop/` (the Tauri glue) over `crates/sapling-store/`,
+`crates/sapling-speech/`, `crates/sapling-models/` and `crates/sapling-captions/`
+(what it lends, none of which knows about Tauri); `src/lib/db/tauri.ts`,
+`src/lib/tts/native.ts`, `src/lib/platform.ts`.
 
 **This is a spike, not a product.** It exists to answer one question — can the
 Rust persistence core run natively over a SQLite file behind the *existing*
@@ -15,7 +17,10 @@ native capability for the same reason, the voice — both synthesizing a clip an
 playing it (see [Speech](#speech)): the webview cannot run the browser's
 implementation of either. Nothing in the web build or its gates
 depends on any of it: the desktop crate is a workspace member but not a
-*default* member, and its toolchain lives in a second devShell. CI does check
+*default* member, and its toolchain lives in a second devShell. The crates it
+lends from are default members, because none of them needs that shell —
+`sapling-speech` only for its `playback` feature, which nothing but the desktop
+crate turns on. CI does check
 it — a `desktop` job in `.github/workflows/deploy.yml` runs `pnpm desktop:check`
 beside the web job, so a protocol change that breaks the host fails the commit.
 It does not gate the deploy: the site has no dependency on the crate. The same
@@ -221,10 +226,11 @@ re-investigate the bridge for this symptom.
 ## Speech
 
 Speech goes both ways on this host and it is **one feature**, `speech`, on by
-default. Synthesis and recognition are the same dependency set — sherpa-onnx,
-and the download, checksum and unpack of a pinned model archive — over the same
-`src/models.rs`, and the only thing either has to itself is the desktop's
-player. It was called `tts` until dictation arrived; splitting it back into two
+default, and it is the `sapling-speech` dependency. Synthesis and recognition
+are the same dependency set — sherpa-onnx, and the download, checksum and unpack
+of a pinned model archive — over the same `sapling-models`, and the only thing
+either has to itself is the desktop's player (`sapling-speech`'s `playback`
+feature, which the desktop crate turns on for desktop targets only). It was called `tts` until dictation arrived; splitting it back into two
 would put `any(feature = …)` on the shared module and make four build
 configurations nobody would ever check.
 
@@ -264,8 +270,9 @@ https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-cantones
 107,995,442 B   sha256 bf3013cd4be34f531b7e514e708d835584dd60c9ad6eaf467ac1402005c04e46
 ```
 
-Each URL, size and hash is one `ModelSpec` in `src/models.rs` — the module all
-speech models share ([the model install](#the-model-install)).
+Each URL, size and hash is one `ModelSpec` in `sapling-speech`'s `src/specs.rs`,
+in the shape `sapling-models` defines and installs — the crate all speech models
+share ([the model install](#the-model-install)).
 
 **The commands**, and there are eight — six on every target, the two players on
 desktop targets only ([speech on Android](#speech-on-android)):
@@ -312,7 +319,7 @@ device per clip would put back exactly the latency this replaced, so the process
 opens one and keeps it — on the first clip, not at boot, so a learner who never
 taps 🔊 never holds a device open. It lives on a thread of its own because
 rodio's `MixerDeviceSink` holds a `cpal::Stream`, which is `!Send` on ALSA, the
-same shape of problem `Core` has and the same answer (`host.rs`). `tts_play`
+same shape of problem `Core` has and the same answer (`sapling-store`). `tts_play`
 does not wait *on* that thread — it waits on a channel the thread drops when
 the clip ends, is stopped, or is replaced by a newer clip — because a thread
 blocked on a clip could not answer `tts_stop`. A second `tts_play` cuts the
@@ -344,12 +351,13 @@ Settings — the second one shows as a row that simply is not there:
 
 Synthesis runs at several times real time on an ordinary desktop CPU, and that
 is what every "is this fast enough" decision above rests on — the engine load,
-the missing clip cache, the download bar. `tests/voice.rs` and
-`tests/playback.rs` print the current numbers on the machine that runs them.
+the missing clip cache, the download bar. `sapling-speech`'s `tests/voice.rs`
+and `tests/playback.rs` print the current numbers on the machine that runs them.
 `playback.rs` opens the real default device but plays **silence** through it —
 zero samples take exactly as long to consume as any others, so the timings are
 real and the check is inaudible; its one audible clip is `#[ignore]`d and is run
-by hand (`cargo test -p sapling-desktop --test playback -- --ignored`) when the
+by hand (`cargo test -p sapling-speech --features playback --test playback --
+--ignored`) when the
 question is whether this machine makes a noise.
 
 Synthesis is **not** bit-reproducible: ONNX reduces in whatever order its
@@ -387,7 +395,7 @@ https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-s
 163,002,883 B   sha256 7d1efa2138a65b0b488df37f8b89e3d91a60676e416f515b952358d83dfd347e
 ```
 
-`SENSE_VOICE` in `src/models.rs`, and it unpacks to 240 MB in `<app-data>/asr/`.
+`SENSE_VOICE` in `sapling-speech`'s `src/specs.rs`, and it unpacks to 240 MB in `<app-data>/asr/`.
 Two choices in that line are worth stating. **int8, where the voice ships fp32**
 — the voice's reason is that one model must sound the same on both hosts and the
 browser's fp32 is the one that works, and there is no browser recognizer for
@@ -476,7 +484,7 @@ quiet word is a VAD's job, and the result is a filler word in the composer —
 precisely the failure the composer exists to absorb.
 
 **Measured, on the model above, on an ordinary desktop CPU** (a debug build, and
-`tests/dictation.rs` prints these on the machine that runs it): 5.6 s of
+`sapling-speech`'s `tests/dictation.rs` prints these on the machine that runs it): 5.6 s of
 Mandarin transcribed in 0.98 s *including* the engine load, and 7 s of English
 and 5 s of Cantonese in about 0.2 s each once warm — 30-odd times real time. The
 load is fast enough that there is no warm-up command and no case for one. **On a
@@ -494,18 +502,19 @@ checkout without one is normal and `pnpm desktop:check` must be green in it. To
 give a machine one:
 
 ```sh
-nix develop .#desktop -c cargo test -p sapling-desktop --test dictation -- --ignored --nocapture
+nix develop .#desktop -c cargo test -p sapling-speech --test dictation -- --ignored --nocapture
 ```
 
 which downloads it into the same place the app does, so the app has it too.
 
 ### The model install
 
-Both models come down the same path, and it is `src/models.rs`: one `ModelSpec`
-per model pinning URL, exact byte size, sha256 and the files that have to exist
-for it to be usable, plus the install those constants describe. It used to be
-`tts/model.rs` and belonged to the voice; two callers is where copying it stops
-being cheaper than sharing it.
+Both models come down the same path, and it is `sapling-models`: one
+`ModelSpec` per model pinning URL, exact byte size, sha256 and the files that
+have to exist for it to be usable, plus the install those constants describe.
+The constants themselves are `sapling-speech`'s (`src/specs.rs`), beside the
+engines that read them. It used to be `tts/model.rs` and belonged to the voice;
+two callers is where copying it stops being cheaper than sharing it.
 
 An archive is streamed to `<app-data>/<tts|asr>/*.part`, hashed as it lands,
 verified against both numbers, and only then unpacked — into a `.partial`
@@ -574,7 +583,7 @@ this slice* as a permanent limitation, and it was one for a page: YouTube's
 timedtext endpoints send no CORS headers and the IFrame API exposes no track
 list, so a browser can never turn a link into a transcript, and closing it
 needed either a server or an extension. A host that can run a program needs
-neither. `src/captions.rs` runs yt-dlp; `src/lib/media/captions.ts` is the other
+neither. `sapling-captions` runs yt-dlp; `src/lib/media/captions.ts` is the other
 end; the `captions` task carries the wait; and the track enters the composer
 through exactly the door an uploaded `.srt` goes through.
 
@@ -592,7 +601,7 @@ fetch does that and then a second request, and even the status starts two child
 processes. There is no managed state and no lock between them — nothing to keep
 warm, so each call is a program run and a file read.
 
-**yt-dlp comes from PATH and is deliberately not pinned.** `src/models.rs` pins
+**yt-dlp comes from PATH and is deliberately not pinned.** `sapling-models` pins
 a URL, an exact byte count and a sha256 for every model, because a model's bytes
 are a constant and a different set of them is a different voice. yt-dlp is the
 opposite kind of dependency: YouTube changes its player every few weeks, yt-dlp
@@ -622,14 +631,14 @@ YouTube track has one.
 directory, with `-o …/captions.%(ext)s` so the one file yt-dlp writes is found
 by extension, and removes the directory whether the fetch worked or not. The
 argument vectors and the listing parser are pure functions with unit tests
-beside them; `tests/captions.rs` covers what needs the real program and **skips
+beside them; `sapling-captions`' `tests/captions.rs` covers what needs the real program and **skips
 itself, printing why, when yt-dlp is not on PATH**, exactly as the speech tests
 skip without a model. Its one end-to-end test is `#[ignore]`d as well, because
 it reaches YouTube and a suite that did that on every run would be red for
 reasons that have nothing to do with this code:
 
 ```sh
-nix develop .#desktop -c cargo test -p sapling-desktop --test captions -- --ignored --nocapture
+nix develop .#desktop -c cargo test -p sapling-captions --test captions -- --ignored --nocapture
 ```
 
 **The machine translations are filtered out**, and without that the feature
@@ -881,8 +890,9 @@ get around WebKitGTK, which builds a fresh GStreamer pipeline per `<audio>` clip
 and starts a spoken word about a second late. **Android's WebView is Chromium**,
 where an `<audio>` element over a blob is the ordinary path and works, so the
 clip stays in the window and rodio — whose cpal backend wants an ALSA that is
-not there anyway — is the one dependency still declared for desktop targets
-only. `tts::play` and its two commands are gated
+not there anyway — is the one dependency still enabled for desktop targets
+only, as `sapling-speech`'s `playback` feature on a target-scoped entry in the
+desktop crate's manifest. `tts::play` and its two commands are gated
 `all(feature = "speech", desktop)`; everything else about speech is gated on the
 feature alone and builds everywhere. One configuration, not two.
 `cargo tree -p sapling-desktop --target aarch64-linux-android` is how that is
@@ -1108,7 +1118,8 @@ default device reaches PipeWire through its ALSA plugin.
 Captions add two, and they are unlike everything else in this list: `yt-dlp`
 and `deno` are **programs on PATH**, not libraries to link, and the crate looks
 for them there rather than pinning them (see [Captions](#captions)). They are in
-the shell so `pnpm desktop:dev` has the feature and `tests/captions.rs` runs
+the shell so `pnpm desktop:dev` has the feature and `sapling-captions`'
+`tests/captions.rs` runs
 instead of skipping; a learner's machine gets them however that machine gets
 programs, and a shell without them costs nothing but the feature.
 

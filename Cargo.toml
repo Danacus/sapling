@@ -1,10 +1,33 @@
 [workspace]
-members = ["crates/sapling-core", "crates/sapling-wasm", "crates/sapling-desktop"]
-# `sapling-desktop` is a member but not a *default* member: it links WebKitGTK,
-# which only the `desktop` devShell provides, and a bare `cargo test` /
-# `cargo clippy --all-targets` at the root is what `pnpm core:test` and
-# `pnpm core:check` run in the default shell. Reach it explicitly, with `-p`.
-default-members = ["crates/sapling-core", "crates/sapling-wasm"]
+members = [
+	"crates/sapling-core",
+	"crates/sapling-wasm",
+	"crates/sapling-store",
+	"crates/sapling-models",
+	"crates/sapling-speech",
+	"crates/sapling-captions",
+	"crates/sapling-desktop",
+]
+# `pnpm core:test` and `pnpm core:check` are a bare `cargo test` / `cargo clippy
+# --all-targets` at the root, in the *default* shell, so a default member is a
+# crate that builds there.
+#
+# Only `sapling-desktop` is left out, and reached with `-p` instead (`pnpm
+# desktop:check` does): it links WebKitGTK, which only the `desktop` devShell
+# provides. `sapling-speech` is in with its default features, `tts` and `asr`:
+# `sherpa-onnx-sys` fetches its prebuilt static library into `target/` at build
+# time, which needs nothing the default shell lacks. Its `playback` feature
+# (rodio, which wants `alsa-lib`) is not a default, and nothing among the
+# default members turns it on, so feature unification cannot pull ALSA in here;
+# `desktop:check` builds it alongside `sapling-desktop`, which does.
+default-members = [
+	"crates/sapling-core",
+	"crates/sapling-wasm",
+	"crates/sapling-store",
+	"crates/sapling-models",
+	"crates/sapling-speech",
+	"crates/sapling-captions",
+]
 resolver = "2"
 
 # The release profile is what the wasm build ships; size is what matters there.

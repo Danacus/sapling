@@ -25,7 +25,7 @@
  * ## Why an empty utterance is this module's problem
  *
  * SenseVoice does not decline to answer. Half a second of digital silence comes
- * back as `嗯。` — measured, and pinned in `crates/sapling-desktop/tests/
+ * back as `嗯。` — measured, and pinned in `crates/sapling-speech/tests/
  * dictation.rs`. The host stays honest and reports what the recognizer said;
  * the *contract* is `$lib/asr`'s, and it says a learner who opened the
  * microphone and thought better of it gets a silent end, exactly as Web
@@ -125,7 +125,7 @@ export function resampleTo16k(samples: Float32Array, from: number): Float32Array
  * `Float32Array` they came from, and the format the whole world agrees on.
  *
  * The scale is 32768 in both directions, which is what `decode_pcm16` in
- * `crates/sapling-desktop/src/asr/mod.rs` reverses: it maps the range
+ * `crates/sapling-speech/src/asr/mod.rs` reverses: it maps the range
  * symmetrically, so −1 is `i16::MIN` exactly, and the one value it cannot
  * represent is +1, which clamps a sixteen-thousandth low.
  */

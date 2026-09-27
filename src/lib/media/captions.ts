@@ -8,7 +8,7 @@
  * no track list, and this app has no server by design. A *host* that can run a
  * program has none of those problems, so the desktop shell lends yt-dlp the way
  * it lends the voice and the recognizer — `docs/desktop.md`, and
- * `crates/sapling-desktop/src/captions.rs` is the other end.
+ * `crates/sapling-captions/src/lib.rs` is the other end.
  *
  * **What comes back is a file, not a parse.** {@link fetchCaptions} answers raw
  * `json3` text and nothing more, and the caller hands it to

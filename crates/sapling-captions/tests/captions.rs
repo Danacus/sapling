@@ -1,32 +1,32 @@
 //! yt-dlp, for real.
 //!
-//! What `captions.rs`'s own tests cover is the part that is pure: the argument
+//! What the crate's own unit tests cover is the part that is pure: the argument
 //! vectors, and how a `--dump-single-json` document becomes a track list. What
 //! they cannot cover is the whole point of the module — that a program called
 //! `yt-dlp` is findable, that it still answers about a YouTube video, and that
 //! the file it writes is `json3` the window can parse.
 //!
 //! So this file **skips itself** when yt-dlp is not on PATH and says so, the
-//! same contract `voice.rs` and `dictation.rs` have without a model: a checkout
-//! with no yt-dlp is normal, and `pnpm desktop:check` must be green in it.
+//! same contract `sapling-speech`'s `voice.rs` and `dictation.rs` have without
+//! a model: a checkout with no yt-dlp is normal — the default shell has none —
+//! and `pnpm core:test` must be green in it.
 //!
 //! The one test that reaches YouTube is `#[ignore]`d as well, for the reason the
-//! audible clip in `playback.rs` is: running the check should not be an event
+//! audible clip in `sapling-speech`'s `playback.rs` is: running the check should not be an event
 //! outside this machine. yt-dlp against a live video is a network fetch and a
 //! third party's rate limit, and a suite that made one on every run would be
 //! red for reasons that have nothing to do with this code. Run it by hand when
 //! the question is whether captions still come back:
 //!
 //! ```sh
-//! nix develop .#desktop -c cargo test -p sapling-desktop --test captions -- --ignored --nocapture
+//! nix develop .#desktop -c cargo test -p sapling-captions --test captions -- --ignored --nocapture
 //! ```
 //!
-//! The whole file is desktop-only, because the module it tests is: there is no
-//! yt-dlp on a phone and `captions` is not compiled there at all.
+//! Unlike that `playback.rs` this file has no gate: the crate is platform-neutral,
+//! and a machine with no yt-dlp is exactly the case the skip already covers.
+//! It is `sapling-desktop` that never builds it for a phone.
 
-#![cfg(desktop)]
-
-use sapling_desktop::captions;
+use sapling_captions as captions;
 
 /// A video with both a written and an automatic track, used only by the
 /// `#[ignore]`d test. If it ever goes away, any public video with captions does

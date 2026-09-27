@@ -28,7 +28,7 @@
 //! owns a `cpal::Stream`, which is `!Send` on ALSA — the same problem `Core`
 //! has for the same kind of reason, and it takes the same answer. One thread
 //! owns the stream for its whole life and every call is a message posted to it
-//! (`host.rs`'s header is the long version). Dropping [`PlayerHandle`] closes
+//! (`sapling-store`'s header is the long version). Dropping [`PlayerHandle`] closes
 //! the channel, which ends the thread, which drops the stream on the thread
 //! that opened it.
 //!

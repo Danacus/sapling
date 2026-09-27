@@ -1,5 +1,5 @@
-//! A video's caption tracks, through yt-dlp — the third capability this host
-//! lends, and the smallest.
+//! A video's caption tracks, through yt-dlp — the third capability a native
+//! host lends, and the smallest.
 //!
 //! The learner's route to a reading text is usually a video, and the subtitle
 //! file is the one artefact of it a *browser* cannot get: YouTube's timedtext
@@ -19,7 +19,7 @@
 //!
 //! ## yt-dlp comes from PATH, and is deliberately not pinned
 //!
-//! `src/models.rs` pins a URL, an exact byte count and a sha256 for every
+//! `sapling-models` pins a URL, an exact byte count and a sha256 for every
 //! model, and that is right for a model: those bytes are a constant and a
 //! different set of them is a different voice. yt-dlp is the opposite kind of
 //! dependency. YouTube changes its player and its signature scheme every few
@@ -35,20 +35,22 @@
 //! usually survive that, so this is reported rather than required: [`status`]
 //! answers for both programs and the window says which one is missing.
 //!
-//! ## No new dependency, and nothing here is a plugin
+//! ## No process crate, and nothing here is a plugin
 //!
-//! `std::process::Command` and the `serde_json` that was already in the
-//! manifest. Not `tauri-plugin-shell`: there is nothing to configure and no
+//! `std::process::Command` and `serde_json`, and no Tauri at all: this crate
+//! runs a program and reads what it wrote, and `sapling-desktop` is what turns
+//! that into three commands. Not `tauri-plugin-shell` either: there is nothing to configure and no
 //! allowlist worth maintaining for three fixed argument vectors, and a plugin
 //! would put a scope file between this module and the one program it runs.
 //!
 //! ## Android never meets any of this
 //!
-//! The whole module and its three commands are `#[cfg(desktop)]` — Tauri's own
-//! cfg alias, the one `tts_play` uses. There is no yt-dlp on a phone and no
-//! PATH to find one on, so this is not a *feature* (there is nothing to link)
-//! but a target gate, and its purpose is that Android's compiler never sees the
-//! code at all. That is not a hole in what a phone can read: a text imported on
+//! The crate itself is platform-neutral — a program on PATH or not — but
+//! `sapling-desktop` depends on it for desktop targets only and gates its three
+//! commands `#[cfg(desktop)]`, Tauri's own cfg alias, the one `tts_play` uses.
+//! There is no yt-dlp on a phone and no PATH to find one on, so that is not a
+//! *feature* (there is nothing to link) but a target gate, and its purpose is
+//! that Android's compiler never sees the code at all. That is not a hole in what a phone can read: a text imported on
 //! the desktop is an event like any other, so it syncs to every paired device
 //! and the phone opens it as an ordinary text.
 //!
@@ -59,6 +61,8 @@
 //! without the program is the running of it, and `tests/captions.rs` skips
 //! itself when yt-dlp is absent exactly as the speech tests skip without a
 //! model.
+
+#![forbid(unsafe_code)]
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -84,7 +88,7 @@ const SUB_FORMAT: &str = "json3";
 /// Where a fetch assembles the track before it is read, under the app-data
 /// directory.
 ///
-/// The same `.partial` idea `models.rs` uses and for a smaller version of the
+/// The same `.partial` idea `sapling-models` uses and for a smaller version of the
 /// same reason: a run that crashes or is killed leaves files behind, and they
 /// have to be findable by the next run rather than accumulating under names
 /// nobody remembers. One fixed name, swept before use and removed after, so the

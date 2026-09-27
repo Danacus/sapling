@@ -24,21 +24,20 @@
 //! by hand when the question is whether this machine makes a noise:
 //!
 //! ```sh
-//! nix develop .#desktop -c cargo test -p sapling-desktop --test playback -- --ignored --nocapture
+//! nix develop .#desktop -c cargo test -p sapling-speech --features playback --test playback -- --ignored --nocapture
 //! ```
 //!
-//! The whole file is desktop-only, because the module it tests is: a phone's
-//! WebView plays the clip itself and `tts::play` is not compiled there at all
-//! (`tts/mod.rs`'s `HOST_PLAYS_AUDIO`).
-
-#![cfg(desktop)]
+//! The whole file needs the `playback` feature (`required-features` in the
+//! manifest), because the module it tests does: a phone's WebView plays the
+//! clip itself, so `sapling-desktop` leaves the feature off there and
+//! `tts::play` is not compiled at all (`tts/mod.rs`'s `HOST_PLAYS_AUDIO`).
 
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use sapling_desktop::tts::play::{PlayerHandle, NO_OUTPUT_DEVICE};
-use sapling_desktop::tts::wav::encode_wav;
+use sapling_speech::tts::play::{PlayerHandle, NO_OUTPUT_DEVICE};
+use sapling_speech::tts::wav::encode_wav;
 
 /// The rate the voice synthesizes at, so the test plays what the app plays.
 const SAMPLE_RATE: u32 = 24000;

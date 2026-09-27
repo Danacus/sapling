@@ -1,4 +1,4 @@
-// Everything is in the library, so `tests/` can open the core without a webview.
+// Everything is in the library, which Android loads as the app itself.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 #[cfg(desktop)]

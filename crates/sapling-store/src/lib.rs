@@ -1,10 +1,16 @@
-//! What a desktop host lends `sapling-core`, and where it keeps it.
+//! What a native host lends `sapling-core`, and where it keeps it.
 //!
-//! The crate itself owns no database, clock, calendar or id generator (see
-//! `core.md`); the browser lends those through `src/lib/db/host.ts`, and this
-//! module is the same four facts read off an operating system instead: a
-//! SQLite *file* under the app-data directory through the crate's own rusqlite
-//! adapter, the system clock, the system time zone, and UUID v4.
+//! The core owns no database, clock, calendar or id generator (see `core.md`);
+//! the browser lends those through `src/lib/db/host.ts`, and this crate is the
+//! same four facts read off an operating system instead: a SQLite *file* in a
+//! directory through the core's own rusqlite adapter, the system clock, the
+//! system time zone, and UUID v4.
+//!
+//! It is its own crate, and free of Tauri, so that anything native opens the
+//! database the same way: `sapling-desktop` hands it Tauri's app-data
+//! directory, and a command-line tool pointed at that directory would open the
+//! very same file. It knows nothing about who is calling — no command, no
+//! window, no event.
 //!
 //! ## Why a thread and not a `Mutex`
 //!
@@ -20,8 +26,9 @@
 //! same file.
 //!
 //! What this thread does *not* decide is the order two calls arrive in. The
-//! persistence commands are `async` and wait on `spawn_blocking` (see the crate
-//! root), so several pool threads can be inside [`CoreHandle::run`] at once and
+//! desktop's persistence commands are `async` and wait on `spawn_blocking` (see
+//! `sapling-desktop`'s crate root), so several pool threads can be inside
+//! [`CoreHandle::run`] at once and
 //! whichever reaches the channel first is served first. The core thread then
 //! runs them one at a time in that arrival order. Ordering a window cares about
 //! — a read that must see the write before it — is the window's to keep, and
@@ -45,6 +52,8 @@
 //! device)`), so it has to outlive every restart *and* `resetData`, which
 //! empties the whole database including `meta`. A sibling file next to
 //! `sapling.db` survives both, and keeps the host out of the core's tables.
+
+#![forbid(unsafe_code)]
 
 use std::fs;
 use std::io;

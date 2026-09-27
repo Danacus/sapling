@@ -108,7 +108,7 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   noise across runs and an `AudioBufferSourceNode` plays silence, while
   `decodeAudioData` on the same page is provably correct. Two commits went into
   that (e273058, reverted by f78eff6) before playback moved to the Rust host
-  (`tts_play`/`tts_stop`, `crates/sapling-desktop/src/tts/play.rs`). **Do not
+  (`tts_play`/`tts_stop`, `crates/sapling-speech/src/tts/play.rs`). **Do not
   re-attempt Web Audio here**, and do not "simplify" the desktop back to
   `<audio>` — it is the fallback on purpose. The GStreamer plugins above are
   still required, for the reader's `<video>` and the YouTube frame.
@@ -145,7 +145,7 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
 - **`Core` is `!Send`, so `Mutex<Core>` is not a way to share it.** Its `Sql`,
   clock, ids and calendar are plain boxed trait objects and have to stay that
   way, because the wasm host's `JsSql` holds a `js_sys::Function`. Adding
-  `+ Send` to the core's bounds would break the browser build. `host.rs` gives
+  `+ Send` to the core's bounds would break the browser build. `sapling-store` gives
   the core its own thread and posts closures to it instead.
 - **A bare `cargo build --release` of the desktop crate is still a Tauri *dev*
   build (2026-09-21).** Tauri's dev/release switch is not the profile: `tauri`'s

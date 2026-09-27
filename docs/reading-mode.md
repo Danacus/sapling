@@ -658,7 +658,7 @@ instead of `youtubePlayer`, and is as host-blind as it was already player-blind.
   a phone, or the "Show transcript" panel copied). **The desktop app closes
   it**: that host can run a program, so a link plus one tap fetches the track
   and the composer imports it like any other subtitle file
-  (`crates/sapling-desktop/src/captions.rs`, `src/lib/media/captions.ts`, the
+  (`crates/sapling-captions/src/lib.rs`, `src/lib/media/captions.ts`, the
   `captions` task, and `json3` as a fourth import format —
   `.claude/rules/desktop.md`). Desktop-only is sufficient rather than a gap: an
   import is an event, so a text fetched there syncs to every paired device and

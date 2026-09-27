@@ -91,7 +91,7 @@
           pkgs.gst_all_1.gst-libav # mp3/aac, for anything the reader plays
         ];
 
-        # The captions capability (`crates/sapling-desktop/src/captions.rs`)
+        # The captions capability (`crates/sapling-captions`)
         # shells out to these two, and it finds them on PATH rather than
         # pinning them — yt-dlp ages against YouTube in weeks, so a pinned
         # copy would be a pinned breakage. They are in the shell so `pnpm

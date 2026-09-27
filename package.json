@@ -18,7 +18,7 @@
 		"core:check": "cargo clippy --all-targets -- -D warnings && cargo fmt --check",
 		"desktop:dev": "cd crates/sapling-desktop && cargo tauri dev",
 		"desktop:build": "cd crates/sapling-desktop && cargo tauri build --no-bundle",
-		"desktop:check": "cargo clippy -p sapling-desktop --all-targets -- -D warnings && cargo test -p sapling-desktop",
+		"desktop:check": "cargo clippy -p sapling-desktop -p sapling-speech -p sapling-captions --all-targets -- -D warnings && cargo test -p sapling-desktop -p sapling-speech -p sapling-captions",
 		"desktop:android:init": "cd crates/sapling-desktop && tauri android init --ci --skip-targets-install",
 		"desktop:android": "cd crates/sapling-desktop && CARGO_TARGET_DIR=\"$PWD/target\" tauri android build --ci --apk --target aarch64 --config '{\"build\":{\"beforeBuildCommand\":\"\"}}'",
 		"desktop:appimage": "cd crates/sapling-desktop && tauri build --ci --bundles appimage --config '{\"build\":{\"beforeBuildCommand\":\"\"}}'",

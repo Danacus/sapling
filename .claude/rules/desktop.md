@@ -1,6 +1,10 @@
 ---
 paths:
   - 'crates/sapling-desktop/**'
+  - 'crates/sapling-store/**'
+  - 'crates/sapling-speech/**'
+  - 'crates/sapling-models/**'
+  - 'crates/sapling-captions/**'
   - 'src/lib/db/tauri.ts'
   - 'src/lib/tts/native.ts'
   - 'src/lib/asr/native.ts'
@@ -15,9 +19,25 @@ not shipped — nothing in the web build or its gates depends on it. CI does run
 a protocol change that breaks the host fails the commit rather than waiting for
 someone to run the check by hand.
 
+- **The host is five crates, and only one of them knows about Tauri.**
+  `sapling-desktop` is the glue: `main.rs`, `lib.rs` (the commands, the
+  `commands!` arms, `setup`) and `permissions.rs`, and nothing else. What it
+  lends lives beside it, free of Tauri so a CLI or another app can reuse it:
+  **`sapling-store`** opens the database in a directory (`CoreHandle`,
+  `Database`, the device-id file, the clock, `localDay` through chrono);
+  **`sapling-models`** is the pinned-archive install (`ModelSpec`, download,
+  verify, stage, rename, `available_threads`) and knows nothing about speech;
+  **`sapling-speech`** is the voice and dictation on sherpa-onnx, features `tts`
+  and `asr` by default plus `playback` (rodio and `tts::play`), with the model
+  pins in `src/specs.rs`; **`sapling-captions`** is yt-dlp status/list/fetch.
+  A crate outside `sapling-desktop` cannot see Tauri's `desktop` cfg alias, so
+  none of them uses it: where a target matters, the desktop manifest decides
+  (a target-scoped dependency entry) and the crate exposes a feature.
+
 - **`crates/sapling-desktop` is a host, and that is all it is.** It owns a file
   (`sapling.db` in Tauri's app-data directory), a device id, the system clock
-  and the system time zone, and it hands all four to `sapling-core` through the
+  and the system time zone — through `sapling-store` — and hands all four to
+  `sapling-core` through the
   `Sql`/`LocalDay` seams `core.md` describes. It contains **no merge rule, no
   read, and no SQL against the read tables** — the only statements it issues are
   two pragmas, `journal_mode = WAL` and `synchronous = NORMAL`, which are
@@ -35,8 +55,8 @@ someone to run the check by hand.
   primitive with no domain knowledge in it: persistence is a file, TTS is text in
   and a WAV out, playback is a WAV in and a sound out, recognition is samples in
   and a sentence out. None of them may grow an opinion. So the voice lives here
-  (`src/tts/`) because WebKitGTK cannot run the browser's engine at all, and
-  dictation lives here (`src/asr/`) because neither this webview nor Android's
+  (`sapling-speech`'s `src/tts/`) because WebKitGTK cannot run the browser's
+  engine at all, and dictation lives here (its `src/asr/`) because neither this webview nor Android's
   has a `SpeechRecognition` at all — while `src/lib/tts/` and `src/lib/asr/` keep
   every decision (which language routes to Kokoro, which speaker, which languages
   the recognizer is offered for, when to fall back, what to cache, and the rule
@@ -45,7 +65,8 @@ someone to run the check by hand.
   and no SQL against the read tables.
 
 - **A video's captions are the third capability, and the first that is
-  desktop-only outright** (`src/captions.rs`, `#[cfg(desktop)]`). It passes the
+  desktop-only outright** (`sapling-captions`, a desktop-only dependency whose
+  three commands are `#[cfg(desktop)]`). It passes the
   same test: a URL in, a caption file out, no domain knowledge. It exists
   because a *page* cannot do it at all — YouTube's timedtext endpoints send no
   CORS headers and the IFrame API exposes no track list, so a browser can never
@@ -54,13 +75,13 @@ someone to run the check by hand.
   are on PATH, `captions_list` parses `--dump-single-json` into
   `{ id, title, tracks }`, `captions_fetch` writes one `json3` track into a
   swept `captions.partial` under the app-data directory and hands back **its raw
-  text**. Four things about it are the contract. **PATH, not a pin**: `models.rs`
-  pins a URL, a byte count and a sha256 because a model's bytes are a constant,
+  text**. Four things about it are the contract. **PATH, not a pin**:
+  `sapling-models` pins a URL, a byte count and a sha256 because a model's bytes are a constant,
   while yt-dlp ages against YouTube in weeks and its fix is always "update" — so
   a pin here would be a pin on the breakage, and Deno (yt-dlp's JavaScript
   runtime since late 2025) is reported rather than required for the same reason.
-  **No new dependency**: `std::process::Command` and the `serde_json` already in
-  the manifest, and deliberately not `tauri-plugin-shell` — three fixed argument
+  **No process crate**: `std::process::Command` and `serde_json`, and
+  deliberately not `tauri-plugin-shell` — three fixed argument
   vectors need no scope file. **The host never parses a caption file**: the
   window has one subtitle parser (`src/lib/reading/subtitles.ts`, where `json3`
   is now a format beside SRT and VTT), and a second one here would be one that
@@ -76,14 +97,15 @@ someone to run the check by hand.
 - **One feature, `speech`, covers both directions**, on by default. It was `tts`
   until dictation arrived, and it is one feature because synthesis and
   recognition are the same dependency set — sherpa-onnx, plus the download,
-  checksum and unpack of a pinned archive — over the same `src/models.rs`;
-  splitting it would put `any(feature = …)` on that shared module and make four
-  build configurations nobody would check. **`src/models.rs` is that shared
-  floor**: one `ModelSpec` per model (`KOKORO`, `SENSE_VOICE`) pinning URL, exact
-  byte size, sha256 and the files that must exist, plus the one
-  download-verify-stage-rename install and the ONNX thread count both engines
-  want. A `ModelSpec` is the *only* place a model is described, so swapping one
-  is a constant change; the two progress keys are derived from `dir`
+  checksum and unpack of a pinned archive — over the same `sapling-models`; the
+  desktop's `speech` feature is simply the optional `sapling-speech` dependency,
+  and splitting it would make four build configurations nobody would check.
+  **`sapling-models` is that shared floor**: the `ModelSpec` shape pinning URL,
+  exact byte size, sha256 and the files that must exist, the one
+  download-verify-stage-rename install and the ONNX thread count every engine
+  wants. The specs themselves (`KOKORO`, `CANTONESE_VITS`, `SENSE_VOICE`) are
+  `sapling-speech`'s `src/specs.rs`, beside their engines. A `ModelSpec` is the
+  *only* place a model is described, so swapping one is a constant change; the two progress keys are derived from `dir`
   (`<dir>.tar.bz2` and `<dir> (unpacking)`), which is what
   `$lib/tasks/kinds/model-download` sums, so renaming a spec renames what a
   progress bar keys on.
@@ -96,7 +118,8 @@ someone to run the check by hand.
   session, is worse than slow — a bare oscillator alternates between clean and
   noise across runs and an `AudioBufferSourceNode` plays silence (commit
   f78eff6 reverted that attempt and its message carries the detail). So the clip
-  goes back across the IPC and rodio plays it: `src/tts/play.rs`, `tts_play` and
+  goes back across the IPC and rodio plays it: `sapling-speech`'s
+  `src/tts/play.rs`, `tts_play` and
   `tts_stop`. **Only speech moved.** The reader's `<video>` and the YouTube
   frame still go through GStreamer, which is why the shell still carries the
   plugins, and `src/lib/tts/`'s element path is still the code the web build
@@ -106,14 +129,17 @@ someone to run the check by hand.
   does differently.** Chromium plays a blob without any of that, so on Android
   `tts::play`, `rodio`, `tts_play` and `tts_stop` do not exist and the clip
   stays in the window. **The window is told rather than left to infer it**:
-  `TtsStatus` carries `playback` (`tts::HOST_PLAYS_AUDIO`, which is `cfg!(desktop)`),
+  `TtsStatus` carries `playback` (`tts::HOST_PLAYS_AUDIO`, which is
+  `cfg!(feature = "playback")` — and the desktop crate enables that feature on
+  desktop targets and nowhere else, so it answers exactly what `cfg!(desktop)`
+  did),
   `tts.ts` reads it off the `tts_status` probe it already makes, and a host that
   answers `false` never attempts `tts_play` — no per-clip failure, no warning,
   no "no output device" latch. `inTauri()` stays the only platform test on the
   web side; everything else about the host is asked of the host.
 
 - **One output stream for the process, owned by one thread**, for the reason
-  `host.rs` gives about the core: rodio's `MixerDeviceSink` holds a
+  `sapling-store` gives about the core: rodio's `MixerDeviceSink` holds a
   `cpal::Stream`, which is `!Send` on ALSA, so it cannot be Tauri managed state
   and gets a thread and a channel instead. Opening a device per clip would put
   back the start latency this whole slice exists to remove, so it is opened
@@ -128,7 +154,7 @@ someone to run the check by hand.
   reaches PipeWire through its own plugin and nothing further is needed.
 
 - **A database that will not open is a screen, not a crash.** `setup` never
-  returns `Err` for it: `host::Database` is the managed state, holding either
+  returns `Err` for it: `sapling_store::Database` is the managed state, holding either
   the `CoreHandle` or the reason there is none, and every persistence command
   answers that reason as its `Err`. There is no boot message on this host (the
   browser's `ready`/`bootError` exists because a Worker has no other way to
@@ -210,7 +236,7 @@ someone to run the check by hand.
   installed model does not uninstall itself while the process runs, and the size
   is a walk of the whole tree. Not installed re-probes every call. Neither reader
   takes the install lock and neither needs to: **an install is staged and renamed
-  into place** (`models.rs`, for both models), so the live model path is always
+  into place** (`sapling-models`, for every model), so the live model path is always
   either absent or a whole model. `unpack` extracts into a `.partial` sibling,
   one `fs::rename` publishes it, and the next install sweeps what a crash left.
   That rename is what makes `load` safe to run mid-download — sherpa-onnx handed
@@ -238,7 +264,8 @@ someone to run the check by hand.
   (`src/lib/asr/index.ts`) holds every decision, not this module, exactly as
   `tts.ts` does for the voice.
 
-- **The crate `forbid`s `unsafe_code`, and the voice is k2-fsa's own crate.**
+- **Every one of the five crates `forbid`s `unsafe_code`, and the voice is
+  k2-fsa's own crate.**
   `tts::kokoro` used to be the one exception — hand-rolled FFI, because the
   third-party `sherpa-rs` wrapper freed the rule-FST path string before
   sherpa-onnx read it and the FSTs are not optional here. The dependency is
@@ -293,7 +320,7 @@ someone to run the check by hand.
   `!Send` — its `Sql`, clock, ids and calendar are plain boxed trait objects,
   and they must stay plain because the wasm host's `JsSql` holds a
   `js_sys::Function`, which can never be `Send`. So `Mutex<Core>` will not
-  compile as Tauri managed state. `host.rs` instead spawns one thread that owns
+  compile as Tauri managed state. `sapling-store` instead spawns one thread that owns
   the core for its whole life and posts closures to it; that serialises calls
   arriving from Tauri's command pool, and dropping `CoreHandle` closes the
   channel and joins, so "the database is closed" is true by the time the drop
@@ -354,8 +381,10 @@ someone to run the check by hand.
   calendar **and all of speech** are the same code over the same app-data
   directory — the same sherpa-onnx, the same 365 MB Kokoro archive, the same
   163 MB SenseVoice archive, the same six status/download/work commands. Only
-  `rodio` is target-scoped
-  (`[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]`),
+  `sapling-speech`'s `playback` feature (rodio) and `sapling-captions` are
+  target-scoped — a second `sapling-speech` entry under
+  `[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]`
+  adds the feature, and resolver 2 applies it only where that target is built —
   and only `tts::play`, `tts_play` and `tts_stop` are gated
   `all(feature = "speech", desktop)` — `desktop` being Tauri's own cfg alias,
   emitted by `tauri_build::build()`. **Widening one of those two gates to
@@ -363,7 +392,8 @@ someone to run the check by hand.
   reverse — narrowing a synthesis or recognition gate back to `desktop` — is a
   bug nobody's compiler sees, and costs the phone its voice or its ears.
   `cargo tree -p sapling-desktop --target aarch64-linux-android` is how the
-  dependency half is checked: no `rodio`, no `cpal`, everything else identical.
+  dependency half is checked: no `rodio`, no `cpal`, no `sapling-captions`,
+  and `sapling-speech` with `tts` and `asr` only; everything else identical.
 - **Android's microphone permission is a manifest edit and nothing more.** wry's
   own `RustWebChromeClient.onPermissionRequest` already answers the WebView's
   `AUDIO_CAPTURE` request by launching a runtime request for `RECORD_AUDIO` *and*
@@ -437,12 +467,19 @@ someone to run the check by hand.
   leaves the tree clean. The root `.gitignore` keeps only `gen/schemas/`, which
   `tauri-build` writes on every desktop build.
 
-- **The crate is a workspace member but not a *default* member.** It links
-  WebKitGTK, which only `nix develop .#desktop` provides, and `pnpm core:check`
-  / `pnpm core:test` are a bare `cargo clippy`/`cargo test` in the *default*
-  shell. Reach it with `-p sapling-desktop` (`pnpm desktop:check` does), and
-  keep it rustfmt-clean — `cargo fmt --check` walks every member, default or
-  not. New source files must be `git add`ed before nix can see them.
+- **`sapling-desktop` is a workspace member but not a *default* member; the
+  four it lends from are.** It links WebKitGTK, which only `nix develop
+  .#desktop` provides, and `pnpm core:check` / `pnpm core:test` are a bare
+  `cargo clippy`/`cargo test` in the *default* shell — which builds
+  `sapling-speech` too, with its default `tts` and `asr` (sherpa-onnx-sys
+  fetches its static library into `target/`; nothing in that shell is missing).
+  `playback` wants `alsa-lib` and stays out of it because no default member
+  enables it. `pnpm desktop:check` reaches the rest with `-p sapling-desktop -p
+  sapling-speech -p sapling-captions` in one invocation, so feature unification
+  builds speech *with* `playback` there and the captions test meets a real
+  yt-dlp. Keep all of them rustfmt-clean — `cargo fmt --check` walks every
+  member, default or not. New source files must be `git add`ed before nix can
+  see them.
 
 - **Two Linux packagings, built by two toolchains on purpose.** The nix
   package (`packages.<system>.sapling-desktop` in `flake.nix`) is the NixOS
@@ -458,7 +495,9 @@ someone to run the check by hand.
   on so the GStreamer plugins travel in the image. `docs/desktop.md`,
   "Packaging".
 
-- **The speech tests are skip-if-absent, and that is the contract.**
+- **The speech tests are skip-if-absent, and that is the contract.** They are
+  `sapling-speech`'s, as the captions test is `sapling-captions`' and the
+  persistence test `sapling-store`'s — each test lives with the code it covers.
   `tests/voice.rs` synthesizes Mandarin, English and a mixed sentence against
   the *real* 365 MB model and asserts finite, audible samples of a plausible
   length; `tests/dictation.rs` transcribes the `test_wavs/` that ship inside the
@@ -470,7 +509,8 @@ someone to run the check by hand.
   The `#[ignore]`d `installs_the_model` in each is how a machine gets one, into
   the same directory the app uses; `tests/common/mod.rs` is the app-data path
   both work out by hand. `tests/playback.rs` is the same shape one layer down,
-  and is `#![cfg(desktop)]` in its entirety because the module it covers is:
+  and has `required-features = ["playback"]` in its entirety because the module
+  it covers does:
   it opens the *real* default device and plays **silence** through it, asserting
   that a 100 ms clip returns in roughly 100 ms and that a stop and a second clip
   both cut a long one short — and it skips itself with a printed reason on a

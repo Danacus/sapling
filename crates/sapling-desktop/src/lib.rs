@@ -7,10 +7,17 @@
 //! in the app-data directory, and the window reaches it through the same
 //! domain-level protocol — `dispatch(method, argsJson)` in, JSON out.
 //!
-//! **This crate is a host and nothing else.** The persistence commands below
-//! are the exact surface `WasmCore` exposes to the Worker, name for name, so
-//! neither side can grow a method the other lacks; every merge rule, every read
-//! and every line of SQL against the read tables stays in `sapling-core`.
+//! **This crate is a host and nothing else — and now only the Tauri half of
+//! one.** What it lends lives in four crates that know nothing about Tauri:
+//! `sapling-store` (the database file, the device id, the clock and the time
+//! zone), `sapling-speech` (the voice, dictation and the desktop's player),
+//! `sapling-models` (the pinned-archive install speech shares) and
+//! `sapling-captions` (yt-dlp). This file is the commands over them, the
+//! handler lists and `setup`; `permissions.rs` is the one thing that has to be
+//! Tauri glue because it answers a WebKitGTK signal. The persistence commands
+//! below are the exact surface `WasmCore` exposes to the Worker, name for name,
+//! so neither side can grow a method the other lacks; every merge rule, every
+//! read and every line of SQL against the read tables stays in `sapling-core`.
 //!
 //! Every command that waits for anything is `async` and hands its work to
 //! `spawn_blocking`, because a synchronous Tauri command runs on the main
@@ -21,16 +28,16 @@
 //! `dispatch` blocks until the core thread has committed, and one Check makes
 //! three or more of those calls. The price is that the pool
 //! decides which of two overlapping calls reaches the core first, so the window
-//! keeps its own order (`src/lib/db/tauri.ts`); see `host.rs`'s header.
+//! keeps its own order (`src/lib/db/tauri.ts`); see `sapling-store`'s header.
 //!
 //! Persistence is not the only thing a host can lend, though. **Speech is the
-//! second, and it goes both ways** (feature `speech`, on by default). The `tts`
-//! module is Kokoro synthesis, which the browser runs as sherpa-onnx compiled
+//! second, and it goes both ways** (feature `speech`, on by default, which is
+//! the `sapling-speech` dependency). Its `tts` module is Kokoro synthesis, which the browser runs as sherpa-onnx compiled
 //! to WASM and this host runs natively, because WebKitGTK cannot run that WASM
 //! path at all — and, for a separate reason measured separately, the *playing*
 //! of the clip too, because this webview's audio stack starts a second late per
-//! clip and its Web Audio output does not work at all (`tts/play.rs`). The
-//! `asr` module is SenseVoice dictation, which the browser has only as the Web
+//! clip and its Web Audio output does not work at all
+//! (`crates/sapling-speech/src/tts/play.rs`). Its `asr` module is SenseVoice dictation, which the browser has only as the Web
 //! Speech API — absent in this webview, absent in Firefox, and a round trip to
 //! a vendor where it exists. Both are still *host* capabilities — text in, a
 //! WAV file out; a WAV file in, a sound out; samples in, a sentence out — with
@@ -38,11 +45,11 @@
 //! `src/lib/asr/native.ts` are the other ends.
 //!
 //! One feature covers both because they are one dependency set (sherpa-onnx and
-//! the model download) over one shared `models` module; the only thing either
+//! the model download) over one shared `sapling-models`; the only thing either
 //! has to itself is the desktop's player.
 //!
-//! **The third capability is a video's captions** (`captions`, desktop targets
-//! only), and it is the smallest: yt-dlp is run, a `json3` track comes back as
+//! **The third capability is a video's captions** (`sapling-captions`, desktop
+//! targets only), and it is the smallest: yt-dlp is run, a `json3` track comes back as
 //! text, and the window parses it with the subtitle parser it already has. A
 //! browser page cannot obtain a caption track at all — no CORS on YouTube's
 //! timedtext endpoints, no track list in the IFrame API — so this closes the
@@ -60,16 +67,17 @@
 //! missing, and for the reason it exists at all. `tts::play` is rodio over ALSA
 //! because *WebKitGTK* cannot play a clip without a second of latency per word;
 //! Android's WebView is Chromium, where an `<audio>` element over a blob is the
-//! ordinary path and works. So the clip stays in the window there, `rodio` is
-//! declared for desktop targets only (`Cargo.toml`), and exactly two things
-//! below read `all(feature = "speech", desktop)` — `tts_play` and `tts_stop` —
+//! ordinary path and works. So the clip stays in the window there,
+//! `sapling-speech`'s `playback` feature (rodio, and `tts::play`) is enabled for
+//! desktop targets only (`Cargo.toml`), and exactly two things below read
+//! `all(feature = "speech", desktop)` — `tts_play` and `tts_stop` —
 //! while everything else about speech reads `feature = "speech"` and builds
 //! everywhere. `desktop` is Tauri's own cfg alias for "not Android or iOS",
 //! emitted by `tauri_build::build()`.
 //!
 //! **The captions are missing there for a plainer reason**: there is no yt-dlp
-//! on a phone and no PATH to look for one on, so the module and its three
-//! commands read `#[cfg(desktop)]` — the same alias, and a target gate rather
+//! on a phone and no PATH to look for one on, so the crate is a desktop-only
+//! dependency and its three commands read `#[cfg(desktop)]` — the same alias, and a target gate rather
 //! than a feature, because there is nothing to link and nothing to make
 //! optional. A phone still *reads* a text imported this way: the import is an
 //! event, so it syncs like every other.
@@ -92,31 +100,17 @@
 //! still handled the way a synthesis that failed is — it degrades; it never
 //! blocks — which is what a `--no-default-features` build is.
 
-//! The crate **forbids** `unsafe_code`, and no module may opt out. It used to
-//! only deny it, for `tts::kokoro`, which hand-rolled the FFI call into
-//! sherpa-onnx because the third-party wrapper of the day freed a config string
-//! before the C library read it. That crate is gone: the voice now goes through
-//! k2-fsa's own `sherpa-onnx` wrapper, which keeps its `CString`s alive across
-//! the call, so there is no FFI here at all any more (`tts/kokoro.rs`).
+//! The crate **forbids** `unsafe_code`, and no module may opt out — as does
+//! every crate it lends from (`sapling-speech`'s header says why the voice
+//! could once not).
 
 #![forbid(unsafe_code)]
 
-#[cfg(feature = "speech")]
-pub mod asr;
-/// Desktop targets only: there is no yt-dlp on a phone, and this is a target
-/// gate rather than a feature because there is nothing to link.
-#[cfg(desktop)]
-pub mod captions;
-pub mod host;
-#[cfg(feature = "speech")]
-pub mod models;
 /// Linux only, like the `webkit2gtk` dependency it needs: WebKitGTK is the one
 /// webview here that asks the *application* whether the page may have the
 /// microphone, and denies it when nobody answers.
 #[cfg(target_os = "linux")]
 pub mod permissions;
-#[cfg(feature = "speech")]
-pub mod tts;
 
 use std::sync::Arc;
 
@@ -129,13 +123,17 @@ use tauri::AppHandle;
 use tauri::Emitter;
 use tauri::{Manager, State};
 
+// Desktop targets only: there is no yt-dlp on a phone, and this is a target
+// gate rather than a feature because there is nothing to link.
+#[cfg(desktop)]
+use sapling_captions as captions;
 #[cfg(feature = "speech")]
-use crate::asr::AsrHandle;
-use crate::host::Database;
+use sapling_speech::asr::{self, AsrHandle};
 #[cfg(all(feature = "speech", desktop))]
-use crate::tts::play::PlayerHandle;
+use sapling_speech::tts::play::PlayerHandle;
 #[cfg(feature = "speech")]
-use crate::tts::TtsHandle;
+use sapling_speech::tts::{self, TtsHandle};
+use sapling_store::Database;
 
 /// One `Backend` call. The answer is `None` — JavaScript's `undefined` — for a
 /// `void` method and for a read of a row that is not there. When the database
@@ -357,7 +355,7 @@ async fn asr_download(app: AppHandle, asr: State<'_, Arc<AsrHandle>>) -> Result<
 ///
 /// There is no language argument: the model identifies its own, and which
 /// languages reach this host at all is `asr_status`'s `languages` answered one
-/// screen up. See `asr/sense_voice.rs`.
+/// screen up. See `sapling-speech`'s `asr/sense_voice.rs`.
 ///
 /// `async` for the reason every waiting command here is — this one loads a
 /// 239 MB ONNX session on its first call and decodes on every one.
@@ -570,7 +568,7 @@ pub fn run() {
             let dir = app.path().app_data_dir()?;
             // A file that will not open is not a reason to have no window: the
             // failure is managed alongside the core and answered to the first
-            // call, and the layout shows it (see `host::Database`).
+            // call, and the layout shows it (see `sapling_store::Database`).
             let database = Database::open(&dir);
             if let Some(error) = database.error() {
                 eprintln!("{error}");

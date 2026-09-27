@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-use sapling_desktop::host::{CoreHandle, DATABASE_FILE, DEVICE_ID_FILE};
+use sapling_store::{CoreHandle, DATABASE_FILE, DEVICE_ID_FILE};
 
 fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/lib/db/fixtures/broad")
@@ -188,7 +188,7 @@ fn concurrent_calls_are_serialised_and_none_is_lost() {
 
     fn shareable<T: Send + Sync + 'static>() {}
     shareable::<CoreHandle>();
-    shareable::<sapling_desktop::host::Database>();
+    shareable::<sapling_store::Database>();
 
     let dir = std::env::temp_dir().join(format!(
         "sapling-desktop-concurrent-{}-{:?}",
@@ -251,7 +251,7 @@ fn concurrent_calls_are_serialised_and_none_is_lost() {
 /// the boot-error screen.
 #[test]
 fn a_database_that_will_not_open_answers_why() {
-    use sapling_desktop::host::Database;
+    use sapling_store::Database;
 
     // A data directory *under a regular file* cannot be created on any OS.
     let file = std::env::temp_dir().join(format!(

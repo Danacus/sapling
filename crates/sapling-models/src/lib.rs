@@ -1,19 +1,21 @@
 //! Where a native speech model comes from, how it gets here, and how much CPU
 //! it gets once it is here.
 //!
-//! Two capabilities now run ONNX on this host — the Kokoro voice (`tts`) and
-//! the SenseVoice recognizer (`asr`) — and everything they share about a *model
-//! on disk* lives here rather than being copied: one [`ModelSpec`] per model
-//! pinning URL, exact byte size and sha256, one download-verify-unpack-rename
-//! install, one "is it here and what does it cost" probe. The two engines keep
-//! their own configuration and their own opinions; neither knows about the
-//! other, and both call this.
+//! Two capabilities run ONNX on a native host — the voice (`sapling-speech`'s
+//! `tts`) and the SenseVoice recognizer (its `asr`) — and everything they share
+//! about a *model on disk* lives here rather than being copied: the
+//! [`ModelSpec`] shape that pins URL, exact byte size and sha256, one
+//! download-verify-unpack-rename install, one "is it here and what does it
+//! cost" probe. The engines keep their own configuration, their own opinions
+//! and their own specs (`sapling_speech::specs`); none knows about the others,
+//! and all of them call this. The crate knows nothing about speech, so the
+//! next thing that wants a pinned archive on disk can use it as it is.
 //!
 //! The browser fetches Kokoro as an Emscripten *file package* — one 427 MB blob
 //! whose byte offsets are baked into vendored glue, which is why
 //! `src/lib/tts/models.ts` pins a third-party mirror commit. Native sherpa-onnx
-//! reads ordinary files, so this host takes every model straight from k2-fsa's
-//! own release assets instead: no mirror in the trust path.
+//! reads ordinary files, so a native host takes every model straight from
+//! k2-fsa's own release assets instead: no mirror in the trust path.
 //!
 //! Both numbers beside a URL are checked before anything is extracted, because
 //! a truncated `model.onnx` does not fail at load — it fails somewhere inside
@@ -37,6 +39,8 @@
 //!
 //! Both engines are one interactive ONNX request at a time on whatever machine
 //! this is, so both want the same answer — see [`available_threads`].
+
+#![forbid(unsafe_code)]
 
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
@@ -64,73 +68,6 @@ pub struct ModelSpec {
     pub files: &'static [&'static str],
 }
 
-/// Kokoro multi-lang v1.1, fp32 — 103 speakers, Mandarin + English.
-///
-/// **fp32, and not int8, deliberately.** The release also ships
-/// `kokoro-int8-multi-lang-v1_1.tar.bz2` at 147 MB against this one's 365 MB,
-/// and the temptation is obvious. See the note in `tts/mod.rs` for what was
-/// measured: the int8 bug is the *WASM* build's, and one model on both hosts is
-/// still worth more than the megabytes.
-///
-/// The size and hash are of the release asset as published; they are not
-/// derived from anything and must be re-measured if the pin ever moves.
-pub const KOKORO: ModelSpec = ModelSpec {
-    dir: "kokoro-multi-lang-v1_1",
-    url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_1.tar.bz2",
-    bytes: 364_816_464,
-    sha256: "a3f4c73d043860e3fd2e5b06f36795eb81de0fc8e8de6df703245edddd87dbad",
-    files: &[
-        "model.onnx",
-        "voices.bin",
-        "tokens.txt",
-        "lexicon-us-en.txt",
-        "lexicon-zh.txt",
-        "date-zh.fst",
-        "number-zh.fst",
-        "espeak-ng-data/phontab",
-        "dict/jieba.dict.utf8",
-    ],
-};
-
-/// Single-speaker Cantonese VITS model, converted and published by k2-fsa.
-pub const CANTONESE_VITS: ModelSpec = ModelSpec {
-    dir: "vits-cantonese-hf-xiaomaiiwn",
-    url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-cantonese-hf-xiaomaiiwn.tar.bz2",
-    bytes: 107_995_442,
-    sha256: "bf3013cd4be34f531b7e514e708d835584dd60c9ad6eaf467ac1402005c04e46",
-    files: &[
-        "vits-cantonese-hf-xiaomaiiwn.onnx",
-        "tokens.txt",
-        "lexicon.txt",
-        "rule.fst",
-    ],
-};
-
-/// SenseVoice small, int8 — the recognizer, covering zh, en, ja, ko and yue.
-///
-/// **int8 here, and that is not a contradiction of [`KOKORO`].** The reason
-/// Kokoro ships fp32 is that one model must sound the same on both hosts, and
-/// the browser's fp32 is the one that works; there is no browser recognizer at
-/// all, so nothing has to agree with anything. What is left is the trade on its
-/// own terms, and int8 wins it: 239 MB of weights against 938 MB, indexed
-/// against a quality difference nobody has been able to hear in a dictated
-/// sentence, on a phone that has to hold the voice model too.
-///
-/// **The archive is the int8-only one**, not the combined release asset. Both
-/// unpack the same `model.int8.onnx`, but the combined archive is 1,047,870,769
-/// bytes because it also carries the fp32 export — a gigabyte downloaded to
-/// keep a sixth of it. This one is 163 MB and contains exactly what is used.
-///
-/// It also ships `test_wavs/`, one sentence per language, which is what
-/// `tests/dictation.rs` transcribes.
-pub const SENSE_VOICE: ModelSpec = ModelSpec {
-    dir: "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17",
-    url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
-    bytes: 163_002_883,
-    sha256: "7d1efa2138a65b0b488df37f8b89e3d91a60676e416f515b952358d83dfd347e",
-    files: &["model.int8.onnx", "tokens.txt"],
-};
-
 /// How often the download reports. Every chunk would be thousands of events
 /// across an IPC boundary for a bar that is 400 pixels wide.
 const PROGRESS_STEP_BYTES: u64 = 4 * 1024 * 1024;
@@ -155,7 +92,9 @@ pub type OnProgress<'a> = &'a (dyn Fn(&str, u64, u64) + Send + Sync);
 /// Cores to give ONNX, never fewer than one and never more than a phone should
 /// spend (see [`MOBILE_MAX_THREADS`]).
 pub fn available_threads() -> i32 {
-    let ceiling = if cfg!(desktop) {
+    // Tauri's `desktop` cfg alias, spelled out: this crate is not built by
+    // `tauri_build` and cannot see it.
+    let ceiling = if cfg!(not(any(target_os = "android", target_os = "ios"))) {
         usize::MAX
     } else {
         MOBILE_MAX_THREADS
@@ -204,14 +143,14 @@ impl ModelSpec {
     /// itself two different things. `$lib/tasks/kinds/model-download` keys the
     /// bar on exactly these strings, which is why they are worth a comment:
     /// changing one changes what a progress bar sums.
-    fn download_step(&self) -> String {
+    pub fn download_step(&self) -> String {
         format!("{}.tar.bz2", self.dir)
     }
 
     /// Progress key for the extraction half. Its total is the archive size too,
     /// so the two halves make one bar that runs 0 → 100% twice over rather than
     /// stalling at 100% for the minute bzip2 takes.
-    fn extract_step(&self) -> String {
+    pub fn extract_step(&self) -> String {
         format!("{} (unpacking)", self.dir)
     }
 
@@ -387,7 +326,7 @@ impl ModelSpec {
     /// when a complete model is already there, so reaching this line means the
     /// live path held nothing, or held something the engine could not have
     /// loaded anyway.
-    pub(crate) fn commit_staged(&self, staging: &Path, models_dir: &Path) -> Result<(), String> {
+    pub fn commit_staged(&self, staging: &Path, models_dir: &Path) -> Result<(), String> {
         if !self.installed_in(staging) {
             return Err(format!("{} unpacked but is missing files", self.dir));
         }
@@ -448,76 +387,51 @@ fn hex(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn every_pin_names_an_immutable_release_asset() {
-        for spec in [&KOKORO, &SENSE_VOICE] {
-            // A tag, not `latest`, and not a branch: the bytes behind this URL
-            // may never change, because the size and hash beside it are
-            // constants.
-            assert!(
-                spec.url
-                    .starts_with("https://github.com/k2-fsa/sherpa-onnx/releases/download/"),
-                "{}",
-                spec.url
-            );
-            // The URL ends in the archive the progress key names, which is what
-            // makes one `dir` enough to describe the whole install.
-            assert!(spec.url.ends_with(&spec.download_step()), "{}", spec.url);
-            assert_eq!(spec.sha256.len(), 64);
-            assert!(spec
-                .sha256
-                .chars()
-                .all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()));
-            assert!(!spec.files.is_empty());
-        }
-
-        // The published sizes of the two release assets, which is also what
-        // each download refuses to exceed by a byte.
-        assert_eq!(KOKORO.bytes, 364_816_464);
-        assert_eq!(SENSE_VOICE.bytes, 163_002_883);
-    }
+    /// A spec in the shape a real one has — nested paths included, since the
+    /// list carries paths and not names — pointing at nothing. The real pins
+    /// are `sapling-speech`'s, and so are the tests of them.
+    const FIXTURE: ModelSpec = ModelSpec {
+        dir: "fixture-model",
+        url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/fixture-model.tar.bz2",
+        bytes: 1,
+        sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+        files: &["model.onnx", "tokens.txt", "espeak-ng-data/phontab"],
+    };
 
     #[test]
     fn the_two_progress_keys_of_one_model_are_distinct_and_named_after_it() {
-        assert_eq!(
-            KOKORO.download_step(),
-            "kokoro-multi-lang-v1_1.tar.bz2",
-            "the key `tts-model` has always summed"
-        );
-        assert_eq!(KOKORO.extract_step(), "kokoro-multi-lang-v1_1 (unpacking)");
-        assert_ne!(SENSE_VOICE.download_step(), SENSE_VOICE.extract_step());
-        assert_ne!(SENSE_VOICE.download_step(), KOKORO.download_step());
+        assert_eq!(FIXTURE.download_step(), "fixture-model.tar.bz2");
+        assert_eq!(FIXTURE.extract_step(), "fixture-model (unpacking)");
     }
 
     #[test]
     fn an_absent_model_is_neither_installed_nor_counted() {
         let missing = Path::new("/nonexistent/sapling-models");
 
-        assert!(!KOKORO.installed_in(missing));
-        assert_eq!(KOKORO.bytes_in(missing), 0);
-        assert!(!SENSE_VOICE.installed_in(missing));
+        assert!(!FIXTURE.installed_in(missing));
+        assert_eq!(FIXTURE.bytes_in(missing), 0);
     }
 
     #[test]
     fn a_directory_missing_one_file_is_not_installed() {
         let root = std::env::temp_dir().join(format!("sapling-models-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
-        let dir = KOKORO.dir_in(&root);
+        let dir = FIXTURE.dir_in(&root);
         // Every file but the first, each one byte, nested directories included —
         // the list carries paths, not names.
-        for file in KOKORO.files.iter().skip(1) {
+        for file in FIXTURE.files.iter().skip(1) {
             let path = dir.join(file);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, b"x").unwrap();
         }
 
-        assert!(!KOKORO.installed_in(&root), "model.onnx is missing");
+        assert!(!FIXTURE.installed_in(&root), "model.onnx is missing");
 
-        fs::write(dir.join(KOKORO.files[0]), b"xyz").unwrap();
-        assert!(KOKORO.installed_in(&root));
+        fs::write(dir.join(FIXTURE.files[0]), b"xyz").unwrap();
+        assert!(FIXTURE.installed_in(&root));
         assert_eq!(
-            KOKORO.bytes_in(&root),
-            KOKORO.files.len() as u64 + 2,
+            FIXTURE.bytes_in(&root),
+            FIXTURE.files.len() as u64 + 2,
             "one 3-byte file and the rest one byte each"
         );
 
@@ -528,7 +442,7 @@ mod tests {
     fn there_is_always_at_least_one_thread_and_never_more_than_a_phone_should_spend() {
         let threads = available_threads();
         assert!(threads >= 1);
-        if !cfg!(desktop) {
+        if cfg!(any(target_os = "android", target_os = "ios")) {
             assert!(
                 threads <= MOBILE_MAX_THREADS as i32,
                 "a phone's slow cluster is not worth an ONNX thread each: {threads}"

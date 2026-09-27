@@ -6,8 +6,7 @@ description = "Sapling as a Tauri v2 desktop app: the persistence core over a re
 publish = false
 
 [lib]
-# The host lives in the library so `tests/` can open it without a webview; the
-# binary is three lines over it.
+# The app lives in the library and the binary is three lines over it.
 #
 # `cdylib` is Android's, and the only reason it is listed: there is no
 # executable on that platform: gradle packs `libsapling_desktop.so` into the
@@ -32,38 +31,39 @@ path = "src/main.rs"
 # machine with no sherpa toolchain.
 #
 # **One feature for both directions**, not `tts` and `asr`. Synthesis and
-# recognition are the same dependency set — sherpa-onnx, and the download,
-# checksum and unpack of a pinned model archive — over the same `src/models.rs`;
-# splitting them would put `any(feature = …)` on that shared module and create a
-# matrix of four builds nobody would ever check. It was called `tts` until
-# dictation arrived.
+# recognition are one crate, `sapling-speech`, over one dependency set —
+# sherpa-onnx, and `sapling-models`' download, checksum and unpack of a pinned
+# archive — and splitting them here would make a matrix of four builds nobody
+# would ever check. It was called `tts` until dictation arrived.
 #
-# **Enabling it does not mean the whole of speech exists.** Six of its seven
-# dependencies build for every target, so Android gets synthesis *and*
-# dictation; the seventh is `rodio`, which is declared for desktop targets only
-# (see the table below) because there is nothing for it to do on a phone — the
-# WebView there is Chromium and plays a clip perfectly well. So `lib.rs` gates
-# the modules and the six synthesis/recognition commands on `feature = "speech"`
-# and only `tts::play` and its two commands on `all(feature = "speech",
-# desktop)`. A `dep:` entry is allowed to name a target-scoped optional
-# dependency: the feature enables it where the target table applies and nothing
-# where it does not.
+# **Enabling it does not mean the whole of speech exists.** `sapling-speech` is
+# declared twice below: on every target with `tts` and `asr`, and once more for
+# desktop targets with `playback` added, which is the one part that is
+# rodio — there is nothing for it to do on a phone, whose WebView is Chromium
+# and plays a clip perfectly well. So `lib.rs` gates the six
+# synthesis/recognition commands on `feature = "speech"` and only `tts_play` and
+# `tts_stop` on `all(feature = "speech", desktop)`. One `dep:` entry enables
+# both declarations; resolver 2 applies a target table's features only where
+# that target is being built.
 default = ["speech"]
-speech = [
-	"dep:sherpa-onnx",
-	"dep:ureq",
-	"dep:tar",
-	"dep:bzip2",
-	"dep:sha2",
-	"dep:hound",
-	"dep:rodio",
-]
+speech = ["dep:sapling-speech"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-sapling-core = { path = "../sapling-core", features = ["sqlite"] }
+sapling-core = { path = "../sapling-core" }
+# The database in the app-data directory: the file, the device id, the clock
+# and the time zone. Everything but the Tauri side of it.
+sapling-store = { path = "../sapling-store" }
+# Synthesis and recognition on every target, phones included: they are the same
+# code and the same models wherever this crate runs. Recording is not here at
+# all: the WebView captures the audio on both hosts and hands it over as a raw
+# IPC body.
+sapling-speech = { path = "../sapling-speech", optional = true, default-features = false, features = [
+	"tts",
+	"asr",
+] }
 # `devtools` is on because this is a spike and the APK CI hands out is now a
 # *release* build: without it a release webview has no inspector at all, and the
 # only way anyone here sees a console on the phone is `chrome://inspect` over
@@ -72,89 +72,29 @@ sapling-core = { path = "../sapling-core", features = ["sqlite"] }
 # the app is distributed**: it leaves a shipped build inspectable by anyone with
 # a cable, and on macOS it reaches for private APIs the App Store rejects.
 tauri = { version = "2", features = ["devtools"] }
-# The host opens the file, so it needs the driver the core's adapter wraps.
-# The version must match `sapling-core`'s or two SQLite builds link at once.
-rusqlite = { version = "0.40", features = ["bundled"] }
-# `localDay` is the only place a time zone exists (see `core.md`), and on a
-# desktop that zone is the operating system's.
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-uuid = { version = "1", features = ["v4"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 
-# -- Native speech, both directions (`speech` feature) ------------------------
+# -- Playback and captions are desktop capabilities ---------------------------
 #
-# Every target, phones included: synthesis and recognition are the same code and
-# the same models wherever this crate runs. Only *playback* is a desktop
-# capability, and only `rodio` is therefore in the target table at the bottom of
-# this file. Recording is not here at all: the WebView captures the audio on
-# both hosts and hands it over as a raw IPC body.
-#
-# k2-fsa's **own** Rust API — the safe `sherpa-onnx` wrapper over its
-# `sherpa-onnx-sys` bindings, both published from the sherpa-onnx repository.
-# It replaces the third-party `sherpa-rs`/`sherpa-rs-sys`, whose README now
-# points at this crate, and it is better on every axis this host cares about:
-# the bindings are pregenerated (no bindgen, so no libclang anywhere in the
-# build), it links **statically** by default (no `.so` files to find at
-# runtime, no rpath, no `LD_LIBRARY_PATH`), and its `OfflineTts::create` keeps
-# every `CString` alive across the C call — which is the use-after-free that
-# forced `src/tts/kokoro.rs` to hand-roll the FFI against `sherpa-rs`.
-#
-# **Pinned exactly**, because the version *is* the sherpa-onnx tag: the build
-# script downloads `sherpa-onnx-v<this version>-…-lib.tar.bz2` from the release
-# of the same name, so the pregenerated bindings and the library they call
-# always come from one tag. A `^` requirement would let cargo move the tag
-# under a lockfile update, and a config struct that grew a member is a silent
-# ABI mismatch rather than a compile error.
-#
-# On Android the same crate fetches `sherpa-onnx-v1.13.8-android.tar.bz2` and
-# links **shared** (the `static` feature is ignored there — the sys crate forces
-# shared on Android and iOS). The Android command uses a crate-local target
-# directory so the sys crate finds `tauri.conf.json` and copies its `.so` files
-# into the APK itself.
-sherpa-onnx = { version = "=1.13.8", optional = true }
-# The model downloads (`src/models.rs`, shared by both). `default-features =
-# false` drops ureq's transparent gzip: an archive is pinned by byte size and
-# sha256, and a decoding layer between the socket and the hasher is exactly what
-# must not exist. `rustls` brings webpki-roots with it, so there is no system
-# certificate store to find.
-ureq = { version = "3", optional = true, default-features = false, features = [
-	"rustls",
-] }
-tar = { version = "0.4", optional = true }
-bzip2 = { version = "0.6", optional = true }
-sha2 = { version = "0.10", optional = true }
-# The RIFF/WAVE container the voice writes and the player reads back. Pure Rust,
-# no unsafe, no dependencies of its own, and it works over an in-memory `Cursor`
-# either way — so the byte layout is a library's problem rather than ours
-# (`src/tts/wav.rs` encodes everywhere; `src/tts/play.rs` decodes on the
-# desktop, where the host is also the player).
-hound = { version = "3.5", optional = true }
-
-# -- Playback, and only playback, is a desktop capability ---------------------
-#
-# This is the whole of what a phone does differently. `rodio` exists here
-# because *WebKitGTK* cannot play a clip without a second of latency per word
-# and its Web Audio output is unusable (`src/tts/play.rs` has the measurements);
-# Android's WebView is Chromium, where `<audio>` over a blob is the ordinary
-# path and works, and rodio's cpal backend would want an ALSA that is not there
-# anyway. So the dependency is target-scoped, `tts::play` and the two commands
-# that reach it are gated `all(feature = "speech", desktop)`, and everything else
-# about the voice is one configuration on every target. `desktop` is Tauri's own
-# cfg alias (`tauri_build::build()` emits it) and means exactly this table's
-# condition.
+# This is the whole of what a phone does differently. `playback` is rodio,
+# which exists because *WebKitGTK* cannot play a clip without a second of
+# latency per word and its Web Audio output is unusable
+# (`crates/sapling-speech/src/tts/play.rs` has the measurements); Android's
+# WebView is Chromium, where `<audio>` over a blob is the ordinary path and
+# works. `sapling-captions` runs yt-dlp off PATH, and a phone has neither. So
+# both are target-scoped here, `tts_play`/`tts_stop` and the three caption
+# commands are gated on `desktop`, and everything else is one configuration on
+# every target. `desktop` is Tauri's own cfg alias (`tauri_build::build()` emits
+# it) and means exactly this table's condition — which is why the condition is
+# spelled here and not in the crates, which cannot see the alias.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-# `default-features = false` keeps out everything but the device: `playback` is
-# the only feature that is wanted,
-# and it pulls exactly cpal. The decoders (`wav`, `mp3`, `flac`, `mp4`,
-# `vorbis` — symphonia, MPL-2.0) are all off because the clip is decoded here
-# with the `hound` above and handed over as samples; `recording` is off and
-# stays off, dictation or no dictation — the microphone is the webview's
-# (`src/asr/mod.rs`), and this host only ever sees samples that have already
-# been captured.
-rodio = { version = "0.22", optional = true, default-features = false, features = [
+sapling-speech = { path = "../sapling-speech", optional = true, default-features = false, features = [
+	"tts",
+	"asr",
 	"playback",
 ] }
+sapling-captions = { path = "../sapling-captions" }
 
 # -- One Linux-only dependency, and it is a permission prompt ----------------
 #

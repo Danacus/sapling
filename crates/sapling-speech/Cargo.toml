@@ -1,0 +1,80 @@
+[package]
+name = "sapling-speech"
+version = "0.0.1"
+edition = "2021"
+description = "Native speech on sherpa-onnx: Kokoro and Cantonese VITS synthesis, SenseVoice recognition, and an optional rodio player."
+publish = false
+
+[features]
+# Synthesis and recognition by default, because that is the crate; the player is
+# opt-in because it is one webview's problem (see `playback` below).
+default = ["tts", "asr"]
+tts = ["dep:sherpa-onnx", "dep:hound"]
+asr = ["dep:sherpa-onnx"]
+# rodio over an output device, and `tts::play` with it. It exists because
+# *WebKitGTK* cannot play a clip without a second of latency per word and its
+# Web Audio output is unusable (`src/tts/play.rs` has the measurements), so it is
+# a desktop capability: a Chromium WebView plays a blob perfectly well, and
+# rodio's cpal backend would want an ALSA a phone does not have. This crate
+# cannot see Tauri's `desktop` cfg alias, so the feature is the switch, and
+# `sapling-desktop` turns it on for desktop targets only. It is also what
+# `tts::HOST_PLAYS_AUDIO` reports.
+playback = ["tts", "dep:rodio"]
+
+[dependencies]
+sapling-models = { path = "../sapling-models" }
+serde = { version = "1", features = ["derive"] }
+
+# k2-fsa's **own** Rust API — the safe `sherpa-onnx` wrapper over its
+# `sherpa-onnx-sys` bindings, both published from the sherpa-onnx repository.
+# It replaces the third-party `sherpa-rs`/`sherpa-rs-sys`, whose README now
+# points at this crate, and it is better on every axis that matters here:
+# the bindings are pregenerated (no bindgen, so no libclang anywhere in the
+# build), it links **statically** by default (no `.so` files to find at
+# runtime, no rpath, no `LD_LIBRARY_PATH`), and its `OfflineTts::create` keeps
+# every `CString` alive across the C call — which is the use-after-free that
+# forced `src/tts/kokoro.rs` to hand-roll the FFI against `sherpa-rs`.
+#
+# **Pinned exactly**, because the version *is* the sherpa-onnx tag: the build
+# script downloads `sherpa-onnx-v<this version>-…-lib.tar.bz2` from the release
+# of the same name, so the pregenerated bindings and the library they call
+# always come from one tag. A `^` requirement would let cargo move the tag
+# under a lockfile update, and a config struct that grew a member is a silent
+# ABI mismatch rather than a compile error.
+#
+# On Android the same crate fetches `sherpa-onnx-v1.13.8-android.tar.bz2` and
+# links **shared** (the `static` feature is ignored there — the sys crate forces
+# shared on Android and iOS). `sapling-desktop`'s Android command uses a
+# crate-local target directory so the sys crate finds `tauri.conf.json` and
+# copies its `.so` files into the APK itself.
+sherpa-onnx = { version = "=1.13.8", optional = true }
+# The RIFF/WAVE container the voice writes and the player reads back. Pure Rust,
+# no unsafe, no dependencies of its own, and it works over an in-memory `Cursor`
+# either way — so the byte layout is a library's problem rather than ours
+# (`src/tts/wav.rs` encodes everywhere; `src/tts/play.rs` decodes where the host
+# is also the player).
+hound = { version = "3.5", optional = true }
+# `default-features = false` keeps out everything but the device: `playback` is
+# the only feature that is wanted, and it pulls exactly cpal. The decoders
+# (`wav`, `mp3`, `flac`, `mp4`, `vorbis` — symphonia, MPL-2.0) are all off
+# because the clip is decoded here with the `hound` above and handed over as
+# samples; `recording` is off and stays off, dictation or no dictation — the
+# microphone is the webview's (`src/asr/mod.rs`), and this crate only ever sees
+# samples that have already been captured.
+rodio = { version = "0.22", optional = true, default-features = false, features = [
+	"playback",
+] }
+
+# Each file is skipped whole when the feature it covers is off, so
+# `cargo test -p sapling-speech --no-default-features` still builds.
+[[test]]
+name = "voice"
+required-features = ["tts"]
+
+[[test]]
+name = "dictation"
+required-features = ["asr"]
+
+[[test]]
+name = "playback"
+required-features = ["playback"]

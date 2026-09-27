@@ -14,7 +14,7 @@
  * WebKitGTK's audio stack cannot do it: `<audio>` over a blob builds a fresh
  * GStreamer pipeline per clip and starts about a second late, and Web Audio —
  * the way to keep one pipeline — plays noise or silence there. The measurements
- * are in `crates/sapling-desktop/src/tts/play.rs` and `docs/desktop.md`. So the
+ * are in `crates/sapling-speech/src/tts/play.rs` and `docs/desktop.md`. So the
  * bytes go back across the IPC and the host makes the sound; `tts.ts` keeps the
  * caches and the decision, and falls back to the element path when the host
  * says it has no output device.
@@ -38,7 +38,7 @@ const PROGRESS_EVENT = 'tts://model-progress';
 
 /**
  * How the host begins the one playback failure worth remembering. Named in
- * `crates/sapling-desktop/src/tts/play.rs` too, and the two must agree: every
+ * `crates/sapling-speech/src/tts/play.rs` too, and the two must agree: every
  * other error from `tts_play` is about the clip that was handed over, and only
  * this one says the machine will never play anything.
  */

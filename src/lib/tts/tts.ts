@@ -289,7 +289,7 @@ export async function voiceDownloadBytes(language?: string): Promise<number> {
  *
  * The browser fetches its two runtime files and is finished — one pass. The
  * desktop host fetches one archive and then unpacks it, reporting both halves
- * against the archive's own size (`crates/sapling-desktop/src/tts/model.rs`),
+ * against the archive's own size (`crates/sapling-models/src/lib.rs`),
  * so there the progress events cross the model twice.
  *
  * Asked rather than inferred from the events, for the same reason
@@ -496,7 +496,7 @@ function playBlob(blob: Blob): Promise<void> {
  * about a second late and stalls the window on every spoken word, and Web Audio
  * — the way to keep one pipeline for the session — plays noise or silence
  * there. So the clip goes back across the IPC and rodio plays it over one
- * output stream the host holds open (`crates/sapling-desktop/src/tts/play.rs`,
+ * output stream the host holds open (`crates/sapling-speech/src/tts/play.rs`,
  * `docs/desktop.md`).
  *
  * **Which host it is comes from the host**, not from {@link inTauri}: the same

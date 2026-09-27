@@ -1,5 +1,5 @@
 //! Dictation, natively — the second thing this host lends to speech, and the
-//! mirror of [`crate::tts`].
+//! mirror of this crate's `tts`.
 //!
 //! The web app has had one recognizer since dictation existed: the browser's
 //! Web Speech API. It is absent in Firefox, absent in WebKitGTK, absent in
@@ -54,10 +54,11 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::Serialize;
 
-use crate::models::{self, available_threads, ModelSpec, SENSE_VOICE};
+use crate::specs::SENSE_VOICE;
+use sapling_models::{self as models, available_threads, ModelSpec};
 use sense_voice::{SenseVoice, SenseVoiceConfig};
 
-/// Directory holding every recognition model, inside Tauri's app-data
+/// Directory holding every recognition model, inside the host's app-data
 /// directory. A sibling of `tts/`, so neither install can see the other's
 /// staging trees.
 pub const ASR_DIR: &str = "asr";
@@ -223,7 +224,7 @@ impl AsrHandle {
     /// Builds the recognizer over the installed files.
     ///
     /// Runs happily while a download is unpacking and takes no install lock to
-    /// do it, for the reason `crate::models` gives: the live path is either a
+    /// do it, for the reason `sapling_models` gives: the live path is either a
     /// whole model or nothing at all. Nothing at all is an ordinary `Err`, and
     /// the window turns it into a microphone button that is simply not there.
     fn load(&self) -> Result<SenseVoice, String> {

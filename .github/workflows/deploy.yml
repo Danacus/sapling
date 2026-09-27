@@ -6,8 +6,10 @@
 # Cloudflare Pages' own build image has no Rust, which is why the build lives
 # here and the Pages git integration is switched off (see .claude/rules/deploy.md).
 #
-# `desktop`: `pnpm desktop:check` (clippy + the crate's tests) in the second
-# devShell, which is the only one that provides WebKitGTK. It runs alongside
+# `desktop`: `pnpm desktop:check` (clippy + the tests of `sapling-desktop`,
+# `sapling-speech` with its `playback` feature, and `sapling-captions` with a
+# real yt-dlp) in the second devShell, which is the only one that provides
+# WebKitGTK. It runs alongside
 # `build` and does not gate the deploy: the web artifact has no dependency on
 # the crate, so a red desktop check says a protocol change broke the host, not
 # that the site is wrong — it fails the commit, not the deploy.
@@ -111,6 +113,10 @@ jobs:
           key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: pnpm-${{ runner.os }}-
 
+      # `target` also holds the sherpa-onnx static library: `sapling-speech`
+      # is a default member, so `core:test` builds it, and `sherpa-onnx-sys`'s
+      # build script downloads the archive for its pinned tag into
+      # `target/sherpa-onnx-prebuilt/`.
       - name: Cache cargo
         uses: actions/cache@v6
         with:
