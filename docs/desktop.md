@@ -112,10 +112,12 @@ printed to stderr for the terminal that launched the binary.
 ## What is native and what still goes through the webview
 
 **Native: persistence, synthesis, playback, recognition and a video's captions.**
-`crates/sapling-desktop` opens the file, lends `sapling-db` the four runtime
+`crates/sapling-store` opens the file, lends `sapling-db` the four runtime
 facts (`deviceId`, the system clock, `localDay` from the system time zone, UUID
-v4 ids) and exposes exactly the three commands `WasmCore` exposes to the
-database Worker — `dispatch`, `commit_all`, `derived_schema_version`.
+v4 ids) and runs the `Core` on a thread of its own; `crates/sapling-desktop`
+exposes exactly the three commands `WasmCore` exposes to the database Worker —
+`dispatch`, `commit_all`, `derived_schema_version` — the first two being
+`sapling-protocol`'s JSON entry points run on that thread (`CoreHandle::run`).
 `src/lib/db/tauri.ts` is one `invoke` per `Backend` call, chosen by
 `backend.ts` when `inTauri()`; every argument still goes through `toPlain()`,
 because `client.ts` owns the proxy for both transports. Speech adds eight more

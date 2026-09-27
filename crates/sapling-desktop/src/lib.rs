@@ -14,8 +14,10 @@
 //! `sapling-models` (the pinned-archive install speech shares) and
 //! `sapling-captions` (yt-dlp). This file is the commands over them, the
 //! handler lists and `setup`; `permissions.rs` is the one thing that has to be
-//! Tauri glue because it answers a WebKitGTK signal. The persistence commands
-//! below are the exact surface `WasmCore` exposes to the Worker, name for name,
+//! Tauri glue because it answers a WebKitGTK signal. The store hands out the
+//! `Core` and speaks no protocol, so the persistence commands call
+//! `sapling-protocol` themselves, on the store's core thread — and they are
+//! the exact surface `WasmCore` exposes to the Worker, name for name,
 //! so neither side can grow a method the other lacks; every merge rule, every
 //! read and every line of SQL against the read tables stays in `sapling-db`.
 //!
@@ -151,9 +153,13 @@ async fn dispatch(
     args: String,
 ) -> Result<Option<String>, String> {
     let db = db.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || db.dispatch(method, args))
-        .await
-        .map_err(|cause| format!("the database call could not run: {cause}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        db.core()?.run(move |core| {
+            sapling_protocol::dispatch_json(core, &method, &args).map_err(|error| error.0)
+        })?
+    })
+    .await
+    .map_err(|cause| format!("the database call could not run: {cause}"))?
 }
 
 /// Appends local facts in one transaction. Here for parity with `WasmCore`;
@@ -164,9 +170,13 @@ async fn dispatch(
 #[tauri::command]
 async fn commit_all(db: State<'_, Arc<Database>>, facts: String) -> Result<(), String> {
     let db = db.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || db.commit_all(facts))
-        .await
-        .map_err(|cause| format!("the database call could not run: {cause}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        db.core()?.run(move |core| {
+            sapling_protocol::commit_facts_json(core, &facts).map_err(|error| error.0)
+        })?
+    })
+    .await
+    .map_err(|cause| format!("the database call could not run: {cause}"))?
 }
 
 /// The read-table shape this build expects — the version `meta` records.

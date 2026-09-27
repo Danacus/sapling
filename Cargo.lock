@@ -3261,6 +3261,7 @@ version = "0.0.1"
 dependencies = [
  "sapling-captions",
  "sapling-db",
+ "sapling-protocol",
  "sapling-speech",
  "sapling-store",
  "serde",
@@ -3328,7 +3329,7 @@ dependencies = [
  "rusqlite",
  "sapling-db",
  "sapling-domain",
- "sapling-protocol",
+ "serde",
  "serde_json",
  "uuid",
 ]

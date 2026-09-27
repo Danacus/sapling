@@ -57,6 +57,9 @@ sapling-db = { path = "../sapling-db" }
 # The database in the app-data directory: the file, the device id, the clock
 # and the time zone. Everything but the Tauri side of it.
 sapling-store = { path = "../sapling-store" }
+# The `Backend` protocol by name: the two persistence commands are its JSON
+# entry points, called on the store's core thread.
+sapling-protocol = { path = "../sapling-protocol" }
 # Synthesis and recognition on every target, phones included: they are the same
 # code and the same models wherever this crate runs. Recording is not here at
 # all: the WebView captures the audio on both hosts and hands it over as a raw

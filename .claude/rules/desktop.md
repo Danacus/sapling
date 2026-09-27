@@ -25,7 +25,9 @@ someone to run the check by hand.
   lends lives beside it, free of Tauri so a CLI or another app can reuse it:
   **`sapling-store`** opens the database in a directory (`CoreHandle`,
   `Database`, `rusqlite_sql` — the only rusqlite in the tree — the device-id
-  file, the clock, `localDay` through chrono);
+  file, the clock, `localDay` through chrono) and speaks no protocol:
+  `CoreHandle::run` hands a closure the `Core` itself, and `dispatch` and
+  `commit_all` are `sapling-protocol`'s JSON entry points called inside one;
   **`sapling-models`** is the pinned-archive install (`ModelSpec`, download,
   verify, stage, rename, `available_threads`) and knows nothing about speech;
   **`sapling-speech`** is the voice and dictation on sherpa-onnx, features `tts`
@@ -168,6 +170,9 @@ someone to run the check by hand.
   `derived_schema_version`. No fourth one, and no new `Backend` method that the
   browser does not also have — the protocol is `src/lib/db/protocol.ts` and
   `sapling-protocol`, and adding to it is still the three edits `core.md` names.
+  Each command is `sapling_protocol::dispatch_json` (or `commit_facts_json`)
+  inside `Database::core()?.run(…)`; the store underneath knows no method
+  names.
   **Speech adds exactly eight more, and captions three** — `tts_status`, `tts_download`,
   `tts_synthesize`, `asr_status`, `asr_download`, `asr_transcribe` on every
   target, `tts_play`, `tts_stop` on desktop targets only, and
@@ -322,7 +327,8 @@ someone to run the check by hand.
   and they must stay plain because the wasm host's `JsSql` holds a
   `js_sys::Function`, which can never be `Send`. So `Mutex<Core>` will not
   compile as Tauri managed state. `sapling-store` instead spawns one thread that owns
-  the core for its whole life and posts closures to it; that serialises calls
+  the core for its whole life and posts closures to it (`CoreHandle::run`, public,
+  generic over the answer); that serialises calls
   arriving from Tauri's command pool, and dropping `CoreHandle` closes the
   channel and joins, so "the database is closed" is true by the time the drop
   returns. It serialises them; it does not *order* them — with the commands

@@ -11,7 +11,9 @@
 //! database the same way: `sapling-desktop` hands it Tauri's app-data
 //! directory, and a command-line tool pointed at that directory would open the
 //! very same file. It knows nothing about who is calling — no command, no
-//! window, no event.
+//! window, no event — and speaks no protocol: [`CoreHandle::run`] hands a
+//! closure the [`Core`] itself, and the desktop's JSON `dispatch` is
+//! `sapling-protocol` called inside one such closure.
 //!
 //! ## Why a thread and not a `Mutex`
 //!
@@ -216,8 +218,11 @@ impl CoreHandle {
         }
     }
 
-    /// Runs one closure against the core and waits for its answer.
-    fn run<T: Send + 'static>(
+    /// Runs one closure against the core, on the core's thread, and waits for
+    /// its answer. This is the whole surface: a caller speaks to [`Core`]
+    /// directly, in whatever shape it wants — the desktop's JSON protocol, or a
+    /// command-line tool's typed calls.
+    pub fn run<T: Send + 'static>(
         &self,
         task: impl FnOnce(&Core) -> T + Send + 'static,
     ) -> Result<T, String> {
@@ -229,21 +234,6 @@ impl CoreHandle {
             }))
             .map_err(|_| CLOSED.to_owned())?;
         answer.recv().map_err(|_| CLOSED.to_owned())
-    }
-
-    /// One `Backend` call: the method name and its argument array as JSON, the
-    /// answer as JSON — `None` where the method answers nothing.
-    pub fn dispatch(&self, method: String, args: String) -> Result<Option<String>, String> {
-        self.run(move |core| {
-            sapling_protocol::dispatch_json(core, &method, &args).map_err(|error| error.0)
-        })?
-    }
-
-    /// Appends local facts, `[{ type, payload }, ...]`, in one transaction.
-    pub fn commit_all(&self, facts: String) -> Result<(), String> {
-        self.run(move |core| {
-            sapling_protocol::commit_facts_json(core, &facts).map_err(|error| error.0)
-        })?
     }
 }
 
@@ -275,22 +265,12 @@ impl Database {
     }
 
     /// The core, or the message every call answers when there is none.
-    fn core(&self) -> Result<&CoreHandle, String> {
+    pub fn core(&self) -> Result<&CoreHandle, String> {
         self.0.as_ref().map_err(Clone::clone)
     }
 
     /// Why the database is not open — `None` when it is.
     pub fn error(&self) -> Option<&str> {
         self.0.as_ref().err().map(String::as_str)
-    }
-
-    /// See [`CoreHandle::dispatch`].
-    pub fn dispatch(&self, method: String, args: String) -> Result<Option<String>, String> {
-        self.core()?.dispatch(method, args)
-    }
-
-    /// See [`CoreHandle::commit_all`].
-    pub fn commit_all(&self, facts: String) -> Result<(), String> {
-        self.core()?.commit_all(facts)
     }
 }

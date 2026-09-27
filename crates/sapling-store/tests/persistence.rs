@@ -7,12 +7,12 @@
 //! else: apply the `broad` fixture's log, close the core, reopen the *same
 //! file*, and read the same answers back.
 //!
-//! Everything goes through `CoreHandle::dispatch`, which is what the Tauri
-//! command calls, so the path under test is the one the app uses. There is no
-//! webview here and there does not need to be: the command is two lines around
-//! this call, and what it adds — `spawn_blocking`, so the main thread is not
-//! the one waiting — is what the second test covers, since it means several
-//! pool threads can now be inside the handle at once.
+//! Everything goes through `CoreHandle::run`, which is what every host call
+//! rides on, and calls `Core` directly inside it — the JSON protocol is
+//! `sapling-protocol`'s to test, not this crate's. There is no webview here and
+//! there does not need to be: what the desktop adds — `spawn_blocking`, so the
+//! main thread is not the one waiting — is what the second test covers, since
+//! it means several pool threads can be inside the handle at once.
 //!
 //! One field of an item cannot be compared against `expected.json` here and is
 //! stripped: `srs`, the schedule the core derives from the card **at read
@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
+use sapling_db::Core;
 use sapling_store::{CoreHandle, DATABASE_FILE, DEVICE_ID_FILE};
 
 fn fixture_dir() -> PathBuf {
@@ -37,11 +38,19 @@ fn read_json(path: PathBuf) -> Value {
     serde_json::from_str(&fs::read_to_string(&path).expect("fixture file")).expect("fixture parses")
 }
 
-/// One `Backend` read, as JSON — panics on the errors a fixture cannot produce.
-fn read(core: &CoreHandle, method: &str, args: Value) -> Option<Value> {
-    core.dispatch(method.to_owned(), args.to_string())
-        .unwrap_or_else(|error| panic!("{method}: {error}"))
-        .map(|answer| integral(serde_json::from_str(&answer).expect("the answer is JSON")))
+/// One call on the core thread, its answer as JSON — panics on the errors a
+/// fixture cannot produce.
+fn on<T: serde::Serialize>(
+    core: &CoreHandle,
+    what: &'static str,
+    call: impl FnOnce(&Core) -> sapling_db::Result<T> + Send + 'static,
+) -> Value {
+    let answer = core
+        .run(move |core| call(core).map(|answer| serde_json::to_value(answer)))
+        .unwrap_or_else(|error| panic!("{what}: {error}"))
+        .unwrap_or_else(|error| panic!("{what}: {}", error.0))
+        .unwrap_or_else(|error| panic!("{what}: {error}"));
+    integral(answer)
 }
 
 /// `value` with every whole-valued number as an integer. The core prints an
@@ -67,8 +76,7 @@ fn integral(value: Value) -> Value {
 /// `getAllItems`, both ways, sorted by id — the shape `expected.json` records.
 fn all_items(core: &CoreHandle) -> Value {
     let of = |recent: bool| {
-        let mut rows = read(core, "getAllItems", json!([{ "withRecentGrades": recent }]))
-            .expect("getAllItems answers")
+        let mut rows = on(core, "getAllItems", move |core| core.get_all_items(recent))
             .as_array()
             .expect("getAllItems is an array")
             .clone();
@@ -134,7 +142,8 @@ fn the_database_outlives_the_process() {
 
     // First run: a directory that does not exist yet, and a log arriving off sync.
     let core = CoreHandle::open(&dir).expect("the core opens on a fresh directory");
-    let applied = read(&core, "applyRemote", json!([events])).expect("applyRemote answers");
+    let log = events.as_array().expect("events is an array").clone();
+    let applied = on(&core, "applyRemote", move |core| core.apply_remote(&log));
     assert_eq!(applied, json!(count), "every fixture row applies");
     let first = all_items(&core);
     assert_eq!(
@@ -143,8 +152,8 @@ fn the_database_outlives_the_process() {
         "getAllItems, first run"
     );
     assert_eq!(
-        read(&core, "getProfile", json!([])),
-        Some(expected["getProfile"].clone()),
+        on(&core, "getProfile", Core::get_profile),
+        expected["getProfile"],
         "getProfile, first run"
     );
 
@@ -172,8 +181,8 @@ fn the_database_outlives_the_process() {
         "the derived schedule survives the process, and is read off the same cards"
     );
     assert_eq!(
-        read(&core, "getProfile", json!([])),
-        Some(expected["getProfile"].clone()),
+        on(&core, "getProfile", Core::get_profile),
+        expected["getProfile"],
         "getProfile, after reopening"
     );
     assert_eq!(
@@ -226,7 +235,7 @@ fn concurrent_calls_are_serialised_and_none_is_lost() {
             let core = Arc::clone(&core);
             let term = term.clone();
             std::thread::spawn(move || {
-                read(&core, "markWord", json!([term, true]));
+                on(&core, "markWord", move |core| core.mark_word(&term, true));
             })
         })
         .collect();
@@ -234,8 +243,7 @@ fn concurrent_calls_are_serialised_and_none_is_lost() {
         writer.join().expect("a writer finishes");
     }
 
-    let mut known: Vec<String> = read(&core, "getKnownTerms", json!([]))
-        .expect("getKnownTerms answers")
+    let mut known: Vec<String> = on(&core, "getKnownTerms", Core::get_known_terms)
         .as_array()
         .expect("an array of terms")
         .iter()
@@ -251,8 +259,10 @@ fn concurrent_calls_are_serialised_and_none_is_lost() {
 
     // Back to back on one thread: the sequential guarantee the window's queue
     // restores on top of the pool.
-    read(&core, "markWord", json!(["written-then-read", true]));
-    let after = read(&core, "getKnownTerms", json!([])).expect("getKnownTerms answers");
+    on(&core, "markWord", |core| {
+        core.mark_word("written-then-read", true)
+    });
+    let after = on(&core, "getKnownTerms", Core::get_known_terms);
     assert!(
         after
             .as_array()
@@ -288,14 +298,9 @@ fn a_database_that_will_not_open_answers_why() {
         "the message is readable as-is: {error}"
     );
     assert_eq!(
-        db.dispatch("poolSize".to_owned(), "[]".to_owned()),
-        Err(error.clone()),
-        "the probe answers the reason"
-    );
-    assert_eq!(
-        db.commit_all("[]".to_owned()),
-        Err(error),
-        "so does every other command"
+        db.core().err(),
+        Some(error),
+        "asking for the core answers the reason, so every call does"
     );
 
     let _ = fs::remove_file(&file);

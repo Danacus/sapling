@@ -8,7 +8,6 @@ publish = false
 [dependencies]
 sapling-db = { path = "../sapling-db" }
 sapling-domain = { path = "../sapling-domain" }
-sapling-protocol = { path = "../sapling-protocol" }
 # The only crate that links SQLite natively: `rusqlite_sql` is the `Sql` adapter
 # over it, and the store opens the file.
 rusqlite = { version = "0.40", features = ["bundled"] }
@@ -18,4 +17,5 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+serde = "1"
 serde_json = { version = "1", features = ["preserve_order"] }
