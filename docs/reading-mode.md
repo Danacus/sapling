@@ -50,8 +50,8 @@ written last month shows today's knowledge.
 Types are in `src/lib/types.ts`, generated from `crates/sapling-domain`:
 `ReadingText { id, title, source, topic?, media?, segments, createdAt }` and
 `Segment { text, start?, end? }` (milliseconds into the recording, both or
-neither). `GlossEntry` — a looked-up word — is TypeScript-only
-(`$lib/reading/schemas.ts`), because nothing stores one.
+neither). `GlossEntry` — a looked-up word — is a wire type of `crates/sapling-llm`'s
+reading calls, and nothing stores one.
 
 ### What a word can be, and what touching it means
 
@@ -149,13 +149,14 @@ The title defaults to the uploaded or fetched file's name without its
 extension, or else the text's first line cut to 60 characters, and is shown as
 the title field's placeholder so the learner can type over it.
 
-The three paid calls live in `src/lib/reading/`, stateless like
-`$lib/conversation`: never imports `$lib/db`. Mock/real dispatch in `index.ts` on
-`isMockMode()`; every envelope pinned with `responseFormat`, re-parsed with zod,
-`.nullish()` normalised to absent (`schemas.ts`, mirroring
-`$lib/conversation/schemas.ts`, including its `strictJsonSchema` pass).
+The three paid calls live in `crates/sapling-llm` (`reading.rs`): prompts in
+`prompts/reading-*.txt`, mock fixtures in `fixtures/reading-*.json` sent through
+the same parsers, every reply pinned with a strict `schemars` schema and a
+`null` normalised to absent. `src/lib/reading/index.ts` forwards each to the
+wasm build on the window thread (`$lib/llm/core.ts`) and never imports
+`$lib/db`.
 
-**Generate** (`generate.ts`). Input: profile (languages, level, interests,
+**Generate**. Input: profile (languages, level, interests,
 `about` capped like `MAX_ABOUT_CHARS`), the vocabulary as terms (capped), a set
 of *focus* words (due items, most overdue first, up to ~12, with meanings), an
 optional topic. Output envelope:
@@ -175,11 +176,10 @@ same unit an import stores.
 
 The other two calls run *while* reading, and both are deliberately quick
 requests: a minimal payload, a one-field-deep reply, no extras. Neither has a
-model setting of its own — they use whatever the LLM layer resolves
-(`ReadingOptions.model` if a caller passes one, else the learner's stored model,
-else `DEFAULT_MODEL`).
+model setting of its own — they use the learner's stored model, else
+`DEFAULT_MODEL`.
 
-**Look up** (`lookup-call.ts`). One word, for the card the reader opens on a
+**Look up**. One word, for the card the reader opens on a
 word nothing explains — which, since a text carries no meanings, is every word
 that is neither tracked nor looked up already. Input `{ profile, term, sentence,
 title? }` — the tapped word exactly as the text spells it, and **the sentence it
@@ -187,8 +187,7 @@ stands in**, so a word with several senses comes back in the one it is actually
 being used in. The sentence is cut out of the word's segment by `sentenceAt`
 (`pages.ts`) — the same `Intl.Segmenter` sentence split pagination uses, at the
 word's character offset into the segment — and is the whole segment where there
-is no segmenter. Output is `{ term, reading, meaning, explanation }`
-(`glossEntrySchema`), the reading under the app's `TargetText` rule and the
+is no segmenter. Output is `{ term, reading, meaning, explanation }`, the reading under the app's `TargetText` rule and the
 answer split in two, both in the native language and in this sentence's sense:
 `meaning` is **the short gloss a card would carry** — a few words, like a
 dictionary headword gloss, no sentences — and `explanation` is **the longer
@@ -200,9 +199,9 @@ nothing to render; a missing explanation is simply absent. **`term` is taken fro
 answer is matched against the token by `wordKey`, and a model that helpfully
 returned the dictionary form would match nothing.
 
-**Translate** (`translate-call.ts`, `translateLine`). One segment into the
+**Translate** (`translateLine`). One segment into the
 learner's native language. Input `{ profile, text, title? }`, sent as `{ native,
-target, text, title? }`; output `{ translation }` (`lineTranslationSchema`) —
+target, text, title? }`; output `{ translation }` —
 faithful enough that the learner can match its parts to the line, and nothing
 else: no notes, no alternatives, no word-by-word gloss. All-or-nothing like
 Look up. **The segment is the unit** because it is what the source cut and what

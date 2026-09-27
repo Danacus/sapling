@@ -11,12 +11,19 @@
 //! Errors cross as strings: a `Result::Err` from the core becomes a thrown
 //! JavaScript string, and a JavaScript exception from a callback becomes a
 //! core `Error` carrying its message.
+//!
+//! [`llm`] is separate and needs no database: the window thread calls it with
+//! its own `fetch` as the transport.
+
+use std::future::Future;
 
 use js_sys::Function;
 use sapling_db::{Core, Error, Param, Result, Row, Sql, SqlValue};
 use sapling_domain::LocalDay;
+use sapling_llm::{Endpoint, HttpRequest, HttpResponse, Llm, Transport};
 use serde_json::{Map, Value};
 use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::JsFuture;
 
 /// A JavaScript exception, as the message it carried.
 fn from_js(error: JsValue) -> Error {
@@ -185,4 +192,59 @@ impl WasmCore {
     pub fn derived_schema_version() -> u32 {
         sapling_db::schema::DERIVED_SCHEMA_VERSION
     }
+}
+
+/// `post(url, headersJson, body) -> Promise<string>`, resolving to `{status, body}` as JSON.
+struct JsTransport(Function);
+
+impl Transport for JsTransport {
+    fn post(
+        &self,
+        request: HttpRequest,
+    ) -> impl Future<Output = std::result::Result<HttpResponse, String>> {
+        let headers: Map<String, Value> = request
+            .headers
+            .into_iter()
+            .map(|(name, value)| (name, Value::String(value)))
+            .collect();
+        let promise = self.0.call3(
+            &JsValue::NULL,
+            &JsValue::from_str(&request.url),
+            &JsValue::from_str(&Value::Object(headers).to_string()),
+            &JsValue::from_str(&request.body),
+        );
+        async move {
+            let promise: js_sys::Promise = promise.map_err(|e| from_js(e).0)?.into();
+            let answer = JsFuture::from(promise).await.map_err(|e| from_js(e).0)?;
+            let answer: Value = answer
+                .as_string()
+                .and_then(|text| serde_json::from_str(&text).ok())
+                .ok_or("post() did not resolve to {status, body}")?;
+            Ok(HttpResponse {
+                status: answer["status"].as_u64().unwrap_or(0) as u16,
+                body: answer["body"].as_str().unwrap_or_default().to_owned(),
+            })
+        }
+    }
+}
+
+/// One model call: the method, its argument array and the endpoint as JSON
+/// (no endpoint is mock mode), and the host's `post`. Resolves to
+/// `{result, usage?}` as JSON; rejects with the `LlmError` as JSON, or plain
+/// text for a malformed call.
+#[wasm_bindgen]
+pub async fn llm(
+    method: String,
+    args_json: String,
+    endpoint_json: Option<String>,
+    post: Function,
+) -> std::result::Result<String, JsValue> {
+    let endpoint: Option<Endpoint> = endpoint_json
+        .map(|json| serde_json::from_str(&json))
+        .transpose()
+        .map_err(|e| JsValue::from_str(&format!("endpoint: {e}")))?;
+    let llm = Llm::new(JsTransport(post), endpoint);
+    sapling_protocol::dispatch_llm_json(&llm, &method, &args_json)
+        .await
+        .map_err(|e| JsValue::from_str(&e))
 }

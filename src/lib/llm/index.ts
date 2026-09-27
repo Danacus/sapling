@@ -59,6 +59,19 @@ export type {
 	ToolResultMessage
 } from './client';
 
+export { callLlm } from './core';
+export type { CallOptions } from './core';
+export { MAX_FOCUS_WORDS, MAX_TOPIC_CHARS } from '$lib/db/generated/llm';
+export type {
+	FocusWord,
+	GenerateTextArgs,
+	GlossEntry,
+	LearnerProfile,
+	LookupWordArgs,
+	ReadingTextDraft,
+	TranslateLineArgs
+} from '$lib/db/generated/index';
+
 export {
 	ANSWER_WORD_LIMIT,
 	DEFAULT_QUESTION,

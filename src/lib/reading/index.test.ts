@@ -1,18 +1,21 @@
 /**
- * The public surface: the mock/real dispatch.
+ * The public surface, through the wasm build's `llm` export.
  *
  * Node tests are always in mock mode (no key, no `localStorage`), so calling
- * either entry point here exercises exactly the offline path a developer with
- * no API key gets.
+ * an entry point here exercises exactly the offline path a developer with no
+ * API key gets: the Rust fixtures through the Rust parsers.
  */
 
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
+import { loadWasmCore } from '$lib/db/backend.testing';
 import { isMockMode } from '$lib/llm';
-import type { BatchProfile } from '$lib/llm';
+import type { LearnerProfile } from '$lib/llm';
 import { generateReadingText, lookUpWord, translateLine } from './index';
 
-const profile: BatchProfile = {
+beforeAll(loadWasmCore);
+
+const profile: LearnerProfile = {
 	nativeLanguage: 'English',
 	targetLanguage: 'Spanish',
 	level: 'beginner',
@@ -48,6 +51,6 @@ describe('the reading entry points', () => {
 
 	it('translateLine returns one translation for the line it was given', async () => {
 		const translation = await translateLine({ profile, text: 'La cuenta no era cara.' });
-		expect(translation).toContain('La cuenta no era cara.');
+		expect(translation).toBe('(translation of "La cuenta no era cara.")');
 	});
 });

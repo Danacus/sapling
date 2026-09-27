@@ -9,10 +9,11 @@
  * {@link lookUpWord} and {@link translateLine} are the two paid calls that run
  * *while* reading: one word, explained in the sentence it stands in, and one
  * segment in the learner's own language — both kept by the page for the rest of
- * that open and never stored. Everything else is local: `paginate` decides where
- * the pages break (and `sentenceAt` which sentence a word travels with), and
- * `tokenizeByTerms` and `annotateSentence` decide what the reader sees — none of
- * which costs a token or a round trip.
+ * that open and never stored. The three calls — prompts, parsing and mock
+ * included — are `crates/sapling-llm`'s. Everything else is local: `paginate`
+ * decides where the pages break (and `sentenceAt` which sentence a word travels
+ * with), and `tokenizeByTerms` and `annotateSentence` decide what the reader
+ * sees — none of which costs a token or a round trip.
  *
  * Stateless, like `$lib/conversation`: **nothing here imports `$lib/db`.** The
  * caller passes the vocabulary in and persists what comes out, which is what
@@ -20,83 +21,46 @@
  * learner's collection going through the repositories that capture sync events.
  */
 
-import { isMockMode } from '$lib/llm';
-import { mockGeneratedText, mockLineTranslation, mockLookedUpWord } from './mock';
-import { requestGeneratedText } from './generate';
-import type { GenerateTextArgs, ReadingOptions } from './generate';
-import { requestLookedUpWord } from './lookup-call';
-import type { LookupWordArgs } from './lookup-call';
-import type { GlossEntry, ReadingTextDraft } from './schemas';
-import { requestLineTranslation } from './translate-call';
-import type { TranslateLineArgs } from './translate-call';
+import { callLlm } from '$lib/llm';
+import type {
+	CallOptions,
+	GenerateTextArgs,
+	GlossEntry,
+	LookupWordArgs,
+	ReadingTextDraft,
+	TranslateLineArgs
+} from '$lib/llm';
 
-/**
- * One text written from the learner's own words: the real call when a key is
- * configured, the deterministic mock otherwise — the same dispatch `getBatch`
- * and `startConversation` make.
- */
-export async function generateReadingText(
+/** One text written from the learner's own words. */
+export function generateReadingText(
 	args: GenerateTextArgs,
-	opts: ReadingOptions = {}
+	opts: CallOptions = {}
 ): Promise<ReadingTextDraft> {
-	if (isMockMode()) return mockGeneratedText(args);
-	return requestGeneratedText(args, opts);
+	return callLlm('generateReadingText', args, opts);
 }
 
-/**
- * One word explained where it stands.
- *
- * Paid, and the only call in the module that happens mid-read — so the caller
- * fires it from a button and never from a tap. What comes back is an ordinary
- * {@link GlossEntry}; the page decides what to do with it.
- */
-export async function lookUpWord(
-	args: LookupWordArgs,
-	opts: ReadingOptions = {}
-): Promise<GlossEntry> {
-	if (isMockMode()) return mockLookedUpWord(args);
-	return requestLookedUpWord(args, opts);
+/** One word explained where it stands. Paid, so only a button fires it. */
+export function lookUpWord(args: LookupWordArgs, opts: CallOptions = {}): Promise<GlossEntry> {
+	return callLlm('lookUpWord', args, opts);
 }
 
-/**
- * One segment in the learner's native language.
- *
- * Paid and mid-read like {@link lookUpWord}, so a button fires it and the page
- * keeps the answer by segment index for the rest of that open.
- */
-export async function translateLine(
-	args: TranslateLineArgs,
-	opts: ReadingOptions = {}
-): Promise<string> {
-	if (isMockMode()) return mockLineTranslation(args);
-	return requestLineTranslation(args, opts);
+/** One segment in the learner's native language. Paid, so only a button fires it. */
+export function translateLine(args: TranslateLineArgs, opts: CallOptions = {}): Promise<string> {
+	return callLlm('translateLine', args, opts);
 }
+
+export { MAX_FOCUS_WORDS, MAX_TOPIC_CHARS } from '$lib/llm';
+export type {
+	FocusWord,
+	GenerateTextArgs,
+	GlossEntry,
+	LookupWordArgs,
+	ReadingTextDraft,
+	TranslateLineArgs
+} from '$lib/llm';
 
 export { annotateSentence, lookedUpGloss, termsFor } from './annotate';
 export type { AnnotateContext, ReadingWord, TokenizeFn, WordStatus } from './annotate';
-
-export {
-	MAX_ABOUT_CHARS,
-	MAX_FOCUS_WORDS,
-	MAX_TOPIC_CHARS,
-	MAX_VOCABULARY_TERMS,
-	SENTENCES_BY_LEVEL,
-	buildGeneratePrompt,
-	parseGeneratedText,
-	requestGeneratedText,
-	sentenceCountFor
-} from './generate';
-export type { FocusWord, GenerateTextArgs, ReadingOptions } from './generate';
-
-export {
-	buildLookupPrompt,
-	parseLookedUpWord,
-	requestLookedUpWord,
-	toGlossEntry
-} from './lookup-call';
-export type { LookupWordArgs } from './lookup-call';
-
-export { mockGeneratedText, mockLineTranslation, mockLookedUpWord } from './mock';
 
 export {
 	PAGE_WORDS,
@@ -107,26 +71,6 @@ export {
 	sentenceAt
 } from './pages';
 export type { PageRange, Pagination, Piece } from './pages';
-
-export {
-	GENERATED_TEXT_SCHEMA_NAME,
-	LINE_TRANSLATION_SCHEMA_NAME,
-	LOOKED_UP_WORD_SCHEMA_NAME,
-	generatedTextJsonSchema,
-	generatedTextSchema,
-	glossEntrySchema,
-	lineTranslationJsonSchema,
-	lineTranslationSchema,
-	lookedUpWordJsonSchema
-} from './schemas';
-export type { GlossEntry, ReadingTextDraft } from './schemas';
-
-export {
-	buildTranslatePrompt,
-	parseLineTranslation,
-	requestLineTranslation
-} from './translate-call';
-export type { TranslateLineArgs } from './translate-call';
 
 export { tokenizeByTerms, wordKey } from './tokenize';
 

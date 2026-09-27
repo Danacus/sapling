@@ -44,7 +44,8 @@ list; `def.ts` is its contract; `primitives.ts` is its shared pieces.
 
 Where the rest lives:
 
-- `src/lib/llm/` — generation (`generate.ts`, `SYSTEM_PROMPT`), `escalation.ts`, `mock.ts`, `schemas.ts` (a re-exporting façade)
+- `src/lib/llm/` — generation (`generate.ts`, `SYSTEM_PROMPT`), `escalation.ts`, `mock.ts`, `schemas.ts` (a re-exporting façade); `core.ts` forwards the ported calls to the Rust ones
+- `crates/sapling-llm/` — the model calls moving to Rust: `client.rs` (the chat client over an injected transport), `reading.rs` (generate / look up / translate), prompts in `prompts/`, mock fixtures in `fixtures/`; `crates/sapling-protocol/src/llm.rs` names them
 - `src/lib/session/` — `engine.ts` (orchestrator, all play-time DB writes), `progression.ts`, `romanization.ts`
 - `src/lib/srs/` — grades and the accessors for the schedule the core derives onto each item (`isDue`, `strengthOf`); no FSRS, no ts-fsrs
 - `src/lib/db/` — repositories, the only store access; `protocol.ts` is the `Backend` boundary, `client.ts` + `sqlite.worker.ts` the transport, `host.ts` the glue that lends the Rust core sqlite-wasm; `events.ts` is types only; `database.ts` keeps only `ChallengeRow`/`challengeOf`
