@@ -1,33 +1,38 @@
 /**
  * Lesson generation and escalation through the wasm build's `llm` export, in
- * mock mode (node has no key): the Rust fixtures through the Rust resolvers,
- * checked against the stored union the rest of the app reads.
+ * mock mode (node has no key): the Rust fixtures through the Rust resolvers.
+ * That every kind resolves to a well-formed stored challenge of its demand is
+ * checked on the Rust side (`sapling-llm`'s `lesson.rs`).
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import { demandOf } from '$lib/challenges/demand';
-import type { Presentation } from '$lib/challenges/serve/presentation';
-import { ALL_READINGS } from '$lib/challenges/serve/reading';
-import { challengeSchema } from '$lib/challenges/types';
+import type { Presentation } from '$lib/challenges/serve';
+import { ALL_READINGS } from '$lib/challenges/serve';
 import { loadWasmCore } from '$lib/db/backend.testing';
-import type { Challenge, ClozeChallenge, WordOrderChallenge } from '$lib/types';
-import {
-	PLANNABLE_KINDS,
-	describeShown,
-	getBatch,
-	getEscalation,
-	isMockMode,
-	kindKey,
-	kindOf
-} from './index';
+import type { ClozeChallenge, WordOrderChallenge } from '$lib/types';
+import { describeShown, getBatch, getEscalation, isMockMode } from './index';
 import type { BatchArgs, ProgressStep, Want, WireType } from './index';
 
 beforeAll(loadWasmCore);
 
-const ALL_KINDS: WireType[] = [...PLANNABLE_KINDS.map((kind) => kind.type), 'translate-to-target'];
+/** Every kind in registry order, and the stored `type` each resolves to. */
+const ALL_KINDS: [WireType, string][] = [
+	['recognize-mc', 'multiple-choice'],
+	['produce-mc', 'multiple-choice'],
+	['context-mc', 'multiple-choice'],
+	['translate-to-native', 'typed-translation'],
+	['spot-error', 'spot-error'],
+	['word-order', 'word-order'],
+	['cloze', 'cloze'],
+	['multi-cloze', 'multi-cloze'],
+	['translate-to-target', 'typed-translation']
+];
 
-function batch(targetLanguage: string, kinds: WireType[] = ALL_KINDS): BatchArgs {
+function batch(
+	targetLanguage: string,
+	kinds: WireType[] = ALL_KINDS.map(([kind]) => kind)
+): BatchArgs {
 	const wants: Want[] = kinds.map((type) => ({
 		item: { id: 'w1', term: 'la cuenta', meaning: 'the bill' },
 		kind: { type },
@@ -49,11 +54,10 @@ describe('getBatch', () => {
 	});
 
 	for (const target of ['Spanish', 'Chinese']) {
-		it(`writes one valid stored challenge per want, of the kind asked (${target})`, async () => {
+		it(`writes one stored challenge per want, of the kind asked (${target})`, async () => {
 			const result = await getBatch(batch(target));
-			expect(result.challenges.map((c) => kindOf(c)?.type)).toEqual(ALL_KINDS);
+			expect(result.challenges.map((c) => c.type)).toEqual(ALL_KINDS.map(([, type]) => type));
 			for (const challenge of result.challenges) {
-				expect(challengeSchema.safeParse(challenge).success, challenge.type).toBe(true);
 				expect(challenge.itemIds).toContain('w1');
 			}
 			expect(result.failedRequests).toBe(0);
@@ -66,18 +70,6 @@ describe('getBatch', () => {
 		expect(cloze.sentenceRomanization).toBeTruthy();
 		expect(cloze.acceptedAnswers.length).toBeGreaterThan(1);
 		expect(wordOrder.tilesRomanization?.length).toBe(wordOrder.tiles.length);
-	});
-
-	it('states each plannable kind’s demand as its resolved challenge reports it', async () => {
-		const { challenges } = await getBatch(
-			batch(
-				'Spanish',
-				PLANNABLE_KINDS.map((k) => k.type)
-			)
-		);
-		challenges.forEach((challenge, i) => {
-			expect(demandOf(challenge), PLANNABLE_KINDS[i].type).toBe(PLANNABLE_KINDS[i].demand);
-		});
 	});
 
 	it('reports its steps and passes the request knobs through', async () => {
@@ -95,26 +87,6 @@ describe('getBatch', () => {
 		await expect(getBatch({ ...batch('Spanish'), wants: [] })).rejects.toMatchObject({
 			kind: 'bad-response'
 		});
-	});
-});
-
-describe('kinds', () => {
-	it('plans every active kind once and never the retired one', () => {
-		const keys = PLANNABLE_KINDS.map(kindKey);
-		expect(new Set(keys).size).toBe(keys.length);
-		expect(keys).not.toContain('translate-to-target');
-		expect(PLANNABLE_KINDS.every((kind) => kind.demand <= 1)).toBe(true);
-	});
-
-	it('reads a match-pairs round back as no kind at all', () => {
-		const round = {
-			id: 'm',
-			type: 'match-pairs',
-			direction: 'toNative',
-			pairs: [],
-			itemIds: []
-		} as Challenge;
-		expect(kindOf(round)).toBeUndefined();
 	});
 });
 

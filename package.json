@@ -50,7 +50,6 @@
 	"dependencies": {
 		"@sqlite.org/sqlite-wasm": "3.53.0-build1",
 		"@tauri-apps/api": "^2.11.1",
-		"pinyin-pro": "^3.29.3",
-		"zod": "^4.4.3"
+		"pinyin-pro": "^3.29.3"
 	}
 }

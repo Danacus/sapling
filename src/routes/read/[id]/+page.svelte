@@ -109,7 +109,7 @@
 	} from '$lib/reading';
 	import type { AnnotateContext, GlossEntry, ReadingWord, TokenizeFn } from '$lib/reading';
 	import { hasLocalRomanizer, loadRomanizer } from '$lib/romanize';
-	import type { Maturity } from '$lib/challenges/serve/progression';
+	import type { Maturity } from '$lib/challenges/serve';
 	import { Grade } from '$lib/srs';
 	import { cardKey, usesInterWordSpaces } from '$lib/text';
 	import { speak, stopSpeaking, ttsAvailable, warmSpeech } from '$lib/tts';

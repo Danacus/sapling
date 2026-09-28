@@ -13,11 +13,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use ts_rs::TS;
 
+use sapling_challenges::Challenge;
+
 use crate::client::{
     ChatRequest, ErrorKind, Llm, LlmError, Message, ProgressStepId, Result, TokenUsage, Transport,
 };
 use crate::json::{fenced, fill, strip_fences};
-use crate::kinds::{kind_of, WireType};
+use crate::kinds::{kind_of, Lesson, WireType};
 use crate::text::{term_key, Rng};
 use crate::wire::{batch_schema, has_instruction, resolve, Generated, Resolver};
 use crate::{is_mandarin, non_blank, truncated, LearnerProfile, MAX_ABOUT_CHARS};
@@ -30,27 +32,7 @@ const PREAMBLE: &str = include_str!("../prompts/lesson.txt");
 const INSTRUCTION_RULE: &str = include_str!("../prompts/lesson-instruction.txt");
 const CORRECTIVE: &str = include_str!("../prompts/lesson-corrective.txt");
 
-/// The word a want is about.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-pub struct WantItem {
-    pub id: String,
-    pub term: String,
-    pub meaning: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct ChallengeKind {
-    #[serde(rename = "type")]
-    pub kind: WireType,
-}
-
-/// One challenge to write: a word, a kind, and the word's rung (1..=5).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-pub struct Want {
-    pub item: WantItem,
-    pub kind: ChallengeKind,
-    pub difficulty: u8,
-}
+pub use sapling_challenges::kinds::{ChallengeKind, Want, WantItem};
 
 /// A word the learner has: its id stays here, only the term reaches the prompt.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -87,8 +69,7 @@ pub struct BatchArgs {
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct BatchResult {
-    #[ts(type = "Array<unknown>")]
-    pub challenges: Vec<Value>,
+    pub challenges: Vec<Challenge>,
     /// Requests that contributed nothing even after their retry.
     pub failed_requests: u32,
     pub usage: TokenUsage,
@@ -267,17 +248,13 @@ fn parse_entries(raw: &str, kind: WireType) -> Result<Vec<Generated>> {
 
 /// The challenges that fill this request's brief, in brief order: the right
 /// kind, about an entry's own word, each entry at most once.
-fn fill_request(challenges: Vec<Value>, request: &TypeRequest) -> Vec<Value> {
-    let mut filled: Vec<Option<Value>> = vec![None; request.wants.len()];
+fn fill_request(challenges: Vec<Challenge>, request: &TypeRequest) -> Vec<Challenge> {
+    let mut filled: Vec<Option<Challenge>> = vec![None; request.wants.len()];
     for challenge in challenges {
         if kind_of(&challenge) != Some(request.kind) {
             continue;
         }
-        let cites = |id: &str| {
-            challenge["itemIds"]
-                .as_array()
-                .is_some_and(|ids| ids.iter().any(|i| i == id))
-        };
+        let cites = |id: &str| challenge.item_ids().iter().any(|i| i == id);
         if let Some(at) =
             (0..filled.len()).find(|&i| filled[i].is_none() && cites(&request.wants[i].item.id))
         {
@@ -329,7 +306,7 @@ fn mock_reply(args: &BatchArgs, request: &TypeRequest) -> String {
 
 #[derive(Default)]
 struct Outcome {
-    filled: Vec<Value>,
+    filled: Vec<Challenge>,
     error: Option<LlmError>,
 }
 
@@ -511,6 +488,7 @@ mod tests {
     use crate::client::fake::{ok, status};
     use crate::client::{Endpoint, HttpRequest, HttpResponse, ProgressStep};
     use pollster::block_on;
+    use sapling_challenges::difficulty::demand_of;
     use sapling_domain::types::Level;
     use std::future::{ready, Future};
     use std::rc::Rc;
@@ -747,13 +725,17 @@ mod tests {
         batch.reasoning_effort = Some("low".into());
         let result = run(&llm, &batch).unwrap();
 
-        let prompts: Vec<&str> = result
+        let stored: Vec<Value> = result
             .challenges
+            .iter()
+            .map(|c| serde_json::to_value(c).unwrap())
+            .collect();
+        let prompts: Vec<&str> = stored
             .iter()
             .map(|c| c["prompt"].as_str().or(c["tokens"][0].as_str()).unwrap())
             .collect();
         assert_eq!(prompts, ["uno", "dos", "Quiero"]);
-        assert_eq!(result.challenges[2]["itemIds"], json!(["c"]));
+        assert_eq!(result.challenges[2].item_ids(), ["c"]);
         assert_eq!(result.failed_requests, 0);
         assert_eq!(
             result.usage,
@@ -898,14 +880,14 @@ mod tests {
                 .map(|c| kind_of(c).unwrap())
                 .collect();
             assert_eq!(kinds, WireType::ALL, "{target}");
-            for challenge in &result.challenges {
-                assert!(challenge["itemIds"]
-                    .as_array()
-                    .unwrap()
-                    .contains(&json!("a")));
+            for (challenge, kind) in result.challenges.iter().zip(kinds) {
+                assert!(challenge.item_ids().contains(&"a".to_owned()));
+                assert_eq!(challenge.check_shape(), Ok(()), "{kind:?}");
+                if let Some(plannable) = kind.plannable() {
+                    assert_eq!(demand_of(challenge), plannable.demand, "{kind:?}");
+                }
             }
-            let multi = &result.challenges[7];
-            assert_eq!(multi["itemIds"], json!(["a", "k"]));
+            assert_eq!(result.challenges[7].item_ids(), ["a", "k"]);
             assert_eq!(result.usage, TokenUsage::default());
         }
         assert!(transport.bodies.borrow().is_empty());

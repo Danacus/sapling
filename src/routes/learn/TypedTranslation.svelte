@@ -8,10 +8,10 @@
 -->
 <script lang="ts">
 	import type { ChallengeProps } from '$lib/challenges/props';
-	import { resolvedPresentation } from '$lib/challenges/serve/presentation';
-	import { readingSlot } from '$lib/challenges/serve/reading';
+	import { resolvedPresentation } from '$lib/challenges/serve';
+	import { readingSlot } from '$lib/challenges/readings';
 	import type { TypedTranslationChallenge } from '$lib/types';
-	import { validateAnswer } from '$lib/validate';
+	import { validateAnswer } from '$lib/challenges/check';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
 	import CheckButton from './blocks/CheckButton.svelte';
 	import PromptHeader from './blocks/PromptHeader.svelte';

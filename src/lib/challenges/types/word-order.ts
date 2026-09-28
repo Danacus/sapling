@@ -1,73 +1,19 @@
 /**
  * `word-order` — rebuild a target sentence out of shuffled tiles.
  *
- * Graded exactly, never fuzzily: the learner picked from a closed set rather
- * than spelling anything, so one tile out of place is a wrong arrangement and
- * not a near miss. The comparison is on the *assembled sentence* — which is what
- * the component reports — and `answer` is the sentence the resolver joined with
- * the script's own spacing rule, so the two are byte-identical by construction.
+ * `answer` is the sentence the resolver joined with the script's own spacing
+ * rule, which is what the component reports once the tiles are placed and what
+ * grading compares — exactly, never fuzzily — so the printed answer and the
+ * graded one are byte-identical by construction.
  */
 
-import { z } from 'zod';
 import type { WordOrderChallenge } from '$lib/types';
-import { normalize } from '$lib/validate';
 import type { StoredTypeDef } from './def';
-import { lengthKnob, nonEmpty, storedBase, withBase } from './primitives';
-
-/**
- * The constrained-production tier's floor, shared with a banked `cloze`: both
- * put every word the learner needs on screen and withhold only one choice, so
- * neither should outrank the other before its own knobs are read.
- */
-const BASE = 0.2;
-
-export const wordOrderChallengeSchema = z.object({
-	type: z.literal('word-order'),
-	// Always written by generation; optional only because some rows were written
-	// by a build that omitted it above the early rungs, and those rows still
-	// play. Whether it is *shown* is a serve-time decision
-	// (`$lib/challenges/serve/presentation`).
-	prompt: nonEmpty.optional(),
-	instruction: z.string().optional(),
-	/** Shuffled by the resolver; duplicates are legal (grading is by text sequence). */
-	tiles: z.array(nonEmpty).min(2),
-	/** Index-aligned with `tiles`; all-or-nothing, see the resolver. */
-	tilesRomanization: z.array(z.string()).optional(),
-	answerTokens: z.array(nonEmpty).min(2),
-	/** `answerTokens` joined with the script's own spacing rule. */
-	answer: nonEmpty,
-	answerRomanization: z.string().optional(),
-	...storedBase
-});
 
 export const wordOrderStoredDef = {
 	type: 'word-order',
-	schema: wordOrderChallengeSchema,
 	reviewsSrs: true,
 	pooled: true,
-
-	check(challenge, answerGiven) {
-		return normalize(answerGiven) === normalize(challenge.answer) ? 'correct' : 'wrong';
-	},
-
-	// Constrained production: the learner really does build a target sentence,
-	// but out of tiles that are handed to them. Every word is on screen and
-	// spelled correctly — what is being recalled is the *order*, not the
-	// vocabulary — so this sits a tier below writing the same sentence blind.
-	demand() {
-		return 1;
-	},
-
-	// One structural knob: how many tiles the answer itself needs — which is the
-	// sentence's own length, so it reads on the shared prose scale like every
-	// other length knob. Distractor-tile count stopped varying by rung (every
-	// generated row now carries the fullest tray the model can supply) so it
-	// stopped being a difficulty knob too; how many of the stored tiles a
-	// served challenge *shows* is a serve-time decision
-	// (`$lib/challenges/serve/presentation`), not a fact about the row.
-	difficulty(challenge) {
-		return withBase(BASE, lengthKnob(challenge.answerTokens.length));
-	},
 
 	correctAnswerText(challenge) {
 		return challenge.answer;

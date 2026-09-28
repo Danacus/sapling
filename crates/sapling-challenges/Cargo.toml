@@ -1,0 +1,19 @@
+[package]
+name = "sapling-challenges"
+version = "0.1.0"
+edition = "2021"
+description = "Sapling's challenge union: the stored shape, grading, difficulty, what a served challenge shows, and the session and top-up planners over the pool."
+publish = false
+
+[dependencies]
+sapling-domain = { path = "../sapling-domain" }
+sapling-srs = { path = "../sapling-srs" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+ts-rs = { version = "12.0.1", features = ["no-serde-warnings"] }
+# NFC, NFD and diacritic folding, as the answer matcher normalizes.
+unicode-normalization = "0.1"
+# `\p{P}`/`\p{S}`/`\p{L}`/`\p{N}`: the matcher's punctuation and word classes.
+unicode-general-category = "1"
+# Match-round ids and the draws when the host lends no seed; `wasm_js` is crypto.getRandomValues.
+getrandom = { version = "0.4", features = ["wasm_js"] }

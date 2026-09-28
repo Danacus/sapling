@@ -4,12 +4,8 @@
  * screen showed, because only the serve layer knows.
  */
 
-import {
-	resolvedPresentation,
-	visibleBank,
-	visibleTiles
-} from '$lib/challenges/serve/presentation';
-import type { Presentation } from '$lib/challenges/serve/presentation';
+import { resolvedPresentation, visibleBank, visibleTiles } from '$lib/challenges/serve';
+import type { Presentation } from '$lib/challenges/serve';
 import type { EscalationReply, Shown } from '$lib/db/generated/index';
 import type { Challenge } from '$lib/types';
 import { callLlm } from './core';

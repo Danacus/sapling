@@ -23,22 +23,15 @@ use sapling_domain::types::{
 };
 use sapling_srs::{new_card_state, review_card, FsrsCardState, Grade, GOOD};
 
+// The challenge types this build knows how to play are the stored union's own
+// members; an unknown type costs one skipped row and the event stays in the log
+// for a later build.
+use sapling_challenges::STORED_TYPES as CHALLENGE_TYPES;
+
 /// Replay order: the backend's `seq`, then local insertion order for whatever
 /// this device has not pushed yet. Not `at`: that is one device's clock, and
 /// `seq` is the order every device agrees on.
 pub const LOG_ORDER: &str = "seq IS NULL, seq, rowid";
-
-/// The challenge types this build knows how to play; an unknown type costs one
-/// skipped row and the event stays in the log for a later build.
-const CHALLENGE_TYPES: [&str; 7] = [
-    "multiple-choice",
-    "cloze",
-    "multi-cloze",
-    "typed-translation",
-    "match-pairs",
-    "word-order",
-    "spot-error",
-];
 
 /// The rules, bound to a database and a calendar.
 #[derive(Clone, Copy)]

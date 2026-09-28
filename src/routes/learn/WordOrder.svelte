@@ -17,7 +17,7 @@
 
   `challenge.prompt` is the native-language anchor, always written by
   generation; whether it is *shown* is the session's serve-time call
-  (`presentation.showHint`, from `$lib/challenges/serve/presentation`), and some rows
+  (`presentation.showHint`, from `$lib/challenges/serve`), and some rows
   written by an earlier build lack it altogether. Where it shows it is the prompt, the way it always
   was: the native sentence says what to build, not in which order, so it is
   support rather than the answer. Without it the tiles are the whole puzzle.
@@ -35,8 +35,8 @@
 -->
 <script lang="ts">
 	import type { ChallengeProps } from '$lib/challenges/props';
-	import { resolvedPresentation, visibleTiles } from '$lib/challenges/serve/presentation';
-	import { readingSlot } from '$lib/challenges/serve/reading';
+	import { resolvedPresentation, visibleTiles } from '$lib/challenges/serve';
+	import { readingSlot } from '$lib/challenges/readings';
 	import { isPunctuationOnly, joinTokens } from '$lib/text';
 	import type { WordOrderChallenge } from '$lib/types';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';

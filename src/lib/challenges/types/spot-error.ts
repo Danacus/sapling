@@ -2,10 +2,10 @@
  * `spot-error` — tap the one word in a target-language sentence that does not
  * belong.
  *
- * Two asymmetries live here, and both are deliberate. What the learner *taps* is
- * the wrong word, so that is what `check` compares against; what the banner
- * *prints* is the word that belonged there — "Answer: pedir" is the thing worth
- * remembering, while "the wrong one was pagar" is already on screen, highlighted.
+ * What the learner *taps* is the wrong word, which is what grading compares
+ * against; what the banner *prints* is the word that belonged there — "Answer:
+ * pedir" is the thing worth remembering, while "the wrong one was pagar" is
+ * already on screen, highlighted.
  *
  * And the sentence is target-language whichever way the challenge is exercised,
  * so neither the romanization line nor the audio is gated on `direction`: what
@@ -13,65 +13,13 @@
  * were shown.
  */
 
-import { z } from 'zod';
 import type { SpotErrorChallenge } from '$lib/types';
-import { normalize } from '$lib/validate';
 import type { StoredTypeDef } from './def';
-import { lengthKnob, nonEmpty, storedBase, withBase } from './primitives';
-
-/**
- * The hardest thing in the recognition tier, and so its highest floor. Every
- * other recognition type shows the learner an answer and asks them to pick it;
- * this one shows a sentence with no answer in it and asks them to notice that
- * one word is wrong — which means reading every word and judging it, at any
- * length.
- */
-const BASE = 0.45;
-
-export const spotErrorChallengeSchema = z.object({
-	type: z.literal('spot-error'),
-	tokens: z.array(nonEmpty).min(3),
-	/** Index-aligned with `tokens`; all-or-nothing, see the resolver. */
-	tokensRomanization: z.array(z.string()).optional(),
-	/** The position of the *wrong* word: tapping it is the correct answer. */
-	correctIndex: z.int().min(0),
-	intendedWord: nonEmpty,
-	intendedWordRomanization: z.string().optional(),
-	correctedSentence: nonEmpty,
-	// Always written by generation; optional only because some rows were written
-	// by a build that omitted it above the early rungs, and those rows still
-	// play. Whether it is *shown* is a serve-time decision
-	// (`$lib/challenges/serve/presentation`).
-	meaning: nonEmpty.optional(),
-	...storedBase
-});
 
 export const spotErrorStoredDef = {
 	type: 'spot-error',
-	schema: spotErrorChallengeSchema,
 	reviewsSrs: true,
 	pooled: true,
-
-	check(challenge, answerGiven) {
-		// The answer is the *wrong* word — the one the learner is asked to tap.
-		return normalize(answerGiven) === normalize(challenge.tokens[challenge.correctIndex])
-			? 'correct'
-			: 'wrong';
-	},
-
-	// Recognition: the learner reads a sentence and judges it. Nothing is
-	// produced — not even the word that belonged there, which the banner supplies
-	// afterwards — so this is comprehension work, and it is available to a word
-	// the very first time it comes back round.
-	demand() {
-		return 0;
-	},
-
-	// `tokens` is already one entry per word — the model did the segmenting — so
-	// the length knob reads straight off it with no counting of its own.
-	difficulty(challenge) {
-		return withBase(BASE, lengthKnob(challenge.tokens.length));
-	},
 
 	// Not the word they had to tap — the word that belonged there.
 	correctAnswerText(challenge) {

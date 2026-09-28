@@ -7,38 +7,8 @@
  * its own: how a word sounds in place is the thing they were missing.
  */
 
-import { z } from 'zod';
 import type { ClozeChallenge } from '$lib/types';
-import { checkAnswer } from '$lib/validate';
 import type { StoredTypeDef } from './def';
-import { lengthKnob, nonEmpty, storedBase, withBase } from './primitives';
-import { wordCount } from './word-count';
-
-/**
- * The constrained-production tier's floor, shared with `word-order`: a banked
- * cloze and a tile tray are the same bargain — every word the learner needs is
- * on screen and only one choice is withheld — so neither type should outrank
- * the other before its own knobs are read.
- */
-const BASE = 0.2;
-
-export const clozeChallengeSchema = z.object({
-	type: z.literal('cloze'),
-	sentence: nonEmpty,
-	sentenceRomanization: z.string().optional(),
-	acceptedAnswers: z.array(z.string()).min(1),
-	/** Reading of `acceptedAnswers[0]`; see the domain type. */
-	answerRomanization: z.string().optional(),
-	wordBank: z.array(z.string()).optional(),
-	/** Index-aligned with `wordBank`; all-or-nothing, see the resolver. */
-	wordBankRomanization: z.array(z.string()).optional(),
-	// Always written by generation; optional only because some rows were written
-	// by a build that omitted it above the early rungs, and those rows still
-	// play. Whether it is *shown* is a serve-time decision
-	// (`$lib/challenges/serve/presentation`).
-	translationHint: z.string().optional(),
-	...storedBase
-});
 
 /** The blank, as the resolver joined the sentence around it. */
 const GAP = '___';
@@ -56,39 +26,8 @@ function completedSentence(challenge: ClozeChallenge): string {
 
 export const clozeStoredDef = {
 	type: 'cloze',
-	schema: clozeChallengeSchema,
 	reviewsSrs: true,
 	pooled: true,
-
-	check(challenge, answerGiven) {
-		return checkAnswer(answerGiven, challenge.acceptedAnswers);
-	},
-
-	// The one type whose demand is decided by the row rather than the type. With a
-	// `wordBank` the answer is on screen and the learner picks the word that fits
-	// the gap — constrained production. Without one they have to retrieve and
-	// spell it from the sentence alone, which is free production of a single word
-	// and the same act a typed translation asks for, sentence-length aside.
-	demand(challenge) {
-		return challenge.wordBank && challenge.wordBank.length > 0 ? 1 : 2;
-	},
-
-	// One structural knob: how long the sentence is. A generated row now always
-	// carries the fullest word bank the model can supply (or none at all, for a
-	// typed want) — bank size stopped varying by rung, so it stopped being a
-	// difficulty knob too; how much of a stored bank a served challenge *shows*
-	// is a serve-time decision (`$lib/challenges/serve/presentation`), read off the word's
-	// current rung rather than baked into the row. The native-language line is
-	// deliberately not a knob either, for the same reason.
-	//
-	// The gap is split out before counting: `segmentWords` reads `___` as a word
-	// of its own where it stands alone, and glues it to its neighbours where it
-	// does not (`a___b` is one segment), so counting the raw sentence both
-	// over-counts a five-word sentence and under-counts a mid-word blank.
-	// Rejoining the pieces with a space says what the sentence is made of.
-	difficulty(challenge) {
-		return withBase(BASE, lengthKnob(wordCount(challenge.sentence.split(GAP).join(' '))));
-	},
 
 	correctAnswerText(challenge) {
 		return challenge.acceptedAnswers[0] ?? '';

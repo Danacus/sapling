@@ -28,9 +28,8 @@
 <script lang="ts">
 	import { choiceKeyAction } from '$lib/challenges/keyboard';
 	import type { ChallengeProps } from '$lib/challenges/props';
-	import { isListeningChallenge } from '$lib/challenges/serve/listening';
-	import { resolvedPresentation } from '$lib/challenges/serve/presentation';
-	import { readingSlot } from '$lib/challenges/serve/reading';
+	import { isListeningChallenge, resolvedPresentation } from '$lib/challenges/serve';
+	import { readingSlot } from '$lib/challenges/readings';
 	import { speak, ttsAvailable } from '$lib/tts';
 	import type { MultipleChoiceChallenge } from '$lib/types';
 	import { getListeningMode } from '$lib/ui/prefs';

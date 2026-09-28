@@ -112,7 +112,7 @@ export function isDue(item: KnowledgeItem, now: number): boolean {
 
 /**
  * How well a word is known, 0..1 — the number behind the strength bars, and the
- * axis `$lib/challenges/serve/progression` slices into demand tiers and difficulty rungs.
+ * axis `crates/sapling-challenges`' ladder slices into demand tiers and difficulty rungs.
  *
  * Zero for a word with nothing derived, for the same reason {@link dueAt} answers
  * `now`: never scheduled is the bottom of the range.
@@ -145,7 +145,7 @@ export function retrievabilityOf(item: KnowledgeItem): number {
  *
  * **The challenge top-up does not use this**, and used to: a window this size
  * over a collection of thirty due words meant every press wrote another row
- * about the same twelve. `planTopUp` (`$lib/session/topup`) walks the whole
+ * about the same twelve. `planTopUp` (`crates/sapling-challenges`' `topup.rs`) walks the whole
  * collection in this same order instead, and skips the words it has already
  * covered.
  *

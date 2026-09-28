@@ -8,7 +8,7 @@ use ts_rs::TS;
 
 use crate::client::{ChatRequest, Llm, Message, Result, Transport};
 use crate::json::parse_reply;
-use crate::kinds::WireType;
+use crate::kinds::{Lesson, WireType};
 use crate::non_blank;
 
 const PROMPT: &str = include_str!("../prompts/escalation.txt");

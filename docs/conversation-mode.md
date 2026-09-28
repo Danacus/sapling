@@ -111,7 +111,7 @@ case, not an edge case. Three things follow, and each of them is load-bearing:
   character they know — and a single 主理人 in a line of romanization must not
   throw the alignment back onto the script.
 - That comparison is loosened: tone marks folded (`foldDiacritics` from
-  `$lib/validate`), case ignored, apostrophes dropped, and — as a whole-message
+  `$lib/text`), case ignored, apostrophes dropped, and — as a whole-message
   test in `same_romanization` (`crates/sapling-llm/src/text.rs`) — syllable spacing ignored, so a message that was
   right but spaced differently draws no correction at all. Where a syllable
   boundary falls in pinyin or romaji is a convention the learner cannot guess

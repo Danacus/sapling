@@ -3251,9 +3251,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "sapling-challenges"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.4.3",
+ "sapling-domain",
+ "sapling-srs",
+ "serde",
+ "serde_json",
+ "ts-rs",
+ "unicode-general-category",
+ "unicode-normalization",
+]
+
+[[package]]
 name = "sapling-db"
 version = "0.1.0"
 dependencies = [
+ "sapling-challenges",
  "sapling-domain",
  "sapling-srs",
  "sapling-store",
@@ -3303,8 +3318,8 @@ name = "sapling-llm"
 version = "0.1.0"
 dependencies = [
  "futures-util",
- "getrandom 0.4.3",
  "pollster",
+ "sapling-challenges",
  "sapling-domain",
  "schemars 1.2.2",
  "serde",
@@ -3328,6 +3343,7 @@ name = "sapling-protocol"
 version = "0.1.0"
 dependencies = [
  "pollster",
+ "sapling-challenges",
  "sapling-db",
  "sapling-domain",
  "sapling-import",
@@ -3378,6 +3394,7 @@ name = "sapling-wasm"
 version = "0.1.0"
 dependencies = [
  "js-sys",
+ "sapling-challenges",
  "sapling-db",
  "sapling-domain",
  "sapling-llm",
@@ -4669,6 +4686,12 @@ checksum = "96bd2f2237fe450fcd0a1d2f5f4e91711124f7857ba2e964247776ebeeb7b0c4"
 dependencies = [
  "unic-common",
 ]
+
+[[package]]
+name = "unicode-general-category"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b993bddc193ae5bd0d623b49ec06ac3e9312875fdae725a975c51db1cc1677f"
 
 [[package]]
 name = "unicode-ident"

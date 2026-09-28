@@ -25,7 +25,7 @@
  */
 
 import { readingKey } from '$lib/text';
-import { foldDiacritics } from '$lib/validate';
+import { foldDiacritics } from '$lib/text';
 import type { RomanizedToken, Romanizer } from './types';
 
 /** The two fields of a knowledge item this module reads. */

@@ -7,17 +7,16 @@
  * might this challenge say out loud at all*, which is what the session screen
  * pre-synthesizes. Those are presentation knowledge — nothing about them
  * touches the SRS, the database or the model — and each type's answers live
- * with that type, in `./types/<type>.ts`, next to its schema and its grading
- * rule.
+ * with that type, in `./types/<type>.ts`.
  *
  * What is left here is the door: five functions with the signatures the banner,
  * the session screen and the engine already import, each one lookup deep. The
  * exhaustiveness guarantee moved with the knowledge — the registry in
- * `./types/index.ts` is a mapped type over `ChallengeType`, so a seventh member
- * of the `Challenge` union fails `pnpm check` at the registry, once, instead of
+ * `./types/index.ts` is a mapped type over `ChallengeType`, so a new member of
+ * the `Challenge` union fails `pnpm check` at the registry, once, instead of
  * rendering blank.
  *
- * Still pure: zod, `$lib/types` and the string matchers, nothing else. No
+ * Still pure: `$lib/types` and the defs, nothing else. No
  * Svelte, no DB, no preferences — the learner's romanization toggle is the
  * *caller's* question, so {@link answerReading} reports what exists and the
  * banner decides whether to show it.

@@ -19,7 +19,7 @@
 	import { fade, fly, scale } from 'svelte/transition';
 
 	import { audioTextsFor, correctAnswerText } from '$lib/challenges/display';
-	import { presentationFor, type Presentation } from '$lib/challenges/serve/presentation';
+	import { presentationFor, type Presentation } from '$lib/challenges/serve';
 	import { STORED_TYPE_DEFS, storedDefFor } from '$lib/challenges/types';
 	import { getDailyActivity, getProfile, streakFrom } from '$lib/db';
 	import { isMockMode } from '$lib/llm';

@@ -21,7 +21,7 @@
  * inventing spaces the script does not have.
  */
 
-import { foldDiacritics } from '$lib/validate';
+import { foldDiacritics } from '$lib/text';
 import type { ConversationCorrection as Correction } from '$lib/db/generated/index';
 
 /** `same` is unchanged text, `removed` came out, `added` went in. */

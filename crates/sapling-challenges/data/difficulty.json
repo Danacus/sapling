@@ -1,0 +1,13 @@
+{
+	"promptWords": [1, 12],
+	"bases": {
+		"multiple-choice": 0,
+		"typed-translation": 0.25,
+		"spot-error": 0.45,
+		"cloze": 0.2,
+		"word-order": 0.2,
+		"multi-cloze": 0.45
+	},
+	"multiCloze": { "maxGaps": 4, "passageWords": [8, 24], "placementWeight": 0.65 },
+	"matchPairs": [2, 6]
+}

@@ -1,55 +1,35 @@
 /**
- * The contract one *stored* challenge type has to satisfy.
+ * The contract one *stored* challenge type has to satisfy on this side of the
+ * seam: how the session treats it (`reviewsSrs`, `pooled`) and the five
+ * presentation facts the feedback banner and the TTS warm-up ask of every
+ * challenge — *what was the right answer* (`correctAnswerText`), *is that
+ * answer in the target language* (`answerIsTargetLanguage`), *what is its
+ * Latin reading* (`answerReading`), *what should the learner hear*
+ * (`spokenAnswerFor`), *what might it say out loud at all* (`audioTexts`).
  *
- * A `StoredTypeDef` is the whole of what the app knows about a member of the
- * `Challenge` union once it has been generated: the zod schema that validates it
- * (`schema`), how a learner's answer to it is graded (`check`), how much it asks
- * of the learner (`demand`), how hard *this one* reads within that tier
- * (`difficulty`), and the five presentation facts the feedback banner
- * and the TTS warm-up ask of every challenge — *what was the right answer*
- * (`correctAnswerText`), *is that answer in the target language*
- * (`answerIsTargetLanguage`), *what is its Latin reading* (`answerReading`),
- * *what should the learner hear* (`spokenAnswerFor`), *what might it say out
- * loud at all* (`audioTexts`).
+ * Its shape, grading, demand and difficulty are Rust's
+ * (`crates/sapling-challenges`), whose exhaustive `match`es fail to compile
+ * for a member with no rule. The union is generated from Rust, and the registry
+ * here is a mapped type over `ChallengeType` — so a new member is a `pnpm
+ * check` error at the registry, naming the type that has no def, before it can
+ * render blank.
  *
- * Those facts used to live in three files and eight `switch`es. Adding a
- * type meant finding all of them, and the compiler only checked some. Now they
- * are one object per type, listed in `./index`, and the registry is a mapped type
- * over `ChallengeType` — so a seventh member of the union is a `pnpm check`
- * error at the registry, naming the type that has no def, before it can render
- * blank or grade wrong.
- *
- * Defs are leaves. They may import zod, `./primitives`, `./word-count`,
- * `$lib/types` and `$lib/validate` (the string matchers, which know nothing
- * about challenges), and must import neither `../display` nor anything under
- * `$lib/llm` — both are *downstream*: `./index` composes `challengeSchema` out
- * of these, and `../display` dispatches through them, so an import either way
- * would close a cycle. Nothing here touches Svelte, the DB
- * or the learner's preferences: a romanization toggle is the *caller's*
- * question, so {@link StoredTypeBehaviour.answerReading} reports what the
- * challenge has and the banner decides whether to show it.
+ * Defs are leaves: they import `$lib/types` and their own `./def`, nothing
+ * else. Nothing here touches Svelte, the DB or the learner's preferences: a
+ * romanization toggle is the *caller's* question, so
+ * {@link StoredTypeBehaviour.answerReading} reports what the challenge has and
+ * the banner decides whether to show it.
  */
 
-import type { z } from 'zod';
-import type { Challenge, ChallengeType, Verdict } from '$lib/types';
+import type { Challenge, ChallengeType } from '$lib/types';
 
 /** The union member tagged `T`. */
 export type ChallengeOf<T extends ChallengeType> = Extract<Challenge, { type: T }>;
 
 /**
- * How much productive recall a challenge asks of its words.
- *
- * An ordinal, not a score: `0 < 1 < 2` is the only arithmetic anyone should do
- * with it, and the one comparison `$lib/challenges/serve/progression` makes is
- * "is this
- * tier at or below what the weakest word can bear".
- */
-export type Demand = 0 | 1 | 2;
-
-/**
  * The half of a def the dispatchers call.
  *
- * Split out from {@link StoredTypeDef} so `../display` and `../check` can hold a
+ * Split out from {@link StoredTypeDef} so `../display` can hold a
  * def whose methods take the whole union: every member is written as a *method*
  * rather than a function-typed property, which is what makes
  * `StoredTypeDef<ClozeChallenge>` assignable to `StoredTypeBehaviour<Challenge>`
@@ -83,61 +63,6 @@ export interface StoredTypeBehaviour<C extends Challenge> {
 	 * currently answers them the same way.
 	 */
 	readonly pooled: boolean;
-	/**
-	 * Grades an answer to this type.
-	 *
-	 * Every type is gradeable from a single string, including the tapped ones:
-	 * the component reports what the learner assembled (the word-order sentence,
-	 * the spot-error token, an `"a::b"` pair) and the def compares it. Whether
-	 * near-misses earn `'almost'` is per type — a typed answer was spelled, a
-	 * tapped one was chosen from a closed set.
-	 */
-	check(challenge: C, answerGiven: string): Verdict;
-	/**
-	 * How much productive recall this challenge asks of its words, 0..2:
-	 * 0 recognition (read/choose), 1 constrained production (assemble from
-	 * given material), 2 free production (produce from nothing).
-	 * Session planning gates 1 and 2 behind word strength; see
-	 * `$lib/challenges/serve/progression`.
-	 *
-	 * A *fact about the question*, deliberately not a factor in
-	 * {@link check}: grading stays type-blind, because a verdict is FSRS's
-	 * evidence about the word and fudging it per type would corrupt the
-	 * schedule. What demand shapes is which question gets asked, never what
-	 * the answer to it is worth.
-	 *
-	 * Takes the whole challenge rather than being a constant per type because
-	 * two types straddle a tier: a cloze with a word bank is a choice and one
-	 * without is free recall, and typed translation is production in one
-	 * direction and comprehension in the other.
-	 */
-	demand(challenge: C): Demand;
-	/**
-	 * How hard *this particular* challenge is, 0..1, purely from its own stored
-	 * fields — a prompt's length, a word bank's size, a tile tray's size, a pair
-	 * count. Where {@link demand} says which of three coarse tiers a challenge
-	 * belongs to, this is the continuous knob within one: two `multiple-choice`
-	 * rows are both demand 0, but a four-word prompt and a one-word one are not
-	 * the same ask. `$lib/challenges/difficulty` scales this into the tier's own
-	 * span, so a lower-demand challenge can never outrank a higher-demand one
-	 * however hard its own fields make it read.
-	 *
-	 * **Comparable across types, not only within one.** The planner picks between
-	 * rows of different types for the same word, so two things are shared: every
-	 * prose-length knob is measured on `./primitives`' one
-	 * {@link LONGEST_PROMPT_WORDS} scale rather than a per-type ceiling, and each
-	 * type states a `base` — where the *format* stands among its tier-mates
-	 * before any field is read — that `withBase` folds its knobs in above. In the
-	 * recognition tier that ordering is multiple-choice, then typed translation
-	 * `toNative`, then spot-error; in constrained production a banked cloze and a
-	 * tile tray are deliberately level.
-	 *
-	 * Structural only — never the learner's history, never `now`. A word count
-	 * needs `$lib/text/segmentWords` (Chinese and Japanese have no spaces), which
-	 * is why `./word-count` exists as the one sibling a def may reach for beyond
-	 * zod, `$lib/types` and `$lib/validate`.
-	 */
-	difficulty(challenge: C): number;
 	/**
 	 * What the feedback banner tells the learner they should have answered.
 	 *
@@ -202,20 +127,14 @@ export interface StoredTypeBehaviour<C extends Challenge> {
 }
 
 /**
- * One stored challenge type, schema through presentation.
+ * One stored challenge type, as this side presents it.
  *
- * @typeParam C The union member this def handles — what its `schema` parses and
- * what every method above narrows to.
+ * @typeParam C The union member this def handles — what every method above
+ * narrows to.
  */
 export interface StoredTypeDef<C extends Challenge> extends StoredTypeBehaviour<C> {
-	/** The discriminator, identical to the one `schema` pins. */
+	/** The discriminator the registry keys this def by. */
 	readonly type: C['type'];
-	/**
-	 * This type's zod member. `./index`'s `challengeSchema` union is built by
-	 * projecting this field across the registry, so listing a def there is the
-	 * whole of adding a member to it.
-	 */
-	readonly schema: z.ZodType<C>;
 }
 
 /**
@@ -223,8 +142,8 @@ export interface StoredTypeDef<C extends Challenge> extends StoredTypeBehaviour<
  * checked against.
  *
  * A mapped type over `ChallengeType`, so it is *total* by construction: add a
- * member to the `Challenge` union in `$lib/types` and the registry object stops
- * typechecking until it has a def, with the missing key named in the error.
+ * member to the union in Rust and the registry object stops typechecking until
+ * it has a def, with the missing key named in the error.
  */
 export type StoredTypeRegistry = {
 	readonly [T in ChallengeType]: StoredTypeDef<ChallengeOf<T>>;

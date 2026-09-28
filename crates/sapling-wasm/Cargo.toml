@@ -2,13 +2,14 @@
 name = "sapling-wasm"
 version = "0.1.0"
 edition = "2021"
-description = "sapling-db and sapling-protocol behind wasm-bindgen: the persistence core the database Worker runs, over the browser's own sqlite-wasm, and the model calls the window runs over fetch."
+description = "sapling-db and sapling-protocol behind wasm-bindgen: the persistence core the database Worker runs, over the browser's own sqlite-wasm, and the model calls and challenge decisions the window runs."
 publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+sapling-challenges = { path = "../sapling-challenges" }
 sapling-db = { path = "../sapling-db" }
 sapling-domain = { path = "../sapling-domain" }
 sapling-llm = { path = "../sapling-llm" }

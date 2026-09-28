@@ -16,9 +16,9 @@ import type {
 	TokenUsage
 } from '$lib/db/generated/index';
 import type { Llm } from '$lib/db/generated/llm';
-import init, { llm } from '$lib/db/wasm/sapling_core';
+import { llm } from '$lib/db/wasm/sapling_core';
 import type { ToolHost } from '$lib/db/wasm/sapling_core';
-import wasmUrl from '$lib/db/wasm/sapling_core_bg.wasm?url';
+import { loadWindowCore } from '$lib/db/window-core';
 import { isMockMode } from './mock';
 import { recordUsage } from './usage';
 
@@ -71,8 +71,6 @@ function toolHost(ctx: ToolContext): ToolHost {
 	};
 }
 
-let ready: Promise<unknown> | undefined;
-
 function endpoint(): string | undefined {
 	if (isMockMode()) return undefined;
 	const live: Endpoint = {
@@ -115,8 +113,7 @@ export async function callLlm<M extends keyof Llm>(
 	args: Parameters<Llm[M]>[0],
 	opts: CallOptions = {}
 ): Promise<Awaited<ReturnType<Llm[M]>>> {
-	ready ??= init({ module_or_path: wasmUrl });
-	await ready;
+	await loadWindowCore();
 	let answer: string;
 	try {
 		const progress = opts.onProgress;

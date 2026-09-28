@@ -4,7 +4,7 @@
   The sentence is laid out as tappable word tiles. `challenge.meaning` is the
   native-language bridge, always written by generation; whether it is *shown*
   is   the session's serve-time call (`presentation.showHint`, from
-  `$lib/challenges/serve/presentation`), and some rows written by an earlier build lack it
+  `$lib/challenges/serve`), and some rows written by an earlier build lack it
   altogether. Without it the
   wrong word has to be judged from the target-language sentence alone, which
   is the harder, later-rung version of the same task.
@@ -22,8 +22,8 @@
 <script lang="ts">
 	import { choiceKeyAction } from '$lib/challenges/keyboard';
 	import type { ChallengeProps } from '$lib/challenges/props';
-	import { resolvedPresentation } from '$lib/challenges/serve/presentation';
-	import { readingSlot } from '$lib/challenges/serve/reading';
+	import { resolvedPresentation } from '$lib/challenges/serve';
+	import { readingSlot } from '$lib/challenges/readings';
 	import type { SpotErrorChallenge } from '$lib/types';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
 	import CheckButton from './blocks/CheckButton.svelte';

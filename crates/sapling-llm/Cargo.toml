@@ -6,6 +6,7 @@ description = "Sapling's model calls: the OpenRouter chat client over an injecte
 publish = false
 
 [dependencies]
+sapling-challenges = { path = "../sapling-challenges" }
 sapling-domain = { path = "../sapling-domain" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
@@ -13,8 +14,6 @@ schemars = "1"
 ts-rs = { version = "12.0.1", features = ["no-serde-warnings"] }
 # `buffered`: a lesson's requests run a few at a time, in order, on one thread.
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
-# Challenge ids and shuffles; `wasm_js` is crypto.getRandomValues.
-getrandom = { version = "0.4", features = ["wasm_js"] }
 # NFC keys and diacritic folding, as the TypeScript side normalizes.
 unicode-normalization = "0.1"
 

@@ -165,17 +165,22 @@ src/lib/srs/          Spaced repetition as the frontend sees it: grades, opaque
                       cards, timestamps. No FSRS — the core folds the card and
                       derives due/retrievability/strength onto every item it
                       returns; this reads those numbers and compares dates.
-src/lib/validate/     Fuzzy answer grading. Unicode-aware normalization plus
-                      Damerau-Levenshtein, producing correct/almost/wrong.
-src/lib/challenges/   The stored side of the challenge union: one module per
-                      type carrying its schema, its grading rule, its
-                      difficulty tier and its presentation facts. The registry
+crates/sapling-challenges/
+                      The challenge union and every decision about one: the
+                      stored shape, grading (Unicode-aware normalization plus
+                      Damerau-Levenshtein, producing correct/almost/wrong),
+                      difficulty, what a served challenge shows, and the
+                      session and top-up planners. Run on the window thread
+                      through the same wasm build.
+src/lib/challenges/   The challenge union as the screen presents it: one
+                      module per type carrying its presentation facts, and the
+                      synchronous seam into the Rust decisions. The registry
                       is a mapped type, so a new member fails typecheck.
 src/lib/llm/          OpenRouter client, batch generation, escalation, and the
                       offline mock. Stateless — touches no database.
-src/lib/session/      Session rules: planning over the pool, per-word
-                      difficulty progression, applying an answer. Owns every
-                      DB write during play.
+src/lib/session/      The session orchestrator: asks Rust for the plan and
+                      the top-up, applies an answer. Owns every DB write
+                      during play.
 src/lib/assistant/    The chat assistant: an LLM managing learner state through
                       tool calls, against an injectable ToolContext.
 src/lib/conversation/ Conversation mode on the same seam — scenario call,
@@ -224,8 +229,8 @@ locally.
   on a small model, and spent only when you press *Generate new lesson*; the
   start card nudges you when the pool runs low, but nothing generates behind
   your back.
-- **Local grading.** Every answer is graded in the browser by
-  `$lib/validate` — no judge call, no latency, no cost. The three-way verdict is
+- **Local grading.** Every answer is graded in the browser, by the Rust core's
+  matchers — no judge call, no latency, no cost. The three-way verdict is
   what lets "café" typed as "cafe" be accepted *and* corrected.
 - **Zero-token rounds.** Match-pairs challenges are assembled locally from words
   you already know. They cost nothing and are spliced into the queue at plan

@@ -6,11 +6,11 @@
 -->
 <script lang="ts">
 	import type { ChallengeProps } from '$lib/challenges/props';
-	import { resolvedPresentation, visibleBank } from '$lib/challenges/serve/presentation';
-	import { readingSlot, rubyFor, storedReading } from '$lib/challenges/serve/reading';
+	import { resolvedPresentation, visibleBank } from '$lib/challenges/serve';
+	import { readingSlot, rubyFor, storedReading } from '$lib/challenges/readings';
+	import { gradeMultiClozeAnswers } from '$lib/challenges/check';
 	import {
 		completedMultiClozePassage,
-		gradeMultiClozeAnswers,
 		serializeMultiClozeAnswers
 	} from '$lib/challenges/types/multi-cloze';
 	import type { MultiClozeChallenge } from '$lib/types';

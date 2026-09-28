@@ -1,16 +1,4 @@
 {
-	"stored": {
-		"type": "multiple-choice",
-		"direction": "toTarget",
-		"promptIsTarget": true
-	},
-	"plannable": {
-		"demand": 0,
-		"levels": [
-			2,
-			3
-		]
-	},
 	"promptSpec": "context-mc — target-language context shown, target text picked. {prompt:TargetText, correct:TargetText, distractors:[3 TargetText], instruction} e.g. {\"type\":\"context-mc\",\"prompt\":{\"text\":\"Terminamos de comer y queremos pagar, así que le pedimos al camarero...\",\"reading\":null},\"correct\":{\"text\":\"la cuenta\",\"reading\":null},\"distractors\":[{\"text\":\"la carta\",\"reading\":null},{\"text\":\"un café\",\"reading\":null},{\"text\":\"la propina\",\"reading\":null}],\"instruction\":\"Pick the word that fits\",\"itemIds\":[\"i2\"],\"explanation\":null}",
 	"rulesSpec": "- context-mc: \"prompt\" is a short target-language sentence or dialogue line with the fitting word or reply left for the learner to choose — never write the blank in, and never let native text appear anywhere in prompt, correct or distractors. Exactly one of the four options may fit the context; if two would both fit, rewrite the context. Distractors must be the same part of speech and plausible on their own, wrong only because the context rules them out.",
 	"paramsSpec": "- words: how many words the target-language context in \"prompt\" should have. A one-word context is not context.",

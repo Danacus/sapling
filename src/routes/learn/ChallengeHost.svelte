@@ -27,7 +27,7 @@
 <script lang="ts">
 	import { unhandledChallenge } from '$lib/challenges/display';
 	import type { AnswerEvent } from '$lib/challenges/props';
-	import type { Presentation } from '$lib/challenges/serve/presentation';
+	import type { Presentation } from '$lib/challenges/serve';
 	import type { RomanizedToken } from '$lib/romanize';
 	import type { Challenge } from '$lib/types';
 

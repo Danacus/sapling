@@ -13,7 +13,8 @@
 //! core `Error` carrying its message.
 //!
 //! [`llm`] is separate and needs no database: the window thread calls it with
-//! its own `fetch` as the transport.
+//! its own `fetch` as the transport. [`challenges`] likewise, synchronously,
+//! with the window's word segmenter.
 
 use std::future::Future;
 
@@ -333,5 +334,29 @@ pub async fn llm(
     }
     sapling_protocol::dispatch_llm_json(&llm, tools.as_ref(), &method, &args_json)
         .await
+        .map_err(|e| JsValue::from_str(&e))
+}
+
+/// One challenge decision: the method and its argument array as JSON, and
+/// `countWords(text) -> number`, the host's word segmenter (without one, the
+/// fallback that counts a no-space script by characters). Answers JSON; throws
+/// plain text for a malformed call.
+#[wasm_bindgen]
+pub fn challenges(
+    method: &str,
+    args_json: &str,
+    count_words: Option<Function>,
+) -> std::result::Result<String, JsValue> {
+    let host = |text: &str| -> usize {
+        count_words
+            .as_ref()
+            .and_then(|count| count.call1(&JsValue::NULL, &JsValue::from_str(text)).ok())
+            .and_then(|count| count.as_f64())
+            .map_or_else(
+                || sapling_challenges::text::fallback_word_count(text),
+                |count| count as usize,
+            )
+    };
+    sapling_protocol::dispatch_challenges_json(method, args_json, &host)
         .map_err(|e| JsValue::from_str(&e))
 }

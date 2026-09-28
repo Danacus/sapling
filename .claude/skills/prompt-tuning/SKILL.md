@@ -32,7 +32,7 @@ are under `crates/sapling-llm/`.
 | Retry fragment | its `correctiveSpec`, inside `prompts/lesson-corrective.txt` | one type |
 | Escalation gloss | its `escalationSpec`, spliced into `prompts/escalation.txt` | one type |
 | The shared preamble | `prompts/lesson.txt` (+ `lesson-instruction.txt`) | rules that name **no** type |
-| Which kind gets written, and how hard | **not prose at all** — `session/topup.ts` + each type's `params` | see below |
+| Which kind gets written, and how hard | **not prose at all** — `sapling-challenges`' `topup.rs` + each type's `params` | see below |
 
 If a rule names a type, it belongs in that def — never in the preamble. A rule
 two types need is written out in **both** (segmentation is spelled out in full in
@@ -46,27 +46,26 @@ spliced in automatically for a type whose wire struct has that field.
 
 ## Kind choice — and difficulty — is code, not prompt
 
-What gets written is decided by the session's top-up planner (`planTopUp` in
-`src/lib/session/topup.ts`) from what the pool is missing; the LLM layer plans
-nothing. **Do not write a prompt rule about which type to use, or add an
+What gets written is decided by the top-up planner (`plan_top_up` in
+`crates/sapling-challenges/src/topup.rs`) from what the pool is missing; the
+LLM layer plans nothing. **Do not write a prompt rule about which type to use, or add an
 accuracy threshold anywhere** — the first will be ignored at best and fight the
 brief at worst, and the second is a mechanism the design deliberately has none
 of (FSRS already lowers a missed word's strength, which lowers its rung, which
-shortens what is written about it). Everything below belongs in `topup.ts`,
-with a unit test in `topup.test.ts`:
+shortens what is written about it). Everything below belongs in `topup.rs`,
+with a `cargo test` beside it:
 
-- which kinds a rung may be asked (`demandForLevel` in
-  `$lib/challenges/serve/progression`, against each kind's `plannable.demand`
-  in `lessons/<type>.json`, read as `PLANNABLE_KINDS`)
+- which kinds a rung may be asked (`demand_for_level` in `ladder.rs`, against
+  each kind's `plannable` in `sapling-challenges`' `data/kinds.json`)
 - how many fresh challenges a word should have waiting (`WANT_PER_WORD`), and in
   which groups (a recognition kind and a production kind, or two recognition
   kinds before production is bearable)
-- what counts as coverage (rested, playable, bearable — `session/pool.ts`)
-- which kind wins among the missing ones (never-had first, then `rng`)
+- what counts as coverage (rested, playable, bearable — `pool.rs`)
+- which kind wins among the missing ones (never-had first, then a draw)
 - the top-up cap (`MAX_TOPUP_WANTS`)
 
 **Difficulty never reaches the model as a number on a scale.** The rung is the
-word's own `difficultyLevelOf`, on the want; what travels is that type's
+word's own (`Word::level`), on the want; what travels is that type's
 `params` at the rung — a sentence length, a tile count, on the item itself. To
 make challenges easier or harder for a type, edit its `params` ladder (and keep
 it monotone; `kinds.rs`' tests check). Do
@@ -94,7 +93,7 @@ should be — stated once, with no rung attached.
   voice block carries extra weight for that reason.
 - A rule phrased "across the batch" is not enforceable by the model — one request
   sees only its own words. Write it per reply, or make it a want-level decision
-  in `$lib/session/topup`.
+  in `topup.rs`.
 
 ## What the resolver will and won't rescue
 
@@ -124,7 +123,7 @@ common false negative here.
 ## Completion criteria
 
 - [ ] The edit is in the narrowest place that covers it (a type's `promptSpec`/`paramsSpec`/`rulesSpec` over the shared preamble)
-- [ ] Nothing about *which type to write* was added to the prompt (that is `session/topup.ts`), and no accuracy threshold was added anywhere
+- [ ] Nothing about *which type to write* was added to the prompt (that is `topup.rs`), and no accuracy threshold was added anywhere
 - [ ] No difficulty scale was reintroduced: difficulty is each type's `params`, in counts
 - [ ] Every type's prompt is still a static string, and names no other type
 - [ ] `pnpm core:test` and `pnpm test` pass (prompt composition, fixtures, the wasm wiring test)

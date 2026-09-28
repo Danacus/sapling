@@ -1,0 +1,11 @@
+{
+	"floors": { "level2": 0.15, "level3": 0.3, "level4": 0.45, "level5": 0.7 },
+	"hintCeilingLevel": 2,
+	"clozeBank": [3, 4, 5, 6, 0],
+	"multiClozeDistractors": [0, 0, 0, 1, 2],
+	"wordOrderDistractors": [0, 0, 1, 2, 3],
+	"matchPairs": [3, 4, 5, 6, 6],
+	"unsizedMatchPairs": [4, 5],
+	"hideReading": { "floor": 0.35, "ceiling": 0.85 },
+	"listeningShare": 0.5
+}

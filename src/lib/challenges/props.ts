@@ -16,7 +16,7 @@
  */
 
 import type { RomanizedToken } from '$lib/romanize';
-import type { Presentation } from '$lib/challenges/serve/presentation';
+import type { Presentation } from '$lib/challenges/serve';
 import type { Challenge, Verdict } from '$lib/types';
 
 /**
@@ -71,7 +71,7 @@ export interface ChallengeProps<C extends Challenge> {
 	/**
 	 * Everything decided at serve time — the hint, the bank size, the
 	 * distractor-tile count and the readings — built once per served challenge by
-	 * `$lib/challenges/serve/presentation`'s `presentationFor`. A component
+	 * `$lib/challenges/serve`'s `presentationFor`. A component
 	 * resolves it with that module's `resolvedPresentation`, which fills the
 	 * bare-render defaults, and reads `readings` off the resolved object rather
 	 * than taking a separate prop.

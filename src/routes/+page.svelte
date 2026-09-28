@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 
-	import { maturityOf, type Maturity } from '$lib/challenges/serve/progression';
+	import { maturityOf, type Maturity } from '$lib/challenges/serve';
 	import {
 		getAllItems,
 		getConversations,

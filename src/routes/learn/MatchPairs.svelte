@@ -1,7 +1,7 @@
 <!--
   Match pairs: the free round.
 
-  These challenges are built locally by `makeMatchPairsChallenge` out of words
+  These challenges are built locally (`crates/sapling-challenges`' `match_pairs.rs`) out of words
   the learner already knows — zero tokens, zero network. They exist to break up
   the rhythm of a session and to give the learner somewhere to breathe.
 
@@ -26,8 +26,8 @@
 -->
 <script lang="ts">
 	import type { ChallengeProps } from '$lib/challenges/props';
-	import { resolvedPresentation } from '$lib/challenges/serve/presentation';
-	import { readingSlot, storedReading } from '$lib/challenges/serve/reading';
+	import { resolvedPresentation } from '$lib/challenges/serve';
+	import { readingSlot, storedReading } from '$lib/challenges/readings';
 	import { speak } from '$lib/tts';
 	import type { MatchPairsChallenge } from '$lib/types';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';

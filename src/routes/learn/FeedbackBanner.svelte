@@ -17,7 +17,7 @@
 	import { fly, slide } from 'svelte/transition';
 
 	import { answerReading, spokenAnswerFor } from '$lib/challenges/display';
-	import type { Presentation } from '$lib/challenges/serve/presentation';
+	import type { Presentation } from '$lib/challenges/serve';
 	import { storedDefFor } from '$lib/challenges/types';
 	import { getEscalation, LlmError } from '$lib/llm';
 	import { motionMs } from '$lib/session/motion';

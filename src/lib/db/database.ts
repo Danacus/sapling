@@ -6,31 +6,20 @@
  * moved to the facts log (`crates/sapling-db/src/schema.rs`).
  */
 
+import type { PoolRow } from './generated/index';
 import type { Challenge } from '$lib/types';
 
 /**
- * Stored challenge: the domain `Challenge` union plus pool bookkeeping.
- *
- * The union is intersected rather than extended so the `type` discriminant
- * still narrows after a read.
+ * Stored challenge: the domain `Challenge` union plus pool bookkeeping —
+ * `generatedAt`, `timesServed`, `lastServedAt` (`null` while never served),
+ * `reported` and `topic?`. Generated from `sapling-challenges`' `PoolRow`, an
+ * intersection, so the `type` discriminant still narrows after a read.
  *
  * Every challenge ever generated stays in the pool — answering one does not
- * consume it, it only stamps it. The session planner (`planSession` in
- * `$lib/session/engine`) reads the whole pool and decides what is worth playing
- * again from these four fields.
+ * consume it, it only stamps it — and the session planner decides what is
+ * worth playing again from these fields.
  */
-export type ChallengeRow = Challenge & {
-	/** Epoch milliseconds the batch this came from was persisted. */
-	generatedAt: number;
-	/** How many times the learner has actually answered it. */
-	timesServed: number;
-	/** Epoch milliseconds of the last answer, or `null` while never served. */
-	lastServedAt: number | null;
-	/** The learner flagged it as broken; excluded from the pool forever. */
-	reported: boolean;
-	/** Generation topic, when the batch was generated with one. */
-	topic?: string;
-};
+export type ChallengeRow = PoolRow;
 
 /**
  * Sheds the bookkeeping above, leaving the immutable domain `Challenge`.

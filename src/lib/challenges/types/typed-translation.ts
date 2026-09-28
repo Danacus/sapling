@@ -7,32 +7,8 @@
  * `'almost'` rather than a red screen.
  */
 
-import { z } from 'zod';
 import type { TypedTranslationChallenge } from '$lib/types';
-import { checkAnswer } from '$lib/validate';
 import type { StoredTypeDef } from './def';
-import { lengthKnob, nonEmpty, storedBase, withBase } from './primitives';
-import { wordCount } from './word-count';
-
-/**
- * Above `multiple-choice` and below `spot-error` in the recognition tier, and
- * the floor of the free-production tier in the other direction. Typing a
- * translation asks the learner to render the whole prompt rather than pick one
- * of four readings of it, so at equal length it is more work than a
- * multiple-choice row; it is less than a `spot-error`, which asks them to hold
- * the whole sentence and judge every word in it.
- */
-const BASE = 0.25;
-
-export const typedTranslationChallengeSchema = z.object({
-	type: z.literal('typed-translation'),
-	prompt: nonEmpty,
-	promptRomanization: z.string().optional(),
-	acceptedAnswers: z.array(z.string()).min(1),
-	/** Reading of `acceptedAnswers[0]`; toTarget only. */
-	answerRomanization: z.string().optional(),
-	...storedBase
-});
 
 /** The canonical accepted answer — `''` for a row that carries none. */
 function canonicalAnswer(challenge: TypedTranslationChallenge): string {
@@ -41,27 +17,8 @@ function canonicalAnswer(challenge: TypedTranslationChallenge): string {
 
 export const typedTranslationStoredDef = {
 	type: 'typed-translation',
-	schema: typedTranslationChallengeSchema,
 	reviewsSrs: true,
 	pooled: true,
-
-	check(challenge, answerGiven) {
-		return checkAnswer(answerGiven, challenge.acceptedAnswers);
-	},
-
-	// The hardest thing the app asks — but only one way round. `toTarget` is free
-	// production: a whole target sentence written from memory, with no options, no
-	// tiles and no bank. `toNative` is comprehension wearing a keyboard; the
-	// typing happens in the learner's own language, so it demands nothing of their
-	// target-language recall and belongs with the recognition tier.
-	demand(challenge) {
-		return challenge.direction === 'toTarget' ? 2 : 0;
-	},
-
-	// The one knob either direction has: how much there is to translate.
-	difficulty(challenge) {
-		return withBase(BASE, lengthKnob(wordCount(challenge.prompt)));
-	},
 
 	correctAnswerText(challenge) {
 		return challenge.acceptedAnswers[0] ?? '';

@@ -1,24 +1,20 @@
 /**
- * Unit tests for the pure half of the session engine.
+ * Unit tests for the session engine's pure half, through the wasm core.
  *
+ * The planners are Rust's and tested there (`crates/sapling-challenges`'
+ * `session.rs` and `topup.rs`); what is left here is the seam — positions
+ * mapped back to the stored rows, the batch arguments built around the
+ * wants — plus the session accounting, and a mock top-up played end to end.
  * The database-touching half (`applyResult`, `generateChallenges`,
- * `startSession`) needs a live store, which this file does not set up, so it
- * is covered by the same "thin wrapper, no logic" rule as
- * `src/lib/db/repositories.ts`:
- * everything worth asserting was pushed down into `planSession` /
- * `planRefill` / `sessionSummary`, which are exercised here.
- *
- * The one exception is {@link planRefill}'s output being fed to the real
- * `getBatch` in mock mode (no API key in node ⇒ mock automatically), which
- * smoke-tests the whole generate → resolve path, through the wasm core,
- * against a real plan.
+ * `startSession`) is a thin wrapper, like `src/lib/db/repositories.ts`.
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import type { ChallengeRow } from '$lib/db';
+import { challengeOf } from '$lib/db';
 import { loadWasmCore } from '$lib/db/backend.testing';
-import { getBatch, isMockMode, kindKey } from '$lib/llm';
+import { getBatch, isMockMode } from '$lib/llm';
 import type { ProgressStep } from '$lib/llm';
 import { gradeFromResult, Grade } from '$lib/srs';
 import type {
@@ -32,17 +28,12 @@ import type {
 	WordOrderChallenge
 } from '$lib/types';
 import {
-	BATCH_TARGET,
-	LISTENING_SHARE,
-	MATCH_PAIRS_EVERY,
-	RESERVE_GAP,
 	SESSION_LENGTH,
 	interleaveMatchRounds,
 	isListeningChallenge,
 	planRefill,
 	planSession,
 	sessionSummary,
-	smoothDemand,
 	spokenAnswerFor,
 	type SessionAnswer
 } from './engine';
@@ -106,27 +97,6 @@ function row(id: string, itemIds: string[], over: Partial<ChallengeRow> = {}): C
 	} as ChallengeRow;
 }
 
-/** An explicit legacy production row, retained for retirement and gating tests. */
-function targetTranslationRow(
-	id: string,
-	itemIds: string[],
-	over: Partial<ChallengeRow> = {}
-): ChallengeRow {
-	return {
-		id,
-		type: 'typed-translation',
-		direction: 'toTarget',
-		prompt: `prompt-${id}`,
-		acceptedAnswers: ['a'],
-		itemIds,
-		generatedAt: NOW - DAY,
-		timesServed: 0,
-		lastServedAt: null,
-		reported: false,
-		...over
-	} as ChallengeRow;
-}
-
 /** An active free-production row whose kind is available at the top rung. */
 function freeProductionRow(
 	id: string,
@@ -146,11 +116,6 @@ function freeProductionRow(
 		reported: false,
 		...over
 	} as ChallengeRow;
-}
-
-/** A pooled challenge served recently enough that it is still resting. */
-function resting(id: string, itemIds: string[], servedAgo: number): ChallengeRow {
-	return row(id, itemIds, { timesServed: 1, lastServedAt: NOW - servedAgo });
 }
 
 /**
@@ -189,83 +154,20 @@ function strongItem(id: string, dueOffset: number): KnowledgeItem {
 	return atStrength(item(id, dueOffset), 0.9);
 }
 
-/**
- * A word partway up level 1: strength 0.10, above the band's centre (0.075) and
- * below its ceiling (`CONSTRAINED_PRODUCTION_FLOOR`, 0.15). Exactly where
- * matching a challenge against the word's *raw* strength used to degenerate —
- * every tier-0 row sits below 0.10, so the tier's hardest was always the
- * nearest.
- */
-function midLevelOneItem(id: string, dueOffset: number): KnowledgeItem {
-	return atStrength(item(id, dueOffset), 0.1);
-}
-
 const ids = (challenges: Challenge[]) => challenges.map((challenge) => challenge.id);
-
-/** A demand-0 (recognition) challenge, for {@link smoothDemand}. */
-function demand0(id: string): MultipleChoiceChallenge {
-	return {
-		id,
-		type: 'multiple-choice',
-		direction: 'toNative',
-		prompt: `prompt-${id}`,
-		options: ['a', 'b', 'c', 'd'],
-		correctIndex: 0,
-		itemIds: [id]
-	};
-}
-
-/** A demand-1 (constrained production) challenge, for {@link smoothDemand}. */
-function demand1(id: string): WordOrderChallenge {
-	return {
-		id,
-		type: 'word-order',
-		direction: 'toTarget',
-		prompt: `prompt-${id}`,
-		tiles: ['a', 'b'],
-		answerTokens: ['a', 'b'],
-		answer: 'a b',
-		itemIds: [id]
-	};
-}
-
-/** A demand-2 (free production) challenge, for {@link smoothDemand}. */
-function demand2(id: string): TypedTranslationChallenge {
-	return {
-		id,
-		type: 'typed-translation',
-		direction: 'toTarget',
-		prompt: `prompt-${id}`,
-		acceptedAnswers: ['a'],
-		itemIds: [id]
-	};
-}
 
 /* -------------------------------------------------------------------------- */
 
 describe('interleaveMatchRounds', () => {
-	/** `n` generated challenges, distinguishable by id. */
 	const generated = (n: number): Challenge[] =>
-		Array.from({ length: n }, (_, i) => row(`c${i}`, ['k0']) as Challenge);
-
+		Array.from({ length: n }, (_, i) => challengeOf(row(`c${i}`, ['k0'])));
 	const known = (n: number) => Array.from({ length: n }, (_, i) => item(`k${i}`, -DAY));
 
-	const types = (challenges: Challenge[]) => challenges.map((challenge) => challenge.type);
+	it('keeps the plan in order with a round after every fourth early challenge, never last', () => {
+		const plan = generated(9);
+		const queue = interleaveMatchRounds(plan, known(6), 1);
 
-	/** A deterministic `[0,1)` sequence, so two rounds get *different* draws. */
-	function lcg(seed: number): () => number {
-		let state = seed;
-		return () => {
-			state = (state * 1664525 + 1013904223) % 4294967296;
-			return state / 4294967296;
-		};
-	}
-
-	it('slots a round in after every Nth challenge', () => {
-		const queue = interleaveMatchRounds(generated(9), known(6));
-
-		expect(queue).toHaveLength(11);
-		expect(types(queue).map((type) => type === 'match-pairs')).toEqual([
+		expect(queue.map((challenge) => challenge.type === 'match-pairs')).toEqual([
 			false,
 			false,
 			false,
@@ -278,104 +180,8 @@ describe('interleaveMatchRounds', () => {
 			true,
 			false
 		]);
-		// The generated challenges keep their planned order around the rounds.
-		expect(
-			queue.filter((challenge) => challenge.type !== 'match-pairs').map((challenge) => challenge.id)
-		).toEqual(ids(generated(9)));
-	});
-
-	it('never ends a session on free filler', () => {
-		// An exact multiple of N: the last splice point is the last challenge.
-		const queue = interleaveMatchRounds(generated(2 * MATCH_PAIRS_EVERY), known(6));
-
-		expect(queue).toHaveLength(2 * MATCH_PAIRS_EVERY + 1);
-		expect(queue.at(-1)?.type).not.toBe('match-pairs');
-		expect(queue[MATCH_PAIRS_EVERY].type).toBe('match-pairs');
-	});
-
-	it('returns an empty queue for an empty plan', () => {
-		expect(interleaveMatchRounds([], known(6))).toEqual([]);
-	});
-
-	it('does not interrupt a mature-only production plan with match pairs', () => {
-		const mature = Array.from({ length: 9 }, (_, i) =>
-			row(`m${i}`, [`k${i}`], { type: 'word-order' })
-		) as Challenge[];
-		const matureItems = Array.from({ length: 9 }, (_, i) => strongItem(`k${i}`, -DAY));
-
-		expect(interleaveMatchRounds(mature, matureItems)).toEqual(mature);
-	});
-
-	it('leaves the plan alone when a round cannot be built', () => {
-		// Below the ladder's own floor of three usable items:
-		// `makeMatchPairsChallenge` declines, and with static items that means no
-		// round anywhere.
-		const plan = generated(9);
-		expect(interleaveMatchRounds(plan, known(2))).toEqual(plan);
-	});
-
-	it('builds each round independently, and deterministically from its rng', () => {
-		const queue = interleaveMatchRounds(generated(9), known(8), lcg(1));
-		const rounds = queue.filter((challenge) => challenge.type === 'match-pairs');
-
-		expect(rounds).toHaveLength(2);
-		expect(rounds[0].id).not.toBe(rounds[1].id);
-		// Fresh shuffle per splice point: the second round is not a copy of the first.
-		expect(rounds[0].itemIds).not.toEqual(rounds[1].itemIds);
-
-		const again = interleaveMatchRounds(generated(9), known(8), lcg(1));
-		expect(
-			again
-				.filter((challenge) => challenge.type === 'match-pairs')
-				.map((challenge) => challenge.itemIds)
-		).toEqual(rounds.map((challenge) => challenge.itemIds));
-	});
-
-	/**
-	 * The rounds are the one part of a session nobody pays for. These pin the
-	 * ladder reaching them, and — more importantly — pin *which* rung a round of
-	 * mixed vocabulary is written at.
-	 */
-	describe('sizing off the ladder', () => {
-		const pairsOf = (queue: Challenge[]) =>
-			queue
-				.filter((challenge) => challenge.type === 'match-pairs')
-				.map((challenge) => (challenge.type === 'match-pairs' ? challenge.pairs.length : 0));
-
-		it('gives new words a three-pair breather', () => {
-			// `item` sits at strength 0, so every word is rung 1.
-			expect(pairsOf(interleaveMatchRounds(generated(9), known(8)))).toEqual([3, 3]);
-		});
-
-		it('gives a vocabulary the learner owns the full six', () => {
-			const strong = Array.from({ length: 8 }, (_, i) => strongItem(`k${i}`, -DAY));
-			expect(pairsOf(interleaveMatchRounds(generated(9), strong))).toEqual([]);
-		});
-
-		it('takes the median rung, so one mature word cannot size the round', () => {
-			// Seven brand-new words and one the learner owns outright: the median is
-			// still rung 1, and the round is still the three-pair breather.
-			const mixed = [
-				...Array.from({ length: 7 }, (_, i) => item(`k${i}`, -DAY)),
-				strongItem('k7', -DAY)
-			];
-			expect(pairsOf(interleaveMatchRounds(generated(5), mixed))).toEqual([3]);
-		});
-
-		it('follows the median up when most of the vocabulary is strong', () => {
-			// The mirror image: one new word among seven strong ones moves nothing.
-			const mixed = [
-				...Array.from({ length: 7 }, (_, i) => strongItem(`k${i}`, -DAY)),
-				item('k7', -DAY)
-			];
-			expect(pairsOf(interleaveMatchRounds(generated(5), mixed))).toEqual([]);
-		});
-
-		it('builds a smaller round rather than none when the vocabulary is short', () => {
-			// Rung 5 asks for six pairs and there are four words to make them from.
-			const strong = Array.from({ length: 4 }, (_, i) => strongItem(`k${i}`, -DAY));
-			expect(pairsOf(interleaveMatchRounds(generated(5), strong))).toEqual([]);
-		});
+		expect(queue.filter((challenge) => challenge.type !== 'match-pairs')).toEqual(plan);
+		expect(interleaveMatchRounds(plan, known(6), 1)).toEqual(queue);
 	});
 });
 
@@ -501,97 +307,21 @@ describe('spokenAnswerFor', () => {
 });
 
 describe('isListeningChallenge', () => {
-	/** A recognize-MC row: target text shown, native meaning picked. */
-	function recognize(id: string, prompt = '菜单'): MultipleChoiceChallenge {
-		return {
+	it('takes recognize-style multiple choice when the learner asked for it', () => {
+		const recognize = (id: string): MultipleChoiceChallenge => ({
 			id,
 			type: 'multiple-choice',
 			direction: 'toNative',
-			prompt,
+			prompt: '菜单',
 			options: ['the menu', 'the bill', 'the tea', 'the water'],
 			correctIndex: 0,
 			itemIds: ['i1']
-		};
-	}
-
-	/** Ids are only hashed, so any spread of them samples the share fairly. */
-	const ids = Array.from({ length: 400 }, (_, i) => `challenge-${i}`);
-
-	it('is off entirely when the learner switched it off', () => {
+		});
+		const ids = Array.from({ length: 40 }, (_, i) => `challenge-${i}`);
 		expect(ids.some((id) => isListeningChallenge(recognize(id), false))).toBe(false);
-	});
-
-	it('takes only recognize-style multiple choice: nothing else has a target prompt', () => {
-		const ineligible: Challenge[] = [
-			{
-				id: 'c1',
-				type: 'multiple-choice',
-				// The prompt is the learner's own language here; playing it teaches nothing.
-				direction: 'toTarget',
-				prompt: 'the menu',
-				options: ['菜单', '筷子', '茶', '水'],
-				correctIndex: 0,
-				itemIds: ['i1']
-			},
-			{
-				id: 'c2',
-				type: 'cloze',
-				direction: 'toTarget',
-				sentence: '请给我一份___。',
-				acceptedAnswers: ['菜单'],
-				translationHint: 'A menu, please.',
-				itemIds: ['i1']
-			},
-			{
-				id: 'c3',
-				type: 'typed-translation',
-				direction: 'toNative',
-				prompt: '买单',
-				acceptedAnswers: ['to pay the bill'],
-				itemIds: ['i1']
-			},
-			{
-				id: 'c4',
-				type: 'match-pairs',
-				direction: 'toNative',
-				pairs: [
-					{ a: '菜单', b: 'the menu' },
-					{ a: '买单', b: 'to pay the bill' }
-				],
-				itemIds: ['i1']
-			}
-		];
-
-		for (const challenge of ineligible) {
-			// Tried under every id, so a hash that happens to fall in range cannot
-			// make an ineligible type look eligible.
-			for (const id of ids.slice(0, 40)) {
-				expect(isListeningChallenge({ ...challenge, id }, true)).toBe(false);
-			}
-		}
-	});
-
-	it('takes roughly the configured share of eligible challenges', () => {
 		const taken = ids.filter((id) => isListeningChallenge(recognize(id), true)).length;
-		const share = taken / ids.length;
-		// Neither "always" nor "never": a session mixes reading and listening.
-		expect(share).toBeGreaterThan(LISTENING_SHARE - 0.1);
-		expect(share).toBeLessThan(LISTENING_SHARE + 0.1);
-	});
-
-	it('decides the same way every time for the same challenge', () => {
-		// A pooled challenge comes back round; it must not flip presentation
-		// between sessions or between devices.
-		for (const id of ids.slice(0, 50)) {
-			const first = isListeningChallenge(recognize(id), true);
-			expect(isListeningChallenge(recognize(id), true)).toBe(first);
-		}
-	});
-
-	it('never hides a prompt that has nothing to say', () => {
-		for (const id of ids.slice(0, 40)) {
-			expect(isListeningChallenge(recognize(id, '   '), true)).toBe(false);
-		}
+		expect(taken).toBeGreaterThan(0);
+		expect(taken).toBeLessThan(ids.length);
 	});
 });
 
@@ -632,637 +362,33 @@ describe('sessionSummary', () => {
 /* -------------------------------------------------------------------------- */
 
 describe('planSession', () => {
-	it('drops retired target-translation rows from normal serving', () => {
-		const items = [item('due', -DAY)];
-		const legacy = targetTranslationRow('legacy', ['due']);
-		const active = recognition('active', ['due']);
-
-		expect(ids(planSession([legacy, active], items, NOW, { target: 2 }))).toEqual(['active']);
-	});
-
-	it('returns a short plan when due material is above the word level', () => {
-		const items = [item('due', -DAY)];
-		const aboveLevel: ChallengeRow = {
-			id: 'word-order',
-			type: 'word-order',
-			direction: 'toTarget',
-			prompt: 'p',
-			tiles: ['a', 'b'],
-			answerTokens: ['a', 'b'],
-			answer: 'a b',
-			itemIds: ['due'],
-			generatedAt: NOW,
-			timesServed: 0,
-			lastServedAt: null,
-			reported: false
-		};
-
-		expect(planSession([aboveLevel], items, NOW, { target: 1 })).toEqual([]);
-	});
-
-	it('serves a due word before a brand-new challenge about a word that is not due', () => {
-		const items = [item('due', -5 * DAY), item('fine', +5 * DAY)];
-		const pool = [
-			row('fresh', ['fine'], { generatedAt: NOW }),
-			row('old-but-due', ['due'], { generatedAt: NOW - 30 * DAY })
-		];
-
-		// The load-bearing case: a global freshness weight would put `fresh`
-		// first here, and every new batch would then bury spaced repetition.
-		expect(ids(planSession(pool, items, NOW, { target: 1 }))).toEqual(['old-but-due']);
-	});
-
-	it('orders due items most-overdue first', () => {
+	it('serves due words first, as the challenges they were stored as', () => {
 		const items = [item('a', -DAY), item('b', -10 * DAY), item('c', -3 * DAY)];
-		const pool = [row('ca', ['a']), row('cb', ['b']), row('cc', ['c'])];
+		const pool = [row('ca', ['a'], { topic: 'at the market' }), row('cb', ['b']), row('cc', ['c'])];
+		const planned = planSession(pool, items, NOW, { target: 3 });
 
-		expect(ids(planSession(pool, items, NOW, { target: 3 }))).toEqual(['cb', 'cc', 'ca']);
+		expect(ids(planned)).toEqual(['cb', 'cc', 'ca']);
+		expect(planned[2]).toEqual(challengeOf(pool[0]));
+		expect(planned[2]).not.toHaveProperty('topic');
+		expect(planned[2]).not.toHaveProperty('lastServedAt');
 	});
 
-	it('prefers a never-served challenge over a served one for the same word', () => {
+	it('respects the target and the ceiling, and never serves what a word cannot bear', () => {
 		const items = [item('due', -DAY)];
-		const pool = [
-			row('served', ['due'], { timesServed: 1, lastServedAt: NOW - 10 * DAY }),
-			row('unseen', ['due'])
-		];
-
-		expect(ids(planSession(pool, items, NOW, { target: 1 }))).toEqual(['unseen']);
-	});
-
-	it('breaks ties between never-served challenges by newest generation', () => {
-		const items = [item('due', -DAY)];
-		const pool = [
-			row('older', ['due'], { generatedAt: NOW - 2 * DAY }),
-			row('newest', ['due'], { generatedAt: NOW })
-		];
-
-		expect(ids(planSession(pool, items, NOW, { target: 1 }))).toEqual(['newest']);
-	});
-
-	it('recycles the least recently served challenge first', () => {
-		const items = [item('due', -DAY)];
-		const pool = [
-			row('recent', ['due'], { timesServed: 2, lastServedAt: NOW - 4 * DAY }),
-			row('stale', ['due'], { timesServed: 5, lastServedAt: NOW - 30 * DAY })
-		];
-
-		expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['stale', 'recent']);
-	});
-
-	it('prefers a rested challenge over one still inside the gap', () => {
-		const items = [item('due', -DAY)];
-		const tooSoon = row('hot', ['due'], { timesServed: 1, lastServedAt: NOW - RESERVE_GAP + 1 });
-		const rested = row('rested', ['due'], { timesServed: 1, lastServedAt: NOW - RESERVE_GAP });
-
-		// The rested row leads: the second pass is rested-only, so the resting one
-		// is fallback material, never a second angle. It is only reached at all
-		// because the last-resort filler would rather re-run it than end early.
-		expect(ids(planSession([tooSoon, rested], items, NOW))).toEqual(['rested', 'hot']);
-	});
-
-	describe('the rest gap yields to a due word', () => {
-		it('serves a resting challenge when a due word has no rested one', () => {
-			// The reported bug: two hard days stamp the whole pool, the young cards
-			// come due within hours, and a hard gap leaves the learner with words due
-			// and nothing playable.
-			const items = [item('due', -DAY)];
-			const pool = [resting('hot', ['due'], DAY)];
-
-			expect(ids(planSession(pool, items, NOW))).toEqual(['hot']);
-		});
-
-		it('falls back to the least recently served of them', () => {
-			const items = [item('due', -DAY)];
-			const pool = [
-				resting('yesterday', ['due'], DAY),
-				resting('two-days', ['due'], 2 * DAY),
-				resting('an-hour', ['due'], 60 * 60 * 1000)
-			];
-
-			expect(ids(planSession(pool, items, NOW, { target: 1 }))).toEqual(['two-days']);
-		});
-
-		it('gives every due word one before any of them gets a second', () => {
-			const items = [item('a', -2 * DAY), item('b', -DAY)];
-			const pool = [
-				resting('a1', ['a'], 2 * DAY),
-				resting('a2', ['a'], DAY),
-				resting('b1', ['b'], DAY)
-			];
-
-			// The walk spends the gap once per word, so `a` cannot take a second
-			// angle out of it while `b` still owes its first. `a2` does come back —
-			// but only from the last-resort filler, behind every other word's turn.
-			expect(ids(planSession(pool, items, NOW, { target: 4 }))).toEqual(['a1', 'b1', 'a2']);
-		});
-
-		it('keeps resting material behind every rested row, due or not', () => {
-			const items = [item('due', -DAY), item('later', +5 * DAY)];
-			const pool = [
-				row('due-rested', ['due']),
-				resting('later-hot', ['later'], DAY),
-				resting('due-hot', ['due'], DAY)
-			];
-
-			// `due` takes its rested row, and `later` may not bend the gap in the
-			// walk at all. Both resting rows are still reachable — last, from the
-			// filler, in serve order — because a re-read beats a short session.
-			expect(ids(planSession(pool, items, NOW, { target: 4 }))).toEqual([
-				'due-rested',
-				'due-hot',
-				'later-hot'
-			]);
-		});
-
-		it('still refuses reported rows and rows whose words are gone', () => {
-			const items = [item('due', -DAY)];
-			const pool = [
-				row('flagged', ['due'], { timesServed: 1, lastServedAt: NOW - DAY, reported: true }),
-				resting('orphan', ['due', 'deleted'], DAY),
-				resting('itemless', [], DAY)
-			];
-
-			// Playability is the absolute half of eligibility: the gap yields, this
-			// never does.
-			expect(ids(planSession(pool, items, NOW))).toEqual([]);
-		});
-
-		it('spends the gap for a never-reviewed word exactly as for a reviewed one', () => {
-			const items = [item('never', -DAY), item('seen', -DAY, [{ at: NOW - DAY, grade: 3 }])];
-			const pool = [resting('c-never', ['never'], DAY), resting('c-seen', ['seen'], DAY)];
-
-			// A word the learner picked up in conversation and has never been drilled
-			// on is due work like any other; nothing about a plan sorts on history.
-			expect(ids(planSession(pool, items, NOW)).sort()).toEqual(['c-never', 'c-seen']);
-		});
-	});
-
-	describe('a challenge a word can bear beats one it cannot', () => {
-		// `recognition` is demand 0 and `freeProductionRow` is an active demand-2
-		// cloze; `item` builds a fresh card at strength 0 and `strongItem` one
-		// past FREE_PRODUCTION_FLOOR. See `./progression`.
-
-		it('gives a weak due word the recognition challenge over the production one', () => {
-			const items = [item('due', -DAY)];
-			const pool = [
-				// Freshness would take production first: it is the newer
-				// never-served row. Bearability outranks freshness within the bucket.
-				freeProductionRow('typed', ['due'], { generatedAt: NOW }),
-				recognition('choice', ['due'], { generatedAt: NOW - 5 * DAY })
-			];
-
-			expect(ids(planSession(pool, items, NOW, { target: 1 }))).toEqual(['choice']);
-			// Above-level production is excluded instead of being used as fallback.
-			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['choice']);
-		});
-
-		it('still serves the production challenge when it is the only one', () => {
-			// An above-level due row produces a shortfall so the missing rung can be
-			// generated.
-			const items = [item('due', -DAY)];
-			const pool = [freeProductionRow('typed', ['due'], { generatedAt: NOW })];
-
-			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual([]);
-		});
-
-		it('prefers the closer-fitting challenge over the fresher one for a word that can bear both', () => {
-			// Both bearable for a strong item, so bearability alone has nothing to
-			// prefer — but they are not equally good a fit: a free-production cloze
-			// sits far closer to this word's own strength
-			// (~0.7) than a two-word multiple-choice (difficulty ~0.02). Freshness
-			// would pick `choice` (the newer, never-served row); fit overrides it.
-			const items = [atStrength(item('due', -DAY), 0.2)];
-			const pool = [
-				recognition('choice', ['due'], { generatedAt: NOW }),
-				freeProductionRow('typed', ['due'], {
-					generatedAt: NOW - 5 * DAY,
-					wordBank: ['corrí', 'fui', 'comí']
-				})
-			];
-
-			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['typed', 'choice']);
-		});
-
-		it('still breaks a true fit tie on freshness, exactly as before this preference existed', () => {
-			// Two multiple-choice rows of the same prompt length are an equally good
-			// (or bad) fit for a strong word, so fit has nothing to decide between
-			// them and freshness — the newer, never-served row — settles it.
-			const items = [atStrength(item('due', -DAY), 0.2)];
-			const pool = [
-				recognition('newer', ['due'], { generatedAt: NOW }),
-				recognition('older', ['due'], { generatedAt: NOW - 5 * DAY })
-			];
-
-			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['newer', 'older']);
-		});
-
-		it("aims at the middle of the word's level band, not at its raw strength", () => {
-			// The word sits at strength ~0.10: level 1, but in the *upper* half of
-			// level 1's [0, 0.15] band. Measured against 0.10 every recognition row
-			// in existence reads too easy, so the tier's hardest — the longest
-			// sentence anyone ever wrote for this word — was always the nearest, and
-			// the short row generated at level 1 could never win. Measured against
-			// the band's centre (0.075) the short one does, which is the row a
-			// level-1 lesson was asked for in the first place.
-			const items = [midLevelOneItem('mid', -DAY)];
-			const pool = [
-				recognition('long', ['mid'], {
-					prompt: 'perdona, ¿me podrías decir dónde está la estación de tren más cercana?',
-					generatedAt: NOW
-				}),
-				recognition('short', ['mid'], { prompt: 'el perro', generatedAt: NOW - 5 * DAY })
-			];
-
-			// Freshness would take `long`: it is the newer never-served row.
-			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['short', 'long']);
-		});
-
-		it('does not spend the rest gap to find something bearable', () => {
-			// Above-level rows are removed before the rest-gap preference is applied;
-			// the remaining active row is inside the reserve gap and yields a
-			// shortfall rather than being served early.
-			const items = [item('due', -DAY)];
-			const pool = [
-				freeProductionRow('typed-rested', ['due']),
-				recognition('choice-hot', ['due'], { timesServed: 1, lastServedAt: NOW - DAY })
-			];
-
-			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['choice-hot']);
-			// Due review may use a rested, bearable row even while it is inside the
-			// reserve gap; the difficulty gate still excludes the production row.
-			expect(ids(planSession(pool, items, NOW, { target: 1 }))).toEqual(['choice-hot']);
-		});
-
-		it('prefers bearable material in the freshness filler too', () => {
-			// Nothing due, so only the filler runs: the same "bearable first, then
-			// the rest, each in its own order" rule, applied to a whole bucket.
-			const items = [item('later', +5 * DAY)];
-			const pool = [
-				freeProductionRow('typed', ['later'], { generatedAt: NOW }),
-				recognition('choice', ['later'], { generatedAt: NOW - 5 * DAY })
-			];
-
-			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['choice']);
-		});
-	});
-
-	it('excludes reported challenges', () => {
-		const items = [item('due', -DAY)];
-		const pool = [row('bad', ['due'], { reported: true }), row('good', ['due'])];
-
-		expect(ids(planSession(pool, items, NOW))).toEqual(['good']);
-	});
-
-	it('excludes challenges whose words no longer exist', () => {
-		const items = [item('kept', -DAY)];
-		const pool = [
-			row('orphan', ['deleted']),
-			row('half-orphan', ['kept', 'deleted']),
-			row('nothing', []),
-			row('fine', ['kept'])
-		];
-
-		expect(ids(planSession(pool, items, NOW))).toEqual(['fine']);
-	});
-
-	it('gives each due word a second challenge before falling back to fresh filler', () => {
-		const items = [item('due', -DAY), item('later', +DAY)];
-		const pool = [
-			row('due-1', ['due'], { generatedAt: NOW - 2 * DAY }),
-			row('due-2', ['due'], { generatedAt: NOW - 3 * DAY }),
-			row('filler', ['later'], { generatedAt: NOW })
-		];
-
-		expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['due-1', 'due-2']);
-	});
-
-	it('fills leftover slots with the newest never-served challenges', () => {
-		const items = [item('due', -DAY), item('later', +DAY)];
-		// Recognition rows throughout, and deliberately: these are fresh cards, so a
-		// pool of `row`'s demand-2 typed translations would be uniformly *un*bearable
-		// and the filler's partition would never be exercised at all — the ordering
-		// below would hold for the wrong reason.
-		const pool = [
-			recognition('due-1', ['due']),
-			recognition('fill-old', ['later'], { generatedAt: NOW - 5 * DAY }),
-			recognition('fill-new', ['later'], { generatedAt: NOW }),
-			recognition('fill-older', ['later'], { generatedAt: NOW - 9 * DAY }),
-			recognition('fill-served', ['later'], { timesServed: 1, lastServedAt: NOW - 10 * DAY })
-		];
-
-		// Due first, then freshness newest-first, and only then the recyclables.
-		expect(ids(planSession(pool, items, NOW, { target: 5 }))).toEqual([
-			'due-1',
-			'fill-new',
-			'fill-old',
-			'fill-older',
-			'fill-served'
-		]);
-	});
-
-	it('orders the filler by freshness alone, never by fit', () => {
-		// A `fitRank` is a distance to *one word's* target, so between two words it
-		// is noise. Ranking the heterogeneous filler by it let a stale row that
-		// happens to sit near its own word's band centre jump a never-served row
-		// from the batch the learner just paid for — and "the newest material
-		// leads" quietly stopped being true.
-		const items = [strongItem('strong', +DAY), item('weak', +2 * DAY)];
-		// Two rows apiece for the walk to claim (it gives every word two passes),
-		// so exactly one row per word is left for the filler to order. Identical
-		// prompts within a word, so the walk's own fit preference has nothing to
-		// say and takes them in plain freshness order.
-		const strongRow = (id: string, over: Partial<ChallengeRow> = {}) =>
-			freeProductionRow(id, ['strong'], { prompt: 'la cuenta', ...over });
-		const weakRow = (id: string, over: Partial<ChallengeRow> = {}) =>
-			recognition(id, ['weak'], { prompt: 'the bill', ...over });
-
-		const pool = [
-			strongRow('s1', { generatedAt: NOW }),
-			strongRow('s2', { generatedAt: NOW - DAY }),
-			weakRow('w1', { generatedAt: NOW }),
-			weakRow('w2', { generatedAt: NOW - DAY }),
-			// The filler's two candidates, both bearable and both rested. `stale` is
-			// the better fit (a typed translation ~0.63 against a level-4 word's
-			// 0.575 centre) but was served a fortnight ago; `fresh` is the worse fit
-			// (a short multiple-choice ~0.01 against a level-1 word's 0.075) and has
-			// never been served. Freshness decides, and only freshness.
-			weakRow('fresh', { generatedAt: NOW - 2 * DAY }),
-			strongRow('stale', { timesServed: 1, lastServedAt: NOW - 14 * DAY })
-		];
-
-		expect(ids(planSession(pool, items, NOW, { target: 6 }))).toEqual([
-			's1',
-			'w1',
-			's2',
-			'w2',
-			'fresh',
-			'stale'
-		]);
-	});
-
-	it('never plans the same challenge twice, even across several due words', () => {
-		const items = [item('a', -2 * DAY), item('b', -DAY)];
-		const pool = [row('both', ['a', 'b']), row('just-b', ['b'])];
-
-		const planned = ids(planSession(pool, items, NOW, { target: 4 }));
-		expect(planned).toEqual(['both', 'just-b']);
-		expect(new Set(planned).size).toBe(planned.length);
-	});
-
-	it('respects the target and the hard cap', () => {
-		const items = [item('due', -DAY)];
-		const pool = Array.from({ length: 40 }, (_, i) =>
-			row(`c${String(i).padStart(2, '0')}`, ['due'], { generatedAt: NOW - i })
+		const pool = Array.from({ length: 30 }, (_, i) =>
+			row(`c${i}`, ['due'], { generatedAt: NOW - i })
 		);
-
-		expect(planSession(pool, items, NOW)).toHaveLength(BATCH_TARGET);
 		expect(planSession(pool, items, NOW, { target: 5 })).toHaveLength(5);
-		// A target above the ceiling is clamped, not honoured.
 		expect(planSession(pool, items, NOW, { target: 999 })).toHaveLength(SESSION_LENGTH);
 		expect(planSession(pool, items, NOW, { target: 999, limit: 3 })).toHaveLength(3);
-	});
-
-	it('is deterministic and independent of pool order', () => {
-		const items = [item('a', -2 * DAY), item('b', -DAY), item('c', +DAY)];
-		const pool = [
-			row('c1', ['a']),
-			row('c2', ['b'], { timesServed: 1, lastServedAt: NOW - 9 * DAY }),
-			row('c3', ['c'], { generatedAt: NOW }),
-			row('c4', ['a'], { generatedAt: NOW - 4 * DAY })
-		];
-
-		const once = ids(planSession(pool, items, NOW));
-		expect(ids(planSession(pool, items, NOW))).toEqual(once);
-		expect(ids(planSession([...pool].reverse(), items, NOW))).toEqual(once);
-	});
-
-	it('hands back plain challenges, without the pool bookkeeping', () => {
-		const planned = planSession(
-			[row('c1', ['due'], { topic: 'at the market' })],
-			[item('due', -DAY)],
-			NOW
-		);
-
-		expect(planned[0]).not.toHaveProperty('timesServed');
-		expect(planned[0]).not.toHaveProperty('lastServedAt');
-		expect(planned[0]).not.toHaveProperty('generatedAt');
-		expect(planned[0]).not.toHaveProperty('reported');
-		expect(planned[0]).not.toHaveProperty('topic');
-		expect(planned[0].id).toBe('c1');
+		expect(planSession([freeProductionRow('typed', ['due'])], items, NOW)).toEqual([]);
 	});
 
 	it('is pure: it does not mutate the pool it is given', () => {
 		const pool = [row('c1', ['due']), row('c2', ['due'], { generatedAt: NOW })];
 		const snapshot = structuredClone(pool);
-
 		planSession(pool, [item('due', -DAY)], NOW);
-
 		expect(pool).toEqual(snapshot);
-	});
-
-	it('returns nothing when there is nothing playable', () => {
-		expect(planSession([], [item('due', -DAY)], NOW)).toEqual([]);
-		expect(planSession([row('c1', ['due'])], [], NOW)).toEqual([]);
-	});
-
-	describe('reaching past the schedule', () => {
-		// The tail that replaced the old separate "extra practice" planner: once
-		// the due words are paid off, the same walk carries on into words due
-		// later, and the leftovers finally spend the rest gap. Early review is
-		// native to FSRS — it simply banks a smaller stability gain.
-
-		it('finds work when nothing is due and the whole pool is resting', () => {
-			// The state the plan used to have nothing at all to say about, and the
-			// reason "Start session" can now always be pressed.
-			const items = [item('a', +2 * DAY), item('b', +5 * DAY)];
-			const pool = [resting('ca', ['a'], DAY), resting('cb', ['b'], DAY)];
-
-			expect(ids(planSession(pool, items, NOW))).toEqual(['ca', 'cb']);
-		});
-
-		it('walks words not yet due soonest-due first', () => {
-			const items = [item('late', +5 * DAY), item('soon', +DAY), item('later', +10 * DAY)];
-			const pool = [row('c-late', ['late']), row('c-soon', ['soon']), row('c-later', ['later'])];
-
-			expect(ids(planSession(pool, items, NOW, { target: 3 }))).toEqual([
-				'c-soon',
-				'c-late',
-				'c-later'
-			]);
-		});
-
-		it('still pays off the schedule first', () => {
-			const items = [item('overdue', -5 * DAY), item('ahead', +5 * DAY)];
-			const pool = [row('c-ahead', ['ahead'], { generatedAt: NOW }), row('c-overdue', ['overdue'])];
-
-			// The overdue word leads even though the other row is the fresher one:
-			// reaching ahead is what happens after the schedule, never instead.
-			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['c-overdue', 'c-ahead']);
-		});
-
-		it('gives a due word its second angle before a word that is not due gets its first', () => {
-			const items = [item('due', -DAY), item('later', +DAY)];
-			const pool = [
-				row('due-1', ['due'], { generatedAt: NOW - 2 * DAY }),
-				row('due-2', ['due'], { generatedAt: NOW - 3 * DAY }),
-				row('ahead', ['later'], { generatedAt: NOW })
-			];
-
-			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['due-1', 'due-2']);
-		});
-
-		it('does not spend the rest gap in the walk for a word that is not due', () => {
-			const items = [item('a', +DAY)];
-			const pool = [
-				resting('hot', ['a'], 60 * 60 * 1000),
-				row('fresh', ['a']),
-				resting('cooler', ['a'], 2 * DAY)
-			];
-
-			// Rested first in the walk; the two resting rows only arrive with the
-			// last-resort filler, least recently served first.
-			expect(ids(planSession(pool, items, NOW, { target: 3 }))).toEqual(['fresh', 'cooler', 'hot']);
-		});
-
-		it('fills leftover slots with rested material before resting material', () => {
-			const items = [item('a', +DAY)];
-			const pool = [
-				row('r-new', ['a'], { generatedAt: NOW }),
-				row('r-old', ['a'], { generatedAt: NOW - 5 * DAY }),
-				resting('s-cool', ['a'], 2 * DAY),
-				resting('s-hot', ['a'], 60 * 60 * 1000)
-			];
-
-			// Two passes take one rested row each, then the filler runs the same two
-			// orders: rested leftovers, and only then anything inside its gap.
-			expect(ids(planSession(pool, items, NOW, { target: 4 }))).toEqual([
-				'r-new',
-				'r-old',
-				's-cool',
-				's-hot'
-			]);
-		});
-
-		it('never plays a reported row or one whose words are gone, resting or not', () => {
-			const items = [item('a', +DAY)];
-			const pool = [
-				row('flagged', ['a'], { reported: true }),
-				row('orphan', ['a', 'deleted']),
-				row('itemless', []),
-				row('flagged-hot', ['a'], { timesServed: 1, lastServedAt: NOW - DAY, reported: true }),
-				row('fine', ['a'])
-			];
-
-			expect(ids(planSession(pool, items, NOW, { target: 5 }))).toEqual(['fine']);
-		});
-
-		it('prefers a bearable challenge for a word that is not due either', () => {
-			// Reaching ahead is not asking to be over-faced: a word still at
-			// strength 0 gets the recognition row; production waits for its rung.
-			const items = [item('a', +DAY)];
-			const pool = [
-				freeProductionRow('typed', ['a'], { generatedAt: NOW }),
-				recognition('choice', ['a'], { generatedAt: NOW - 5 * DAY })
-			];
-
-			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['choice']);
-			expect(ids(planSession(pool, [strongItem('a', +DAY)], NOW, { target: 2 }))).toEqual([
-				'typed'
-			]);
-		});
-
-		it('walks words past the schedule regardless of review history', () => {
-			const reviewed = [{ at: NOW - DAY, grade: 3 }];
-			const items = [item('never', +DAY), item('seen', +2 * DAY, reviewed)];
-			const pool = [resting('c-never', ['never'], DAY), resting('c-seen', ['seen'], DAY)];
-
-			// Soonest-due first, and that is the only thing that orders them.
-			expect(ids(planSession(pool, items, NOW, { target: 4 }))).toEqual(['c-never', 'c-seen']);
-		});
-	});
-
-	describe('the whole vocabulary participates', () => {
-		it('serves a never-reviewed word its due challenge like any other', () => {
-			const items = [item('never', -DAY), item('seen', -DAY, [{ at: NOW - DAY, grade: 3 }])];
-			const pool = [row('c-never', ['never']), row('c-seen', ['seen'])];
-
-			expect(ids(planSession(pool, items, NOW)).sort()).toEqual(['c-never', 'c-seen']);
-		});
-
-		it('lets a never-reviewed word fill a leftover slot too', () => {
-			const items = [item('due', -DAY, [{ at: NOW - DAY, grade: 3 }]), item('never', +DAY)];
-			const pool = [row('due-1', ['due']), row('filler', ['never'], { generatedAt: NOW })];
-
-			expect(ids(planSession(pool, items, NOW, { target: 2 }))).toEqual(['due-1', 'filler']);
-		});
-
-		it('still puts a due word ahead of a fresher challenge for one that is not', () => {
-			const items = [item('due', -5 * DAY), item('fine', +5 * DAY)];
-			const pool = [
-				row('fresh', ['fine'], { generatedAt: NOW }),
-				row('old-but-due', ['due'], { generatedAt: NOW - 30 * DAY })
-			];
-
-			expect(ids(planSession(pool, items, NOW, { target: 1 }))).toEqual(['old-but-due']);
-		});
-	});
-});
-
-/* -------------------------------------------------------------------------- */
-
-describe('smoothDemand', () => {
-	it('pulls the nearest later demand-1 challenge between a 0,2 pair', () => {
-		const plan = [demand0('a'), demand2('b'), demand1('c')];
-
-		expect(ids(smoothDemand(plan, []))).toEqual(['a', 'c', 'b']);
-	});
-
-	it('leaves a 0,2 jump alone when no demand-1 challenge exists anywhere', () => {
-		const plan = [demand0('a'), demand2('b'), demand0('c')];
-
-		expect(ids(smoothDemand(plan, []))).toEqual(['a', 'b', 'c']);
-	});
-
-	it('leaves an already-smooth 0,1,2 run untouched', () => {
-		const plan = [demand0('a'), demand1('b'), demand2('c')];
-
-		expect(ids(smoothDemand(plan, []))).toEqual(['a', 'b', 'c']);
-	});
-
-	it('preserves the relative order of every challenge not pulled forward', () => {
-		const plan = [demand0('a'), demand0('b'), demand2('c'), demand1('d'), demand0('e')];
-
-		// 'd' is pulled between 'b' and 'c'; 'a', 'b', 'c' and 'e' keep their order.
-		expect(ids(smoothDemand(plan, []))).toEqual(['a', 'b', 'd', 'c', 'e']);
-	});
-
-	it('is deterministic', () => {
-		const plan = [demand0('a'), demand2('b'), demand1('c'), demand0('d'), demand2('e')];
-
-		expect(ids(smoothDemand(plan, []))).toEqual(ids(smoothDemand(plan, [])));
-	});
-
-	it('treats a rung-5 banked cloze as tier 2, the demand it is actually served at', () => {
-		// A banked cloze is stored at demand 1 (`demandOf` reads its `wordBank`),
-		// but at rung 5 `$lib/challenges/serve/presentation`'s `bankSizeFor` shows none of it —
-		// the learner types the answer exactly as they would for a demand-2
-		// challenge. `smoothDemand` has to see that, or it would leave a
-		// recognition-then-"constrained-production" pair alone that the learner
-		// actually experiences as a 0,2 jump.
-		const owned = strongItem('owned', -DAY);
-		const bankedCloze: ClozeChallenge = {
-			id: 'banked',
-			type: 'cloze',
-			direction: 'toTarget',
-			sentence: 'Yo ___ ayer.',
-			acceptedAnswers: ['corrí'],
-			wordBank: ['corrí', 'fui', 'comí'],
-			itemIds: ['owned']
-		};
-		const middle = demand1('middle');
-
-		const plan = [demand0('recognition'), bankedCloze, middle];
-		expect(ids(smoothDemand(plan, [owned]))).toEqual(['recognition', 'middle', 'banked']);
 	});
 });
 
@@ -1393,7 +519,7 @@ describe('planRefill', () => {
 		const plan = planRefill(pool, [item('a', -DAY)], profile(), NOW);
 
 		expect(plan.wants).toHaveLength(1);
-		expect(kindKey(plan.wants[0].kind)).not.toBe('recognize-mc');
+		expect(plan.wants[0].kind.type).not.toBe('recognize-mc');
 		expect(wordsOf(plan)).toEqual(['a']);
 	});
 
@@ -1566,15 +692,6 @@ describe('session walkthrough (mock batch, no database)', () => {
 	it('plays a flawless session with only early-level active formats', async () => {
 		const known = Array.from({ length: 7 }, (_, i) => item(`k${i}`, -DAY));
 		const run = await playSession(known, () => 'correct');
-		console.log(
-			'DBG',
-			run.llmAnswered,
-			run.unplayed,
-			run.matchRounds,
-			run.answers.length,
-			run.summary.correct,
-			run.planned.length
-		);
 
 		// Two challenges per word, the mock filling every want, played to the
 		// end: the session is sized by what was planned, and nothing is left over.

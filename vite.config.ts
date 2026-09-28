@@ -33,6 +33,10 @@ export default defineConfig({
 		// `pnpm test` actually runs.
 		environment: 'node',
 		include: ['src/**/*.test.ts', 'worker/**/*.test.ts'],
+		// The challenge decisions are synchronous calls into the wasm core, which
+		// the browser loads before the first page renders; here every file gets
+		// it instantiated up front instead.
+		setupFiles: ['src/lib/db/wasm.setup.ts'],
 		exclude: ['src/**/*.svelte.test.ts']
 	}
 });

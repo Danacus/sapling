@@ -8,9 +8,8 @@
  * never introduces any — so the caller has only the pool to persist.
  */
 
-import type { BatchArgs, BatchResult as WireBatchResult } from '$lib/db/generated/index';
+import type { BatchArgs, BatchResult } from '$lib/db/generated/index';
 import type { ReasoningEffort } from '$lib/db/settings';
-import type { Challenge } from '$lib/types';
 import { callLlm } from './core';
 import type { CallOptions } from './core';
 
@@ -22,14 +21,10 @@ export interface BatchOptions extends CallOptions {
 	reasoningEffort?: ReasoningEffort;
 }
 
-export interface BatchResult extends Omit<WireBatchResult, 'challenges'> {
-	challenges: Challenge[];
-}
-
 /** One top-up: the wants written, a few requests at a time, in request order. */
 export async function getBatch(args: BatchArgs, opts: BatchOptions = {}): Promise<BatchResult> {
 	const { itemsPerRequest, reasoningEffort, ...call } = opts;
-	const result = await callLlm(
+	return callLlm(
 		'generateBatch',
 		{
 			...args,
@@ -38,7 +33,6 @@ export async function getBatch(args: BatchArgs, opts: BatchOptions = {}): Promis
 		},
 		call
 	);
-	return result as BatchResult;
 }
 
 export { describeShown, getEscalation } from './escalation';
@@ -54,6 +48,8 @@ export {
 } from '$lib/db/generated/llm';
 export type {
 	BatchArgs,
+	BatchResult,
+	ChallengeKind,
 	EscalationReply,
 	FocusWord,
 	GenerateTextArgs,
@@ -66,26 +62,11 @@ export type {
 	ReadingTextDraft,
 	Shown,
 	TokenUsage,
-	TranslateLineArgs
-} from '$lib/db/generated/index';
-
-export {
-	PLANNABLE_KINDS,
-	bareKind,
-	isActiveKind,
-	isKindAvailableAt,
-	kindKey,
-	kindOf,
-	plannableKind
-} from './kinds';
-export type {
-	ChallengeKind,
-	DifficultyRung,
-	PlannableKind,
+	TranslateLineArgs,
 	Want,
 	WantItem,
 	WireType
-} from './kinds';
+} from '$lib/db/generated/index';
 
 export { MOCK_FLAG_KEY, isMockMode, setMockMode } from './mock';
 

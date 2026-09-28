@@ -2,13 +2,17 @@
 //! The resolver decides everything positional — option order, the blank, the
 //! tile tray, which readings are safe to show — so the model cannot get it wrong.
 //! A defect that leaves nothing to play drops the challenge; a cosmetic one
-//! (a partial reading, a bank that dedupes away) only drops that part.
+//! (a partial reading, a bank that dedupes away) only drops that part. What
+//! comes out must read as `sapling-challenges`' stored union and pass its
+//! `check_shape`, or it is dropped too.
 
 use std::collections::HashSet;
 
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
+
+use sapling_challenges::Challenge;
 
 use crate::json::{inline_schema, seal};
 use crate::kinds::WireType;
@@ -364,7 +368,14 @@ fn tokens(words: &[TargetText]) -> Option<Vec<Token>> {
 }
 
 /// The stored challenge, or `None` to drop it.
-pub fn resolve(generated: Generated, ctx: &mut Resolver) -> Option<Value> {
+pub fn resolve(generated: Generated, ctx: &mut Resolver) -> Option<Challenge> {
+    let resolved = resolve_json(generated, ctx)?;
+    let challenge = Challenge::from_value(resolved).ok()?;
+    challenge.check_shape().ok()?;
+    Some(challenge)
+}
+
+fn resolve_json(generated: Generated, ctx: &mut Resolver) -> Option<Value> {
     let (refs, explanation) = generated.base();
     let mut item_ids: Vec<String> = Vec::new();
     for id in refs.iter().filter_map(|r| (ctx.item_ref)(r)) {
@@ -783,13 +794,14 @@ mod tests {
         let generated: Generated = serde_json::from_value(entry).expect("a wire entry");
         let mut rng = Rng::seeded(1);
         let item_ref = |r: &str| (r.starts_with('i')).then(|| r.to_owned());
-        resolve(
+        let challenge = resolve(
             generated,
             &mut Resolver {
                 item_ref: &item_ref,
                 rng: &mut rng,
             },
-        )
+        )?;
+        Some(serde_json::to_value(challenge).unwrap())
     }
 
     fn t(text: &str, reading: Option<&str>) -> Value {

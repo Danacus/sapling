@@ -9,6 +9,8 @@ publish = false
 serde = { version = "1", features = ["derive"] }
 # `preserve_order` so an object round-trips with its keys where its writer put them.
 serde_json = { version = "1", features = ["preserve_order"] }
+# The pool admits exactly the stored union's types.
+sapling-challenges = { path = "../sapling-challenges" }
 sapling-domain = { path = "../sapling-domain" }
 sapling-srs = { path = "../sapling-srs" }
 # The TypeScript side of the wire is generated from these types (`pnpm core:types`,

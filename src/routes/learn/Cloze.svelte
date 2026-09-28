@@ -20,12 +20,12 @@
 -->
 <script lang="ts">
 	import type { ChallengeProps } from '$lib/challenges/props';
-	import { resolvedPresentation, visibleBank } from '$lib/challenges/serve/presentation';
-	import { readingSlot, rubyFor, storedReading } from '$lib/challenges/serve/reading';
+	import { resolvedPresentation, visibleBank } from '$lib/challenges/serve';
+	import { readingSlot, rubyFor, storedReading } from '$lib/challenges/readings';
 	import type { RomanizedToken } from '$lib/romanize';
 	import type { ClozeChallenge } from '$lib/types';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
-	import { validateAnswer } from '$lib/validate';
+	import { validateAnswer } from '$lib/challenges/check';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
 	import CheckButton from './blocks/CheckButton.svelte';
 	import PromptHeader from './blocks/PromptHeader.svelte';
@@ -233,7 +233,7 @@
 	{/if}
 
 	<!-- The native line is always on the row; whether it shows is the serve-time
-	     call (`$lib/challenges/serve/presentation`), like the readings above. -->
+	     call (`$lib/challenges/serve`), like the readings above. -->
 	{#if showHint && challenge.translationHint}
 		<p class="hint translation">{challenge.translationHint}</p>
 	{/if}
