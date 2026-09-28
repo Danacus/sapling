@@ -133,11 +133,7 @@ export const TEACHER_REPLY_SCHEMA_NAME = 'teacher_turn';
  * with `additionalProperties: false`; an optional key stays expressible by
  * being nullable, which is exactly how the schemas above are written.
  *
- * The batch format's equivalent pass (`tighten` in `$lib/llm/schemas`) also
- * rewrites `oneOf` and strips `minLength` for a seven-member discriminated
- * union. These two envelopes have neither, so this is the smaller half of that
- * job rather than a shared helper — extracting one would mean refactoring a
- * module this feature otherwise leaves alone.
+ * The lesson schemas get the same pass in Rust (`seal` in `crates/sapling-llm`).
  */
 function requireEveryKey(node: unknown): void {
 	if (Array.isArray(node)) {

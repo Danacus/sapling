@@ -1,0 +1,1 @@
+(mock answer — no API key set, so nothing was sent to OpenRouter) Your answer "{answer}" was graded "{verdict}". The expected form differs in one detail, usually the verb ending or a missing article. With a key configured this paragraph would be a real explanation in {native}, under 120 words — and a justified dispute could overturn the grade.

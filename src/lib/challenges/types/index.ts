@@ -9,8 +9,8 @@
  * presentation `switch`es and the grading `switch` used to provide between them,
  * except it now fires once, in one file, for every fact at once.
  *
- * Everything downstream is a projection of this object: `$lib/llm/schemas`
- * composes `challengeSchema` out of {@link storedChallengeSchemas}, `../display`
+ * Everything downstream is a projection of this object: {@link challengeSchema}
+ * is composed out of {@link storedChallengeSchemas}, `../display`
  * and `../check` dispatch through {@link storedDefFor}. None of them names a
  * type.
  *
@@ -21,6 +21,7 @@
  * that go with it.
  */
 
+import { z } from 'zod';
 import type { Challenge, ChallengeType } from '$lib/types';
 import { clozeStoredDef } from './cloze';
 import type { StoredTypeBehaviour, StoredTypeRegistry } from './def';
@@ -122,8 +123,7 @@ void _orderParity;
  * Spelled out instead: membership cannot drift (`_orderParity` above and the
  * mapped registry type), and `registry.test.ts` pins order and member identity.
  *
- * `$lib/llm/schemas` wraps this into `challengeSchema`; nothing else should need
- * it.
+ * {@link challengeSchema} wraps this; nothing else should need it.
  */
 export const storedChallengeSchemas = [
 	multipleChoiceStoredDef.schema,
@@ -134,6 +134,12 @@ export const storedChallengeSchemas = [
 	wordOrderStoredDef.schema,
 	spotErrorStoredDef.schema
 ] as const;
+
+/** Mirrors the `Challenge` union in `$lib/types`, member for member. */
+export const challengeSchema = z.discriminatedUnion('type', storedChallengeSchemas);
+
+const _challengeParity: (c: z.infer<typeof challengeSchema>) => Challenge = (c) => c;
+void _challengeParity;
 
 /**
  * The def for a challenge, with its methods widened to the whole union.

@@ -11,7 +11,7 @@ use sapling_domain::types::{Level, Segment};
 
 use crate::client::{ChatRequest, ErrorKind, Llm, LlmError, Message, Result, Transport};
 use crate::json::{fenced, fill, parse_reply, strict_schema};
-use crate::{truncated, LearnerProfile, MAX_ABOUT_CHARS};
+use crate::{is_mandarin, non_blank, truncated, LearnerProfile, MAX_ABOUT_CHARS};
 
 pub const MAX_VOCABULARY_TERMS: usize = 400;
 /// Every focus word must be used; past a dozen a text turns into a bingo card.
@@ -160,10 +160,6 @@ pub fn sentence_count(level: Level) -> u32 {
     }
 }
 
-fn non_blank(text: Option<&str>) -> Option<&str> {
-    text.map(str::trim).filter(|text| !text.is_empty())
-}
-
 /// Trimmed, blanks dropped, deduplicated case-insensitively, capped — in order.
 fn capped_terms(terms: &[String], limit: usize) -> Vec<&str> {
     let mut seen = std::collections::HashSet::new();
@@ -175,13 +171,13 @@ fn capped_terms(terms: &[String], limit: usize) -> Vec<&str> {
         .collect()
 }
 
-fn request(system: &str, payload: &impl Serialize, schema: (&'static str, Value)) -> ChatRequest {
+fn request(system: &str, payload: &impl Serialize, schema: (&str, Value)) -> ChatRequest {
     ChatRequest {
         messages: vec![
             Message::System(system.trim_end().to_owned()),
             Message::User(serde_json::to_string(payload).expect("a payload serializes")),
         ],
-        schema: Some(schema),
+        schema: Some((schema.0.to_owned(), schema.1)),
         ..ChatRequest::default()
     }
 }
@@ -304,16 +300,6 @@ pub fn parse_translation(raw: &str) -> Result<String> {
         .map(|reply| reply.translation.trim().to_owned())
         .filter(|translation| !translation.is_empty())
         .ok_or_else(|| bad("The model did not translate that line. Try again."))
-}
-
-/// Whether the mock writes the Mandarin text rather than the Spanish one.
-fn is_mandarin(language: &str) -> bool {
-    let language = language.trim().to_lowercase();
-    language == "zh"
-        || language.starts_with("zh-")
-        || language.contains("chinese")
-        || language.contains("mandarin")
-        || language.contains("中文")
 }
 
 fn fixture(source: &str, vars: &[(&str, &str)]) -> String {

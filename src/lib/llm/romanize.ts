@@ -15,9 +15,8 @@
 
 import { z } from 'zod';
 
-import { chatCompletion, LlmError } from './client';
+import { chatCompletion, LlmError, stripFences } from './client';
 import type { ChatMessage, FetchLike, TokenUsage } from './client';
-import { stripFences } from './generate';
 
 /** One word that needs a reading. `id` is only a handle for the round trip. */
 export interface RomanizeItem {

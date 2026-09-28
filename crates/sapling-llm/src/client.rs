@@ -9,6 +9,26 @@ pub const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 const APP_REFERER: &str = "https://github.com/daanvo/language-learning";
 const APP_TITLE: &str = "Language Learning";
 
+/// One phase of a long call starting; the caller times it until the next.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+pub struct ProgressStep {
+    pub id: ProgressStepId,
+    /// Written for display.
+    pub label: String,
+}
+
+/// A top-up's phases. `select-items` and `save` are the session's own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProgressStepId {
+    SelectItems,
+    BuildPrompt,
+    Request,
+    Retry,
+    Validate,
+    Save,
+}
+
 /// Why a call failed, in terms the UI can act on. `message` is UI-ready.
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 pub struct LlmError {
@@ -160,7 +180,7 @@ pub struct Tool {
 pub struct ChatRequest {
     pub messages: Vec<Message>,
     /// A strict JSON schema the reply must match, and its name.
-    pub schema: Option<(&'static str, Value)>,
+    pub schema: Option<(String, Value)>,
     pub tools: Vec<Tool>,
     pub temperature: Option<f64>,
     pub max_tokens: Option<u32>,
@@ -184,11 +204,15 @@ pub struct Completion {
     pub tool_calls: Vec<ToolCall>,
 }
 
-/// The chat client: an endpoint (or mock mode), a transport, and the usage it has spent.
+type Progress = Box<dyn Fn(&ProgressStep)>;
+
+/// The chat client: an endpoint (or mock mode), a transport, the usage it has
+/// spent, and where a long call reports its progress.
 pub struct Llm<T> {
     transport: T,
     endpoint: Option<Endpoint>,
     usage: Cell<TokenUsage>,
+    progress: Option<Progress>,
 }
 
 impl<T: Transport> Llm<T> {
@@ -197,11 +221,31 @@ impl<T: Transport> Llm<T> {
             transport,
             endpoint,
             usage: Cell::new(TokenUsage::default()),
+            progress: None,
         }
+    }
+
+    pub fn with_progress(mut self, report: impl Fn(&ProgressStep) + 'static) -> Self {
+        self.progress = Some(Box::new(report));
+        self
     }
 
     pub fn is_mock(&self) -> bool {
         self.endpoint.is_none()
+    }
+
+    /// The configured model; `None` in mock mode.
+    pub fn model(&self) -> Option<&str> {
+        self.endpoint.as_ref().map(|e| e.model.as_str())
+    }
+
+    pub(crate) fn report(&self, id: ProgressStepId, label: impl Into<String>) {
+        if let Some(report) = &self.progress {
+            report(&ProgressStep {
+                id,
+                label: label.into(),
+            });
+        }
     }
 
     /// Everything spent so far, across retries.
@@ -545,7 +589,7 @@ mod tests {
         let request = ChatRequest {
             temperature: Some(0.3),
             reasoning_effort: Some("low".into()),
-            schema: Some(("s", json!({ "type": "object" }))),
+            schema: Some(("s".into(), json!({ "type": "object" }))),
             ..hello()
         };
         assert_eq!(ask(&llm, &request).unwrap().content, "hi");
@@ -641,7 +685,7 @@ mod tests {
             )),
         ]);
         let request = ChatRequest {
-            schema: Some(("s", json!({}))),
+            schema: Some(("s".into(), json!({}))),
             ..hello()
         };
         assert_eq!(ask(&live(&fake), &request).unwrap().content, "{}");

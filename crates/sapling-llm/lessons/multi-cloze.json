@@ -1,0 +1,177 @@
+{
+	"stored": {
+		"type": "multi-cloze",
+		"direction": "toTarget"
+	},
+	"plannable": {
+		"demand": 1,
+		"levels": [
+			3,
+			4,
+			5
+		]
+	},
+	"promptSpec": "multi-cloze — 2-4 target-language sentences with 2-4 target-language gaps and one shared bank of 6. {parts:[{text,reading}],gaps:[{itemId,answer:{text,reading}}],distractorWords:[{text,reading}],itemIds} e.g. {\"type\":\"multi-cloze\",\"parts\":[{\"text\":\"En el restaurante, pido \",\"reading\":null},{\"text\":\". Después pago la \",\"reading\":null},{\"text\":\".\",\"reading\":null}],\"gaps\":[{\"itemId\":\"pedir\",\"answer\":{\"text\":\"comida\",\"reading\":null}},{\"itemId\":\"la cuenta\",\"answer\":{\"text\":\"cuenta\",\"reading\":null}}],\"distractorWords\":[{\"text\":\"mesa\",\"reading\":null},{\"text\":\"carta\",\"reading\":null},{\"text\":\"propina\",\"reading\":null},{\"text\":\"botella\",\"reading\":null}],\"itemIds\":[\"pedir\",\"la cuenta\"],\"explanation\":null} — parts are consecutive spans around gaps and must have exactly one more entry than gaps; gaps and itemIds are in the same order; all text is target-language. Write enough distractorWords that, together with the answers, the shared bank has 6 entries.",
+	"rulesSpec": "- Multi-cloze is target-language-only: do not include a native translation or hint. Write a coherent 2-4 sentence scene, use each itemId for exactly one gap, and make distractors plausible in the same context without making an answer ambiguous.",
+	"paramsSpec": "- words: target-language words across the whole passage. gaps: blanks to write.",
+	"params": {
+		"words": [
+			8,
+			9,
+			10,
+			14,
+			18
+		],
+		"gaps": [
+			2,
+			2,
+			2,
+			3,
+			4
+		]
+	},
+	"correctiveSpec": "multi-cloze {parts,gaps,distractorWords,itemIds}",
+	"escalationSpec": "multi-cloze passage stores numbered gaps; the logged answer is `N: chosen word` entries in passage order, and each gap has its own accepted answer and item id.",
+	"fixtures": {
+		"spanish": [
+			{
+				"type": "multi-cloze",
+				"parts": [
+					{
+						"text": "Primero queremos ",
+						"reading": null
+					},
+					{
+						"text": ". Después pedimos la ",
+						"reading": null
+					},
+					{
+						"text": " para pagar.",
+						"reading": null
+					}
+				],
+				"gaps": [
+					{
+						"itemId": "{item}",
+						"answer": {
+							"text": "pedir",
+							"reading": null
+						}
+					},
+					{
+						"itemId": "{other}",
+						"answer": {
+							"text": "cuenta",
+							"reading": null
+						}
+					}
+				],
+				"distractorWords": [
+					{
+						"text": "mesa",
+						"reading": null
+					},
+					{
+						"text": "carta",
+						"reading": null
+					},
+					{
+						"text": "propina",
+						"reading": null
+					},
+					{
+						"text": "botella",
+						"reading": null
+					},
+					{
+						"text": "servilleta",
+						"reading": null
+					},
+					{
+						"text": "copa",
+						"reading": null
+					},
+					{
+						"text": "plato",
+						"reading": null
+					}
+				],
+				"itemIds": [
+					"{item}",
+					"{other}"
+				],
+				"explanation": null
+			}
+		],
+		"mandarin": [
+			{
+				"type": "multi-cloze",
+				"parts": [
+					{
+						"text": "我们先看",
+						"reading": "Wǒmen xiān kàn"
+					},
+					{
+						"text": "，然后想",
+						"reading": "ránhòu xiǎng"
+					},
+					{
+						"text": "。",
+						"reading": "。"
+					}
+				],
+				"gaps": [
+					{
+						"itemId": "{item}",
+						"answer": {
+							"text": "菜单",
+							"reading": "càidān"
+						}
+					},
+					{
+						"itemId": "{other}",
+						"answer": {
+							"text": "买单",
+							"reading": "mǎidān"
+						}
+					}
+				],
+				"distractorWords": [
+					{
+						"text": "筷子",
+						"reading": "kuàizi"
+					},
+					{
+						"text": "茶",
+						"reading": "chá"
+					},
+					{
+						"text": "水",
+						"reading": "shuǐ"
+					},
+					{
+						"text": "咖啡",
+						"reading": "kāfēi"
+					},
+					{
+						"text": "啤酒",
+						"reading": "píjiǔ"
+					},
+					{
+						"text": "碗",
+						"reading": "wǎn"
+					},
+					{
+						"text": "勺子",
+						"reading": "sháozi"
+					}
+				],
+				"itemIds": [
+					"{item}",
+					"{other}"
+				],
+				"explanation": "先 (xiān) marks the first action; 然后 (ránhòu) introduces what comes next."
+			}
+		]
+	}
+}

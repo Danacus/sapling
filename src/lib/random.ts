@@ -1,11 +1,8 @@
 /**
  * The one Fisher-Yates shuffle the app shares.
  *
- * It used to live in `$lib/llm/resolve-helpers` because the wire resolvers were
- * its first callers. It is not an LLM concern, though: the local match-pairs
- * builder (`$lib/challenges/local/match-pairs`) needs the same shuffle to order
- * a round, and it must not reach into `$lib/llm` for a zero-token helper. One
- * implementation, no drift.
+ * The local match-pairs builder (`$lib/challenges/local/match-pairs`) orders a
+ * round with it; the generated challenges are shuffled in Rust.
  */
 
 /** Fisher-Yates over a copy; `rng` is injectable so shuffles can be replayed. */

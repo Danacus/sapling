@@ -82,30 +82,6 @@ describe('chatCompletion', () => {
 		expect(headers.Authorization).toBe(`Bearer ${KEY}`);
 	});
 
-	it('sends a configured reasoning effort in both spellings, and neither when default', async () => {
-		const configured = recordingFetch([() => jsonResponse(okCompletion())]);
-		await chatCompletion({
-			messages,
-			apiKey: KEY,
-			model: 'm',
-			fetchFn: configured.fetchFn,
-			reasoningEffort: 'low'
-		});
-		expect(configured.calls[0].body.reasoning_effort).toBe('low');
-		expect(configured.calls[0].body.reasoning).toEqual({ effort: 'low' });
-
-		const omitted = recordingFetch([() => jsonResponse(okCompletion())]);
-		await chatCompletion({
-			messages,
-			apiKey: KEY,
-			model: 'm',
-			fetchFn: omitted.fetchFn,
-			reasoningEffort: 'default'
-		});
-		expect(omitted.calls[0].body).not.toHaveProperty('reasoning_effort');
-		expect(omitted.calls[0].body).not.toHaveProperty('reasoning');
-	});
-
 	it('opts in to browser CORS on the Anthropic endpoint', async () => {
 		const { fetchFn, calls } = recordingFetch([() => jsonResponse(okCompletion())]);
 		await chatCompletion({
@@ -216,9 +192,8 @@ describe('chatCompletion', () => {
 	});
 
 	it('lets an abort through as an abort, not as a network failure', async () => {
-		// A lesson is several concurrent completions on one signal (see
-		// `generate.ts`); if a cancelled call came back as `LlmError('network')`,
-		// quitting a refill would look to the learner like the network died.
+		// If a cancelled call came back as `LlmError('network')`, quitting a chat
+		// turn would look to the learner like the network died.
 		const controller = new AbortController();
 		const fetchFn: FetchLike = async (_url, init) => {
 			controller.abort();

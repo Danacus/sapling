@@ -1,49 +1,58 @@
 /**
- * Public surface of the LLM layer.
- *
- * The UI should only ever need {@link getBatch} and {@link getEscalation}:
- * they dispatch between the real OpenRouter path and the offline mock
- * automatically, based on whether a key is configured. (The one zero-token
- * challenge, `match-pairs`, is not built here at all — it lives in
- * `$lib/challenges/local/match-pairs`.)
+ * Public surface of the LLM layer. Lesson generation, escalation and the
+ * reading calls run in Rust (`crates/sapling-llm`) through {@link callLlm};
+ * `client.ts` is the TypeScript chat client the assistant and conversation
+ * mode still use. Mock mode is decided here and honoured on both sides.
  *
  * Nothing in this layer touches the database. `getBatch` returns challenges and
  * nothing else — a lesson is written *about* the vocabulary it is handed and
  * never introduces any — so the caller has only the pool to persist.
  */
 
-import { escalate } from './escalation';
-import type { EscalationArgs, EscalationOptions, EscalationResult } from './escalation';
-import { generateBatch } from './generate';
-import type { BatchArgs, BatchOptions, BatchResult } from './generate';
-import { escalateMock, isMockMode, mockBatch } from './mock';
+import type { BatchArgs, BatchResult as WireBatchResult } from '$lib/db/generated/index';
+import type { ReasoningEffort } from '$lib/db/settings';
+import type { Challenge } from '$lib/types';
+import { callLlm } from './core';
+import type { CallOptions } from './core';
 
-/**
- * One lesson batch: real generation when an API key is configured, the
- * deterministic mock otherwise (or when `ll.mockMode` is set).
- */
+export type OnProgress = NonNullable<CallOptions['onProgress']>;
+
+export interface BatchOptions extends CallOptions {
+	/** Overrides {@link REQUEST_ITEMS}; each type is still its own request. */
+	itemsPerRequest?: number;
+	reasoningEffort?: ReasoningEffort;
+}
+
+export interface BatchResult extends Omit<WireBatchResult, 'challenges'> {
+	challenges: Challenge[];
+}
+
+/** One top-up: the wants written, a few requests at a time, in request order. */
 export async function getBatch(args: BatchArgs, opts: BatchOptions = {}): Promise<BatchResult> {
-	if (isMockMode()) return mockBatch(args, opts);
-	return generateBatch(args, opts);
+	const { itemsPerRequest, reasoningEffort, ...call } = opts;
+	const result = await callLlm(
+		'generateBatch',
+		{
+			...args,
+			...(itemsPerRequest === undefined ? {} : { itemsPerRequest }),
+			...(reasoningEffort === undefined || reasoningEffort === 'default' ? {} : { reasoningEffort })
+		},
+		call
+	);
+	return result as BatchResult;
 }
 
-/**
- * One follow-up explanation, mock-aware in the same way as {@link getBatch}.
- *
- * `overturn` comes back `true` when the model judges the learner's answer
- * should have counted; the mock never overturns.
- */
-export async function getEscalation(
-	args: EscalationArgs,
-	opts: EscalationOptions = {}
-): Promise<EscalationResult> {
-	if (isMockMode()) return escalateMock(args);
-	return escalate(args, opts);
-}
+export { describeShown, getEscalation } from './escalation';
+export type { EscalationArgs } from './escalation';
 
-// -- The rest of the layer, for callers that want the pieces ---------------
-
-export { APP_REFERER, APP_TITLE, LlmError, OPENROUTER_BASE_URL, chatCompletion } from './client';
+export {
+	APP_REFERER,
+	APP_TITLE,
+	LlmError,
+	OPENROUTER_BASE_URL,
+	chatCompletion,
+	stripFences
+} from './client';
 export type {
 	AssistantMessage,
 	ChatCompletionOptions,
@@ -61,69 +70,45 @@ export type {
 
 export { callLlm } from './core';
 export type { CallOptions } from './core';
-export { MAX_FOCUS_WORDS, MAX_TOPIC_CHARS } from '$lib/db/generated/llm';
+export {
+	MAX_ABOUT_CHARS,
+	MAX_FOCUS_WORDS,
+	MAX_TOPIC_CHARS,
+	REQUEST_ITEMS
+} from '$lib/db/generated/llm';
 export type {
+	BatchArgs,
+	EscalationReply,
 	FocusWord,
 	GenerateTextArgs,
 	GlossEntry,
+	KnownItem,
 	LearnerProfile,
 	LookupWordArgs,
+	ProgressStep,
+	ProgressStepId,
 	ReadingTextDraft,
+	Shown,
 	TranslateLineArgs
 } from '$lib/db/generated/index';
 
 export {
-	ANSWER_WORD_LIMIT,
-	DEFAULT_QUESTION,
-	buildEscalationPrompt,
-	escalate,
-	escalationReplySchema,
-	parseEscalationReply
-} from './escalation';
-export type {
-	EscalationArgs,
-	EscalationOptions,
-	EscalationReply,
-	EscalationResult
-} from './escalation';
-
-export {
-	MAX_ABOUT_CHARS,
-	buildRequestPrompt,
-	correctiveInstructionFor,
-	generateBatch,
-	parseBatch,
-	resolveBatch,
-	stripFences,
-	systemPromptFor
-} from './generate';
-export type {
-	BatchArgs,
-	BatchOptions,
-	BatchProfile,
-	BatchResult,
-	ChallengeMemberSchema,
-	OnProgress,
-	ParsedBatch,
-	ProgressStep,
-	ProgressStepId,
-	ResolveOptions,
-	ResolvedBatch
-} from './generate';
-
-export {
 	PLANNABLE_KINDS,
-	REQUEST_CONCURRENCY,
-	REQUEST_ITEMS,
 	bareKind,
-	groupIntoRequests,
 	isActiveKind,
 	isKindAvailableAt,
 	kindKey,
 	kindOf,
 	plannableKind
-} from './requests';
-export type { ChallengeKind, PlannableKind, TypeRequest, Want, WantItem } from './requests';
+} from './kinds';
+export type {
+	ChallengeKind,
+	DifficultyRung,
+	PlannableKind,
+	Want,
+	WantItem,
+	WireType
+} from './kinds';
 
 export {
 	ROMANIZE_SCHEMA_NAME,
@@ -135,23 +120,7 @@ export {
 } from './romanize';
 export type { RomanizeArgs, RomanizeItem, RomanizeOptions, RomanizeResult } from './romanize';
 
-export {
-	MOCK_FLAG_KEY,
-	escalateMock,
-	isMockMode,
-	mockBatch,
-	setMockMode,
-	usesMandarinFixtures
-} from './mock';
-
-export {
-	batchJsonSchemaFor,
-	batchSchemaNameFor,
-	challengeSchema,
-	generatedBatchSchema,
-	generatedChallengeSchema
-} from './schemas';
-export type { GeneratedBatch, GeneratedChallenge } from './schemas';
+export { MOCK_FLAG_KEY, isMockMode, setMockMode } from './mock';
 
 export { getUsageTotals, recordUsage, resetUsage } from './usage';
 export type { UsageTotals } from './usage';

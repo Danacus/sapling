@@ -69,7 +69,7 @@
 		 * swap (the queue has already moved on by the time the banner asks) can
 		 * never change what an escalation for *this* answer is judged against.
 		 * Threaded to `FeedbackBanner` and on to `getEscalation`
-		 * (`$lib/llm/escalation`), which needs it to know what the learner's screen
+		 * (`$lib/llm`), which needs it to know what the learner's screen
 		 * actually showed rather than assuming the full stored row was on it.
 		 */
 		presentation?: Presentation;

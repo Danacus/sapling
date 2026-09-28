@@ -3,11 +3,9 @@
  *
  * `match-pairs` is the one challenge the pipeline does not generate: the session
  * splices a round of it between paid challenges as a breather, drawing on words
- * the learner already has. It used to live in `$lib/llm/generate` beside the
- * paid generation path, but it is not an LLM concern — it spends no tokens and
- * imports no client — so it lives with the challenge it builds now. The arrow
- * still points one way: this module imports `$lib/types` and generic leaves,
- * never `$lib/llm`.
+ * the learner already has. It spends no tokens and imports no client, so it
+ * lives with the challenge it builds: this module imports `$lib/types` and
+ * generic leaves, never `$lib/llm`.
  */
 
 import { newUuid } from '$lib/device';

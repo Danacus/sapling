@@ -7,7 +7,7 @@
  * term. **The stored reading is authoritative.** It was written with the
  * word's meaning in view, and for a spelling the learner holds twice — 长 as
  * `cháng` and 长 as `zhǎng` — it is the *only* thing that tells the two cards
- * apart (`knownTermLabels` in `$lib/llm` cites them by it). A local reading of
+ * apart (a lesson prompt cites them by it). A local reading of
  * the bare term cannot know which card it is looking at, so it may refine how
  * the stored reading is displayed but never contradict it.
  *

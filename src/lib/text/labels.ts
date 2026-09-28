@@ -8,8 +8,8 @@
  * which is right for asking whether two *cards* name the same word but would
  * merge two rendered labels that differ only by Unicode composition. This key
  * is exactly the normalization the match-pairs builder has always used — trim,
- * lower-case, collapse internal whitespace — so moving it out of
- * `$lib/llm/resolve-helpers` changes nothing about which labels collide.
+ * lower-case, collapse internal whitespace — and the one the Rust resolvers
+ * (`crates/sapling-llm`'s `text.rs`) use for a word bank.
  */
 export function labelKey(value: string): string {
 	return value.trim().toLowerCase().replace(/\s+/g, ' ');

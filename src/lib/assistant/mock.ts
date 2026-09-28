@@ -1,7 +1,7 @@
 /**
  * Offline chat: no key, no network, no model — but real tools.
  *
- * The same bargain `$lib/llm/mock` strikes for lesson generation: the *reply*
+ * The same bargain the Rust mock strikes for lesson generation: the *reply*
  * is canned, everything underneath it is the production path. A recognized
  * message is turned into a genuine tool call and pushed through
  * `executeToolCall` — argument JSON, schema validation, executor, real writes —

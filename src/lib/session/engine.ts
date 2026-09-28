@@ -18,7 +18,7 @@
  * Token economy, restated because it is what allows that: one `getBatch` call
  * fills the whole top-up — internally a handful of short concurrent requests,
  * one per challenge kind, each against its own cached system prompt, see
- * `$lib/llm/generate` — grading is local and free, and only an explicit
+ * `crates/sapling-llm`'s `lesson.rs` — grading is local and free, and only an explicit
  * "explain this" spends more. So we generate only what the pool lacks, and get
  * many sessions out of each challenge by recycling. `getBatch` is still one
  * `await` from here: cutting the brief into requests, per-request retries and
@@ -735,8 +735,8 @@ export function planRefill(
 		// word can be a real sentence made of words the learner can already read
 		// rather than one padded with strangers. The ids ride along for the
 		// resolver's term index; only the terms reach the prompt.
-		// The romanization rides along for one reason: `knownTermLabels` needs it
-		// to tell two same-spelled cards apart in the prompt. It is dropped again
+		// The romanization rides along for one reason: the prompt needs it to
+		// tell two same-spelled cards apart. It is dropped again
 		// for every word whose spelling is unambiguous, which is nearly all of them.
 		...(items.length
 			? {
@@ -814,7 +814,7 @@ export interface GenerateOptions {
  * `add_words` (`$lib/assistant`, `$lib/conversation`). That is why the batch
  * needs no dedupe pass and no id remapping — there is no proposed vocabulary to
  * fork the collection with — and why a challenge citing an id the resolver
- * could not place is simply dropped over in `resolveBatch` rather than dragging
+ * could not place is simply dropped by the resolver rather than dragging
  * an item into the database behind it.
  *
  * `LlmError` is deliberately **not** caught: its `message` is already written

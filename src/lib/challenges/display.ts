@@ -98,7 +98,7 @@ export function answerReading(challenge: Challenge): string | undefined {
  * into a miss.
  *
  * Always the canonical script form — `acceptedAnswers[0]`, which the resolver
- * pins (see `answerVariants` in `$lib/llm/generate`) — never a romanized
+ * pins (`answer_variants` in `crates/sapling-llm`'s `wire.rs`) — never a romanized
  * variant: TTS reads Latin letters as Latin letters. A cloze speaks the whole
  * sentence with the blank filled, because how the word sounds *in place* is
  * the thing the learner is missing.

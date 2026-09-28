@@ -1,15 +1,11 @@
 /**
  * The locally-built `match-pairs` round: sizing, collision handling and the
- * shapes it refuses. Moved here with the builder, out of `$lib/llm`.
- *
- * The schema check goes through `$lib/llm/schemas` on purpose — the round is
- * played like any other stored challenge, so it has to satisfy the same union
- * the real batch parses into. That import is the test's, not the builder's; the
- * builder itself never touches `$lib/llm`.
+ * shapes it refuses. The round is played like any other stored challenge, so
+ * it has to satisfy the stored union.
  */
 
 import { describe, expect, it } from 'vitest';
-import { challengeSchema } from '$lib/llm/schemas';
+import { challengeSchema } from '$lib/challenges/types';
 import type { Challenge, KnowledgeItem } from '$lib/types';
 import { makeMatchPairsChallenge } from './match-pairs';
 

@@ -22,9 +22,9 @@
  * Defs are leaves. They may import zod, `./primitives`, `./word-count`,
  * `$lib/types` and `$lib/validate` (the string matchers, which know nothing
  * about challenges), and must import neither `../display` nor anything under
- * `$lib/llm` — both are *downstream*: `$lib/llm/schemas` composes
- * `challengeSchema` out of these, and `../display` dispatches through them, so
- * an import either way would close a cycle. Nothing here touches Svelte, the DB
+ * `$lib/llm` — both are *downstream*: `./index` composes `challengeSchema` out
+ * of these, and `../display` dispatches through them, so an import either way
+ * would close a cycle. Nothing here touches Svelte, the DB
  * or the learner's preferences: a romanization toggle is the *caller's*
  * question, so {@link StoredTypeBehaviour.answerReading} reports what the
  * challenge has and the banner decides whether to show it.
@@ -211,10 +211,9 @@ export interface StoredTypeDef<C extends Challenge> extends StoredTypeBehaviour<
 	/** The discriminator, identical to the one `schema` pins. */
 	readonly type: C['type'];
 	/**
-	 * This type's zod member. It lives here, not in `$lib/llm/schemas`: the
-	 * `challengeSchema` union over there is built by projecting this field across
-	 * the registry, so listing a def in `./index` is the whole of adding a member
-	 * to it.
+	 * This type's zod member. `./index`'s `challengeSchema` union is built by
+	 * projecting this field across the registry, so listing a def there is the
+	 * whole of adding a member to it.
 	 */
 	readonly schema: z.ZodType<C>;
 }

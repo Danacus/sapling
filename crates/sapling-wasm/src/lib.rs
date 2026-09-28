@@ -229,21 +229,29 @@ impl Transport for JsTransport {
 }
 
 /// One model call: the method, its argument array and the endpoint as JSON
-/// (no endpoint is mock mode), and the host's `post`. Resolves to
-/// `{result, usage?}` as JSON; rejects with the `LlmError` as JSON, or plain
-/// text for a malformed call.
+/// (no endpoint is mock mode), the host's `post`, and optionally
+/// `progress(stepJson)`. Resolves to `{result, usage?}` as JSON; rejects with
+/// the `LlmError` as JSON, or plain text for a malformed call.
 #[wasm_bindgen]
 pub async fn llm(
     method: String,
     args_json: String,
     endpoint_json: Option<String>,
     post: Function,
+    progress: Option<Function>,
 ) -> std::result::Result<String, JsValue> {
     let endpoint: Option<Endpoint> = endpoint_json
         .map(|json| serde_json::from_str(&json))
         .transpose()
         .map_err(|e| JsValue::from_str(&format!("endpoint: {e}")))?;
-    let llm = Llm::new(JsTransport(post), endpoint);
+    let mut llm = Llm::new(JsTransport(post), endpoint);
+    if let Some(progress) = progress {
+        // A throwing callback costs its step, never the call.
+        llm = llm.with_progress(move |step| {
+            let step = serde_json::to_string(step).unwrap_or_default();
+            let _ = progress.call1(&JsValue::NULL, &JsValue::from_str(&step));
+        });
+    }
     sapling_protocol::dispatch_llm_json(&llm, &method, &args_json)
         .await
         .map_err(|e| JsValue::from_str(&e))

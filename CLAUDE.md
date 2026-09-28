@@ -70,7 +70,7 @@ Every area is a registry with one module per member; forgetting a registration f
 
 | Area | The invariant that bites | Rule |
 |---|---|---|
-| `src/lib/llm/` | **Stateless** — never touches the DB. `getBatch` returns challenges only: a lesson is written *about* the vocabulary it is given and introduces none. | `llm.md` |
+| `src/lib/llm/` | **Stateless** — never touches the DB. The session plans the wants in TypeScript; `getBatch` hands them to Rust (`crates/sapling-llm`) and returns challenges only: a lesson is written *about* the vocabulary it is given and introduces none. | `llm.md` |
 | `src/lib/challenges/` | Registry is a **mapped type over `ChallengeType`** — a new member fails `pnpm check` at the registry. Grading is deliberately **type-blind**. | `challenges.md` |
 | `src/lib/session/` | The orchestrator owns **all DB writes during play**. Components emit answer events; they don't write. | `session.md` |
 | `src/lib/tasks/` | Every long job is a task: **the runner owns status, cancellation and progress; pages never hold task state.** `TaskKind` is derived from the registry, so an unlisted kind fails `pnpm check` at the call site. In memory only. | `tasks.md` |

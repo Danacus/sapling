@@ -6,7 +6,12 @@
  */
 
 import { DEFAULT_MODEL, getApiKey, getBaseUrl, getModel } from '$lib/db/settings';
-import type { Endpoint, LlmError as WireError, TokenUsage } from '$lib/db/generated/index';
+import type {
+	Endpoint,
+	ProgressStep,
+	LlmError as WireError,
+	TokenUsage
+} from '$lib/db/generated/index';
 import type { Llm } from '$lib/db/generated/llm';
 import init, { llm } from '$lib/db/wasm/sapling_core';
 import wasmUrl from '$lib/db/wasm/sapling_core_bg.wasm?url';
@@ -16,6 +21,8 @@ import { recordUsage } from './usage';
 
 export interface CallOptions {
 	signal?: AbortSignal;
+	/** For the calls that report progress (`generateBatch`). */
+	onProgress?: (step: ProgressStep) => void;
 }
 
 let ready: Promise<unknown> | undefined;
@@ -66,7 +73,14 @@ export async function callLlm<M extends keyof Llm>(
 	await ready;
 	let answer: string;
 	try {
-		answer = await llm(method, JSON.stringify([args]), endpoint(), poster(opts.signal));
+		const progress = opts.onProgress;
+		answer = await llm(
+			method,
+			JSON.stringify([args]),
+			endpoint(),
+			poster(opts.signal),
+			progress && ((step: string) => progress(JSON.parse(step) as ProgressStep))
+		);
 	} catch (error) {
 		opts.signal?.throwIfAborted();
 		throw failure(error);

@@ -28,25 +28,38 @@ pub fn parse_reply<T: DeserializeOwned>(raw: &str) -> Option<T> {
 /// `T`'s JSON schema as strict structured outputs want it: every property
 /// required, no additional ones. An optional key stays expressible as nullable.
 pub fn strict_schema<T: JsonSchema>() -> Value {
-    let mut schema = schemars::schema_for!(T).to_value();
+    let mut schema = inline_schema::<T>();
+    seal(&mut schema);
+    schema
+}
+
+/// `T`'s schema with every subschema inlined: several cheap models choke on `$ref`.
+pub fn inline_schema<T: JsonSchema>() -> Value {
+    let mut schema = schemars::generate::SchemaSettings::draft2020_12()
+        .with(|s| s.inline_subschemas = true)
+        .into_generator()
+        .into_root_schema_for::<T>()
+        .to_value();
     if let Some(root) = schema.as_object_mut() {
         root.remove("$schema");
         root.remove("title");
     }
-    require_every_key(&mut schema);
     schema
 }
 
-fn require_every_key(node: &mut Value) {
+/// Every key required and no others, all the way down; `format` dropped, since
+/// strict endpoints reject the ones schemars writes for integers.
+pub fn seal(node: &mut Value) {
     match node {
-        Value::Array(items) => items.iter_mut().for_each(require_every_key),
+        Value::Array(items) => items.iter_mut().for_each(seal),
         Value::Object(map) => {
+            map.remove("format");
             if let Some(Value::Object(properties)) = map.get("properties") {
                 let keys: Vec<Value> = properties.keys().cloned().map(Value::String).collect();
                 map.insert("required".into(), Value::Array(keys));
                 map.insert("additionalProperties".into(), Value::Bool(false));
             }
-            map.values_mut().for_each(require_every_key);
+            map.values_mut().for_each(seal);
         }
         _ => {}
     }
@@ -109,7 +122,8 @@ mod tests {
         assert!(schema.get("$schema").is_none());
         assert_eq!(schema["required"], json!(["items", "note"]));
         assert_eq!(schema["additionalProperties"], false);
-        let inner = &schema["$defs"]["Inner"];
+        assert!(!schema.to_string().contains("$ref"));
+        let inner = &schema["properties"]["items"]["items"];
         assert_eq!(inner["required"], json!(["a", "b"]));
         assert_eq!(inner["additionalProperties"], false);
         assert_eq!(inner["properties"]["b"]["type"], json!(["string", "null"]));

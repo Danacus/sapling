@@ -10,7 +10,6 @@
  */
 
 import { DEFAULT_MODEL, getApiKey, getBaseUrl, getModel } from '$lib/db/settings';
-import type { ReasoningEffort } from '$lib/db/settings';
 import { recordUsage } from './usage';
 
 /** OpenRouter's OpenAI-compatible endpoint; used unless the learner set a custom one. */
@@ -89,14 +88,6 @@ export interface ChatCompletionOptions {
 	tools?: ToolDef[];
 	maxTokens?: number;
 	temperature?: number;
-	/**
-	 * How hard a reasoning model may think. Sent as both `reasoning_effort`
-	 * (OpenAI-compatible endpoints, e.g. DeepSeek) and `reasoning: { effort }`
-	 * (OpenRouter's unified spelling), since a given endpoint reads one or the
-	 * other and ignores the rest. `'default'` sends neither. Reasoning tokens
-	 * are billed as output tokens; see `$lib/db/settings`.
-	 */
-	reasoningEffort?: ReasoningEffort;
 	signal?: AbortSignal;
 	/** Injectable `fetch`; defaults to `globalThis.fetch`. */
 	fetchFn?: FetchLike;
@@ -295,11 +286,6 @@ export async function chatCompletion(opts: ChatCompletionOptions): Promise<ChatC
 	const body: Record<string, unknown> = { model, messages: opts.messages.map(buildMessage) };
 	if (opts.temperature !== undefined) body.temperature = opts.temperature;
 	if (opts.maxTokens !== undefined) body.max_tokens = opts.maxTokens;
-	// Both spellings, because the endpoint picks. `'default'` is the absence.
-	if (opts.reasoningEffort && opts.reasoningEffort !== 'default') {
-		body.reasoning_effort = opts.reasoningEffort;
-		body.reasoning = { effort: opts.reasoningEffort };
-	}
 	// No `tool_choice`: the default (auto) is what every caller wants.
 	if (opts.tools?.length) body.tools = opts.tools.map(buildTool);
 
@@ -400,4 +386,19 @@ export async function chatCompletion(opts: ChatCompletionOptions): Promise<ChatC
 	recordUsage(usage);
 
 	return { content, toolCalls, usage, model: payload.model ?? model, schemaDropped };
+}
+
+/**
+ * The JSON object in a reply: fences dropped, else the outermost brace pair.
+ * Models drop back into ```json blocks constantly, schema or not.
+ */
+export function stripFences(text: string): string {
+	let out = text.trim();
+	const match = /^```[a-zA-Z]*\s*\n?([\s\S]*?)\n?```$/.exec(out);
+	if (match) out = match[1].trim();
+	if (out.startsWith('{')) return out;
+	const start = out.indexOf('{');
+	const end = out.lastIndexOf('}');
+	if (start >= 0 && end > start) return out.slice(start, end + 1).trim();
+	return out;
 }

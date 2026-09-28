@@ -8,8 +8,8 @@
  * weeks while the word's rung moves, so "how much support to show" cannot be
  * baked into the row at write time. The model always writes the fullest
  * version it can — every native line, the fullest bank/tray a wire type's
- * schema allows (`$lib/llm/challenge-types`' cloze, multi-cloze and
- * word-order defs) — and this module decides how much of that stored content
+ * schema allows (`crates/sapling-llm`'s cloze, multi-cloze and word-order
+ * lessons) — and this module decides how much of that stored content
  * a *served* challenge actually shows.
  *
  * `showNativeHint`, `bankSizeFor` and `distractorTilesFor` all read

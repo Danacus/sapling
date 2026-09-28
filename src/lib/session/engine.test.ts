@@ -10,12 +10,14 @@
  *
  * The one exception is {@link planRefill}'s output being fed to the real
  * `getBatch` in mock mode (no API key in node ⇒ mock automatically), which
- * smoke-tests the whole generate → resolve path against a real plan.
+ * smoke-tests the whole generate → resolve path, through the wasm core,
+ * against a real plan.
  */
 
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import type { ChallengeRow } from '$lib/db';
+import { loadWasmCore } from '$lib/db/backend.testing';
 import { getBatch, isMockMode, kindKey } from '$lib/llm';
 import type { ProgressStep } from '$lib/llm';
 import { gradeFromResult, Grade } from '$lib/srs';
@@ -1339,8 +1341,7 @@ describe('planRefill', () => {
 	});
 
 	it('lets a romanization ride along, for the words that have one', () => {
-		// `knownTermLabels` needs it to tell two same-spelled cards apart in the
-		// prompt; a word without one costs nothing for the field.
+		// The prompt needs it to tell two same-spelled cards apart; a word without one costs nothing for the field.
 		const items = [{ ...item('a', -1 * DAY), romanization: 'cháng' }, item('b', -1 * DAY)];
 		const plan = planRefill([], items, profile(), NOW);
 
@@ -1452,52 +1453,46 @@ describe('a skipped challenge', () => {
 });
 
 describe('planRefill → getBatch (mock mode)', () => {
+	beforeAll(loadWasmCore);
+
 	it('runs in mock mode under node (no API key)', () => {
 		expect(isMockMode()).toBe(true);
 	});
 
-	it('produces a playable batch that introduces no vocabulary', async () => {
+	it('fills every want with a challenge about a word we sent, and introduces none', async () => {
 		const items = [item('a', -2 * DAY), item('b', -DAY)];
 		const plan = planRefill([], items, profile(), NOW);
 		const batch = await getBatch(plan);
 
-		expect(batch.challenges.length).toBeGreaterThanOrEqual(5);
-		// The invariant the whole generation path now rests on: a lesson is
-		// challenges and nothing else, so `generateChallenges` has no item write to
-		// make and the collection cannot grow behind the learner's back.
+		expect(batch.challenges).toHaveLength(plan.wants.length);
 		expect(batch).not.toHaveProperty('newItems');
-
-		// Every challenge stands on a word we actually sent.
 		const known = new Set(items.map((i) => i.id));
 		for (const challenge of batch.challenges) {
 			expect(challenge.itemIds.length).toBeGreaterThan(0);
 			for (const id of challenge.itemIds) expect(known.has(id)).toBe(true);
 		}
-
-		// Mock mode spends nothing.
-		expect(batch.usage).toEqual({ promptTokens: 0, completionTokens: 0 });
+		expect(batch.usage).toEqual({ promptTokens: 0, completionTokens: 0, requests: 0 });
+		expect(batch.failedRequests).toBe(0);
 	});
 
-	it('has nothing to build from when the learner has no words', async () => {
-		const batch = await getBatch(planRefill([], [], profile(), NOW));
-		expect(batch.challenges).toEqual([]);
+	it('says there is nothing to write when the learner has no words', async () => {
+		await expect(getBatch(planRefill([], [], profile(), NOW))).rejects.toThrow(/nothing to write/);
 	});
 
 	it('walks the same progress steps as the real path, instantly', async () => {
 		const steps: ProgressStep[] = [];
-		await getBatch(planRefill([], [], profile(), NOW), { onProgress: (s) => steps.push(s) });
+		const plan = planRefill([], [item('a', -DAY)], profile(), NOW);
+		await getBatch(plan, { onProgress: (s) => steps.push(s) });
 		expect(steps.map((s) => s.id)).toEqual(['build-prompt', 'request', 'validate']);
 	});
 
-	it('covers every gradeable challenge type the session renders', async () => {
-		const items = [item('a', -2 * DAY), item('b', -DAY)];
-		const plan = planRefill([], items, profile(), NOW);
-		const batch = await getBatch(plan);
+	it('writes the kinds each word can bear', async () => {
+		const items = [item('a', -2 * DAY), atStrength(item('b', -DAY), 0.3)];
+		const batch = await getBatch(planRefill([], items, profile(), NOW));
 		const types = new Set(batch.challenges.map((c) => c.type));
 
-		expect(types.has('multiple-choice')).toBe(true);
-		expect(types.has('cloze')).toBe(true);
-		expect(types.has('typed-translation')).toBe(true);
+		expect(types.has('multiple-choice') || types.has('typed-translation')).toBe(true);
+		expect(types.has('cloze') || types.has('word-order') || types.has('multi-cloze')).toBe(true);
 	});
 });
 
@@ -1512,6 +1507,8 @@ describe('planRefill → getBatch (mock mode)', () => {
  * real session is planned.
  */
 describe('session walkthrough (mock batch, no database)', () => {
+	beforeAll(loadWasmCore);
+
 	/** Plays a session the way the page does; `answerAs` scripts the learner. */
 	async function playSession(
 		known: KnowledgeItem[],
@@ -1569,16 +1566,24 @@ describe('session walkthrough (mock batch, no database)', () => {
 	it('plays a flawless session with only early-level active formats', async () => {
 		const known = Array.from({ length: 7 }, (_, i) => item(`k${i}`, -DAY));
 		const run = await playSession(known, () => 'correct');
+		console.log(
+			'DBG',
+			run.llmAnswered,
+			run.unplayed,
+			run.matchRounds,
+			run.answers.length,
+			run.summary.correct,
+			run.planned.length
+		);
 
-		// Every playable challenge the mock batch yields for seven words, played
-		// to the end: the session is sized by what was planned, and nothing may be
-		// left over at the end of it.
-		expect(run.llmAnswered).toBe(5);
+		// Two challenges per word, the mock filling every want, played to the
+		// end: the session is sized by what was planned, and nothing is left over.
+		expect(run.llmAnswered).toBe(14);
 		expect(run.unplayed).toBe(0);
-		expect(run.matchRounds).toBe(1); // after the 4th early-material answer
-		expect(run.answers).toHaveLength(6);
+		expect(run.matchRounds).toBe(3); // after every 4th early-material answer
+		expect(run.answers).toHaveLength(17);
 		expect(run.summary.accuracy).toBe(1);
-		expect(run.summary.correct).toBe(6);
+		expect(run.summary.correct).toBe(17);
 	});
 
 	it('counts a single miss without disturbing the rest of the session', async () => {
@@ -1587,18 +1592,13 @@ describe('session walkthrough (mock batch, no database)', () => {
 			index === 4 ? 'wrong' : 'correct'
 		);
 
-		expect(run.llmAnswered).toBe(5);
+		expect(run.llmAnswered).toBe(14);
 		expect(run.summary.wrong).toBe(1);
-		expect(run.summary.answered).toBe(6);
+		expect(run.summary.answered).toBe(17);
 	});
 
 	it('ends gracefully when the plan is shorter than a full session', async () => {
-		// A tiny batch: mock mode still returns its canned challenges.
-		const plan = planRefill([], [], profile(), NOW);
-		const batch = await getBatch(plan);
-		expect(batch.challenges.length).toBeLessThan(SESSION_LENGTH);
-
-		const run = await playSession([], () => 'correct');
+		const run = await playSession([item('a', -DAY)], () => 'correct');
 		expect(run.planned.length).toBeLessThan(SESSION_LENGTH);
 		expect(run.llmAnswered).toBe(run.planned.length);
 		expect(run.unplayed).toBe(0);

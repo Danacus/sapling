@@ -21,88 +21,51 @@ If the new question can be graded and drawn by an existing stored type, it is a
 wire type. Only widen the stored union when grading or presentation genuinely
 differs.
 
-## Wire type only — three edits
+## Wire type only — three edits, all in `crates/sapling-llm`
 
-1. Write one def module in `src/lib/llm/challenge-types/<type>.ts`, using
-   `satisfies WireTypeDef<T>` (not a type annotation — an annotation widens the
-   schema and defeats zod's inference). It bundles: zod `schema`, `stored`,
-   `promptSpec` (its field list plus one inline example), `params` +
-   `paramsSpec`, `correctiveSpec`, `resolve`, `fixtures` (one per mock scenario,
-   with `order` set to the intended lesson position), and optional `rulesSpec` /
-   `escalationSpec`.
-   `stored` is the `{type, direction}` this def's `resolve` always writes —
-   `generate.ts` checks a request's reply against the brief it asked for by
-   comparing it. *Forget it:* `pnpm check` fails at the def. *Get it wrong:*
-   `registry.test.ts` resolves every fixture and compares, and the type would
-   otherwise be asked for and then rejected on arrival, every time.
+1. **A data file, `lessons/<type>.json`**: `stored` (the `{type, direction}` —
+   plus `promptIsTarget` where two types share that pair — the resolver always
+   writes), `plannable` (`{demand, levels}`, omitted for a retired type),
+   `promptSpec` (field list plus one inline example), optional `rulesSpec`,
+   `paramsSpec`, `params` (each size key and its value at rungs 1..5),
+   `correctiveSpec`, optional `escalationSpec`, and `fixtures` — at least one
+   per scenario (`spanish`, `mandarin`), citing `{item}` for the want's word
+   and `{other}` for a second one.
 
-   **`params(difficulty)` is this type's difficulty**, as counts the model
-   can hit: `{words}`, `{tiles}`. It must be pure, keep the same keys at every
-   rung, and be monotone in the rung (lengths never fall). A word bank or a
-   distractor-tile count is deliberately **not** a rung-varying key any more —
-   cloze, multi-cloze and word-order all ask for a constant, full-size set
-   whichever rung the want is written at (cloze always asks for exactly five
-   `distractorWords`, a fixed line in its prompt rather than a parameter;
-   multi-cloze always writing enough to reach seven bank entries — the most a
-   served row (four gaps) can ever show; word-order
-   always asking for three distractor tiles), and `$lib/challenges/serve/presentation` sizes
-   how much of that stored set a *served* challenge shows, from the word's
-   current rung. Only a structural count — a sentence's length, a tile tray's
-   own tile count, a gap count — belongs in `params` now. Align the ends with
-   the *stored* side's scales — `challenges/types/primitives.ts`'s 1..12-word
-   `lengthKnob`, and whatever constants that type's stored `difficulty` reads —
-   so a challenge written at rung 1 sits at the low end of its tier and one at
-   rung 5 at the high end. `paramsSpec` is one prompt line explaining exactly
-   the keys `params` returns, in the model's terms — plus, where it applies,
-   the fixed instruction for a bank/tray the model always writes in full.
-   *Forget either, or emit a key `paramsSpec` does not name:* `registry.test.ts`
-   fails (and `pnpm check` fails at the def for a missing one).
+   **`params` is this type's difficulty**, as counts the model can hit
+   (`words`, `tiles`, `gaps`): the same keys at every rung, monotone, aligned
+   with the stored side's scales (`challenges/types/primitives.ts`'
+   `lengthKnob`). A bank or tray size is **not** a rung-varying key: every
+   banked type asks for its fullest set, and `$lib/challenges/serve/presentation`
+   sizes what a served row shows. `paramsSpec` names exactly those keys.
+   *Get either wrong:* `kinds.rs`' tests fail.
 
-   Its `rulesSpec` is where **any** rule about this type goes — including one
-   another type also needs, spelled out in full in both (segmentation is in
-   `word-order` *and* `spot-error`). A duplicated line costs nothing it did not
-   already cost: each copy only ever travels on its own type's calls. It states
-   **no difficulty gradient** — `params` is the difficulty — only the judgement
-   no number expresses (how close a distractor should sit, how subtle a planted
-   error should be). Only rules that name no type at all belong in
-   `generate.ts`'s shared preamble.
-2. Register it in the ordered `WIRE_TYPE_DEFS` in `challenge-types/index.ts`.
-3. **Add a `PlannableKind` for it to `PLANNABLE_KINDS` in
-   `src/lib/llm/requests.ts`**, with the `demand` tier its *stored* challenge
-   reports (`$lib/challenges`' `demand`: 0 recognition, 1 constrained
-   production, 2 free production). The session's top-up planner
-   (`$lib/session/topup`) only asks a word for kinds at or below the tier its
-   rung can bear, so a kind whose stated tier is lower than its stored one is
-   written for words the session planner will then refuse to serve it to, and
-   one stated higher is never written for words that could use it. Presentation
-   is decided at serve time now, never as a kind — a type whose *stored* demand
-   can genuinely vary by row (cloze's word bank) is still listed once, at the
-   tier it is generated and planned at; the gap between that and what a served
-   row actually asks (typed, at the top rung) is `$lib/challenges/serve/progression`'s
-   `servedDemand`, not a second `PlannableKind`.
-   *Forget it:* the type is described to the model, exampled, and **never asked
-   for** — the session chooses kinds, not the model. `registry.test.ts` fails on
-   the `PLANNABLE_KINDS` parity check. *Get the tier wrong:* `registry.test.ts`
-   resolves every fixture of the type and compares `demandOf` with the stated
-   `demand` — and checks `kindOf` reads the resolved challenge back as that kind.
+   `rulesSpec` holds **any** rule about this type — including one another
+   type also needs, spelled out in both (segmentation is in `word-order` and
+   `spot-error`). Only rules that name no type belong in `prompts/lesson.txt`.
+2. **A `WireType` variant in `kinds.rs`** — in `ALL` (registry order: the
+   planner's tie-break order and the escalation gloss order; appending keeps
+   seeded picks stable), `as_str` and `source`. *Forget `ALL`:* the const
+   assert under it fails the build.
+3. **A wire struct and a `Generated` variant in `wire.rs`**, with its resolver
+   arm in `resolve`. `serde` + `schemars` derives are the schema: array
+   lengths as `#[schemars(length(...))]`, optional fields `Option`. The resolver
+   drops a challenge only for a structural defect, and trims cosmetic ones.
+   *Forget it:* every exhaustive `match` over `WireType` fails to compile.
 
-Import direction is strict: `primitives.ts` ← def modules ← `index.ts` ←
-`schemas.ts` ← `generate.ts`, with `requests.ts` importing the registry and
-`generate.ts` importing `requests.ts`. **A def module must never import
-`schemas.ts`**, and never `requests.ts` either — a def sizes itself by
-`DifficultyRung`, which `def.ts` declares for exactly that reason.
-
-Registry order *is* union order and escalation-gloss order — not prompt order,
-since each type composes its own prompt. Prefer appending.
+`CHALLENGE_KINDS` in the generated `llm.ts` carries `stored` and `plannable` to
+TypeScript, so `$lib/llm`'s `PLANNABLE_KINDS` and `kindOf` follow with no edit.
+`src/lib/llm/index.test.ts` resolves every kind through wasm and checks the
+result against the stored `challengeSchema`, `kindOf` and the stated `demand`.
 
 ## Challenge type, end to end — four registrations
 
 Each omission is caught by a different gate. That is the design; lean on it
 rather than checking by eye.
 
-1. **Wire def** in `llm/challenge-types/index.ts` (as above).
+1. **Wire type** in `crates/sapling-llm` (as above).
    *Forget it:* the type does not exist at all — nothing prompts it, nothing
-   parses it. A missing fixture fails `challenge-types/registry.test.ts`.
+   parses it.
 2. **Stored def** module in `src/lib/challenges/types/<type>.ts`, listed in
    `challenges/types/index.ts` **and** in `STORED_TYPE_ORDER`. It bundles the
    stored zod `schema`, the grading rule `check`, the difficulty tier `demand`,
@@ -148,7 +111,7 @@ rather than checking by eye.
 
 - [ ] Every applicable registration above is done
 - [ ] `pnpm check` passes — this is what catches registrations 2 and 3
-- [ ] `pnpm test` passes — this is what catches registrations 1 and 4
+- [ ] `pnpm test` and `pnpm core:test` pass — this is what catches registrations 1 and 4
 - [ ] A fixture exists for each mock scenario, so the type is playable offline
 - [ ] Played once in mock mode if the change is user-visible
 

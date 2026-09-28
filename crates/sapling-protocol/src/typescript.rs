@@ -5,8 +5,8 @@
 //! Every type is `ts-rs`'s own export, one file per type, integers as `number`.
 //! Written here by hand are only what `ts-rs` cannot derive: `backend.ts` (the
 //! `Backend` interface, `BACKEND_METHODS` and `EXPORT_VERSION`, from the method
-//! table in `lib.rs`), `llm.ts` (the `Llm` interface, `LLM_METHODS` and the
-//! reading caps, from the table in `llm.rs`), `Payloads.ts` (each event type's
+//! table in `lib.rs`), `llm.ts` (the `Llm` interface, `LLM_METHODS`, the
+//! prompt caps and `CHALLENGE_KINDS`, from the table in `llm.rs`), `Payloads.ts` (each event type's
 //! payload) and `index.ts`, which re-exports every type file.
 
 use std::fmt::Write as _;
@@ -22,8 +22,10 @@ use sapling_domain::events::{
 use sapling_domain::types::{
     ChallengeResult, Conversation, ConversationExchange, Profile, ReadingText,
 };
+use sapling_llm::kinds::{KindInfo, WireType};
+use sapling_llm::lesson::REQUEST_ITEMS;
 use sapling_llm::reading::{MAX_FOCUS_WORDS, MAX_TOPIC_CHARS};
-use sapling_llm::{Endpoint, LlmError, TokenUsage};
+use sapling_llm::{Endpoint, LlmError, ProgressStep, TokenUsage, MAX_ABOUT_CHARS};
 use sapling_srs::FsrsCardState;
 
 use crate::llm::{llm_methods, visit_llm_types};
@@ -130,7 +132,13 @@ fn llm(names: &[String]) -> String {
     }
     let _ = writeln!(
         out,
-        "] as const;\n\nexport const MAX_FOCUS_WORDS = {MAX_FOCUS_WORDS};\nexport const MAX_TOPIC_CHARS = {MAX_TOPIC_CHARS};"
+        "] as const;\n\nexport const MAX_FOCUS_WORDS = {MAX_FOCUS_WORDS};\nexport const MAX_TOPIC_CHARS = {MAX_TOPIC_CHARS};\nexport const MAX_ABOUT_CHARS = {MAX_ABOUT_CHARS};\nexport const REQUEST_ITEMS = {REQUEST_ITEMS};"
+    );
+    let kinds: Vec<KindInfo> = WireType::ALL.into_iter().map(WireType::info).collect();
+    let _ = writeln!(
+        out,
+        "\n/** Every wire type, in registry order: its stored shape and, if still generated, its plan. */\nexport const CHALLENGE_KINDS: readonly KindInfo[] = {};",
+        serde_json::to_string(&kinds).expect("kinds serialize")
     );
     out
 }
@@ -181,6 +189,8 @@ fn typescript() {
     Endpoint::export_all(&cfg).expect("export");
     LlmError::export_all(&cfg).expect("export");
     TokenUsage::export_all(&cfg).expect("export");
+    ProgressStep::export_all(&cfg).expect("export");
+    KindInfo::export_all(&cfg).expect("export");
     std::fs::write(dir.join("Payloads.ts"), payloads(&cfg)).expect("write");
 
     let mut names: Vec<String> = std::fs::read_dir(&dir)

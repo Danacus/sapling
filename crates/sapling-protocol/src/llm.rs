@@ -5,6 +5,8 @@
 
 use serde_json::{json, Value};
 
+use sapling_llm::escalation::{self, EscalationArgs, EscalationReply};
+use sapling_llm::lesson::{self, BatchArgs, BatchResult};
 use sapling_llm::reading::TranslateLineArgs;
 use sapling_llm::reading::{self, GenerateTextArgs, GlossEntry, LookupWordArgs, ReadingTextDraft};
 use sapling_llm::{Llm, LlmError, Transport};
@@ -83,6 +85,14 @@ llm! {
         translateLine(args: TranslateLineArgs) -> String {
             reading::translate_line(llm, &args)
         }
+        /// A top-up: one request per wire type, a few at a time. Reports progress.
+        generateBatch(args: BatchArgs) -> BatchResult {
+            lesson::generate_batch(llm, &args)
+        }
+        /// One follow-up about a graded answer, which may overturn it.
+        escalate(args: EscalationArgs) -> EscalationReply {
+            escalation::escalate(llm, &args)
+        }
     }
 }
 
@@ -140,6 +150,23 @@ mod tests {
         )
         .unwrap();
         assert_eq!(answer, json!({ "result": "(translation of \"Hola.\")" }));
+    }
+
+    #[test]
+    fn a_mock_top_up_answers_its_challenges() {
+        let mock = Llm::new(Offline, None);
+        let want = r#"{"item":{"id":"w","term":"hola","meaning":"hi"},"kind":{"type":"recognize-mc"},"difficulty":1}"#;
+        let answer = call(
+            &mock,
+            "generateBatch",
+            &format!(r#"[{{"profile":{PROFILE},"wants":[{want}]}}]"#),
+        )
+        .unwrap();
+        let result = &answer["result"];
+        assert_eq!(result["challenges"][0]["type"], "multiple-choice");
+        assert_eq!(result["challenges"][0]["itemIds"], json!(["w"]));
+        assert_eq!(result["failedRequests"], 0);
+        assert!(answer.get("usage").is_none());
     }
 
     #[test]

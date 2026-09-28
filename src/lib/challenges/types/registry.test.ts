@@ -8,21 +8,14 @@
  * suite instead of a challenge that grades wrong or renders blank, and they fail
  * loudly if anyone reintroduces a hand-written copy of a list that is currently
  * derived.
- *
- * That last one is why `challengeSchema` is imported from `$lib/llm/schemas`
- * rather than composed here: that module is the façade every other module
- * imports through, and a hand-edited union over there — a member added, one
- * dropped, the order shuffled — would be invisible to a test that read the
- * registry twice.
  */
 
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { challengeSchema } from '$lib/llm/schemas';
 import type { Challenge, ChallengeType } from '$lib/types';
-import { STORED_TYPE_DEFS, STORED_TYPE_ORDER, storedDefFor } from './index';
+import { STORED_TYPE_DEFS, STORED_TYPE_ORDER, challengeSchema, storedDefFor } from './index';
 
 const TYPES_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -65,9 +58,7 @@ describe('STORED_TYPE_DEFS', () => {
 
 	it('is the union, member for member', () => {
 		// True by construction: `challengeSchema` is a projection of the registry.
-		// Asserted anyway on *identity*, because the union reaches the app through
-		// `$lib/llm/schemas` — if that façade is ever hand-edited into a second list
-		// of members, matching type literals would not catch it but this will.
+		// Asserted on *identity*, so a hand-edited second list of members fails.
 		expect([...challengeSchema.options]).toEqual(defs().map((def) => def.schema));
 	});
 

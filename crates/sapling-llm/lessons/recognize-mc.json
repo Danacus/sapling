@@ -1,0 +1,68 @@
+{
+	"stored": {
+		"type": "multiple-choice",
+		"direction": "toNative"
+	},
+	"plannable": {
+		"demand": 0,
+		"levels": [
+			1,
+			2
+		]
+	},
+	"promptSpec": "recognize-mc — target text shown, native meaning picked. {shown:TargetText, correctMeaning, distractors:[3], instruction} e.g. {\"type\":\"recognize-mc\",\"shown\":{\"text\":\"el perro\",\"reading\":null},\"correctMeaning\":\"the dog\",\"distractors\":[\"the cat\",\"the bread\",\"the house\"],\"instruction\":null,\"itemIds\":[\"i1\"],\"explanation\":null}",
+	"rulesSpec": "- recognize-mc: exactly one of the four options may be correct given \"shown\"; if two would both answer it, rewrite it. The closer the distractors sit to correctMeaning without being a second right answer, the better the challenge.",
+	"paramsSpec": "- words: how many words the target text in \"shown\" should have.",
+	"params": {
+		"words": [
+			1,
+			3,
+			5,
+			8,
+			11
+		]
+	},
+	"correctiveSpec": "recognize-mc {shown,correctMeaning,distractors: exactly 3}",
+	"fixtures": {
+		"spanish": [
+			{
+				"type": "recognize-mc",
+				"shown": {
+					"text": "¿Nos trae la cuenta, por favor?",
+					"reading": null
+				},
+				"correctMeaning": "Could you bring us the bill, please?",
+				"distractors": [
+					"Could we see the menu, please?",
+					"Is this table free?",
+					"Could you bring another chair?"
+				],
+				"instruction": "What is the customer asking for?",
+				"itemIds": [
+					"{item}"
+				],
+				"explanation": "Waiters are addressed with \"usted\", hence \"trae\" rather than \"traes\"."
+			}
+		],
+		"mandarin": [
+			{
+				"type": "recognize-mc",
+				"shown": {
+					"text": "菜单",
+					"reading": "càidān"
+				},
+				"correctMeaning": "the menu",
+				"distractors": [
+					"the bill",
+					"the chopsticks",
+					"the waiter"
+				],
+				"instruction": null,
+				"itemIds": [
+					"{item}"
+				],
+				"explanation": null
+			}
+		]
+	}
+}

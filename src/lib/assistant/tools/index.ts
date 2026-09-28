@@ -67,8 +67,8 @@ export function assistantToolByName(name: string): AssistantToolDef | undefined 
 /**
  * The `tools` payload sent with every chat request.
  *
- * Note what is *not* done to these schemas, unlike `batchJsonSchemaFor` in
- * `$lib/llm/schemas`: no `required`-everything tightening. That rewrite exists
+ * Note what is *not* done to these schemas, unlike a lesson's strict schema
+ * (`crates/sapling-llm`): no `required`-everything tightening. That rewrite exists
  * to satisfy strict structured outputs, where the model must emit every key;
  * here an optional argument has to stay optional, or a model would be forced to
  * invent a `query` for a list it wants in full.

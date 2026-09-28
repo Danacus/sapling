@@ -91,8 +91,8 @@ export function setModel(model: string): void {
  * strict schema already does the structural work, that is usually waste.
  * `'default'` sends nothing and leaves the model's own choice in place. Every
  * other value travels two ways (`reasoning_effort` and `reasoning.effort`; see
- * `$lib/llm/client`) so it lands on both OpenAI-compatible and OpenRouter
- * endpoints.
+ * `crates/sapling-llm`'s `client.rs`) so it lands on both OpenAI-compatible and
+ * OpenRouter endpoints.
  */
 export type ReasoningEffort = 'default' | 'minimal' | 'low' | 'medium' | 'high' | 'max';
 

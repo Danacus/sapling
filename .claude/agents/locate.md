@@ -31,7 +31,7 @@ something doesn't exist:
 
 | Registry | Directory | Members |
 |---|---|---|
-| **Wire** (what the model emits) | `src/lib/llm/challenge-types/` | 7: `recognize-mc`, `produce-mc`, `cloze`, `translate-to-target`, `translate-to-native`, `word-order`, `spot-error` |
+| **Wire** (what the model emits) | `crates/sapling-llm/lessons/*.json` + `src/{kinds,wire}.rs` | 9: `recognize-mc`, `produce-mc`, `context-mc`, `translate-to-native`, `spot-error`, `word-order`, `cloze`, `multi-cloze`, `translate-to-target` (retired) |
 | **Stored** (what the app plays) | `src/lib/challenges/types/` | 6: `cloze`, `match-pairs`, `multiple-choice`, `spot-error`, `typed-translation`, `word-order` |
 | **Assistant tools** | `src/lib/assistant/tools/` | `add-words`, `list-words`, `update-word`, `remove-word` |
 
@@ -39,13 +39,13 @@ The two challenge registries are **not** the same list — wire types resolve
 *into* stored types (both `recognize-mc` and `produce-mc` become
 `multiple-choice`; both `translate-to-*` become `typed-translation`;
 `match-pairs` has no wire type, it is assembled locally). A name missing from
-one half is normal, not a bug. Each registry's `index.ts` is its membership
+one half is normal, not a bug. The wire half's membership is `WireType::ALL` in `kinds.rs`; elsewhere each registry's `index.ts` is its membership
 list; `def.ts` is its contract; `primitives.ts` is its shared pieces.
 
 Where the rest lives:
 
-- `src/lib/llm/` — generation (`generate.ts`, `SYSTEM_PROMPT`), `escalation.ts`, `mock.ts`, `schemas.ts` (a re-exporting façade); `core.ts` forwards the ported calls to the Rust ones
-- `crates/sapling-llm/` — the model calls moving to Rust: `client.rs` (the chat client over an injected transport), `reading.rs` (generate / look up / translate), prompts in `prompts/`, mock fixtures in `fixtures/`; `crates/sapling-protocol/src/llm.rs` names them
+- `src/lib/llm/` — `index.ts` (`getBatch`), `escalation.ts` (`getEscalation`, what the screen showed), `kinds.ts` (`PLANNABLE_KINDS`, `kindOf`), `core.ts` (`callLlm` into the wasm), `mock.ts` (the flag); `client.ts` is the TypeScript chat client the assistant and conversation mode still use
+- `crates/sapling-llm/` — the model calls: `client.rs` (chat client over an injected transport), `lesson.rs` (the top-up: requests, prompt, batch loop, mock), `wire.rs` (wire structs, schemas, resolvers), `kinds.rs` (the wire types over `lessons/*.json`), `escalation.rs`, `reading.rs`, `text.rs`; prompts in `prompts/`, mock fixtures in `fixtures/` and `lessons/`; `crates/sapling-protocol/src/llm.rs` names them
 - `src/lib/session/` — `engine.ts` (orchestrator, all play-time DB writes), `progression.ts`, `romanization.ts`
 - `src/lib/srs/` — grades and the accessors for the schedule the core derives onto each item (`isDue`, `strengthOf`); no FSRS, no ts-fsrs
 - `src/lib/db/` — repositories, the only store access; `protocol.ts` is the `Backend` boundary, `client.ts` + `sqlite.worker.ts` the transport, `host.ts` the glue that lends the Rust core sqlite-wasm; `events.ts` is types only; `database.ts` keeps only `ChallengeRow`/`challengeOf`

@@ -100,11 +100,9 @@ export function normalize(input: string, opts: NormalizeOptions = {}): string {
  * NFD-decompose and drop combining marks, e.g. `"café"` -> `"cafe"`,
  * `"nǐ hǎo"` -> `"ni hao"`.
  *
- * Exported because grading is not its only customer: the LLM resolver folds the
- * readings it is handed into extra `acceptedAnswers`, so a learner typing
- * toneless pinyin is graded correct by the ordinary (free) matcher rather than
- * by script-aware special cases — and the model never spends tokens spelling
- * those variants out.
+ * The Rust resolver folds readings the same way into extra `acceptedAnswers`
+ * (`crates/sapling-llm`'s `text.rs`), so a learner typing toneless pinyin is
+ * graded correct by the ordinary matcher.
  */
 export function foldDiacritics(s: string): string {
 	return s

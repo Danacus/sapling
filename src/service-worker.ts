@@ -12,8 +12,8 @@
  * an offline launch a *fully working* app, not a degraded one.
  *
  * What still needs network — and already fails gracefully where it lives:
- *   - generating a new batch of challenges (`$lib/llm/generate`)
- *   - the Explain/dispute escalation (`$lib/llm/escalation`)
+ *   - generating a new batch of challenges (`getBatch` in `$lib/llm`)
+ *   - the Explain/dispute escalation (`getEscalation` in `$lib/llm`)
  *   - the first-ever Kokoro model download (`$lib/tts`), which falls back to
  *     Web Speech and, failing that, to silence — audio never blocks gameplay.
  * Once the models are cached, TTS works offline too.

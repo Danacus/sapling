@@ -1,0 +1,1 @@
+Your previous reply was rejected. Return ONLY a raw JSON object {"challenges":[...]}, no fences, no commentary. Every challenge needs type, itemIds and its own fields: {correctiveSpec}. Every target-language slot is a TargetText object {"text","reading"}, reading null for Latin scripts. Keep to the sizes each item asked for.
