@@ -1,0 +1,1 @@
+Words the learner already knows, newest first. Build your reply out of these and the most common words of {target}. At most one word per reply that is not on this list, and only when the scene truly needs it.

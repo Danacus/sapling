@@ -6,14 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import {
-	alignedForm,
-	correctionSpans,
-	diffCorrection,
-	hasChanges,
-	sameRomanization,
-	spanGap
-} from './diff';
+import { alignedForm, correctionSpans, diffCorrection, hasChanges, spanGap } from './diff';
 
 describe('diffCorrection', () => {
 	it('returns one unchanged span when nothing changed', () => {
@@ -109,20 +102,6 @@ describe('correctionSpans', () => {
 		});
 		expect(spans.filter((span) => span.kind === 'same')).not.toHaveLength(0);
 		expect(spans.map((span) => span.text).join(' ')).toContain('yao');
-	});
-});
-
-describe('sameRomanization', () => {
-	it('ignores tone marks, capitals and syllable spacing', () => {
-		expect(sameRomanization('ni hao ma', 'Nǐ hǎo ma')).toBe(true);
-		expect(sameRomanization('wo yao kafei', 'wǒ yào kā fēi')).toBe(true);
-		expect(sameRomanization('konnichiwa', 'konnichi wa')).toBe(true);
-		expect(sameRomanization("xi'an", 'xian')).toBe(true);
-	});
-
-	it('still sees a different word as different', () => {
-		expect(sameRomanization('wo yao kafei', 'wǒ yǒu kā fēi')).toBe(false);
-		expect(sameRomanization('ni hao', 'ni hao ma')).toBe(false);
 	});
 });
 

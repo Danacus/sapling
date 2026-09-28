@@ -69,7 +69,7 @@
 	import { untrack } from 'svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 
-	import { addWordsTool, defaultToolContext } from '$lib/assistant/tools';
+	import { addWords } from '$lib/assistant';
 	import {
 		deleteText,
 		getAllItems,
@@ -1146,18 +1146,13 @@
 			// The outcome is not inspected: `add_words` skips a word already in the
 			// list rather than failing, and either way the card re-reads its status
 			// from the refreshed garden — which is a better receipt than a sentence.
-			await addWordsTool.run(
+			await addWords([
 				{
-					words: [
-						{
-							term: target.text,
-							meaning: draftMeaning,
-							...(reading ? { romanization: reading } : {})
-						}
-					]
-				},
-				defaultToolContext()
-			);
+					term: target.text,
+					meaning: draftMeaning,
+					...(reading ? { romanization: reading } : {})
+				}
+			]);
 			await refresh();
 		} catch (cause) {
 			cardError = cause instanceof Error ? cause.message : 'Could not add that word.';

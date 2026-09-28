@@ -1,35 +1,45 @@
 /**
- * Public surface of the chat assistant.
- *
- * The UI should only ever need {@link sendChatMessage} and the turn types: it
- * keeps a `ChatTurn[]`, appends the learner's message, awaits the returned
- * {@link AssistantTurn} and renders its `text` plus one line per
- * {@link ActionNote}. The mock/real split, the tool loop and every database
- * write are inside.
- *
- * The assistant's whole write surface is the tool registry (`./tools`): four
- * actions on the learner's word list, each one module. Nothing else in here
- * mutates anything, and a change the learner did not see an action note for did
- * not happen.
+ * The chat assistant. The loop, the tools and the offline mock are Rust
+ * (`crates/sapling-llm`); this module hands them the learner's word list.
+ * Tool traffic never outlives a turn: the page keeps prose only.
  */
 
-export {
-	MAX_REPLY_TOKENS,
-	MAX_TOOL_ROUNDS,
-	ROUND_LIMIT_REPLY,
-	buildSystemPrompt,
-	runChat,
-	sendChatMessage
-} from './chat';
-export type { ActionNote, AssistantTurn, ChatOptions, ChatTurn } from './chat';
+import type {
+	AddWordsParams,
+	AssistantTurn,
+	ChatTurn,
+	ConversationAction,
+	LearnerProfile,
+	NewWord,
+	ToolOutcome
+} from '$lib/db/generated/index';
+import { callLlm } from '$lib/llm';
+import type { CallOptions, ToolContext } from '$lib/llm';
+import { defaultToolContext } from './context';
 
-export { OFFLINE_REPLY, mockChat, parseWordLines } from './mock';
+export type { AddWordsParams, AssistantTurn, ChatTurn, NewWord, ToolContext, ToolOutcome };
+/** One tool call a turn made, for the note under the reply. */
+export type ActionNote = ConversationAction;
+export { defaultToolContext };
 
-export {
-	ASSISTANT_TOOLS,
-	assistantToolByName,
-	defaultToolContext,
-	executeToolCall,
-	toolDefsForClient
-} from './tools';
-export type { AssistantToolDef, ToolContext, ToolOutcome } from './tools';
+/** One assistant turn. Only `LlmError` (or a failing store) rejects. */
+export function sendChatMessage(
+	history: ChatTurn[],
+	text: string,
+	profile: LearnerProfile,
+	opts: CallOptions = {}
+): Promise<AssistantTurn> {
+	return callLlm(
+		'sendChatMessage',
+		{ profile, history, text },
+		{ ...opts, tools: opts.tools ?? defaultToolContext() }
+	);
+}
+
+/**
+ * `add_words` with no model: the one route by which vocabulary enters the
+ * collection, whoever asks.
+ */
+export function addWords(words: NewWord[], opts: CallOptions = {}): Promise<ToolOutcome> {
+	return callLlm('addWords', { words }, { ...opts, tools: opts.tools ?? defaultToolContext() });
+}

@@ -1,0 +1,17 @@
+{
+  "scenario": {
+    "setting": "An ice cream shop on a hot afternoon.",
+    "teacherRole": "the person behind the counter",
+    "learnerRole": "a customer",
+    "firstSpeaker": "teacher",
+    "opener": { "text": "¡Hola! ¿Qué te pongo?", "reading": null },
+    "openerTranslation": "Hello! What can I get you?"
+  },
+  "replies": [
+    { "text": "Muy bien. ¿Algo más?", "translation": "Very good. Anything else?" },
+    { "text": "¿Y para beber?", "translation": "And to drink?" },
+    { "text": "Perfecto. ¿Aquí o para llevar?", "translation": "Perfect. Here or to take away?" },
+    { "text": "Claro. ¿Cómo te llamas?", "translation": "Of course. What is your name?" }
+  ],
+  "note": "A sentence opens with a capital and closes with a full stop."
+}

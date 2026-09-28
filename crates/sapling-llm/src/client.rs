@@ -260,11 +260,21 @@ impl<T: Transport> Llm<T> {
         request: &ChatRequest,
         mock: impl FnOnce() -> String,
     ) -> Result<Completion> {
+        self.complete_or(request, || Completion {
+            content: mock(),
+            tool_calls: Vec::new(),
+        })
+        .await
+    }
+
+    /// [`Self::complete_or_mock`] for a mock that may call tools.
+    pub async fn complete_or(
+        &self,
+        request: &ChatRequest,
+        mock: impl FnOnce() -> Completion,
+    ) -> Result<Completion> {
         match &self.endpoint {
-            None => Ok(Completion {
-                content: mock(),
-                tool_calls: Vec::new(),
-            }),
+            None => Ok(mock()),
             Some(endpoint) => self.complete(endpoint, request).await,
         }
     }

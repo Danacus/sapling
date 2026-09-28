@@ -1,8 +1,8 @@
 /**
- * Public surface of the LLM layer. Lesson generation, escalation and the
- * reading calls run in Rust (`crates/sapling-llm`) through {@link callLlm};
- * `client.ts` is the TypeScript chat client the assistant and conversation
- * mode still use. Mock mode is decided here and honoured on both sides.
+ * Public surface of the LLM layer. Every model call but one runs in Rust
+ * (`crates/sapling-llm`) through {@link callLlm}; `client.ts` is left for the
+ * romanization backfill (`romanize.ts`). Mock mode is decided here and
+ * honoured on both sides.
  *
  * Nothing in this layer touches the database. `getBatch` returns challenges and
  * nothing else — a lesson is written *about* the vocabulary it is handed and
@@ -45,31 +45,11 @@ export async function getBatch(args: BatchArgs, opts: BatchOptions = {}): Promis
 export { describeShown, getEscalation } from './escalation';
 export type { EscalationArgs } from './escalation';
 
-export {
-	APP_REFERER,
-	APP_TITLE,
-	LlmError,
-	OPENROUTER_BASE_URL,
-	chatCompletion,
-	stripFences
-} from './client';
-export type {
-	AssistantMessage,
-	ChatCompletionOptions,
-	ChatCompletionResult,
-	ChatMessage,
-	FetchLike,
-	LlmErrorKind,
-	ResponseFormat,
-	TextMessage,
-	TokenUsage,
-	ToolCallRequest,
-	ToolDef,
-	ToolResultMessage
-} from './client';
+export { LlmError } from './client';
+export type { FetchLike, LlmErrorKind, TokenUsage } from './client';
 
 export { callLlm } from './core';
-export type { CallOptions } from './core';
+export type { CallOptions, ToolContext } from './core';
 export {
 	MAX_ABOUT_CHARS,
 	MAX_FOCUS_WORDS,

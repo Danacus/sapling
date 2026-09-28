@@ -1,0 +1,1 @@
+The learner has no words in their list yet: use only the most common words of {target}.

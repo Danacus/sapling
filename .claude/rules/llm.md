@@ -11,7 +11,7 @@ paths:
 
 # LLM generation
 
-Stateless: data in, data out, never touches the DB. Lesson generation, escalation and the reading calls run in Rust (`crates/sapling-llm`, see `core.md`) on the window thread, reached through `callLlm` (`core.ts`); `client.ts` is the TypeScript chat client `$lib/assistant` and `$lib/conversation` still use until their port. `LlmError` is the one error class both throw. Mock mode (`mock.ts`: no key, or `ll.mockMode`) sends no endpoint, and Rust answers with fixtures through the same parser and resolver as a live reply; node tests are always in mock mode.
+Stateless: data in, data out, never touches the DB. Every model call runs in Rust (`crates/sapling-llm`, see `core.md`) on the window thread, reached through `callLlm` (`core.ts`) — except the romanization backfill (`romanize.ts`), the last user of the trimmed TypeScript `client.ts`. The tool-calling methods take a `ToolContext` in `CallOptions` (`assistant.md`); this layer only declares it and bridges it to wasm. `LlmError` is the one error class both throw. Mock mode (`mock.ts`: no key, or `ll.mockMode`) sends no endpoint, and Rust answers with fixtures through the same parser and resolver as a live reply; node tests are always in mock mode.
 
 ## The seam
 

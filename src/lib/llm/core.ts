@@ -1,28 +1,55 @@
 /**
  * The model calls that live in Rust (`crates/sapling-llm`), run on the window
  * thread: the wasm build's `llm` export, with this thread's `fetch` as the
- * transport. Rust owns the prompts, the parsing and mock mode; this module
- * lends it the endpoint the learner configured and records what it spent.
+ * transport. Rust owns the prompts, the parsing, the tools and mock mode; this
+ * module lends it the endpoint the learner configured, the word list a
+ * tool-calling method reads and writes, and records what it spent.
  */
 
 import { DEFAULT_MODEL, getApiKey, getBaseUrl, getModel } from '$lib/db/settings';
 import type {
 	Endpoint,
+	KnowledgeItem,
 	ProgressStep,
 	LlmError as WireError,
 	TokenUsage
 } from '$lib/db/generated/index';
 import type { Llm } from '$lib/db/generated/llm';
 import init, { llm } from '$lib/db/wasm/sapling_core';
+import type { ToolHost } from '$lib/db/wasm/sapling_core';
 import wasmUrl from '$lib/db/wasm/sapling_core_bg.wasm?url';
 import { LlmError } from './client';
 import { isMockMode } from './mock';
 import { recordUsage } from './usage';
 
+/**
+ * The word list the assistant's tools run against — `$lib/assistant`'s
+ * `defaultToolContext` is the store; this layer never imports it.
+ */
+export interface ToolContext {
+	getAllItems(): Promise<KnowledgeItem[]>;
+	upsertItems(items: KnowledgeItem[]): Promise<void>;
+	deleteItem(id: string): Promise<void>;
+	newId(): string;
+	now(): number;
+}
+
 export interface CallOptions {
 	signal?: AbortSignal;
 	/** For the calls that report progress (`generateBatch`). */
 	onProgress?: (step: ProgressStep) => void;
+	/** For the calls that run tools (`sendChatMessage`, `sendTurn`, `addWords`). */
+	tools?: ToolContext;
+}
+
+function toolHost(ctx: ToolContext): ToolHost {
+	return {
+		getAllItems: async () => JSON.stringify(await ctx.getAllItems()),
+		upsertItems: (json) => ctx.upsertItems(JSON.parse(json) as KnowledgeItem[]),
+		deleteItem: (id) => ctx.deleteItem(id),
+		newId: () => ctx.newId(),
+		now: () => ctx.now()
+	};
 }
 
 let ready: Promise<unknown> | undefined;
@@ -79,7 +106,8 @@ export async function callLlm<M extends keyof Llm>(
 			JSON.stringify([args]),
 			endpoint(),
 			poster(opts.signal),
-			progress && ((step: string) => progress(JSON.parse(step) as ProgressStep))
+			progress && ((step: string) => progress(JSON.parse(step) as ProgressStep)),
+			opts.tools && toolHost(opts.tools)
 		);
 	} catch (error) {
 		opts.signal?.throwIfAborted();

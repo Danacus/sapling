@@ -1,105 +1,59 @@
 /**
- * Public surface of conversation mode.
+ * Conversation mode. The setup call, the turn loop, the envelope and the
+ * offline mock are Rust (`crates/sapling-llm`); the one tool is the
+ * assistant's own `add_words`, over the same word list. What stays here is
+ * presentation: `./diff`, the inline correction markup.
  *
- * The UI should only ever need {@link startConversation}, {@link sendTurn} and
- * the turn types: it holds a `ConversationTurn[]`, appends what the learner
- * wrote, awaits the {@link TurnResult}, pins the returned correction onto that
- * learner turn and pushes the teacher's. The mock/real split, the tool loop and
- * every write are inside.
- *
- * The whole write surface is one tool — `add_words`, reused verbatim from
- * `$lib/assistant/tools` — reached through the injected `ToolContext`. Nothing
- * in this module imports `$lib/db`, which is what keeps it testable in node and
- * what makes every word the teacher files a real repository write with a sync
- * event behind it.
- *
- * Persisting the transcript is the page's job, not this module's: the scene and
- * every completed exchange are rows in the events log, written from
- * `src/routes/converse/` through the repositories. That split is why a
- * conversation resumes after a reload without a line of storage code in here.
+ * Persisting is the page's job: the scene and every completed exchange are
+ * events written from `src/routes/converse/`.
  */
 
-import { isMockMode } from '$lib/llm';
-import type { Profile } from '$lib/types';
-import { mockScenario, mockTurn } from './mock';
-import { requestScenario } from './scenario';
-import type { ScenarioArgs, ScenarioOptions } from './scenario';
-import { runTurn } from './teacher';
-import type { ConversationTurn, TurnOptions, TurnResult } from './teacher';
-import type { Scenario } from './schemas';
+import { defaultToolContext } from '$lib/assistant';
+import type {
+	ConversationCorrection,
+	ConversationLearnerTurn,
+	ConversationLine,
+	ConversationScenario,
+	ConversationTeacherTurn,
+	ConversationTurn,
+	LearnerProfile,
+	TurnResult
+} from '$lib/db/generated/index';
+import { callLlm } from '$lib/llm';
+import type { CallOptions } from '$lib/llm';
 
-/**
- * The scene for one session: the real setup call when a key is configured, the
- * deterministic mock otherwise — the same dispatch `getBatch` and
- * `sendChatMessage` make.
- */
-export async function startConversation(
-	args: ScenarioArgs,
-	opts: ScenarioOptions = {}
-): Promise<Scenario> {
-	if (isMockMode()) return mockScenario(args);
-	return requestScenario(args, opts);
+export type { ConversationTurn, TurnResult };
+export type Scenario = ConversationScenario;
+export type TargetLine = ConversationLine;
+export type Correction = ConversationCorrection;
+export type LearnerTurn = ConversationLearnerTurn;
+export type TeacherTurn = ConversationTeacherTurn;
+
+export interface ScenarioArgs {
+	profile: LearnerProfile;
+	/** Blank means "you choose". */
+	topic?: string;
 }
 
-/** One exchange, mock-aware in the same way. */
-export async function sendTurn(
+/** The scene for one session. A scene that will not parse rejects. */
+export function startConversation(args: ScenarioArgs, opts: CallOptions = {}): Promise<Scenario> {
+	return callLlm('startConversation', args, opts);
+}
+
+/** One exchange: the teacher's turn, plus what belongs on the learner's bubble. */
+export function sendTurn(
 	history: ConversationTurn[],
 	scenario: Scenario,
 	text: string,
-	profile: Profile,
-	opts: TurnOptions = {}
+	profile: LearnerProfile,
+	opts: CallOptions = {}
 ): Promise<TurnResult> {
-	if (isMockMode()) return mockTurn(history, scenario, text, profile, opts);
-	return runTurn(history, scenario, text, profile, opts);
+	return callLlm(
+		'sendTurn',
+		{ profile, scenario, history, text },
+		{ ...opts, tools: opts.tools ?? defaultToolContext() }
+	);
 }
 
-export {
-	alignedForm,
-	correctionSpans,
-	diffCorrection,
-	hasChanges,
-	sameRomanization,
-	spanGap
-} from './diff';
+export { alignedForm, correctionSpans, diffCorrection, hasChanges, spanGap } from './diff';
 export type { DiffKind, DiffOptions, DiffSpan } from './diff';
-
-export { mockScenario, mockTurn } from './mock';
-
-export {
-	MAX_SCENARIO_TOKENS,
-	MAX_TOPIC_CHARS,
-	buildScenarioPrompt,
-	parseScenario,
-	requestScenario
-} from './scenario';
-export type { ScenarioArgs, ScenarioOptions } from './scenario';
-
-export {
-	SCENARIO_SCHEMA_NAME,
-	TEACHER_REPLY_SCHEMA_NAME,
-	correctionSchema,
-	scenarioJsonSchema,
-	scenarioSchema,
-	targetTextSchema,
-	teacherReplyJsonSchema,
-	teacherReplySchema
-} from './schemas';
-export type { Correction, Scenario, TargetLine, TeacherReply } from './schemas';
-
-export {
-	MAX_CONTEXT_WORDS,
-	MAX_REPLY_TOKENS,
-	MAX_TOOL_ROUNDS,
-	ROUND_LIMIT_REPLY,
-	buildSystemPrompt,
-	buildWordBlock,
-	parseTeacherReply,
-	runTurn
-} from './teacher';
-export type {
-	ConversationTurn,
-	LearnerTurn,
-	TeacherTurn,
-	TurnOptions,
-	TurnResult
-} from './teacher';

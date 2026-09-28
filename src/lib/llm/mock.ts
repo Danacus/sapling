@@ -1,7 +1,7 @@
 /**
  * Whether model calls run in mock mode: no API key, or the learner switched it
- * on. The mock replies themselves live beside each call — in Rust for the
- * calls there, in `$lib/assistant` and `$lib/conversation` for theirs.
+ * on. The mock replies themselves live beside each call in Rust
+ * (`crates/sapling-llm/fixtures/`); the romanization backfill has none.
  */
 
 import { getApiKey } from '$lib/db/settings';

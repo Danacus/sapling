@@ -2,7 +2,7 @@
  * Word-level diff of what the learner typed against the teacher's rewrite.
  *
  * The model is asked for the *whole* message rewritten rather than a fragment
- * (see `./schemas`), because a fragment cannot be aligned back to a position in
+ * (see `prompts/teacher.txt` in `crates/sapling-llm`), because a fragment cannot be aligned back to a position in
  * the original — and the learner has to see the correction where they made it,
  * not as a sentence quoted underneath. So the alignment is done here, once, and
  * the UI renders spans.
@@ -22,7 +22,7 @@
  */
 
 import { foldDiacritics } from '$lib/validate';
-import type { Correction } from './schemas';
+import type { ConversationCorrection as Correction } from '$lib/db/generated/index';
 
 /** `same` is unchanged text, `removed` came out, `added` went in. */
 export type DiffKind = 'same' | 'removed' | 'added';
@@ -80,24 +80,13 @@ export function spanGap(left: string, right: string): string {
 	return UNSPACED_CHAR.test(before) || UNSPACED_CHAR.test(after) ? '' : ' ';
 }
 
-/** One romanized word, reduced to what is actually being compared. */
+/**
+ * One romanized word, reduced to what is actually being compared. The same
+ * loosening as `same_romanization` in `crates/sapling-llm`, which decides
+ * whether a correction corrected anything; that one also ignores spacing.
+ */
 function looseKey(word: string): string {
 	return foldDiacritics(word.toLowerCase()).replace(/['’ʼ-]/g, '');
-}
-
-/**
- * True when two romanized forms differ only in spacing, case, tone marks or
- * apostrophes — `ni hao ma` against `Nǐ hǎo ma`, `kafei` against `kā fēi`.
- *
- * Segmentation is the reason spacing has to go. Where a syllable boundary falls
- * in pinyin, romaji or revised romanization is a convention the learner has no
- * way to guess and the model applies inconsistently, so two spellings of the
- * same sentence are the same sentence. It is a whole-message test on purpose:
- * within a sentence that *is* wrong, spacing still shifts which words align,
- * and that is a narrower annoyance than being corrected for nothing.
- */
-export function sameRomanization(a: string, b: string): boolean {
-	return looseKey(a).replace(/\s+/g, '') === looseKey(b).replace(/\s+/g, '');
 }
 
 /**

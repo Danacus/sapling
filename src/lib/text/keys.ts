@@ -8,7 +8,10 @@
  * neither. Nothing had gone wrong yet, but the whole point of a key is that both
  * sides of a lookup compute it the same way, and four implementations are four
  * chances for one of them to drift. So the union of all four lives here, in the
- * dependency-free module both halves of the app can already import.
+ * dependency-free module both halves of the app can already import. The lesson
+ * resolver and the assistant's tools have since moved to Rust, where
+ * `crates/sapling-llm/src/text.rs` spells the same keys (`term_key`,
+ * `reading_key`, `same_card`); a change here is a change there.
  *
  * ## Why there are two keys, not one
  *
@@ -24,7 +27,7 @@
  *
  * **Tones are never folded here.** They are the entire difference between the
  * two 长s, so a key that dropped them would merge exactly the cards this module
- * exists to keep apart. `sameRomanization` in `$lib/conversation/diff` folds
+ * exists to keep apart. `same_romanization` in `crates/sapling-llm` folds
  * them deliberately and is a different question — how forgiving to be about what
  * a *learner typed* — which is why the two are not shared.
  */

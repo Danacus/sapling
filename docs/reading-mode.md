@@ -383,9 +383,8 @@ under the same condition.
   the app has. Both file pickers hide the browser's own control inside a label
   and wear a dashed slot instead — the native widget says "No file chosen" where
   a verb belongs, and a dashed edge is where this journal puts things.
-- `add_words` is imported from **`$lib/assistant/tools`**, the path
-  `$lib/conversation/teacher` already reuses it by; `$lib/assistant`'s barrel
-  does not re-export the def.
+- `add_words` is **`addWords` from `$lib/assistant`**: the assistant's own
+  Rust executor, run through the `llm` export with no model.
 - A **`tracked` word's card carries no actions** — only its bed label. Adding it
   again is a no-op and marking a scheduled word "known" would mean two answers
   to one question; the garden is where a tracked word is managed, and a reading

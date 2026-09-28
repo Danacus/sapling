@@ -17,6 +17,48 @@ fn collapse(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// `{name}` placeholders in a prompt, filled.
+pub fn template(text: &str, vars: &[(&str, &str)]) -> String {
+    let mut out = text.trim_end().to_owned();
+    for (name, with) in vars {
+        out = out.replace(&format!("{{{name}}}"), with);
+    }
+    out
+}
+
+/// A reading as a card key: NFC, lowercased, every space dropped. Tone marks stay.
+pub fn reading_key(value: &str) -> String {
+    value
+        .nfc()
+        .flat_map(char::to_lowercase)
+        .filter(|c| !c.is_whitespace())
+        .collect()
+}
+
+/// Two cards that may not both exist: one spelling, and readings that do not
+/// tell them apart. A missing reading tells nothing apart.
+pub fn same_card(a: (&str, Option<&str>), b: (&str, Option<&str>)) -> bool {
+    if term_key(a.0) != term_key(b.0) {
+        return false;
+    }
+    match (a.1, b.1) {
+        (Some(x), Some(y)) => reading_key(x) == reading_key(y),
+        _ => true,
+    }
+}
+
+/// How forgiving to be about a typed romanization: case, tone marks,
+/// apostrophes, hyphens and all spacing ignored.
+pub fn same_romanization(a: &str, b: &str) -> bool {
+    let loose = |text: &str| -> String {
+        fold_diacritics(&text.to_lowercase())
+            .chars()
+            .filter(|c| !c.is_whitespace() && !"'’ʼ-".contains(*c))
+            .collect()
+    };
+    loose(a) == loose(b)
+}
+
 /// `"nǐ hǎo"` → `"ni hao"`: NFD with the combining diacritics dropped.
 pub fn fold_diacritics(value: &str) -> String {
     value
@@ -164,6 +206,27 @@ mod tests {
     fn keys_fold_case_and_space_and_terms_normalize() {
         assert_eq!(label_key("  La   Cuenta "), "la cuenta");
         assert_eq!(term_key("Cafe\u{0301}"), term_key("café"));
+    }
+
+    #[test]
+    fn two_readings_are_two_cards_and_a_bare_spelling_is_every_card() {
+        assert!(same_card(
+            ("长", Some("cháng")),
+            (" 长", Some("cha\u{0301}ng"))
+        ));
+        assert!(!same_card(("长", Some("cháng")), ("长", Some("zhǎng"))));
+        assert!(same_card(("长", None), ("长", Some("zhǎng"))));
+        assert!(same_card(("Hola", None), ("hola", None)));
+        assert!(!same_card(("hola", None), ("adiós", None)));
+        assert_eq!(reading_key(" Zì xíng chē "), "zìxíngchē");
+    }
+
+    #[test]
+    fn a_romanization_is_the_same_whatever_its_spacing_case_and_tones() {
+        assert!(same_romanization("ni hao ma", "Nǐ hǎo ma"));
+        assert!(same_romanization("kafei", "kā fēi"));
+        assert!(same_romanization("xi'an", "Xī’ān"));
+        assert!(!same_romanization("ni hao", "ni men hao"));
     }
 
     #[test]

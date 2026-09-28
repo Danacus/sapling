@@ -111,7 +111,7 @@ case, not an edge case. Three things follow, and each of them is load-bearing:
   throw the alignment back onto the script.
 - That comparison is loosened: tone marks folded (`foldDiacritics` from
   `$lib/validate`), case ignored, apostrophes dropped, and — as a whole-message
-  test in `sameRomanization` — syllable spacing ignored, so a message that was
+  test in `same_romanization` (`crates/sapling-llm/src/text.rs`) — syllable spacing ignored, so a message that was
   right but spaced differently draws no correction at all. Where a syllable
   boundary falls in pinyin or romaji is a convention the learner cannot guess
   and the model applies inconsistently.
@@ -142,11 +142,11 @@ same sentence `corrected` would have carried, minus the claim that anything was
 wrong — asked for whenever any part of what they typed was not already in the
 script, and null when it was, or when the target is Latin-script anyway.
 
-The two fields are exclusive downstream, and `runTurn` is what makes them so:
+The two fields are exclusive downstream, and the turn (`conversation.rs`) is what makes them so:
 
 - A surviving correction already carries the sentence in the script, so `heard`
   is dropped rather than rendered twice under one bubble.
-- When a "correction" turns out to have corrected nothing (`isNoOpCorrection` —
+- When a "correction" turns out to have corrected nothing (`is_no_op` —
   they typed the reading, and typed it right), its `corrected` line becomes the
   `heard` line instead of being discarded with it. Models fill `corrected` and
   leave `heard` null far more readily than the reverse, and it is the same
@@ -157,9 +157,10 @@ The two fields are exclusive downstream, and `runTurn` is what makes them so:
 Cost is one sentence per turn on a non-Latin target, which is what the feature
 is worth: without it the script is invisible on every turn the learner gets right.
 
-Schemas live in `src/lib/conversation/schemas.ts` as zod, projected to JSON
-Schema with the existing `toJsonSchema`. Model-emitted optional fields are
-`.nullish()` and normalized to absent on parse, per `docs`-wide convention.
+Both envelopes are serde + `schemars` structs in
+`crates/sapling-llm/src/conversation.rs`, sent as strict schemas (every key
+required, optional ones nullable); `null` and blank strings are normalized to
+absent on parse.
 
 `max_tokens` is set well clear of the worst case on both calls (2000), because
 it is a ceiling and not a budget: an unused token is not billed, and the only
@@ -169,9 +170,8 @@ prevented, not recovered from.
 What is left is a model that writes the wrong thing, and prose and a broken
 envelope degrade differently. Content that is not JSON *is* the spoken line — a
 model that ignored the format still said something in character, so it becomes
-`reply.text` with no translation and no correction. An envelope is not a line:
-salvage `reply.text` (or a bare string `reply`, which is what a model writes
-when `response_format` was dropped) if it is there, and otherwise fall back to a
+`reply.text` with no translation and no correction. An envelope that misses the
+schema is not a line, and nothing is salvaged from it: it becomes a
 language-neutral pause. The conversation must never break on a malformed turn,
 and must never render the envelope.
 
@@ -185,7 +185,7 @@ vocabulary in". Put the static prompt text first and the word block last, so the
 cacheable prefix stays stable across turns.
 
 **Out.** The teacher gets exactly one tool: `add_words`, reused verbatim from
-`$lib/assistant/tools` — so it dedupes by card (spelling plus reading, see
+the assistant's tools (`crates/sapling-llm/src/tools.rs`) — so it dedupes by card (spelling plus reading, see
 `assistant.md`), initializes the FSRS card and
 captures a sync event, identically to the generation path. It is called when the
 learner *produced* a word that is not in their list and used it correctly; never
@@ -200,21 +200,22 @@ deleting vocabulary.
 ## 6. Module layout
 
 ```
+crates/sapling-llm/
+  src/conversation.rs   both calls: prompts, envelopes, parse, the turn, the mock
+  src/tools.rs          the shared tool loop and add_words
+  prompts/scenario.txt, teacher.txt, teacher-words.txt, teacher-no-words.txt
+  fixtures/conversation.json   the offline scene and replies
 src/lib/conversation/
   index.ts        public surface: startConversation, sendTurn, the types
-  scenario.ts     scenario prompt + parse + the one setup call
-  teacher.ts      system prompt, the turn loop, reply parse
-  schemas.ts      zod for both envelopes
   diff.ts         diff of typed vs. corrected (word- or character-wise,
                   per script), for the markup
-  mock.ts         the offline path
 src/routes/converse/+page.svelte       library + start screen
 src/routes/converse/[id]/+page.svelte  one transcript, resumable
 ```
 
-`teacher.ts` mirrors `chat.ts`: it owns the loop, tool failures come back to the
-model as `{error}` results, only `LlmError` escapes, and a turn is atomic. Two
-deliberate differences from `chat.ts`:
+The turn runs the same loop as the chat assistant (`chat.rs`): tool failures
+come back to the model as `{error}` results, only a model error or a failing
+store escapes, and a turn is atomic. Two deliberate differences:
 
 - **`MAX_TOOL_ROUNDS = 2`, and the last round is asked without tools.** One
   tool, no read-then-write pattern. Offering the tool on every round lets a
@@ -222,11 +223,12 @@ deliberate differences from `chat.ts`:
   result nobody asked about and no line for the learner — a pause the model
   never meant to take. Withdrawing the tool on the last round leaves answering
   as the only thing to do.
-- **History replays as dialogue, not JSON.** Prior teacher turns go back as
-  plain `assistant` messages carrying only `reply.text`; learner turns go back as
-  what they actually typed, not the corrected version. The output contract is
-  re-stated by the system prompt and pinned by `responseFormat` each turn, so the
-  envelope never has to travel in the history.
+- **History replays as dialogue.** Learner turns go back as what they actually
+  typed, not the corrected version. Prior teacher turns go back as the whole
+  envelope they came from, with `heard` and `correction` paired back from the
+  learner message they were about: replayed as a bare line, every prior turn is
+  a worked example of the wrong contract, and a cheap model follows the
+  examples over the instructions a few turns in.
 
 Nothing in the module imports `$lib/db`; every side effect goes through the
 injected `ToolContext`, same seam as the assistant. Persistence is the pages'
@@ -243,7 +245,7 @@ log, a library page and a resumable detail page.
 **The unit is the exchange**, not the turn: one learner message and the teacher
 turn that answered it, written together after the reply lands. A message whose
 reply failed stays in the page's `$state` and is never written, so stored
-history always ends on a teacher line — which is what `runTurn`'s dialogue
+history always ends on a teacher line — which is what the turn's dialogue
 replay expects to resume from. `heard` and `correction` are stored on the
 learner half, because that is the bubble they belong to and the pairing the
 replay demonstrates. `learner` is absent only at index 0, where the scenario's
@@ -271,12 +273,10 @@ aggregate join, so a shelf row costs no transcripts), `getConversation(id)`,
 `deleteConversation(id)`.
 
 The stored shapes are structs in `crates/sapling-domain`, generated into
-`$lib/types`, and this module's `Scenario`, `TargetLine`, `Correction`,
-`LearnerTurn` and `TeacherTurn` match them structurally rather than importing
-them: this module imports `$lib/types` for `Profile`, so `types.ts` importing
-back would close a cycle. Structural identity is what keeps the two harmless —
-the pages assign one to the other with no conversion, and a drift fails
-`pnpm check` where the two meet.
+`$lib/types`, and the Rust calls take and return those same structs: a stored
+transcript is `sendTurn`'s history as is, and a returned turn is what
+`addExchange` stores. `$lib/conversation`'s `Scenario`, `TargetLine`,
+`Correction`, `LearnerTurn` and `TeacherTurn` are aliases of them.
 
 Sync comes for free: the three events travel the log like every other fact, and
 the backend never reads a payload.
@@ -313,26 +313,29 @@ order so a phone meets it before an empty shelf.
 ## 8. Mock mode
 
 Node tests are always in mock mode and the whole app must stay developable
-without a key, so `mock.ts` follows `assistant/mock.ts`: a fixed scenario, a
-short cycle of canned teacher replies, a canned correction on one set turn, a
-canned `heard` line on another (the two are exclusive, so they need separate
-turns), and —
-so the tool path is genuinely exercised offline — a `term = meaning` line in the
-learner's message routed through the real `executeToolCall`/`add_words`.
-Deterministic: same input, same reply, same writes.
+without a key, so the mock plays the model through the real loop and parser, as
+the chat assistant's does: a fixed scenario, a short cycle of canned teacher
+replies, a canned correction on one set turn, a canned `heard` line on another
+(the two are exclusive, so they need separate turns), and — so the tool path is
+genuinely exercised offline — a `term = meaning` line in the learner's message
+turned into a real `add_words` call. Deterministic: same input, same reply, same
+writes.
 
 ## 9. Tests
 
-Node, pure logic, per `src/**/*.test.ts`:
+In `conversation.rs`, against a fake transport and `MemoryTools`:
 
 - prompt building (word block capped and formatted, topic threaded through);
-- both parsers: valid, nullish normalization, malformed-JSON fallback;
-- `diff.ts`, including no-change and whole-message-rewritten;
-- the turn loop against a fake `fetchFn` and an in-memory `ToolContext`: a plain
-  turn, a turn with an `add_words` call, a tool failure, the round limit;
-- mock determinism.
+- both parsers: valid, null normalization, malformed-JSON fallback;
+- the turn: history replay, the no-op correction becoming `heard`, the tool-less
+  last round;
+- the mock's correction and `heard` turns.
 
-Green light is `pnpm check`, `pnpm test`, `pnpm format:check`.
+In TypeScript: `diff.ts`, including no-change and whole-message-rewritten, and
+`index.test.ts`, the mock through the wasm build into a real in-memory store.
+
+Green light is `pnpm check`, `pnpm test`, `pnpm format:check`, `pnpm core:test`,
+`pnpm core:check`.
 
 ## 10. Scope
 

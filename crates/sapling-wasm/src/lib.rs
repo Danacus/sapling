@@ -19,7 +19,9 @@ use std::future::Future;
 
 use js_sys::Function;
 use sapling_db::{Core, Error, Param, Result, Row, Sql, SqlValue};
+use sapling_domain::types::KnowledgeItem;
 use sapling_domain::LocalDay;
+use sapling_llm::tools::{StoreError, StoreResult, ToolContext};
 use sapling_llm::{Endpoint, HttpRequest, HttpResponse, Llm, Transport};
 use serde_json::{Map, Value};
 use wasm_bindgen::prelude::*;
@@ -228,10 +230,86 @@ impl Transport for JsTransport {
     }
 }
 
+#[wasm_bindgen(typescript_custom_section)]
+const TOOL_HOST: &str = r#"
+/** The word list a tool-calling `llm` call reads and writes, items as JSON. */
+export interface ToolHost {
+  getAllItems(): Promise<string>;
+  upsertItems(itemsJson: string): Promise<void>;
+  deleteItem(id: string): Promise<void>;
+  newId(): string;
+  now(): number;
+}
+"#;
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(typescript_type = "ToolHost")]
+    pub type ToolHost;
+
+    #[wasm_bindgen(method, catch, js_name = getAllItems)]
+    fn js_get_all_items(this: &ToolHost) -> std::result::Result<js_sys::Promise, JsValue>;
+
+    #[wasm_bindgen(method, catch, js_name = upsertItems)]
+    fn js_upsert_items(
+        this: &ToolHost,
+        items_json: &str,
+    ) -> std::result::Result<js_sys::Promise, JsValue>;
+
+    #[wasm_bindgen(method, catch, js_name = deleteItem)]
+    fn js_delete_item(this: &ToolHost, id: &str) -> std::result::Result<js_sys::Promise, JsValue>;
+
+    #[wasm_bindgen(method, js_name = newId)]
+    fn js_new_id(this: &ToolHost) -> String;
+
+    #[wasm_bindgen(method, js_name = now)]
+    fn js_now(this: &ToolHost) -> f64;
+}
+
+async fn settled(promise: std::result::Result<js_sys::Promise, JsValue>) -> StoreResult<JsValue> {
+    let promise = promise.map_err(|e| StoreError(from_js(e).0))?;
+    JsFuture::from(promise)
+        .await
+        .map_err(|e| StoreError(from_js(e).0))
+}
+
+impl ToolContext for ToolHost {
+    fn all_items(&self) -> impl Future<Output = StoreResult<Vec<KnowledgeItem>>> {
+        let promise = self.js_get_all_items();
+        async move {
+            let json = settled(promise)
+                .await?
+                .as_string()
+                .ok_or_else(|| StoreError("getAllItems() did not resolve to a string".into()))?;
+            serde_json::from_str(&json).map_err(|e| StoreError(format!("getAllItems(): {e}")))
+        }
+    }
+
+    fn upsert_items(&self, items: Vec<KnowledgeItem>) -> impl Future<Output = StoreResult<()>> {
+        let json = serde_json::to_string(&items).expect("items serialize");
+        let promise = self.js_upsert_items(&json);
+        async move { settled(promise).await.map(|_| ()) }
+    }
+
+    fn delete_item(&self, id: &str) -> impl Future<Output = StoreResult<()>> {
+        let promise = self.js_delete_item(id);
+        async move { settled(promise).await.map(|_| ()) }
+    }
+
+    fn new_id(&self) -> String {
+        self.js_new_id()
+    }
+
+    fn now(&self) -> f64 {
+        self.js_now()
+    }
+}
+
 /// One model call: the method, its argument array and the endpoint as JSON
-/// (no endpoint is mock mode), the host's `post`, and optionally
-/// `progress(stepJson)`. Resolves to `{result, usage?}` as JSON; rejects with
-/// the `LlmError` as JSON, or plain text for a malformed call.
+/// (no endpoint is mock mode), the host's `post`, optionally
+/// `progress(stepJson)`, and for the tool-calling methods the word list.
+/// Resolves to `{result, usage?}` as JSON; rejects with the `LlmError` as
+/// JSON, or plain text for a malformed call or a failing store.
 #[wasm_bindgen]
 pub async fn llm(
     method: String,
@@ -239,6 +317,7 @@ pub async fn llm(
     endpoint_json: Option<String>,
     post: Function,
     progress: Option<Function>,
+    tools: Option<ToolHost>,
 ) -> std::result::Result<String, JsValue> {
     let endpoint: Option<Endpoint> = endpoint_json
         .map(|json| serde_json::from_str(&json))
@@ -252,7 +331,7 @@ pub async fn llm(
             let _ = progress.call1(&JsValue::NULL, &JsValue::from_str(&step));
         });
     }
-    sapling_protocol::dispatch_llm_json(&llm, &method, &args_json)
+    sapling_protocol::dispatch_llm_json(&llm, tools.as_ref(), &method, &args_json)
         .await
         .map_err(|e| JsValue::from_str(&e))
 }

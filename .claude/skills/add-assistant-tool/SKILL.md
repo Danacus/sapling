@@ -10,49 +10,56 @@ argument-hint: [tool_name]
 
 # Adding an assistant tool
 
-`src/lib/assistant/tools/` is a registry in the house pattern. **Adding a
-capability is one def module + one registration.**
+A tool is Rust: `crates/sapling-llm/src/tools.rs`. `assistant.md` is the
+contract.
 
-1. Write `src/lib/assistant/tools/<tool-name>.ts` bundling its zod
-   `paramsSchema` and its `run`.
-2. Register it in `tools/index.ts`, which projects the client tool JSON
-   (`toolDefsForClient`) and dispatches `executeToolCall`.
+1. Add a `ToolName` variant and list it in `ToolName::ALL`, in the order the
+   model should see it (reads before writes). **The gate:** `as_str`, `tool`
+   and `execute` match exhaustively, so `cargo build` fails until all three name
+   it. `ALL` is the membership — a variant left out of it is never offered to
+   the chat.
+2. Write its params struct (`Deserialize` + `JsonSchema`; optional arguments
+   are `#[serde(default)] Option<T>` and stay optional — no strict sealing),
+   its description in `prompts/tool-<name>.txt` (snake_case name on the wire,
+   kebab-case file), and its executor `async fn <name>(params, ctx) ->
+   StoreResult<ToolOutcome>`.
+3. Test it in `tools.rs` against `MemoryTools`.
 
-Tool names are snake_case on the wire (`add_words`, `list_words`), file names
-are kebab-case (`add-words.ts`). Follow the existing four.
+Conversation mode offers `add_words` only; don't add a new tool there unless
+asked.
+
+## If the tool needs more than the word list
+
+`ToolContext` is deliberately narrow (all items, upsert, delete, new id, now).
+Growing it is a chain the compiler walks you through: the trait, `MemoryTools`,
+the wasm `ToolHost` (the `extern` block and the `typescript_custom_section`
+interface in `crates/sapling-wasm/src/lib.rs`), then `pnpm check` fails at
+`toolHost` in `src/lib/llm/core.ts` and `ToolContext` there, and
+`src/lib/assistant/context.ts` wires the new method to a repository.
 
 ## Contracts
 
-- **Never touch the DB directly.** Tools run against an injectable
-  `ToolContext`, whose default is wired to `$lib/db` + `$lib/srs` in
-  `tools/context.ts` — the only module here that may import the DB. Going
-  through the repositories is what captures sync events for free; a direct store
-  call silently breaks multi-device sync.
-- Anything creating vocabulary passes `fsrsCard: null` and a correct
-  `introducedAt` — the core folds the card from it, and there is no FSRS on this
-  side to mint one with — and must
-  dedupe with `sameCard` (`$lib/text`) — same spelling *and* a reading that
-  fails to tell two cards apart — exactly as `add_words` does. **`add_words` is the only
-  way words enter the collection** — lesson generation writes challenges and
-  never items — so that dedupe is the app's single guard against a forked SRS
-  history.
-- Tool failures are **returned**, not thrown — `chat.ts` feeds `{error}` back to
-  the model as a tool result so it can recover. Only `LlmError` escapes the loop.
-- A turn is atomic: tool traffic is never replayed into later turns; prior turns
-  travel as prose. Don't design a tool that needs to see its own earlier calls.
-- The loop runs at most `MAX_TOOL_ROUNDS` rounds. A capability needing more
-  round-trips than that is the wrong shape.
+- **Never touch the store directly.** Every read and write goes through
+  `ToolContext`, whose browser implementation is the repositories — that is what
+  makes every change an event and syncs it.
+- Anything creating vocabulary goes through `add_words`: `fsrsCard: null`, a
+  real `introducedAt`, and the `same_card` dedupe. **`add_words` is the only
+  way words enter the collection.**
+- A domain failure is a **result** (`failure(...)`: `{error}`, `ok: false`) the
+  model reads; only a `StoreError` ends the call.
+- A turn is atomic: tool traffic is never replayed into later turns. Don't
+  design a tool that needs to see its own earlier calls. The chat runs at most
+  `MAX_TOOL_ROUNDS` rounds.
 
 ## Mock mode
 
-`assistant/mock.ts` parses `term = meaning` lines and drives the **real**
-executors, so the offline path exercises real code. If the new tool should be
-reachable without an API key, extend the mock's parsing — otherwise it is
-simply unavailable offline, which is usually fine.
+`chat.rs`'s `mock` plays the model through the real loop: `term = meaning`
+lines call `add_words`, a question about the list calls `list_words`. Extend it
+if the tool should be reachable without a key; otherwise it is online-only.
 
 ## Completion criteria
 
-- [ ] Def module written and registered in `tools/index.ts`
-- [ ] Every mutation goes through `ToolContext`, not the store directly
-- [ ] `pnpm check` and `pnpm test` pass
+- [ ] Variant, `ALL`, params struct, description file, executor, tests
+- [ ] Every mutation goes through `ToolContext`
+- [ ] `pnpm core:test`, `pnpm core:check`, `pnpm check`, `pnpm test` pass
 - [ ] Exercised once in mock mode, or explicitly noted as online-only

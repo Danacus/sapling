@@ -1,28 +1,59 @@
 //! The model calls by name, like the `Backend` table but async and without
 //! `Core`: stateless, so the window runs them and never the database Worker.
 //! Each method takes one argument object; the table also generates the
-//! TypeScript `Llm` interface and `LLM_METHODS` (`llm.ts`).
+//! TypeScript `Llm` interface and `LLM_METHODS` (`llm.ts`). The tool-calling
+//! ones also need the host's [`ToolContext`].
 
 use serde_json::{json, Value};
 
+use sapling_domain::types::ConversationScenario;
+use sapling_llm::chat::{self, AssistantTurn, ChatArgs};
+use sapling_llm::conversation::{self, ScenarioArgs, TurnArgs, TurnResult};
 use sapling_llm::escalation::{self, EscalationArgs, EscalationReply};
 use sapling_llm::lesson::{self, BatchArgs, BatchResult};
 use sapling_llm::reading::TranslateLineArgs;
 use sapling_llm::reading::{self, GenerateTextArgs, GlossEntry, LookupWordArgs, ReadingTextDraft};
+use sapling_llm::tools::{self as word_tools, AddWordsParams, LoopError, ToolContext, ToolOutcome};
 use sapling_llm::{Llm, LlmError, Transport};
 
 use crate::required;
 
-/// Why a call failed: the model's side, or a malformed call.
+/// Why a call failed: the model's side, or a malformed call (or the host's
+/// store failing under a tool).
 #[derive(Debug)]
 pub enum LlmFailure {
     Model(LlmError),
     Call(String),
 }
 
+impl From<LlmError> for LlmFailure {
+    fn from(error: LlmError) -> Self {
+        LlmFailure::Model(error)
+    }
+}
+
+impl From<LoopError> for LlmFailure {
+    fn from(error: LoopError) -> Self {
+        match error {
+            LoopError::Model(error) => LlmFailure::Model(error),
+            LoopError::Store(error) => LlmFailure::Call(error.0),
+        }
+    }
+}
+
+impl From<word_tools::StoreError> for LlmFailure {
+    fn from(error: word_tools::StoreError) -> Self {
+        LlmFailure::Call(error.0)
+    }
+}
+
+fn needs<C>(tools: Option<&C>) -> Result<&C, LlmFailure> {
+    tools.ok_or_else(|| LlmFailure::Call("this call needs a tool context".to_owned()))
+}
+
 macro_rules! llm {
     (
-        |$llm:ident| {
+        |$llm:ident, $tools:ident| {
             $(
                 $(#[doc = $doc:literal])*
                 $method:ident($arg:ident: $ty:ty) -> $ret:ty $body:block
@@ -31,8 +62,9 @@ macro_rules! llm {
     ) => {
         /// Runs one model call by name.
         #[allow(non_snake_case)]
-        pub async fn dispatch_llm<T: Transport>(
+        pub async fn dispatch_llm<T: Transport, C: ToolContext>(
             $llm: &Llm<T>,
+            $tools: Option<&C>,
             method: &str,
             args: &[Value],
         ) -> Result<Value, LlmFailure> {
@@ -41,7 +73,7 @@ macro_rules! llm {
                     stringify!($method) => {
                         let $arg: $ty =
                             required(method, args, 0).map_err(|e| LlmFailure::Call(e.0))?;
-                        let value: $ret = $body.await.map_err(LlmFailure::Model)?;
+                        let value: $ret = $body.await.map_err(LlmFailure::from)?;
                         serde_json::to_value(value).map_err(|e| LlmFailure::Call(e.to_string()))
                     }
                 )*
@@ -72,7 +104,7 @@ macro_rules! llm {
 }
 
 llm! {
-    |llm| {
+    |llm, tools| {
         /// A text written out of the learner's vocabulary, paragraphs only.
         generateReadingText(args: GenerateTextArgs) -> ReadingTextDraft {
             reading::generate_text(llm, &args)
@@ -93,20 +125,37 @@ llm! {
         escalate(args: EscalationArgs) -> EscalationReply {
             escalation::escalate(llm, &args)
         }
+        /// One chat-assistant turn, with the word-list tools.
+        sendChatMessage(args: ChatArgs) -> AssistantTurn {
+            chat::send(llm, needs(tools)?, &args)
+        }
+        /// The scene a conversation plays.
+        startConversation(args: ScenarioArgs) -> ConversationScenario {
+            conversation::start(llm, &args)
+        }
+        /// One conversation exchange: the teacher's line, and what it heard or corrected.
+        sendTurn(args: TurnArgs) -> TurnResult {
+            conversation::send(llm, needs(tools)?, &args)
+        }
+        /// `add_words` without a model: the reader's "Add to my words".
+        addWords(args: AddWordsParams) -> ToolOutcome {
+            word_tools::add_words(&args, needs(tools)?)
+        }
     }
 }
 
 /// [`dispatch_llm`] over the wire: `{result, usage?}` as JSON, `usage` only
 /// when a live call spent something. An `Err` is the [`LlmError`] as JSON, or
 /// plain text for a malformed call.
-pub async fn dispatch_llm_json<T: Transport>(
+pub async fn dispatch_llm_json<T: Transport, C: ToolContext>(
     llm: &Llm<T>,
+    tools: Option<&C>,
     method: &str,
     args_json: &str,
 ) -> Result<String, String> {
     let args: Vec<Value> = serde_json::from_str(args_json)
         .map_err(|e| format!("{method}: arguments are not a JSON array: {e}"))?;
-    match dispatch_llm(llm, method, &args).await {
+    match dispatch_llm(llm, tools, method, &args).await {
         Ok(result) => {
             let mut answer = json!({ "result": result });
             if llm.usage().requests > 0 {
@@ -122,6 +171,7 @@ pub async fn dispatch_llm_json<T: Transport>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sapling_llm::tools::MemoryTools;
     use sapling_llm::{HttpRequest, HttpResponse};
     use std::future::{ready, Future};
 
@@ -136,8 +186,42 @@ mod tests {
     const PROFILE: &str = r#"{"nativeLanguage":"English","targetLanguage":"Spanish","level":"beginner","interests":[],"model":"m","createdAt":1}"#;
 
     fn call(llm: &Llm<Offline>, method: &str, args: &str) -> Result<Value, String> {
-        pollster::block_on(dispatch_llm_json(llm, method, args))
+        call_with(llm, None, method, args)
+    }
+
+    fn call_with(
+        llm: &Llm<Offline>,
+        tools: Option<&MemoryTools>,
+        method: &str,
+        args: &str,
+    ) -> Result<Value, String> {
+        pollster::block_on(dispatch_llm_json(llm, tools, method, args))
             .map(|answer| serde_json::from_str(&answer).unwrap())
+    }
+
+    #[test]
+    fn a_tool_call_runs_against_the_host_context_and_needs_one() {
+        let mock = Llm::new(Offline, None);
+        let tools = MemoryTools::default();
+        let chat = format!(r#"[{{"profile":{PROFILE},"history":[],"text":"hola = hi"}}]"#);
+        let answer = call_with(&mock, Some(&tools), "sendChatMessage", &chat).unwrap();
+        assert_eq!(answer["result"]["role"], "assistant");
+        assert_eq!(answer["result"]["actions"][0]["tool"], "add_words");
+        assert_eq!(tools.items.borrow()[0].term, "hola");
+
+        let added = call_with(
+            &mock,
+            Some(&tools),
+            "addWords",
+            r#"[{"words":[{"term":"gato","meaning":"cat"}]}]"#,
+        )
+        .unwrap();
+        assert_eq!(added["result"]["summary"], "Added 1 word: gato");
+
+        assert_eq!(
+            call(&mock, "sendChatMessage", &chat).unwrap_err(),
+            "this call needs a tool context"
+        );
     }
 
     #[test]

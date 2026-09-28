@@ -1,0 +1,7 @@
+{
+  "offline": "Offline demo mode: no API key, so I only do the basics. Write \"word = meaning\" on a line to add words, or ask me what is in your list.",
+  "added": "Added {terms}. (Offline demo mode — no model was asked.)",
+  "unchanged": "Nothing added: those are already in your list. (Offline demo mode — no model was asked.)",
+  "listed": "Your list holds {total}: {terms}. (Offline demo mode — no model was asked.)",
+  "empty": "Your list is empty so far. (Offline demo mode — no model was asked.)"
+}

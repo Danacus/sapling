@@ -9,13 +9,16 @@ use ts_rs::TS;
 
 use sapling_domain::types::Level;
 
+pub mod chat;
 pub mod client;
+pub mod conversation;
 pub mod escalation;
 pub mod json;
 pub mod kinds;
 pub mod lesson;
 pub mod reading;
 pub mod text;
+pub mod tools;
 pub mod wire;
 
 pub use client::{
