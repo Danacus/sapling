@@ -24,7 +24,8 @@
 //! A method may also answer without the database: `importSource` is
 //! `sapling-import`'s, and ignores `core`. The model calls are a second,
 //! async table in [`llm`], run on the window thread rather than in the Worker,
-//! and the challenge decisions a third, synchronous one in [`challenges`].
+//! the challenge decisions a third, synchronous one in [`challenges`], and the
+//! sync client a fourth, async one in [`sync`], over a store the host lends.
 //!
 //! Where Rust treats a value as opaque JSON because TypeScript owns its shape —
 //! a challenge, a pool row, a raw pulled event — the entry says which
@@ -50,11 +51,13 @@ use sapling_import::ImportedSource;
 
 pub mod challenges;
 pub mod llm;
+pub mod sync;
 #[cfg(test)]
 mod typescript;
 
 pub use challenges::{dispatch_challenges, dispatch_challenges_json};
 pub use llm::{dispatch_llm, dispatch_llm_json, LlmFailure};
+pub use sync::{dispatch_sync, dispatch_sync_json};
 
 /// `getAllItems`' options.
 #[derive(Debug, Default, Deserialize, TS)]

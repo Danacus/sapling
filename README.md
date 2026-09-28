@@ -172,6 +172,11 @@ crates/sapling-challenges/
                       difficulty, what a served challenge shows, and the
                       session and top-up planners. Run on the window thread
                       through the same wasm build.
+crates/sapling-sync/  The sync client: the pairing phrase and one push/pull
+                      cycle against the relay, over an HTTP transport and a
+                      store the host lends. Run on the window thread through
+                      the same wasm build; `src/lib/sync/` keeps the phrase,
+                      the switch and when to sync.
 src/lib/challenges/   The challenge union as the screen presents it: one
                       module per type carrying its presentation facts, and the
                       synchronous seam into the Rust decisions. The registry

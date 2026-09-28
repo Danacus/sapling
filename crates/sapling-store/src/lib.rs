@@ -59,6 +59,7 @@
 #![forbid(unsafe_code)]
 
 pub mod rusqlite_sql;
+mod sync;
 
 use std::fs;
 use std::io;

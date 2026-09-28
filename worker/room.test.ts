@@ -10,10 +10,11 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { formatPhrase, mintPhrase, PHRASE_LENGTH } from '../src/lib/sync/phrase';
+import { PHRASE_LENGTH } from './phrase';
 import { roomIdForPhrase } from './room';
 
 const PHRASE = 'ABCDEFGHJKMNPQRSTVWX';
+const DISPLAYED = 'ABCDE-FGHJK-MNPQR-STVWX';
 
 describe('roomIdForPhrase', () => {
 	it('derives a stable room id', async () => {
@@ -35,9 +36,9 @@ describe('roomIdForPhrase', () => {
 	it('reaches the same room from every form a learner might type', async () => {
 		const expected = await roomIdForPhrase(PHRASE);
 		for (const typed of [
-			formatPhrase(PHRASE),
+			DISPLAYED,
 			PHRASE.toLowerCase(),
-			`  ${formatPhrase(PHRASE).toLowerCase()}  `,
+			`  ${DISPLAYED.toLowerCase()}  `,
 			PHRASE.split('').join(' ')
 		]) {
 			await expect(roomIdForPhrase(typed)).resolves.toBe(expected);
@@ -45,8 +46,8 @@ describe('roomIdForPhrase', () => {
 	});
 
 	it('separates two different phrases', async () => {
-		const a = await roomIdForPhrase(mintPhrase());
-		const b = await roomIdForPhrase(mintPhrase());
+		const a = await roomIdForPhrase(PHRASE);
+		const b = await roomIdForPhrase('0123456789YZ0123456Y');
 		expect(a).not.toBe(b);
 	});
 

@@ -14,12 +14,14 @@
 //!
 //! [`llm`] is separate and needs no database: the window thread calls it with
 //! its own `fetch` as the transport. [`challenges`] likewise, synchronously,
-//! with the window's word segmenter.
+//! with the window's word segmenter. And [`sync`], with `fetch` again and the
+//! window's `Backend` as the store, beside the pairing phrase's four helpers.
 
 use std::future::Future;
 
 use js_sys::Function;
 use sapling_db::{Core, Error, Param, Result, Row, Sql, SqlValue};
+use sapling_domain::events::{parse_envelope, RawEvent};
 use sapling_domain::types::KnowledgeItem;
 use sapling_domain::LocalDay;
 use sapling_llm::tools::{StoreError, StoreResult, ToolContext};
@@ -359,4 +361,216 @@ pub fn challenges(
     };
     sapling_protocol::dispatch_challenges_json(method, args_json, &host)
         .map_err(|e| JsValue::from_str(&e))
+}
+
+/// `request(requestJson) -> Promise<string>`: `{method, url, headers, body?}`
+/// in, `{status, body}` out; a rejection is no response at all.
+struct JsRequest(Function);
+
+impl sapling_sync::Transport for JsRequest {
+    fn send(
+        &self,
+        request: sapling_sync::Request,
+    ) -> impl Future<Output = std::result::Result<sapling_sync::Response, String>> {
+        let headers: Map<String, Value> = request
+            .headers
+            .into_iter()
+            .map(|(name, value)| (name, Value::String(value)))
+            .collect();
+        let method = match request.method {
+            sapling_sync::Method::Get => "GET",
+            sapling_sync::Method::Post => "POST",
+        };
+        let mut json =
+            serde_json::json!({ "method": method, "url": request.url, "headers": headers });
+        if let Some(body) = request.body {
+            json["body"] = Value::String(body);
+        }
+        let promise = self
+            .0
+            .call1(&JsValue::NULL, &JsValue::from_str(&json.to_string()));
+        async move {
+            let promise: js_sys::Promise = promise.map_err(|e| from_js(e).0)?.into();
+            let answer = JsFuture::from(promise).await.map_err(|e| from_js(e).0)?;
+            let answer: Value = answer
+                .as_string()
+                .and_then(|text| serde_json::from_str(&text).ok())
+                .ok_or("request() did not resolve to {status, body}")?;
+            Ok(sapling_sync::Response {
+                status: answer["status"].as_u64().unwrap_or(0) as u16,
+                body: answer["body"].as_str().unwrap_or_default().to_owned(),
+            })
+        }
+    }
+}
+
+#[wasm_bindgen(typescript_custom_section)]
+const SYNC_HOST: &str = r#"
+/** The part of the `Backend` a sync cycle reads and writes, events as JSON. */
+export interface SyncHost {
+  pendingEvents(limit: number): Promise<string>;
+  markPushed(seqsJson: string): Promise<number>;
+  applyRemote(eventsJson: string): Promise<number>;
+  getPullCursor(): Promise<number>;
+  setPullCursor(cursor: number): Promise<void>;
+  hasProfile(): Promise<boolean>;
+}
+"#;
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(typescript_type = "SyncHost")]
+    pub type SyncHost;
+
+    #[wasm_bindgen(method, catch, js_name = pendingEvents)]
+    fn js_pending_events(
+        this: &SyncHost,
+        limit: f64,
+    ) -> std::result::Result<js_sys::Promise, JsValue>;
+
+    #[wasm_bindgen(method, catch, js_name = markPushed)]
+    fn js_mark_pushed(
+        this: &SyncHost,
+        seqs_json: &str,
+    ) -> std::result::Result<js_sys::Promise, JsValue>;
+
+    #[wasm_bindgen(method, catch, js_name = applyRemote)]
+    fn js_apply_remote(
+        this: &SyncHost,
+        events_json: &str,
+    ) -> std::result::Result<js_sys::Promise, JsValue>;
+
+    #[wasm_bindgen(method, catch, js_name = getPullCursor)]
+    fn js_get_pull_cursor(this: &SyncHost) -> std::result::Result<js_sys::Promise, JsValue>;
+
+    #[wasm_bindgen(method, catch, js_name = setPullCursor)]
+    fn js_set_pull_cursor(
+        this: &SyncHost,
+        cursor: f64,
+    ) -> std::result::Result<js_sys::Promise, JsValue>;
+
+    #[wasm_bindgen(method, catch, js_name = hasProfile)]
+    fn js_has_profile(this: &SyncHost) -> std::result::Result<js_sys::Promise, JsValue>;
+}
+
+async fn stored(
+    promise: std::result::Result<js_sys::Promise, JsValue>,
+) -> sapling_sync::StoreResult<JsValue> {
+    let promise = promise.map_err(|e| sapling_sync::StoreError(from_js(e).0))?;
+    JsFuture::from(promise)
+        .await
+        .map_err(|e| sapling_sync::StoreError(from_js(e).0))
+}
+
+async fn stored_number(
+    what: &'static str,
+    promise: std::result::Result<js_sys::Promise, JsValue>,
+) -> sapling_sync::StoreResult<f64> {
+    stored(promise)
+        .await?
+        .as_f64()
+        .ok_or_else(|| sapling_sync::StoreError(format!("{what}() did not resolve to a number")))
+}
+
+impl sapling_sync::SyncStore for SyncHost {
+    fn pending_events(
+        &self,
+        limit: usize,
+    ) -> impl Future<Output = sapling_sync::StoreResult<Vec<RawEvent>>> {
+        let promise = self.js_pending_events(limit as f64);
+        async move {
+            let bad =
+                || sapling_sync::StoreError("pendingEvents() did not resolve to log rows".into());
+            let json = stored(promise).await?.as_string().ok_or_else(bad)?;
+            let rows: Vec<Value> = serde_json::from_str(&json).map_err(|_| bad())?;
+            rows.iter()
+                .map(|row| parse_envelope(row).ok_or_else(bad))
+                .collect()
+        }
+    }
+
+    fn mark_pushed(
+        &self,
+        seqs: Vec<(String, f64)>,
+    ) -> impl Future<Output = sapling_sync::StoreResult<usize>> {
+        let seqs: Map<String, Value> = seqs
+            .into_iter()
+            .map(|(id, seq)| (id, serde_json::json!(seq)))
+            .collect();
+        let promise = self.js_mark_pushed(&Value::Object(seqs).to_string());
+        async move { Ok(stored_number("markPushed", promise).await? as usize) }
+    }
+
+    fn apply_remote(
+        &self,
+        events: Vec<Value>,
+    ) -> impl Future<Output = sapling_sync::StoreResult<usize>> {
+        let promise = self.js_apply_remote(&Value::Array(events).to_string());
+        async move { Ok(stored_number("applyRemote", promise).await? as usize) }
+    }
+
+    fn pull_cursor(&self) -> impl Future<Output = sapling_sync::StoreResult<f64>> {
+        let promise = self.js_get_pull_cursor();
+        async move { stored_number("getPullCursor", promise).await }
+    }
+
+    fn set_pull_cursor(&self, cursor: f64) -> impl Future<Output = sapling_sync::StoreResult<()>> {
+        let promise = self.js_set_pull_cursor(cursor);
+        async move { stored(promise).await.map(|_| ()) }
+    }
+
+    fn has_profile(&self) -> impl Future<Output = sapling_sync::StoreResult<bool>> {
+        let promise = self.js_has_profile();
+        async move {
+            stored(promise).await?.as_bool().ok_or_else(|| {
+                sapling_sync::StoreError("hasProfile() did not resolve to a boolean".into())
+            })
+        }
+    }
+}
+
+/// One sync call: the method and its argument array as JSON, the host's
+/// `request`, and for the calls that touch the log its `SyncHost`. Resolves to
+/// the outcome as JSON — a failed cycle is an outcome too — and rejects with
+/// plain text only for a malformed call.
+#[wasm_bindgen]
+pub async fn sync(
+    method: String,
+    args_json: String,
+    request: Function,
+    store: Option<SyncHost>,
+) -> std::result::Result<String, JsValue> {
+    sapling_protocol::dispatch_sync_json(&JsRequest(request), store.as_ref(), &method, &args_json)
+        .await
+        .map_err(|e| JsValue::from_str(&e))
+}
+
+/// The canonical form of a typed or pasted pairing phrase.
+#[wasm_bindgen(js_name = normalizePhrase)]
+pub fn normalize_phrase(raw: &str) -> String {
+    sapling_sync::phrase::normalize(raw)
+}
+
+/// Whether a *normalised* phrase is one this app could have minted.
+#[wasm_bindgen(js_name = isValidPhrase)]
+pub fn is_valid_phrase(phrase: &str) -> bool {
+    sapling_sync::phrase::is_valid(phrase)
+}
+
+/// A fresh phrase from `PHRASE_LENGTH` random bytes the host drew.
+#[wasm_bindgen(js_name = mintPhrase)]
+pub fn mint_phrase(entropy: &[u8]) -> std::result::Result<String, JsValue> {
+    let entropy = entropy.try_into().map_err(|_| {
+        JsValue::from_str(&format!(
+            "mintPhrase wants {} random bytes",
+            sapling_sync::PHRASE_LENGTH
+        ))
+    })?;
+    Ok(sapling_sync::phrase::mint(entropy))
+}
+
+/// The canonical phrase grouped for a human to read.
+#[wasm_bindgen(js_name = formatPhrase)]
+pub fn format_phrase(phrase: &str) -> String {
+    sapling_sync::phrase::format(phrase)
 }

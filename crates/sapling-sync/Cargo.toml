@@ -1,0 +1,17 @@
+[package]
+name = "sapling-sync"
+version = "0.1.0"
+edition = "2021"
+description = "Sapling's sync client: the pairing phrase, and the push/pull cycle against the relay over an injected HTTP transport and an injected store."
+publish = false
+
+[dependencies]
+sapling-domain = { path = "../sapling-domain" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+# The TypeScript side of the wire is generated from these types (`pnpm core:types`,
+# see `sapling-protocol`'s `typescript` tests). The derive is inert outside that.
+ts-rs = { version = "12.0.1", features = ["no-serde-warnings"] }
+
+[dev-dependencies]
+pollster = "0.4"

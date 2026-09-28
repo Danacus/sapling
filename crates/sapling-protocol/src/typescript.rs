@@ -8,6 +8,8 @@
 //! table in `lib.rs`), `llm.ts` (the `Llm` interface, `LLM_METHODS` and the
 //! prompt caps, from the table in `llm.rs`), `challenges.ts` (the synchronous
 //! `Challenges` interface and `CHALLENGE_METHODS`, from `challenges.rs`),
+//! `sync.ts` (the `Sync` interface, `SYNC_METHODS` and the phrase's constants,
+//! from `sync.rs`),
 //! `Payloads.ts` (each event type's payload) and `index.ts`, which re-exports
 //! every type file.
 
@@ -29,9 +31,11 @@ use sapling_llm::lesson::REQUEST_ITEMS;
 use sapling_llm::reading::{MAX_FOCUS_WORDS, MAX_TOPIC_CHARS};
 use sapling_llm::{Endpoint, LlmError, ProgressStep, TokenUsage, MAX_ABOUT_CHARS};
 use sapling_srs::FsrsCardState;
+use sapling_sync::{BAD_PHRASE, PHRASE_LENGTH};
 
 use crate::challenges::{challenge_methods, visit_challenge_types};
 use crate::llm::{llm_methods, visit_llm_types};
+use crate::sync::{sync_methods, visit_sync_types};
 use crate::{methods, visit_method_types, INTERFACE_DOCS};
 
 /// One `Backend` method, as the table declares it.
@@ -164,6 +168,27 @@ fn challenges(names: &[String]) -> String {
     out
 }
 
+/// `sync.ts`: the sync client's table as a TypeScript interface.
+fn sync(names: &[String]) -> String {
+    let cfg = Config::new().with_large_int("number");
+    let methods = sync_methods(&cfg);
+    let mut out = format!(
+        "import type {{ {} }} from './index';\n\n/** The sync client, run on the window thread over `fetch` and the `Backend`. */\nexport interface Sync {{\n",
+        names.join(", ")
+    );
+    members(&mut out, &methods, true);
+    out.push_str("}\n\nexport const SYNC_METHODS = [\n");
+    for method in &methods {
+        let _ = writeln!(out, "  '{}',", method.name);
+    }
+    let _ = writeln!(
+        out,
+        "] as const;\n\nexport const PHRASE_LENGTH = {PHRASE_LENGTH};\nexport const BAD_PHRASE = {};",
+        serde_json::to_string(BAD_PHRASE).expect("a string")
+    );
+    out
+}
+
 /// `backend.ts`: the method table as a TypeScript interface.
 fn backend(names: &[String]) -> String {
     let cfg = Config::new().with_large_int("number");
@@ -210,6 +235,7 @@ fn typescript() {
     TokenUsage::export_all(&cfg).expect("export");
     ProgressStep::export_all(&cfg).expect("export");
     visit_challenge_types(&mut Export(&cfg));
+    visit_sync_types(&mut Export(&cfg));
     std::fs::write(dir.join("Payloads.ts"), payloads(&cfg)).expect("write");
 
     let mut names: Vec<String> = std::fs::read_dir(&dir)
@@ -226,4 +252,5 @@ fn typescript() {
     std::fs::write(dir.join("backend.ts"), backend(&names)).expect("write");
     std::fs::write(dir.join("llm.ts"), llm(&names)).expect("write");
     std::fs::write(dir.join("challenges.ts"), challenges(&names)).expect("write");
+    std::fs::write(dir.join("sync.ts"), sync(&names)).expect("write");
 }

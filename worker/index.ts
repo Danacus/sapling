@@ -3,7 +3,7 @@
  *
  * It assigns every event a sequence number and hands events back in that order.
  * It never merges, never reads a payload and never rewrites anything — every
- * merge rule lives in `src/lib/db/materialize.ts` and is order-independent, so
+ * merge rule lives in `crates/sapling-db/src/materialize.rs` and is order-independent, so
  * the order here is a cursor, not a decision.
  *
  * Access control is the pairing phrase, carried as `Authorization: Bearer`.
@@ -16,7 +16,7 @@
  *
  * Deploy with `pnpm sync:deploy`, run it locally with `pnpm sync:dev`.
  */
-import { normalizePhrase } from '../src/lib/sync/phrase';
+import { normalizePhrase } from './phrase';
 import { bearerPhrase, pullRange, pushedEvents } from './protocol';
 import { roomIdForPhrase } from './room';
 

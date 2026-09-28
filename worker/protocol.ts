@@ -7,7 +7,7 @@
  * differently from the client's would put two devices in two rooms, and an
  * unclamped `limit` would let one request ask for a whole log.
  */
-import { isValidPhrase, normalizePhrase } from '../src/lib/sync/phrase';
+import { isValidPhrase, normalizePhrase } from './phrase';
 
 /** The most events one pull may return, however large a `limit` asks for. */
 export const MAX_PULL = 1000;

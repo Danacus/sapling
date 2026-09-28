@@ -2,12 +2,15 @@
 name = "sapling-store"
 version = "0.0.1"
 edition = "2021"
-description = "Sapling's database in a directory: sapling-db over a SQLite file through rusqlite, with the device id, the system clock and the system time zone a native host lends it."
+description = "Sapling's database in a directory: sapling-db over a SQLite file through rusqlite, with the device id, the system clock and the system time zone a native host lends it, and that core as sapling-sync's store."
 publish = false
 
 [dependencies]
 sapling-db = { path = "../sapling-db" }
 sapling-domain = { path = "../sapling-domain" }
+# `sync.rs`: the core as `sapling-sync`'s store, for a native frontend.
+sapling-sync = { path = "../sapling-sync" }
+serde_json = { version = "1", features = ["preserve_order"] }
 # The only crate that links SQLite natively: `rusqlite_sql` is the `Sql` adapter
 # over it, and the store opens the file.
 rusqlite = { version = "0.40", features = ["bundled"] }
@@ -18,4 +21,4 @@ uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 serde = "1"
-serde_json = { version = "1", features = ["preserve_order"] }
+pollster = "0.4"

@@ -16,7 +16,7 @@
  *   turning it back on rejoins the same room rather than stranding the device
  *   in a fresh empty one.
  */
-import { isValidPhrase, mintPhrase, normalizePhrase } from './phrase';
+import { isValidPhrase, mintPhrase, normalizePhrase } from './core';
 import { SYNC_URL } from './url';
 
 const PHRASE_KEY = 'll.sync.phrase';

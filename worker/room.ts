@@ -18,12 +18,12 @@
  * end-to-end encryption would still be a real improvement if this were ever
  * more than one learner's own devices.
  *
- * {@link normalizePhrase} is imported from the client rather than reimplemented
- * here. Two copies that disagreed by one character would be two different
+ * {@link normalizePhrase} is `phrase.ts`'s, which a shared fixture pins to the
+ * client's Rust: two copies that disagreed by one character would be two
  * rooms, and the symptom — an empty library on the second device — looks like
  * data loss rather than a mismatch.
  */
-import { isValidPhrase, normalizePhrase } from '../src/lib/sync/phrase';
+import { isValidPhrase, normalizePhrase } from './phrase';
 
 /**
  * Domain separation, and a version marker.

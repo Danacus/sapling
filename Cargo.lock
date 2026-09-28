@@ -3349,6 +3349,7 @@ dependencies = [
  "sapling-import",
  "sapling-llm",
  "sapling-srs",
+ "sapling-sync",
  "serde",
  "serde_json",
  "ts-rs",
@@ -3381,12 +3382,25 @@ name = "sapling-store"
 version = "0.0.1"
 dependencies = [
  "chrono",
+ "pollster",
  "rusqlite",
  "sapling-db",
  "sapling-domain",
+ "sapling-sync",
  "serde",
  "serde_json",
  "uuid",
+]
+
+[[package]]
+name = "sapling-sync"
+version = "0.1.0"
+dependencies = [
+ "pollster",
+ "sapling-domain",
+ "serde",
+ "serde_json",
+ "ts-rs",
 ]
 
 [[package]]
@@ -3399,6 +3413,7 @@ dependencies = [
  "sapling-domain",
  "sapling-llm",
  "sapling-protocol",
+ "sapling-sync",
  "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",

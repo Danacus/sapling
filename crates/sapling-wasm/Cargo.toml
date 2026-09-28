@@ -2,7 +2,7 @@
 name = "sapling-wasm"
 version = "0.1.0"
 edition = "2021"
-description = "sapling-db and sapling-protocol behind wasm-bindgen: the persistence core the database Worker runs, over the browser's own sqlite-wasm, and the model calls and challenge decisions the window runs."
+description = "sapling-db and sapling-protocol behind wasm-bindgen: the persistence core the database Worker runs, over the browser's own sqlite-wasm, and the model calls, challenge decisions and sync client the window runs."
 publish = false
 
 [lib]
@@ -14,6 +14,7 @@ sapling-db = { path = "../sapling-db" }
 sapling-domain = { path = "../sapling-domain" }
 sapling-llm = { path = "../sapling-llm" }
 sapling-protocol = { path = "../sapling-protocol" }
+sapling-sync = { path = "../sapling-sync" }
 # Pinned to the exact version of `wasm-bindgen-cli` the flake ships: the CLI
 # refuses (or, worse, misreads) a `.wasm` built by a different version.
 wasm-bindgen = "=0.2.121"

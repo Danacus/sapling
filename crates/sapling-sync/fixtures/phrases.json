@@ -1,0 +1,25 @@
+{
+	"about": "Pairing-phrase normalisation, language-neutral. crates/sapling-sync (phrase.rs) and worker/phrase.ts must both turn every raw into its normalized form and agree on whether that is valid: two normalisations that differ put two devices in two rooms.",
+	"cases": [
+		{ "raw": "ABCDEFGHJKMNPQRSTVWX", "normalized": "ABCDEFGHJKMNPQRSTVWX", "valid": true },
+		{ "raw": "ABCDE-FGHJK-MNPQR-STVWX", "normalized": "ABCDEFGHJKMNPQRSTVWX", "valid": true },
+		{ "raw": "  abcde-fghjk-mnpqr-stvwx  ", "normalized": "ABCDEFGHJKMNPQRSTVWX", "valid": true },
+		{ "raw": "a b c d e f g h j k m n p q r s t v w x", "normalized": "ABCDEFGHJKMNPQRSTVWX", "valid": true },
+		{ "raw": "  ab3d5 fg7jk\tm2p4r-stv6x  ", "normalized": "AB3D5FG7JKM2P4RSTV6X", "valid": true },
+		{ "raw": "ILO", "normalized": "110", "valid": false },
+		{ "raw": "ilo", "normalized": "110", "valid": false },
+		{ "raw": "ILOIL-OILOI-LOILO-ILOIL", "normalized": "11011011011011011011", "valid": true },
+		{ "raw": "0123456789YZ0123456Y", "normalized": "0123456789YZ0123456Y", "valid": true },
+		{ "raw": "UUUUUUUUUUUUUUUUUUUU", "normalized": "UUUUUUUUUUUUUUUUUUUU", "valid": false },
+		{ "raw": "ABCDEFGHJKMNPQRSTVW", "normalized": "ABCDEFGHJKMNPQRSTVW", "valid": false },
+		{ "raw": "ABCDEFGHJKMNPQRSTVWX7", "normalized": "ABCDEFGHJKMNPQRSTVWX7", "valid": false },
+		{ "raw": "", "normalized": "", "valid": false },
+		{ "raw": "hello", "normalized": "HE110", "valid": false },
+		{ "raw": "ABCDE_FGHJK.MNPQR/STVWX!", "normalized": "ABCDEFGHJKMNPQRSTVWX", "valid": true },
+		{ "raw": "straße-ABCDEFGHJKMNPQ", "normalized": "STRASSEABCDEFGHJKMNPQ", "valid": false },
+		{ "raw": "ﬁ", "normalized": "F1", "valid": false },
+		{ "raw": "ıſ", "normalized": "1S", "valid": false },
+		{ "raw": "ＡＢＣ", "normalized": "", "valid": false },
+		{ "raw": "ÀBCDEFGHJKMNPQRSTVWX", "normalized": "BCDEFGHJKMNPQRSTVWX", "valid": false }
+	]
+}

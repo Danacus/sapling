@@ -1,6 +1,7 @@
 # Sync
 
-Contracts and runbook. Code: `src/lib/db/`, `src/lib/sync/`, `worker/`.
+Contracts and runbook. Code: `crates/sapling-sync/`, `src/lib/sync/`,
+`src/lib/db/`, `worker/`.
 
 ## Event model
 
@@ -69,6 +70,42 @@ another tab." and stops; no leader election. Node tests run the same wasm
 build, DDL and materializer against an in-memory database
 (`backend.testing.ts`).
 
+## Client
+
+The client is `crates/sapling-sync`, and it is host-agnostic: a cycle is
+`run(transport, store, url, phrase)`, with the HTTP request and the database
+both injected and the URL and phrase as arguments. One cycle pushes pending
+events in pages of 500 and stamps the `seq` of each one the relay
+acknowledged, then pulls pages of 1000 from the stored cursor until the cursor
+reaches `latest`, applying each page before moving the cursor past it. A local
+event keeps a missing `seq` until the relay has answered for it, and the cursor
+never passes an unapplied page, so an interruption costs a repeated request and
+never an event. Every failure — offline, a refused phrase, a store error — is a
+returned outcome with a learner-facing message, never an error. `probe` is an
+empty pull (`limit=0`) that tells a refused phrase from an unreachable server.
+`pair` runs one cycle and reports whether a profile came down the log; it never
+writes one, so a second device can join before onboarding would write a
+profile that wins last-write-wins everywhere.
+
+The web host runs it on the window thread through the wasm build's `sync`
+export (`src/lib/sync/core.ts`), lending `fetch` and the window's `Backend`.
+What stays in TypeScript is the device's own state: the phrase and the on/off
+switch in `localStorage` (`config.ts`), the build's `VITE_SYNC_URL` (`url.ts`),
+the last outcome for Settings, the triggers, and joining a cycle already
+running (`run.ts`). A native host lends `sapling-store`'s `CoreHandle` as the
+store and a transport of its own; `crates/sapling-store/tests/sync.rs` runs two
+devices through an in-memory relay that way.
+
+## Pairing phrase
+
+20 characters of Crockford base32 (100 bits), minted from host-drawn random
+bytes and shown in groups of five. Anything typed is normalised — upper-cased,
+everything outside `0-9A-Z` dropped, `I`/`L` read as `1` and `O` as `0` — and
+must then be exactly 20 characters of the alphabet. The client's rules are
+`phrase.rs`; the Worker keeps its own copy (`worker/phrase.ts`), and
+`crates/sapling-sync/fixtures/phrases.json` is the shared set of cases both run
+against, since two normalisations that differ are two rooms.
+
 ## Wire protocol
 
 - `POST /push` `{ events }` → `{ seqs: { id: seq } }` — `INSERT OR IGNORE`;
@@ -83,7 +120,8 @@ build, DDL and materializer against an in-memory database
 ## Runbook
 
 - Deploy the Worker: `pnpm sync:deploy`, or connect the repo under Workers
-  Builds (watch paths must include `src/lib/sync/*`, not just `worker/*`).
+  Builds (the Worker imports nothing outside `worker/`, so `worker/*` is
+  enough as a watch path).
 - Restrict who it serves: `wrangler secret put SYNC_ALLOWED_PHRASES`.
 - Point a build at it: set `VITE_SYNC_URL` in the Pages project's environment
   variables (build-time; unset means no sync in that build).

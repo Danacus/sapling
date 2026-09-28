@@ -29,12 +29,14 @@ function installStorage(): Storage {
 
 /**
  * `url.ts` reads `import.meta.env` once at module load, so the environment has
- * to be stubbed before the import rather than after.
+ * to be stubbed before the import rather than after. Resetting the modules
+ * also resets the wasm glue the phrase runs in, so it is instantiated again.
  */
 async function loadConfig(syncUrl: string | undefined) {
 	vi.resetModules();
 	if (syncUrl === undefined) vi.stubEnv('VITE_SYNC_URL', '');
 	else vi.stubEnv('VITE_SYNC_URL', syncUrl);
+	(await import('$lib/db/backend.testing')).loadWasmCore();
 	return import('./config');
 }
 

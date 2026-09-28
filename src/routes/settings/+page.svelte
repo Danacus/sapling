@@ -31,6 +31,7 @@
 	import { startTask } from '$lib/tasks';
 	import { taskStore } from '$lib/tasks/store.svelte';
 	import {
+		BAD_PHRASE,
 		clearSyncPhrase,
 		formatPhrase,
 		getSyncPhrase,
@@ -403,7 +404,7 @@
 		const adopting = setSyncPhrase(pairInput);
 		if (adopting === undefined) {
 			syncStatus = 'error';
-			syncMessage = 'That does not look like a pairing phrase.';
+			syncMessage = BAD_PHRASE;
 			return;
 		}
 		syncPhrase = adopting;

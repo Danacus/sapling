@@ -14,6 +14,7 @@ sapling-db = { path = "../sapling-db" }
 sapling-domain = { path = "../sapling-domain" }
 sapling-import = { path = "../sapling-import" }
 sapling-llm = { path = "../sapling-llm" }
+sapling-sync = { path = "../sapling-sync" }
 # The TypeScript side of the wire is generated from these types (`pnpm core:types`,
 # see `sapling-protocol`'s `typescript` tests). The derive is inert outside that.
 ts-rs = { version = "12.0.1", features = ["no-serde-warnings"] }
