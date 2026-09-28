@@ -4,7 +4,6 @@
 	import {
 		DEFAULT_MODEL,
 		exportData,
-		getAllItems,
 		getApiKey,
 		getBaseUrl,
 		getModel,
@@ -27,12 +26,10 @@
 		dictationDownloadBytes,
 		dictationModelInstalled
 	} from '$lib/asr';
-	import { REQUEST_ITEMS, isMockMode } from '$lib/llm';
+	import { REQUEST_ITEMS } from '$lib/llm';
 	import { inTauri } from '$lib/platform';
-	import { loadRomanizer, localReadings } from '$lib/romanize';
-	import { TASK_KINDS, startTask } from '$lib/tasks';
+	import { startTask } from '$lib/tasks';
 	import { taskStore } from '$lib/tasks/store.svelte';
-	import type { Romanizer } from '$lib/romanize';
 	import {
 		clearSyncPhrase,
 		formatPhrase,
@@ -66,7 +63,7 @@
 		type TtsEngine,
 		type TtsVoice
 	} from '$lib/tts';
-	import type { KnowledgeItem, Profile } from '$lib/types';
+	import type { Profile } from '$lib/types';
 	import BackLink from '$lib/ui/BackLink.svelte';
 	import InlineStatus from '$lib/ui/InlineStatus.svelte';
 	import {
@@ -114,11 +111,6 @@
 	let loading = $state(true);
 	let loadError = $state('');
 	let profile = $state<Profile | undefined>(undefined);
-	let allItems = $state<KnowledgeItem[]>([]);
-	/** The target language's local romanizer once its chunk has landed; `null` before, and for languages without one. */
-	let romanizer = $state<Romanizer | null>(null);
-	/** No key configured (or the flag is set): nothing here may offer to spend. */
-	let mockMode = $state(false);
 
 	// Display -----------------------------------------------------------------------
 	let themeMode = $state<ThemeMode>('system');
@@ -180,14 +172,6 @@
 	let usageCompletionTokens = $state(0);
 	let usageRequests = $state(0);
 
-	// Readings backfill -------------------------------------------------------------
-	const backfillTask = $derived(taskStore.latestOf('readings'));
-	const backfilling = $derived(
-		backfillTask?.status === 'queued' || backfillTask?.status === 'running'
-	);
-	let backfillStatus = $state<Status>('idle');
-	let backfillMessage = $state('');
-
 	// Sync --------------------------------------------------------------------------
 	// Everything here takes effect on the *next* boot: the sync backend is chosen
 	// when the leader worker builds the store, so the UI offers a reload rather
@@ -230,20 +214,11 @@
 		loading = true;
 		loadError = '';
 
-		Promise.all([getProfile(), getAllItems()])
-			.then(([loadedProfile, loadedItems]) => {
+		getProfile()
+			.then((loadedProfile) => {
 				if (cancelled) return;
 				profile = loadedProfile;
-				allItems = loadedItems;
-				// Lazy chunk; until it lands every missing reading looks like a model
-				// job, and the count corrects itself when it arrives.
-				loadRomanizer(loadedProfile?.targetLanguage)
-					.then((loaded) => {
-						if (!cancelled) romanizer = loaded;
-					})
-					.catch(() => {});
 
-				mockMode = isMockMode();
 				apiKeySet = getApiKey() !== undefined;
 				modelInput = getModel();
 				baseUrlInput = getBaseUrl() ?? '';
@@ -574,7 +549,6 @@
 			}
 			setModel(modelInput);
 			modelInput = getModel();
-			mockMode = isMockMode();
 			llmMessage = 'Saved';
 			flash((value) => (llmStatus = value));
 		} catch (cause) {
@@ -603,79 +577,6 @@
 		}
 		requestItemsInput = String(parsed);
 		setRequestItems(parsed);
-	}
-
-	/**
-	 * Whether a word is unreadable without help: it has no stored reading, and
-	 * what is left of its term once every Latin letter is removed still contains
-	 * a letter. That second half is the whole test — "café" and "Straße" strip
-	 * down to nothing and are left alone, "菜单" and "ありがとう" do not.
-	 * Punctuation and digits are not letters, so they never trigger it either.
-	 */
-	function needsReading(item: KnowledgeItem): boolean {
-		if (item.romanization?.trim()) return false;
-		return /\p{L}/u.test(item.term.replace(/\p{Script=Latin}/gu, ''));
-	}
-
-	/** Words that predate romanization support, or were added without one. */
-	const missingReadings = $derived(allItems.filter(needsReading));
-
-	/**
-	 * The missing readings the local romanizer can answer *for keeps* — only
-	 * where no context could change them (`localReadings`). These cost nothing;
-	 * the rest are words a reader has to know the meaning of to romanize, which
-	 * is the model's job and the one button in the app that spends tokens on
-	 * something other than a lesson.
-	 */
-	const freeReadings = $derived(localReadings(missingReadings, romanizer));
-	const modelReadings = $derived(missingReadings.filter((item) => !freeReadings.has(item.id)));
-
-	/**
-	 * Whether the fill can be offered at all: anything free is always on the
-	 * table, the model's share only with a real key behind it.
-	 */
-	const canBackfill = $derived(freeReadings.size > 0 || (!mockMode && modelReadings.length > 0));
-
-	/** How many the button will actually fill — the model's share is skipped without a key. */
-	const backfillCount = $derived(freeReadings.size + (mockMode ? 0 : modelReadings.length));
-
-	/**
-	 * Backfills readings as a background task: the local ones first, then one
-	 * batched model call for the rest (`$lib/tasks/kinds/readings`). This page
-	 * works out the two lists — it needs them for its own copy — and reports
-	 * how the task ended in the inline slot.
-	 *
-	 * Awaited rather than watched as a record, for the reason
-	 * {@link preloadVoiceModel} gives: the patched items are a local copy of
-	 * rows the task has already written, so a retry from the tray leaves this
-	 * page's count high until it is revisited and nothing else.
-	 */
-	async function backfillReadings() {
-		if (backfilling || !profile) return;
-		backfillStatus = 'idle';
-		backfillMessage = '';
-
-		const free = missingReadings
-			.filter((item) => freeReadings.has(item.id))
-			.map((item) => ({ ...item, romanization: freeReadings.get(item.id) as string }));
-
-		const outcome = await startTask('readings', {
-			targetLanguage: profile.targetLanguage,
-			free,
-			fromModel: mockMode ? [] : [...modelReadings]
-		}).done;
-
-		if (outcome.status === 'done') {
-			// Patch the local copy rather than re-reading: the count in the button
-			// label has to fall the moment the write lands.
-			const byId = new Map(outcome.result.patched.map((item) => [item.id, item]));
-			allItems = allItems.map((item) => byId.get(item.id) ?? item);
-			backfillMessage = TASK_KINDS.readings.summary(outcome.result);
-			flash((value) => (backfillStatus = value), 3000);
-		} else if (outcome.status === 'failed') {
-			backfillMessage = outcome.error;
-			backfillStatus = 'error';
-		}
 	}
 
 	function backupFilename(): string {
@@ -1326,34 +1227,6 @@
 					<InlineStatus status={exportStatus} message={exportMessage} />
 				</div>
 
-				{#if canBackfill}
-					<div class="field backfill-field">
-						<span class="label">Missing pronunciations</span>
-						<!-- The cost lives in the line, not in the button: a label with a
-						     parenthesis is a label that has stopped being a verb. -->
-						<p class="hint">
-							{missingReadings.length} word{missingReadings.length === 1 ? '' : 's'}
-							{missingReadings.length === 1 ? 'has' : 'have'} no reading{modelReadings.length > 0 &&
-							!mockMode
-								? '; one short model call fills them in'
-								: ''}.
-						</p>
-						<div class="actions-row">
-							<button
-								type="button"
-								class="btn btn-primary"
-								onclick={() => void backfillReadings()}
-								disabled={backfilling}
-							>
-								{backfilling
-									? 'Adding…'
-									: `Add ${backfillCount} reading${backfillCount === 1 ? '' : 's'}`}
-							</button>
-							<InlineStatus status={backfillStatus} message={backfillMessage} />
-						</div>
-					</div>
-				{/if}
-
 				<div class="field import-field">
 					<label class="label" for="settings-import-progress">Import progress</label>
 					<input
@@ -1793,10 +1666,6 @@
 	   above it so the eye stops at the key and the model. */
 	.field-aside .input {
 		background: var(--surface-alt);
-	}
-
-	.backfill-field {
-		margin-top: 1.25rem;
 	}
 
 	.import-field {

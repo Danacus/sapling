@@ -37,7 +37,7 @@ import { bcp47For } from '$lib/tts/languages';
 import type { Romanizer } from './types';
 
 export type { RomanizedToken, Romanizer } from './types';
-export { itemReadingTokens, localReadings, readingFold } from './item';
+export { itemReadingTokens, readingFold } from './item';
 export type { ReadableItem } from './item';
 
 /**

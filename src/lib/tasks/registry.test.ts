@@ -3,7 +3,6 @@ import type { Profile } from '$lib/types';
 import { TASK_KINDS } from './registry';
 import type { TaskInput, TaskKind } from './registry';
 import { captionsTask } from './kinds/captions';
-import { readingsTask } from './kinds/readings';
 import { topUpTask } from './kinds/top-up';
 
 const profile: Profile = {
@@ -17,7 +16,6 @@ const profile: Profile = {
 /** One well-formed input per kind, so every `title` can be called. */
 const FAKE_INPUTS: { [K in TaskKind]: TaskInput<K> } = {
 	'top-up': { profile, topic: 'at the market' },
-	readings: { targetLanguage: 'Chinese', free: [], fromModel: [] },
 	'read-generate': { profile, vocabulary: [], focus: [] },
 	captions: { videoId: 'abcdefghijk', lang: 'ja', name: 'Japanese', auto: false },
 	'tts-model': 'Mandarin Chinese',
@@ -86,15 +84,5 @@ describe('captions summary and title', () => {
 
 	it('cannot be cancelled, because a child process the host is waiting on cannot', () => {
 		expect(captionsTask.cancellable).toBe(false);
-	});
-});
-
-describe('readings summary', () => {
-	it('says where the readings came from', () => {
-		expect(readingsTask.summary({ free: 3, fromModel: 0, patched: [] })).toBe('Added 3 readings');
-		expect(readingsTask.summary({ free: 0, fromModel: 1, patched: [] })).toBe('Added 1 reading');
-		expect(readingsTask.summary({ free: 2, fromModel: 1, patched: [] })).toBe(
-			'Added 3 readings (1 from the model)'
-		);
 	});
 });

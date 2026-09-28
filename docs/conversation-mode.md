@@ -58,10 +58,11 @@ conversation itself reads as a conversation.
 
 ## 4. Wire formats
 
-Both are pinned with `responseFormat: { schema, name }` on `chatCompletion`,
-which already coexists with `tools`. Cheap models sometimes reject structured
-outputs and the client retries without them (`schemaDropped`), so the parser must
-also accept a fenced or bare JSON body — reuse `stripFences` from `$lib/llm`.
+Both are pinned with a strict `response_format` on the chat request
+(`crates/sapling-llm`'s client), which already coexists with `tools`. Cheap
+models sometimes reject structured outputs and the client retries without them,
+so the parser must also accept a fenced or bare JSON body — `json.rs`'s
+`strip_fences`.
 Target-language strings carry their own Latin reading, exactly like the
 `TargetText` primitive in generation: `{ text, reading }`, `reading: null` for
 Latin-script languages.

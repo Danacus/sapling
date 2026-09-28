@@ -26,7 +26,7 @@
  *
  * **In memory only.** A reload loses every record. That is deliberate: a
  * request that dies with the tab cannot be resumed, only re-run, and the
- * pool, the texts and the readings all land through their own repositories
+ * pool and the texts both land through their own repositories
  * the moment a job finishes, so nothing is lost but the ledger.
  *
  * **Retry is a new record, and it says where it came from.** Re-running a

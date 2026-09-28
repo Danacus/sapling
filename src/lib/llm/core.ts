@@ -9,6 +9,7 @@
 import { DEFAULT_MODEL, getApiKey, getBaseUrl, getModel } from '$lib/db/settings';
 import type {
 	Endpoint,
+	ErrorKind,
 	KnowledgeItem,
 	ProgressStep,
 	LlmError as WireError,
@@ -18,9 +19,27 @@ import type { Llm } from '$lib/db/generated/llm';
 import init, { llm } from '$lib/db/wasm/sapling_core';
 import type { ToolHost } from '$lib/db/wasm/sapling_core';
 import wasmUrl from '$lib/db/wasm/sapling_core_bg.wasm?url';
-import { LlmError } from './client';
 import { isMockMode } from './mock';
 import { recordUsage } from './usage';
+
+export type LlmErrorKind = ErrorKind;
+
+/**
+ * Every failure out of `$lib/llm`, rebuilt from the core's error JSON so a
+ * caller can `instanceof` it. Rust writes `message` for a human.
+ */
+export class LlmError extends Error {
+	readonly kind: LlmErrorKind;
+	/** HTTP status, when the failure came from a response. */
+	readonly status?: number;
+
+	constructor(kind: LlmErrorKind, message: string, options?: { status?: number }) {
+		super(message);
+		this.name = 'LlmError';
+		this.kind = kind;
+		this.status = options?.status;
+	}
+}
 
 /**
  * The word list the assistant's tools run against — `$lib/assistant`'s

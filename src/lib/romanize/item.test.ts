@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { itemReadingTokens, localReadings, readingFold } from './item';
+import { itemReadingTokens, readingFold } from './item';
 import type { Romanizer } from './types';
 import { zhRomanizer } from './zh';
 
@@ -80,27 +80,5 @@ describe('itemReadingTokens', () => {
 		expect(itemReadingTokens({ term: '银行' }, odd)).toEqual([
 			{ text: '银行', reading: 'one two three' }
 		]);
-	});
-});
-
-describe('localReadings', () => {
-	const items = [
-		{ id: 'a', term: '银行' },
-		{ id: 'b', term: '行' },
-		{ id: 'c', term: '菜' },
-		{ id: 'd', term: '菜单', romanization: 'cài dān' },
-		{ id: 'e', term: 'gracias' }
-	];
-
-	it('answers only the context-free readings of items with none stored', () => {
-		expect([...localReadings(items, zhRomanizer)]).toEqual([
-			['a', 'yín háng'],
-			['c', 'cài']
-		]);
-	});
-
-	it('is empty with no romanizer, or one that cannot read in isolation', () => {
-		expect(localReadings(items, null).size).toBe(0);
-		expect(localReadings(items, { tokenize: () => [] }).size).toBe(0);
 	});
 });

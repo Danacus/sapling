@@ -16,7 +16,6 @@
 import { asrModelTask } from './kinds/asr-model';
 import { captionsTask } from './kinds/captions';
 import { readGenerateTask } from './kinds/read-generate';
-import { readingsTask } from './kinds/readings';
 import { topUpTask } from './kinds/top-up';
 import { ttsModelTask } from './kinds/tts-model';
 import type { InputOf, ResultOf } from './runner';
@@ -24,7 +23,6 @@ import type { TaskRecord } from './types';
 
 export const TASK_KINDS = {
 	'top-up': topUpTask,
-	readings: readingsTask,
 	'read-generate': readGenerateTask,
 	captions: captionsTask,
 	'tts-model': ttsModelTask,

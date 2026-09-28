@@ -1,7 +1,6 @@
 /**
- * Public surface of the LLM layer. Every model call but one runs in Rust
- * (`crates/sapling-llm`) through {@link callLlm}; `client.ts` is left for the
- * romanization backfill (`romanize.ts`). Mock mode is decided here and
+ * Public surface of the LLM layer. Every model call runs in Rust
+ * (`crates/sapling-llm`) through {@link callLlm}. Mock mode is decided here and
  * honoured on both sides.
  *
  * Nothing in this layer touches the database. `getBatch` returns challenges and
@@ -45,11 +44,8 @@ export async function getBatch(args: BatchArgs, opts: BatchOptions = {}): Promis
 export { describeShown, getEscalation } from './escalation';
 export type { EscalationArgs } from './escalation';
 
-export { LlmError } from './client';
-export type { FetchLike, LlmErrorKind, TokenUsage } from './client';
-
-export { callLlm } from './core';
-export type { CallOptions, ToolContext } from './core';
+export { LlmError, callLlm } from './core';
+export type { CallOptions, LlmErrorKind, ToolContext } from './core';
 export {
 	MAX_ABOUT_CHARS,
 	MAX_FOCUS_WORDS,
@@ -69,6 +65,7 @@ export type {
 	ProgressStepId,
 	ReadingTextDraft,
 	Shown,
+	TokenUsage,
 	TranslateLineArgs
 } from '$lib/db/generated/index';
 
@@ -89,16 +86,6 @@ export type {
 	WantItem,
 	WireType
 } from './kinds';
-
-export {
-	ROMANIZE_SCHEMA_NAME,
-	buildRomanizePrompt,
-	fillRomanizations,
-	parseRomanizations,
-	romanizationsSchema,
-	romanizeJsonSchema
-} from './romanize';
-export type { RomanizeArgs, RomanizeItem, RomanizeOptions, RomanizeResult } from './romanize';
 
 export { MOCK_FLAG_KEY, isMockMode, setMockMode } from './mock';
 

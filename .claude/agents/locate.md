@@ -44,7 +44,7 @@ list; `def.ts` is its contract; `primitives.ts` is its shared pieces.
 
 Where the rest lives:
 
-- `src/lib/llm/` — `index.ts` (`getBatch`), `escalation.ts` (`getEscalation`, what the screen showed), `kinds.ts` (`PLANNABLE_KINDS`, `kindOf`), `core.ts` (`callLlm` into the wasm), `mock.ts` (the flag), `romanize.ts` (the one TypeScript model call, over the trimmed `client.ts`)
+- `src/lib/llm/` — `index.ts` (`getBatch`), `escalation.ts` (`getEscalation`, what the screen showed), `kinds.ts` (`PLANNABLE_KINDS`, `kindOf`), `core.ts` (`callLlm` into the wasm, `LlmError`), `mock.ts` (the flag), `usage.ts` (the token meter)
 - `src/lib/assistant/` — `index.ts` (`sendChatMessage`, `addWords`), `context.ts` (`defaultToolContext`, the repositories); `src/lib/conversation/` — `index.ts` (`startConversation`, `sendTurn`), `diff.ts` (correction markup)
 - `crates/sapling-llm/` — the model calls: `client.rs` (chat client over an injected transport), `lesson.rs` (the top-up: requests, prompt, batch loop, mock), `wire.rs` (wire structs, schemas, resolvers), `kinds.rs` (the wire types over `lessons/*.json`), `escalation.rs`, `reading.rs`, `tools.rs` (`ToolContext`, the tools, the loop), `chat.rs`, `conversation.rs`, `text.rs`; prompts in `prompts/`, mock fixtures in `fixtures/` and `lessons/`; `crates/sapling-protocol/src/llm.rs` names them
 - `src/lib/session/` — `engine.ts` (orchestrator, all play-time DB writes), `progression.ts`, `romanization.ts`

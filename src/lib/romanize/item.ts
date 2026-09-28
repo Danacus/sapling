@@ -90,24 +90,3 @@ export function itemReadingTokens(
 	}
 	return localReading === '' ? null : local;
 }
-
-/**
- * The readings a local romanizer can give these items *for keeps*: only the
- * ones with no stored reading, and only where the term's reading is
- * context-free (`Romanizer.unambiguousReading`). Keyed by item id; an item the
- * romanizer declines is simply absent, which is the caller's signal that it
- * needs a reader who knows the meaning.
- */
-export function localReadings<T extends ReadableItem & { id: string }>(
-	items: readonly T[],
-	romanizer: Romanizer | null | undefined
-): Map<string, string> {
-	const out = new Map<string, string>();
-	if (!romanizer?.unambiguousReading) return out;
-	for (const item of items) {
-		if (item.romanization?.trim()) continue;
-		const reading = romanizer.unambiguousReading(item.term);
-		if (reading) out.set(item.id, reading);
-	}
-	return out;
-}

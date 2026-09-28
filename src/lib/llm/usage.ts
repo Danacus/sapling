@@ -9,7 +9,7 @@
  * This is the single stateful corner of `$lib/llm`; everything else is pure.
  */
 
-import type { TokenUsage } from './client';
+import type { TokenUsage } from '$lib/db/generated/index';
 
 const PROMPT_KEY = 'll.usage.promptTokens';
 const COMPLETION_KEY = 'll.usage.completionTokens';
@@ -66,7 +66,7 @@ function sanitize(n: unknown): number {
  * by `requests` when the Rust core counted several, else by one. Called from
  * the real client path; mock mode never records.
  */
-export function recordUsage(usage: TokenUsage & { requests?: number }): void {
+export function recordUsage(usage: TokenUsage): void {
 	if (!hasStorage()) return;
 	writeNumber(PROMPT_KEY, readNumber(PROMPT_KEY) + sanitize(usage?.promptTokens));
 	writeNumber(COMPLETION_KEY, readNumber(COMPLETION_KEY) + sanitize(usage?.completionTokens));
