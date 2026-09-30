@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::challenge::{Challenge, Direction, WordOrderChallenge};
+use crate::help::help_level_of;
 use crate::ladder::{level_for_strength, weakest_level, weakest_of, weakest_strength, ById, Word};
 use crate::text::js_trim;
 use crate::tuning::ladders;
@@ -55,6 +56,11 @@ pub struct Presentation {
     /// How many distractor tiles a word-order shows beyond its own; 0 otherwise.
     pub distractor_tiles: usize,
     pub readings: ReadingPlan,
+    /// Whether the prompt is played before it is read: a recognize-style
+    /// multiple choice, when the host said audio is available.
+    pub listening: bool,
+    /// The help level this screen is (`help.rs`): what the answer records as `shown`.
+    pub shown: String,
 }
 
 /// True through [`hint_ceiling_level`](crate::tuning::Ladders::hint_ceiling_level): a step, not a roll.
@@ -187,21 +193,38 @@ pub fn plan_readings(
     ReadingPlan { sentence, by_term }
 }
 
+/// `audio` is the host's answer to "can this device speak, and does the
+/// learner want listening at all?"; without it nothing is played first.
 pub fn presentation_for(
     challenge: &Challenge,
     words: &[Word],
     index: &ById,
     mode: RomanizationMode,
+    audio: bool,
     draw: &mut dyn FnMut() -> f64,
 ) -> Presentation {
+    let bank_size = bank_size(challenge, index);
+    let distractor_tiles = match challenge {
+        Challenge::WordOrder(c) => distractor_tiles(c, index),
+        _ => 0,
+    };
+    let readings = plan_readings(mode, challenge, words, index, draw);
+    let listening = is_listening(challenge, audio);
+    let shown = help_level_of(
+        challenge,
+        bank_size,
+        distractor_tiles,
+        readings.sentence,
+        listening,
+    )
+    .id();
     Presentation {
         show_hint: show_hint(challenge, index),
-        bank_size: bank_size(challenge, index),
-        distractor_tiles: match challenge {
-            Challenge::WordOrder(c) => distractor_tiles(c, index),
-            _ => 0,
-        },
-        readings: plan_readings(mode, challenge, words, index, draw),
+        bank_size,
+        distractor_tiles,
+        readings,
+        listening,
+        shown,
     }
 }
 
@@ -450,13 +473,16 @@ mod tests {
                 &words,
                 &index,
                 RomanizationMode::On,
+                false,
                 &mut never
             ),
             Presentation {
                 show_hint: true,
                 bank_size: ladders().cloze_bank[0],
                 distractor_tiles: 0,
-                readings: all.clone()
+                readings: all.clone(),
+                listening: false,
+                shown: "pick-4".into(),
             }
         );
         let words2 = rung(2, &["w"]);
@@ -472,13 +498,16 @@ mod tests {
                 &words2,
                 &by_id(&words2),
                 RomanizationMode::On,
+                false,
                 &mut never
             ),
             Presentation {
                 show_hint: true,
                 bank_size: 0,
                 distractor_tiles: ladders().word_order_distractors[1],
-                readings: all
+                readings: all,
+                listening: false,
+                shown: "tiles".into(),
             }
         );
         let off = presentation_for(
@@ -486,9 +515,22 @@ mod tests {
             &words,
             &index,
             RomanizationMode::Off,
+            false,
             &mut never,
         );
         assert!(!off.readings.sentence);
+        // A Latin-script row has no reading to hide, so Off is not a different screen.
+        assert_eq!(off.shown, "pick-4");
+        let heard = presentation_for(
+            &mc(&["w"]),
+            &words,
+            &index,
+            RomanizationMode::On,
+            true,
+            &mut never,
+        );
+        assert_eq!(heard.listening, is_listening(&mc(&["w"]), true));
+        assert_eq!(heard.shown == "listening", heard.listening);
     }
 
     fn mc(item_ids: &[&str]) -> Challenge {

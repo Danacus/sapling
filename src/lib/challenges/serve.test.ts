@@ -57,7 +57,9 @@ describe('presentationFor', () => {
 			showHint: true,
 			bankSize: 3,
 			distractorTiles: 0,
-			readings: ALL_READINGS
+			readings: ALL_READINGS,
+			listening: false,
+			shown: 'pick-4'
 		});
 
 		const owned = presentationFor(cloze, [item('w', 0.9)], {
@@ -100,7 +102,8 @@ describe('resolvedPresentation', () => {
 			showHint: true,
 			bankSize: 6,
 			distractorTiles: 0,
-			readings: ALL_READINGS
+			readings: ALL_READINGS,
+			listening: false
 		});
 		expect(resolvedPresentation(wordOrder).distractorTiles).toBe(2);
 	});
@@ -110,14 +113,16 @@ describe('resolvedPresentation', () => {
 			showHint: false,
 			bankSize: 2,
 			distractorTiles: 0,
-			readings: { sentence: false, byTerm: new Map([['w', true]]) }
+			readings: { sentence: false, byTerm: new Map([['w', true]]) },
+			listening: false
 		};
 		expect(resolvedPresentation(cloze, supplied)).toEqual(supplied);
 		expect(resolvedPresentation(cloze, { showHint: false })).toEqual({
 			showHint: false,
 			bankSize: 6,
 			distractorTiles: 0,
-			readings: ALL_READINGS
+			readings: ALL_READINGS,
+			listening: false
 		});
 	});
 });

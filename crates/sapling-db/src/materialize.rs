@@ -441,13 +441,14 @@ impl<'a> Materializer<'a> {
             return Ok(());
         }
         self.sql.exec(
-            "INSERT INTO results (id, challengeId, verdict, answerGiven, at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO results (id, challengeId, verdict, answerGiven, at, shown) VALUES (?, ?, ?, ?, ?, ?)",
             &[
                 Param::text(id),
                 Param::text(&p.challenge_id),
                 Param::text(p.verdict.as_str()),
                 Param::text(&p.answer_given),
                 Param::number(p.at),
+                Param::opt_text(p.shown.as_deref()),
             ],
         )
     }

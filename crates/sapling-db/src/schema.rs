@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS challenges (
 
 CREATE TABLE IF NOT EXISTS results (
   id TEXT PRIMARY KEY, challengeId TEXT NOT NULL, verdict TEXT NOT NULL,
-  answerGiven TEXT NOT NULL, at INTEGER NOT NULL);
+  answerGiven TEXT NOT NULL, at INTEGER NOT NULL, shown TEXT);
 CREATE INDEX IF NOT EXISTS results_at ON results(at);
 
 CREATE TABLE IF NOT EXISTS tombstones (itemId TEXT PRIMARY KEY);
@@ -102,7 +102,10 @@ pub fn review_key(item_id: &str, at: f64, device: &str) -> String {
 /// Bumped for 5 when `texts` traded its `sentences` and `glossary` columns for
 /// one `segments` column: the rebuild replays every `textAdded`, old shape
 /// included, into the new table.
-pub const DERIVED_SCHEMA_VERSION: u32 = 5;
+///
+/// Bumped for 6 when `results` gained `shown`, the help level an answer was
+/// given at: the rebuild carries it over from every `resultLogged` that has one.
+pub const DERIVED_SCHEMA_VERSION: u32 = 6;
 
 /// Every read table the materializer owns; `events` and `meta` survive a rebuild.
 ///

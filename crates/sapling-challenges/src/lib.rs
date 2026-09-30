@@ -1,6 +1,7 @@
 //! The challenge union and everything decided about a challenge once it
 //! exists: its stored shape (`challenge.rs`), grading (`grade.rs` over the
-//! string matchers in `matcher.rs`), how much it asks (`difficulty.rs`), what a
+//! string matchers in `matcher.rs`), how much it asks (`difficulty.rs`), the
+//! help levels a stored row can be shown at (`help.rs`), what a
 //! word can bear (`ladder.rs`), what a served one shows (`serve.rs`), the free
 //! match round (`match_pairs.rs`), and the two planners over the pool: which
 //! challenges a session plays (`session.rs`) and what a top-up writes
@@ -16,6 +17,7 @@
 pub mod challenge;
 pub mod difficulty;
 pub mod grade;
+pub mod help;
 pub mod kinds;
 pub mod ladder;
 pub mod match_pairs;

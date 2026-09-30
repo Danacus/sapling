@@ -504,6 +504,12 @@ export interface AnswerOutcome {
 	responseMs?: number;
 	/** See {@link AnswerEvent.itemVerdicts}; absent preserves one verdict per challenge. */
 	itemVerdicts?: readonly { itemId: string; verdict: Verdict }[];
+	/**
+	 * The help level the challenge was shown at — the served presentation's
+	 * `shown`. Logged with the result, because it is what the difficulty model
+	 * learns from; absent for a screen nothing served (a bare render).
+	 */
+	shown?: string;
 	/** Epoch ms; defaults to `Date.now()`. */
 	now?: number;
 }
@@ -557,7 +563,8 @@ export async function applyResult(
 		challengeId: challenge.id,
 		verdict: outcome.verdict,
 		answerGiven: outcome.answerGiven,
-		at: now
+		at: now,
+		...(outcome.shown === undefined ? {} : { shown: outcome.shown })
 	});
 
 	// Ephemeral match-pairs rounds were never pooled; `recordServe` no-ops on a

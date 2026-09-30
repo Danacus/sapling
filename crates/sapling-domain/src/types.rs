@@ -297,6 +297,17 @@ pub struct ChallengeResult {
     pub answer_given: String,
     /// Epoch milliseconds.
     pub at: f64,
+    /// The help level the challenge was shown at — `sapling-challenges`' `help.rs`
+    /// names them (`pick-6`, `typed-hidden`, `listening`). What the difficulty
+    /// model learns from; absent on an answer logged before it was recorded,
+    /// which replay reconstructs instead.
+    #[serde(
+        default,
+        deserialize_with = "absent_or",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional)]
+    pub shown: Option<String>,
 }
 
 /// Everything the learner did on one local calendar day, read straight off

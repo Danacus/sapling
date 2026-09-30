@@ -187,6 +187,7 @@ fn result_from(row: &Row) -> Result<ChallengeResult> {
         verdict: parse_enum(row.text("verdict")?)?,
         answer_given: row.text("answerGiven")?.to_owned(),
         at: row.f64("at")?,
+        shown: row.opt_text("shown")?.map(str::to_owned),
     })
 }
 

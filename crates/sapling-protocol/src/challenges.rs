@@ -51,6 +51,10 @@ pub struct PresentationArgs {
     pub challenge: Challenge,
     pub words: Vec<Word>,
     pub romanization_mode: RomanizationMode,
+    /// Whether this device can speak and the learner wants listening; off when absent.
+    #[serde(default)]
+    #[ts(optional)]
+    pub audio: Option<bool>,
     #[serde(default)]
     #[ts(optional)]
     pub seed: Option<u64>,
@@ -192,7 +196,7 @@ challenges! {
         presentationFor(args: PresentationArgs) -> Presentation {
             let index = by_id(&args.words);
             let mut rng = Rng::from_seed(args.seed);
-            serve::presentation_for(&args.challenge, &args.words, &index, args.romanization_mode, &mut || rng.next_f64())
+            serve::presentation_for(&args.challenge, &args.words, &index, args.romanization_mode, args.audio.unwrap_or(false), &mut || rng.next_f64())
         }
         /// The bank positions a cloze or multi-cloze shows at `size`.
         visibleBank(args: VisibleBankArgs) -> Vec<usize> {

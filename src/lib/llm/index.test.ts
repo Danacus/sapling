@@ -96,6 +96,8 @@ describe('getEscalation', () => {
 		bankSize: 0,
 		distractorTiles: 0,
 		readings: ALL_READINGS,
+		listening: false,
+		shown: 'plain',
 		...fields
 	});
 

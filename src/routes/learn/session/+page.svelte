@@ -41,9 +41,9 @@
 	import type { Grade } from '$lib/srs';
 	import { runSync } from '$lib/sync';
 	import { taskStore } from '$lib/tasks/store.svelte';
-	import { getTtsEngine, preloadVoice, sherpaSupports, warmSpeech } from '$lib/tts';
+	import { getTtsEngine, preloadVoice, sherpaSupports, ttsAvailable, warmSpeech } from '$lib/tts';
 	import type { Challenge, KnowledgeItem, Profile, Verdict } from '$lib/types';
-	import { getRomanizationMode } from '$lib/ui/prefs';
+	import { getListeningMode, getRomanizationMode } from '$lib/ui/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
@@ -355,7 +355,10 @@
 	function show(challenge: Challenge): void {
 		const at = Date.now();
 		challengeShownAt = at;
-		currentPresentation = presentationFor(challenge, items, { romanizationMode });
+		currentPresentation = presentationFor(challenge, items, {
+			romanizationMode,
+			audio: listeningEnabled && ttsAvailable(targetLanguage)
+		});
 		current = challenge;
 		// Warm this challenge's own audio while the learner is still reading it.
 		// The queue loop covers the whole session now, so it has usually got there
@@ -405,6 +408,7 @@
 			answerGiven: event.answerGiven,
 			responseMs: event.responseMs,
 			...(event.itemVerdicts ? { itemVerdicts: event.itemVerdicts } : {}),
+			...(currentPresentation ? { shown: currentPresentation.shown } : {}),
 			now: Date.now()
 		}).catch(() => {
 			// A failed write must not eat the session; the answer is already logged.
@@ -634,6 +638,8 @@
 
 	/** Read once — the toggle lives in Settings, not mid-session. */
 	const romanizationMode = getRomanizationMode();
+	/** Read once, like the romanization mode: listening is a Settings toggle. */
+	const listeningEnabled = getListeningMode();
 	/**
 	 * The summary's new-word list. A word the learner has just been drilled on
 	 * for the first time is by definition not one they own yet, so adaptive mode

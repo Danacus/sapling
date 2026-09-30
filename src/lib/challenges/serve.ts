@@ -47,6 +47,13 @@ export interface Presentation {
 	/** Distractor tiles a word-order shows beyond its own, via {@link visibleTiles}. */
 	distractorTiles: number;
 	readings: ReadingPlan;
+	/** Played before it is read: the prompt's text waits until the learner asks. */
+	listening: boolean;
+	/**
+	 * The help level this screen is — `crates/sapling-challenges`' `help.rs` names
+	 * them (`pick-6`, `typed-hidden`, `listening`). What the answer records.
+	 */
+	shown: string;
 }
 
 /** Readings on everywhere: the default a component gets with no plan. */
@@ -59,12 +66,18 @@ export const ALL_READINGS: ReadingPlan = { sentence: true, byTerm: new Map() };
 export function presentationFor(
 	challenge: Challenge,
 	items: readonly KnowledgeItem[],
-	opts: { romanizationMode: RomanizationMode; seed?: number }
+	opts: {
+		romanizationMode: RomanizationMode;
+		/** This device can speak and the learner wants listening; off when absent. */
+		audio?: boolean;
+		seed?: number;
+	}
 ): Presentation {
 	const served = callChallenges('presentationFor', {
 		challenge,
 		words: asWords(items),
 		romanizationMode: opts.romanizationMode,
+		...(opts.audio === undefined ? {} : { audio: opts.audio }),
 		...(opts.seed === undefined ? {} : { seed: opts.seed })
 	});
 	return {
@@ -78,12 +91,14 @@ export function presentationFor(
 
 /**
  * A served presentation, or the bare-render defaults — hint on, the whole
- * stored bank and tray, every reading — for whatever the caller left out.
+ * stored bank and tray, every reading, nothing played first — for whatever
+ * the caller left out. `shown` is not defaulted: it is what an answer records,
+ * and a bare render records nothing.
  */
 export function resolvedPresentation(
 	challenge: Challenge,
 	presentation?: Partial<Presentation>
-): Presentation {
+): Omit<Presentation, 'shown'> {
 	const bank =
 		challenge.type === 'cloze' || challenge.type === 'multi-cloze'
 			? (challenge.wordBank?.length ?? 0)
@@ -96,7 +111,8 @@ export function resolvedPresentation(
 		showHint: presentation?.showHint ?? true,
 		bankSize: presentation?.bankSize ?? bank,
 		distractorTiles: presentation?.distractorTiles ?? tray,
-		readings: presentation?.readings ?? ALL_READINGS
+		readings: presentation?.readings ?? ALL_READINGS,
+		listening: presentation?.listening ?? false
 	};
 }
 
@@ -122,7 +138,8 @@ export function visibleTiles(challenge: WordOrderChallenge, count: number): numb
 
 /**
  * Whether a challenge is played before it is read: `enabled` is the learner's
- * preference; whether speech is available is the caller's question.
+ * preference; whether speech is available is the caller's question. The
+ * session reads it off {@link Presentation.listening} instead, decided once.
  */
 export function isListeningChallenge(challenge: Challenge, enabled: boolean): boolean {
 	return enabled && callChallenges('isListening', { challenge, enabled });

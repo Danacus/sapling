@@ -550,7 +550,7 @@ mod tests {
             (EventType::ChallengeReported, json!({ "challengeId": "c" })),
             (
                 EventType::ResultLogged,
-                json!({ "challengeId": "c", "verdict": "almost", "answerGiven": "a", "at": 7 }),
+                json!({ "challengeId": "c", "verdict": "almost", "answerGiven": "a", "at": 7, "shown": "pick-6" }),
             ),
             (
                 EventType::ProfileUpdated,
