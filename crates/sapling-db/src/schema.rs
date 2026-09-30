@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS items (
   id TEXT PRIMARY KEY, kind TEXT, term TEXT, meaning TEXT, romanization TEXT, notes TEXT,
   introducedAt INTEGER, fsrsCard TEXT NOT NULL, reviewCount INTEGER NOT NULL DEFAULT 0,
   correctCount INTEGER NOT NULL DEFAULT 0, recentGrades TEXT NOT NULL DEFAULT '[]',
-  lastReviewedAt INTEGER, updatedAt INTEGER NOT NULL DEFAULT 0);
+  lastReviewedAt INTEGER, updatedAt INTEGER NOT NULL DEFAULT 0, skill REAL);
 
 CREATE TABLE IF NOT EXISTS reviews (
   id TEXT PRIMARY KEY, itemId TEXT NOT NULL, at INTEGER NOT NULL, grade INTEGER NOT NULL,
@@ -33,12 +33,20 @@ CREATE INDEX IF NOT EXISTS reviews_at ON reviews(at);
 CREATE TABLE IF NOT EXISTS challenges (
   id TEXT PRIMARY KEY, content TEXT NOT NULL, generatedAt INTEGER NOT NULL, topic TEXT,
   reported INTEGER NOT NULL DEFAULT 0, timesServed INTEGER NOT NULL DEFAULT 0,
-  lastServedAt INTEGER);
+  lastServedAt INTEGER, correction REAL);
 
 CREATE TABLE IF NOT EXISTS results (
   id TEXT PRIMARY KEY, challengeId TEXT NOT NULL, verdict TEXT NOT NULL,
   answerGiven TEXT NOT NULL, at INTEGER NOT NULL, shown TEXT);
 CREATE INDEX IF NOT EXISTS results_at ON results(at);
+CREATE INDEX IF NOT EXISTS results_challenge ON results(challengeId);
+
+-- The difficulty model's shared numbers (`learned.rs`): `base:<kind>/<help
+-- level>` and `slope:<kind>`. A key not here is at its starting value.
+CREATE TABLE IF NOT EXISTS difficultyParts (key TEXT PRIMARY KEY, value REAL NOT NULL);
+-- One row: the newest answer folded, and whether a full replay is owed.
+CREATE TABLE IF NOT EXISTS difficultyFold (
+  id INTEGER PRIMARY KEY, at REAL, resultId TEXT, dirty INTEGER NOT NULL DEFAULT 0);
 
 CREATE TABLE IF NOT EXISTS tombstones (itemId TEXT PRIMARY KEY);
 
@@ -105,7 +113,11 @@ pub fn review_key(item_id: &str, at: f64, device: &str) -> String {
 ///
 /// Bumped for 6 when `results` gained `shown`, the help level an answer was
 /// given at: the rebuild carries it over from every `resultLogged` that has one.
-pub const DERIVED_SCHEMA_VERSION: u32 = 6;
+///
+/// Bumped for 7 when the difficulty model's numbers became derived data:
+/// `items.skill`, `challenges.correction`, `difficultyParts` and
+/// `difficultyFold`, replayed from every answer in the log.
+pub const DERIVED_SCHEMA_VERSION: u32 = 7;
 
 /// Every read table the materializer owns; `events` and `meta` survive a rebuild.
 ///
@@ -113,7 +125,7 @@ pub const DERIVED_SCHEMA_VERSION: u32 = 6;
 /// activity read folds the base tables at read time instead, since a day is
 /// made of reviews, lookups and added words as much as of answers. A database
 /// from before still carries the empty table; nothing reads or drops it.
-pub const DERIVED_TABLES: [&str; 13] = [
+pub const DERIVED_TABLES: [&str; 15] = [
     "items",
     "reviews",
     "challenges",
@@ -127,6 +139,8 @@ pub const DERIVED_TABLES: [&str; 13] = [
     "conversations",
     "conversationTurns",
     "conversationTombstones",
+    "difficultyParts",
+    "difficultyFold",
 ];
 
 #[cfg(test)]

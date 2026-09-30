@@ -17,6 +17,7 @@
 #![forbid(unsafe_code)]
 
 pub mod core;
+pub mod learned;
 pub mod materialize;
 pub mod schema;
 pub mod sql;

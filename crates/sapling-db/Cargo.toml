@@ -8,7 +8,10 @@ publish = false
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 # `preserve_order` so an object round-trips with its keys where its writer put them.
-serde_json = { version = "1", features = ["preserve_order"] }
+# `float_roundtrip`: a learned number crosses from sqlite-wasm as JSON and has
+# to read back to the same bits, or an incremental fold and a full replay of
+# the difficulty model disagree in the last place.
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 # The pool admits exactly the stored union's types.
 sapling-challenges = { path = "../sapling-challenges" }
 sapling-domain = { path = "../sapling-domain" }

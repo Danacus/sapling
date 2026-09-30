@@ -222,6 +222,7 @@ fn probe(core: &Core, events: &[Value]) -> Value {
         "poolSize": core.pool_size().expect("pool_size"),
         "getChallengesByIds": by_id(core.get_challenges_by_ids(&ids.challenges).expect("get_challenges_by_ids")),
         "recentResults": core.recent_results(RECENT_LIMIT).expect("recent_results"),
+        "getDifficultyParts": core.get_difficulty_parts().expect("get_difficulty_parts"),
         "getDailyActivity": core.get_daily_activity().expect("get_daily_activity"),
         "getTexts": core.get_texts().expect("get_texts"),
         "getText": by_key(&ids.texts, |id| core.get_text(id).expect("get_text")),
@@ -262,9 +263,20 @@ const MODEL_FLOATS: [&str; 4] = [
     ".srs.strength",
 ];
 
+/// The difficulty model's derived numbers, which are learned from memories
+/// the `f32` model computed: a word's skill, a row's correction, and every
+/// shared part.
+const LEARNED_FLOATS: [&str; 2] = [".skill", ".correction"];
+const LEARNED_PARTS: &str = "$.getDifficultyParts.";
+
 /// Whether `path` names a model float, and these two are close enough.
 fn model_floats_agree(path: &str, a: &Value, b: &Value) -> bool {
-    if !MODEL_FLOATS.iter().any(|field| path.ends_with(field)) {
+    if !MODEL_FLOATS
+        .iter()
+        .chain(&LEARNED_FLOATS)
+        .any(|field| path.ends_with(field))
+        && !path.starts_with(LEARNED_PARTS)
+    {
         return false;
     }
     match (a.as_f64(), b.as_f64()) {

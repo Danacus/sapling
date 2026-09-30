@@ -66,6 +66,7 @@
 				},
 				"reviewCount": 2,
 				"correctCount": 1,
+				"skill": 1.4576766000130472,
 				"history": []
 			},
 			{
@@ -95,6 +96,7 @@
 				},
 				"reviewCount": 1,
 				"correctCount": 1,
+				"skill": 1.8634982017713915,
 				"history": []
 			}
 		],
@@ -153,6 +155,7 @@
 				},
 				"reviewCount": 2,
 				"correctCount": 1,
+				"skill": 1.4576766000130472,
 				"recentGrades": [
 					{
 						"at": 1710061800000,
@@ -192,6 +195,7 @@
 				},
 				"reviewCount": 1,
 				"correctCount": 1,
+				"skill": 1.8634982017713915,
 				"recentGrades": [
 					{
 						"at": 1710061920000,
@@ -258,6 +262,7 @@
 			},
 			"reviewCount": 2,
 			"correctCount": 1,
+			"skill": 1.4576766000130472,
 			"recentGrades": [
 				{
 					"at": 1710061800000,
@@ -308,6 +313,7 @@
 			},
 			"reviewCount": 1,
 			"correctCount": 1,
+			"skill": 1.8634982017713915,
 			"recentGrades": [
 				{
 					"at": 1710061920000,
@@ -352,7 +358,8 @@
 			"timesServed": 1,
 			"lastServedAt": 1710061860000,
 			"reported": false,
-			"topic": "greetings"
+			"topic": "greetings",
+			"correction": 0.05255513131295628
 		},
 		{
 			"id": "ch-mc",
@@ -376,7 +383,8 @@
 			"timesServed": 2,
 			"lastServedAt": 1710199800000,
 			"reported": false,
-			"topic": "greetings"
+			"topic": "greetings",
+			"correction": -0.02824625075953441
 		},
 		{
 			"id": "ch-mp",
@@ -465,7 +473,8 @@
 			"timesServed": 1,
 			"lastServedAt": 1710061920000,
 			"reported": false,
-			"topic": "greetings"
+			"topic": "greetings",
+			"correction": -0.17860192032575023
 		},
 		{
 			"id": "ch-wo",
@@ -696,6 +705,18 @@
 			"at": 1710061860000
 		}
 	],
+	"getDifficultyParts": {
+		"bases": {
+			"cloze/pick-4": 1.1105110262625912,
+			"recognize-mc/plain": -0.005649250151906882,
+			"translate-to-target/plain": 3.3642796159348496
+		},
+		"slopes": {
+			"cloze": 0.12315330787877737,
+			"recognize-mc": 0.1194350749848093,
+			"translate-to-target": 0.14285592318697
+		}
+	},
 	"getDailyActivity": [
 		{
 			"day": "2024-03-10",

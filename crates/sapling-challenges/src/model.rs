@@ -359,6 +359,16 @@ impl Learner {
     }
 }
 
+/// Every answer folded in, in order, at the tuned rates: the derived numbers.
+pub fn fold(observations: &[Observation]) -> Learner {
+    let mut learner = Learner::default();
+    let rates = tuning().rates;
+    for o in observations {
+        learner.learn(o, &rates, MULTI_WORD);
+    }
+    learner
+}
+
 /* ---- Scoring ------------------------------------------------------------ */
 
 /// One band of the calibration table: answers predicted in `[from, to)`.

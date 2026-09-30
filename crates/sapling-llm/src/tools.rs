@@ -359,6 +359,7 @@ pub async fn add_words<C: ToolContext>(
             srs: None,
             review_count: None,
             correct_count: None,
+            skill: None,
             recent_grades: None,
             history: Vec::new(),
         });
@@ -669,6 +670,7 @@ pub(crate) mod tests {
             srs: None,
             review_count: Some(3.0),
             correct_count: None,
+            skill: None,
             recent_grades: None,
             history: Vec::new(),
         }

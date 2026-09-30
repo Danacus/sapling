@@ -40,6 +40,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use ts_rs::TS;
 
+use sapling_challenges::model::Shared;
 use sapling_db::core::LanguageProfile;
 use sapling_db::{Core, Error, Result, ReviewOutcome};
 use sapling_domain::events::{parse_payload, EventType, Payload, RawEvent};
@@ -385,6 +386,13 @@ backend! {
         /// The most recent results, newest first.
         recentResults(limit: f64) -> Vec<ChallengeResult> {
             core.recent_results(limit as i64)
+        }
+        /// The difficulty model's shared numbers — each kind and help level's
+        /// base, each kind's length slope — as learned from every answer; a
+        /// part not listed is at its starting value. Each word's skill rides
+        /// on its item, each row's correction on its pool row.
+        getDifficultyParts() -> Shared {
+            core.get_difficulty_parts()
         }
         /// What the learner did on each local calendar day, oldest day first — a
         /// day is present when anything at all happened on it. Folded from the

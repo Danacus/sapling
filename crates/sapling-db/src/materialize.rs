@@ -8,6 +8,7 @@
 
 use serde_json::{json, Value};
 
+use crate::learned;
 use crate::schema::{
     review_key, ACTIVE_PROFILE_KEY, DDL, DERIVED_SCHEMA_VERSION, DERIVED_TABLES, RECENT_GRADES_CAP,
 };
@@ -162,6 +163,7 @@ impl<'a> Materializer<'a> {
                 Param::text(card_json(&new_card_state(p.introduced_at))?),
             ],
         )?;
+        learned::on_item_changed(self.sql, &p.id)?;
 
         // Reviews that arrived before their item are kept, inert; this is where
         // they start counting.
@@ -196,6 +198,7 @@ impl<'a> Materializer<'a> {
                 Param::text(&p.device),
             ],
         )?;
+        learned::on_review(self.sql, p.at)?;
 
         let item = self.sql.query(
             "SELECT fsrsCard, lastReviewedAt, recentGrades FROM items WHERE id = ?",
@@ -234,6 +237,7 @@ impl<'a> Materializer<'a> {
     }
 
     fn review_amended(&self, p: &ReviewAmended) -> Result<()> {
+        learned::on_review(self.sql, p.replaces.map_or(p.at, |r| r.min(p.at)))?;
         if let Some(replaces) = p.replaces {
             self.sql.exec(
                 "DELETE FROM reviews WHERE id = ?",
@@ -378,6 +382,7 @@ impl<'a> Materializer<'a> {
     }
 
     fn item_deleted(&self, p: &ItemDeleted) -> Result<()> {
+        learned::on_item_changed(self.sql, &p.item_id)?;
         let id = Param::text(&p.item_id);
         self.sql.exec(
             "INSERT OR IGNORE INTO tombstones (itemId) VALUES (?)",
@@ -413,7 +418,8 @@ impl<'a> Materializer<'a> {
                 Param::number(p.generated_at),
                 Param::opt_text(p.topic.as_deref()),
             ],
-        )
+        )?;
+        learned::on_challenge_added(self.sql, id)
     }
 
     fn challenge_served(&self, p: &ChallengeServed) -> Result<()> {
@@ -450,7 +456,8 @@ impl<'a> Materializer<'a> {
                 Param::number(p.at),
                 Param::opt_text(p.shown.as_deref()),
             ],
-        )
+        )?;
+        learned::on_result(self.sql, id, p)
     }
 
     fn profile_updated(&self, profile_id: &str, at: f64, p: &Profile) -> Result<()> {
@@ -750,6 +757,8 @@ impl<'a> Materializer<'a> {
         for table in DERIVED_TABLES {
             self.sql.exec(&format!("DELETE FROM {table}"), &[])?;
         }
+        // The difficulty model replays once, at the end, rather than answer by answer.
+        learned::mark_dirty(self.sql)?;
         let rows = self.sql.query(
             &format!("SELECT id, type, at, device, payload FROM events ORDER BY {LOG_ORDER}"),
             &[],
@@ -759,7 +768,14 @@ impl<'a> Materializer<'a> {
                 self.apply_event(&event)?;
             }
         }
-        Ok(())
+        self.settle()
+    }
+
+    /// Pays whatever replay of the difficulty model this run of events made
+    /// owed (`learned.rs`). Every caller that materializes calls it before it
+    /// commits.
+    pub fn settle(&self) -> Result<()> {
+        learned::settle(self.sql)
     }
 }
 

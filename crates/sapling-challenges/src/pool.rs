@@ -38,6 +38,12 @@ pub struct PoolRow {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub topic: Option<String>,
+    /// How much harder (or, below zero, easier) this row has proved than its
+    /// kind, help level and length predict — learned from its answers, absent
+    /// until it has any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub correction: Option<f64>,
 }
 
 /// The pool as a host hands it over, a row that does not read as `None` — it

@@ -137,6 +137,10 @@
 	"poolSize": 0,
 	"getChallengesByIds": [],
 	"recentResults": [],
+	"getDifficultyParts": {
+		"bases": {},
+		"slopes": {}
+	},
 	"getDailyActivity": [
 		{
 			"day": "2024-03-10",

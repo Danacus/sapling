@@ -354,6 +354,7 @@ mod tests {
             last_served_at: None,
             reported: false,
             topic: None,
+            correction: None,
         }
     }
 

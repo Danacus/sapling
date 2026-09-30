@@ -284,6 +284,7 @@ pub(crate) mod tests {
             last_served_at: served,
             reported: false,
             topic: None,
+            correction: None,
         }
     }
 

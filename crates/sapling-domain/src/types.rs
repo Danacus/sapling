@@ -266,6 +266,17 @@ pub struct KnowledgeItem {
     )]
     #[ts(optional)]
     pub correct_count: Option<f64>,
+    /// How hard a challenge about this word the learner can handle, on the
+    /// difficulty model's scale — derived from every answer that named it
+    /// (`sapling-db`'s `learned.rs`). Absent for a word with no answers yet,
+    /// which reads as the model's starting skill.
+    #[serde(
+        default,
+        deserialize_with = "absent_or",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional)]
+    pub skill: Option<f64>,
     /// The most recent reviews, oldest first — what the ledger's tick strip
     /// shows. Only `getAllItems({ withRecentGrades: true })` and `getItem`
     /// attach it: it is up to `RECENT_GRADES_CAP` entries per item and nothing
