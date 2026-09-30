@@ -14,18 +14,23 @@
 
 #![forbid(unsafe_code)]
 
+pub mod calibrate;
 pub mod challenge;
 pub mod difficulty;
 pub mod grade;
 pub mod help;
 pub mod kinds;
 pub mod ladder;
+pub mod legacy;
 pub mod match_pairs;
 pub mod matcher;
+pub mod model;
 pub mod pool;
+pub mod replay;
 pub mod rng;
 pub mod serve;
 pub mod session;
+pub mod sim;
 pub mod text;
 pub mod topup;
 pub mod tuning;
