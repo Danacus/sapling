@@ -1,29 +1,44 @@
 //! Top-up planning: what the pool is missing, so generation writes exactly
 //! that. The walk is the learner's whole vocabulary in urgency order — due
-//! words most overdue first, then the rest soonest-due first — and each word
-//! wants one fresh challenge per kind-group it is short in: one recognition and
-//! one production kind where its rung has both, otherwise two distinct kinds
-//! from the side it has. A covered word is stepped over, and the list is capped
-//! from the least urgent end, so the next press starts where this one stopped.
+//! words most overdue first, then the rest soonest-due first — and a word is
+//! **covered** when a rested row about it fits (`fits.rs`): the same check
+//! serving picks by, so what counts as coverage is exactly what a session
+//! would serve. An uncovered word wants [`WANT_PER_WORD`] rows written, each
+//! `{word, kind, length}`; the list is capped from the least urgent end, so
+//! the next press starts where this one stopped.
 //!
-//! There is no accuracy dial: FSRS lowers a missed word's strength, which lowers
-//! its rung, which shortens what is written about it.
+//! **What to write** (`docs/challenge-difficulty.md` §6): the kinds that can
+//! reach the word's target — the difficulty that would put it at the aim —
+//! at some help level and some length in the kind's range. Among those, a
+//! kind the word has never had wins, then one it has fewest fitting rows of,
+//! and a draw breaks the tie. The **length** is worked backwards from the
+//! difficulty formula at the midpoint of the kind's help levels and clamped to
+//! its range: written in the middle, the row still fits if the word weakens
+//! (an easier help level) or strengthens (a harder one), so one row covers a
+//! wider range of skill.
 
 use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::kinds::{kind_of, plannable_kinds, ChallengeKind, Plannable, Want, WantItem, WireType};
-use crate::ladder::{by_id, demand_for_level, Word};
+use crate::fits::{best_fit, inside, Serving};
+use crate::help::HelpLevel;
+use crate::kinds::{active_kinds, kind_of, ChallengeKind, Want, WantItem, WireType};
+use crate::model::{logit, target};
 use crate::pool::{is_playable, is_rested, known_ids, PoolRow, SESSION_LENGTH};
 use crate::text::js_trim;
+use crate::word::{by_id, Word};
 
-/// Fresh challenges each word should have waiting.
+/// Fresh challenges an uncovered word gets written.
 pub const WANT_PER_WORD: usize = 2;
 
 /// The most wants one top-up writes.
 pub const MAX_TOPUP_WANTS: usize = 24;
+
+/// The memory a row is written for: FSRS schedules a review for when recall
+/// has decayed to 90%, so that is roughly where a due word is served.
+pub const WRITE_MEMORY: f64 = 0.9;
 
 /// How well the pool covers the words a session is about to serve.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -31,7 +46,7 @@ pub struct TopUpCoverage {
     /// The words the figure is about: every due word, or when none is due the
     /// next `SESSION_LENGTH` soonest-due ones.
     pub upcoming: usize,
-    /// Of those, the words with nothing left to write.
+    /// Of those, the words with a rested row that fits them.
     pub covered: usize,
     /// What a top-up would write now, after the cap, over the whole walk.
     pub wants: usize,
@@ -41,15 +56,19 @@ pub struct TopUpCoverage {
 
 #[derive(Default)]
 struct Coverage {
-    /// Kinds with a rested, playable challenge: nothing to write.
-    rested: HashSet<WireType>,
-    /// Kinds the word has ever had a playable challenge of.
+    /// Rested rows that fit the word, by kind.
+    fitting: HashMap<WireType, usize>,
+    /// Kinds the word has ever had a playable row of.
     ever: HashSet<WireType>,
 }
 
-/// What every word has, by kind, counting only what the session would serve:
-/// playable rows of an active kind the word's current rung still takes.
-fn coverage_of(pool: &[&PoolRow], words: &[Word], now: f64) -> HashMap<String, Coverage> {
+/// What every word has, counting only rows serving would consider.
+fn coverage_of(
+    pool: &[&PoolRow],
+    words: &[Word],
+    now: f64,
+    serving: &Serving,
+) -> HashMap<String, Coverage> {
     let known = known_ids(words);
     let index = by_id(words);
     let mut coverage: HashMap<String, Coverage> = HashMap::new();
@@ -60,18 +79,12 @@ fn coverage_of(pool: &[&PoolRow], words: &[Word], now: f64) -> HashMap<String, C
         let Some(kind) = kind_of(&row.challenge).filter(|k| k.is_active()) else {
             continue;
         };
-        let rested = is_rested(row, now);
+        let fits = is_rested(row, now) && best_fit(row, &index, serving).is_some();
         for id in row.challenge.item_ids() {
-            let Some(word) = index.get(id.as_str()) else {
-                continue;
-            };
-            if !kind.available_at(word.level()) {
-                continue;
-            }
             let entry = coverage.entry(id.clone()).or_default();
             entry.ever.insert(kind);
-            if rested {
-                entry.rested.insert(kind);
+            if fits {
+                *entry.fitting.entry(kind).or_default() += 1;
             }
         }
     }
@@ -90,6 +103,49 @@ pub(crate) fn by_urgency<'a>(words: impl IntoIterator<Item = &'a Word>, now: f64
     sorted
 }
 
+/// The length to write a row of `kind` at for this word, or `None` when no
+/// help level and no length in the kind's range can put the word inside the
+/// window.
+pub fn length_for(word: &Word, kind: WireType, serving: &Serving) -> Option<u8> {
+    let [shortest, longest] = kind.lengths()?;
+    let parts = &serving.parts;
+    let skill = word.skill();
+    let slope = parts.slope(kind);
+    let bases: Vec<f64> = kind
+        .written_steps()
+        .iter()
+        .map(|step| parts.base(kind, HelpLevel::step(*step)))
+        .collect();
+    let reaches = bases.iter().any(|base| {
+        [f64::from(shortest), f64::from(longest)]
+            .into_iter()
+            .chain(std::iter::once(
+                ((skill - logit(target(serving.aim) / WRITE_MEMORY) - base) / slope)
+                    .clamp(f64::from(shortest), f64::from(longest)),
+            ))
+            .filter(|l| l.is_finite())
+            .any(|length| {
+                let manage = crate::model::sigmoid(skill - base - slope * length);
+                inside(WRITE_MEMORY, manage, serving.aim)
+            })
+    });
+    if !reaches {
+        return None;
+    }
+    let goal = skill - logit((target(serving.aim) / WRITE_MEMORY).min(0.99));
+    let middle = (bases[0] + bases[bases.len() - 1]) / 2.0;
+    let length = if slope.abs() < 1e-6 {
+        (f64::from(shortest) + f64::from(longest)) / 2.0
+    } else {
+        (goal - middle) / slope
+    };
+    Some(
+        length
+            .round()
+            .clamp(f64::from(shortest), f64::from(longest)) as u8,
+    )
+}
+
 struct Walk<'a> {
     owed: Vec<&'a Word>,
     ahead: Vec<&'a Word>,
@@ -102,70 +158,54 @@ fn walk<'a>(
     pool: &[&PoolRow],
     words: &'a [Word],
     now: f64,
+    serving: &Serving,
     draw: &mut dyn FnMut() -> f64,
 ) -> Walk<'a> {
     let sorted = by_urgency(words.iter().filter(|w| w.is_writable()), now);
     let (owed, ahead): (Vec<&Word>, Vec<&Word>) = sorted.into_iter().partition(|w| w.is_due(now));
-    let coverage = coverage_of(pool, words, now);
+    let coverage = coverage_of(pool, words, now, serving);
     let none = Coverage::default();
     let mut wants = Vec::new();
 
     for word in owed.iter().chain(&ahead) {
-        let level = word.level();
-        let bearable = demand_for_level(level);
-        let allowed: Vec<(WireType, &Plannable)> = plannable_kinds()
-            .filter(|(_, p)| p.demand <= bearable && p.levels.contains(&level))
-            .collect();
-        let recognition: Vec<WireType> = allowed
-            .iter()
-            .filter(|(_, p)| p.demand == 0)
-            .map(|(k, _)| *k)
-            .collect();
-        let production: Vec<WireType> = allowed
-            .iter()
-            .filter(|(_, p)| p.demand > 0)
-            .map(|(k, _)| *k)
-            .collect();
         let have = coverage.get(&word.id).unwrap_or(&none);
+        if have.fitting.values().sum::<usize>() > 0 {
+            continue;
+        }
+        let mut candidates: Vec<(WireType, u8)> = active_kinds()
+            .filter_map(|kind| length_for(word, kind, serving).map(|length| (kind, length)))
+            .collect();
         let item = WantItem {
             id: word.id.clone(),
             term: js_trim(&word.term).to_owned(),
             meaning: js_trim(&word.meaning).to_owned(),
         };
-        let mut chosen: HashSet<WireType> = HashSet::new();
-
-        let groups: Vec<(Vec<WireType>, usize)> =
-            if !recognition.is_empty() && !production.is_empty() {
-                vec![(recognition, WANT_PER_WORD - 1), (production, 1)]
-            } else {
-                vec![(allowed.iter().map(|(k, _)| *k).collect(), WANT_PER_WORD)]
-            };
-        for (group, need) in groups {
-            let covered = group.iter().filter(|k| have.rested.contains(k)).count();
-            for _ in covered..need {
-                let candidates: Vec<WireType> = group
-                    .iter()
-                    .copied()
-                    .filter(|k| !have.rested.contains(k) && !chosen.contains(k))
-                    .collect();
-                if candidates.is_empty() {
-                    break;
-                }
-                let fresh: Vec<WireType> = candidates
-                    .iter()
-                    .copied()
-                    .filter(|k| !have.ever.contains(k))
-                    .collect();
-                let from = if fresh.is_empty() { candidates } else { fresh };
-                let at = ((draw() * from.len() as f64).floor() as usize).min(from.len() - 1);
-                let kind = from[at];
-                chosen.insert(kind);
-                wants.push(Want {
-                    item: item.clone(),
-                    kind: ChallengeKind { kind },
-                    difficulty: level,
-                });
+        for _ in 0..WANT_PER_WORD {
+            if candidates.is_empty() {
+                break;
             }
+            let never: Vec<usize> = (0..candidates.len())
+                .filter(|&i| !have.ever.contains(&candidates[i].0))
+                .collect();
+            let from: Vec<usize> = if never.is_empty() {
+                let fewest = candidates
+                    .iter()
+                    .map(|(k, _)| have.fitting.get(k).copied().unwrap_or(0))
+                    .min()
+                    .unwrap_or(0);
+                (0..candidates.len())
+                    .filter(|&i| have.fitting.get(&candidates[i].0).copied().unwrap_or(0) == fewest)
+                    .collect()
+            } else {
+                never
+            };
+            let at = ((draw() * from.len() as f64).floor() as usize).min(from.len() - 1);
+            let (kind, length) = candidates.remove(from[at]);
+            wants.push(Want {
+                item: item.clone(),
+                kind: ChallengeKind { kind },
+                length,
+            });
         }
     }
     Walk { owed, ahead, wants }
@@ -176,16 +216,22 @@ pub fn plan_top_up(
     pool: &[&PoolRow],
     words: &[Word],
     now: f64,
+    serving: &Serving,
     draw: &mut dyn FnMut() -> f64,
 ) -> Vec<Want> {
-    let mut wants = walk(pool, words, now, draw).wants;
+    let mut wants = walk(pool, words, now, serving, draw).wants;
     wants.truncate(MAX_TOPUP_WANTS);
     wants
 }
 
 /// Counts, not wants — the same walk, and the same numbers whatever the draws.
-pub fn top_up_coverage(pool: &[&PoolRow], words: &[Word], now: f64) -> TopUpCoverage {
-    let Walk { owed, ahead, wants } = walk(pool, words, now, &mut || 0.0);
+pub fn top_up_coverage(
+    pool: &[&PoolRow],
+    words: &[Word],
+    now: f64,
+    serving: &Serving,
+) -> TopUpCoverage {
+    let Walk { owed, ahead, wants } = walk(pool, words, now, serving, &mut || 0.0);
     let short: HashSet<&str> = wants.iter().map(|w| w.item.id.as_str()).collect();
     let due = !owed.is_empty();
     let upcoming: &[&Word] = if due {
@@ -208,6 +254,7 @@ pub fn top_up_coverage(pool: &[&PoolRow], words: &[Word], now: f64) -> TopUpCove
 pub(crate) mod tests {
     use super::*;
     use crate::challenge::Challenge;
+    use crate::model::Aim;
     use crate::pool::RESERVE_GAP;
     use sapling_srs::ItemSrs;
     use serde_json::json;
@@ -215,7 +262,8 @@ pub(crate) mod tests {
     pub const NOW: f64 = 1_700_000_000_000.0;
     pub const DAY: f64 = 24.0 * 60.0 * 60.0 * 1000.0;
 
-    /// A word due `offset` from now at `strength`.
+    /// A word due `offset` from now at `strength`; remembered for certain once
+    /// it has any strength, at the new-word memory before.
     pub fn word(id: &str, offset: f64, strength: f64) -> Word {
         Word {
             id: id.into(),
@@ -227,20 +275,17 @@ pub(crate) mod tests {
                 retrievability: if strength > 0.0 { 1.0 } else { 0.0 },
                 strength,
             }),
+            skill: None,
         }
     }
 
     fn fresh(id: &str) -> Word {
         word(id, -DAY, 0.0)
     }
-    fn developing(id: &str) -> Word {
-        word(id, -DAY, 0.3)
-    }
-    fn advanced(id: &str) -> Word {
-        word(id, -DAY, 0.6)
-    }
-    fn strong(id: &str) -> Word {
-        word(id, -DAY, 0.9)
+    fn skilled(id: &str, skill: f64) -> Word {
+        let mut w = word(id, -DAY, 0.5);
+        w.skill = Some(skill);
+        w
     }
 
     /// A pooled row of `kind` about `item_ids`, never served unless `served`.
@@ -288,22 +333,6 @@ pub(crate) mod tests {
         }
     }
 
-    fn recognition() -> Vec<WireType> {
-        plannable_kinds()
-            .filter(|(_, p)| p.demand == 0)
-            .map(|(k, _)| k)
-            .collect()
-    }
-    fn constrained() -> Vec<WireType> {
-        plannable_kinds()
-            .filter(|(_, p)| p.demand == 1)
-            .map(|(k, _)| k)
-            .collect()
-    }
-    fn demand(kind: ChallengeKind) -> u8 {
-        kind.kind.plannable().map_or(9, |p| p.demand)
-    }
-
     pub fn cycling() -> impl FnMut() -> f64 {
         let values = [0.13, 0.71, 0.42, 0.97, 0.05, 0.6];
         let mut n = 0;
@@ -321,14 +350,14 @@ pub(crate) mod tests {
         draw: &mut dyn FnMut() -> f64,
     ) -> Vec<Want> {
         let rows: Vec<&PoolRow> = pool.iter().collect();
-        plan_top_up(&rows, words, now, draw)
+        plan_top_up(&rows, words, now, &Serving::default(), draw)
     }
     fn plan_cycling(pool: &[PoolRow], words: &[Word]) -> Vec<Want> {
         plan(pool, words, NOW, &mut cycling())
     }
     fn coverage(pool: &[PoolRow], words: &[Word]) -> TopUpCoverage {
         let rows: Vec<&PoolRow> = pool.iter().collect();
-        top_up_coverage(&rows, words, NOW)
+        top_up_coverage(&rows, words, NOW, &Serving::default())
     }
 
     fn kinds(wants: &[Want]) -> Vec<WireType> {
@@ -343,24 +372,23 @@ pub(crate) mod tests {
         }
         out
     }
-    fn distinct(values: &[WireType]) -> usize {
-        values.iter().collect::<HashSet<_>>().len()
-    }
     fn overdue(count: usize) -> Vec<Word> {
         (0..count)
             .map(|i| word(&format!("w{i}"), (i as f64 - count as f64) * DAY, 0.0))
             .collect()
     }
-    fn cover_new(id: &str) -> Vec<PoolRow> {
-        let r = recognition();
-        vec![
-            pooled(&format!("{id}-r0"), r[0], &[id], None),
-            pooled(&format!("{id}-r1"), r[1], &[id], None),
-        ]
+    fn cover(id: &str) -> Vec<PoolRow> {
+        vec![pooled(
+            &format!("{id}-r"),
+            WireType::RecognizeMc,
+            &[id],
+            None,
+        )]
     }
+    const RECOGNITION: [WireType; 2] = [WireType::RecognizeMc, WireType::ProduceMc];
 
     #[test]
-    fn a_new_word_wants_two_recognition_kinds() {
+    fn a_new_word_wants_the_two_kinds_it_can_manage_at_their_shortest() {
         let wants = plan_cycling(&[], &[fresh("a")]);
         assert_eq!(wants.len(), WANT_PER_WORD);
         for want in &wants {
@@ -372,102 +400,86 @@ pub(crate) mod tests {
                     meaning: "meaning-a".into()
                 }
             );
-            assert_eq!(want.difficulty, 1);
-            assert_eq!(demand(want.kind), 0);
+            assert!(RECOGNITION.contains(&want.kind.kind), "{:?}", want.kind);
+            assert_eq!(want.length, 1);
         }
-        assert_eq!(distinct(&kinds(&wants)), WANT_PER_WORD);
+        assert_ne!(wants[0].kind, wants[1].kind);
     }
 
     #[test]
-    fn the_top_rungs_want_two_distinct_production_kinds() {
-        let top = plan_cycling(&[], &[strong("a")]);
-        assert_eq!(top.len(), WANT_PER_WORD);
-        assert!(top.iter().all(|w| w.difficulty == 5 && demand(w.kind) > 0));
-        let set: HashSet<WireType> = kinds(&top).into_iter().collect();
-        assert_eq!(set, HashSet::from([WireType::MultiCloze, WireType::Cloze]));
-
-        let four = plan_cycling(&[], &[advanced("a")]);
-        assert_eq!(four.len(), WANT_PER_WORD);
-        assert!(four.iter().all(|w| w.difficulty == 4 && demand(w.kind) > 0));
-        assert_eq!(distinct(&kinds(&four)), WANT_PER_WORD);
-    }
-
-    #[test]
-    fn a_new_word_is_never_asked_for_what_it_cannot_bear() {
-        for seed in [0.0, 0.25, 0.5, 0.75, 0.999] {
-            for want in plan(&[], &[fresh("a")], NOW, &mut || seed) {
-                assert_eq!(demand(want.kind), 0);
-            }
-        }
-    }
-
-    #[test]
-    fn a_covered_word_wants_nothing_and_a_half_covered_one_the_other_half() {
-        let pool = [
-            pooled("p", WireType::Cloze, &["a"], None),
-            pooled("m", WireType::MultiCloze, &["a"], None),
-        ];
-        assert!(plan_cycling(&pool, &[strong("a")]).is_empty());
-
-        let recognised = plan_cycling(
-            &[pooled("r", WireType::SpotError, &["a"], None)],
-            &[developing("a")],
-        );
-        assert_eq!(recognised.len(), 1);
-        assert!(demand(recognised[0].kind) > 0);
-
-        let produced = plan_cycling(
-            &[pooled("p", constrained()[0], &["a"], None)],
-            &[developing("a")],
-        );
-        assert_eq!(produced.len(), 1);
-        assert_eq!(demand(produced[0].kind), 0);
-        // Spot-error and context-mc are both open at rung 3; the first draw picks.
-        assert_eq!(produced[0].kind.kind, WireType::ContextMc);
-    }
-
-    #[test]
-    fn a_row_the_word_cannot_bear_is_not_coverage() {
-        let wants = plan_cycling(&[pooled("p", WireType::Cloze, &["a"], None)], &[fresh("a")]);
+    fn a_strong_word_has_outgrown_recognition_and_wants_production() {
+        let wants = plan_cycling(&[], &[skilled("a", 5.0)]);
         assert_eq!(wants.len(), WANT_PER_WORD);
+        for want in &wants {
+            assert!(!RECOGNITION.contains(&want.kind.kind), "{:?}", want.kind);
+            let [shortest, longest] = want.kind.kind.lengths().unwrap();
+            assert!((shortest..=longest).contains(&want.length));
+        }
+    }
+
+    #[test]
+    fn the_length_grows_with_skill_and_with_a_harder_aim() {
+        let normal = Serving::default();
+        let at = |skill: f64, serving: &Serving| {
+            length_for(&skilled("a", skill), WireType::Cloze, serving).unwrap()
+        };
+        assert!(at(4.6, &normal) < at(5.2, &normal));
+        let harder = Serving {
+            aim: Aim::Harder,
+            ..Serving::default()
+        };
+        assert!(at(4.6, &normal) < at(4.6, &harder));
+        // Out of reach either way, the kind is not asked for at all.
+        assert_eq!(length_for(&fresh("a"), WireType::Cloze, &normal), None);
+        assert_eq!(
+            length_for(&skilled("a", 20.0), WireType::RecognizeMc, &normal),
+            None
+        );
+        assert_eq!(
+            length_for(&fresh("a"), WireType::TranslateToTarget, &normal),
+            None
+        );
+    }
+
+    #[test]
+    fn a_word_with_a_fitting_rested_row_wants_nothing() {
+        assert!(plan_cycling(&cover("a"), &[fresh("a")]).is_empty());
+    }
+
+    #[test]
+    fn a_row_that_does_not_fit_is_not_coverage() {
+        let pool = [pooled("p", WireType::Cloze, &["a"], None)];
+        assert_eq!(plan_cycling(&pool, &[fresh("a")]).len(), WANT_PER_WORD);
+        let owned = plan_cycling(&cover("a"), &[skilled("a", 6.0)]);
+        assert_eq!(owned.len(), WANT_PER_WORD);
     }
 
     #[test]
     fn a_resting_row_is_not_coverage_but_is_remembered() {
-        let r = recognition();
-        let resting = [pooled("r", r[0], &["a"], Some(NOW - DAY))];
-        let wants = plan_cycling(&resting, &[fresh("a")]);
-        assert_eq!(wants.len(), WANT_PER_WORD);
-        assert!(!kinds(&wants).contains(&r[0]));
-
-        let rested = [pooled("r", r[0], &["a"], Some(NOW - RESERVE_GAP))];
-        let wants = plan_cycling(&rested, &[fresh("a")]);
-        assert_eq!(wants.len(), WANT_PER_WORD - 1);
-        assert!(!kinds(&wants).contains(&r[0]));
-    }
-
-    #[test]
-    fn a_kind_never_had_wins_before_one_is_repeated() {
-        let r = recognition();
-        let pool: Vec<PoolRow> = r[1..]
-            .iter()
-            .enumerate()
-            .map(|(i, kind)| pooled(&format!("r{i}"), *kind, &["a"], Some(NOW - DAY)))
-            .collect();
+        let resting = [pooled("r", WireType::RecognizeMc, &["a"], Some(NOW - DAY))];
         for seed in [0.0, 0.5, 0.999] {
-            let wants = plan(&pool, &[fresh("a")], NOW, &mut || seed);
-            assert_eq!(wants[0].kind.kind, r[0]);
+            let wants = plan(&resting, &[fresh("a")], NOW, &mut || seed);
             assert_eq!(wants.len(), WANT_PER_WORD);
-            assert_eq!(distinct(&kinds(&wants)), WANT_PER_WORD);
+            // The kind never had goes first, whatever the draw.
+            assert_eq!(wants[0].kind.kind, WireType::ProduceMc);
         }
+        let rested = [pooled(
+            "r",
+            WireType::RecognizeMc,
+            &["a"],
+            Some(NOW - RESERVE_GAP),
+        )];
+        assert!(plan_cycling(&rested, &[fresh("a")]).is_empty());
     }
 
     #[test]
     fn reported_and_orphaned_rows_cover_nothing() {
-        let r = recognition();
-        let mut flagged = pooled("flagged", r[0], &["a"], None);
+        let mut flagged = pooled("flagged", WireType::RecognizeMc, &["a"], None);
         flagged.reported = true;
-        let pool = [flagged, pooled("orphan", r[1], &["a", "gone"], None)];
+        let pool = [
+            flagged,
+            pooled("orphan", WireType::ProduceMc, &["a", "gone"], None),
+        ];
         assert_eq!(plan_cycling(&pool, &[fresh("a")]).len(), WANT_PER_WORD);
     }
 
@@ -497,25 +509,18 @@ pub(crate) mod tests {
         let words = overdue(20);
         let first = words_of(&plan_cycling(&[], &words));
         assert_eq!(first, (0..12).map(|i| format!("w{i}")).collect::<Vec<_>>());
-        let pool: Vec<PoolRow> = first.iter().flat_map(|id| cover_new(id)).collect();
+        let pool: Vec<PoolRow> = first.iter().flat_map(|id| cover(id)).collect();
         let second = plan_cycling(&pool, &words);
         assert_eq!(
             words_of(&second),
             (12..20).map(|i| format!("w{i}")).collect::<Vec<_>>()
         );
         assert_eq!(second.len(), 8 * WANT_PER_WORD);
-
-        let three = overdue(3);
-        let covered: Vec<PoolRow> = ["w0", "w1", "w2"]
-            .iter()
-            .flat_map(|id| cover_new(id))
-            .collect();
-        assert!(plan_cycling(&covered, &three).is_empty());
     }
 
     #[test]
     fn a_word_never_gets_one_kind_twice_and_the_plan_follows_the_draws() {
-        let words = [fresh("a"), strong("b")];
+        let words = [skilled("a", 3.0), skilled("b", 4.0)];
         for seed in [0.0, 0.5, 0.999] {
             let wants = plan(&[], &words, NOW, &mut || seed);
             let pairs: HashSet<(String, WireType)> = wants
@@ -524,11 +529,10 @@ pub(crate) mod tests {
                 .collect();
             assert_eq!(pairs.len(), wants.len());
         }
-        let three = [fresh("a"), strong("b"), fresh("c")];
-        assert_eq!(plan_cycling(&[], &three), plan_cycling(&[], &three));
+        assert_eq!(plan_cycling(&[], &words), plan_cycling(&[], &words));
         let variants: HashSet<Vec<WireType>> = [0.0, 0.3, 0.6, 0.9]
             .iter()
-            .map(|&seed| kinds(&plan(&[], &three, NOW, &mut || seed)))
+            .map(|&seed| kinds(&plan(&[], &words, NOW, &mut || seed)))
             .collect();
         assert!(variants.len() > 1);
     }
@@ -539,15 +543,12 @@ pub(crate) mod tests {
         let shuffled = [3, 0, 5, 1, 4, 2].map(|i| words[i].clone());
         assert_eq!(plan_cycling(&[], &shuffled), plan_cycling(&[], &words));
 
-        let pool = [pooled("r", recognition()[0], &["a"], Some(NOW - DAY))];
+        let pool = [pooled("r", WireType::RecognizeMc, &["a"], Some(NOW - DAY))];
         assert_eq!(
             plan(&pool, &[fresh("a")], NOW, &mut cycling()).len(),
             WANT_PER_WORD
         );
-        assert_eq!(
-            plan(&pool, &[fresh("a")], NOW + RESERVE_GAP, &mut cycling()).len(),
-            WANT_PER_WORD - 1
-        );
+        assert!(plan(&pool, &[fresh("a")], NOW + RESERVE_GAP, &mut cycling()).is_empty());
     }
 
     #[test]
@@ -560,12 +561,8 @@ pub(crate) mod tests {
 
     #[test]
     fn coverage_counts_covered_words_and_the_wants_a_press_would_write() {
-        let covered = [
-            pooled("m", WireType::MultiCloze, &["a"], None),
-            pooled("p", WireType::Cloze, &["a"], None),
-        ];
         assert_eq!(
-            coverage(&covered, &[strong("a")]),
+            coverage(&cover("a"), &[fresh("a")]),
             TopUpCoverage {
                 upcoming: 1,
                 covered: 1,
@@ -573,36 +570,27 @@ pub(crate) mod tests {
                 due: true
             }
         );
-        let half = [pooled("m", WireType::MultiCloze, &["a"], None)];
         assert_eq!(
-            coverage(&half, &[strong("a"), fresh("b")]),
+            coverage(&cover("a"), &[fresh("a"), fresh("b")]),
             TopUpCoverage {
                 upcoming: 2,
-                covered: 0,
-                wants: 3,
+                covered: 1,
+                wants: WANT_PER_WORD,
                 due: true
             }
         );
-
-        let words = [fresh("a"), strong("b"), fresh("c")];
-        let r = recognition();
-        let pool = [
-            pooled("r", r[0], &["a"], None),
-            pooled("r2", r[1], &["a"], None),
-        ];
-        let counted = coverage(&pool, &words);
-        assert_eq!(counted.wants, plan(&pool, &words, NOW, &mut || 0.5).len());
-        assert_eq!(counted.covered, 1);
+        let words = [fresh("a"), skilled("b", 4.0), fresh("c")];
+        let counted = coverage(&cover("a"), &words);
+        assert_eq!(
+            counted.wants,
+            plan(&cover("a"), &words, NOW, &mut || 0.5).len()
+        );
     }
 
     #[test]
-    fn coverage_ignores_the_draws_and_caps_the_wants_but_not_the_words() {
-        let words = [fresh("a"), strong("b"), fresh("c")];
-        let pool = [pooled("r", recognition()[0], &["a"], None)];
-        assert_eq!(coverage(&pool, &words), coverage(&pool, &words));
-        let many = coverage(&[], &overdue(20));
+    fn coverage_caps_the_wants_but_not_the_words() {
         assert_eq!(
-            many,
+            coverage(&[], &overdue(20)),
             TopUpCoverage {
                 upcoming: 20,
                 covered: 0,
@@ -616,7 +604,6 @@ pub(crate) mod tests {
     fn coverage_is_the_due_words_else_the_next_session_length() {
         let mut words = overdue(3);
         words.push(word("later", 2.0 * DAY, 0.0));
-        words.push(word("latest", 4.0 * DAY, 0.0));
         let due = coverage(&[], &words);
         assert_eq!((due.upcoming, due.due), (3, true));
 
@@ -630,31 +617,6 @@ pub(crate) mod tests {
                 covered: 0,
                 wants: MAX_TOPUP_WANTS,
                 due: false
-            }
-        );
-    }
-
-    #[test]
-    fn coverage_can_have_wants_once_every_due_word_is_covered() {
-        let words = [fresh("due"), word("ahead", 3.0 * DAY, 0.0)];
-        assert_eq!(
-            coverage(&cover_new("due"), &words),
-            TopUpCoverage {
-                upcoming: 1,
-                covered: 1,
-                wants: WANT_PER_WORD,
-                due: true
-            }
-        );
-        let mut blank = fresh("a");
-        blank.meaning = "  ".into();
-        assert_eq!(
-            coverage(&[], &[blank, fresh("b")]),
-            TopUpCoverage {
-                upcoming: 1,
-                covered: 0,
-                wants: WANT_PER_WORD,
-                due: true
             }
         );
         assert_eq!(

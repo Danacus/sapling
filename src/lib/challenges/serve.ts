@@ -1,8 +1,10 @@
 /**
  * What a served challenge shows, decided in Rust (`crates/sapling-challenges`'
- * `serve.rs`) from its weakest word's rung: the native hint, how much of a
- * stored bank or tray shows, which readings show, whether it is played before
- * it is read — and a word's maturity, which the screens that colour a word read.
+ * `serve.rs`) from the help level serving picked for it (`fits.rs`): the
+ * native hint, how much of a stored bank or tray shows, whether its reading
+ * shows, whether it is played before it is read — and, for the screens that
+ * colour a word, its maturity and the reader's reading ramp, which are display
+ * and decide nothing about a challenge.
  *
  * The learn screen computes a {@link Presentation} once per served challenge
  * and hands it down through `ChallengeHost`; a component resolves it with
@@ -19,21 +21,18 @@ import type {
 } from '$lib/types';
 import type { Maturity } from '$lib/db/generated/index';
 import { strengthOf } from '$lib/srs';
-import type { RomanizationMode } from '$lib/ui/prefs';
-import { asWords, callChallenges } from './core';
+import { callChallenges } from './core';
 
 export type { Maturity };
 
-/** Which readings a served challenge shows — one answer for the whole, one per word. */
+/** Which readings a served challenge shows — one answer for the whole, and per-word overrides. */
 export interface ReadingPlan {
-	/**
-	 * The whole-challenge decision, from its weakest word: what a flat stored
-	 * reading and any token no tracked word covers follow.
-	 */
+	/** The whole-challenge decision: the help level's reading shown or hidden. */
 	sentence: boolean;
 	/**
-	 * Per-word decisions keyed by the item's `term` — every known word, not
-	 * only the ones the challenge cites. Empty under `'on'`/`'off'`.
+	 * Per-word overrides keyed by the item's `term`. Serving leaves it empty —
+	 * a help level decides the whole challenge — and the shape stays so a
+	 * component reads one plan whoever made it.
 	 */
 	byTerm: ReadonlyMap<string, boolean>;
 }
@@ -60,26 +59,12 @@ export interface Presentation {
 export const ALL_READINGS: ReadingPlan = { sentence: true, byTerm: new Map() };
 
 /**
- * The one served-presentation object, rolled once per served challenge. `seed`
- * replays the reading rolls.
+ * The one served-presentation object: the challenge at the help level serving
+ * picked (`shown`, from the plan). A level this build does not know shows the
+ * row at its easiest.
  */
-export function presentationFor(
-	challenge: Challenge,
-	items: readonly KnowledgeItem[],
-	opts: {
-		romanizationMode: RomanizationMode;
-		/** This device can speak and the learner wants listening; off when absent. */
-		audio?: boolean;
-		seed?: number;
-	}
-): Presentation {
-	const served = callChallenges('presentationFor', {
-		challenge,
-		words: asWords(items),
-		romanizationMode: opts.romanizationMode,
-		...(opts.audio === undefined ? {} : { audio: opts.audio }),
-		...(opts.seed === undefined ? {} : { seed: opts.seed })
-	});
+export function presentationFor(challenge: Challenge, shown: string): Presentation {
+	const served = callChallenges('presentationFor', { challenge, shown });
 	return {
 		...served,
 		readings: {
@@ -136,21 +121,12 @@ export function visibleTiles(challenge: WordOrderChallenge, count: number): numb
 	return callChallenges('visibleTiles', { challenge, count });
 }
 
-/**
- * Whether a challenge is played before it is read: `enabled` is the learner's
- * preference; whether speech is available is the caller's question. The
- * session reads it off {@link Presentation.listening} instead, decided once.
- */
-export function isListeningChallenge(challenge: Challenge, enabled: boolean): boolean {
-	return enabled && callChallenges('isListening', { challenge, enabled });
-}
-
 /** How far along a word is, in three coarse steps. */
 export function maturityOf(item: KnowledgeItem): Maturity {
 	return callChallenges('maturityOf', { strength: strengthOf(item) });
 }
 
-/** The chance a word of this strength has its reading hidden under `'adaptive'`. */
+/** The chance the reader hides a word's reading at this strength, under `'adaptive'`. */
 export function hideReadingProbability(strength: number): number {
 	return callChallenges('hideReadingProbability', { strength });
 }

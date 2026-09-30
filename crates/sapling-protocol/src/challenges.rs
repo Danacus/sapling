@@ -1,6 +1,7 @@
 //! The challenge decisions by name, like the `llm!` table but synchronous and
-//! needing nothing but the host's word counter: grading, what a served
-//! challenge shows, and the two planners. Each method takes one argument
+//! needing nothing from the host: grading, what a served challenge shows, and
+//! the two planners. (The host still lends a word counter; nothing reads it
+//! now that difficulty is measured by the model's own `words_in`.) Each method takes one argument
 //! object; the table also generates the TypeScript `Challenges` interface and
 //! `CHALLENGE_METHODS` (`challenges.ts`). A seed, where a method takes one,
 //! replays its draws; without one it draws from the OS.
@@ -10,14 +11,16 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use sapling_challenges::challenge::{MultiClozeChallenge, WordOrderChallenge};
+use sapling_challenges::fits::Serving;
 use sapling_challenges::grade::{self, MultiClozeGrade};
-use sapling_challenges::ladder::{by_id, maturity_for_strength, Maturity};
+use sapling_challenges::help::HelpLevel;
 use sapling_challenges::matcher::{self, AnswerMatch};
 use sapling_challenges::pool::lenient_rows;
-use sapling_challenges::serve::{self, Presentation, RomanizationMode};
-use sapling_challenges::session::{self, Slot};
+use sapling_challenges::serve::{self, Presentation};
+use sapling_challenges::session::{self, Planned, Slot};
 use sapling_challenges::text::WordCount;
 use sapling_challenges::topup::{self, TopUpCoverage};
+use sapling_challenges::word::{hide_reading_probability, maturity_for_strength, Maturity};
 use sapling_challenges::{Challenge, PoolRow, Rng, Want, Word};
 use sapling_domain::types::Verdict;
 
@@ -46,18 +49,11 @@ pub struct ValidateAnswerArgs {
 }
 
 #[derive(Debug, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
 pub struct PresentationArgs {
     pub challenge: Challenge,
-    pub words: Vec<Word>,
-    pub romanization_mode: RomanizationMode,
-    /// Whether this device can speak and the learner wants listening; off when absent.
-    #[serde(default)]
-    #[ts(optional)]
-    pub audio: Option<bool>,
-    #[serde(default)]
-    #[ts(optional)]
-    pub seed: Option<u64>,
+    /// The help level serving picked (`Planned.shown`); a level this build
+    /// does not know shows the row at its easiest step.
+    pub shown: String,
 }
 
 #[derive(Debug, Deserialize, TS)]
@@ -70,12 +66,6 @@ pub struct VisibleBankArgs {
 pub struct VisibleTilesArgs {
     pub challenge: WordOrderChallenge,
     pub count: usize,
-}
-
-#[derive(Debug, Deserialize, TS)]
-pub struct ListeningArgs {
-    pub challenge: Challenge,
-    pub enabled: bool,
 }
 
 #[derive(Debug, Deserialize, TS)]
@@ -92,6 +82,10 @@ pub struct PlanSessionArgs {
     pub pool: Vec<Option<PoolRow>>,
     pub words: Vec<Word>,
     pub now: f64,
+    /// The learned numbers, the aim and the help-level bounds a pick is made against.
+    #[serde(default)]
+    #[ts(optional)]
+    pub serving: Option<Serving>,
     /// Slots to aim for.
     #[serde(default)]
     #[ts(optional)]
@@ -121,6 +115,9 @@ pub struct TopUpArgs {
     pub now: f64,
     #[serde(default)]
     #[ts(optional)]
+    pub serving: Option<Serving>,
+    #[serde(default)]
+    #[ts(optional)]
     pub seed: Option<u64>,
 }
 
@@ -144,6 +141,7 @@ macro_rules! challenges {
             args: &[Value],
             $count: WordCount,
         ) -> Result<Value, String> {
+            let _ = $count;
             match method {
                 $(
                     stringify!($method) => {
@@ -192,11 +190,10 @@ challenges! {
         validateAnswer(args: ValidateAnswerArgs) -> AnswerMatch {
             matcher::validate_answer(&args.given, &args.accepted, args.fuzzy.unwrap_or(true))
         }
-        /// Everything a served challenge shows, rolled once.
+        /// Everything a served challenge shows at the help level it was picked at.
         presentationFor(args: PresentationArgs) -> Presentation {
-            let index = by_id(&args.words);
-            let mut rng = Rng::from_seed(args.seed);
-            serve::presentation_for(&args.challenge, &args.words, &index, args.romanization_mode, args.audio.unwrap_or(false), &mut || rng.next_f64())
+            let easiest = HelpLevel::step(sapling_challenges::help::steps_of(&args.challenge)[0]);
+            serve::presentation_for(&args.challenge, HelpLevel::parse(&args.shown).unwrap_or(easiest))
         }
         /// The bank positions a cloze or multi-cloze shows at `size`.
         visibleBank(args: VisibleBankArgs) -> Vec<usize> {
@@ -206,21 +203,17 @@ challenges! {
         visibleTiles(args: VisibleTilesArgs) -> Vec<usize> {
             serve::visible_tiles(&args.challenge, args.count)
         }
-        /// Whether a challenge is played before it is read.
-        isListening(args: ListeningArgs) -> bool {
-            serve::is_listening(&args.challenge, args.enabled)
-        }
         /// A word's maturity bucket, from its strength.
         maturityOf(args: StrengthArgs) -> Maturity {
             maturity_for_strength(args.strength)
         }
-        /// The chance a word of this strength has its reading hidden.
+        /// The chance the reader hides a word's reading at this strength.
         hideReadingProbability(args: StrengthArgs) -> f64 {
-            serve::hide_reading_probability(args.strength)
+            hide_reading_probability(args.strength)
         }
-        /// The session: positions into `pool`, in play order.
-        planSession(args: PlanSessionArgs) -> Vec<usize> {
-            session::plan_session(&args.pool, &args.words, args.now, args.target, args.limit, count)
+        /// The session: positions into `pool`, in play order, each at its help level.
+        planSession(args: PlanSessionArgs) -> Vec<Planned> {
+            session::plan_session(&args.pool, &args.words, args.now, &args.serving.unwrap_or_default(), args.target, args.limit)
         }
         /// The queue: each planned challenge by its position, with the match rounds between.
         interleaveMatchRounds(args: InterleaveArgs) -> Vec<Slot> {
@@ -229,11 +222,11 @@ challenges! {
         /// What the pool is missing, most urgent word first.
         planTopUp(args: TopUpArgs) -> Vec<Want> {
             let mut rng = Rng::from_seed(args.seed);
-            topup::plan_top_up(&readable(&args.pool), &args.words, args.now, &mut || rng.next_f64())
+            topup::plan_top_up(&readable(&args.pool), &args.words, args.now, &args.serving.unwrap_or_default(), &mut || rng.next_f64())
         }
         /// How well the pool covers the words a session is about to serve.
         topUpCoverage(args: TopUpArgs) -> TopUpCoverage {
-            topup::top_up_coverage(&readable(&args.pool), &args.words, args.now)
+            topup::top_up_coverage(&readable(&args.pool), &args.words, args.now, &args.serving.unwrap_or_default())
         }
     }
 }
@@ -291,7 +284,9 @@ mod tests {
             json!({ "pool": [alien, row], "words": words, "now": 1 }),
         )
         .unwrap();
-        assert_eq!(plan, json!([1]));
+        assert_eq!(plan[0]["at"], json!(1));
+        assert_eq!(plan[0]["shown"], json!("plain"));
+        assert_eq!(plan.as_array().unwrap().len(), 1);
     }
 
     #[test]

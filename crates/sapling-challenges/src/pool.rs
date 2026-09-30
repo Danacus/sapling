@@ -11,7 +11,7 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use crate::challenge::Challenge;
-use crate::ladder::Word;
+use crate::word::Word;
 
 /// How long a served challenge rests before it is planned again: long enough
 /// that the sentence is re-read rather than recognized.

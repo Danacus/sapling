@@ -472,8 +472,8 @@ impl<'a> Materializer<'a> {
         }
         self.sql.exec(
             "INSERT OR REPLACE INTO profile
-			   (id, nativeLanguage, targetLanguage, level, interests, about, model, createdAt, updatedAt)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			   (id, nativeLanguage, targetLanguage, level, interests, about, model, createdAt, updatedAt, aim)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             &[
                 Param::text(profile_id),
                 Param::text(&p.native_language),
@@ -484,6 +484,7 @@ impl<'a> Materializer<'a> {
                 Param::text(&p.model),
                 Param::number(p.created_at),
                 Param::number(at),
+                Param::opt_text(p.aim.map(|aim| aim.as_str())),
             ],
         )
     }

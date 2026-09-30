@@ -1,46 +1,98 @@
 [
 	{
 		"type": "recognize-mc",
-		"stored": { "type": "multiple-choice", "direction": "toNative" },
-		"plannable": { "demand": 0, "levels": [1, 2] }
+		"stored": {
+			"type": "multiple-choice",
+			"direction": "toNative"
+		},
+		"lengths": [
+			1,
+			11
+		]
 	},
 	{
 		"type": "produce-mc",
-		"stored": { "type": "multiple-choice", "direction": "toTarget" },
-		"plannable": { "demand": 0, "levels": [1, 2] }
+		"stored": {
+			"type": "multiple-choice",
+			"direction": "toTarget"
+		},
+		"lengths": [
+			1,
+			11
+		]
 	},
 	{
 		"type": "context-mc",
-		"stored": { "type": "multiple-choice", "direction": "toTarget", "promptIsTarget": true },
-		"plannable": { "demand": 0, "levels": [2, 3] }
+		"stored": {
+			"type": "multiple-choice",
+			"direction": "toTarget",
+			"promptIsTarget": true
+		},
+		"lengths": [
+			3,
+			11
+		]
 	},
 	{
 		"type": "translate-to-native",
-		"stored": { "type": "typed-translation", "direction": "toNative" },
-		"plannable": { "demand": 0, "levels": [1] }
+		"stored": {
+			"type": "typed-translation",
+			"direction": "toNative"
+		},
+		"lengths": [
+			2,
+			11
+		]
 	},
 	{
 		"type": "spot-error",
-		"stored": { "type": "spot-error", "direction": "toNative" },
-		"plannable": { "demand": 0, "levels": [2, 3] }
+		"stored": {
+			"type": "spot-error",
+			"direction": "toNative"
+		},
+		"lengths": [
+			3,
+			11
+		]
 	},
 	{
 		"type": "word-order",
-		"stored": { "type": "word-order", "direction": "toTarget" },
-		"plannable": { "demand": 1, "levels": [2, 3, 4] }
+		"stored": {
+			"type": "word-order",
+			"direction": "toTarget"
+		},
+		"lengths": [
+			3,
+			8
+		]
 	},
 	{
 		"type": "cloze",
-		"stored": { "type": "cloze", "direction": "toTarget" },
-		"plannable": { "demand": 1, "levels": [2, 3, 4, 5] }
+		"stored": {
+			"type": "cloze",
+			"direction": "toTarget"
+		},
+		"lengths": [
+			3,
+			11
+		]
 	},
 	{
 		"type": "multi-cloze",
-		"stored": { "type": "multi-cloze", "direction": "toTarget" },
-		"plannable": { "demand": 1, "levels": [3, 4, 5] }
+		"stored": {
+			"type": "multi-cloze",
+			"direction": "toTarget"
+		},
+		"lengths": [
+			8,
+			18
+		]
 	},
 	{
 		"type": "translate-to-target",
-		"stored": { "type": "typed-translation", "direction": "toTarget" }
+		"stored": {
+			"type": "typed-translation",
+			"direction": "toTarget"
+		}
 	}
 ]

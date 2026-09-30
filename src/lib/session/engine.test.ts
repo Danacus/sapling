@@ -30,7 +30,6 @@ import type {
 import {
 	SESSION_LENGTH,
 	interleaveMatchRounds,
-	isListeningChallenge,
 	planRefill,
 	planSession,
 	sessionSummary,
@@ -55,7 +54,8 @@ function profile(overrides: Partial<Profile> = {}): Profile {
 
 /**
  * An item due `dueOffset` ms from `NOW` (negative = overdue), at strength 0 —
- * a word the learner has met and never got right, so every rung is 1.
+ * a word FSRS has no curve for yet, so it reads the new-word memory and the
+ * starting skill.
  */
 function item(
 	id: string,
@@ -74,7 +74,7 @@ function item(
 	};
 }
 
-/** The same word at a given strength — what decides its rung and its tier. */
+/** The same word at a given strength, remembered for certain — display, and early or not for match rounds. */
 function atStrength(word: KnowledgeItem, strength: number): KnowledgeItem {
 	return { ...word, srs: { ...word.srs!, retrievability: 1, strength } };
 }
@@ -97,7 +97,7 @@ function row(id: string, itemIds: string[], over: Partial<ChallengeRow> = {}): C
 	} as ChallengeRow;
 }
 
-/** An active free-production row whose kind is available at the top rung. */
+/** A bankless cloze: typed, the hardest thing in the pool. */
 function freeProductionRow(
 	id: string,
 	itemIds: string[],
@@ -119,10 +119,9 @@ function freeProductionRow(
 }
 
 /**
- * A pooled multiple-choice row — demand 0, so any word can bear it, where
- * {@link row}'s typed-translation default is demand 2 and none of the fresh
- * cards {@link item} builds can. The pair is what the bearability tests below
- * choose between.
+ * A pooled one-word recognition row: the easiest thing in the pool, which a
+ * brand-new word fits, where {@link freeProductionRow}'s typed cloze fits none
+ * of the fresh cards {@link item} builds.
  */
 function recognition(
 	id: string,
@@ -146,9 +145,8 @@ function recognition(
 }
 
 /**
- * A word the learner owns: strength well clear of `FREE_PRODUCTION_FLOOR`, so
- * every demand tier is bearable and the rung is 5. About what ten days of
- * stability folds to. {@link item} sits at strength 0.
+ * A word with a full strength bar, remembered for certain. Its skill is still
+ * the model's starting one: strength is display and decides nothing served.
  */
 function strongItem(id: string, dueOffset: number): KnowledgeItem {
 	return atStrength(item(id, dueOffset), 0.9);
@@ -306,25 +304,6 @@ describe('spokenAnswerFor', () => {
 	});
 });
 
-describe('isListeningChallenge', () => {
-	it('takes recognize-style multiple choice when the learner asked for it', () => {
-		const recognize = (id: string): MultipleChoiceChallenge => ({
-			id,
-			type: 'multiple-choice',
-			direction: 'toNative',
-			prompt: '菜单',
-			options: ['the menu', 'the bill', 'the tea', 'the water'],
-			correctIndex: 0,
-			itemIds: ['i1']
-		});
-		const ids = Array.from({ length: 40 }, (_, i) => `challenge-${i}`);
-		expect(ids.some((id) => isListeningChallenge(recognize(id), false))).toBe(false);
-		const taken = ids.filter((id) => isListeningChallenge(recognize(id), true)).length;
-		expect(taken).toBeGreaterThan(0);
-		expect(taken).toBeLessThan(ids.length);
-	});
-});
-
 describe('sessionSummary', () => {
 	const answers: SessionAnswer[] = [
 		{ challengeId: 'a', type: 'multiple-choice', verdict: 'correct', itemIds: ['i1'] },
@@ -367,13 +346,16 @@ describe('planSession', () => {
 		const pool = [row('ca', ['a'], { topic: 'at the market' }), row('cb', ['b']), row('cc', ['c'])];
 		const planned = planSession(pool, items, NOW, { target: 3 });
 
-		expect(ids(planned)).toEqual(['cb', 'cc', 'ca']);
-		expect(planned[2]).toEqual(challengeOf(pool[0]));
-		expect(planned[2]).not.toHaveProperty('topic');
-		expect(planned[2]).not.toHaveProperty('lastServedAt');
+		expect(ids(planned.map((pick) => pick.challenge))).toEqual(['cb', 'cc', 'ca']);
+		expect(planned[2]!.challenge).toEqual(challengeOf(pool[0]));
+		expect(planned[2]!.challenge).not.toHaveProperty('topic');
+		expect(planned[2]!.challenge).not.toHaveProperty('lastServedAt');
+		// Each pick carries the help level it is served at and its predicted chance.
+		expect(planned[2]!.shown).toBe('plain');
+		expect(planned[2]!.chance).toBeGreaterThan(0.65);
 	});
 
-	it('respects the target and the ceiling, and never serves what a word cannot bear', () => {
+	it('respects the target and the ceiling, and never serves what does not fit the word', () => {
 		const items = [item('due', -DAY)];
 		const pool = Array.from({ length: 30 }, (_, i) =>
 			row(`c${i}`, ['due'], { generatedAt: NOW - i })
@@ -481,28 +463,30 @@ describe('planRefill', () => {
 		const items = [item('a', -1 * DAY), item('b', -5 * DAY), item('c', +2 * DAY)];
 		const plan = planRefill([], items, profile(), NOW);
 
-		// These cards are freshly created, so every word is still rung 1 and only
-		// recognition kinds are wanted. `c` is not due — it rides along because a
-		// top-up has no other source of vocabulary and must not come back empty
-		// for a learner who is caught up.
+		// These cards are freshly created, so every word is at the starting skill
+		// and only the two recognition kinds can reach it, at their shortest. `c`
+		// is not due — it rides along because a top-up has no other source of
+		// vocabulary and must not come back empty for a learner who is caught up.
 		expect(wordsOf(plan)).toEqual(['b', 'a', 'c']);
 		expect(plan.wants.map((w) => w.item.id)).toEqual(['b', 'b', 'a', 'a', 'c', 'c']);
 		for (const want of plan.wants) {
 			const id = want.item.id;
 			expect(want.item).toEqual({ id, term: `term-${id}`, meaning: `meaning-${id}` });
-			expect(want.difficulty).toBe(1);
+			expect(want.length).toBe(1);
 		}
 	});
 
-	it('writes a reviewed word at a higher rung than a brand-new one', () => {
+	it('writes production for a word the model has learned is strong', () => {
 		const fresh = item('a', -DAY);
-		const reviewed = atStrength(item('b', -DAY), 0.32);
+		const strong = { ...atStrength(item('b', -DAY), 0.5), skill: 5 };
 
-		const rungs = new Map(
-			planRefill([], [fresh, reviewed], profile(), NOW).wants.map((w) => [w.item.id, w.difficulty])
-		);
-		expect(rungs.get('a')).toBe(1);
-		expect(rungs.get('b')).toBeGreaterThan(1);
+		const kinds = (id: string) =>
+			planRefill([], [fresh, strong], profile(), NOW)
+				.wants.filter((w) => w.item.id === id)
+				.map((w) => w.kind.type);
+		expect(kinds('a').every((k) => k === 'recognize-mc' || k === 'produce-mc')).toBe(true);
+		expect(kinds('b')).toHaveLength(2);
+		expect(kinds('b').some((k) => k === 'recognize-mc' || k === 'produce-mc')).toBe(false);
 	});
 
 	it('wants nothing for a word the pool already covers', () => {
@@ -514,12 +498,13 @@ describe('planRefill', () => {
 		expect(plan.wants).toEqual([]);
 	});
 
-	it('asks only for what a word is missing', () => {
+	it('does not count a row the word has outgrown as coverage', () => {
 		const pool = [recognition('r1', ['a'])];
-		const plan = planRefill(pool, [item('a', -DAY)], profile(), NOW);
+		const owned = { ...atStrength(item('a', -DAY), 0.5), skill: 6 };
+		const plan = planRefill(pool, [owned], profile(), NOW);
 
-		expect(plan.wants).toHaveLength(1);
-		expect(plan.wants[0].kind.type).not.toBe('recognize-mc');
+		expect(plan.wants).toHaveLength(2);
+		expect(plan.wants.map((w) => w.kind.type)).not.toContain('recognize-mc');
 		expect(wordsOf(plan)).toEqual(['a']);
 	});
 
@@ -612,8 +597,8 @@ describe('planRefill → getBatch (mock mode)', () => {
 		expect(steps.map((s) => s.id)).toEqual(['build-prompt', 'request', 'validate']);
 	});
 
-	it('writes the kinds each word can bear', async () => {
-		const items = [item('a', -2 * DAY), atStrength(item('b', -DAY), 0.3)];
+	it('writes the kinds each word can manage', async () => {
+		const items = [item('a', -2 * DAY), { ...atStrength(item('b', -DAY), 0.5), skill: 5 }];
 		const batch = await getBatch(planRefill([], items, profile(), NOW));
 		const types = new Set(batch.challenges.map((c) => c.type));
 
@@ -656,7 +641,7 @@ describe('session walkthrough (mock batch, no database)', () => {
 
 		// The session is planned once, up front — no database read mid-play — and
 		// the free rounds are spliced in there too, so play is one walk.
-		const planned = planSession(pool, items, NOW);
+		const planned = planSession(pool, items, NOW).map((pick) => pick.challenge);
 		const queue = interleaveMatchRounds(planned, items);
 
 		const answers: SessionAnswer[] = [];

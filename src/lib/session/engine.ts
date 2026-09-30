@@ -29,7 +29,9 @@ import {
 	addResult,
 	addToPool,
 	getAllItems,
+	getDifficultyParts,
 	getPool,
+	getProfile,
 	recordServe,
 	reportChallenge as flagChallengeReported,
 	updateItemAfterReview
@@ -44,6 +46,9 @@ import { Grade, gradeFromResult, isDue } from '$lib/srs';
 import { asWords, callChallenges } from '$lib/challenges/core';
 import { storedDefFor } from '$lib/challenges/types';
 import type { Challenge, KnowledgeItem, Profile, Verdict } from '$lib/types';
+import { servingFor, type DeviceServing, type Serving } from './serving';
+
+export { deviceServing, servingFor, type DeviceServing, type Serving } from './serving';
 
 /* -------------------------------------------------------------------------- */
 /* Tuning                                                                      */
@@ -60,10 +65,10 @@ export { SESSION_LENGTH };
  * `answerGiven` written when the learner presses "Too hard — skip".
  *
  * It is a `wrong` answer in every respect, FSRS `Again` included —
- * "I could not produce it" is exactly what `Again` encodes. That grade is the
- * whole of its effect on what gets written next: the word's strength falls, its
- * ladder rung falls with it, and the next top-up sizes every challenge about it
- * to the lower rung. Nothing else carries the skip forward.
+ * "I could not produce it" is exactly what `Again` encodes — and the
+ * difficulty model learns from it like any other miss: the word's skill falls
+ * and the row reads harder, so the next pick and the next top-up both ask
+ * less of the word.
  */
 export const SKIP_ANSWER = '(skipped)';
 
@@ -137,8 +142,8 @@ export function sessionSummary(answers: SessionAnswer[]): SessionSummary {
  * queue the learn screen walks — built at plan time so the TTS warm loop, the
  * progress math and the walk all see the same session. Rust decides where the
  * rounds go and builds them (`crates/sapling-challenges`' `session.rs`): one
- * after every fourth challenge that touches an early word, never last, sized at
- * the lower median rung of those words. `seed` replays the rounds' draws.
+ * after every fourth challenge that touches an early word, never last, five
+ * pairs where the words allow. `seed` replays the rounds' draws.
  */
 export function interleaveMatchRounds(
 	challenges: Challenge[],
@@ -160,9 +165,6 @@ export function interleaveMatchRounds(
  */
 export { spokenAnswerFor } from '$lib/challenges/display';
 
-/** Whether a challenge is played before it is read — `$lib/challenges/serve`. */
-export { isListeningChallenge } from '$lib/challenges/serve';
-
 /* -------------------------------------------------------------------------- */
 /* Session planning                                                            */
 /* -------------------------------------------------------------------------- */
@@ -172,52 +174,78 @@ export interface PlanSessionOptions {
 	target?: number;
 	/** Hard ceiling, whatever `target` says; {@link SESSION_LENGTH} when absent. */
 	limit?: number;
+	/** What the picks are made against; starting values, the normal aim and no listening when absent. */
+	serving?: Serving;
+}
+
+/** One planned challenge, at the help level it is served at. */
+export interface SessionPick {
+	challenge: Challenge;
+	/** The help level (`crates/sapling-challenges`' `help.rs`): what `presentationFor` shows and the answer records. */
+	shown: string;
+	/** The predicted chance of a correct answer at that help level. */
+	chance: number;
 }
 
 /**
- * Builds the session: which pooled challenges to play, in order. Rust plans
- * it (`crates/sapling-challenges`' `session.rs`) — due words first, most
- * overdue first, each claiming the bearable challenge nearest the centre of
- * its level band, then the words not yet due, then the leftovers — and hands
- * back positions into `pool`, so what plays is the row as stored, minus its
- * bookkeeping.
+ * Builds the session: which pooled challenges to play, in order, and at which
+ * help level. Rust plans it (`crates/sapling-challenges`' `session.rs`) — due
+ * words first, most overdue first, each claiming the row whose best help level
+ * puts its predicted chance closest to the aim, then the words not yet due,
+ * then the leftovers; a row that fits no help level for its words is never
+ * served — and hands back positions into `pool`, so what plays is the row as
+ * stored, minus its bookkeeping.
  */
 export function planSession(
 	pool: ChallengeRow[],
 	items: KnowledgeItem[],
 	now: number,
 	opts: PlanSessionOptions = {}
-): Challenge[] {
+): SessionPick[] {
 	const planned = callChallenges('planSession', {
 		pool,
 		words: asWords(items),
 		now,
+		...(opts.serving === undefined ? {} : { serving: opts.serving }),
 		...(opts.target === undefined ? {} : { target: opts.target }),
 		...(opts.limit === undefined ? {} : { limit: opts.limit })
 	});
-	return planned.map((at) => challengeOf(pool[at]!));
+	return planned.map(({ at, shown, chance }) => ({
+		challenge: challengeOf(pool[at]!),
+		shown,
+		chance
+	}));
 }
 
 /* -------------------------------------------------------------------------- */
 /* Top-up planning                                                             */
 /* -------------------------------------------------------------------------- */
 
+export interface PlanTopUpOptions {
+	/** What coverage is judged against; see {@link PlanSessionOptions.serving}. */
+	serving?: Serving;
+	/** Replays the tie-breaks between equally good kinds. */
+	seed?: number;
+}
+
 /**
  * The wants the pool is missing, most urgent word first — Rust's
- * (`crates/sapling-challenges`' `topup.rs`). `seed` replays the tie-breaks
- * between equally good kinds.
+ * (`crates/sapling-challenges`' `topup.rs`): a word with no rested row that
+ * fits it wants two written, each a kind that can reach the difficulty that
+ * would put the word at the aim, at the length worked back from it.
  */
 export function planTopUp(
 	pool: readonly ChallengeRow[],
 	items: KnowledgeItem[],
 	now: number,
-	seed?: number
+	opts: PlanTopUpOptions = {}
 ): Want[] {
 	return callChallenges('planTopUp', {
 		pool: [...pool],
 		words: asWords(items),
 		now,
-		...(seed === undefined ? {} : { seed })
+		...(opts.serving === undefined ? {} : { serving: opts.serving }),
+		...(opts.seed === undefined ? {} : { seed: opts.seed })
 	});
 }
 
@@ -225,28 +253,32 @@ export function planTopUp(
 export function topUpCoverage(
 	pool: readonly ChallengeRow[],
 	items: KnowledgeItem[],
-	now: number
+	now: number,
+	serving?: Serving
 ): TopUpCoverage {
-	return callChallenges('topUpCoverage', { pool: [...pool], words: asWords(items), now });
+	return callChallenges('topUpCoverage', {
+		pool: [...pool],
+		words: asWords(items),
+		now,
+		...(serving === undefined ? {} : { serving })
+	});
 }
 
-export interface PlanRefillOptions {
+export interface PlanRefillOptions extends PlanTopUpOptions {
 	/**
 	 * Free-form scenario for this top-up, e.g. `'ordering in a restaurant'`.
 	 * Blank/whitespace-only is treated the same as absent — the key is only
 	 * added to {@link BatchArgs} when it carries real content.
 	 */
 	topic?: string;
-	/** Replays {@link planTopUp}'s tie-breaks. */
-	seed?: number;
 }
 
 /**
  * Turns the pool and the learner's collection into one batch request.
  *
- * The brief is {@link planTopUp}'s: a want for every kind a word is short of,
- * walked most urgent first over the whole collection, and nothing at all for a
- * word already covered. A batch is written *about* vocabulary the learner
+ * The brief is {@link planTopUp}'s: two wants for every word no rested row
+ * fits, walked most urgent first over the whole collection, and nothing at all
+ * for a word already covered. A batch is written *about* vocabulary the learner
  * already has and introduces none of its own — new words arrive through the
  * assistant and conversation mode — so a learner with no words has no wants,
  * and one whose every word is covered has none either. Both come back as an
@@ -262,7 +294,10 @@ export function planRefill(
 	now: number,
 	opts: PlanRefillOptions = {}
 ): BatchArgs {
-	const wants = planTopUp(pool, items, now, opts.seed);
+	const wants = planTopUp(pool, items, now, {
+		...(opts.serving === undefined ? {} : { serving: opts.serving }),
+		...(opts.seed === undefined ? {} : { seed: opts.seed })
+	});
 	const topic = opts.topic?.trim();
 
 	return {
@@ -339,6 +374,12 @@ export interface GenerateOptions {
 	 */
 	itemsPerRequest?: number;
 	reasoningEffort?: ReasoningEffort;
+	/**
+	 * This device's help-level bounds; read from the preferences when absent
+	 * (`deviceServing`), so a top-up judges coverage exactly as a session on
+	 * this device would serve.
+	 */
+	device?: DeviceServing;
 }
 
 /**
@@ -378,9 +419,10 @@ export async function generateChallenges(
 
 	progress?.({ id: 'select-items', label: 'Checking what the pool is missing' });
 
-	const [pool, items] = await Promise.all([getPool(), getAllItems()]);
+	const [pool, items, parts] = await Promise.all([getPool(), getAllItems(), getDifficultyParts()]);
 
 	const args = planRefill(pool, items, profile, now, {
+		serving: servingFor(profile, parts, opts.device),
 		...(opts.topic === undefined ? {} : { topic: opts.topic })
 	});
 
@@ -420,7 +462,9 @@ export async function generateChallenges(
 
 /** Everything the learn screen needs to render its start screen and then play. */
 export interface SessionPlan {
-	/** The challenges to play, in order. Empty means there is nothing to do. */
+	/** The challenges to play, in order, each at its help level. Empty means there is nothing to do. */
+	picks: SessionPick[];
+	/** The same challenges, without their help levels. */
 	challenges: Challenge[];
 	/** Every item known right now — the match-pairs pool and the item lookup. */
 	items: KnowledgeItem[];
@@ -441,9 +485,11 @@ export interface SessionPlan {
 
 export type { TopUpCoverage };
 
-export interface StartSessionOptions extends PlanSessionOptions {
+export interface StartSessionOptions extends Omit<PlanSessionOptions, 'serving'> {
 	/** Epoch ms; defaults to `Date.now()`. */
 	now?: number;
+	/** This device's help-level bounds; read from the preferences when absent. */
+	device?: DeviceServing;
 }
 
 /**
@@ -459,17 +505,24 @@ export interface StartSessionOptions extends PlanSessionOptions {
  */
 export async function startSession(opts: StartSessionOptions = {}): Promise<SessionPlan> {
 	const now = opts.now ?? Date.now();
-	const { now: _now, ...planOpts } = opts;
+	const { now: _now, device, ...planOpts } = opts;
 
-	const [pool, items] = await Promise.all([getPool(), getAllItems()]);
-	const challenges = planSession(pool, items, now, planOpts);
+	const [pool, items, parts, profile] = await Promise.all([
+		getPool(),
+		getAllItems(),
+		getDifficultyParts(),
+		getProfile()
+	]);
+	const serving = servingFor(profile, parts, device);
+	const picks = planSession(pool, items, now, { ...planOpts, serving });
 	const dueCount = items.filter((item) => isDue(item, now)).length;
 
 	return {
-		challenges,
+		picks,
+		challenges: picks.map((pick) => pick.challenge),
 		items,
 		dueCount,
-		topUp: topUpCoverage(pool, items, now)
+		topUp: topUpCoverage(pool, items, now, serving)
 	};
 }
 

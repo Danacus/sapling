@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS tombstones (itemId TEXT PRIMARY KEY);
 
 CREATE TABLE IF NOT EXISTS profile (
   id TEXT PRIMARY KEY, nativeLanguage TEXT, targetLanguage TEXT, level TEXT, interests TEXT,
-  about TEXT, model TEXT, createdAt INTEGER, updatedAt INTEGER NOT NULL DEFAULT 0);
+  about TEXT, model TEXT, createdAt INTEGER, updatedAt INTEGER NOT NULL DEFAULT 0, aim TEXT);
 
 CREATE TABLE IF NOT EXISTS texts (
   id TEXT PRIMARY KEY, title TEXT NOT NULL, source TEXT NOT NULL, topic TEXT,
@@ -117,7 +117,10 @@ pub fn review_key(item_id: &str, at: f64, device: &str) -> String {
 /// Bumped for 7 when the difficulty model's numbers became derived data:
 /// `items.skill`, `challenges.correction`, `difficultyParts` and
 /// `difficultyFold`, replayed from every answer in the log.
-pub const DERIVED_SCHEMA_VERSION: u32 = 7;
+///
+/// Bumped for 8 when `profile` gained `aim`, the success rate challenges are
+/// pitched at.
+pub const DERIVED_SCHEMA_VERSION: u32 = 8;
 
 /// Every read table the materializer owns; `events` and `meta` survive a rebuild.
 ///

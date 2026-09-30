@@ -442,6 +442,10 @@ impl Core {
             about: row.opt_text("about")?.map(str::to_owned),
             model: row.text("model")?.to_owned(),
             created_at: row.f64("createdAt")?,
+            aim: match row.opt_text("aim")? {
+                Some(aim) => Some(parse_enum(aim)?),
+                None => None,
+            },
         }))
     }
 

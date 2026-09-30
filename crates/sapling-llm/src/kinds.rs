@@ -1,7 +1,7 @@
-//! What the model is told about each wire type — its field list, rules, sizes,
-//! retry line, escalation gloss — and the mock's examples, in
-//! `lessons/<type>.json`. The kinds themselves (stored shape, demand, rungs)
-//! are `sapling-challenges`'.
+//! What the model is told about each wire type — its field list, rules, the
+//! key its length travels under, retry line, escalation gloss — and the mock's
+//! examples, in `lessons/<type>.json`. The kinds themselves (stored shape,
+//! length range) are `sapling-challenges`'.
 
 use std::sync::OnceLock;
 
@@ -17,8 +17,8 @@ pub struct Spec {
     #[serde(default)]
     pub rules_spec: Option<String>,
     pub params_spec: String,
-    /// Each size key and its value at rungs 1..5.
-    pub params: Map<String, Value>,
+    /// The key a want's length travels under in the item: `words`, or `tiles`.
+    pub length: String,
     pub corrective_spec: String,
     #[serde(default)]
     pub escalation_spec: Option<String>,
@@ -50,8 +50,9 @@ fn source(kind: WireType) -> &'static str {
 /// A wire type's lesson spec.
 pub trait Lesson {
     fn spec(self) -> &'static Spec;
-    /// The sizes one challenge is written at, for a rung clamped to 1..=5.
-    fn params(self, rung: u8) -> Map<String, Value>;
+    /// The sizes one challenge is written at: its length under the type's
+    /// key, and for a multi-cloze the gaps that length carries.
+    fn params(self, length: u8) -> Map<String, Value>;
 }
 
 impl Lesson for WireType {
@@ -69,13 +70,24 @@ impl Lesson for WireType {
             .expect("listed")]
     }
 
-    fn params(self, rung: u8) -> Map<String, Value> {
-        let at = usize::from(rung.clamp(1, 5) - 1);
-        self.spec()
-            .params
-            .iter()
-            .map(|(key, ladder)| (key.clone(), ladder[at].clone()))
-            .collect()
+    fn params(self, length: u8) -> Map<String, Value> {
+        let mut params = Map::new();
+        params.insert(self.spec().length.clone(), Value::from(length));
+        if self == WireType::MultiCloze {
+            params.insert("gaps".into(), Value::from(gaps_for(length)));
+        }
+        params
+    }
+}
+
+/// A multi-cloze passage's gaps for its length: two up to eleven words, three
+/// up to fifteen, four beyond — a gap every four or five words, as the old
+/// rung table paired them (8–10 words with two, 14 with three, 18 with four).
+pub fn gaps_for(length: u8) -> u8 {
+    match length {
+        0..=11 => 2,
+        12..=15 => 3,
+        _ => 4,
     }
 }
 
@@ -85,37 +97,34 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn every_spec_parses_with_five_rungs_that_never_fall() {
+    fn every_spec_parses_and_names_its_length_key() {
         for kind in WireType::ALL {
             let spec = kind.spec();
-            assert!(!spec.params.is_empty(), "{kind:?}");
-            for (key, ladder) in &spec.params {
-                let ladder: Vec<u64> = ladder
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|n| n.as_u64().unwrap())
-                    .collect();
-                assert_eq!(ladder.len(), 5, "{kind:?} {key}");
-                assert!(ladder.windows(2).all(|w| w[0] <= w[1]), "{kind:?} {key}");
-                assert!(
-                    spec.params_spec.contains(&format!("{key}:")),
-                    "{kind:?} {key}"
-                );
-            }
+            assert!(
+                spec.params_spec.contains(&format!("{}:", spec.length)),
+                "{kind:?}"
+            );
             assert!(!spec.fixtures.spanish.is_empty() && !spec.fixtures.mandarin.is_empty());
         }
     }
 
     #[test]
-    fn params_pick_the_rung() {
+    fn params_carry_the_length_and_a_multi_clozes_gaps() {
         assert_eq!(
-            WireType::MultiCloze.params(4),
+            WireType::MultiCloze.params(14),
             json!({ "words": 14, "gaps": 3 })
                 .as_object()
                 .unwrap()
                 .clone()
         );
-        assert_eq!(WireType::Cloze.params(9)["words"], 11);
+        assert_eq!(WireType::Cloze.params(9)["words"], 9);
+        assert_eq!(WireType::WordOrder.params(5)["tiles"], 5);
+        assert_eq!((gaps_for(8), gaps_for(18)), (2, 4));
+        // Every gap count a multi-cloze's length range can ask for is one the
+        // resolver accepts (2 to 4).
+        let [shortest, longest] = WireType::MultiCloze.lengths().unwrap();
+        for length in shortest..=longest {
+            assert!((2..=4).contains(&gaps_for(length)));
+        }
     }
 }

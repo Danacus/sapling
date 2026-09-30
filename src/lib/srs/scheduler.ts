@@ -111,8 +111,8 @@ export function isDue(item: KnowledgeItem, now: number): boolean {
 }
 
 /**
- * How well a word is known, 0..1 — the number behind the strength bars, and the
- * axis `crates/sapling-challenges`' ladder slices into demand tiers and difficulty rungs.
+ * How well a word is known, 0..1 — the number behind the strength bars. Display
+ * only: what a challenge asks of a word is the difficulty model's skill.
  *
  * Zero for a word with nothing derived, for the same reason {@link dueAt} answers
  * `now`: never scheduled is the bottom of the range.

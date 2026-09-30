@@ -43,15 +43,7 @@ pub enum MultiWord {
 /// log can flip it here.
 pub const MULTI_WORD: MultiWord = MultiWord::Lowest;
 
-/// The learner's aim: the success rate they want, as a profile setting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
-#[serde(rename_all = "lowercase")]
-pub enum Aim {
-    Easier,
-    #[default]
-    Normal,
-    Harder,
-}
+pub use sapling_domain::types::Aim;
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 pub struct Aims {
@@ -101,22 +93,21 @@ pub fn tuning() -> &'static Tuning {
     })
 }
 
-impl Aim {
-    pub fn target(self) -> f64 {
-        let aims = &tuning().aims;
-        match self {
-            Aim::Easier => aims.easier,
-            Aim::Normal => aims.normal,
-            Aim::Harder => aims.harder,
-        }
+/// The success rate an aim asks for.
+pub fn target(aim: Aim) -> f64 {
+    let aims = &tuning().aims;
+    match aim {
+        Aim::Easier => aims.easier,
+        Aim::Normal => aims.normal,
+        Aim::Harder => aims.harder,
     }
+}
 
-    /// The predicted chances a pick may land on: the aim, less and more.
-    pub fn window(self) -> (f64, f64) {
-        let target = self.target();
-        let w = &tuning().window;
-        ((target - w.below).max(0.0), (target + w.above).min(1.0))
-    }
+/// The predicted chances a pick may land on: the aim, less and more.
+pub fn window(aim: Aim) -> (f64, f64) {
+    let target = target(aim);
+    let w = &tuning().window;
+    ((target - w.below).max(0.0), (target + w.above).min(1.0))
 }
 
 pub fn sigmoid(x: f64) -> f64 {
@@ -226,7 +217,7 @@ pub fn starting_skill() -> f64 {
         .filter(|kind| kind.is_active())
         .map(|kind| starting_base(kind, HelpLevel::step(Step::Plain)) + starting_slope(kind))
         .fold(f64::INFINITY, f64::min);
-    easiest + logit(Aim::Normal.target())
+    easiest + logit(target(Aim::Normal))
 }
 
 /* ---- The learned numbers ------------------------------------------------ */
@@ -456,12 +447,12 @@ mod tests {
     #[test]
     fn the_aims_and_windows_are_the_profile_settings() {
         assert_eq!(Aim::default(), Aim::Normal);
-        assert_eq!(Aim::Normal.target(), 0.8);
-        assert_eq!(Aim::Easier.target(), 0.88);
-        assert_eq!(Aim::Harder.target(), 0.7);
-        let (low, high) = Aim::Normal.window();
+        assert_eq!(target(Aim::Normal), 0.8);
+        assert_eq!(target(Aim::Easier), 0.88);
+        assert_eq!(target(Aim::Harder), 0.7);
+        let (low, high) = window(Aim::Normal);
         assert!((low - 0.65).abs() < 1e-9 && (high - 0.92).abs() < 1e-9);
-        let (_, high) = Aim::Easier.window();
+        let (_, high) = window(Aim::Easier);
         assert!(high <= 1.0);
     }
 
@@ -475,7 +466,7 @@ mod tests {
             0.0,
         );
         let p = chance(&[1.0], &[starting_skill()], d, MULTI_WORD);
-        assert!((p - Aim::Normal.target()).abs() < 1e-9);
+        assert!((p - target(Aim::Normal)).abs() < 1e-9);
     }
 
     #[test]

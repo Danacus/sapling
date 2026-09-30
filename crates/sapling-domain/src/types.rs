@@ -167,6 +167,38 @@ pub struct Profile {
     pub model: String,
     /// Epoch milliseconds.
     pub created_at: f64,
+    /// The success rate challenges are pitched at. Absent on every profile
+    /// written before it existed, which reads as `normal`; a change takes
+    /// effect on the next pick and rebuilds nothing.
+    #[serde(
+        default,
+        deserialize_with = "absent_or",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional)]
+    pub aim: Option<Aim>,
+}
+
+/// How hard the learner wants their challenges: the success rate the
+/// difficulty model aims at (`sapling-challenges`' `data/model.json` maps
+/// easier, normal and harder to 88%, 80% and 70%).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum Aim {
+    Easier,
+    #[default]
+    Normal,
+    Harder,
+}
+
+impl Aim {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Aim::Easier => "easier",
+            Aim::Normal => "normal",
+            Aim::Harder => "harder",
+        }
+    }
 }
 
 /* -------------------------------------------------------------------------- */

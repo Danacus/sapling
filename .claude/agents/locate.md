@@ -44,14 +44,14 @@ one half is normal, not a bug. The wire half's membership is `WireType::ALL` in 
 Where the rest lives:
 
 - `src/lib/llm/` — `index.ts` (`getBatch`), `escalation.ts` (`getEscalation`, what the screen showed), `core.ts` (`callLlm` into the wasm, `LlmError`), `mock.ts` (the flag), `usage.ts` (the token meter)
-- `crates/sapling-challenges/` — the challenge decisions: `challenge.rs` (the stored union), `grade.rs` + `matcher.rs` (grading), `difficulty.rs`, `ladder.rs` (rungs, bearability), `serve.rs` (hint, bank, tray, readings, listening), `match_pairs.rs`, `kinds.rs`, `pool.rs`, `session.rs` (the session plan, match-round splicing), `topup.rs` (the wants); numbers in `data/*.json`; `crates/sapling-protocol/src/challenges.rs` names them, `src/lib/challenges/core.ts` calls them, `check.ts`/`serve.ts`/`readings.ts` wrap them
+- `crates/sapling-challenges/` — the challenge decisions: `challenge.rs` (the stored union), `grade.rs` + `matcher.rs` (grading), `help.rs` (help levels), `model.rs` (the learned difficulty model), `replay.rs` + `legacy.rs` (a log into observations), `calibrate.rs` + `sim.rs` + `bin/calibrate.rs` (measuring it), `fits.rs` (the one check serving and refill ask), `word.rs` (`Word`, display maturity), `serve.rs` (a help level as a screen), `match_pairs.rs`, `kinds.rs`, `pool.rs`, `session.rs` (the session plan, match-round splicing), `topup.rs` (the wants); numbers in `data/*.json`; `crates/sapling-protocol/src/challenges.rs` names them, `src/lib/challenges/core.ts` calls them, `check.ts`/`serve.ts`/`readings.ts` wrap them
 - `src/lib/assistant/` — `index.ts` (`sendChatMessage`, `addWords`), `context.ts` (`defaultToolContext`, the repositories); `src/lib/conversation/` — `index.ts` (`startConversation`, `sendTurn`), `diff.ts` (correction markup)
 - `crates/sapling-llm/` — the model calls: `client.rs` (chat client over an injected transport), `lesson.rs` (the top-up: requests, prompt, batch loop, mock), `wire.rs` (wire structs, schemas, resolvers), `kinds.rs` (each wire type's lesson spec over `lessons/*.json`), `escalation.rs`, `reading.rs`, `tools.rs` (`ToolContext`, the tools, the loop), `chat.rs`, `conversation.rs`, `text.rs`; prompts in `prompts/`, mock fixtures in `fixtures/` and `lessons/`; `crates/sapling-protocol/src/llm.rs` names them
 - `crates/sapling-sync/` — the sync client: `lib.rs` (`Transport`, `SyncStore`, the cycle `run`, `probe`, `pair`), `phrase.rs`, `relay.rs` (`MemoryRelay`, the in-memory relay for tests), `fixtures/phrases.json` (shared with `worker/phrase.test.ts`); `crates/sapling-protocol/src/sync.rs` names it, `src/lib/sync/core.ts` calls it, `run.ts` joins cycles and records the last one, `config.ts` holds the phrase; `crates/sapling-store/src/sync.rs` is the native `SyncStore`
 - `src/lib/session/` — `engine.ts` (orchestrator over the Rust planners, all play-time DB writes), `motion.ts`
 - `src/lib/srs/` — grades and the accessors for the schedule the core derives onto each item (`isDue`, `strengthOf`); no FSRS, no ts-fsrs
 - `src/lib/db/` — repositories, the only store access; `protocol.ts` is the `Backend` boundary, `client.ts` + `sqlite.worker.ts` the transport, `host.ts` the glue that lends the Rust core sqlite-wasm; `events.ts` is types only; `database.ts` keeps only `ChallengeRow`/`challengeOf`
-- The persistence core: `crates/sapling-domain/` (`events.rs` payload schemas, `types.rs`, `day.rs`), `crates/sapling-challenges/` (above), `crates/sapling-db/` (`schema.rs` DDL, `materialize.rs` merge rules, `core.rs` every `Backend` method, `sql.rs` the seam), `crates/sapling-protocol/` (the methods by name, over JSON), `crates/sapling-srs/` (the SRS); `crates/sapling-wasm/` wraps db and protocol for the browser, `crates/sapling-store/` (with `rusqlite_sql.rs`) for native hosts
+- The persistence core: `crates/sapling-domain/` (`events.rs` payload schemas, `types.rs`, `day.rs`), `crates/sapling-challenges/` (above), `crates/sapling-db/` (`schema.rs` DDL, `materialize.rs` merge rules, `learned.rs` the model's derived numbers, `core.rs` every `Backend` method, `sql.rs` the seam), `crates/sapling-protocol/` (the methods by name, over JSON), `crates/sapling-srs/` (the SRS); `crates/sapling-wasm/` wraps db and protocol for the browser, `crates/sapling-store/` (with `rusqlite_sql.rs`) for native hosts
 - `src/lib/romanize/`, `src/lib/tts/`, `src/lib/text/`
 - `src/routes/learn/` — the six challenge components + `ChallengeHost.svelte` (an `{#if}` dispatch chain); shared UI in `blocks/`
 - `src/routes/` — `chat/`, `words/`, `settings/`, and the dashboard
@@ -63,7 +63,7 @@ which of the three registries or which `src/lib/<area>` owns the question.
 
 Grep for the **identifier**, not prose. For a behaviour with no obvious symbol,
 grep the constant or the type name that governs it (e.g. `RESERVE_GAP`,
-`MAX_TOPUP_WANTS`, `demand_of`, `plan_session`, `toPlain`).
+`MAX_TOPUP_WANTS`, `best_fit`, `plan_session`, `toPlain`).
 
 Don't stop at the definition. The question "where is X" almost always also
 means "and what reads it" — grep the identifier a second time for call sites,

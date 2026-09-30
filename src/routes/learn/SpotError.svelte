@@ -2,12 +2,10 @@
   Spot the error: one word in the sentence does not belong.
 
   The sentence is laid out as tappable word tiles. `challenge.meaning` is the
-  native-language bridge, always written by generation; whether it is *shown*
-  is   the session's serve-time call (`presentation.showHint`, from
-  `$lib/challenges/serve`), and some rows written by an earlier build lack it
-  altogether. Without it the
-  wrong word has to be judged from the target-language sentence alone, which
-  is the harder, later-rung version of the same task.
+  native-language bridge, always written by generation and shown at spot-error's
+  one help level (`presentation.showHint`, from `$lib/challenges/serve`); some
+  rows written by an earlier build lack it altogether, and then the wrong word
+  has to be judged from the target-language sentence alone.
 
   Grading is a plain index comparison, like multiple choice: the learner picked
   a token rather than producing a string, so there is no fuzzy matching and this

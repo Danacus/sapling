@@ -1,8 +1,8 @@
 /**
- * Serving through the wasm seam. The ladders and their cases are Rust's
- * (`crates/sapling-challenges`' `serve.rs` and `ladder.rs`); this pins what
- * the TypeScript side adds — the readings arriving as a `Map`, a seed
- * replaying them — and the bare-render defaults, which are this side's.
+ * Serving through the wasm seam. The help levels and their cases are Rust's
+ * (`crates/sapling-challenges`' `serve.rs`, `help.rs` and `fits.rs`); this pins
+ * what the TypeScript side adds — the readings arriving as a `Map` — and the
+ * bare-render defaults, which are this side's.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -51,33 +51,24 @@ const wordOrder: WordOrderChallenge = {
 };
 
 describe('presentationFor', () => {
-	it('sizes support off the weakest word and hands the readings back as a Map', () => {
-		const fresh = presentationFor(cloze, [item('w', 0)], { romanizationMode: 'on' });
-		expect(fresh).toEqual({
+	it('shows the help level serving picked, and hands the readings back as a Map', () => {
+		expect(presentationFor(cloze, 'pick-4')).toEqual({
 			showHint: true,
-			bankSize: 3,
+			bankSize: 4,
 			distractorTiles: 0,
 			readings: ALL_READINGS,
 			listening: false,
 			shown: 'pick-4'
 		});
-
-		const owned = presentationFor(cloze, [item('w', 0.9)], {
-			romanizationMode: 'adaptive',
-			seed: 7
-		});
-		expect(owned.showHint).toBe(false);
-		expect(owned.bankSize).toBe(0);
-		expect(owned.readings.byTerm).toBeInstanceOf(Map);
-		expect(owned.readings.byTerm.get('w')).toBe(false);
+		const typed = presentationFor(cloze, 'typed-hidden');
+		expect(typed.showHint).toBe(false);
+		expect(typed.bankSize).toBe(0);
+		expect(typed.readings.byTerm).toBeInstanceOf(Map);
+		expect(typed.readings.sentence).toBe(false);
 	});
 
-	it('replays its reading rolls from a seed', () => {
-		const words = ['a', 'b', 'c', 'd', 'e'].map((id) => item(id, 0.6));
-		const roll = (seed: number) =>
-			presentationFor({ ...cloze, itemIds: ['a'] }, words, { romanizationMode: 'adaptive', seed })
-				.readings;
-		expect(roll(3)).toEqual(roll(3));
+	it('shows a help level this build does not know at the easiest step', () => {
+		expect(presentationFor(cloze, 'pick-9').shown).toBe('pick-4');
 	});
 });
 

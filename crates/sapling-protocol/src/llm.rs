@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn a_mock_top_up_answers_its_challenges() {
         let mock = Llm::new(Offline, None);
-        let want = r#"{"item":{"id":"w","term":"hola","meaning":"hi"},"kind":{"type":"recognize-mc"},"difficulty":1}"#;
+        let want = r#"{"item":{"id":"w","term":"hola","meaning":"hi"},"kind":{"type":"recognize-mc"},"length":1}"#;
         let answer = call(
             &mock,
             "generateBatch",

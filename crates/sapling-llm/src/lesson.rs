@@ -213,7 +213,7 @@ fn payload(args: &BatchArgs, request: &TypeRequest) -> String {
             if !want.item.meaning.is_empty() {
                 entry.insert("m".into(), json!(want.item.meaning));
             }
-            entry.extend(request.kind.params(want.difficulty));
+            entry.extend(request.kind.params(want.length));
             Value::Object(entry)
         })
         .collect();
@@ -488,7 +488,6 @@ mod tests {
     use crate::client::fake::{ok, status};
     use crate::client::{Endpoint, HttpRequest, HttpResponse, ProgressStep};
     use pollster::block_on;
-    use sapling_challenges::difficulty::demand_of;
     use sapling_domain::types::Level;
     use std::future::{ready, Future};
     use std::rc::Rc;
@@ -553,7 +552,7 @@ mod tests {
         }
     }
 
-    fn want(id: &str, term: &str, kind: WireType, rung: u8) -> Want {
+    fn want(id: &str, term: &str, kind: WireType, length: u8) -> Want {
         Want {
             item: WantItem {
                 id: id.into(),
@@ -561,7 +560,7 @@ mod tests {
                 meaning: format!("meaning of {term}"),
             },
             kind: ChallengeKind { kind },
-            difficulty: rung,
+            length,
         }
     }
 
@@ -635,7 +634,7 @@ mod tests {
     #[test]
     fn the_payload_sends_sizes_shared_blocks_first_and_ids_never_for_known() {
         let mut batch = args(vec![
-            want("a", "la cuenta", WireType::MultiCloze, 4),
+            want("a", "la cuenta", WireType::MultiCloze, 14),
             want("b", "pedir", WireType::MultiCloze, 1),
         ]);
         batch.topic = Some(" restaurant ".into());
@@ -883,9 +882,6 @@ mod tests {
             for (challenge, kind) in result.challenges.iter().zip(kinds) {
                 assert!(challenge.item_ids().contains(&"a".to_owned()));
                 assert_eq!(challenge.check_shape(), Ok(()), "{kind:?}");
-                if let Some(plannable) = kind.plannable() {
-                    assert_eq!(demand_of(challenge), plannable.demand, "{kind:?}");
-                }
             }
             assert_eq!(result.challenges[7].item_ids(), ["a", "k"]);
             assert_eq!(result.usage, TokenUsage::default());

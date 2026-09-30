@@ -59,6 +59,7 @@ export const getChallengesByIds = forward('getChallengesByIds');
 
 export const addResult = forward('addResult');
 export const recentResults = forward('recentResults');
+export const getDifficultyParts = forward('getDifficultyParts');
 export const getDailyActivity = forward('getDailyActivity');
 
 export const addText = forward('addText');

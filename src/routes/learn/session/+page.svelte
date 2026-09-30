@@ -41,9 +41,9 @@
 	import type { Grade } from '$lib/srs';
 	import { runSync } from '$lib/sync';
 	import { taskStore } from '$lib/tasks/store.svelte';
-	import { getTtsEngine, preloadVoice, sherpaSupports, ttsAvailable, warmSpeech } from '$lib/tts';
+	import { getTtsEngine, preloadVoice, sherpaSupports, warmSpeech } from '$lib/tts';
 	import type { Challenge, KnowledgeItem, Profile, Verdict } from '$lib/types';
-	import { getListeningMode, getRomanizationMode } from '$lib/ui/prefs';
+	import { getRomanizationMode } from '$lib/ui/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
@@ -87,6 +87,12 @@
 	 */
 	let queue: Challenge[] = [];
 	let nextIndex = 0;
+	/**
+	 * The help level each planned challenge was picked at, by id — what its
+	 * presentation shows and its answer records. A match round is not in it
+	 * and shows as `plain`.
+	 */
+	let shownById = new Map<string, string>();
 
 	/** Every known item; what the free match-pairs rounds are drawn from. */
 	let items = $state<KnowledgeItem[]>([]);
@@ -96,12 +102,12 @@
 	/**
 	 * Everything about {@link current} decided at serve time rather than
 	 * written by the model — the native-language hint, the cloze/multi-cloze
-	 * bank size, the word-order distractor-tile count, and which readings to
-	 * show. Built once in {@link show} from the challenge's weakest word and
-	 * the learner's mode, and for the same reason: a row carries its full
-	 * content for life, and only the rung the word is at *now* says how much of
-	 * it the learner still needs. The readings travel inside the same object so
-	 * a component has one serve-time prop, not two.
+	 * bank size, the word-order distractor-tile count, whether its reading
+	 * shows, whether it is heard first. Built once in {@link show} from the help
+	 * level the plan picked for it: a row carries its full content for life,
+	 * and only how the learner stands with its words *now* says how much of it
+	 * they still need. The readings travel inside the same object so a
+	 * component has one serve-time prop, not two.
 	 */
 	let currentPresentation = $state<Presentation | undefined>(undefined);
 	/**
@@ -212,6 +218,7 @@
 		// `warmSession` below is the reason: a round that only came into existence
 		// mid-play could never have its tile audio pre-rendered.
 		queue = interleaveMatchRounds(ready.challenges, items);
+		shownById = new Map(ready.picks.map((pick) => [pick.challenge.id, pick.shown]));
 		nextIndex = 0;
 		plannedLlm = ready.challenges.length;
 		plannedSteps = queue.length;
@@ -355,10 +362,7 @@
 	function show(challenge: Challenge): void {
 		const at = Date.now();
 		challengeShownAt = at;
-		currentPresentation = presentationFor(challenge, items, {
-			romanizationMode,
-			audio: listeningEnabled && ttsAvailable(targetLanguage)
-		});
+		currentPresentation = presentationFor(challenge, shownById.get(challenge.id) ?? 'plain');
 		current = challenge;
 		// Warm this challenge's own audio while the learner is still reading it.
 		// The queue loop covers the whole session now, so it has usually got there
@@ -488,8 +492,8 @@
 	 * "Skip": an answer event like any other, with the verdict a skip
 	 * honestly deserves. `wrong` counts as a miss in the summary, and
 	 * `applyResult` grades the item FSRS-`Again` — which is exactly "I could not
-	 * produce this". That grade lowers the word's strength, and so the ladder
-	 * rung the next top-up writes it at; nothing else carries the skip forward.
+	 * produce this" — and the difficulty model reads it as the miss it is, so
+	 * the word's skill falls and the next pick asks less of it.
 	 */
 	function skipCurrent(): void {
 		const challenge = current;
@@ -638,8 +642,6 @@
 
 	/** Read once — the toggle lives in Settings, not mid-session. */
 	const romanizationMode = getRomanizationMode();
-	/** Read once, like the romanization mode: listening is a Settings toggle. */
-	const listeningEnabled = getListeningMode();
 	/**
 	 * The summary's new-word list. A word the learner has just been drilled on
 	 * for the first time is by definition not one they own yet, so adaptive mode

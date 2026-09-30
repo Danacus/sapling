@@ -190,7 +190,7 @@ pub fn simulate(options: SimOptions) -> Simulation {
         .into_iter()
         .filter(|k| k.is_active())
         .collect();
-    let target = Aim::Normal.target();
+    let target = crate::model::target(Aim::Normal);
 
     for day in 0..options.days {
         let morning = START + day as f64 * DAY;
