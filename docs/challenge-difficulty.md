@@ -1,8 +1,8 @@
 # Challenge difficulty — design
 
-Status: **spec, not implemented.** Replaces the rung/tier/band machinery in
-`crates/sapling-challenges` and the per-rung writing sizes in
-`crates/sapling-llm/lessons/`. Streaming (§11) builds on it and comes after.
+Status: **implemented**, all five steps of §13. The contracts are
+`.claude/rules/challenges.md`, `session.md` and `data.md`; the calibration
+command is §12a.
 
 ## 1. Why
 

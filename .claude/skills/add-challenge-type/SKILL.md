@@ -121,7 +121,7 @@ it.
 - Difficulty is deliberately **not** consulted by `check`. Grading stays
   type-blind: a verdict is FSRS's evidence about the *word* and the difficulty
   model's evidence about the row, so difficulty shapes the question stream
-  (`sapling-challenges`' `fits.rs` and `session.rs`), never what an answer is
+  (`sapling-challenges`' `fits.rs` and `stream.rs`), never what an answer is
   worth. Do not "improve" this by weighting grades.
 - A multi-string answer crosses the seam as one string (a multi-cloze logs
   `"1: a · 2: b"`); if the new type needs a format like that, the component's

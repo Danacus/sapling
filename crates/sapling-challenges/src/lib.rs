@@ -5,8 +5,9 @@
 //! difficulty model (`model.rs`, replayed from the log by `replay.rs`,
 //! measured by `calibrate.rs`) — and the one check both planners ask
 //! (`fits.rs`), what a served one shows (`serve.rs`), the free match round
-//! (`match_pairs.rs`), and the two planners over the pool: which challenges a
-//! session plays (`session.rs`) and what a top-up writes (`topup.rs`). The
+//! (`match_pairs.rs`), and the two planners over the pool: which challenge
+//! the practice stream serves next (`stream.rs`) and what a top-up writes
+//! (`topup.rs`). The
 //! kinds a challenge is written as are `kinds.rs`; the numbers are data
 //! (`data/*.json`).
 //!
@@ -30,8 +31,8 @@ pub mod pool;
 pub mod replay;
 pub mod rng;
 pub mod serve;
-pub mod session;
 pub mod sim;
+pub mod stream;
 pub mod text;
 pub mod topup;
 pub mod word;

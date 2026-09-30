@@ -10,6 +10,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use ts_rs::TS;
 
+use sapling_challenges::challenge::MatchPairsChallenge;
 use sapling_challenges::challenge::{MultiClozeChallenge, WordOrderChallenge};
 use sapling_challenges::fits::Serving;
 use sapling_challenges::grade::{self, MultiClozeGrade};
@@ -17,7 +18,7 @@ use sapling_challenges::help::HelpLevel;
 use sapling_challenges::matcher::{self, AnswerMatch};
 use sapling_challenges::pool::lenient_rows;
 use sapling_challenges::serve::{self, Presentation};
-use sapling_challenges::session::{self, Planned, Slot};
+use sapling_challenges::stream::{self, Next, Outlook};
 use sapling_challenges::text::WordCount;
 use sapling_challenges::topup::{self, TopUpCoverage};
 use sapling_challenges::word::{hide_reading_probability, maturity_for_strength, Maturity};
@@ -74,9 +75,9 @@ pub struct StrengthArgs {
 }
 
 /// A pool as the host read it; a row this build cannot read keeps its place
-/// and is never planned.
+/// and is never picked.
 #[derive(Debug, Deserialize, TS)]
-pub struct PlanSessionArgs {
+pub struct StreamArgs {
     #[serde(deserialize_with = "lenient_rows")]
     #[ts(as = "Vec<PoolRow>")]
     pub pool: Vec<Option<PoolRow>>,
@@ -86,20 +87,34 @@ pub struct PlanSessionArgs {
     #[serde(default)]
     #[ts(optional)]
     pub serving: Option<Serving>,
-    /// Slots to aim for.
+    /// The challenge ids this stream has already shown: never picked again.
     #[serde(default)]
     #[ts(optional)]
-    pub target: Option<i64>,
-    /// The ceiling, whatever `target` says.
-    #[serde(default)]
-    #[ts(optional)]
-    pub limit: Option<i64>,
+    pub served: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, TS)]
-pub struct InterleaveArgs {
-    /// Each planned challenge's `itemIds`, in play order.
-    pub plan: Vec<Vec<String>>,
+#[serde(rename_all = "camelCase")]
+pub struct LowWaterArgs {
+    /// The learner's recent time per answer, in milliseconds.
+    #[serde(default)]
+    #[ts(optional)]
+    pub pace_ms: Option<f64>,
+    /// How long the last batch took to come back, in milliseconds.
+    #[serde(default)]
+    #[ts(optional)]
+    pub batch_ms: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct EarlyArgs {
+    pub item_ids: Vec<String>,
+    pub words: Vec<Word>,
+}
+
+#[derive(Debug, Deserialize, TS)]
+pub struct MatchRoundArgs {
     pub words: Vec<Word>,
     #[serde(default)]
     #[ts(optional)]
@@ -211,13 +226,25 @@ challenges! {
         hideReadingProbability(args: StrengthArgs) -> f64 {
             hide_reading_probability(args.strength)
         }
-        /// The session: positions into `pool`, in play order, each at its help level.
-        planSession(args: PlanSessionArgs) -> Vec<Planned> {
-            session::plan_session(&args.pool, &args.words, args.now, &args.serving.unwrap_or_default(), args.target, args.limit)
+        /// The stream's next challenge — a position into `pool` at its help level — or none when nothing fits.
+        nextPick(args: StreamArgs) -> Option<Next> {
+            stream::next_pick(&args.pool, &args.words, args.now, &args.serving.unwrap_or_default(), &args.served.unwrap_or_default())
         }
-        /// The queue: each planned challenge by its position, with the match rounds between.
-        interleaveMatchRounds(args: InterleaveArgs) -> Vec<Slot> {
-            session::interleave_match_rounds(&args.plan, &args.words, &mut Rng::from_seed(args.seed))
+        /// How many upcoming words have a pick ready, and whether a top-up has anything to write.
+        streamOutlook(args: StreamArgs) -> Outlook {
+            stream::outlook(&args.pool, &args.words, args.now, &args.serving.unwrap_or_default(), &args.served.unwrap_or_default())
+        }
+        /// The ready words below which the stream asks for a batch, at this pace.
+        lowWaterMark(args: LowWaterArgs) -> usize {
+            stream::low_water_mark(args.pace_ms, args.batch_ms)
+        }
+        /// Whether a challenge about these words counts towards the next match round.
+        isEarly(args: EarlyArgs) -> bool {
+            stream::is_early(&args.item_ids, &args.words)
+        }
+        /// A free match round from the early words, or none when there are too few.
+        matchRound(args: MatchRoundArgs) -> Option<MatchPairsChallenge> {
+            stream::match_round(&args.words, &mut Rng::from_seed(args.seed))
         }
         /// What the pool is missing, most urgent word first.
         planTopUp(args: TopUpArgs) -> Vec<Want> {
@@ -272,21 +299,26 @@ mod tests {
     }
 
     #[test]
-    fn a_plan_answers_positions_and_skips_what_it_cannot_read() {
+    fn a_pick_answers_a_position_and_skips_what_it_cannot_read() {
         let row = json!({ "id": "c", "type": "multiple-choice", "direction": "toNative", "prompt": "p",
             "options": ["a", "b", "c", "d"], "correctIndex": 0, "itemIds": ["w"],
             "generatedAt": 0, "timesServed": 0, "lastServedAt": null, "reported": false });
         let alien = json!({ "id": "x", "type": "dictation", "itemIds": ["w"] });
         let words =
             json!([{ "id": "w", "term": "t", "meaning": "m", "kind": "vocab", "fsrsCard": null }]);
-        let plan = call(
-            "planSession",
-            json!({ "pool": [alien, row], "words": words, "now": 1 }),
+        let next = call(
+            "nextPick",
+            json!({ "pool": [alien, row.clone()], "words": words, "now": 1 }),
         )
         .unwrap();
-        assert_eq!(plan[0]["at"], json!(1));
-        assert_eq!(plan[0]["shown"], json!("plain"));
-        assert_eq!(plan.as_array().unwrap().len(), 1);
+        assert_eq!(next["at"], json!(1));
+        assert_eq!(next["shown"], json!("plain"));
+        let done = call(
+            "nextPick",
+            json!({ "pool": [row], "words": words, "now": 1, "served": ["c"] }),
+        )
+        .unwrap();
+        assert_eq!(done, Value::Null);
     }
 
     #[test]

@@ -17,9 +17,9 @@ use crate::word::Word;
 /// that the sentence is re-read rather than recognized.
 pub const RESERVE_GAP: f64 = 3.0 * 24.0 * 60.0 * 60.0 * 1000.0;
 
-/// The most model-written challenges one session serves, and how far ahead
-/// coverage looks when nothing is due.
-pub const SESSION_LENGTH: usize = 20;
+/// How far ahead the stream looks: the upcoming words its refill and the
+/// start screen's coverage figure are about when nothing is due.
+pub const UPCOMING: usize = 20;
 
 /// A stored challenge with the pool's bookkeeping.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

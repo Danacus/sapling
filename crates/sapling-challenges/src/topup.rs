@@ -26,7 +26,7 @@ use crate::fits::{best_fit, inside, Serving};
 use crate::help::HelpLevel;
 use crate::kinds::{active_kinds, kind_of, ChallengeKind, Want, WantItem, WireType};
 use crate::model::{logit, target};
-use crate::pool::{is_playable, is_rested, known_ids, PoolRow, SESSION_LENGTH};
+use crate::pool::{is_playable, is_rested, known_ids, PoolRow, UPCOMING};
 use crate::text::js_trim;
 use crate::word::{by_id, Word};
 
@@ -44,7 +44,7 @@ pub const WRITE_MEMORY: f64 = 0.9;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct TopUpCoverage {
     /// The words the figure is about: every due word, or when none is due the
-    /// next `SESSION_LENGTH` soonest-due ones.
+    /// next `UPCOMING` soonest-due ones.
     pub upcoming: usize,
     /// Of those, the words with a rested row that fits them.
     pub covered: usize,
@@ -237,7 +237,7 @@ pub fn top_up_coverage(
     let upcoming: &[&Word] = if due {
         &owed
     } else {
-        &ahead[..ahead.len().min(SESSION_LENGTH)]
+        &ahead[..ahead.len().min(UPCOMING)]
     };
     TopUpCoverage {
         upcoming: upcoming.len(),
@@ -613,7 +613,7 @@ pub(crate) mod tests {
         assert_eq!(
             coverage(&[], &ahead),
             TopUpCoverage {
-                upcoming: SESSION_LENGTH,
+                upcoming: UPCOMING,
                 covered: 0,
                 wants: MAX_TOPUP_WANTS,
                 due: false

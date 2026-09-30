@@ -9,11 +9,12 @@
  *
  * **Generation and play are decoupled.** Every challenge ever generated lives
  * in a persistent pool (the `challenges` table); answering one stamps it
- * rather than consuming it. {@link generateChallenges} is an explicit,
- * backgroundable user action that tops the pool up with what it is missing
- * ({@link planTopUp}), and {@link planSession} assembles a session out of
- * whatever is already there — so starting is instant, always, and never waits
- * on the network.
+ * rather than consuming it. Practice is one stream that runs until the learner
+ * stops (`./stream`): each next challenge is picked from what the pool holds
+ * now ({@link nextPick}), and {@link generateChallenges} tops the pool up with
+ * what it is missing ({@link planTopUp}) — in the background, as a task, when
+ * the learner asks or when the stream runs low. Starting never waits on the
+ * network.
  *
  * Token economy, restated because it is what allows that: one `getBatch` call
  * fills the whole top-up — internally a handful of short concurrent requests,
@@ -38,14 +39,14 @@ import {
 } from '$lib/db';
 import type { ChallengeRow, ReasoningEffort } from '$lib/db';
 import { challengeOf } from '$lib/db';
-import { SESSION_LENGTH } from '$lib/db/generated/challenges';
-import type { TopUpCoverage } from '$lib/db/generated/index';
+import { MATCH_PAIRS_EVERY, UPCOMING } from '$lib/db/generated/challenges';
+import type { Outlook, TopUpCoverage } from '$lib/db/generated/index';
 import { getBatch, isMockMode } from '$lib/llm';
 import type { BatchArgs, OnProgress, TokenUsage, Want } from '$lib/llm';
 import { Grade, gradeFromResult, isDue } from '$lib/srs';
 import { asWords, callChallenges } from '$lib/challenges/core';
 import { storedDefFor } from '$lib/challenges/types';
-import type { Challenge, KnowledgeItem, Profile, Verdict } from '$lib/types';
+import type { Challenge, KnowledgeItem, MatchPairsChallenge, Profile, Verdict } from '$lib/types';
 import { servingFor, type DeviceServing, type Serving } from './serving';
 
 export { deviceServing, servingFor, type DeviceServing, type Serving } from './serving';
@@ -55,11 +56,11 @@ export { deviceServing, servingFor, type DeviceServing, type Serving } from './s
 /* -------------------------------------------------------------------------- */
 
 /**
- * The most model-written challenges one session serves — `crates/sapling-challenges`'
- * `pool.rs`, which also owns the rest gap, the session target and the match
- * round spacing.
+ * How many upcoming words the stream's refill and the start screen's figure
+ * are about, and how many early-word challenges a match round follows —
+ * `crates/sapling-challenges`' `pool.rs` and `stream.rs`.
  */
-export { SESSION_LENGTH };
+export { MATCH_PAIRS_EVERY, UPCOMING };
 
 /**
  * `answerGiven` written when the learner presses "Too hard — skip".
@@ -138,27 +139,6 @@ export function sessionSummary(answers: SessionAnswer[]): SessionSummary {
 }
 
 /**
- * Splices the free match-pairs rounds into a planned session, returning the one
- * queue the learn screen walks — built at plan time so the TTS warm loop, the
- * progress math and the walk all see the same session. Rust decides where the
- * rounds go and builds them (`crates/sapling-challenges`' `session.rs`): one
- * after every fourth challenge that touches an early word, never last, five
- * pairs where the words allow. `seed` replays the rounds' draws.
- */
-export function interleaveMatchRounds(
-	challenges: Challenge[],
-	items: KnowledgeItem[],
-	seed?: number
-): Challenge[] {
-	const slots = callChallenges('interleaveMatchRounds', {
-		plan: challenges.map((challenge) => challenge.itemIds),
-		words: asWords(items),
-		...(seed === undefined ? {} : { seed })
-	});
-	return slots.map((slot) => (typeof slot === 'number' ? challenges[slot]! : slot));
-}
-
-/**
  * The canonical target-language audio for a challenge's answer — a
  * presentation fact (`$lib/challenges/display`), exported here where the
  * session screen has always found it.
@@ -166,55 +146,100 @@ export function interleaveMatchRounds(
 export { spokenAnswerFor } from '$lib/challenges/display';
 
 /* -------------------------------------------------------------------------- */
-/* Session planning                                                            */
+/* The stream's decisions (pure)                                               */
 /* -------------------------------------------------------------------------- */
 
-export interface PlanSessionOptions {
-	/** Slots to aim for; Rust's `BATCH_TARGET` when absent. */
-	target?: number;
-	/** Hard ceiling, whatever `target` says; {@link SESSION_LENGTH} when absent. */
-	limit?: number;
-	/** What the picks are made against; starting values, the normal aim and no listening when absent. */
+export interface StreamOptions {
+	/** What the pick is made against; starting values, the normal aim and no listening when absent. */
 	serving?: Serving;
+	/** The challenge ids this stream has already shown: never picked again. */
+	served?: readonly string[];
 }
 
-/** One planned challenge, at the help level it is served at. */
+/** One challenge the stream serves, at the help level it is served at. */
 export interface SessionPick {
 	challenge: Challenge;
 	/** The help level (`crates/sapling-challenges`' `help.rs`): what `presentationFor` shows and the answer records. */
 	shown: string;
 	/** The predicted chance of a correct answer at that help level. */
 	chance: number;
+	/** Whether its word is due, rather than reviewed ahead. */
+	due: boolean;
 }
 
-/**
- * Builds the session: which pooled challenges to play, in order, and at which
- * help level. Rust plans it (`crates/sapling-challenges`' `session.rs`) — due
- * words first, most overdue first, each claiming the row whose best help level
- * puts its predicted chance closest to the aim, then the words not yet due,
- * then the leftovers; a row that fits no help level for its words is never
- * served — and hands back positions into `pool`, so what plays is the row as
- * stored, minus its bookkeeping.
- */
-export function planSession(
-	pool: ChallengeRow[],
+function streamArgs(
+	pool: readonly ChallengeRow[],
 	items: KnowledgeItem[],
 	now: number,
-	opts: PlanSessionOptions = {}
-): SessionPick[] {
-	const planned = callChallenges('planSession', {
-		pool,
+	opts: StreamOptions
+) {
+	return {
+		pool: [...pool],
 		words: asWords(items),
 		now,
 		...(opts.serving === undefined ? {} : { serving: opts.serving }),
-		...(opts.target === undefined ? {} : { target: opts.target }),
-		...(opts.limit === undefined ? {} : { limit: opts.limit })
+		...(opts.served === undefined ? {} : { served: [...opts.served] })
+	};
+}
+
+/**
+ * The stream's next challenge — Rust's (`crates/sapling-challenges`'
+ * `stream.rs`): the most urgent word with a rested row that fits it (due words
+ * first, most overdue first, then the words not yet due), that word's row
+ * whose best help level sits closest to the aim — or `null` when nothing in
+ * the pool fits any word. What plays is the row as stored, minus its
+ * bookkeeping.
+ */
+export function nextPick(
+	pool: readonly ChallengeRow[],
+	items: KnowledgeItem[],
+	now: number,
+	opts: StreamOptions = {}
+): SessionPick | null {
+	const next = callChallenges('nextPick', streamArgs(pool, items, now, opts));
+	if (!next) return null;
+	return {
+		challenge: challengeOf(pool[next.at]!),
+		shown: next.shown,
+		chance: next.chance,
+		due: next.due
+	};
+}
+
+/** How many of the next {@link UPCOMING} words have a pick ready, and what a top-up would write. */
+export function streamOutlook(
+	pool: readonly ChallengeRow[],
+	items: KnowledgeItem[],
+	now: number,
+	opts: StreamOptions = {}
+): Outlook {
+	return callChallenges('streamOutlook', streamArgs(pool, items, now, opts));
+}
+
+export type { Outlook };
+
+/**
+ * The ready words below which the stream asks for a batch: enough to keep
+ * answering, at `paceMs` a challenge, while one that takes `batchMs` comes back.
+ */
+export function lowWaterMark(paceMs?: number, batchMs?: number): number {
+	return callChallenges('lowWaterMark', {
+		...(paceMs === undefined ? {} : { paceMs }),
+		...(batchMs === undefined ? {} : { batchMs })
 	});
-	return planned.map(({ at, shown, chance }) => ({
-		challenge: challengeOf(pool[at]!),
-		shown,
-		chance
-	}));
+}
+
+/** Whether a challenge counts towards the next match round: it is about an early word. */
+export function isEarlyChallenge(challenge: Challenge, items: KnowledgeItem[]): boolean {
+	return callChallenges('isEarly', { itemIds: challenge.itemIds, words: asWords(items) });
+}
+
+/** A free match round drawn from the early words, or `null` when there are too few. `seed` replays it. */
+export function matchRound(items: KnowledgeItem[], seed?: number): MatchPairsChallenge | null {
+	return callChallenges('matchRound', {
+		words: asWords(items),
+		...(seed === undefined ? {} : { seed })
+	});
 }
 
 /* -------------------------------------------------------------------------- */
@@ -222,7 +247,7 @@ export function planSession(
 /* -------------------------------------------------------------------------- */
 
 export interface PlanTopUpOptions {
-	/** What coverage is judged against; see {@link PlanSessionOptions.serving}. */
+	/** What coverage is judged against; see {@link StreamOptions.serving}. */
 	serving?: Serving;
 	/** Replays the tie-breaks between equally good kinds. */
 	seed?: number;
@@ -457,35 +482,31 @@ export async function generateChallenges(
 }
 
 /* -------------------------------------------------------------------------- */
-/* Starting a session (database)                                               */
+/* The start screen (database)                                                 */
 /* -------------------------------------------------------------------------- */
 
-/** Everything the learn screen needs to render its start screen and then play. */
-export interface SessionPlan {
-	/** The challenges to play, in order, each at its help level. Empty means there is nothing to do. */
-	picks: SessionPick[];
-	/** The same challenges, without their help levels. */
-	challenges: Challenge[];
-	/** Every item known right now — the match-pairs pool and the item lookup. */
+/** What the learn screen shows before the stream starts. */
+export interface PracticeOverview {
+	/** Every item known right now. */
 	items: KnowledgeItem[];
 	/** Words whose card is due at `now`. */
 	dueCount: number;
+	/** The first challenge the stream would serve; `null` when nothing fits yet. */
+	first: SessionPick | null;
 	/**
-	 * How well the pool covers the words this session will serve, and what a
-	 * top-up would write — the same `planTopUp` walk generation makes, counted
-	 * rather than planned (`topUpCoverage`). This is the start screen's freshness
-	 * figure and the Generate button's label in one: "N of M due words have fresh
-	 * challenges" is exactly the question the learner is asking, and `wants`
-	 * being zero is exactly when the button has nothing left to write and says
-	 * so. A pool-wide count of rested rows used to stand here, and it could say
-	 * "running low" on a day every due word was already covered.
+	 * How well the pool covers the upcoming words, and what a top-up would
+	 * write — the same `planTopUp` walk generation makes, counted rather than
+	 * planned (`topUpCoverage`). The start screen's figure and the Generate
+	 * button's label in one: "N of M due words have fresh challenges" is exactly
+	 * the question the learner is asking, and `wants` being zero is exactly when
+	 * the button has nothing left to write and says so.
 	 */
 	topUp: TopUpCoverage;
 }
 
 export type { TopUpCoverage };
 
-export interface StartSessionOptions extends Omit<PlanSessionOptions, 'serving'> {
+export interface OverviewOptions {
 	/** Epoch ms; defaults to `Date.now()`. */
 	now?: number;
 	/** This device's help-level bounds; read from the preferences when absent. */
@@ -493,35 +514,24 @@ export interface StartSessionOptions extends Omit<PlanSessionOptions, 'serving'>
 }
 
 /**
- * Reads the pool and plans a session from it. No network, no generation, no
- * waiting: this is what makes "Start session" instant, whatever state the
- * learner's key or connection is in.
- *
- * Cheap enough to re-run whenever the pool may have moved (a background
- * generation finishing, say) so the start screen's counts stay honest. The
- * counts describe the *schedule* and the *pool*, not the plan: `dueCount` is
- * what is actually due (the plan routinely reaches past it into early review),
- * and `topUp` is what the next generation would find missing.
+ * Reads the pool and says what practice would start with. No network, no
+ * generation, no waiting. Cheap enough to re-run whenever the pool may have
+ * moved (a background generation finishing, say) so the start screen's counts
+ * stay honest.
  */
-export async function startSession(opts: StartSessionOptions = {}): Promise<SessionPlan> {
+export async function practiceOverview(opts: OverviewOptions = {}): Promise<PracticeOverview> {
 	const now = opts.now ?? Date.now();
-	const { now: _now, device, ...planOpts } = opts;
-
 	const [pool, items, parts, profile] = await Promise.all([
 		getPool(),
 		getAllItems(),
 		getDifficultyParts(),
 		getProfile()
 	]);
-	const serving = servingFor(profile, parts, device);
-	const picks = planSession(pool, items, now, { ...planOpts, serving });
-	const dueCount = items.filter((item) => isDue(item, now)).length;
-
+	const serving = servingFor(profile, parts, opts.device);
 	return {
-		picks,
-		challenges: picks.map((pick) => pick.challenge),
 		items,
-		dueCount,
+		dueCount: items.filter((item) => isDue(item, now)).length,
+		first: nextPick(pool, items, now, { serving }),
 		topUp: topUpCoverage(pool, items, now, serving)
 	};
 }

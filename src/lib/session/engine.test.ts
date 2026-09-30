@@ -1,12 +1,13 @@
 /**
  * Unit tests for the session engine's pure half, through the wasm core.
  *
- * The planners are Rust's and tested there (`crates/sapling-challenges`'
- * `session.rs` and `topup.rs`); what is left here is the seam — positions
+ * The decisions are Rust's and tested there (`crates/sapling-challenges`'
+ * `stream.rs` and `topup.rs`); what is left here is the seam — positions
  * mapped back to the stored rows, the batch arguments built around the
- * wants — plus the session accounting, and a mock top-up played end to end.
+ * wants — plus the session accounting, and a mock top-up streamed end to end.
  * The database-touching half (`applyResult`, `generateChallenges`,
- * `startSession`) is a thin wrapper, like `src/lib/db/repositories.ts`.
+ * `practiceOverview`, `./stream`) is a thin wrapper, like
+ * `src/lib/db/repositories.ts`, and `stream.test.ts` runs it against a store.
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -28,12 +29,15 @@ import type {
 	WordOrderChallenge
 } from '$lib/types';
 import {
-	SESSION_LENGTH,
-	interleaveMatchRounds,
+	MATCH_PAIRS_EVERY,
+	isEarlyChallenge,
+	lowWaterMark,
+	matchRound,
+	nextPick,
 	planRefill,
-	planSession,
 	sessionSummary,
 	spokenAnswerFor,
+	streamOutlook,
 	type SessionAnswer
 } from './engine';
 
@@ -152,225 +156,73 @@ function strongItem(id: string, dueOffset: number): KnowledgeItem {
 	return atStrength(item(id, dueOffset), 0.9);
 }
 
-const ids = (challenges: Challenge[]) => challenges.map((challenge) => challenge.id);
-
 /* -------------------------------------------------------------------------- */
 
-describe('interleaveMatchRounds', () => {
-	const generated = (n: number): Challenge[] =>
-		Array.from({ length: n }, (_, i) => challengeOf(row(`c${i}`, ['k0'])));
+describe('match rounds', () => {
 	const known = (n: number) => Array.from({ length: n }, (_, i) => item(`k${i}`, -DAY));
 
-	it('keeps the plan in order with a round after every fourth early challenge, never last', () => {
-		const plan = generated(9);
-		const queue = interleaveMatchRounds(plan, known(6), 1);
-
-		expect(queue.map((challenge) => challenge.type === 'match-pairs')).toEqual([
-			false,
-			false,
-			false,
-			false,
-			true,
-			false,
-			false,
-			false,
-			false,
-			true,
-			false
-		]);
-		expect(queue.filter((challenge) => challenge.type !== 'match-pairs')).toEqual(plan);
-		expect(interleaveMatchRounds(plan, known(6), 1)).toEqual(queue);
-	});
-});
-
-describe('spokenAnswerFor', () => {
-	// The banner speaks this and the session screen pre-synthesizes it; these
-	// pin that both always get the canonical script form, never a romanization.
-	const base = { id: 'c1', itemIds: ['i1'] };
-
-	it('speaks the correct option of a toTarget multiple choice', () => {
-		expect(
-			spokenAnswerFor({
-				...base,
-				type: 'multiple-choice',
-				direction: 'toTarget',
-				prompt: 'the menu',
-				options: ['筷子', '菜单', '茶', '水'],
-				correctIndex: 1
-			})
-		).toBe('菜单');
+	it('come from early words, five pairs, and a seed replays them', () => {
+		const round = matchRound(known(8), 1)!;
+		expect(round.type).toBe('match-pairs');
+		expect(round.pairs).toHaveLength(5);
+		expect(matchRound(known(8), 1)!.itemIds).toEqual(round.itemIds);
+		expect(matchRound(known(2), 1)).toBeNull();
+		expect(matchRound([strongItem('a', -DAY), strongItem('b', -DAY), strongItem('c', -DAY)])).toBe(
+			null
+		);
 	});
 
-	it('speaks the canonical accepted answer of a toTarget typed translation', () => {
-		expect(
-			spokenAnswerFor({
-				...base,
-				type: 'typed-translation',
-				direction: 'toTarget',
-				prompt: 'the bill, please',
-				acceptedAnswers: ['买单', 'mǎidān', 'maidan']
-			})
-		).toBe('买单');
-	});
-
-	it('speaks a cloze as the whole sentence with the blank filled', () => {
-		expect(
-			spokenAnswerFor({
-				...base,
-				type: 'cloze',
-				direction: 'toTarget',
-				sentence: '请给我一份___。',
-				acceptedAnswers: ['菜单', 'càidān'],
-				translationHint: 'A menu, please.'
-			})
-		).toBe('请给我一份菜单。');
-	});
-
-	it('speaks a word-order answer as the assembled sentence, not tile by tile', () => {
-		expect(
-			spokenAnswerFor({
-				...base,
-				type: 'word-order',
-				direction: 'toTarget',
-				prompt: 'We would like to pay the bill.',
-				tiles: ['买单', '我们', '菜单', '想'],
-				answerTokens: ['我们', '想', '买单'],
-				answer: '我们想买单'
-			})
-		).toBe('我们想买单');
-	});
-
-	it('speaks the corrected spot-error sentence, never the broken one on screen', () => {
-		expect(
-			spokenAnswerFor({
-				...base,
-				type: 'spot-error',
-				// toNative, and still spoken: the sentence is target-language whichever
-				// way round the challenge is exercised.
-				direction: 'toNative',
-				tokens: ['我们', '想', '菜单'],
-				correctIndex: 2,
-				intendedWord: '买单',
-				correctedSentence: '我们想买单',
-				meaning: 'We would like to pay the bill.'
-			})
-		).toBe('我们想买单');
-	});
-
-	it('is silent when the answer is in the native language, or has no single answer', () => {
-		expect(
-			spokenAnswerFor({
-				...base,
-				type: 'multiple-choice',
-				direction: 'toNative',
-				prompt: '菜单',
-				options: ['the menu', 'the bill', 'the tea', 'the water'],
-				correctIndex: 0
-			})
-		).toBe('');
-		expect(
-			spokenAnswerFor({
-				...base,
-				type: 'typed-translation',
-				direction: 'toNative',
-				prompt: '买单',
-				acceptedAnswers: ['to pay the bill']
-			})
-		).toBe('');
-		expect(
-			spokenAnswerFor({
-				...base,
-				type: 'match-pairs',
-				direction: 'toNative',
-				pairs: [
-					{ a: '菜单', b: 'the menu' },
-					{ a: '买单', b: 'to pay the bill' }
-				]
-			})
-		).toBe('');
-	});
-
-	it('is silent on an empty accepted-answer list rather than speaking a bare gap', () => {
-		expect(
-			spokenAnswerFor({
-				...base,
-				type: 'cloze',
-				direction: 'toTarget',
-				sentence: '请给我一份___。',
-				acceptedAnswers: [],
-				translationHint: 'A menu, please.'
-			})
-		).toBe('');
-	});
-});
-
-describe('sessionSummary', () => {
-	const answers: SessionAnswer[] = [
-		{ challengeId: 'a', type: 'multiple-choice', verdict: 'correct', itemIds: ['i1'] },
-		{ challengeId: 'b', type: 'cloze', verdict: 'almost', itemIds: ['i1', 'i2'] },
-		{ challengeId: 'c', type: 'typed-translation', verdict: 'wrong', itemIds: ['i3'] },
-		{ challengeId: 'd', type: 'match-pairs', verdict: 'correct', itemIds: [] }
-	];
-
-	it('totals verdicts', () => {
-		const summary = sessionSummary(answers);
-		expect(summary.answered).toBe(4);
-		expect(summary.correct).toBe(2);
-		expect(summary.almost).toBe(1);
-		expect(summary.wrong).toBe(1);
-	});
-
-	it('counts almost as accepted and de-duplicates practised items', () => {
-		const summary = sessionSummary(answers);
-		expect(summary.accuracy).toBeCloseTo(3 / 4);
-		expect(summary.itemsPracticed).toBe(3);
-	});
-
-	it('is safe on an empty session', () => {
-		expect(sessionSummary([])).toEqual({
-			answered: 0,
-			correct: 0,
-			almost: 0,
-			wrong: 0,
-			accuracy: 0,
-			itemsPracticed: 0
-		});
+	it('follow challenges about early words only', () => {
+		const words = [item('new', -DAY), strongItem('owned', -DAY)];
+		expect(isEarlyChallenge(challengeOf(row('c1', ['new'])), words)).toBe(true);
+		expect(isEarlyChallenge(challengeOf(row('c2', ['owned'])), words)).toBe(false);
+		expect(MATCH_PAIRS_EVERY).toBe(4);
 	});
 });
 
 /* -------------------------------------------------------------------------- */
 
-describe('planSession', () => {
-	it('serves due words first, as the challenges they were stored as', () => {
+describe('nextPick', () => {
+	it('serves the most overdue word first, as the challenge it was stored as', () => {
 		const items = [item('a', -DAY), item('b', -10 * DAY), item('c', -3 * DAY)];
 		const pool = [row('ca', ['a'], { topic: 'at the market' }), row('cb', ['b']), row('cc', ['c'])];
-		const planned = planSession(pool, items, NOW, { target: 3 });
 
-		expect(ids(planned.map((pick) => pick.challenge))).toEqual(['cb', 'cc', 'ca']);
-		expect(planned[2]!.challenge).toEqual(challengeOf(pool[0]));
-		expect(planned[2]!.challenge).not.toHaveProperty('topic');
-		expect(planned[2]!.challenge).not.toHaveProperty('lastServedAt');
+		const first = nextPick(pool, items, NOW)!;
+		expect(first.challenge.id).toBe('cb');
+		expect(first.due).toBe(true);
+		const third = nextPick(pool, items, NOW, { served: ['cb', 'cc'] })!;
+		expect(third.challenge).toEqual(challengeOf(pool[0]));
+		expect(third.challenge).not.toHaveProperty('topic');
+		expect(third.challenge).not.toHaveProperty('lastServedAt');
 		// Each pick carries the help level it is served at and its predicted chance.
-		expect(planned[2]!.shown).toBe('plain');
-		expect(planned[2]!.chance).toBeGreaterThan(0.65);
+		expect(third.shown).toBe('plain');
+		expect(third.chance).toBeGreaterThan(0.65);
+		expect(nextPick(pool, items, NOW, { served: ['ca', 'cb', 'cc'] })).toBeNull();
 	});
 
-	it('respects the target and the ceiling, and never serves what does not fit the word', () => {
-		const items = [item('due', -DAY)];
-		const pool = Array.from({ length: 30 }, (_, i) =>
-			row(`c${i}`, ['due'], { generatedAt: NOW - i })
-		);
-		expect(planSession(pool, items, NOW, { target: 5 })).toHaveLength(5);
-		expect(planSession(pool, items, NOW, { target: 999 })).toHaveLength(SESSION_LENGTH);
-		expect(planSession(pool, items, NOW, { target: 999, limit: 3 })).toHaveLength(3);
-		expect(planSession([freeProductionRow('typed', ['due'])], items, NOW)).toEqual([]);
+	it('never serves what does not fit the word', () => {
+		expect(nextPick([freeProductionRow('typed', ['due'])], [item('due', -DAY)], NOW)).toBeNull();
 	});
 
 	it('is pure: it does not mutate the pool it is given', () => {
 		const pool = [row('c1', ['due']), row('c2', ['due'], { generatedAt: NOW })];
 		const snapshot = structuredClone(pool);
-		planSession(pool, [item('due', -DAY)], NOW);
+		nextPick(pool, [item('due', -DAY)], NOW);
 		expect(pool).toEqual(snapshot);
+	});
+});
+
+describe('streamOutlook', () => {
+	it('counts the upcoming words with a pick ready, and what a top-up would write', () => {
+		const items = [item('a', -2 * DAY), item('b', -DAY), item('c', DAY)];
+		const outlook = streamOutlook([row('ca', ['a'])], items, NOW);
+		expect(outlook).toEqual({ ready: 1, upcoming: 3, due: 2, wants: 4 });
+		expect(streamOutlook([row('ca', ['a'])], items, NOW, { served: ['ca'] }).ready).toBe(0);
+	});
+
+	it('asks for more ready words the faster the learner answers', () => {
+		expect(lowWaterMark()).toBe(5);
+		expect(lowWaterMark(5_000, 60_000)).toBeGreaterThan(lowWaterMark(30_000, 60_000));
 	});
 });
 
@@ -639,29 +491,42 @@ describe('session walkthrough (mock batch, no database)', () => {
 			reported: false
 		}));
 
-		// The session is planned once, up front — no database read mid-play — and
-		// the free rounds are spliced in there too, so play is one walk.
-		const planned = planSession(pool, items, NOW).map((pick) => pick.challenge);
-		const queue = interleaveMatchRounds(planned, items);
-
+		// One pick at a time, as the stream makes them — here without the store,
+		// so nothing the learner answers moves the schedule, and each pick is only
+		// kept from coming back by the stream's own served list. A round follows
+		// every fourth early-word challenge, and only when a pick follows it.
+		const served: string[] = [];
 		const answers: SessionAnswer[] = [];
 		let llmAnswered = 0;
 		let matchRounds = 0;
+		let earlySinceRound = 0;
 
-		for (const challenge of queue) {
-			if (llmAnswered >= SESSION_LENGTH) break;
-
-			const isMatch = challenge.type === 'match-pairs';
-			if (isMatch) matchRounds++;
-			const verdict = isMatch ? 'correct' : answerAs(challenge, llmAnswered);
-
-			if (!isMatch) llmAnswered++;
+		for (;;) {
+			const pick = nextPick(pool, items, NOW, { served });
+			if (!pick) break;
+			if (earlySinceRound >= MATCH_PAIRS_EVERY) {
+				earlySinceRound = 0;
+				const round = matchRound(items, matchRounds);
+				if (round) {
+					matchRounds++;
+					answers.push({
+						challengeId: round.id,
+						type: round.type,
+						verdict: 'correct',
+						itemIds: []
+					});
+				}
+			}
+			served.push(pick.challenge.id);
+			const challenge = pick.challenge;
 			answers.push({
 				challengeId: challenge.id,
 				type: challenge.type,
-				verdict,
-				itemIds: isMatch ? [] : challenge.itemIds
+				verdict: answerAs(challenge, llmAnswered),
+				itemIds: challenge.itemIds
 			});
+			llmAnswered++;
+			if (isEarlyChallenge(challenge, items)) earlySinceRound++;
 		}
 
 		return {
@@ -669,20 +534,19 @@ describe('session walkthrough (mock batch, no database)', () => {
 			matchRounds,
 			llmAnswered,
 			summary: sessionSummary(answers),
-			planned,
-			unplayed: planned.length - llmAnswered
+			written: pool.length
 		};
 	}
 
-	it('plays a flawless session with only early-level active formats', async () => {
+	it('streams every challenge a batch wrote for new words, with rounds between', async () => {
 		const known = Array.from({ length: 7 }, (_, i) => item(`k${i}`, -DAY));
 		const run = await playSession(known, () => 'correct');
 
-		// Two challenges per word, the mock filling every want, played to the
-		// end: the session is sized by what was planned, and nothing is left over.
+		// Two challenges per word, the mock filling every want, and every one of
+		// them fits a new word: the stream serves them all, then ends.
+		expect(run.written).toBe(14);
 		expect(run.llmAnswered).toBe(14);
-		expect(run.unplayed).toBe(0);
-		expect(run.matchRounds).toBe(3); // after every 4th early-material answer
+		expect(run.matchRounds).toBe(3); // after every 4th early-material answer, never last
 		expect(run.answers).toHaveLength(17);
 		expect(run.summary.accuracy).toBe(1);
 		expect(run.summary.correct).toBe(17);
@@ -699,11 +563,10 @@ describe('session walkthrough (mock batch, no database)', () => {
 		expect(run.summary.answered).toBe(17);
 	});
 
-	it('ends gracefully when the plan is shorter than a full session', async () => {
+	it('ends when nothing is left that fits', async () => {
 		const run = await playSession([item('a', -DAY)], () => 'correct');
-		expect(run.planned.length).toBeLessThan(SESSION_LENGTH);
-		expect(run.llmAnswered).toBe(run.planned.length);
-		expect(run.unplayed).toBe(0);
+		expect(run.llmAnswered).toBe(run.written);
+		expect(run.matchRounds).toBe(0);
 	});
 
 	it('match rounds carry no item ids into the summary', async () => {
