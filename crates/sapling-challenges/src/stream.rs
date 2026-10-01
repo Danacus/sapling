@@ -13,7 +13,9 @@
 //! **Refill** is the stream's to ask for: [`outlook`] counts the upcoming words
 //! that have a pick ready, and the host writes a batch in the background when
 //! that falls below [`low_water_mark`] — sized so a batch comes back before the
-//! learner runs out, at their pace.
+//! learner runs out, at their pace — or when a due word is **stranded**, with
+//! nothing that fits it: words not yet due can keep the count above the mark
+//! while the words the schedule owes have nothing at all.
 //!
 //! **Pacing** is a rule on the stream, not a plan: a free match round after
 //! every [`MATCH_PAIRS_EVERY`] challenges about early words, never when there
@@ -69,6 +71,9 @@ pub struct Outlook {
     pub upcoming: usize,
     /// Words the schedule owes now.
     pub due: usize,
+    /// Due words with no pick ready: the schedule owes them and nothing in the
+    /// pool fits. Counted over every due word, not only the next [`UPCOMING`].
+    pub stranded: usize,
     /// What a top-up would write now (`topup.rs`): zero when refilling cannot help.
     pub wants: usize,
 }
@@ -187,15 +192,15 @@ fn buckets<'a>(
     Buckets { rested, resting }
 }
 
-/// Walks the words in urgency order, handing each one the pick it would get,
-/// until `visit` answers `false`.
+/// Walks the words in urgency order, handing each one whether it is due and
+/// the pick it would get, until `visit` answers `false`.
 fn walk(
     pool: &[Option<PoolRow>],
     words: &[Word],
     now: f64,
     serving: &Serving,
     served: &[String],
-    visit: &mut dyn FnMut(Option<Next>) -> bool,
+    visit: &mut dyn FnMut(bool, Option<Next>) -> bool,
 ) {
     let served: HashSet<&str> = served.iter().map(String::as_str).collect();
     let Buckets { rested, resting } = buckets(pool, words, now, &served);
@@ -219,7 +224,7 @@ fn walk(
             chance: fit.chance,
             due,
         });
-        if !visit(next) {
+        if !visit(due, next) {
             break;
         }
     }
@@ -235,7 +240,7 @@ pub fn next_pick(
     served: &[String],
 ) -> Option<Next> {
     let mut found = None;
-    walk(pool, words, now, serving, served, &mut |next| {
+    walk(pool, words, now, serving, served, &mut |_, next| {
         found = next;
         found.is_none()
     });
@@ -253,12 +258,22 @@ pub fn outlook(
 ) -> Outlook {
     let mut ready = 0;
     let mut upcoming = 0;
-    walk(pool, words, now, serving, served, &mut |next| {
-        upcoming += 1;
-        if next.is_some() {
-            ready += 1;
+    let mut stranded = 0;
+    // Due words come first in the walk, so it runs past the next `UPCOMING`
+    // only while there are due words left to count.
+    let mut walked = 0;
+    walk(pool, words, now, serving, served, &mut |due, next| {
+        walked += 1;
+        if walked <= UPCOMING {
+            upcoming += 1;
+            if next.is_some() {
+                ready += 1;
+            }
         }
-        upcoming < UPCOMING
+        if due && next.is_none() {
+            stranded += 1;
+        }
+        walked < UPCOMING || due
     });
     let readable: Vec<&PoolRow> = pool.iter().flatten().collect();
     let coverage = top_up_coverage(&readable, words, now, serving);
@@ -266,6 +281,7 @@ pub fn outlook(
         ready,
         upcoming,
         due: words.iter().filter(|w| w.is_due(now)).count(),
+        stranded,
         wants: coverage.wants,
     }
 }
@@ -450,6 +466,27 @@ mod tests {
         assert_eq!(next.at, 1);
     }
 
+    /// Words ahead of schedule with rows of their own keep `ready` above any
+    /// mark; the due words with nothing are what says a batch is owed.
+    #[test]
+    fn a_due_word_with_nothing_is_stranded_whatever_is_ready_ahead() {
+        let mut words: Vec<Word> = (0..5)
+            .map(|i| fresh(&format!("d{i}"), -f64::from(i + 1) * DAY))
+            .collect();
+        words.extend((0..15).map(|i| fresh(&format!("a{i}"), f64::from(i + 1) * DAY)));
+        let pool: Vec<PoolRow> = (0..15)
+            .map(|i| row(&format!("c{i}"), &[&format!("a{i}")]))
+            .collect();
+        let seen = outlook(&rows(&pool), &words, NOW, &Serving::default(), &[]);
+        assert_eq!((seen.ready, seen.due, seen.stranded), (15, 5, 5));
+        // Past the next `UPCOMING` words, a due one still counts.
+        let many: Vec<Word> = (0..30)
+            .map(|i| fresh(&format!("m{i}"), -f64::from(i + 1) * DAY))
+            .collect();
+        let seen = outlook(&[], &many, NOW, &Serving::default(), &[]);
+        assert_eq!((seen.upcoming, seen.stranded), (UPCOMING, 30));
+    }
+
     #[test]
     fn the_outlook_counts_the_upcoming_words_with_a_pick_ready() {
         let words: Vec<Word> = (0..5)
@@ -463,6 +500,7 @@ mod tests {
                 ready: 3,
                 upcoming: 5,
                 due: 5,
+                stranded: 2,
                 wants: 4
             }
         );

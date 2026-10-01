@@ -64,15 +64,22 @@ function median(values: readonly number[]): number | undefined {
 
 /**
  * Whether the page should start a top-up now: the upcoming words with a pick
- * ready are under the mark (or nothing fits at all), there is something to
- * write, the learner can write (a key, and a connection), and one is not
- * already on its way.
+ * ready are under the mark (or nothing fits at all) or a due word is stranded,
+ * there is something to write, the learner can write (a key, and a
+ * connection), and one is not already on its way.
+ *
+ * `strandedMark` is how many were stranded when a refill was last asked for
+ * on their account: stranded words ask again only once a refill has rescued
+ * some, so rows that come back still not fitting cannot set off a batch after
+ * every answer.
  */
 export function shouldRefill(
 	outlook: StreamOutlook,
-	opts: { canWrite: boolean; writing: boolean }
+	opts: { canWrite: boolean; writing: boolean; strandedMark?: number }
 ): boolean {
-	return opts.canWrite && !opts.writing && outlook.wants > 0 && outlook.ready < outlook.lowWater;
+	if (!opts.canWrite || opts.writing || outlook.wants === 0) return false;
+	const stranded = outlook.stranded > 0 && outlook.stranded < (opts.strandedMark ?? Infinity);
+	return outlook.ready < outlook.lowWater || stranded;
 }
 
 export class PracticeStream {

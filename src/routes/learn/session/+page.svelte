@@ -166,6 +166,8 @@
 	let handled = new Set<string>();
 	/** Set when a refill came back and still nothing fit: do not ask again in a loop. */
 	let refilledIntoNothing = false;
+	/** Stranded due words when a refill was last asked for on their account (`shouldRefill`). */
+	let strandedMark = Infinity;
 
 	const topUp = $derived(taskStore.latestOf('top-up'));
 	const writing = $derived(topUp?.status === 'queued' || topUp?.status === 'running');
@@ -175,17 +177,21 @@
 		return !mock && (typeof navigator === 'undefined' || navigator.onLine !== false);
 	}
 
-	function refill(): void {
+	function refill(outlook: StreamOutlook): void {
 		if (!profile) return;
+		if (outlook.stranded > 0) strandedMark = outlook.stranded;
 		const { id } = startTask('top-up', { profile });
 		refills.add(id);
 	}
 
-	/** After an answer lands: ask for a batch when the stream is running low. */
+	/**
+	 * After the first pick and after each answer lands: ask for a batch when the
+	 * stream is running low or a due word has nothing.
+	 */
 	async function topUpIfLow(): Promise<void> {
 		if (writing || refilledIntoNothing) return;
 		const outlook = await stream.outlook();
-		if (shouldRefill(outlook, { canWrite: canWrite(), writing })) refill();
+		if (shouldRefill(outlook, { canWrite: canWrite(), writing, strandedMark })) refill(outlook);
 	}
 
 	/**
@@ -259,6 +265,8 @@
 			bootSpeech();
 			await advance();
 			if (phase === 'summary' && answers.length === 0 && !endReason) await goto('/learn');
+			// The first answer is a while off, and the start may already owe a batch.
+			if (phase === 'playing') void topUpIfLow().catch(() => {});
 		} catch {
 			await goto('/learn');
 		}
@@ -357,7 +365,7 @@
 				}
 			)
 		) {
-			refill();
+			refill(outlook);
 			phase = 'waiting';
 			return;
 		}

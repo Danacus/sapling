@@ -143,6 +143,7 @@ describe('shouldRefill', () => {
 		ready: 2,
 		upcoming: 20,
 		due: 10,
+		stranded: 0,
 		wants: 6,
 		lowWater: 5,
 		...over
@@ -153,9 +154,26 @@ describe('shouldRefill', () => {
 		expect(shouldRefill(outlook({ ready: 5 }), { canWrite: true, writing: false })).toBe(false);
 	});
 
+	it('asks for a stranded due word however many words ahead are ready', () => {
+		const ahead = outlook({ ready: 15, stranded: 3 });
+		expect(shouldRefill(ahead, { canWrite: true, writing: false })).toBe(true);
+		// Once asked for three, it asks again only when a refill rescued some.
+		expect(shouldRefill(ahead, { canWrite: true, writing: false, strandedMark: 3 })).toBe(false);
+		expect(
+			shouldRefill(outlook({ ready: 15, stranded: 2 }), {
+				canWrite: true,
+				writing: false,
+				strandedMark: 3
+			})
+		).toBe(true);
+	});
+
 	it('never asks without a key or a connection, twice at once, or for nothing', () => {
 		expect(shouldRefill(outlook(), { canWrite: false, writing: false })).toBe(false);
 		expect(shouldRefill(outlook(), { canWrite: true, writing: true })).toBe(false);
 		expect(shouldRefill(outlook({ wants: 0 }), { canWrite: true, writing: false })).toBe(false);
+		const stranded = outlook({ ready: 15, stranded: 3 });
+		expect(shouldRefill(stranded, { canWrite: false, writing: false })).toBe(false);
+		expect(shouldRefill(stranded, { canWrite: true, writing: true })).toBe(false);
 	});
 });

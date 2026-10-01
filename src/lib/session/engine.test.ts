@@ -216,7 +216,7 @@ describe('streamOutlook', () => {
 	it('counts the upcoming words with a pick ready, and what a top-up would write', () => {
 		const items = [item('a', -2 * DAY), item('b', -DAY), item('c', DAY)];
 		const outlook = streamOutlook([row('ca', ['a'])], items, NOW);
-		expect(outlook).toEqual({ ready: 1, upcoming: 3, due: 2, wants: 4 });
+		expect(outlook).toEqual({ ready: 1, upcoming: 3, due: 2, stranded: 1, wants: 4 });
 		expect(streamOutlook([row('ca', ['a'])], items, NOW, { served: ['ca'] }).ready).toBe(0);
 	});
 
