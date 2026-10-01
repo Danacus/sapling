@@ -38,10 +38,10 @@ pub enum MultiWord {
     Average,
 }
 
-/// The one to use. The calibration command reports both; `lowest` scored
-/// better on the simulated learner (see the commit that set it), and a real
-/// log can flip it here.
-pub const MULTI_WORD: MultiWord = MultiWord::Lowest;
+/// The one to use. The calibration command reports both; `average` scored
+/// better on the first real log, and on the simulated learners once the grid
+/// was searched wide enough.
+pub const MULTI_WORD: MultiWord = MultiWord::Average;
 
 pub use sapling_domain::types::Aim;
 
@@ -76,6 +76,9 @@ pub struct Tuning {
     /// The memory of a word that has never been reviewed: FSRS has no curve
     /// for it, but the learner met it where they added it.
     pub new_word_memory: f64,
+    /// The chance a brand-new word, remembered, manages the easiest question:
+    /// where the starting skill sits.
+    pub new_word_chance: f64,
     /// What hiding the reading adds to a help level's starting number.
     pub hidden: f64,
     /// What listening adds to a type's `plain` starting number.
@@ -210,14 +213,15 @@ pub fn starting_slope(kind: WireType) -> f64 {
 }
 
 /// A brand-new word's skill: just above the easiest help level of the easiest
-/// kind — enough that a one-word recognition question lands on the normal aim.
+/// kind — enough that a one-word recognition question lands on
+/// `newWordChance`, since a word is added where the learner met it.
 pub fn starting_skill() -> f64 {
     let easiest = WireType::ALL
         .into_iter()
         .filter(|kind| kind.is_active())
         .map(|kind| starting_base(kind, HelpLevel::step(Step::Plain)) + starting_slope(kind))
         .fold(f64::INFINITY, f64::min);
-    easiest + logit(target(Aim::Normal))
+    easiest + logit(tuning().new_word_chance)
 }
 
 /* ---- The learned numbers ------------------------------------------------ */
@@ -457,7 +461,7 @@ mod tests {
     }
 
     #[test]
-    fn a_new_word_manages_the_easiest_question_at_the_normal_aim() {
+    fn a_new_word_manages_the_easiest_question_at_its_written_chance() {
         let shared = Shared::default();
         let d = shared.difficulty(
             WireType::RecognizeMc,
@@ -466,7 +470,7 @@ mod tests {
             0.0,
         );
         let p = chance(&[1.0], &[starting_skill()], d, MULTI_WORD);
-        assert!((p - target(Aim::Normal)).abs() < 1e-9);
+        assert!((p - tuning().new_word_chance).abs() < 1e-9);
     }
 
     #[test]

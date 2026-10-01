@@ -120,7 +120,10 @@ pub fn review_key(item_id: &str, at: f64, device: &str) -> String {
 ///
 /// Bumped for 8 when `profile` gained `aim`, the success rate challenges are
 /// pitched at.
-pub const DERIVED_SCHEMA_VERSION: u32 = 8;
+///
+/// Bumped for 9 when the first real-log calibration changed the model's
+/// starting values and combined several words by their average skill.
+pub const DERIVED_SCHEMA_VERSION: u32 = 9;
 
 /// Every read table the materializer owns; `events` and `meta` survive a rebuild.
 ///

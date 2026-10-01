@@ -64,7 +64,7 @@ chance of a correct answer = memory × sigmoid(skill − difficulty)
   one point higher is about 73%, two points about 88%.
 
 A challenge about several words uses the product of their memories and the
-**lowest** of their skills.
+**average** of their skills.
 
 ### Learning from an answer
 
@@ -197,7 +197,7 @@ The numbers are:
 | Word rate | How fast a word's skill moves | to be chosen by replay |
 | Shared rate | How fast type/help/length numbers move | to be chosen by replay |
 | Challenge rate | How fast one row's correction moves | to be chosen by replay |
-| Starting skill | A brand-new word's skill | just above the easiest help level of the easiest type |
+| Starting skill | A brand-new word's skill | the easiest help level of the easiest type at `newWordChance` (0.9): a word is added where the learner met it, and the first real log showed new words answered right far more often than the aim. It stays under the window's top, so a new word always fits the easiest question |
 | Type-and-help starting numbers | One per row of §4's table | from today's `difficulty.json` bases, spread across the help levels |
 | Length slope starting values | Per type | from today's `promptWords` scale |
 
@@ -263,7 +263,9 @@ Sessions are replaced by one continuous stream that runs until you stop:
 1. **Several words in one challenge.** Implement both the lowest skill and the
    average skill as candidates. The calibration command reports both, and the
    better score on the fixture log is the default. The other stays behind one
-   constant so a real-log run can flip it.
+   constant so a real-log run can flip it. The first real log (1,620 answers)
+   flipped it to **average**: lowest skill on top of multiplied memories
+   counted a weak word twice.
 2. **Reading and listening are help levels** (§4), picked by `fits`, not user
    settings. The existing romanization-mode setting stays as an upper bound: if
    the learner turned readings off, no help level shows them. Listening help

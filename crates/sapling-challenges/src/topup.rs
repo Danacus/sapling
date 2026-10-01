@@ -388,7 +388,7 @@ pub(crate) mod tests {
     const RECOGNITION: [WireType; 2] = [WireType::RecognizeMc, WireType::ProduceMc];
 
     #[test]
-    fn a_new_word_wants_the_two_kinds_it_can_manage_at_their_shortest() {
+    fn a_new_word_wants_two_kinds_it_can_manage_at_their_lengths() {
         let wants = plan_cycling(&[], &[fresh("a")]);
         assert_eq!(wants.len(), WANT_PER_WORD);
         for want in &wants {
@@ -400,8 +400,12 @@ pub(crate) mod tests {
                     meaning: "meaning-a".into()
                 }
             );
-            assert!(RECOGNITION.contains(&want.kind.kind), "{:?}", want.kind);
-            assert_eq!(want.length, 1);
+            assert_eq!(
+                length_for(&fresh("a"), want.kind.kind, &Serving::default()),
+                Some(want.length),
+                "{:?}",
+                want.kind
+            );
         }
         assert_ne!(wants[0].kind, wants[1].kind);
     }
@@ -460,8 +464,8 @@ pub(crate) mod tests {
         for seed in [0.0, 0.5, 0.999] {
             let wants = plan(&resting, &[fresh("a")], NOW, &mut || seed);
             assert_eq!(wants.len(), WANT_PER_WORD);
-            // The kind never had goes first, whatever the draw.
-            assert_eq!(wants[0].kind.kind, WireType::ProduceMc);
+            // A kind never had goes first, whatever the draw.
+            assert!(kinds(&wants).iter().all(|&k| k != WireType::RecognizeMc));
         }
         let rested = [pooled(
             "r",

@@ -13,9 +13,9 @@ use std::fmt::Write;
 use crate::model::{evaluate, tuning, MultiWord, Observation, Rates, Score, MULTI_WORD};
 
 /// The rates `--search` tries, each axis around where the current ones sit.
-pub const WORD_RATES: [f64; 5] = [0.1, 0.2, 0.3, 0.45, 0.6];
-pub const SHARED_RATES: [f64; 4] = [0.005, 0.01, 0.02, 0.05];
-pub const CHALLENGE_RATES: [f64; 4] = [0.05, 0.1, 0.2, 0.4];
+pub const WORD_RATES: [f64; 7] = [0.1, 0.2, 0.3, 0.45, 0.6, 0.8, 1.0];
+pub const SHARED_RATES: [f64; 5] = [0.005, 0.01, 0.02, 0.05, 0.1];
+pub const CHALLENGE_RATES: [f64; 5] = [0.05, 0.1, 0.2, 0.4, 0.6];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Candidate {
