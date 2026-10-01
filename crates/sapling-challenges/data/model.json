@@ -1,0 +1,31 @@
+{
+	"aims": { "easier": 0.97, "normal": 0.89, "harder": 0.78 },
+	"window": { "below": 0.17, "above": 0.04 },
+	"rates": { "word": 0.2, "shared": 0.02, "challenge": 0.1 },
+	"newWordMemory": 0.9,
+	"newWordChance": 0.9,
+	"hidden": 0.6,
+	"listening": 0.8,
+	"bases": {
+		"recognize-mc": { "plain": 0 },
+		"produce-mc": { "plain": 0.3 },
+		"context-mc": { "plain": 0.7 },
+		"translate-to-native": { "plain": 0.9 },
+		"spot-error": { "plain": 0.3 },
+		"word-order": { "tiles": 1.3, "extra-2": 2.1 },
+		"cloze": { "pick-4": 1.1, "pick-6": 1.9, "typed": 3.1 },
+		"multi-cloze": { "answers": 1.9, "extra-2": 2.6 },
+		"translate-to-target": { "plain": 2.8 }
+	},
+	"slopes": {
+		"recognize-mc": 0.12,
+		"produce-mc": 0.12,
+		"context-mc": 0.12,
+		"translate-to-native": 0.12,
+		"spot-error": 0.12,
+		"word-order": 0.15,
+		"cloze": 0.12,
+		"multi-cloze": 0.08,
+		"translate-to-target": 0.15
+	}
+}

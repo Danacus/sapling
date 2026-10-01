@@ -1,8 +1,6 @@
-//! A pooled row and the two questions both planners ask of it: is it worth
-//! playing at all (absolute), and has it rested (a preference). The session
-//! planner asks them to decide what to play, the top-up planner to decide what
-//! is missing — one set of answers, so a row the session would decline is not
-//! coverage and one it would serve is not written again.
+//! A pooled row and the two row-level questions the stream's one predicate
+//! (`stream.rs`' `available`) asks of it: is it worth playing at all, and has
+//! it rested.
 
 use std::collections::HashSet;
 
@@ -11,15 +9,11 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use crate::challenge::Challenge;
-use crate::ladder::Word;
+use crate::word::Word;
 
 /// How long a served challenge rests before it is planned again: long enough
 /// that the sentence is re-read rather than recognized.
 pub const RESERVE_GAP: f64 = 3.0 * 24.0 * 60.0 * 60.0 * 1000.0;
-
-/// The most model-written challenges one session serves, and how far ahead
-/// coverage looks when nothing is due.
-pub const SESSION_LENGTH: usize = 20;
 
 /// A stored challenge with the pool's bookkeeping.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -38,6 +32,12 @@ pub struct PoolRow {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub topic: Option<String>,
+    /// How much harder (or, below zero, easier) this row has proved than its
+    /// kind, help level and length predict — learned from its answers, absent
+    /// until it has any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub correction: Option<f64>,
 }
 
 /// The pool as a host hands it over, a row that does not read as `None` — it

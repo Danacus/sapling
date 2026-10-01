@@ -17,6 +17,10 @@ export interface TopUpInput {
 	profile: Profile;
 	/** The scenario the lesson leans into, when the learner gave one. */
 	topic?: string;
+	/** A practice stream's refill: the ids it has shown, the words it already asked for, and how many words ahead it writes for. */
+	served?: string[];
+	asked?: string[];
+	limit?: number;
 }
 
 export const topUpTask = {
@@ -36,6 +40,9 @@ export const topUpTask = {
 			signal: ctx.signal,
 			onProgress: (step) => ctx.step(step.id, step.label),
 			...(input.topic ? { topic: input.topic } : {}),
+			...(input.served ? { served: input.served } : {}),
+			...(input.asked ? { asked: input.asked } : {}),
+			...(input.limit === undefined ? {} : { limit: input.limit }),
 			...(itemsPerRequest === undefined ? {} : { itemsPerRequest }),
 			...(reasoningEffort === 'default' ? {} : { reasoningEffort })
 		});

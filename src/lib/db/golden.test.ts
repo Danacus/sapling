@@ -160,6 +160,7 @@ async function probe(backend: Backend, events: RawEvent[]): Promise<Record<strin
 		poolSize: await backend.poolSize(),
 		getChallengesByIds: byId(await backend.getChallengesByIds(ids.challenges)),
 		recentResults: await backend.recentResults(RECENT_LIMIT),
+		getDifficultyParts: await backend.getDifficultyParts(),
 		getDailyActivity: await backend.getDailyActivity(),
 		getTexts: await backend.getTexts(),
 		getText: await byKey(ids.texts, (id) => backend.getText(id)),
@@ -178,8 +179,20 @@ function dataOnly(reads: Record<string, unknown>): Record<string, unknown> {
 	return data;
 }
 
-/** The keys whose numbers come out of the FSRS model, and how far apart they may be. */
-const MODEL_FLOATS = new Set(['stability', 'difficulty', 'retrievability', 'strength']);
+/**
+ * The keys whose numbers come out of the FSRS model — or are learned from
+ * memories it computed (a word's `skill`, a row's `correction`) — and how far
+ * apart they may be. Every number under `getDifficultyParts` is learned too.
+ */
+const MODEL_FLOATS = new Set([
+	'stability',
+	'difficulty',
+	'retrievability',
+	'strength',
+	'skill',
+	'correction'
+]);
+const LEARNED_PARTS = 'getDifficultyParts';
 const MODEL_TOLERANCE = 1e-4;
 
 /**
@@ -187,21 +200,24 @@ const MODEL_TOLERANCE = 1e-4;
  * `expected`'s replaced by `expected`'s, so a `toEqual` after it compares
  * those loosely and everything else exactly.
  */
-function nearModel(actual: unknown, expected: unknown, key = ''): unknown {
+function nearModel(actual: unknown, expected: unknown, key = '', learned = false): unknown {
 	if (typeof actual === 'number' && typeof expected === 'number') {
 		const close =
-			MODEL_FLOATS.has(key) &&
+			(learned || MODEL_FLOATS.has(key)) &&
 			Math.abs(actual - expected) <=
 				MODEL_TOLERANCE * Math.max(Math.abs(actual), Math.abs(expected));
 		return close ? expected : actual;
 	}
 	if (Array.isArray(actual) && Array.isArray(expected)) {
-		return actual.map((value, i) => nearModel(value, expected[i]));
+		return actual.map((value, i) => nearModel(value, expected[i], '', learned));
 	}
 	if (actual && expected && typeof actual === 'object' && typeof expected === 'object') {
 		const other = expected as Record<string, unknown>;
 		return Object.fromEntries(
-			Object.entries(actual).map(([k, value]) => [k, nearModel(value, other[k], k)])
+			Object.entries(actual).map(([k, value]) => [
+				k,
+				nearModel(value, other[k], k, learned || k === LEARNED_PARTS)
+			])
 		);
 	}
 	return actual;

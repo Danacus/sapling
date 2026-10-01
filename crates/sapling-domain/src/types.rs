@@ -167,6 +167,38 @@ pub struct Profile {
     pub model: String,
     /// Epoch milliseconds.
     pub created_at: f64,
+    /// The success rate challenges are pitched at. Absent on every profile
+    /// written before it existed, which reads as `normal`; a change takes
+    /// effect on the next pick and rebuilds nothing.
+    #[serde(
+        default,
+        deserialize_with = "absent_or",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional)]
+    pub aim: Option<Aim>,
+}
+
+/// How hard the learner wants their challenges: the success rate the
+/// difficulty model aims at (`sapling-challenges`' `data/model.json`; at
+/// FSRS's 0.9 memory, easier, normal and harder come to about 88%, 80% and 70%).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum Aim {
+    Easier,
+    #[default]
+    Normal,
+    Harder,
+}
+
+impl Aim {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Aim::Easier => "easier",
+            Aim::Normal => "normal",
+            Aim::Harder => "harder",
+        }
+    }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -266,6 +298,17 @@ pub struct KnowledgeItem {
     )]
     #[ts(optional)]
     pub correct_count: Option<f64>,
+    /// How hard a challenge about this word the learner can handle, on the
+    /// difficulty model's scale — derived from every answer that named it
+    /// (`sapling-db`'s `learned.rs`). Absent for a word with no answers yet,
+    /// which reads as the model's starting skill.
+    #[serde(
+        default,
+        deserialize_with = "absent_or",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional)]
+    pub skill: Option<f64>,
     /// The most recent reviews, oldest first — what the ledger's tick strip
     /// shows. Only `getAllItems({ withRecentGrades: true })` and `getItem`
     /// attach it: it is up to `RECENT_GRADES_CAP` entries per item and nothing
@@ -297,6 +340,17 @@ pub struct ChallengeResult {
     pub answer_given: String,
     /// Epoch milliseconds.
     pub at: f64,
+    /// The help level the challenge was shown at — `sapling-challenges`' `help.rs`
+    /// names them (`pick-6`, `typed-hidden`, `listening`). What the difficulty
+    /// model learns from; absent on an answer logged before it was recorded,
+    /// which replay reconstructs instead.
+    #[serde(
+        default,
+        deserialize_with = "absent_or",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional)]
+    pub shown: Option<String>,
 }
 
 /// Everything the learner did on one local calendar day, read straight off

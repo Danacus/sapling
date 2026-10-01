@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 use ts_rs::{Config, TypeVisitor, TS};
 
-use sapling_challenges::pool::SESSION_LENGTH;
+use sapling_challenges::stream::MATCH_PAIRS_EVERY;
 use sapling_db::core::{ExportEnvelope, EXPORT_VERSION};
 use sapling_domain::events::{
     ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted, EventType, ItemAdded,
@@ -163,7 +163,7 @@ fn challenges(names: &[String]) -> String {
     }
     let _ = writeln!(
         out,
-        "] as const;\n\nexport const SESSION_LENGTH = {SESSION_LENGTH};"
+        "] as const;\n\nexport const MATCH_PAIRS_EVERY = {MATCH_PAIRS_EVERY};"
     );
     out
 }

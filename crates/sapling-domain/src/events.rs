@@ -550,11 +550,11 @@ mod tests {
             (EventType::ChallengeReported, json!({ "challengeId": "c" })),
             (
                 EventType::ResultLogged,
-                json!({ "challengeId": "c", "verdict": "almost", "answerGiven": "a", "at": 7 }),
+                json!({ "challengeId": "c", "verdict": "almost", "answerGiven": "a", "at": 7, "shown": "pick-6" }),
             ),
             (
                 EventType::ProfileUpdated,
-                json!({ "nativeLanguage": "en", "targetLanguage": "zh", "level": "beginner", "interests": ["food"], "about": "me", "model": "m", "createdAt": 8 }),
+                json!({ "nativeLanguage": "en", "targetLanguage": "zh", "level": "beginner", "interests": ["food"], "about": "me", "model": "m", "createdAt": 8, "aim": "harder" }),
             ),
             (
                 EventType::TextAdded,

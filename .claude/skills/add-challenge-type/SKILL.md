@@ -28,27 +28,31 @@ differs.
    escalation gloss order; appending keeps seeded picks stable) and `as_str` —
    and its entry in `data/kinds.json`, in the same order: `stored` (the
    `{type, direction}` the resolver always writes, plus `promptIsTarget` where
-   two kinds share that pair) and `plannable` (`{demand, levels}`: the tier its
-   stored challenge reports and the rungs it is written at; omitted for a
-   retired kind).
+   two kinds share that pair) and `lengths` (`[shortest, longest]` a row of the
+   kind is written at, on the model's length scale — `model.rs`' `length_of`;
+   omitted for a retired kind). Give it a `written_steps` arm if a freshly
+   written row can be shown at more than one help level, its starting numbers
+   in `data/model.json` (`bases` per step, `slopes`), and its steps in
+   `help.rs`' `steps_of` if it is a new stored type.
    *Forget `ALL`:* the const assert under it fails the build. *Forget the data,
    or put it out of order:* `kinds.rs`' `the_data_lists_every_kind_in_registry_order`.
 2. **The lesson, `crates/sapling-llm/lessons/<type>.json`**: `promptSpec`
    (field list plus one inline example), optional `rulesSpec`, `paramsSpec`,
-   `params` (each size key and its value at rungs 1..5), `correctiveSpec`,
+   `length` (the item key a want's length travels under: `words`, `tiles`),
+   `correctiveSpec`,
    optional `escalationSpec`, and `fixtures` — at least one per scenario
    (`spanish`, `mandarin`), citing `{item}` for the want's word and `{other}`
    for a second one — and its arm in `sapling-llm`'s `kinds.rs` `source`.
 
-   **`params` is this type's difficulty**, as counts the model can hit
-   (`words`, `tiles`, `gaps`): the same keys at every rung, monotone, aligned
-   with the stored side's scales (`sapling-challenges`' `data/difficulty.json`,
-   the 1-to-12-word prose scale). A bank or tray size is **not** a
-   rung-varying key: every banked type asks for its fullest set, and
-   `sapling-challenges`' `serve.rs` sizes what a served row shows.
-   `paramsSpec` names exactly those keys.
+   **The length is this type's one difficulty knob the model sees**, a count it
+   can hit, worked out per want by the top-up planner (`topup.rs`' `length_for`)
+   and measured on stored rows the same way (`length_of`). A bank or tray size
+   is **not** a knob: every banked type asks for its fullest set, and a help
+   level (`help.rs`, `serve.rs`) sizes what a served row shows. `paramsSpec`
+   names the length key (and any key derived from it, like a multi-cloze's
+   `gaps`, `gaps_for`).
    *Forget the `source` arm:* it is an exhaustive `match`, so it does not compile.
-   *Get the ladder wrong:* `kinds.rs`' tests fail.
+   *Name the wrong key:* `kinds.rs`' tests fail.
 
    `rulesSpec` holds **any** rule about this type — including one another
    type also needs, spelled out in both (segmentation is in `word-order` and
@@ -62,8 +66,9 @@ differs.
    *Forget it:* every exhaustive `match` over `WireType` fails to compile.
 
 `lesson.rs`' mock test resolves every kind in both scenarios through that
-gate, reads each back with `kind_of`, and checks each plannable kind's stated
-demand against `demand_of` of the challenge it resolved to.
+gate and reads each back with `kind_of`. Keep the mock fixture of a kind a
+brand-new word is written short: mock mode serves through the same `fits`, and
+a fixture too long for a new word is never served.
 
 ## Challenge type, end to end
 
@@ -80,10 +85,9 @@ rather than checking by eye.
    TypeScript), its `Challenge` variant, its `ChallengeType` variant (in `ALL`
    and `as_str`), and its arms in `from_value`, the accessors and
    `check_shape`. Then its rule in every exhaustive `match`: `grade.rs`' `check`,
-   `difficulty.rs`' `demand_of` and `within_tier` (a `base` in
-   `data/difficulty.json` for where the *format* stands among its tier-mates,
-   its structural knobs on the shared `length_knob` scale), and `serve.rs` where
-   it has a bank, a tray or a native line. `STORED_TYPES` follows `ALL`, so the
+   `model.rs`' `length_of` (how long it reads, on the one scale every slope is
+   per), `help.rs`' `has_readings` and `steps_of`, and `serve.rs`'
+   `presentation_for` where it has a bank, a tray or a native line. `STORED_TYPES` follows `ALL`, so the
    pool admits the type with no edit of its own.
    *Forget any of it:* the exhaustive `match`es do not compile; a missing `ALL`
    entry fails the const assert.
@@ -114,11 +118,11 @@ it.
 - Presentation defs import **`$lib/types` and `./def` and nothing else** — an
   explicit allowlist in `challenges/types/registry.test.ts`, so one def
   importing another is caught too.
-- `demand` is deliberately **not** consulted by `check`. Grading stays
-  type-blind: a verdict is FSRS's evidence about the *word*, so difficulty
-  shapes the question stream (`sapling-challenges`' `ladder.rs` and
-  `session.rs`), never what an answer is worth. Do not "improve" this by
-  weighting grades.
+- Difficulty is deliberately **not** consulted by `check`. Grading stays
+  type-blind: a verdict is FSRS's evidence about the *word* and the difficulty
+  model's evidence about the row, so difficulty shapes the question stream
+  (`sapling-challenges`' `fits.rs` and `stream.rs`), never what an answer is
+  worth. Do not "improve" this by weighting grades.
 - A multi-string answer crosses the seam as one string (a multi-cloze logs
   `"1: a · 2: b"`); if the new type needs a format like that, the component's
   writer and `grade.rs`' reader are one contract — test them together.

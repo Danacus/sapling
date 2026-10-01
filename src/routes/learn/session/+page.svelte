@@ -1,16 +1,22 @@
 <!--
-  The session screen — the part of the app people actually spend time in.
+  The practice screen — the part of the app people actually spend time in.
 
-  This route starts the plan that `/learn` prepared, plays its challenges with
-  a locally-built match-pairs round after every fourth, then shows the summary.
-  There is no setup or generation UI here: crossing the route boundary is what
-  makes the experience focused and safe to reload or leave.
+  One continuous stream that runs until the learner stops
+  (`docs/challenge-difficulty.md` §11): each challenge is picked when the last
+  one is done, against the store as it is then, by `$lib/session/stream` — the
+  most urgent word with a challenge that fits it, at the help level closest to
+  the learner's aim — with a free match round after every few challenges about
+  early words. There is no plan to walk and no end but the learner's: when the
+  most urgent word has nothing, the stream waits for a batch written for it, or
+  says why it cannot.
 
-  Rules and writes live in `$lib/session/engine`; this file owns pacing, motion
-  and everything the learner sees. The invariant worth stating: the session is
-  planned once, up front, and nothing reads the database mid-play — `advance`
-  walks an array. `pendingWrite` is still awaited before advancing, because a
-  self-assessment must land on top of the review it re-grades.
+  Rules and writes live in `$lib/session/engine` and `$lib/session/stream`; this
+  file owns pacing, motion and everything the learner sees. It writes nothing
+  itself. Starting a refill is the one thing it does about one, because it
+  starts a task: after each answer, when the stream says the words ahead want
+  something, it starts a `top-up` task for them — one at a time. `pendingWrite`
+  is awaited before each pick, because a self-assessment must land on top of
+  the review it re-grades and the next pick must see this answer.
 -->
 <script lang="ts">
 	import { browser } from '$app/environment';
@@ -20,7 +26,7 @@
 
 	import { audioTextsFor, correctAnswerText } from '$lib/challenges/display';
 	import { presentationFor, type Presentation } from '$lib/challenges/serve';
-	import { STORED_TYPE_DEFS, storedDefFor } from '$lib/challenges/types';
+	import { storedDefFor } from '$lib/challenges/types';
 	import { getDailyActivity, getProfile, streakFrom } from '$lib/db';
 	import { isMockMode } from '$lib/llm';
 	import { loadRomanizer, type Romanizer } from '$lib/romanize';
@@ -29,17 +35,16 @@
 		amendResult,
 		applyOverturn,
 		applyResult,
-		interleaveMatchRounds,
 		reportChallenge,
 		sessionSummary,
-		startSession,
 		type AnswerEvent,
-		type SessionAnswer,
-		type SessionPlan
+		type SessionAnswer
 	} from '$lib/session/engine';
 	import { motionMs } from '$lib/session/motion';
+	import { PracticeStream, type StreamStep } from '$lib/session/stream';
 	import type { Grade } from '$lib/srs';
 	import { runSync } from '$lib/sync';
+	import { startTask } from '$lib/tasks';
 	import { taskStore } from '$lib/tasks/store.svelte';
 	import { getTtsEngine, preloadVoice, sherpaSupports, warmSpeech } from '$lib/tts';
 	import type { Challenge, KnowledgeItem, Profile, Verdict } from '$lib/types';
@@ -50,7 +55,8 @@
 	import ChallengeHost from '../ChallengeHost.svelte';
 	import FeedbackBanner from '../FeedbackBanner.svelte';
 
-	type Phase = 'loading' | 'playing' | 'summary';
+	/** `waiting`: the most urgent word has nothing, and a batch is being written for it. */
+	type Phase = 'loading' | 'playing' | 'waiting' | 'summary';
 
 	interface Feedback {
 		challenge: Challenge;
@@ -66,9 +72,8 @@
 		/**
 		 * The presentation this challenge was actually served with — captured off
 		 * `currentPresentation` the instant feedback is built, so a later challenge
-		 * swap (the queue has already moved on by the time the banner asks) can
-		 * never change what an escalation for *this* answer is judged against.
-		 * Threaded to `FeedbackBanner` and on to `getEscalation`
+		 * swap can never change what an escalation for *this* answer is judged
+		 * against. Threaded to `FeedbackBanner` and on to `getEscalation`
 		 * (`$lib/llm`), which needs it to know what the learner's screen
 		 * actually showed rather than assuming the full stored row was on it.
 		 */
@@ -79,46 +84,47 @@
 	let profile = $state<Profile | undefined>(undefined);
 	let mock = $state(false);
 
-	/* Session ----------------------------------------------------------------- */
+	/* Stream ------------------------------------------------------------------ */
 
-	/**
-	 * The whole session in order — generated challenges *and* the free match
-	 * rounds spliced between them — and how far into it we are.
-	 */
-	let queue: Challenge[] = [];
-	let nextIndex = 0;
+	/** What the stream remembers between picks; see `$lib/session/stream`. */
+	let stream = new PracticeStream();
 
-	/** Every known item; what the free match-pairs rounds are drawn from. */
+	/** Every known item, as of the last pick; what the tokenizer groups around. */
 	let items = $state<KnowledgeItem[]>([]);
+	/**
+	 * Words drilled for the first time in this stream, by id — captured when a
+	 * challenge about them is shown, while their review history is still empty.
+	 */
 	let newWords = $state<KnowledgeItem[]>([]);
 
 	let current = $state<Challenge | null>(null);
 	/**
 	 * Everything about {@link current} decided at serve time rather than
 	 * written by the model — the native-language hint, the cloze/multi-cloze
-	 * bank size, the word-order distractor-tile count, and which readings to
-	 * show. Built once in {@link show} from the challenge's weakest word and
-	 * the learner's mode, and for the same reason: a row carries its full
-	 * content for life, and only the rung the word is at *now* says how much of
-	 * it the learner still needs. The readings travel inside the same object so
-	 * a component has one serve-time prop, not two.
+	 * bank size, the word-order distractor-tile count, whether its reading
+	 * shows, whether it is heard first. Built once in {@link show} from the help
+	 * level the stream picked for it: a row carries its full content for life,
+	 * and only how the learner stands with its words *now* says how much of it
+	 * they still need. The readings travel inside the same object so a
+	 * component has one serve-time prop, not two.
 	 */
 	let currentPresentation = $state<Presentation | undefined>(undefined);
 	/**
 	 * The learner's local romanizer, once its chunk has landed. `null` until then
-	 * — and forever, for a language that has none; see {@link loadStartScreen}.
+	 * — and forever, for a language that has none; see {@link boot}.
 	 */
 	let romanizer = $state<Romanizer | null>(null);
 	let feedback = $state<Feedback | null>(null);
 	let answers = $state<SessionAnswer[]>([]);
-	let plannedLlm = $state(0);
-	/** {@link queue}'s length, mirrored into state for the progress bar. */
-	let plannedSteps = $state(0);
 
-	/** Day streak after this session, folded out of the answer log by {@link finish}. */
+	/** Day streak after this stream, folded out of the answer log by {@link finish}. */
 	let endStreak = $state(0);
+	/**
+	 * Why the stream stopped when the learner did not stop it: its next word
+	 * has nothing, and why nothing could be written for it. Empty when they stopped.
+	 */
+	let endReason = $state('');
 
-	let showQuitConfirm = $state(false);
 	let leaving = $state(false);
 
 	/** When the current challenge was first shown; used for a skip's response time. */
@@ -126,9 +132,9 @@
 
 	/**
 	 * The in-flight `applyResult`. Never dropped on the floor: the UI advances
-	 * without waiting for it, but `continueSession` awaits it, so a rating given
+	 * without waiting for it, but {@link advance} awaits it, so a rating given
 	 * as the learner reaches for Continue still lands on top of the review it
-	 * re-grades rather than racing it.
+	 * re-grades rather than racing it — and the next pick sees this answer.
 	 */
 	let pendingWrite: Promise<void> = Promise.resolve();
 
@@ -141,6 +147,52 @@
 	 */
 	let pendingReviewed: Promise<Set<string>> = Promise.resolve(new Set());
 
+	/* Refill ------------------------------------------------------------------ */
+
+	/**
+	 * The `top-up` tasks this screen started, by id — not task state (the
+	 * runner owns that, `.claude/rules/tasks.md`), only "which records are
+	 * mine", so a batch finishing can be timed and can wake a waiting stream.
+	 */
+	let refills = new Set<string>();
+	/** Records already acted on, so a settled refill is handled once. */
+	let handled = new Set<string>();
+
+	const topUp = $derived(taskStore.latestOf('top-up'));
+	const writing = $derived(topUp?.status === 'queued' || topUp?.status === 'running');
+
+	/** A key and a connection: a batch can be written without the learner. */
+	function canWrite(): boolean {
+		return !mock && (typeof navigator === 'undefined' || navigator.onLine !== false);
+	}
+
+	/** Starts a top-up for the words ahead that want one; whether it did. */
+	async function refill(): Promise<boolean> {
+		if (!profile || writing || !canWrite()) return false;
+		const scope = await stream.refill();
+		if (!scope) return false;
+		refills.add(startTask('top-up', { profile, ...scope }).id);
+		return true;
+	}
+
+	/**
+	 * A refill settled: time it for the next mark, and if the stream was
+	 * waiting, pick again — or stop and say why.
+	 */
+	$effect(() => {
+		for (const record of taskStore.tasks) {
+			if (!refills.has(record.id) || handled.has(record.id)) continue;
+			if (record.status === 'queued' || record.status === 'running') continue;
+			handled.add(record.id);
+			if (record.status === 'done' && record.startedAt && record.finishedAt) {
+				stream.noteBatch(record.finishedAt - record.startedAt);
+			}
+			if (phase !== 'waiting') continue;
+			if (record.status === 'done') void advance();
+			else void finish(record.error ?? 'Writing more challenges was cancelled.');
+		}
+	});
+
 	/* ---------------------------------------------------------------------- */
 	/* Boot                                                                    */
 	/* ---------------------------------------------------------------------- */
@@ -150,7 +202,7 @@
 	$effect(() => {
 		if (booted || !browser) return;
 		booted = true;
-		void loadStartScreen();
+		void boot();
 	});
 
 	/**
@@ -163,12 +215,8 @@
 		return () => taskStore.setHidden(false);
 	});
 
-	/**
-	 * Boot: read the profile and independently rebuild the plan `/learn` just
-	 * showed. Planning is local and deterministic over the current pool, so the
-	 * route needs no transient state handoff from its parent.
-	 */
-	async function loadStartScreen(): Promise<void> {
+	/** Reads the profile, warms the audio engine, and asks the stream for its first challenge. */
+	async function boot(): Promise<void> {
 		try {
 			const loaded = await getProfile();
 			if (!loaded) {
@@ -180,72 +228,23 @@
 			// small), and nothing waits on it. Resolving `null` — no local romanizer
 			// for this language — and resolving late are the same case as far as the
 			// components are concerned: they fall back to the stored, LLM-written
-			// romanization strings, so at worst the first challenge of a session
-			// renders the way the whole app did before ruby existed.
+			// romanization strings.
 			void loadRomanizer(loaded.targetLanguage).then((loadedRomanizer) => {
 				romanizer = loadedRomanizer;
 			});
 			mock = isMockMode();
-			const ready = await startSession();
-			if (ready.challenges.length === 0) {
-				await goto('/learn');
-				return;
-			}
-			await playPlan(ready);
+			stream = new PracticeStream();
+			answers = [];
+			newWords = [];
+			cancelWarming();
+			bootSpeech();
+			await advance();
+			if (phase === 'summary' && answers.length === 0 && !endReason) await goto('/learn');
+			// The first answer is a while off, and the words ahead may already want a batch.
+			if (phase === 'playing') void refill().catch(() => {});
 		} catch {
 			await goto('/learn');
 		}
-	}
-
-	/**
-	 * Turns a {@link SessionPlan} into the playing phase: match-pairs filtering,
-	 * queue assembly, audio warm-up.
-	 */
-	async function playPlan(ready: SessionPlan): Promise<void> {
-		if (ready.challenges.length === 0) return;
-
-		// Match rounds are drawn from `items`, so it has to be settled first. Every
-		// word the learner has is fair game, never-reviewed ones included — that is
-		// exactly the vocabulary a session exists to drill.
-		items = ready.items;
-		// The free rounds are spliced in here, before anything walks the session —
-		// `warmSession` below is the reason: a round that only came into existence
-		// mid-play could never have its tile audio pre-rendered.
-		queue = interleaveMatchRounds(ready.challenges, items);
-		nextIndex = 0;
-		plannedLlm = ready.challenges.length;
-		plannedSteps = queue.length;
-		newWords = firstTimeWords(ready);
-
-		answers = [];
-
-		// Audio, ahead of the learner: boot the engine now rather than inside the
-		// first spoken challenge, and start rendering the session's clips in play
-		// order. A previous run — an early quit straight into another session —
-		// is dropped first, so only this session's queue is being warmed.
-		cancelWarming();
-		bootSpeech();
-		warmSession(queue);
-
-		phase = 'playing';
-		await advance();
-	}
-
-	/**
-	 * The words in this session the learner has never been reviewed on — what the
-	 * summary calls "New words".
-	 *
-	 * A session introduces no vocabulary; these words were added elsewhere — in
-	 * conversation, or by asking the tutor — and this is simply the first time
-	 * the learner is being *drilled* on them. An empty review history is the
-	 * honest local test for that, and it stays true for a word added a week ago
-	 * that is only now coming up.
-	 */
-	function firstTimeWords(ready: SessionPlan): KnowledgeItem[] {
-		const exercised = new Set(ready.challenges.flatMap((challenge) => challenge.itemIds));
-		return ready.items.filter(
-			(item) => exercised.has(item.id) && (item.reviewCount ?? item.history.length) === 0
-		);
 	}
 
 	/* ---------------------------------------------------------------------- */
@@ -255,8 +254,8 @@
 	/**
 	 * Which warm-up run is current. Every loop captures it before it starts and
 	 * re-checks it between phrases, so {@link cancelWarming} — one increment — is
-	 * the whole of stopping them: a finished session, an early quit, or the
-	 * screen going away leaves nothing rendering audio for a session that is over.
+	 * the whole of stopping them: stopping, or the screen going away, leaves
+	 * nothing rendering audio for a stream that is over.
 	 */
 	let warmGeneration = 0;
 
@@ -270,8 +269,8 @@
 	 * Renders `texts` into the audio caches, **one at a time**.
 	 *
 	 * The sequencing is the entire mechanism, and it is deliberate: the sherpa
-	 * worker synthesizes FIFO, so a warm loop that fired the whole session at
-	 * once would put a hundred phrases in front of the one clip the learner just
+	 * worker synthesizes FIFO, so a warm loop that fired a whole batch of clips
+	 * at once would put them all in front of the one clip the learner just
 	 * asked to hear. Keeping at most one warm in flight means a live `speak`
 	 * waits behind a single synthesis, and `$lib/tts`'s `inflight` map does the
 	 * rest — a real `speak` of a phrase this loop is already rendering joins that
@@ -286,29 +285,7 @@
 	}
 
 	/**
-	 * Pre-synthesizes the whole session, in the order it will be played.
-	 *
-	 * A clip takes Kokoro a second or two and a challenge takes the learner
-	 * rather longer, so a loop that starts with the session stays comfortably
-	 * ahead of it after the first challenge or two — which is the difference
-	 * between audio that is simply there and audio that lands after the moment
-	 * it belonged to. It sees the *whole* session because the free match rounds
-	 * are spliced into the queue at plan time — improvised rounds used to be
-	 * invisible here, and arrived with cold tiles. Nothing waits on it and every
-	 * failure is swallowed inside `warmSpeech`; the queue is walked by value, and
-	 * it never grows mid-session (a background generation lands in the *pool*, and
-	 * only the next plan sees it), so there is nothing here to keep in sync.
-	 */
-	function warmSession(challenges: Challenge[]): void {
-		const generation = warmGeneration;
-		void warmTexts(
-			challenges.flatMap((challenge) => audioTextsFor(challenge)),
-			generation
-		);
-	}
-
-	/**
-	 * Starts Kokoro's worker and model load the moment a session begins.
+	 * Starts Kokoro's worker and model load the moment the stream begins.
 	 *
 	 * Not a new download decision — the first `speak` fetches exactly the same
 	 * artifacts — just one taken off the critical path: booting lazily means the
@@ -323,46 +300,88 @@
 	}
 
 	/* ---------------------------------------------------------------------- */
-	/* Session flow                                                            */
+	/* Stream flow                                                             */
 	/* ---------------------------------------------------------------------- */
 
-	/**
-	 * Total steps the progress bar plans for. The queue already *is* the session,
-	 * free match rounds included, so this is just its length — there is no second
-	 * source of challenges left to predict.
-	 */
-	const totalSteps = $derived(Math.max(1, plannedSteps));
-	const stepsDone = $derived(answers.length);
-	/** Answered generated challenges: what `plannedLlm` is counted against. */
-	const llmAnswered = $derived(
-		answers.filter((answer) => STORED_TYPE_DEFS[answer.type].reviewsSrs).length
-	);
+	/** Answered challenges, match rounds included: the running count on the top bar. */
+	const answered = $derived(answers.length);
 
+	/**
+	 * The next pick, once this answer's writes have landed. While the most
+	 * urgent word has nothing, the stream waits for a batch written for it.
+	 */
 	async function advance(): Promise<void> {
 		feedback = null;
-
-		// The queue is the session: when it is walked, we are done. The free rounds
-		// are already in it — `interleaveMatchRounds` put them there, and that is
-		// also where the "never end on filler" rule lives.
-		if (nextIndex >= queue.length) {
-			await finish();
+		await pendingWrite;
+		const step = await stream.next();
+		items = stream.items;
+		if (step.kind === 'blocked') {
+			await blocked(step.asked);
 			return;
 		}
-
-		show(queue[nextIndex++]);
+		phase = 'playing';
+		show(step);
 	}
 
-	function show(challenge: Challenge): void {
+	/** The next word has nothing: wait for a batch, start one, or — once one was asked for it — stop. */
+	async function blocked(asked: boolean): Promise<void> {
+		if (writing) {
+			// Someone else's batch (the learn screen's) wakes this stream too.
+			if (topUp) refills.add(topUp.id);
+			phase = 'waiting';
+			return;
+		}
+		if (!asked && (await refill())) {
+			phase = 'waiting';
+			return;
+		}
+		await finish(endReasonFor(asked));
+	}
+
+	/** Why a stream whose next word has nothing cannot go on, in the learner's words. */
+	function endReasonFor(asked: boolean): string {
+		if (asked) {
+			return 'Nothing that fits your next word could be written just now. Try again, or come back later.';
+		}
+		if (mock) {
+			return 'Nothing left that fits. Add your OpenRouter key in Settings and practice writes more as you go.';
+		}
+		if (canWrite()) return 'Nothing to practise right now. Come back later, or add words.';
+		return "You're offline, so no new challenges can be written for your next word.";
+	}
+
+	/** Back into the stream after it stopped itself: the store may have moved since. */
+	async function retry(): Promise<void> {
+		endReason = '';
+		stream.resetAsked();
+		phase = 'loading' as Phase;
+		await advance();
+		if (phase === 'playing') void refill().catch(() => {});
+	}
+
+	function show(step: Exclude<StreamStep, { kind: 'blocked' }>): void {
+		const challenge = step.challenge;
 		const at = Date.now();
 		challengeShownAt = at;
-		currentPresentation = presentationFor(challenge, items, { romanizationMode });
+		currentPresentation = presentationFor(
+			challenge,
+			step.kind === 'challenge' ? step.shown : 'plain'
+		);
 		current = challenge;
+		// The words drilled here for the first time, before this answer gives them a history.
+		if (storedDefFor(challenge).reviewsSrs) {
+			const seen = new Set(newWords.map((word) => word.id));
+			const first = items.filter(
+				(item) =>
+					challenge.itemIds.includes(item.id) &&
+					!seen.has(item.id) &&
+					(item.reviewCount ?? item.history.length) === 0
+			);
+			if (first.length > 0) newWords = [...newWords, ...first];
+		}
 		// Warm this challenge's own audio while the learner is still reading it.
-		// The queue loop covers the whole session now, so it has usually got there
-		// first — but not for the first challenge, which is shown the same tick the
-		// loop starts, and not for a clip the audio cache has since evicted.
 		// Fire-and-forget: a failed warm just means the real `speak` synthesizes as
-		// it always did.
+		// it always did, and sound never blocks play.
 		void warmTexts(audioTextsFor(challenge), warmGeneration);
 	}
 
@@ -370,7 +389,7 @@
 		const challenge = current;
 		if (!challenge || feedback) return;
 
-		// The challenge's own def answers "does this feed SRS?", so the session
+		// The challenge's own def answers "does this feed SRS?", so the screen
 		// never names a type: a round that does not review carries no item ids.
 		const reviewsSrs = storedDefFor(challenge).reviewsSrs;
 
@@ -383,6 +402,7 @@
 				itemIds: reviewsSrs ? challenge.itemIds : []
 			}
 		];
+		stream.noteAnswered(challenge, event.responseMs);
 
 		feedback = {
 			challenge,
@@ -398,19 +418,21 @@
 		// Fire-and-follow: the banner animates now, the write lands underneath it.
 		// The one promise is held twice — as `pendingReviewed` for its value (the
 		// items a self-assessment may re-grade) and as `pendingWrite` for its
-		// completion, which is what the session awaits before touching the queue
-		// again. Neither is ever dropped.
+		// completion, which is what the stream awaits before the next pick.
 		pendingReviewed = applyResult(challenge, {
 			verdict: event.verdict,
 			answerGiven: event.answerGiven,
 			responseMs: event.responseMs,
 			...(event.itemVerdicts ? { itemVerdicts: event.itemVerdicts } : {}),
+			...(currentPresentation ? { shown: currentPresentation.shown } : {}),
 			now: Date.now()
 		}).catch(() => {
-			// A failed write must not eat the session; the answer is already logged.
+			// A failed write must not eat the stream; the answer is already logged.
 			return new Set<string>();
 		});
 		pendingWrite = pendingReviewed.then(() => undefined);
+		// While the banner is up: do the words ahead want a batch? One takes a while.
+		void pendingWrite.then(() => refill()).catch(() => {});
 	}
 
 	/**
@@ -484,8 +506,8 @@
 	 * "Skip": an answer event like any other, with the verdict a skip
 	 * honestly deserves. `wrong` counts as a miss in the summary, and
 	 * `applyResult` grades the item FSRS-`Again` — which is exactly "I could not
-	 * produce this". That grade lowers the word's strength, and so the ladder
-	 * rung the next top-up writes it at; nothing else carries the skip forward.
+	 * produce this" — and the difficulty model reads it as the miss it is, so
+	 * the word's skill falls and the next pick asks less of it.
 	 */
 	function skipCurrent(): void {
 		const challenge = current;
@@ -499,7 +521,7 @@
 
 	/**
 	 * The learner flagged this challenge as broken. It is excluded from every
-	 * future plan, immediately and permanently — but the session does *not*
+	 * future pick, immediately and permanently — but the stream does *not*
 	 * advance: a challenge worth reporting is usually one they still want
 	 * explained. Chained onto `pendingWrite` like every other write, and
 	 * swallowed on failure for the same reason.
@@ -510,64 +532,61 @@
 		pendingWrite = pendingWrite
 			.then(() => reportChallenge(fb.challenge))
 			.catch(() => {
-				// A failed write must not eat the session; the banner already said thanks.
+				// A failed write must not eat the stream; the banner already said thanks.
 			});
 	}
 
 	async function continueSession(): Promise<void> {
-		// Drop the banner first so it slides out while the write finishes, then
-		// wait for it: a self-assessment given at the last moment is chained onto
-		// the same promise and must land before the next challenge is shown.
+		// Drop the banner first so it slides out while the write finishes; the
+		// next pick waits for it (a self-assessment given at the last moment is
+		// chained onto the same promise).
 		feedback = null;
-		await pendingWrite;
 		await advance();
 	}
 
-	async function finish(): Promise<void> {
-		await pendingWrite;
+	/** Stops the stream, cleanly: every answer is already written. `reason` when it stopped itself. */
+	async function finish(reason = ''): Promise<void> {
+		try {
+			await pendingWrite;
+		} catch {
+			/* stopping anyway */
+		}
 		// Nothing left to say: the summary screen is silent, so any phrase still
 		// queued for synthesis is work nobody asked for.
 		cancelWarming();
 		current = null;
 		feedback = null;
+		endReason = reason;
 
 		// The streak is derived, not bookkept: `pendingWrite` is settled above, so
-		// this session's own results are already in the log being folded.
+		// this stream's own results are already in the log being folded.
 		endStreak = streakFrom((await getDailyActivity()).map((entry) => entry.day));
 		phase = 'summary';
-		// The session's writes are in the log; the summary is a moment nobody is
+		// The stream's writes are in the log; the summary is a moment nobody is
 		// waiting on, so it is the natural place to push them.
 		void runSync();
 	}
 
-	function requestQuit(): void {
-		if (answers.length > 0 && phase === 'playing') {
-			showQuitConfirm = true;
+	/**
+	 * The learner stopped. Stopping is always clean — results and reviews land
+	 * per answer, and a challenge they never answered was never stamped — so
+	 * there is nothing to confirm: straight to the summary, or back to Practice
+	 * when nothing was answered.
+	 */
+	async function stop(): Promise<void> {
+		if (leaving) return;
+		if (answers.length === 0) {
+			leaving = true;
+			cancelWarming();
+			try {
+				await pendingWrite;
+			} catch {
+				/* leaving anyway */
+			}
+			await goto('/learn');
 			return;
 		}
-		void quit();
-	}
-
-	/**
-	 * Leaves early. Everything answered is already written — results and reviews
-	 * land per answer, not at the end — so there is nothing to bank.
-	 *
-	 * Nothing to clean up either: challenges are only stamped as served when they
-	 * are answered, so everything the learner did not reach is still in the pool
-	 * and simply gets planned again next time.
-	 */
-	async function quit(): Promise<void> {
-		if (leaving) return;
-		leaving = true;
-		showQuitConfirm = false;
-		// The rest of the session will not be played; stop rendering its audio.
-		cancelWarming();
-		try {
-			await pendingWrite;
-		} catch {
-			/* leaving anyway */
-		}
-		await goto('/learn');
+		await finish();
 	}
 
 	/* ---------------------------------------------------------------------- */
@@ -630,7 +649,6 @@
 
 	const targetLanguage = $derived(profile?.targetLanguage ?? '');
 	const nativeLanguage = $derived(profile?.nativeLanguage ?? '');
-	const isLastStep = $derived(llmAnswered >= plannedLlm || stepsDone >= totalSteps);
 
 	/** Read once — the toggle lives in Settings, not mid-session. */
 	const romanizationMode = getRomanizationMode();
@@ -643,13 +661,13 @@
 </script>
 
 <svelte:head>
-	<title>Sapling · Session</title>
+	<title>Sapling · Practice</title>
 </svelte:head>
 
 <main class="shell">
 	<!--
 	  Setup belongs to the persistent Practice destination. This focused route
-	  owns the quit ✕ during play and the explicit return on its summary, so it
+	  owns the stop ✕ during play and the explicit return on its summary, so it
 	  never competes with the app shell for a way out.
 
 	  Leaving while a top-up is generating is safe and needs no guard: the task
@@ -659,6 +677,16 @@
 	-->
 	{#if phase === 'loading'}
 		<div class="centered"><Spinner /></div>
+	{:else if phase === 'waiting'}
+		<!--
+		  Nothing fits right now and a batch is on its way. The tray says what it
+		  is doing; this says what the learner is waiting for, and lets them stop.
+		-->
+		<div class="centered" in:fade={{ duration: motionMs(200) }}>
+			<Spinner />
+			<p class="lead">Writing more challenges for you…</p>
+			<button type="button" class="btn btn-ghost" onclick={() => void stop()}>Stop</button>
+		</div>
 	{:else if phase === 'summary'}
 		<div class="summary" in:scale={{ duration: motionMs(320), start: 0.94 }}>
 			<div class="confetti" aria-hidden="true">
@@ -675,7 +703,9 @@
 			<div class="card summary-card">
 				{#if summary.answered === 0}
 					<h1>Nothing to practise</h1>
-					<p class="lead">Your pool has nothing ready right now — generate a new lesson.</p>
+					<p class="lead">
+						{endReason || 'Your pool has nothing ready right now — write a new lesson.'}
+					</p>
 				{:else}
 					<!-- The brand glyph, pressed into the page: a sprout in a specimen
 					     frame. Two leaves for a session that went well, one for a session
@@ -692,7 +722,8 @@
 							</svg>
 						</span>
 					</p>
-					<h1>Session complete</h1>
+					<h1>Practice done</h1>
+					{#if endReason}<p class="lead end-reason">{endReason}</p>{/if}
 
 					<div class="score-hero">
 						<span class="score-number">{summary.correct + summary.almost}/{summary.answered}</span>
@@ -747,6 +778,15 @@
 					{/if}
 				{/if}
 
+				{#if endReason}
+					<button
+						type="button"
+						class="btn btn-ghost btn-block retry-btn"
+						onclick={() => void retry()}
+					>
+						Try again
+					</button>
+				{/if}
 				<a class="btn btn-primary btn-block back-btn" href="/learn">Back to Practice</a>
 			</div>
 		</div>
@@ -759,24 +799,18 @@
 		-->
 		<div class="session">
 			<header class="topbar">
-				<button type="button" class="quit" onclick={requestQuit} aria-label="Quit session">
+				<button type="button" class="quit" onclick={() => void stop()} aria-label="Stop practising">
 					<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"
 						><path d="m7 7 10 10M17 7 7 17" /></svg
 					>
 				</button>
 
-				<div
-					class="progress"
-					role="progressbar"
-					aria-valuenow={stepsDone}
-					aria-valuemin={0}
-					aria-valuemax={totalSteps}
-					aria-label="Session progress"
-				>
-					{#each Array.from({ length: totalSteps }, (_, i) => i) as index (index)}
-						<span class="segment" class:filled={index < stepsDone}></span>
-					{/each}
-				</div>
+				<!-- No length to fill: the stream runs until the learner stops, so the bar
+				     counts what has been done rather than what is left. -->
+				<p class="answered" aria-live="polite">
+					{answered}
+					<span class="answered-label">answered</span>
+				</p>
 
 				<div class="topbar-spacer" aria-hidden="true"></div>
 			</header>
@@ -843,35 +877,13 @@
 				skipped={feedback.answerGiven === SKIP_ANSWER}
 				{nativeLanguage}
 				{targetLanguage}
-				last={isLastStep}
+				last={false}
 				overturned={feedback.overturned ?? false}
 				oncontinue={() => void continueSession()}
 				onoverturn={overturnCurrent}
 				onassess={assessCurrent}
 				onreport={reportCurrent}
 			/>
-		{/if}
-
-		{#if showQuitConfirm}
-			<div class="overlay" transition:fade={{ duration: motionMs(150) }}>
-				<div class="card quit-card" in:scale={{ duration: motionMs(200), start: 0.92 }}>
-					<h2>Leave the session?</h2>
-					<p class="hint">Answers so far are saved.</p>
-					<div class="quit-actions">
-						<button type="button" class="btn btn-primary" onclick={() => (showQuitConfirm = false)}>
-							Keep going
-						</button>
-						<button
-							type="button"
-							class="btn btn-ghost"
-							onclick={() => void quit()}
-							disabled={leaving}
-						>
-							Quit
-						</button>
-					</div>
-				</div>
-			</div>
 		{/if}
 	{/if}
 </main>
@@ -1006,36 +1018,31 @@
 	}
 
 	/*
-	  Progress as a row of ruled ticks rather than beads — squared ends, a
-	  hairline trough, ink laid into the paper as each step is answered. The
-	  same measure `ProgressBar` draws on the dashboard, cut into segments.
+	  A running count, set like a ledger figure: the stream has no length to
+	  fill, so the top bar says what has been done.
 	*/
-	.progress {
-		display: flex;
+	.answered {
 		flex: 1;
-		gap: 3px;
-		min-width: 0;
+		margin: 0;
+		font-size: 1.05rem;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+		text-align: center;
+		color: var(--text);
 	}
 
-	.segment {
-		flex: 1;
-		height: 0.55rem;
-		border: 1px solid var(--border);
-		border-radius: 3px;
-		background: var(--surface-alt);
-		box-shadow: inset 0 1px 2px color-mix(in srgb, var(--border-strong) 30%, transparent);
-		transition:
-			background 0.3s ease,
-			border-color 0.3s ease;
+	.answered-label {
+		margin-left: 0.3rem;
+		font-size: 0.8rem;
+		font-weight: 500;
+		color: var(--text-muted);
 	}
 
-	.segment.filled {
-		border-color: var(--primary-strong);
-		background: var(--primary);
-		box-shadow: none;
+	.end-reason {
+		text-wrap: balance;
 	}
 
-	/* Balances the quit control so the progress row stays optically centred. */
+	/* Balances the stop control so the count stays optically centred. */
 	.topbar-spacer {
 		flex: 0 0 auto;
 		min-width: 3rem;
@@ -1114,43 +1121,6 @@
 	}
 
 	/* Quit confirmation ---------------------------------------------------- */
-
-	/*
-	  A warm ink wash, never a blue-grey scrim. `--scrim` points at whichever
-	  token is *dark* in the current palette — the page ink on paper, the
-	  inverse ink on moss — so the overlay stays warm in both without a single
-	  literal colour.
-	*/
-	.overlay {
-		--scrim: var(--text);
-		position: fixed;
-		inset: 0;
-		z-index: 30;
-		display: grid;
-		place-items: center;
-		padding: 1rem;
-		background: color-mix(in srgb, var(--scrim) 62%, transparent);
-	}
-
-	:global(html[data-theme='dark']) .overlay {
-		--scrim: var(--text-inverse);
-	}
-
-	.quit-card {
-		max-width: 24rem;
-		text-align: center;
-	}
-
-	.quit-card h2 {
-		font-size: 1.2rem;
-	}
-
-	.quit-actions {
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-		margin-top: 1.25rem;
-	}
 
 	/* Summary -------------------------------------------------------------- */
 
@@ -1379,6 +1349,14 @@
 		overflow-wrap: anywhere;
 	}
 
+	.retry-btn {
+		margin-top: 1.75rem;
+	}
+
+	.retry-btn + .back-btn {
+		margin-top: 0.75rem;
+	}
+
 	.back-btn {
 		margin-top: 1.75rem;
 		font-size: 1rem;
@@ -1419,7 +1397,6 @@
 		}
 
 		.quit,
-		.segment,
 		.stage {
 			transition: none;
 		}

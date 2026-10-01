@@ -24,15 +24,19 @@
   learner is still on the challenges before it, so a clip that has not arrived
   yet is one that is coming, and revealing the prompt out from under it would
   cost the learner the exercise. Sound never blocks gameplay.
+
+  Whether a challenge listens is decided once, at serve time, in the served
+  presentation (`listening`) — the session screen asks with the preference and
+  whether this device can speak, and the answer records it as the help level
+  it was shown at. A bare render never listens.
 -->
 <script lang="ts">
 	import { choiceKeyAction } from '$lib/challenges/keyboard';
 	import type { ChallengeProps } from '$lib/challenges/props';
-	import { isListeningChallenge, resolvedPresentation } from '$lib/challenges/serve';
+	import { resolvedPresentation } from '$lib/challenges/serve';
 	import { readingSlot } from '$lib/challenges/readings';
-	import { speak, ttsAvailable } from '$lib/tts';
+	import { speak } from '$lib/tts';
 	import type { MultipleChoiceChallenge } from '$lib/types';
-	import { getListeningMode } from '$lib/ui/prefs';
 	import { createAnswerLock } from './blocks/answer-lock.svelte.js';
 	import CheckButton from './blocks/CheckButton.svelte';
 	import PromptHeader from './blocks/PromptHeader.svelte';
@@ -49,9 +53,6 @@
 
 	const served = $derived(resolvedPresentation(challenge, presentation));
 	const readings = $derived(served.readings);
-
-	/** Read once — the toggle lives in Settings, not mid-session. */
-	const listeningEnabled = getListeningMode();
 
 	/**
 	 * `speak()` resolves quietly on every failure — deliberately, and it leaves
@@ -76,13 +77,11 @@
 	);
 
 	/**
-	 * Audio-first for this particular challenge. Three independent gates: the
-	 * engine's share-of-eligible rule, the learner's preference, and whether
-	 * speech can produce anything at all on this device.
+	 * Audio-first for this particular challenge, as served: the session screen
+	 * decided it from the learner's preference and whether this device can
+	 * speak at all.
 	 */
-	const listening = $derived(
-		isListeningChallenge(challenge, listeningEnabled) && ttsAvailable(targetLanguage)
-	);
+	const listening = $derived(served.listening);
 
 	/** True while the prompt is withheld — the only thing listening mode changes. */
 	const hidingPrompt = $derived(listening && !revealed && !lock.locked);

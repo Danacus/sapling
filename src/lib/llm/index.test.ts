@@ -36,7 +36,7 @@ function batch(
 	const wants: Want[] = kinds.map((type) => ({
 		item: { id: 'w1', term: 'la cuenta', meaning: 'the bill' },
 		kind: { type },
-		difficulty: 3
+		length: 6
 	}));
 	return {
 		profile: { nativeLanguage: 'English', targetLanguage, level: 'beginner', interests: [] },
@@ -96,6 +96,8 @@ describe('getEscalation', () => {
 		bankSize: 0,
 		distractorTiles: 0,
 		readings: ALL_READINGS,
+		listening: false,
+		shown: 'plain',
 		...fields
 	});
 

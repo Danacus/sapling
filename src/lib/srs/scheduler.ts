@@ -111,8 +111,8 @@ export function isDue(item: KnowledgeItem, now: number): boolean {
 }
 
 /**
- * How well a word is known, 0..1 — the number behind the strength bars, and the
- * axis `crates/sapling-challenges`' ladder slices into demand tiers and difficulty rungs.
+ * How well a word is known, 0..1 — the number behind the strength bars. Display
+ * only: what a challenge asks of a word is the difficulty model's skill.
  *
  * Zero for a word with nothing derived, for the same reason {@link dueAt} answers
  * `now`: never scheduled is the bottom of the range.
@@ -138,9 +138,9 @@ export function retrievabilityOf(item: KnowledgeItem): number {
  * overdue first, capped at `maxItems` (default 12); then, while there is room
  * left, the soonest-due items that are not due yet.
  *
- * That is the same degradation `planSession` performs on the play side — a
- * session runs out of due work and continues into review-ahead rather than into
- * nothing. Early review is native to FSRS: a review is graded whenever it
+ * That is the same degradation the practice stream performs on the play side
+ * (`nextPick`) — it runs out of due work and continues into review-ahead
+ * rather than into nothing. Early review is native to FSRS: a review is graded whenever it
  * happens, it simply banks a smaller stability gain.
  *
  * **The challenge top-up does not use this**, and used to: a window this size

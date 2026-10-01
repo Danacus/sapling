@@ -4,7 +4,7 @@
 
 	import { getProfile } from '$lib/db';
 	import { isMockMode } from '$lib/llm';
-	import { startSession, type SessionPlan } from '$lib/session/engine';
+	import { practiceOverview, type PracticeOverview } from '$lib/session/engine';
 	import { startTask } from '$lib/tasks';
 	import { taskStore } from '$lib/tasks/store.svelte';
 	import type { Profile } from '$lib/types';
@@ -26,7 +26,7 @@
 	let loading = $state(true);
 	let loadError = $state('');
 	let profile = $state<Profile | undefined>(undefined);
-	let plan = $state<SessionPlan | null>(null);
+	let plan = $state<PracticeOverview | null>(null);
 	let mock = $state(false);
 	let topicInput = $state('');
 	let recentTopics = $state<string[]>([]);
@@ -45,11 +45,26 @@
 	const wants = $derived(plan?.topUp.wants ?? 0);
 	const dueFigure = $derived(plan?.topUp.due ?? false);
 	const uncovered = $derived(upcoming - covered);
-	const canStart = $derived((plan?.challenges.length ?? 0) > 0);
+	const online = $derived(typeof navigator === 'undefined' || navigator.onLine !== false);
+	/** A key and a connection: the stream writes what it runs short of by itself. */
+	const streamWrites = $derived(!mock && online);
+	/**
+	 * Something fits now, or the stream can write something that will: with a
+	 * key and a connection, practice starts on a batch it writes itself.
+	 */
+	const canStart = $derived(plan !== null && (plan.first !== null || (wants > 0 && streamWrites)));
 	const hasWords = $derived((plan?.items.length ?? 0) > 0);
 	const aheadOfSchedule = $derived(canStart && dueCount === 0);
+	/**
+	 * Only when the button can write and the stream cannot — practice mode. With
+	 * a key the stream fills these gaps itself, and offline neither can.
+	 */
 	const nudgeGenerate = $derived(
-		plan !== null && hasWords && (!canStart || (wants > 0 && covered * 2 <= upcoming))
+		plan !== null &&
+			hasWords &&
+			mock &&
+			wants > 0 &&
+			(plan.first === null || covered * 2 <= upcoming)
 	);
 
 	const topicChips = $derived([
@@ -87,7 +102,13 @@
 			actions: []
 		});
 
-		if (!canStart) return say('Nothing to practise yet.');
+		if (!canStart) {
+			return say(
+				online || mock
+					? 'Nothing to practise yet.'
+					: "Nothing to practise yet, and you're offline — new challenges are written once you're back."
+			);
+		}
 		if (nudgeGenerate) {
 			return say(
 				`${uncovered} of those still ${uncovered === 1 ? 'needs' : 'need'} a challenge — a new lesson writes ${wants}.`
@@ -95,7 +116,7 @@
 		}
 		if (aheadOfSchedule) {
 			return {
-				body: "Nothing due right now — this session reviews words before they're due.",
+				body: "Nothing due right now — practice reviews words before they're due.",
 				actions: []
 			};
 		}
@@ -115,7 +136,7 @@
 				profile = loaded;
 				mock = isMockMode();
 				recentTopics = getRecentTopics();
-				plan = await startSession();
+				plan = await practiceOverview();
 				if (!cancelled) loading = false;
 			})
 			.catch((cause) => {
@@ -132,7 +153,7 @@
 	$effect(() => {
 		if (topUp?.status !== 'done' || topUp.id === replannedFor) return;
 		replannedFor = topUp.id;
-		void startSession().then((next) => (plan = next));
+		void practiceOverview().then((next) => (plan = next));
 	});
 
 	function generate(): void {
@@ -164,14 +185,14 @@
 
 		<div class="practice-grid">
 			<section class="card ready-card ll-rise" style="animation-delay: 70ms">
-				<p class="card-kicker">Your next session</p>
+				<p class="card-kicker">Practice</p>
 				<h2>
 					{#if dueCount > 0}
 						{dueCount} word{dueCount === 1 ? '' : 's'} ready
 					{:else if canStart}
-						A session is ready
+						Practice is ready
 					{:else}
-						Prepare your next session
+						Prepare to practise
 					{/if}
 				</h2>
 				<hr class="stitch" />
@@ -201,7 +222,7 @@
 					disabled={!canStart}
 					onclick={() => void beginSession()}
 				>
-					Start session
+					Start practising
 				</button>
 
 				{#if notice}
@@ -232,14 +253,19 @@
 						</svg>
 					</span>
 					<div>
-						<p class="card-kicker">Fresh material</p>
-						<h2>Write a new lesson</h2>
+						<p class="card-kicker">{mock ? 'Fresh material' : 'Optional'}</p>
+						<h2>{mock ? 'Write a new lesson' : 'Write ahead or on a topic'}</h2>
 					</div>
 					{#if generating}<span class="generation-state">Generating…</span>{/if}
 				</div>
 				<p class="lesson-copy">
-					Create challenges from words already in your garden. Add a topic if you want a particular
-					setting.
+					{#if mock}
+						Create challenges from words already in your garden. Add a topic if you want a
+						particular setting.
+					{:else}
+						Practice writes new challenges by itself as you go. Write some now to set them in a
+						particular topic, or to have them ready before you go offline.
+					{/if}
 				</p>
 
 				<label class="field topic-field">

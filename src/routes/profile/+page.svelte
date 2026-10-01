@@ -4,16 +4,18 @@
   backups) stays on /settings — the split is person-facts here, machine-facts
   there, so neither page has to explain why half of it is about the other.
 
-  Nothing here autosaves. These fields are prose and taste, not toggles: a
-  half-typed sentence must not become the thing every lesson is built around,
-  so the write happens only when the learner says so.
+  Nothing in "About you" autosaves. Those fields are prose and taste, not
+  toggles: a half-typed sentence must not become the thing every lesson is
+  built around, so the write happens only when the learner says so. The one
+  toggle here, how hard practice aims, saves the moment it is picked: it is a
+  setting, it rebuilds nothing, and it takes effect on the next pick.
 -->
 <script lang="ts">
 	import { browser } from '$app/environment';
 
 	import { getProfile, saveProfile } from '$lib/db';
 	import { MAX_ABOUT_CHARS } from '$lib/llm';
-	import type { Level, Profile } from '$lib/types';
+	import type { Aim, Level, Profile } from '$lib/types';
 	import BackLink from '$lib/ui/BackLink.svelte';
 	import InterestPicker from '$lib/ui/InterestPicker.svelte';
 	import LevelPicker from '$lib/ui/LevelPicker.svelte';
@@ -40,6 +42,34 @@
 	let saving = $state(false);
 	let saveStatus = $state<Status>('idle');
 	let saveMessage = $state('');
+
+	/**
+	 * How hard practice aims: the success rate the difficulty model picks
+	 * challenges for (`crates/sapling-challenges`' `data/model.json`). Absent
+	 * on a profile reads as normal.
+	 */
+	const AIMS: { value: Aim; title: string; blurb: string }[] = [
+		{ value: 'easier', title: 'Easier', blurb: 'About 9 in 10 right' },
+		{ value: 'normal', title: 'Normal', blurb: 'About 8 in 10 right' },
+		{ value: 'harder', title: 'Harder', blurb: 'About 7 in 10 right' }
+	];
+	let aimStatus = $state<Status>('idle');
+	let aimMessage = $state('');
+
+	async function chooseAim(aim: Aim) {
+		if (!profile || (profile.aim ?? 'normal') === aim) return;
+		const updated: Profile = { ...profile, aim };
+		try {
+			await saveProfile(updated);
+			profile = updated;
+			aimMessage = 'Saved';
+			aimStatus = 'saved';
+			setTimeout(() => (aimStatus = 'idle'), 1800);
+		} catch (cause) {
+			aimMessage = cause instanceof Error ? cause.message : 'Could not save that.';
+			aimStatus = 'error';
+		}
+	}
 
 	$effect(() => {
 		if (!browser) return;
@@ -189,6 +219,37 @@
 		</section>
 
 		{#if profile}
+			<section class="card ll-rise" style="animation-delay: 90ms">
+				<div class="card-head">
+					<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
+						<circle cx="12" cy="12" r="8.2" />
+						<circle cx="12" cy="12" r="4.4" />
+						<circle cx="12" cy="12" r="0.9" />
+					</svg>
+					<h2>Practice</h2>
+				</div>
+				<hr class="stitch" />
+				<p class="hint lead">
+					How often you should get a challenge right. Practice picks each one to land there, from
+					how your answers have gone.
+				</p>
+				<div class="aims" role="group" aria-label="How hard practice aims">
+					{#each AIMS as option (option.value)}
+						<button
+							type="button"
+							class="aim"
+							class:selected={(profile.aim ?? 'normal') === option.value}
+							aria-pressed={(profile.aim ?? 'normal') === option.value}
+							onclick={() => void chooseAim(option.value)}
+						>
+							<span class="aim-title">{option.title}</span>
+							<span class="aim-blurb">{option.blurb}</span>
+						</button>
+					{/each}
+				</div>
+				<InlineStatus status={aimStatus} message={aimMessage} />
+			</section>
+
 			<section class="card ll-rise" style="animation-delay: 120ms">
 				<div class="card-head">
 					<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
@@ -307,6 +368,53 @@
 
 	.lead {
 		margin: 0 0 1.25rem;
+	}
+
+	/* Three choices in one row even on a phone: short labels, and the same
+	   pressed-card hand as the level picker above them. */
+	.aims {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 0.5rem;
+		margin-bottom: 0.5rem;
+	}
+
+	.aim {
+		display: flex;
+		flex-direction: column;
+		gap: 0.1rem;
+		padding: 0.7rem 0.75rem;
+		border: 1.5px solid var(--border);
+		border-bottom-width: 3px;
+		border-radius: var(--radius);
+		background: var(--surface);
+		color: var(--text);
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.aim:hover {
+		border-color: var(--border-strong);
+	}
+
+	.aim:focus-visible {
+		outline: none;
+		box-shadow: var(--ring);
+	}
+
+	.aim.selected {
+		border-color: var(--primary);
+		background: var(--primary-soft);
+	}
+
+	.aim-title {
+		font-weight: 700;
+	}
+
+	.aim-blurb {
+		font-size: 0.78rem;
+		color: var(--text-muted);
 	}
 
 	/*

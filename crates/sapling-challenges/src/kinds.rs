@@ -1,7 +1,7 @@
 //! The kinds a challenge is planned and written as: each wire type's stored
-//! `{type, direction}` and, while it is still generated, its demand tier and
-//! the rungs it is written at (`data/kinds.json`). What the model is told about
-//! a kind is `sapling-llm`'s.
+//! `{type, direction}` and, while it is still generated, the range of lengths
+//! it may be written at (`data/kinds.json`) — the one difficulty knob a
+//! request carries. What the model is told about a kind is `sapling-llm`'s.
 
 use std::sync::OnceLock;
 
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::challenge::{Challenge, Direction};
-use crate::difficulty::Demand;
+use crate::help::Step;
 
 /// One kind of challenge the model can be asked to write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
@@ -42,20 +42,15 @@ pub struct StoredShape {
     pub prompt_is_target: bool,
 }
 
-/// A kind's demand tier and the rungs it is generated at.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct Plannable {
-    pub demand: Demand,
-    pub levels: Vec<u8>,
-}
-
 #[derive(Debug, Deserialize)]
 pub struct KindSpec {
     #[serde(rename = "type")]
     pub kind: WireType,
     pub stored: StoredShape,
+    /// The shortest and longest a row of this kind is written, on the
+    /// model's length scale; absent once the kind is retired.
     #[serde(default)]
-    pub plannable: Option<Plannable>,
+    pub lengths: Option<[u8; 2]>,
 }
 
 impl WireType {
@@ -104,25 +99,30 @@ impl WireType {
         &self.kind_spec().stored
     }
 
-    /// `None` once retired: a retired kind is neither written nor coverage.
-    pub fn plannable(self) -> Option<&'static Plannable> {
-        self.kind_spec().plannable.as_ref()
+    /// `None` once retired: a retired kind is neither written nor served.
+    pub fn lengths(self) -> Option<[u8; 2]> {
+        self.kind_spec().lengths
     }
 
     pub fn is_active(self) -> bool {
-        self.plannable().is_some()
+        self.lengths().is_some()
     }
 
-    pub fn available_at(self, level: u8) -> bool {
-        self.plannable().is_some_and(|p| p.levels.contains(&level))
+    /// The steps a freshly written row of this kind can be shown at — the
+    /// resolver always writes the full bank, tray and hint — easiest first.
+    pub fn written_steps(self) -> &'static [Step] {
+        match self {
+            WireType::Cloze => &[Step::Pick4, Step::Pick6, Step::Typed],
+            WireType::MultiCloze => &[Step::Answers, Step::Extra2],
+            WireType::WordOrder => &[Step::Tiles, Step::Extra2],
+            _ => &[Step::Plain],
+        }
     }
 }
 
-/// Every kind still generated, in registry order (a seeded pick depends on it).
-pub fn plannable_kinds() -> impl Iterator<Item = (WireType, &'static Plannable)> {
-    WireType::ALL
-        .into_iter()
-        .filter_map(|kind| kind.plannable().map(|p| (kind, p)))
+/// Every kind still written, in registry order (a seeded pick depends on it).
+pub fn active_kinds() -> impl Iterator<Item = WireType> {
+    WireType::ALL.into_iter().filter(|kind| kind.is_active())
 }
 
 /// The kind a stored challenge was written as; `None` for a match-pairs round.
@@ -149,12 +149,14 @@ pub struct ChallengeKind {
     pub kind: WireType,
 }
 
-/// One challenge to write: a word, a kind, and the word's rung (1..=5).
+/// One challenge to write: a word, a kind, and how long to write it — worked
+/// out backwards from the difficulty that would put the word at the aim.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct Want {
     pub item: WantItem,
     pub kind: ChallengeKind,
-    pub difficulty: u8,
+    /// Words (tiles, for a word-order) the row should have.
+    pub length: u8,
 }
 
 #[cfg(test)]
@@ -177,18 +179,16 @@ mod tests {
     }
 
     #[test]
-    fn only_the_retired_kind_is_unplannable_and_nothing_plans_above_constrained_production() {
-        let unplanned: Vec<WireType> = WireType::ALL
+    fn only_the_retired_kind_is_unwritten_and_every_range_is_a_range() {
+        let retired: Vec<WireType> = WireType::ALL
             .into_iter()
             .filter(|k| !k.is_active())
             .collect();
-        assert_eq!(unplanned, [WireType::TranslateToTarget]);
-        for (kind, plannable) in plannable_kinds() {
-            assert!(plannable.demand <= 1, "{kind:?}");
-            assert!(
-                !plannable.levels.is_empty()
-                    && plannable.levels.iter().all(|l| (1..=5).contains(l))
-            );
+        assert_eq!(retired, [WireType::TranslateToTarget]);
+        for kind in active_kinds() {
+            let [shortest, longest] = kind.lengths().unwrap();
+            assert!(1 <= shortest && shortest <= longest, "{kind:?}");
+            assert!(!kind.written_steps().is_empty());
         }
     }
 

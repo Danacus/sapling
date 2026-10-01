@@ -1,6 +1,7 @@
 //! The challenge decisions by name, like the `llm!` table but synchronous and
-//! needing nothing but the host's word counter: grading, what a served
-//! challenge shows, and the two planners. Each method takes one argument
+//! needing nothing from the host: grading, what a served challenge shows, and
+//! the two planners. (The host still lends a word counter; nothing reads it
+//! now that difficulty is measured by the model's own `words_in`.) Each method takes one argument
 //! object; the table also generates the TypeScript `Challenges` interface and
 //! `CHALLENGE_METHODS` (`challenges.ts`). A seed, where a method takes one,
 //! replays its draws; without one it draws from the OS.
@@ -9,15 +10,18 @@ use serde::Deserialize;
 use serde_json::Value;
 use ts_rs::TS;
 
+use sapling_challenges::challenge::MatchPairsChallenge;
 use sapling_challenges::challenge::{MultiClozeChallenge, WordOrderChallenge};
+use sapling_challenges::fits::Serving;
 use sapling_challenges::grade::{self, MultiClozeGrade};
-use sapling_challenges::ladder::{by_id, maturity_for_strength, Maturity};
+use sapling_challenges::help::HelpLevel;
 use sapling_challenges::matcher::{self, AnswerMatch};
 use sapling_challenges::pool::lenient_rows;
-use sapling_challenges::serve::{self, Presentation, RomanizationMode};
-use sapling_challenges::session::{self, Slot};
+use sapling_challenges::serve::{self, Presentation};
+use sapling_challenges::stream::{self, Head};
 use sapling_challenges::text::WordCount;
-use sapling_challenges::topup::{self, TopUpCoverage};
+use sapling_challenges::topup::{self, Scope, TopUpCoverage};
+use sapling_challenges::word::{hide_reading_probability, maturity_for_strength, Maturity};
 use sapling_challenges::{Challenge, PoolRow, Rng, Want, Word};
 use sapling_domain::types::Verdict;
 
@@ -46,14 +50,11 @@ pub struct ValidateAnswerArgs {
 }
 
 #[derive(Debug, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
 pub struct PresentationArgs {
     pub challenge: Challenge,
-    pub words: Vec<Word>,
-    pub romanization_mode: RomanizationMode,
-    #[serde(default)]
-    #[ts(optional)]
-    pub seed: Option<u64>,
+    /// The help level serving picked (`Planned.shown`); a level this build
+    /// does not know shows the row at its easiest step.
+    pub shown: String,
 }
 
 #[derive(Debug, Deserialize, TS)]
@@ -69,39 +70,51 @@ pub struct VisibleTilesArgs {
 }
 
 #[derive(Debug, Deserialize, TS)]
-pub struct ListeningArgs {
-    pub challenge: Challenge,
-    pub enabled: bool,
-}
-
-#[derive(Debug, Deserialize, TS)]
 pub struct StrengthArgs {
     pub strength: f64,
 }
 
 /// A pool as the host read it; a row this build cannot read keeps its place
-/// and is never planned.
+/// and is never picked.
 #[derive(Debug, Deserialize, TS)]
-pub struct PlanSessionArgs {
+pub struct StreamArgs {
     #[serde(deserialize_with = "lenient_rows")]
     #[ts(as = "Vec<PoolRow>")]
     pub pool: Vec<Option<PoolRow>>,
     pub words: Vec<Word>,
     pub now: f64,
-    /// Slots to aim for.
+    /// The learned numbers, the aim and the help-level bounds a pick is made against.
     #[serde(default)]
     #[ts(optional)]
-    pub target: Option<i64>,
-    /// The ceiling, whatever `target` says.
+    pub serving: Option<Serving>,
+    /// The challenge ids this stream has already shown: never picked again.
     #[serde(default)]
     #[ts(optional)]
-    pub limit: Option<i64>,
+    pub served: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, TS)]
-pub struct InterleaveArgs {
-    /// Each planned challenge's `itemIds`, in play order.
-    pub plan: Vec<Vec<String>>,
+#[serde(rename_all = "camelCase")]
+pub struct LowWaterArgs {
+    /// The learner's recent time per answer, in milliseconds.
+    #[serde(default)]
+    #[ts(optional)]
+    pub pace_ms: Option<f64>,
+    /// How long the last batch took to come back, in milliseconds.
+    #[serde(default)]
+    #[ts(optional)]
+    pub batch_ms: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct EarlyArgs {
+    pub item_ids: Vec<String>,
+    pub words: Vec<Word>,
+}
+
+#[derive(Debug, Deserialize, TS)]
+pub struct MatchRoundArgs {
     pub words: Vec<Word>,
     #[serde(default)]
     #[ts(optional)]
@@ -117,11 +130,22 @@ pub struct TopUpArgs {
     pub now: f64,
     #[serde(default)]
     #[ts(optional)]
+    pub serving: Option<Serving>,
+    /// The challenge ids the stream has already shown: they cover nothing.
+    #[serde(default)]
+    #[ts(optional)]
+    pub served: Option<Vec<String>>,
+    /// Words the stream has already asked a refill for: they want nothing.
+    #[serde(default)]
+    #[ts(optional)]
+    pub asked: Option<Vec<String>>,
+    /// How many of the words ahead to write for; every word when absent.
+    #[serde(default)]
+    #[ts(optional)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    #[ts(optional)]
     pub seed: Option<u64>,
-}
-
-fn readable(pool: &[Option<PoolRow>]) -> Vec<&PoolRow> {
-    pool.iter().flatten().collect()
 }
 
 macro_rules! challenges {
@@ -140,6 +164,7 @@ macro_rules! challenges {
             args: &[Value],
             $count: WordCount,
         ) -> Result<Value, String> {
+            let _ = $count;
             match method {
                 $(
                     stringify!($method) => {
@@ -188,11 +213,10 @@ challenges! {
         validateAnswer(args: ValidateAnswerArgs) -> AnswerMatch {
             matcher::validate_answer(&args.given, &args.accepted, args.fuzzy.unwrap_or(true))
         }
-        /// Everything a served challenge shows, rolled once.
+        /// Everything a served challenge shows at the help level it was picked at.
         presentationFor(args: PresentationArgs) -> Presentation {
-            let index = by_id(&args.words);
-            let mut rng = Rng::from_seed(args.seed);
-            serve::presentation_for(&args.challenge, &args.words, &index, args.romanization_mode, &mut || rng.next_f64())
+            let easiest = HelpLevel::step(sapling_challenges::help::steps_of(&args.challenge)[0]);
+            serve::presentation_for(&args.challenge, HelpLevel::parse(&args.shown).unwrap_or(easiest))
         }
         /// The bank positions a cloze or multi-cloze shows at `size`.
         visibleBank(args: VisibleBankArgs) -> Vec<usize> {
@@ -202,34 +226,40 @@ challenges! {
         visibleTiles(args: VisibleTilesArgs) -> Vec<usize> {
             serve::visible_tiles(&args.challenge, args.count)
         }
-        /// Whether a challenge is played before it is read.
-        isListening(args: ListeningArgs) -> bool {
-            serve::is_listening(&args.challenge, args.enabled)
-        }
         /// A word's maturity bucket, from its strength.
         maturityOf(args: StrengthArgs) -> Maturity {
             maturity_for_strength(args.strength)
         }
-        /// The chance a word of this strength has its reading hidden.
+        /// The chance the reader hides a word's reading at this strength.
         hideReadingProbability(args: StrengthArgs) -> f64 {
-            serve::hide_reading_probability(args.strength)
+            hide_reading_probability(args.strength)
         }
-        /// The session: positions into `pool`, in play order.
-        planSession(args: PlanSessionArgs) -> Vec<usize> {
-            session::plan_session(&args.pool, &args.words, args.now, args.target, args.limit, count)
+        /// The most urgent word and its challenge — a position into `pool` at its help level — absent while it has nothing.
+        streamHead(args: StreamArgs) -> Option<Head> {
+            stream::head(&args.pool, &args.words, args.now, &args.serving.unwrap_or_default(), &args.served.unwrap_or_default())
         }
-        /// The queue: each planned challenge by its position, with the match rounds between.
-        interleaveMatchRounds(args: InterleaveArgs) -> Vec<Slot> {
-            session::interleave_match_rounds(&args.plan, &args.words, &mut Rng::from_seed(args.seed))
+        /// How many words ahead the stream keeps written for, at this pace.
+        lowWaterMark(args: LowWaterArgs) -> usize {
+            stream::low_water_mark(args.pace_ms, args.batch_ms)
         }
-        /// What the pool is missing, most urgent word first.
+        /// Whether a challenge about these words counts towards the next match round.
+        isEarly(args: EarlyArgs) -> bool {
+            stream::is_early(&args.item_ids, &args.words)
+        }
+        /// A free match round from the early words, or none when there are too few.
+        matchRound(args: MatchRoundArgs) -> Option<MatchPairsChallenge> {
+            stream::match_round(&args.words, &mut Rng::from_seed(args.seed))
+        }
+        /// What the words ahead are missing, most urgent word first.
         planTopUp(args: TopUpArgs) -> Vec<Want> {
             let mut rng = Rng::from_seed(args.seed);
-            topup::plan_top_up(&readable(&args.pool), &args.words, args.now, &mut || rng.next_f64())
+            let (served, asked) = (args.served.unwrap_or_default(), args.asked.unwrap_or_default());
+            let scope = Scope { served: &served, asked: &asked, limit: args.limit };
+            topup::plan_top_up(&args.pool, &args.words, args.now, &args.serving.unwrap_or_default(), scope, &mut || rng.next_f64())
         }
-        /// How well the pool covers the words a session is about to serve.
+        /// The start screen's figure and what a press would write.
         topUpCoverage(args: TopUpArgs) -> TopUpCoverage {
-            topup::top_up_coverage(&readable(&args.pool), &args.words, args.now)
+            topup::coverage(&args.pool, &args.words, args.now, &args.serving.unwrap_or_default())
         }
     }
 }
@@ -275,19 +305,27 @@ mod tests {
     }
 
     #[test]
-    fn a_plan_answers_positions_and_skips_what_it_cannot_read() {
+    fn a_pick_answers_a_position_and_skips_what_it_cannot_read() {
         let row = json!({ "id": "c", "type": "multiple-choice", "direction": "toNative", "prompt": "p",
             "options": ["a", "b", "c", "d"], "correctIndex": 0, "itemIds": ["w"],
             "generatedAt": 0, "timesServed": 0, "lastServedAt": null, "reported": false });
         let alien = json!({ "id": "x", "type": "dictation", "itemIds": ["w"] });
         let words =
             json!([{ "id": "w", "term": "t", "meaning": "m", "kind": "vocab", "fsrsCard": null }]);
-        let plan = call(
-            "planSession",
-            json!({ "pool": [alien, row], "words": words, "now": 1 }),
+        let head = call(
+            "streamHead",
+            json!({ "pool": [alien, row.clone()], "words": words, "now": 1 }),
         )
         .unwrap();
-        assert_eq!(plan, json!([1]));
+        assert_eq!(head["word"], json!("w"));
+        assert_eq!(head["next"]["at"], json!(1));
+        assert_eq!(head["next"]["shown"], json!("plain"));
+        let blocked = call(
+            "streamHead",
+            json!({ "pool": [row], "words": words, "now": 1, "served": ["c"] }),
+        )
+        .unwrap();
+        assert_eq!(blocked, json!({ "word": "w" }));
     }
 
     #[test]

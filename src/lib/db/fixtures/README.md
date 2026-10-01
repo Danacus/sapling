@@ -33,6 +33,9 @@ Reads are always taken under `TZ=UTC` (`getDailyActivity` buckets by local day).
   and recorded as a map from id to result; a missing row is `null`.
 - `getChallengesByIds` is called once with every challenge id the log mentions.
 - `recentResults` uses limit 5; `pendingEvents` uses limit 100.
+- `getDifficultyParts` is recorded as returned. It, each item's `skill` and
+  each pool row's `correction` are learned from memories the FSRS model
+  computed, so they compare with the same tolerance as the model's floats.
 - `exportData` is recorded parsed, not as the string.
 - Reads the protocol leaves unordered — `getAllItems`, `getPool`,
   `getChallengesByIds`, `getKnownTerms` — are sorted by id or term in code-unit

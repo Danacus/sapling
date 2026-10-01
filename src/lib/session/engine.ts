@@ -9,11 +9,12 @@
  *
  * **Generation and play are decoupled.** Every challenge ever generated lives
  * in a persistent pool (the `challenges` table); answering one stamps it
- * rather than consuming it. {@link generateChallenges} is an explicit,
- * backgroundable user action that tops the pool up with what it is missing
- * ({@link planTopUp}), and {@link planSession} assembles a session out of
- * whatever is already there — so starting is instant, always, and never waits
- * on the network.
+ * rather than consuming it. Practice is one stream that runs until the learner
+ * stops (`./stream`): each next challenge is picked from what the pool holds
+ * now ({@link nextPick}), and {@link generateChallenges} tops the pool up with
+ * what it is missing ({@link planTopUp}) — in the background, as a task, when
+ * the learner asks or when the words ahead in the stream want rows. Starting
+ * never waits on the network.
  *
  * Token economy, restated because it is what allows that: one `getBatch` call
  * fills the whole top-up — internally a handful of short concurrent requests,
@@ -29,41 +30,42 @@ import {
 	addResult,
 	addToPool,
 	getAllItems,
+	getDifficultyParts,
 	getPool,
+	getProfile,
 	recordServe,
 	reportChallenge as flagChallengeReported,
 	updateItemAfterReview
 } from '$lib/db';
 import type { ChallengeRow, ReasoningEffort } from '$lib/db';
 import { challengeOf } from '$lib/db';
-import { SESSION_LENGTH } from '$lib/db/generated/challenges';
+import { MATCH_PAIRS_EVERY } from '$lib/db/generated/challenges';
 import type { TopUpCoverage } from '$lib/db/generated/index';
 import { getBatch, isMockMode } from '$lib/llm';
 import type { BatchArgs, OnProgress, TokenUsage, Want } from '$lib/llm';
 import { Grade, gradeFromResult, isDue } from '$lib/srs';
 import { asWords, callChallenges } from '$lib/challenges/core';
 import { storedDefFor } from '$lib/challenges/types';
-import type { Challenge, KnowledgeItem, Profile, Verdict } from '$lib/types';
+import type { Challenge, KnowledgeItem, MatchPairsChallenge, Profile, Verdict } from '$lib/types';
+import { servingFor, type DeviceServing, type Serving } from './serving';
+
+export { deviceServing, servingFor, type DeviceServing, type Serving } from './serving';
 
 /* -------------------------------------------------------------------------- */
 /* Tuning                                                                      */
 /* -------------------------------------------------------------------------- */
 
-/**
- * The most model-written challenges one session serves — `crates/sapling-challenges`'
- * `pool.rs`, which also owns the rest gap, the session target and the match
- * round spacing.
- */
-export { SESSION_LENGTH };
+/** How many early-word challenges a match round follows — `crates/sapling-challenges`' `stream.rs`. */
+export { MATCH_PAIRS_EVERY };
 
 /**
  * `answerGiven` written when the learner presses "Too hard — skip".
  *
  * It is a `wrong` answer in every respect, FSRS `Again` included —
- * "I could not produce it" is exactly what `Again` encodes. That grade is the
- * whole of its effect on what gets written next: the word's strength falls, its
- * ladder rung falls with it, and the next top-up sizes every challenge about it
- * to the lower rung. Nothing else carries the skip forward.
+ * "I could not produce it" is exactly what `Again` encodes — and the
+ * difficulty model learns from it like any other miss: the word's skill falls
+ * and the row reads harder, so the next pick and the next top-up both ask
+ * less of the word.
  */
 export const SKIP_ANSWER = '(skipped)';
 
@@ -133,119 +135,189 @@ export function sessionSummary(answers: SessionAnswer[]): SessionSummary {
 }
 
 /**
- * Splices the free match-pairs rounds into a planned session, returning the one
- * queue the learn screen walks — built at plan time so the TTS warm loop, the
- * progress math and the walk all see the same session. Rust decides where the
- * rounds go and builds them (`crates/sapling-challenges`' `session.rs`): one
- * after every fourth challenge that touches an early word, never last, sized at
- * the lower median rung of those words. `seed` replays the rounds' draws.
- */
-export function interleaveMatchRounds(
-	challenges: Challenge[],
-	items: KnowledgeItem[],
-	seed?: number
-): Challenge[] {
-	const slots = callChallenges('interleaveMatchRounds', {
-		plan: challenges.map((challenge) => challenge.itemIds),
-		words: asWords(items),
-		...(seed === undefined ? {} : { seed })
-	});
-	return slots.map((slot) => (typeof slot === 'number' ? challenges[slot]! : slot));
-}
-
-/**
  * The canonical target-language audio for a challenge's answer — a
  * presentation fact (`$lib/challenges/display`), exported here where the
  * session screen has always found it.
  */
 export { spokenAnswerFor } from '$lib/challenges/display';
 
-/** Whether a challenge is played before it is read — `$lib/challenges/serve`. */
-export { isListeningChallenge } from '$lib/challenges/serve';
-
 /* -------------------------------------------------------------------------- */
-/* Session planning                                                            */
+/* The stream's decisions (pure)                                               */
 /* -------------------------------------------------------------------------- */
 
-export interface PlanSessionOptions {
-	/** Slots to aim for; Rust's `BATCH_TARGET` when absent. */
-	target?: number;
-	/** Hard ceiling, whatever `target` says; {@link SESSION_LENGTH} when absent. */
-	limit?: number;
+export interface StreamOptions {
+	/** What the pick is made against; starting values, the normal aim and no listening when absent. */
+	serving?: Serving;
+	/** The challenge ids this stream has already shown: never picked again. */
+	served?: readonly string[];
+}
+
+/** One challenge the stream serves, at the help level it is served at. */
+export interface SessionPick {
+	challenge: Challenge;
+	/** The help level (`crates/sapling-challenges`' `help.rs`): what `presentationFor` shows and the answer records. */
+	shown: string;
+	/** The chance of a correct answer at that help level, given the word is remembered. */
+	chance: number;
+	/** Whether its word is due, rather than reviewed ahead. */
+	due: boolean;
+}
+
+function streamArgs(
+	pool: readonly ChallengeRow[],
+	items: KnowledgeItem[],
+	now: number,
+	opts: StreamOptions
+) {
+	return {
+		pool: [...pool],
+		words: asWords(items),
+		now,
+		...(opts.serving === undefined ? {} : { serving: opts.serving }),
+		...(opts.served === undefined ? {} : { served: [...opts.served] })
+	};
+}
+
+/** The head of the stream: its most urgent word, and that word's pick unless it has nothing. */
+export interface StreamHead {
+	word: string;
+	pick: SessionPick | null;
 }
 
 /**
- * Builds the session: which pooled challenges to play, in order. Rust plans
- * it (`crates/sapling-challenges`' `session.rs`) — due words first, most
- * overdue first, each claiming the bearable challenge nearest the centre of
- * its level band, then the words not yet due, then the leftovers — and hands
- * back positions into `pool`, so what plays is the row as stored, minus its
- * bookkeeping.
+ * Rust's (`crates/sapling-challenges`' `stream.rs`): the most urgent word (due
+ * words first, most overdue first, then the words not yet due) and its
+ * available row whose best help level sits closest to the aim — `pick: null`
+ * while that word has nothing, which a refill is what fixes; `null` only with
+ * no words at all. What plays is the row as stored, minus its bookkeeping.
  */
-export function planSession(
-	pool: ChallengeRow[],
+export function streamHead(
+	pool: readonly ChallengeRow[],
 	items: KnowledgeItem[],
 	now: number,
-	opts: PlanSessionOptions = {}
-): Challenge[] {
-	const planned = callChallenges('planSession', {
-		pool,
-		words: asWords(items),
-		now,
-		...(opts.target === undefined ? {} : { target: opts.target }),
-		...(opts.limit === undefined ? {} : { limit: opts.limit })
+	opts: StreamOptions = {}
+): StreamHead | null {
+	const head = callChallenges('streamHead', streamArgs(pool, items, now, opts));
+	if (!head) return null;
+	const next = head.next;
+	return {
+		word: head.word,
+		pick: next
+			? {
+					challenge: challengeOf(pool[next.at]!),
+					shown: next.shown,
+					chance: next.chance,
+					due: next.due
+				}
+			: null
+	};
+}
+
+/** {@link streamHead}'s pick: the stream's next challenge, or `null` while its head has nothing. */
+export function nextPick(
+	pool: readonly ChallengeRow[],
+	items: KnowledgeItem[],
+	now: number,
+	opts: StreamOptions = {}
+): SessionPick | null {
+	return streamHead(pool, items, now, opts)?.pick ?? null;
+}
+
+/**
+ * How many words ahead the stream keeps written for: enough to keep
+ * answering, at `paceMs` a challenge, while a batch that takes `batchMs` comes back.
+ */
+export function lowWaterMark(paceMs?: number, batchMs?: number): number {
+	return callChallenges('lowWaterMark', {
+		...(paceMs === undefined ? {} : { paceMs }),
+		...(batchMs === undefined ? {} : { batchMs })
 	});
-	return planned.map((at) => challengeOf(pool[at]!));
+}
+
+/** Whether a challenge counts towards the next match round: it is about an early word. */
+export function isEarlyChallenge(challenge: Challenge, items: KnowledgeItem[]): boolean {
+	return callChallenges('isEarly', { itemIds: challenge.itemIds, words: asWords(items) });
+}
+
+/** A free match round drawn from the early words, or `null` when there are too few. `seed` replays it. */
+export function matchRound(items: KnowledgeItem[], seed?: number): MatchPairsChallenge | null {
+	return callChallenges('matchRound', {
+		words: asWords(items),
+		...(seed === undefined ? {} : { seed })
+	});
 }
 
 /* -------------------------------------------------------------------------- */
 /* Top-up planning                                                             */
 /* -------------------------------------------------------------------------- */
 
+export interface PlanTopUpOptions {
+	/** What a row is judged against; see {@link StreamOptions.serving}. */
+	serving?: Serving;
+	/** The ids a stream has already shown: they cover nothing, as they serve nothing. */
+	served?: readonly string[];
+	/** Words a stream has already asked a refill for: they want nothing. */
+	asked?: readonly string[];
+	/** How many of the words ahead to write for — the stream's mark; every word when absent. */
+	limit?: number;
+	/** Replays the tie-breaks between equally good kinds. */
+	seed?: number;
+}
+
 /**
- * The wants the pool is missing, most urgent word first — Rust's
- * (`crates/sapling-challenges`' `topup.rs`). `seed` replays the tie-breaks
- * between equally good kinds.
+ * The wants the words ahead are missing, most urgent word first — Rust's
+ * (`crates/sapling-challenges`' `topup.rs`): of the same list the stream
+ * serves from, a word with no available row wants two written, each a kind
+ * that can reach it, at the length worked back from the aim.
  */
 export function planTopUp(
 	pool: readonly ChallengeRow[],
 	items: KnowledgeItem[],
 	now: number,
-	seed?: number
+	opts: PlanTopUpOptions = {}
 ): Want[] {
 	return callChallenges('planTopUp', {
 		pool: [...pool],
 		words: asWords(items),
 		now,
-		...(seed === undefined ? {} : { seed })
+		...(opts.serving === undefined ? {} : { serving: opts.serving }),
+		...(opts.served === undefined ? {} : { served: [...opts.served] }),
+		...(opts.asked === undefined ? {} : { asked: [...opts.asked] }),
+		...(opts.limit === undefined ? {} : { limit: opts.limit }),
+		...(opts.seed === undefined ? {} : { seed: opts.seed })
 	});
 }
 
-/** The same walk as {@link planTopUp}, counted: the start screen's figure and the button's count. */
+/** The start screen's figure and what a press would write, off the same list as {@link planTopUp}. */
 export function topUpCoverage(
 	pool: readonly ChallengeRow[],
 	items: KnowledgeItem[],
-	now: number
+	now: number,
+	serving?: Serving
 ): TopUpCoverage {
-	return callChallenges('topUpCoverage', { pool: [...pool], words: asWords(items), now });
+	return callChallenges('topUpCoverage', {
+		pool: [...pool],
+		words: asWords(items),
+		now,
+		...(serving === undefined ? {} : { serving })
+	});
 }
 
-export interface PlanRefillOptions {
+export interface PlanRefillOptions extends PlanTopUpOptions {
 	/**
 	 * Free-form scenario for this top-up, e.g. `'ordering in a restaurant'`.
 	 * Blank/whitespace-only is treated the same as absent — the key is only
 	 * added to {@link BatchArgs} when it carries real content.
 	 */
 	topic?: string;
-	/** Replays {@link planTopUp}'s tie-breaks. */
-	seed?: number;
 }
 
 /**
  * Turns the pool and the learner's collection into one batch request.
  *
- * The brief is {@link planTopUp}'s: a want for every kind a word is short of,
- * walked most urgent first over the whole collection, and nothing at all for a
+ * The brief is {@link planTopUp}'s: two wants for every word with no row
+ * available, walked most urgent first — over the stream's next `limit` words
+ * for a refill, the whole collection for a press — and nothing at all for a
  * word already covered. A batch is written *about* vocabulary the learner
  * already has and introduces none of its own — new words arrive through the
  * assistant and conversation mode — so a learner with no words has no wants,
@@ -262,7 +334,7 @@ export function planRefill(
 	now: number,
 	opts: PlanRefillOptions = {}
 ): BatchArgs {
-	const wants = planTopUp(pool, items, now, opts.seed);
+	const wants = planTopUp(pool, items, now, opts);
 	const topic = opts.topic?.trim();
 
 	return {
@@ -339,6 +411,16 @@ export interface GenerateOptions {
 	 */
 	itemsPerRequest?: number;
 	reasoningEffort?: ReasoningEffort;
+	/**
+	 * This device's help-level bounds; read from the preferences when absent
+	 * (`deviceServing`), so a top-up judges rows exactly as a stream on this
+	 * device would serve them.
+	 */
+	device?: DeviceServing;
+	/** A stream's refill: what it has shown, the words it already asked for, and how many words ahead it writes for. */
+	served?: readonly string[];
+	asked?: readonly string[];
+	limit?: number;
 }
 
 /**
@@ -378,9 +460,13 @@ export async function generateChallenges(
 
 	progress?.({ id: 'select-items', label: 'Checking what the pool is missing' });
 
-	const [pool, items] = await Promise.all([getPool(), getAllItems()]);
+	const [pool, items, parts] = await Promise.all([getPool(), getAllItems(), getDifficultyParts()]);
 
 	const args = planRefill(pool, items, profile, now, {
+		serving: servingFor(profile, parts, opts.device),
+		...(opts.served === undefined ? {} : { served: opts.served }),
+		...(opts.asked === undefined ? {} : { asked: opts.asked }),
+		...(opts.limit === undefined ? {} : { limit: opts.limit }),
 		...(opts.topic === undefined ? {} : { topic: opts.topic })
 	});
 
@@ -415,61 +501,56 @@ export async function generateChallenges(
 }
 
 /* -------------------------------------------------------------------------- */
-/* Starting a session (database)                                               */
+/* The start screen (database)                                                 */
 /* -------------------------------------------------------------------------- */
 
-/** Everything the learn screen needs to render its start screen and then play. */
-export interface SessionPlan {
-	/** The challenges to play, in order. Empty means there is nothing to do. */
-	challenges: Challenge[];
-	/** Every item known right now — the match-pairs pool and the item lookup. */
+/** What the learn screen shows before the stream starts. */
+export interface PracticeOverview {
+	/** Every item known right now. */
 	items: KnowledgeItem[];
 	/** Words whose card is due at `now`. */
 	dueCount: number;
+	/** The first challenge the stream would serve; `null` while its first word has nothing. */
+	first: SessionPick | null;
 	/**
-	 * How well the pool covers the words this session will serve, and what a
-	 * top-up would write — the same `planTopUp` walk generation makes, counted
-	 * rather than planned (`topUpCoverage`). This is the start screen's freshness
-	 * figure and the Generate button's label in one: "N of M due words have fresh
-	 * challenges" is exactly the question the learner is asking, and `wants`
-	 * being zero is exactly when the button has nothing left to write and says
-	 * so. A pool-wide count of rested rows used to stand here, and it could say
-	 * "running low" on a day every due word was already covered.
+	 * How well the pool covers the upcoming words, and what a press would
+	 * write — read off the list the stream serves from (`topUpCoverage`). The start screen's figure and the Generate
+	 * button's label in one: "N of M due words have fresh challenges" is exactly
+	 * the question the learner is asking, and `wants` being zero is exactly when
+	 * the button has nothing left to write and says so.
 	 */
 	topUp: TopUpCoverage;
 }
 
 export type { TopUpCoverage };
 
-export interface StartSessionOptions extends PlanSessionOptions {
+export interface OverviewOptions {
 	/** Epoch ms; defaults to `Date.now()`. */
 	now?: number;
+	/** This device's help-level bounds; read from the preferences when absent. */
+	device?: DeviceServing;
 }
 
 /**
- * Reads the pool and plans a session from it. No network, no generation, no
- * waiting: this is what makes "Start session" instant, whatever state the
- * learner's key or connection is in.
- *
- * Cheap enough to re-run whenever the pool may have moved (a background
- * generation finishing, say) so the start screen's counts stay honest. The
- * counts describe the *schedule* and the *pool*, not the plan: `dueCount` is
- * what is actually due (the plan routinely reaches past it into early review),
- * and `topUp` is what the next generation would find missing.
+ * Reads the pool and says what practice would start with. No network, no
+ * generation, no waiting. Cheap enough to re-run whenever the pool may have
+ * moved (a background generation finishing, say) so the start screen's counts
+ * stay honest.
  */
-export async function startSession(opts: StartSessionOptions = {}): Promise<SessionPlan> {
+export async function practiceOverview(opts: OverviewOptions = {}): Promise<PracticeOverview> {
 	const now = opts.now ?? Date.now();
-	const { now: _now, ...planOpts } = opts;
-
-	const [pool, items] = await Promise.all([getPool(), getAllItems()]);
-	const challenges = planSession(pool, items, now, planOpts);
-	const dueCount = items.filter((item) => isDue(item, now)).length;
-
+	const [pool, items, parts, profile] = await Promise.all([
+		getPool(),
+		getAllItems(),
+		getDifficultyParts(),
+		getProfile()
+	]);
+	const serving = servingFor(profile, parts, opts.device);
 	return {
-		challenges,
 		items,
-		dueCount,
-		topUp: topUpCoverage(pool, items, now)
+		dueCount: items.filter((item) => isDue(item, now)).length,
+		first: nextPick(pool, items, now, { serving }),
+		topUp: topUpCoverage(pool, items, now, serving)
 	};
 }
 
@@ -504,6 +585,12 @@ export interface AnswerOutcome {
 	responseMs?: number;
 	/** See {@link AnswerEvent.itemVerdicts}; absent preserves one verdict per challenge. */
 	itemVerdicts?: readonly { itemId: string; verdict: Verdict }[];
+	/**
+	 * The help level the challenge was shown at — the served presentation's
+	 * `shown`. Logged with the result, because it is what the difficulty model
+	 * learns from; absent for a screen nothing served (a bare render).
+	 */
+	shown?: string;
 	/** Epoch ms; defaults to `Date.now()`. */
 	now?: number;
 }
@@ -557,7 +644,8 @@ export async function applyResult(
 		challengeId: challenge.id,
 		verdict: outcome.verdict,
 		answerGiven: outcome.answerGiven,
-		at: now
+		at: now,
+		...(outcome.shown === undefined ? {} : { shown: outcome.shown })
 	});
 
 	// Ephemeral match-pairs rounds were never pooled; `recordServe` no-ops on a

@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
 	addResult,
+	recentResults,
 	addText,
 	addToPool,
 	deleteItem,
@@ -92,7 +93,13 @@ async function seedOneOfEach(): Promise<void> {
 	await deleteItem('i2');
 	await addToPool([challenge], 3000);
 	await recordServe('c1', 4000);
-	await addResult({ challengeId: 'c1', verdict: 'correct', answerGiven: '书', at: 5000 });
+	await addResult({
+		challengeId: 'c1',
+		verdict: 'correct',
+		answerGiven: '书',
+		at: 5000,
+		shown: 'pick-6'
+	});
 	await addText(text);
 	await markWord('水', true);
 	await recordLookup('书', 't1', 'i1');
@@ -148,7 +155,8 @@ describe('export', () => {
 			activity: await getDailyActivity(),
 			texts: await getTexts(),
 			known: await getKnownTerms(),
-			lookups: await lookupRows(store)
+			lookups: await lookupRows(store),
+			results: await recentResults(5)
 		};
 
 		store = await makeTestBackend();
@@ -162,6 +170,10 @@ describe('export', () => {
 		expect(await getTexts()).toEqual(before.texts);
 		expect(await getKnownTerms()).toEqual(before.known);
 		expect(await lookupRows(store)).toEqual(before.lookups);
+		// The help level an answer was shown at is what the difficulty model
+		// learns from, so it has to survive the trip.
+		expect(before.results[0]?.shown).toBe('pick-6');
+		expect(await recentResults(5)).toEqual(before.results);
 	});
 
 	// An import is a copy of a log, and a log a device cannot read is still a

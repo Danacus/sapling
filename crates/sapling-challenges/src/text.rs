@@ -67,7 +67,7 @@ pub fn uses_inter_word_spaces(text: &str) -> bool {
 }
 
 /// Letters, marks and digits: what a word is made of.
-fn is_word_char(c: char) -> bool {
+pub fn is_word_char(c: char) -> bool {
     use unicode_general_category::{get_general_category, GeneralCategory as G};
     matches!(
         get_general_category(c),

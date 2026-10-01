@@ -51,28 +51,29 @@ What gets written is decided by the top-up planner (`plan_top_up` in
 LLM layer plans nothing. **Do not write a prompt rule about which type to use, or add an
 accuracy threshold anywhere** — the first will be ignored at best and fight the
 brief at worst, and the second is a mechanism the design deliberately has none
-of (FSRS already lowers a missed word's strength, which lowers its rung, which
-shortens what is written about it). Everything below belongs in `topup.rs`,
+of (the difficulty model already learns from every miss: the word's skill
+falls and the row reads harder, which is what the next pick and the next
+top-up are sized by). Everything below belongs in `topup.rs` and `fits.rs`,
 with a `cargo test` beside it:
 
-- which kinds a rung may be asked (`demand_for_level` in `ladder.rs`, against
-  each kind's `plannable` in `sapling-challenges`' `data/kinds.json`)
-- how many fresh challenges a word should have waiting (`WANT_PER_WORD`), and in
-  which groups (a recognition kind and a production kind, or two recognition
-  kinds before production is bearable)
-- what counts as coverage (rested, playable, bearable — `pool.rs`)
-- which kind wins among the missing ones (never-had first, then a draw)
+- which kinds a word may be asked (those that can reach the difficulty that
+  puts it at the aim, at some help level and length — `length_for`)
+- how many fresh challenges an uncovered word gets (`WANT_PER_WORD`)
+- what counts as coverage (a rested, playable row that `fits` the word)
+- which kind wins among the reachable ones (never-had first, then fewest
+  fitting rows, then a draw)
 - the top-up cap (`MAX_TOPUP_WANTS`)
 
-**Difficulty never reaches the model as a number on a scale.** The rung is the
-word's own (`Word::level`), on the want; what travels is that type's
-`params` at the rung — a sentence length, a tile count, on the item itself. To
-make challenges easier or harder for a type, edit its `params` ladder (and keep
-it monotone; `kinds.rs`' tests check). Do
-**not** reintroduce a "difficulty 1-5" line: a number the model has to interpret
-is exactly what the counts replaced. What stays prose in a `rulesSpec` is the
-judgement no count expresses — distractor closeness, how subtle a planted error
-should be — stated once, with no rung attached.
+**Difficulty never reaches the model as a number on a scale.** What travels is
+one count on the item — a sentence length, a tile count — worked back from the
+word's skill and the kind's learned numbers (`length_for`), clamped to the
+kind's range in `sapling-challenges`' `data/kinds.json`. To make a type's rows
+longer or shorter overall, move that range or the kind's starting numbers in
+`data/model.json` (a `DERIVED_SCHEMA_VERSION` bump, and a calibration run to
+compare). Do **not** reintroduce a "difficulty 1-5" line: a number the model
+has to interpret is exactly what the counts replaced. What stays prose in a
+`rulesSpec` is the judgement no count expresses — distractor closeness, how
+subtle a planted error should be — stated once, with no level attached.
 
 ## Constraints on a type's prompt
 
@@ -80,10 +81,10 @@ should be — stated once, with no rung attached.
   string is prompt-cache friendly — and a top-up's requests of one kind all
   quote it. Never interpolate per-session values into it; per-user signals
   travel in the user payload.
-- Nothing about how the learner has been doing travels, and nothing local reads
-  it either: a missed word's strength has already fallen, so its rung and its
-  sizes fell with it. Do not add a "write this one easier" hint on top of a
-  length that already says how long to write it.
+- Nothing about how the learner has been doing travels as prose: a missed
+  word's skill has already fallen, so the length it is written at fell with it.
+  Do not add a "write this one easier" hint on top of a length that already
+  says how long to write it.
 - Load-bearing blocks: voice/anti-blandness, the `TargetText` reading rule,
   answerability, the `items` rule, and the size-is-a-target rule. Deleting one to
   save tokens regresses a whole class of output — say which block you are

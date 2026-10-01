@@ -28,11 +28,12 @@ export function callChallenges<M extends keyof Challenges>(
 
 /** The part of each item the decisions read, so a large vocabulary crosses light. */
 export function asWords(items: readonly KnowledgeItem[]): Word[] {
-	return items.map(({ id, term, meaning, romanization, srs }) => ({
+	return items.map(({ id, term, meaning, romanization, srs, skill }) => ({
 		id,
 		term,
 		meaning,
 		...(romanization === undefined ? {} : { romanization }),
-		...(srs === undefined ? {} : { srs })
+		...(srs === undefined ? {} : { srs }),
+		...(skill === undefined ? {} : { skill })
 	}));
 }
