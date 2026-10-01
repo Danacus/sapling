@@ -22,6 +22,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+pub use crate::fits::WRITE_MEMORY;
 use crate::fits::{best_fit, inside, Serving};
 use crate::help::HelpLevel;
 use crate::kinds::{active_kinds, kind_of, ChallengeKind, Want, WantItem, WireType};
@@ -35,10 +36,6 @@ pub const WANT_PER_WORD: usize = 2;
 
 /// The most wants one top-up writes.
 pub const MAX_TOPUP_WANTS: usize = 24;
-
-/// The memory a row is written for: FSRS schedules a review for when recall
-/// has decayed to 90%, so that is roughly where a due word is served.
-pub const WRITE_MEMORY: f64 = 0.9;
 
 /// How well the pool covers the words a session is about to serve.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

@@ -136,6 +136,16 @@ The **window** is a band around the aim, for example 65–92%. A challenge fits 
 word if at least one of its help levels puts the predicted chance inside the
 window.
 
+`fits` reads each word's memory as **no lower than 0.9**, the recall FSRS
+schedules a review at and the one refill writes for. An overdue word's low
+memory is the schedule running late, not the challenge being hard: no
+challenge can make up for it, and the review it is owed is what restores it.
+On its true memory a word under about 0.71 would fit nothing (the whole
+chance at least 65%, the remembered part at most 92%), so it would never be
+served, never reviewed, and only slip further, while refill wrote it rows
+serving then turned down. The model's prediction itself still uses the true
+memory.
+
 - **Serving** takes the most urgent word (FSRS due first, most overdue first —
   unchanged), and among its rested challenges and their help levels picks the
   one whose predicted chance is closest to the aim. Freshness breaks a tie.

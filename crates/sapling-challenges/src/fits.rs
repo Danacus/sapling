@@ -11,6 +11,14 @@
 //! and a due word's memory sits near FSRS's 0.9, so on the whole chance the
 //! top edge would almost never be reached and a word would never outgrow its
 //! first recognition rows.
+//!
+//! Memory is read no lower than [`WRITE_MEMORY`], word by word. An overdue
+//! word's memory is the schedule running late, not the row being hard: no
+//! row can make up for it, and the review it is owed is what restores it. On
+//! its true memory a word under about 0.71 fits nothing at all (the bottom
+//! wants the whole chance at 0.65, the top caps the rest at 0.92), so it is
+//! never served, never reviewed, and only slips further — while refill keeps
+//! writing rows for it at 0.9 that serving then turns down.
 //! Serving picks by it, refill counts coverage by it, so a row refill counts as
 //! covering a word is exactly one serving would show, and one serving would
 //! never show is never coverage.
@@ -77,16 +85,28 @@ pub fn help_levels(challenge: &Challenge, serving: &Serving) -> Vec<HelpLevel> {
     levels
 }
 
-/// The two halves of a prediction: the words' combined memory, and the
-/// chance of managing the row given they are remembered.
-fn halves(row: &PoolRow, help: HelpLevel, words: &ById, parts: &Shared) -> Option<(f64, f64)> {
+/// The memory a row is judged and written at, at the least: FSRS schedules a
+/// review for when recall has decayed to 90%, so that is roughly where a due
+/// word is served.
+pub const WRITE_MEMORY: f64 = 0.9;
+
+/// The two halves of a prediction: the words' combined memory, each read no
+/// lower than `floor`, and the chance of managing the row given they are
+/// remembered.
+fn halves(
+    row: &PoolRow,
+    help: HelpLevel,
+    words: &ById,
+    parts: &Shared,
+    floor: f64,
+) -> Option<(f64, f64)> {
     let kind = kind_of(&row.challenge)?;
     let ids = row.challenge.item_ids();
     let mut skills = Vec::with_capacity(ids.len());
     let mut memory = 1.0;
     for id in ids {
         let word = words.get(id.as_str())?;
-        memory *= word.memory();
+        memory *= word.memory().max(floor);
         skills.push(word.skill());
     }
     let difficulty = parts.difficulty(
@@ -104,7 +124,7 @@ fn halves(row: &PoolRow, help: HelpLevel, words: &ById, parts: &Shared) -> Optio
 /// The predicted chance of this row at this help level for its words, or
 /// `None` for a match round or a row naming a word that is gone.
 pub fn chance_of(row: &PoolRow, help: HelpLevel, words: &ById, parts: &Shared) -> Option<f64> {
-    halves(row, help, words, parts).map(|(memory, manage)| memory * manage)
+    halves(row, help, words, parts, 0.0).map(|(memory, manage)| memory * manage)
 }
 
 /// Whether a prediction's two halves sit inside an aim's window: the whole
@@ -116,7 +136,7 @@ pub fn inside(memory: f64, manage: f64, aim: Aim) -> bool {
 
 /// `fits`: the predicted chance, when it lands inside the window.
 pub fn fits(row: &PoolRow, help: HelpLevel, words: &ById, serving: &Serving) -> Option<f64> {
-    let (memory, manage) = halves(row, help, words, &serving.parts)?;
+    let (memory, manage) = halves(row, help, words, &serving.parts, WRITE_MEMORY)?;
     inside(memory, manage, serving.aim).then_some(memory * manage)
 }
 
@@ -252,6 +272,33 @@ mod tests {
         assert_eq!(pick(5.8), Some(Step::Typed));
         // Far too weak for any of it: the row does not fit, and is not served.
         assert_eq!(pick(-2.0), None);
+    }
+
+    /// An overdue word's memory can sit far under any window: read at its true
+    /// memory it fits nothing and is never reviewed again. It is judged as if
+    /// at the 0.9 it is written for, and its real chance is still what
+    /// `chance_of` predicts.
+    #[test]
+    fn a_forgotten_word_still_fits_what_it_would_fit_on_time() {
+        let mut forgotten = skilled(3.0);
+        if let Some(srs) = forgotten.srs.as_mut() {
+            srs.retrievability = 0.44;
+        }
+        let mut on_time = skilled(3.0);
+        if let Some(srs) = on_time.srs.as_mut() {
+            srs.retrievability = WRITE_MEMORY;
+        }
+        let serving = Serving::default();
+        let late = best_fit(&cloze(false), &by_id(&[forgotten.clone()]), &serving).unwrap();
+        let due = best_fit(&cloze(false), &by_id(&[on_time]), &serving).unwrap();
+        assert_eq!(late, due);
+        let real = chance_of(
+            &cloze(false),
+            late.help,
+            &by_id(&[forgotten]),
+            &serving.parts,
+        );
+        assert!(real.unwrap() < late.chance * 0.5);
     }
 
     #[test]
