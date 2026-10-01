@@ -45,19 +45,26 @@
 	const wants = $derived(plan?.topUp.wants ?? 0);
 	const dueFigure = $derived(plan?.topUp.due ?? false);
 	const uncovered = $derived(upcoming - covered);
+	const online = $derived(typeof navigator === 'undefined' || navigator.onLine !== false);
+	/** A key and a connection: the stream writes what it runs short of by itself. */
+	const streamWrites = $derived(!mock && online);
 	/**
 	 * Something fits now, or the stream can write something that will: with a
 	 * key and a connection, practice starts on a batch it writes itself.
 	 */
-	const canStart = $derived(
-		plan !== null &&
-			(plan.first !== null ||
-				(wants > 0 && !mock && (typeof navigator === 'undefined' || navigator.onLine !== false)))
-	);
+	const canStart = $derived(plan !== null && (plan.first !== null || (wants > 0 && streamWrites)));
 	const hasWords = $derived((plan?.items.length ?? 0) > 0);
 	const aheadOfSchedule = $derived(canStart && dueCount === 0);
+	/**
+	 * Only when the button can write and the stream cannot — practice mode. With
+	 * a key the stream fills these gaps itself, and offline neither can.
+	 */
 	const nudgeGenerate = $derived(
-		plan !== null && hasWords && (!canStart || (wants > 0 && covered * 2 <= upcoming))
+		plan !== null &&
+			hasWords &&
+			mock &&
+			wants > 0 &&
+			(plan.first === null || covered * 2 <= upcoming)
 	);
 
 	const topicChips = $derived([
@@ -95,7 +102,13 @@
 			actions: []
 		});
 
-		if (!canStart) return say('Nothing to practise yet.');
+		if (!canStart) {
+			return say(
+				online || mock
+					? 'Nothing to practise yet.'
+					: "Nothing to practise yet, and you're offline — new challenges are written once you're back."
+			);
+		}
 		if (nudgeGenerate) {
 			return say(
 				`${uncovered} of those still ${uncovered === 1 ? 'needs' : 'need'} a challenge — a new lesson writes ${wants}.`
@@ -240,14 +253,19 @@
 						</svg>
 					</span>
 					<div>
-						<p class="card-kicker">Fresh material</p>
-						<h2>Write a new lesson</h2>
+						<p class="card-kicker">{mock ? 'Fresh material' : 'Optional'}</p>
+						<h2>{mock ? 'Write a new lesson' : 'Write ahead or on a topic'}</h2>
 					</div>
 					{#if generating}<span class="generation-state">Generating…</span>{/if}
 				</div>
 				<p class="lesson-copy">
-					Create challenges from words already in your garden. Add a topic if you want a particular
-					setting.
+					{#if mock}
+						Create challenges from words already in your garden. Add a topic if you want a
+						particular setting.
+					{:else}
+						Practice writes new challenges by itself as you go. Write some now to set them in a
+						particular topic, or to have them ready before you go offline.
+					{/if}
 				</p>
 
 				<label class="field topic-field">
