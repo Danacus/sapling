@@ -1,6 +1,6 @@
 {
-	"aims": { "easier": 0.88, "normal": 0.8, "harder": 0.7 },
-	"window": { "below": 0.15, "above": 0.12 },
+	"aims": { "easier": 0.97, "normal": 0.89, "harder": 0.78 },
+	"window": { "below": 0.17, "above": 0.04 },
 	"rates": { "word": 0.2, "shared": 0.02, "challenge": 0.1 },
 	"newWordMemory": 0.9,
 	"newWordChance": 0.9,

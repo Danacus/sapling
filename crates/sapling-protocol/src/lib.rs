@@ -349,7 +349,7 @@ backend! {
         ///
         /// Reported rows are dropped here rather than at the planner, so "flagged"
         /// means gone everywhere at once. Everything else — eligibility, recycling
-        /// gaps, fit, ordering — is `nextPick`'s business, working in memory
+        /// gaps, fit, ordering — is `streamHead`'s business, working in memory
         /// over this array.
         getPool() -> Vec<Value> as "Array<ChallengeRow>" {
             core.get_pool()

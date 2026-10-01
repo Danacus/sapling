@@ -22,6 +22,8 @@ pub mod challenge;
 pub mod fits;
 pub mod grade;
 pub mod help;
+#[cfg(test)]
+mod invariants;
 pub mod kinds;
 pub mod legacy;
 pub mod match_pairs;

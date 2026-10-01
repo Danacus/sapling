@@ -18,9 +18,9 @@ use sapling_challenges::help::HelpLevel;
 use sapling_challenges::matcher::{self, AnswerMatch};
 use sapling_challenges::pool::lenient_rows;
 use sapling_challenges::serve::{self, Presentation};
-use sapling_challenges::stream::{self, Next, Outlook};
+use sapling_challenges::stream::{self, Head};
 use sapling_challenges::text::WordCount;
-use sapling_challenges::topup::{self, TopUpCoverage};
+use sapling_challenges::topup::{self, Scope, TopUpCoverage};
 use sapling_challenges::word::{hide_reading_probability, maturity_for_strength, Maturity};
 use sapling_challenges::{Challenge, PoolRow, Rng, Want, Word};
 use sapling_domain::types::Verdict;
@@ -131,13 +131,21 @@ pub struct TopUpArgs {
     #[serde(default)]
     #[ts(optional)]
     pub serving: Option<Serving>,
+    /// The challenge ids the stream has already shown: they cover nothing.
+    #[serde(default)]
+    #[ts(optional)]
+    pub served: Option<Vec<String>>,
+    /// Words the stream has already asked a refill for: they want nothing.
+    #[serde(default)]
+    #[ts(optional)]
+    pub asked: Option<Vec<String>>,
+    /// How many of the words ahead to write for; every word when absent.
+    #[serde(default)]
+    #[ts(optional)]
+    pub limit: Option<usize>,
     #[serde(default)]
     #[ts(optional)]
     pub seed: Option<u64>,
-}
-
-fn readable(pool: &[Option<PoolRow>]) -> Vec<&PoolRow> {
-    pool.iter().flatten().collect()
 }
 
 macro_rules! challenges {
@@ -226,15 +234,11 @@ challenges! {
         hideReadingProbability(args: StrengthArgs) -> f64 {
             hide_reading_probability(args.strength)
         }
-        /// The stream's next challenge — a position into `pool` at its help level — or none when nothing fits.
-        nextPick(args: StreamArgs) -> Option<Next> {
-            stream::next_pick(&args.pool, &args.words, args.now, &args.serving.unwrap_or_default(), &args.served.unwrap_or_default())
+        /// The most urgent word and its challenge — a position into `pool` at its help level — absent while it has nothing.
+        streamHead(args: StreamArgs) -> Option<Head> {
+            stream::head(&args.pool, &args.words, args.now, &args.serving.unwrap_or_default(), &args.served.unwrap_or_default())
         }
-        /// How many upcoming words have a pick ready, and whether a top-up has anything to write.
-        streamOutlook(args: StreamArgs) -> Outlook {
-            stream::outlook(&args.pool, &args.words, args.now, &args.serving.unwrap_or_default(), &args.served.unwrap_or_default())
-        }
-        /// The ready words below which the stream asks for a batch, at this pace.
+        /// How many words ahead the stream keeps written for, at this pace.
         lowWaterMark(args: LowWaterArgs) -> usize {
             stream::low_water_mark(args.pace_ms, args.batch_ms)
         }
@@ -246,14 +250,16 @@ challenges! {
         matchRound(args: MatchRoundArgs) -> Option<MatchPairsChallenge> {
             stream::match_round(&args.words, &mut Rng::from_seed(args.seed))
         }
-        /// What the pool is missing, most urgent word first.
+        /// What the words ahead are missing, most urgent word first.
         planTopUp(args: TopUpArgs) -> Vec<Want> {
             let mut rng = Rng::from_seed(args.seed);
-            topup::plan_top_up(&readable(&args.pool), &args.words, args.now, &args.serving.unwrap_or_default(), &mut || rng.next_f64())
+            let (served, asked) = (args.served.unwrap_or_default(), args.asked.unwrap_or_default());
+            let scope = Scope { served: &served, asked: &asked, limit: args.limit };
+            topup::plan_top_up(&args.pool, &args.words, args.now, &args.serving.unwrap_or_default(), scope, &mut || rng.next_f64())
         }
-        /// How well the pool covers the words a session is about to serve.
+        /// The start screen's figure and what a press would write.
         topUpCoverage(args: TopUpArgs) -> TopUpCoverage {
-            topup::top_up_coverage(&readable(&args.pool), &args.words, args.now, &args.serving.unwrap_or_default())
+            topup::coverage(&args.pool, &args.words, args.now, &args.serving.unwrap_or_default())
         }
     }
 }
@@ -306,19 +312,20 @@ mod tests {
         let alien = json!({ "id": "x", "type": "dictation", "itemIds": ["w"] });
         let words =
             json!([{ "id": "w", "term": "t", "meaning": "m", "kind": "vocab", "fsrsCard": null }]);
-        let next = call(
-            "nextPick",
+        let head = call(
+            "streamHead",
             json!({ "pool": [alien, row.clone()], "words": words, "now": 1 }),
         )
         .unwrap();
-        assert_eq!(next["at"], json!(1));
-        assert_eq!(next["shown"], json!("plain"));
-        let done = call(
-            "nextPick",
+        assert_eq!(head["word"], json!("w"));
+        assert_eq!(head["next"]["at"], json!(1));
+        assert_eq!(head["next"]["shown"], json!("plain"));
+        let blocked = call(
+            "streamHead",
             json!({ "pool": [row], "words": words, "now": 1, "served": ["c"] }),
         )
         .unwrap();
-        assert_eq!(done, Value::Null);
+        assert_eq!(blocked, json!({ "word": "w" }));
     }
 
     #[test]

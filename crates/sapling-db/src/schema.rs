@@ -123,7 +123,11 @@ pub fn review_key(item_id: &str, at: f64, device: &str) -> String {
 ///
 /// Bumped for 9 when the first real-log calibration changed the model's
 /// starting values and combined several words by their average skill.
-pub const DERIVED_SCHEMA_VERSION: u32 = 9;
+///
+/// Bumped for 10 when a written row began recording the length it was asked
+/// for, which `length_of` reads before the measured shape: a device that
+/// folded such rows under an older build measured them instead.
+pub const DERIVED_SCHEMA_VERSION: u32 = 10;
 
 /// Every read table the materializer owns; `events` and `meta` survive a rebuild.
 ///

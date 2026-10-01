@@ -1,174 +1,129 @@
-//! Top-up planning: what the pool is missing, so generation writes exactly
-//! that. The walk is the learner's whole vocabulary in urgency order — due
-//! words most overdue first, then the rest soonest-due first — and a word is
-//! **covered** when a rested row about it fits (`fits.rs`): the same check
-//! serving picks by, so what counts as coverage is exactly what a session
-//! would serve. An uncovered word wants [`WANT_PER_WORD`] rows written, each
-//! `{word, kind, length}`; the list is capped from the least urgent end, so
-//! the next press starts where this one stopped.
+//! Top-up planning: what the stream's list is missing, so generation writes
+//! exactly that. The list is `stream.rs`' [`upcoming`] — the same words in the
+//! same order serving walks, judged by the same predicate — and a word with
+//! nothing available wants [`WANT_PER_WORD`] rows written, each
+//! `{word, kind, length}`. The stream's refill reads the first
+//! `low_water_mark` words; a press on the learn screen reads them all. The
+//! list is capped from the least urgent end, so the next one starts there.
 //!
-//! **What to write** (`docs/challenge-difficulty.md` §6): the kinds that can
-//! reach the word's target — the difficulty that would put it at the aim —
-//! at some help level and some length in the kind's range. Among those, a
-//! kind the word has never had wins, then one it has fewest fitting rows of,
-//! and a draw breaks the tie. The **length** is worked backwards from the
-//! difficulty formula at the midpoint of the kind's help levels and clamped to
-//! its range: written in the middle, the row still fits if the word weakens
-//! (an easier help level) or strengthens (a harder one), so one row covers a
-//! wider range of skill.
+//! **What to write** (`docs/challenge-difficulty.md` §6) is the judge run
+//! backwards: each kind's length is solved from the same remembered chance and
+//! the same widened window `fits` uses, so a row written as asked fits.
 
 use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-pub use crate::fits::WRITE_MEMORY;
-use crate::fits::{best_fit, inside, Serving};
+use crate::fits::{inside, window_for, Serving};
 use crate::help::HelpLevel;
 use crate::kinds::{active_kinds, kind_of, ChallengeKind, Want, WantItem, WireType};
-use crate::model::{logit, target};
-use crate::pool::{is_playable, is_rested, known_ids, PoolRow, UPCOMING};
+use crate::model::{logit, sigmoid, target};
+use crate::pool::{is_playable, known_ids, PoolRow};
+use crate::stream::{upcoming, Ahead};
 use crate::text::js_trim;
-use crate::word::{by_id, Word};
+use crate::word::Word;
 
-/// Fresh challenges an uncovered word gets written.
+/// Fresh challenges a word with nothing available gets written.
 pub const WANT_PER_WORD: usize = 2;
 
 /// The most wants one top-up writes.
 pub const MAX_TOPUP_WANTS: usize = 24;
 
-/// How well the pool covers the words a session is about to serve.
+/// How many of the words ahead the start screen's figure counts when none is due.
+pub const UPCOMING: usize = 20;
+
+/// The start screen's figure, read off the list.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct TopUpCoverage {
     /// The words the figure is about: every due word, or when none is due the
     /// next `UPCOMING` soonest-due ones.
     pub upcoming: usize,
-    /// Of those, the words with a rested row that fits them.
+    /// Of those, the words with a row available now.
     pub covered: usize,
-    /// What a top-up would write now, after the cap, over the whole walk.
+    /// What a press would write, after the cap.
     pub wants: usize,
     /// Whether `upcoming` is the due words.
     pub due: bool,
 }
 
-#[derive(Default)]
-struct Coverage {
-    /// Rested rows that fit the word, by kind.
-    fitting: HashMap<WireType, usize>,
-    /// Kinds the word has ever had a playable row of.
-    ever: HashSet<WireType>,
-}
-
-/// What every word has, counting only rows serving would consider.
-fn coverage_of(
-    pool: &[&PoolRow],
-    words: &[Word],
-    now: f64,
-    serving: &Serving,
-) -> HashMap<String, Coverage> {
-    let known = known_ids(words);
-    let index = by_id(words);
-    let mut coverage: HashMap<String, Coverage> = HashMap::new();
-    for row in pool {
-        if !is_playable(row, &known) {
-            continue;
-        }
-        let Some(kind) = kind_of(&row.challenge).filter(|k| k.is_active()) else {
-            continue;
-        };
-        let fits = is_rested(row, now) && best_fit(row, &index, serving).is_some();
-        for id in row.challenge.item_ids() {
-            let entry = coverage.entry(id.clone()).or_default();
-            entry.ever.insert(kind);
-            if fits {
-                *entry.fitting.entry(kind).or_default() += 1;
-            }
-        }
-    }
-    coverage
-}
-
-/// Soonest due first, id breaking the tie so the walk ignores store order.
-pub(crate) fn by_urgency<'a>(words: impl IntoIterator<Item = &'a Word>, now: f64) -> Vec<&'a Word> {
-    let mut sorted: Vec<&Word> = words.into_iter().collect();
-    sorted.sort_by(|a, b| {
-        a.due_at(now)
-            .partial_cmp(&b.due_at(now))
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.id.cmp(&b.id))
-    });
-    sorted
-}
-
-/// The length to write a row of `kind` at for this word, or `None` when no
-/// help level and no length in the kind's range can put the word inside the
-/// window.
+/// The length to write a row of `kind` at for this word: the one closest to
+/// putting the word at the aim at the kind's middle help level, among those
+/// whose row would fit; `None` when none would.
 pub fn length_for(word: &Word, kind: WireType, serving: &Serving) -> Option<u8> {
     let [shortest, longest] = kind.lengths()?;
     let parts = &serving.parts;
     let skill = word.skill();
+    let window = window_for(skill, serving);
+    let steps = kind.written_steps();
+    let base = |i: usize| parts.base(kind, HelpLevel::step(steps[i]));
+    let middle = (base(0) + base(steps.len() - 1)) / 2.0;
     let slope = parts.slope(kind);
-    let bases: Vec<f64> = kind
-        .written_steps()
-        .iter()
-        .map(|step| parts.base(kind, HelpLevel::step(*step)))
-        .collect();
-    let reaches = bases.iter().any(|base| {
-        [f64::from(shortest), f64::from(longest)]
-            .into_iter()
-            .chain(std::iter::once(
-                ((skill - logit(target(serving.aim) / WRITE_MEMORY) - base) / slope)
-                    .clamp(f64::from(shortest), f64::from(longest)),
-            ))
-            .filter(|l| l.is_finite())
-            .any(|length| {
-                let manage = crate::model::sigmoid(skill - base - slope * length);
-                inside(WRITE_MEMORY, manage, serving.aim)
-            })
-    });
-    if !reaches {
-        return None;
-    }
-    let goal = skill - logit((target(serving.aim) / WRITE_MEMORY).min(0.99));
-    let middle = (bases[0] + bases[bases.len() - 1]) / 2.0;
-    let length = if slope.abs() < 1e-6 {
+    let ideal = if slope.abs() < 1e-6 {
         (f64::from(shortest) + f64::from(longest)) / 2.0
     } else {
-        (goal - middle) / slope
+        (skill - logit(target(serving.aim)) - middle) / slope
     };
-    Some(
-        length
-            .round()
-            .clamp(f64::from(shortest), f64::from(longest)) as u8,
-    )
+    let fits_at = |length: u8| {
+        steps.iter().any(|step| {
+            let d = parts.difficulty(kind, HelpLevel::step(*step), f64::from(length), 0.0);
+            inside(sigmoid(skill - d), window)
+        })
+    };
+    (shortest..=longest)
+        .filter(|&length| fits_at(length))
+        .min_by(|a, b| {
+            (f64::from(*a) - ideal)
+                .abs()
+                .total_cmp(&(f64::from(*b) - ideal).abs())
+        })
 }
 
-struct Walk<'a> {
-    owed: Vec<&'a Word>,
-    ahead: Vec<&'a Word>,
-    wants: Vec<Want>,
-}
-
-/// The uncapped plan: [`plan_top_up`] cuts it and [`top_up_coverage`] counts
-/// it, so the two can never disagree about a word.
-fn walk<'a>(
-    pool: &[&PoolRow],
-    words: &'a [Word],
-    now: f64,
-    serving: &Serving,
-    draw: &mut dyn FnMut() -> f64,
-) -> Walk<'a> {
-    let sorted = by_urgency(words.iter().filter(|w| w.is_writable()), now);
-    let (owed, ahead): (Vec<&Word>, Vec<&Word>) = sorted.into_iter().partition(|w| w.is_due(now));
-    let coverage = coverage_of(pool, words, now, serving);
-    let none = Coverage::default();
-    let mut wants = Vec::new();
-
-    for word in owed.iter().chain(&ahead) {
-        let have = coverage.get(&word.id).unwrap_or(&none);
-        if have.fitting.values().sum::<usize>() > 0 {
+/// The kinds each word has ever had a playable row of.
+fn kinds_had<'a>(
+    pool: &'a [Option<PoolRow>],
+    words: &[Word],
+) -> HashMap<&'a str, HashSet<WireType>> {
+    let known = known_ids(words);
+    let mut had: HashMap<&str, HashSet<WireType>> = HashMap::new();
+    for row in pool.iter().flatten().filter(|r| is_playable(r, &known)) {
+        let Some(kind) = kind_of(&row.challenge).filter(|k| k.is_active()) else {
             continue;
+        };
+        for id in row.challenge.item_ids() {
+            had.entry(id.as_str()).or_default().insert(kind);
         }
+    }
+    had
+}
+
+/// What a stream's refill is about: the rows it has shown cover nothing, the
+/// words it has already asked for want nothing, and only the first `limit`
+/// words of the list count. The default is a press: the whole collection.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Scope<'a> {
+    pub served: &'a [String],
+    pub asked: &'a [String],
+    pub limit: Option<usize>,
+}
+
+/// The wants for the words of `list` with nothing available, capped.
+fn wants_of(
+    list: &[Ahead],
+    pool: &[Option<PoolRow>],
+    words: &[Word],
+    serving: &Serving,
+    asked: &[String],
+    draw: &mut dyn FnMut() -> f64,
+) -> Vec<Want> {
+    let had = kinds_had(pool, words);
+    let none = HashSet::new();
+    let mut wants = Vec::new();
+    let wanting = list
+        .iter()
+        .filter(|a| a.next.is_none() && !asked.contains(&a.word.id));
+    for word in wanting.map(|a| a.word) {
+        let have = had.get(word.id.as_str()).unwrap_or(&none);
         let mut candidates: Vec<(WireType, u8)> = active_kinds()
             .filter_map(|kind| length_for(word, kind, serving).map(|length| (kind, length)))
             .collect();
@@ -181,18 +136,12 @@ fn walk<'a>(
             if candidates.is_empty() {
                 break;
             }
+            // A kind the word has never had goes first.
             let never: Vec<usize> = (0..candidates.len())
-                .filter(|&i| !have.ever.contains(&candidates[i].0))
+                .filter(|&i| !have.contains(&candidates[i].0))
                 .collect();
             let from: Vec<usize> = if never.is_empty() {
-                let fewest = candidates
-                    .iter()
-                    .map(|(k, _)| have.fitting.get(k).copied().unwrap_or(0))
-                    .min()
-                    .unwrap_or(0);
-                (0..candidates.len())
-                    .filter(|&i| have.fitting.get(&candidates[i].0).copied().unwrap_or(0) == fewest)
-                    .collect()
+                (0..candidates.len()).collect()
             } else {
                 never
             };
@@ -205,45 +154,43 @@ fn walk<'a>(
             });
         }
     }
-    Walk { owed, ahead, wants }
-}
-
-/// The wants the pool is missing, most urgent word first, capped at [`MAX_TOPUP_WANTS`].
-pub fn plan_top_up(
-    pool: &[&PoolRow],
-    words: &[Word],
-    now: f64,
-    serving: &Serving,
-    draw: &mut dyn FnMut() -> f64,
-) -> Vec<Want> {
-    let mut wants = walk(pool, words, now, serving, draw).wants;
     wants.truncate(MAX_TOPUP_WANTS);
     wants
 }
 
-/// Counts, not wants — the same walk, and the same numbers whatever the draws.
-pub fn top_up_coverage(
-    pool: &[&PoolRow],
+/// The wants for the words in `scope`, most urgent first, capped at [`MAX_TOPUP_WANTS`].
+pub fn plan_top_up(
+    pool: &[Option<PoolRow>],
+    words: &[Word],
+    now: f64,
+    serving: &Serving,
+    scope: Scope,
+    draw: &mut dyn FnMut() -> f64,
+) -> Vec<Want> {
+    let n = scope.limit.unwrap_or(usize::MAX);
+    let list = upcoming(pool, words, now, serving, scope.served, n);
+    wants_of(&list, pool, words, serving, scope.asked, draw)
+}
+
+/// The start screen's figure and the press's count, off one list.
+pub fn coverage(
+    pool: &[Option<PoolRow>],
     words: &[Word],
     now: f64,
     serving: &Serving,
 ) -> TopUpCoverage {
-    let Walk { owed, ahead, wants } = walk(pool, words, now, serving, &mut || 0.0);
-    let short: HashSet<&str> = wants.iter().map(|w| w.item.id.as_str()).collect();
-    let due = !owed.is_empty();
-    let upcoming: &[&Word] = if due {
-        &owed
+    let list = upcoming(pool, words, now, serving, &[], usize::MAX);
+    let due = list.iter().take_while(|a| a.word.is_due(now)).count();
+    let figure = &list[..if due > 0 {
+        due
     } else {
-        &ahead[..ahead.len().min(UPCOMING)]
-    };
+        list.len().min(UPCOMING)
+    }];
     TopUpCoverage {
-        upcoming: upcoming.len(),
-        covered: upcoming
-            .iter()
-            .filter(|w| !short.contains(w.id.as_str()))
-            .count(),
-        wants: wants.len().min(MAX_TOPUP_WANTS),
-        due,
+        upcoming: figure.len(),
+        covered: figure.iter().filter(|a| a.next.is_some()).count(),
+        wants: wants_of(&list, pool, words, serving, &[], &mut || 0.0).len(),
+        due: due > 0,
     }
 }
 
@@ -346,15 +293,26 @@ pub(crate) mod tests {
         now: f64,
         draw: &mut dyn FnMut() -> f64,
     ) -> Vec<Want> {
-        let rows: Vec<&PoolRow> = pool.iter().collect();
-        plan_top_up(&rows, words, now, &Serving::default(), draw)
+        let rows = crate::stream::tests::rows(pool);
+        plan_top_up(
+            &rows,
+            words,
+            now,
+            &Serving::default(),
+            Scope::default(),
+            draw,
+        )
     }
     fn plan_cycling(pool: &[PoolRow], words: &[Word]) -> Vec<Want> {
         plan(pool, words, NOW, &mut cycling())
     }
-    fn coverage(pool: &[PoolRow], words: &[Word]) -> TopUpCoverage {
-        let rows: Vec<&PoolRow> = pool.iter().collect();
-        top_up_coverage(&rows, words, NOW, &Serving::default())
+    fn figure(pool: &[PoolRow], words: &[Word]) -> TopUpCoverage {
+        coverage(
+            &crate::stream::tests::rows(pool),
+            words,
+            NOW,
+            &Serving::default(),
+        )
     }
 
     fn kinds(wants: &[Want]) -> Vec<WireType> {
@@ -456,21 +414,24 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_resting_row_is_not_coverage_but_is_remembered() {
+    fn a_resting_row_covers_only_a_due_word_and_is_remembered() {
+        let ahead = word("a", 5.0 * DAY, 0.0);
         let resting = [pooled("r", WireType::RecognizeMc, &["a"], Some(NOW - DAY))];
         for seed in [0.0, 0.5, 0.999] {
-            let wants = plan(&resting, &[fresh("a")], NOW, &mut || seed);
+            let wants = plan(&resting, std::slice::from_ref(&ahead), NOW, &mut || seed);
             assert_eq!(wants.len(), WANT_PER_WORD);
             // A kind never had goes first, whatever the draw.
             assert!(kinds(&wants).iter().all(|&k| k != WireType::RecognizeMc));
         }
+        // Due, the word may take the resting row: serving would, so it is covered.
+        assert!(plan_cycling(&resting, &[fresh("a")]).is_empty());
         let rested = [pooled(
             "r",
             WireType::RecognizeMc,
             &["a"],
             Some(NOW - RESERVE_GAP),
         )];
-        assert!(plan_cycling(&rested, &[fresh("a")]).is_empty());
+        assert!(plan_cycling(&rested, &[ahead]).is_empty());
     }
 
     #[test]
@@ -544,12 +505,46 @@ pub(crate) mod tests {
         let shuffled = [3, 0, 5, 1, 4, 2].map(|i| words[i].clone());
         assert_eq!(plan_cycling(&[], &shuffled), plan_cycling(&[], &words));
 
+        let ahead = [word("a", 10.0 * DAY, 0.0)];
         let pool = [pooled("r", WireType::RecognizeMc, &["a"], Some(NOW - DAY))];
         assert_eq!(
-            plan(&pool, &[fresh("a")], NOW, &mut cycling()).len(),
+            plan(&pool, &ahead, NOW, &mut cycling()).len(),
             WANT_PER_WORD
         );
-        assert!(plan(&pool, &[fresh("a")], NOW + RESERVE_GAP, &mut cycling()).is_empty());
+        assert!(plan(&pool, &ahead, NOW + RESERVE_GAP, &mut cycling()).is_empty());
+    }
+
+    #[test]
+    fn a_limit_reads_only_the_first_words_of_the_list() {
+        let rows = crate::stream::tests::rows(&[]);
+        let scope = Scope {
+            limit: Some(3),
+            ..Scope::default()
+        };
+        let wants = plan_top_up(
+            &rows,
+            &overdue(10),
+            NOW,
+            &Serving::default(),
+            scope,
+            &mut cycling(),
+        );
+        assert_eq!(words_of(&wants), ["w0", "w1", "w2"]);
+        // A word the stream already asked for wants nothing, and keeps its place.
+        let asked = ["w1".to_owned()];
+        let scope = Scope {
+            asked: &asked,
+            ..scope
+        };
+        let wants = plan_top_up(
+            &rows,
+            &overdue(10),
+            NOW,
+            &Serving::default(),
+            scope,
+            &mut cycling(),
+        );
+        assert_eq!(words_of(&wants), ["w0", "w2"]);
     }
 
     #[test]
@@ -563,7 +558,7 @@ pub(crate) mod tests {
     #[test]
     fn coverage_counts_covered_words_and_the_wants_a_press_would_write() {
         assert_eq!(
-            coverage(&cover("a"), &[fresh("a")]),
+            figure(&cover("a"), &[fresh("a")]),
             TopUpCoverage {
                 upcoming: 1,
                 covered: 1,
@@ -572,7 +567,7 @@ pub(crate) mod tests {
             }
         );
         assert_eq!(
-            coverage(&cover("a"), &[fresh("a"), fresh("b")]),
+            figure(&cover("a"), &[fresh("a"), fresh("b")]),
             TopUpCoverage {
                 upcoming: 2,
                 covered: 1,
@@ -581,7 +576,7 @@ pub(crate) mod tests {
             }
         );
         let words = [fresh("a"), skilled("b", 4.0), fresh("c")];
-        let counted = coverage(&cover("a"), &words);
+        let counted = figure(&cover("a"), &words);
         assert_eq!(
             counted.wants,
             plan(&cover("a"), &words, NOW, &mut || 0.5).len()
@@ -591,7 +586,7 @@ pub(crate) mod tests {
     #[test]
     fn coverage_caps_the_wants_but_not_the_words() {
         assert_eq!(
-            coverage(&[], &overdue(20)),
+            figure(&[], &overdue(20)),
             TopUpCoverage {
                 upcoming: 20,
                 covered: 0,
@@ -605,14 +600,14 @@ pub(crate) mod tests {
     fn coverage_is_the_due_words_else_the_next_session_length() {
         let mut words = overdue(3);
         words.push(word("later", 2.0 * DAY, 0.0));
-        let due = coverage(&[], &words);
+        let due = figure(&[], &words);
         assert_eq!((due.upcoming, due.due), (3, true));
 
         let ahead: Vec<Word> = (0..25)
             .map(|i| word(&format!("w{i}"), (i + 1) as f64 * DAY, 0.0))
             .collect();
         assert_eq!(
-            coverage(&[], &ahead),
+            figure(&[], &ahead),
             TopUpCoverage {
                 upcoming: UPCOMING,
                 covered: 0,
@@ -621,7 +616,7 @@ pub(crate) mod tests {
             }
         );
         assert_eq!(
-            coverage(&[], &[]),
+            figure(&[], &[]),
             TopUpCoverage {
                 upcoming: 0,
                 covered: 0,

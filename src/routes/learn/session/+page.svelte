@@ -6,19 +6,17 @@
   one is done, against the store as it is then, by `$lib/session/stream` — the
   most urgent word with a challenge that fits it, at the help level closest to
   the learner's aim — with a free match round after every few challenges about
-  early words. There is no plan to walk and no end but the learner's: when
-  nothing fits, the stream waits for a batch being written, or says why it
-  stopped.
+  early words. There is no plan to walk and no end but the learner's: when the
+  most urgent word has nothing, the stream waits for a batch written for it, or
+  says why it cannot.
 
   Rules and writes live in `$lib/session/engine` and `$lib/session/stream`; this
   file owns pacing, motion and everything the learner sees. It writes nothing
-  itself. Refilling is the one decision it makes, because it is the one that
-  starts a task: after each answer it asks the stream's outlook, and when the
-  upcoming words with a challenge ready fall under the mark (sized from the
-  learner's pace and how long a batch takes) it starts a `top-up` task, which
-  writes into the pool in the background. `pendingWrite` is awaited before each
-  pick, because a self-assessment must land on top of the review it re-grades
-  and the next pick must see this answer.
+  itself. Starting a refill is the one thing it does about one, because it
+  starts a task: after each answer, when the stream says the words ahead want
+  something, it starts a `top-up` task for them — one at a time. `pendingWrite`
+  is awaited before each pick, because a self-assessment must land on top of
+  the review it re-grades and the next pick must see this answer.
 -->
 <script lang="ts">
 	import { browser } from '$app/environment';
@@ -43,12 +41,7 @@
 		type SessionAnswer
 	} from '$lib/session/engine';
 	import { motionMs } from '$lib/session/motion';
-	import {
-		PracticeStream,
-		shouldRefill,
-		type StreamOutlook,
-		type StreamStep
-	} from '$lib/session/stream';
+	import { PracticeStream, type StreamStep } from '$lib/session/stream';
 	import type { Grade } from '$lib/srs';
 	import { runSync } from '$lib/sync';
 	import { startTask } from '$lib/tasks';
@@ -62,7 +55,7 @@
 	import ChallengeHost from '../ChallengeHost.svelte';
 	import FeedbackBanner from '../FeedbackBanner.svelte';
 
-	/** `waiting`: nothing fits, and a batch is being written that may. */
+	/** `waiting`: the most urgent word has nothing, and a batch is being written for it. */
 	type Phase = 'loading' | 'playing' | 'waiting' | 'summary';
 
 	interface Feedback {
@@ -127,8 +120,8 @@
 	/** Day streak after this stream, folded out of the answer log by {@link finish}. */
 	let endStreak = $state(0);
 	/**
-	 * Why the stream stopped when the learner did not stop it: nothing left
-	 * that fits, and why nothing more could be written. Empty when they stopped.
+	 * Why the stream stopped when the learner did not stop it: its next word
+	 * has nothing, and why nothing could be written for it. Empty when they stopped.
 	 */
 	let endReason = $state('');
 
@@ -164,10 +157,6 @@
 	let refills = new Set<string>();
 	/** Records already acted on, so a settled refill is handled once. */
 	let handled = new Set<string>();
-	/** Set when a refill came back and still nothing fit: do not ask again in a loop. */
-	let refilledIntoNothing = false;
-	/** Stranded due words when a refill was last asked for on their account (`shouldRefill`). */
-	let strandedMark = Infinity;
 
 	const topUp = $derived(taskStore.latestOf('top-up'));
 	const writing = $derived(topUp?.status === 'queued' || topUp?.status === 'running');
@@ -177,26 +166,18 @@
 		return !mock && (typeof navigator === 'undefined' || navigator.onLine !== false);
 	}
 
-	function refill(outlook: StreamOutlook): void {
-		if (!profile) return;
-		if (outlook.stranded > 0) strandedMark = outlook.stranded;
-		const { id } = startTask('top-up', { profile });
-		refills.add(id);
+	/** Starts a top-up for the words ahead that want one; whether it did. */
+	async function refill(): Promise<boolean> {
+		if (!profile || writing || !canWrite()) return false;
+		const scope = await stream.refill();
+		if (!scope) return false;
+		refills.add(startTask('top-up', { profile, ...scope }).id);
+		return true;
 	}
 
 	/**
-	 * After the first pick and after each answer lands: ask for a batch when the
-	 * stream is running low or a due word has nothing.
-	 */
-	async function topUpIfLow(): Promise<void> {
-		if (writing || refilledIntoNothing) return;
-		const outlook = await stream.outlook();
-		if (shouldRefill(outlook, { canWrite: canWrite(), writing, strandedMark })) refill(outlook);
-	}
-
-	/**
-	 * A refill this screen started settled: time it for the next mark, and if
-	 * the stream was waiting on it, pick again — or stop and say why.
+	 * A refill settled: time it for the next mark, and if the stream was
+	 * waiting, pick again — or stop and say why.
 	 */
 	$effect(() => {
 		for (const record of taskStore.tasks) {
@@ -207,14 +188,8 @@
 				stream.noteBatch(record.finishedAt - record.startedAt);
 			}
 			if (phase !== 'waiting') continue;
-			if (record.status === 'done') {
-				refilledIntoNothing = true;
-				void advance();
-			} else {
-				void finish(
-					record.error ?? 'Writing more challenges was cancelled, and nothing else fits right now.'
-				);
-			}
+			if (record.status === 'done') void advance();
+			else void finish(record.error ?? 'Writing more challenges was cancelled.');
 		}
 	});
 
@@ -265,8 +240,8 @@
 			bootSpeech();
 			await advance();
 			if (phase === 'summary' && answers.length === 0 && !endReason) await goto('/learn');
-			// The first answer is a while off, and the start may already owe a batch.
-			if (phase === 'playing') void topUpIfLow().catch(() => {});
+			// The first answer is a while off, and the words ahead may already want a batch.
+			if (phase === 'playing') void refill().catch(() => {});
 		} catch {
 			await goto('/learn');
 		}
@@ -332,61 +307,59 @@
 	const answered = $derived(answers.length);
 
 	/**
-	 * The next pick, once this answer's writes have landed. When nothing fits,
-	 * the stream waits for a batch being written (or starts one), and otherwise
-	 * stops and says why.
+	 * The next pick, once this answer's writes have landed. While the most
+	 * urgent word has nothing, the stream waits for a batch written for it.
 	 */
 	async function advance(): Promise<void> {
 		feedback = null;
 		await pendingWrite;
 		const step = await stream.next();
 		items = stream.items;
-		if (step.kind === 'empty') {
-			await nothingFits(step.outlook);
+		if (step.kind === 'blocked') {
+			await blocked(step.asked);
 			return;
 		}
-		refilledIntoNothing = false;
 		phase = 'playing';
 		show(step);
 	}
 
-	async function nothingFits(outlook: StreamOutlook): Promise<void> {
+	/** The next word has nothing: wait for a batch, start one, or — once one was asked for it — stop. */
+	async function blocked(asked: boolean): Promise<void> {
 		if (writing) {
+			// Someone else's batch (the learn screen's) wakes this stream too.
+			if (topUp) refills.add(topUp.id);
 			phase = 'waiting';
 			return;
 		}
-		if (
-			!refilledIntoNothing &&
-			shouldRefill(
-				{ ...outlook, lowWater: Math.max(outlook.lowWater, 1) },
-				{
-					canWrite: canWrite(),
-					writing
-				}
-			)
-		) {
-			refill(outlook);
+		if (!asked && (await refill())) {
 			phase = 'waiting';
 			return;
 		}
-		await finish(endReasonFor(outlook));
+		await finish(endReasonFor(asked));
 	}
 
-	/** Why a stream with nothing left that fits cannot go on, in the learner's words. */
-	function endReasonFor(outlook: StreamOutlook): string {
-		if (refilledIntoNothing) {
-			return 'The newest challenges are not a fit for where your words are yet. Try again later, or write a lesson from Practice.';
-		}
-		if (outlook.wants === 0) {
-			return "That's everything that fits right now — what is left is resting. Come back later, or add words.";
+	/** Why a stream whose next word has nothing cannot go on, in the learner's words. */
+	function endReasonFor(asked: boolean): string {
+		if (asked) {
+			return 'Nothing that fits your next word could be written just now. Try again, or come back later.';
 		}
 		if (mock) {
 			return 'Nothing left that fits. Add your OpenRouter key in Settings and practice writes more as you go.';
 		}
-		return "You're offline, so no new challenges can be written. Nothing else fits right now.";
+		if (canWrite()) return 'Nothing to practise right now. Come back later, or add words.';
+		return "You're offline, so no new challenges can be written for your next word.";
 	}
 
-	function show(step: Exclude<StreamStep, { kind: 'empty' }>): void {
+	/** Back into the stream after it stopped itself: the store may have moved since. */
+	async function retry(): Promise<void> {
+		endReason = '';
+		stream.resetAsked();
+		phase = 'loading' as Phase;
+		await advance();
+		if (phase === 'playing') void refill().catch(() => {});
+	}
+
+	function show(step: Exclude<StreamStep, { kind: 'blocked' }>): void {
 		const challenge = step.challenge;
 		const at = Date.now();
 		challengeShownAt = at;
@@ -458,8 +431,8 @@
 			return new Set<string>();
 		});
 		pendingWrite = pendingReviewed.then(() => undefined);
-		// While the banner is up: is the stream running low? A batch takes a while.
-		void pendingWrite.then(() => topUpIfLow()).catch(() => {});
+		// While the banner is up: do the words ahead want a batch? One takes a while.
+		void pendingWrite.then(() => refill()).catch(() => {});
 	}
 
 	/**
@@ -805,6 +778,15 @@
 					{/if}
 				{/if}
 
+				{#if endReason}
+					<button
+						type="button"
+						class="btn btn-ghost btn-block retry-btn"
+						onclick={() => void retry()}
+					>
+						Try again
+					</button>
+				{/if}
 				<a class="btn btn-primary btn-block back-btn" href="/learn">Back to Practice</a>
 			</div>
 		</div>
@@ -1365,6 +1347,14 @@
 		font-size: 0.9rem;
 		text-align: right;
 		overflow-wrap: anywhere;
+	}
+
+	.retry-btn {
+		margin-top: 1.75rem;
+	}
+
+	.retry-btn + .back-btn {
+		margin-top: 0.75rem;
 	}
 
 	.back-btn {

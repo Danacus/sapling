@@ -10,10 +10,9 @@
  * This module holds only what a stream remembers between picks — the ids it
  * has shown, the learner's pace, how many early-word challenges have passed
  * since the last match round, how long the last batch took — and reads the
- * store for each pick. It makes no write, and it starts no task: refilling is
- * the page's call (a `top-up` task, `$lib/tasks`), made from {@link
- * PracticeStream.outlook} and {@link shouldRefill}, because `$lib/session`
- * never imports `$lib/tasks`.
+ * store for each pick. It makes no write and starts no task: {@link
+ * PracticeStream.refill} says what a `top-up` would write for, and the page
+ * starts it, because `$lib/session` never imports `$lib/tasks`.
  */
 
 import { getAllItems, getDifficultyParts, getPool, getProfile } from '$lib/db';
@@ -24,9 +23,8 @@ import {
 	isEarlyChallenge,
 	lowWaterMark,
 	matchRound,
-	nextPick,
-	streamOutlook,
-	type Outlook,
+	planTopUp,
+	streamHead,
 	type SessionPick
 } from './engine';
 import { servingFor, type DeviceServing } from './serving';
@@ -35,13 +33,17 @@ import { servingFor, type DeviceServing } from './serving';
 export type StreamStep =
 	| ({ kind: 'challenge' } & SessionPick)
 	| { kind: 'round'; challenge: MatchPairsChallenge }
-	/** Nothing in the pool fits any word; the outlook says whether writing more would help. */
-	| { kind: 'empty'; outlook: StreamOutlook };
+	/**
+	 * The most urgent word has nothing available: the stream waits for a
+	 * refill, unless one was already asked for it — then no batch will help.
+	 */
+	| { kind: 'blocked'; asked: boolean };
 
-/** {@link Outlook} with the mark it is judged against. */
-export interface StreamOutlook extends Outlook {
-	/** Ready words below which a batch should be written now. */
-	lowWater: number;
+/** What a stream's refill writes for: the `top-up` task's `served`, `asked` and `limit`. */
+export interface RefillScope {
+	served: string[];
+	asked: string[];
+	limit: number;
 }
 
 export interface PracticeStreamOptions {
@@ -62,31 +64,17 @@ function median(values: readonly number[]): number | undefined {
 	return sorted[Math.floor((sorted.length - 1) / 2)];
 }
 
-/**
- * Whether the page should start a top-up now: the upcoming words with a pick
- * ready are under the mark (or nothing fits at all) or a due word is stranded,
- * there is something to write, the learner can write (a key, and a
- * connection), and one is not already on its way.
- *
- * `strandedMark` is how many were stranded when a refill was last asked for
- * on their account: stranded words ask again only once a refill has rescued
- * some, so rows that come back still not fitting cannot set off a batch after
- * every answer.
- */
-export function shouldRefill(
-	outlook: StreamOutlook,
-	opts: { canWrite: boolean; writing: boolean; strandedMark?: number }
-): boolean {
-	if (!opts.canWrite || opts.writing || outlook.wants === 0) return false;
-	const stranded = outlook.stranded > 0 && outlook.stranded < (opts.strandedMark ?? Infinity);
-	return outlook.ready < outlook.lowWater || stranded;
-}
-
 export class PracticeStream {
 	readonly #clock: () => number;
 	readonly #device: DeviceServing | undefined;
 	#seed: number | undefined;
 	readonly #served = new Set<string>();
+	/**
+	 * Words a refill was asked for and nothing has been served of since: never
+	 * asked for again, so rows that came back not fitting, a word a batch
+	 * dropped and a failed batch all end at one request.
+	 */
+	readonly #asked = new Set<string>();
 	readonly #paces: number[] = [];
 	#earlySinceRound = 0;
 	#batchMs: number | undefined;
@@ -116,32 +104,44 @@ export class PracticeStream {
 	}
 
 	/**
-	 * The next thing to show: a challenge at its help level, a free match round
-	 * when enough early-word challenges have passed and there is a challenge to
-	 * follow it, or `empty` when nothing fits.
+	 * The next thing to show: the head word's challenge at its help level, a
+	 * free match round when enough early-word challenges have passed and there
+	 * is a challenge to follow it, or `blocked` while the head has nothing.
 	 */
 	async next(): Promise<StreamStep> {
 		const { pool, items, serving, now, served } = await this.#read();
-		const pick = nextPick(pool, items, now, { serving, served });
-		if (!pick) {
-			return {
-				kind: 'empty',
-				outlook: this.#judge(streamOutlook(pool, items, now, { serving, served }))
-			};
-		}
+		const head = streamHead(pool, items, now, { serving, served });
+		const pick = head?.pick;
+		if (!pick) return { kind: 'blocked', asked: head ? this.#asked.has(head.word) : false };
 		if (this.#earlySinceRound >= MATCH_PAIRS_EVERY) {
 			this.#earlySinceRound = 0;
 			const round = matchRound(items, this.#nextSeed());
 			if (round) return { kind: 'round', challenge: round };
 		}
 		this.#served.add(pick.challenge.id);
+		for (const id of pick.challenge.itemIds) this.#asked.delete(id);
 		return { kind: 'challenge', ...pick };
 	}
 
-	/** How the upcoming words stand, and the mark refill is judged against. */
-	async outlook(): Promise<StreamOutlook> {
+	/**
+	 * Claims a refill: what it should write for — the next words up to the
+	 * mark, sized from the learner's pace, less those already asked for — or
+	 * `null` when none of them wants anything. The words it wants are asked for
+	 * from here on; the caller starts the task.
+	 */
+	async refill(): Promise<RefillScope | null> {
 		const { pool, items, serving, now, served } = await this.#read();
-		return this.#judge(streamOutlook(pool, items, now, { serving, served }));
+		const limit = lowWaterMark(median(this.#paces), this.#batchMs);
+		const asked = [...this.#asked];
+		const wants = planTopUp(pool, items, now, { serving, served, asked, limit });
+		if (wants.length === 0) return null;
+		for (const want of wants) this.#asked.add(want.item.id);
+		return { served, asked, limit };
+	}
+
+	/** Forget what was asked for: a retry asks again. */
+	resetAsked(): void {
+		this.#asked.clear();
 	}
 
 	/** An answer was given: its time feeds the pace, its words the round counter. */
@@ -157,10 +157,6 @@ export class PracticeStream {
 	/** A batch came back after `ms`: what the next mark allows for. */
 	noteBatch(ms: number): void {
 		if (Number.isFinite(ms) && ms > 0) this.#batchMs = ms;
-	}
-
-	#judge(outlook: Outlook): StreamOutlook {
-		return { ...outlook, lowWater: lowWaterMark(median(this.#paces), this.#batchMs) };
 	}
 
 	#nextSeed(): number | undefined {

@@ -35,9 +35,9 @@ import {
 	matchRound,
 	nextPick,
 	planRefill,
+	planTopUp,
 	sessionSummary,
 	spokenAnswerFor,
-	streamOutlook,
 	type SessionAnswer
 } from './engine';
 
@@ -190,14 +190,19 @@ describe('nextPick', () => {
 		const first = nextPick(pool, items, NOW)!;
 		expect(first.challenge.id).toBe('cb');
 		expect(first.due).toBe(true);
-		const third = nextPick(pool, items, NOW, { served: ['cb', 'cc'] })!;
-		expect(third.challenge).toEqual(challengeOf(pool[0]));
-		expect(third.challenge).not.toHaveProperty('topic');
-		expect(third.challenge).not.toHaveProperty('lastServedAt');
-		// Each pick carries the help level it is served at and its predicted chance.
-		expect(third.shown).toBe('plain');
-		expect(third.chance).toBeGreaterThan(0.65);
-		expect(nextPick(pool, items, NOW, { served: ['ca', 'cb', 'cc'] })).toBeNull();
+		const only = nextPick(pool, [items[0]], NOW)!;
+		expect(only.challenge).toEqual(challengeOf(pool[0]));
+		expect(only.challenge).not.toHaveProperty('topic');
+		expect(only.challenge).not.toHaveProperty('lastServedAt');
+		// Each pick carries the help level it is served at and its remembered chance.
+		expect(only.shown).toBe('plain');
+		expect(only.chance).toBeGreaterThan(0.72);
+	});
+
+	it('never skips the most urgent word, even when another has something', () => {
+		const items = [item('a', -DAY), item('b', -10 * DAY)];
+		const pool = [row('ca', ['a']), row('cb', ['b'])];
+		expect(nextPick(pool, items, NOW, { served: ['cb'] })).toBeNull();
 	});
 
 	it('never serves what does not fit the word', () => {
@@ -212,15 +217,18 @@ describe('nextPick', () => {
 	});
 });
 
-describe('streamOutlook', () => {
-	it('counts the upcoming words with a pick ready, and what a top-up would write', () => {
+describe('refill', () => {
+	it('writes for the words ahead up to the mark, never twice, and a shown row covers nothing', () => {
 		const items = [item('a', -2 * DAY), item('b', -DAY), item('c', DAY)];
-		const outlook = streamOutlook([row('ca', ['a'])], items, NOW);
-		expect(outlook).toEqual({ ready: 1, upcoming: 3, due: 2, stranded: 1, wants: 4 });
-		expect(streamOutlook([row('ca', ['a'])], items, NOW, { served: ['ca'] }).ready).toBe(0);
+		const pool = [row('ca', ['a'])];
+		const ids = (wants: { item: { id: string } }[]) => [...new Set(wants.map((w) => w.item.id))];
+		expect(ids(planTopUp(pool, items, NOW, { limit: 2 }))).toEqual(['b']);
+		expect(ids(planTopUp(pool, items, NOW, { limit: 2, served: ['ca'] }))).toEqual(['a', 'b']);
+		expect(ids(planTopUp(pool, items, NOW))).toEqual(['b', 'c']);
+		expect(ids(planTopUp(pool, items, NOW, { asked: ['b'] }))).toEqual(['c']);
 	});
 
-	it('asks for more ready words the faster the learner answers', () => {
+	it('keeps more words written for the faster the learner answers', () => {
 		expect(lowWaterMark()).toBe(5);
 		expect(lowWaterMark(5_000, 60_000)).toBeGreaterThan(lowWaterMark(30_000, 60_000));
 	});
@@ -487,7 +495,7 @@ describe('session walkthrough (mock batch, no database)', () => {
 
 		// The vocabulary is exactly what went in — generating changes nothing about
 		// it — and what `addToPool` writes is a fresh, never-served batch.
-		const items = known;
+		const items = [...known];
 		const pool: ChallengeRow[] = batch.challenges.map((challenge, index) => ({
 			...challenge,
 			generatedAt: NOW + index,
@@ -497,9 +505,9 @@ describe('session walkthrough (mock batch, no database)', () => {
 		}));
 
 		// One pick at a time, as the stream makes them — here without the store,
-		// so nothing the learner answers moves the schedule, and each pick is only
-		// kept from coming back by the stream's own served list. A round follows
-		// every fourth early-word challenge, and only when a pick follows it.
+		// so an answer only moves its word's due date, and each pick is kept from
+		// coming back by the stream's own served list. A round follows every
+		// fourth early-word challenge, and only when a pick follows it.
 		const served: string[] = [];
 		const answers: SessionAnswer[] = [];
 		let llmAnswered = 0;
@@ -532,6 +540,14 @@ describe('session walkthrough (mock batch, no database)', () => {
 			});
 			llmAnswered++;
 			if (isEarlyChallenge(challenge, items)) earlySinceRound++;
+			// Reviewed: the word goes to the back of the line, still new to the model.
+			for (const id of challenge.itemIds) {
+				const at = items.findIndex((i) => i.id === id);
+				items[at] = {
+					...items[at],
+					srs: { ...items[at].srs!, due: NOW + (100 + llmAnswered) * DAY }
+				};
+			}
 		}
 
 		return {
@@ -548,11 +564,11 @@ describe('session walkthrough (mock batch, no database)', () => {
 		const run = await playSession(known, () => 'correct');
 
 		// Two challenges per word, the mock filling every want. The mock writes
-		// its fixture at the fixture's own length, not the one asked for, so a
-		// context row comes out too long for a new word and never fits: the
-		// stream serves every row that does, then ends.
+		// its fixture at the fixture's own length, not the one asked for, but a
+		// row is judged at the length it was asked for, so every row fits its
+		// word and the stream serves them all.
 		expect(run.written).toBe(14);
-		expect(run.llmAnswered).toBe(9);
+		expect(run.llmAnswered).toBe(14);
 		expect(run.matchRounds).toBe(Math.floor((run.llmAnswered - 1) / 4)); // after every 4th early-material answer, never last
 		expect(run.answers).toHaveLength(run.llmAnswered + run.matchRounds);
 		expect(run.summary.accuracy).toBe(1);
@@ -565,7 +581,7 @@ describe('session walkthrough (mock batch, no database)', () => {
 			index === 4 ? 'wrong' : 'correct'
 		);
 
-		expect(run.llmAnswered).toBe(9);
+		expect(run.llmAnswered).toBe(14);
 		expect(run.summary.wrong).toBe(1);
 		expect(run.summary.answered).toBe(run.llmAnswered + run.matchRounds);
 	});

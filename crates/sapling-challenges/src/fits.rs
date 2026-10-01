@@ -1,35 +1,20 @@
-//! The one check (`docs/challenge-difficulty.md` §5): serving and refill both
-//! ask whether a stored row, shown at one of its help levels, puts its words'
-//! predicted chance inside the window around the learner's aim.
+//! The one check (`docs/challenge-difficulty.md` §5): whether a row, at one
+//! of its help levels, puts its words' chance *given they are remembered* —
+//! `sigmoid(skill − difficulty)` — inside the window around the learner's aim.
+//! Memory decides which word comes up (FSRS's order), never which row it gets.
 //!
-//! A row **fits** when at least one of its help levels lands inside the window;
-//! its best fit is the help level closest to the aim, the easier one on a tie.
-//!
-//! The window's two edges read two different things. Too hard is the whole
-//! chance under the bottom — forgetting the word counts. Too easy is the
-//! chance *given the word is remembered* over the top: memory multiplies in,
-//! and a due word's memory sits near FSRS's 0.9, so on the whole chance the
-//! top edge would almost never be reached and a word would never outgrow its
-//! first recognition rows.
-//!
-//! Memory is read no lower than [`WRITE_MEMORY`], word by word. An overdue
-//! word's memory is the schedule running late, not the row being hard: no
-//! row can make up for it, and the review it is owed is what restores it. On
-//! its true memory a word under about 0.71 fits nothing at all (the bottom
-//! wants the whole chance at 0.65, the top caps the rest at 0.92), so it is
-//! never served, never reviewed, and only slips further — while refill keeps
-//! writing rows for it at 0.9 that serving then turns down.
-//! Serving picks by it, refill counts coverage by it, so a row refill counts as
-//! covering a word is exactly one serving would show, and one serving would
-//! never show is never coverage.
+//! The window is widened, per skill, just far enough to take in the nearest
+//! row a writer can produce ([`window_for`]): a word too weak for the easiest
+//! kind at its shortest still fits that, one too strong for the hardest still
+//! fits that, so every word always has something writable that serving takes.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::challenge::Challenge;
 use crate::help::{can_listen, has_readings, steps_of, HelpLevel};
-use crate::kinds::kind_of;
-use crate::model::{chance, length_of, target, window, Aim, Shared, MULTI_WORD};
+use crate::kinds::{active_kinds, kind_of};
+use crate::model::{combined, length_of, sigmoid, target, window, Aim, Shared, MULTI_WORD};
 use crate::pool::PoolRow;
 use crate::serve::RomanizationMode;
 use crate::word::ById;
@@ -85,29 +70,53 @@ pub fn help_levels(challenge: &Challenge, serving: &Serving) -> Vec<HelpLevel> {
     levels
 }
 
-/// The memory a row is judged and written at, at the least: FSRS schedules a
-/// review for when recall has decayed to 90%, so that is roughly where a due
-/// word is served.
-pub const WRITE_MEMORY: f64 = 0.9;
+/// Every difficulty a freshly written row can have: each active kind at each
+/// step it is written with, at every length in its range, before any correction.
+fn writable(parts: &Shared) -> impl Iterator<Item = f64> + '_ {
+    active_kinds().flat_map(move |kind| {
+        let [shortest, longest] = kind.lengths().unwrap_or([1, 1]);
+        let slope = parts.slope(kind);
+        kind.written_steps().iter().flat_map(move |step| {
+            // `Shared::difficulty` at correction 0, its lookups hoisted.
+            let base = parts.base(kind, HelpLevel::step(*step));
+            (shortest..=longest).map(move |length| base + slope * f64::from(length))
+        })
+    })
+}
 
-/// The two halves of a prediction: the words' combined memory, each read no
-/// lower than `floor`, and the chance of managing the row given they are
-/// remembered.
-fn halves(
-    row: &PoolRow,
-    help: HelpLevel,
-    words: &ById,
-    parts: &Shared,
-    floor: f64,
-) -> Option<(f64, f64)> {
+/// The remembered chances a word of this skill may be served at: the aim's
+/// window, widened just enough to take in the nearest writable row.
+pub fn window_for(skill: f64, serving: &Serving) -> (f64, f64) {
+    let (low, high) = window(serving.aim);
+    let gap = |c: f64| (low - c).max(c - high);
+    let mut nearest: Option<f64> = None;
+    for difficulty in writable(&serving.parts) {
+        let c = sigmoid(skill - difficulty);
+        if gap(c) <= 0.0 {
+            return (low, high);
+        }
+        if nearest.is_none_or(|n| gap(c) < gap(n)) {
+            nearest = Some(c);
+        }
+    }
+    match nearest {
+        Some(c) if c < low => (c, high),
+        Some(c) => (low, c),
+        None => (low, high),
+    }
+}
+
+pub fn inside(chance: f64, (low, high): (f64, f64)) -> bool {
+    chance >= low - 1e-12 && chance <= high + 1e-12
+}
+
+/// The words' combined skill and the row's difficulty at this help level, or
+/// `None` for a match round or a row naming a word that is gone.
+fn judged(row: &PoolRow, help: HelpLevel, words: &ById, parts: &Shared) -> Option<(f64, f64)> {
     let kind = kind_of(&row.challenge)?;
-    let ids = row.challenge.item_ids();
-    let mut skills = Vec::with_capacity(ids.len());
-    let mut memory = 1.0;
-    for id in ids {
-        let word = words.get(id.as_str())?;
-        memory *= word.memory().max(floor);
-        skills.push(word.skill());
+    let mut skills = Vec::new();
+    for id in row.challenge.item_ids() {
+        skills.push(words.get(id.as_str())?.skill());
     }
     let difficulty = parts.difficulty(
         kind,
@@ -115,29 +124,28 @@ fn halves(
         length_of(&row.challenge),
         row.correction.unwrap_or(0.0),
     );
-    Some((
-        memory,
-        chance(&[1.0], &skills, difficulty, MULTI_WORD).max(0.0),
-    ))
+    Some((combined(&skills, MULTI_WORD)?, difficulty))
 }
 
-/// The predicted chance of this row at this help level for its words, or
-/// `None` for a match round or a row naming a word that is gone.
+/// The predicted chance of a correct answer, memory included: what the model
+/// is scored on, never what a row is picked by.
 pub fn chance_of(row: &PoolRow, help: HelpLevel, words: &ById, parts: &Shared) -> Option<f64> {
-    halves(row, help, words, parts, 0.0).map(|(memory, manage)| memory * manage)
+    let (skill, difficulty) = judged(row, help, words, parts)?;
+    let memory: f64 = row
+        .challenge
+        .item_ids()
+        .iter()
+        .filter_map(|id| words.get(id.as_str()))
+        .map(|w| w.memory())
+        .product();
+    Some(memory * sigmoid(skill - difficulty))
 }
 
-/// Whether a prediction's two halves sit inside an aim's window: the whole
-/// chance no lower than its bottom, the remembered chance no higher than its top.
-pub fn inside(memory: f64, manage: f64, aim: Aim) -> bool {
-    let (low, high) = window(aim);
-    memory * manage >= low && manage <= high
-}
-
-/// `fits`: the predicted chance, when it lands inside the window.
+/// `fits`: the remembered chance, when it lands inside the word's window.
 pub fn fits(row: &PoolRow, help: HelpLevel, words: &ById, serving: &Serving) -> Option<f64> {
-    let (memory, manage) = halves(row, help, words, &serving.parts, WRITE_MEMORY)?;
-    inside(memory, manage, serving.aim).then_some(memory * manage)
+    let (skill, difficulty) = judged(row, help, words, &serving.parts)?;
+    let chance = sigmoid(skill - difficulty);
+    inside(chance, window_for(skill, serving)).then_some(chance)
 }
 
 /// A row's best fit: the help level inside the window closest to the aim.
@@ -156,10 +164,16 @@ impl Fit {
 
 pub fn best_fit(row: &PoolRow, words: &ById, serving: &Serving) -> Option<Fit> {
     let mut best: Option<Fit> = None;
+    let mut window = None;
     for help in help_levels(&row.challenge, serving) {
-        let Some(chance) = fits(row, help, words, serving) else {
+        let (skill, difficulty) = judged(row, help, words, &serving.parts)?;
+        let chance = sigmoid(skill - difficulty);
+        if !inside(
+            chance,
+            *window.get_or_insert_with(|| window_for(skill, serving)),
+        ) {
             continue;
-        };
+        }
         let fit = Fit { help, chance };
         if best.is_none_or(|b| fit.distance(serving.aim) < b.distance(serving.aim)) {
             best = Some(fit);
@@ -173,6 +187,7 @@ mod tests {
     use super::*;
     use crate::help::Step;
     use crate::model::starting_skill;
+    use crate::sim::synthetic;
     use crate::word::tests::word;
     use crate::word::{by_id, Word};
     use serde_json::json;
@@ -270,35 +285,53 @@ mod tests {
         };
         assert_eq!(pick(3.0), Some(Step::Pick4));
         assert_eq!(pick(5.8), Some(Step::Typed));
-        // Far too weak for any of it: the row does not fit, and is not served.
+        // Far too weak for any of it: the row does not fit, though an easier kind would.
         assert_eq!(pick(-2.0), None);
     }
 
-    /// An overdue word's memory can sit far under any window: read at its true
-    /// memory it fits nothing and is never reviewed again. It is judged as if
-    /// at the 0.9 it is written for, and its real chance is still what
-    /// `chance_of` predicts.
+    /// Memory picks the word, never the row: an overdue word is judged as it
+    /// would be on time, and only its predicted chance knows it is fading.
     #[test]
-    fn a_forgotten_word_still_fits_what_it_would_fit_on_time() {
-        let mut forgotten = skilled(3.0);
-        if let Some(srs) = forgotten.srs.as_mut() {
-            srs.retrievability = 0.44;
-        }
-        let mut on_time = skilled(3.0);
-        if let Some(srs) = on_time.srs.as_mut() {
-            srs.retrievability = WRITE_MEMORY;
-        }
+    fn memory_decides_nothing_a_row_is_picked_by() {
+        let at = |memory: f64| {
+            let mut w = skilled(3.0);
+            w.srs.as_mut().unwrap().retrievability = memory;
+            w
+        };
         let serving = Serving::default();
-        let late = best_fit(&cloze(false), &by_id(&[forgotten.clone()]), &serving).unwrap();
-        let due = best_fit(&cloze(false), &by_id(&[on_time]), &serving).unwrap();
+        let late = best_fit(&cloze(false), &by_id(&[at(0.2)]), &serving).unwrap();
+        let due = best_fit(&cloze(false), &by_id(&[at(0.9)]), &serving).unwrap();
         assert_eq!(late, due);
-        let real = chance_of(
-            &cloze(false),
-            late.help,
-            &by_id(&[forgotten]),
-            &serving.parts,
-        );
-        assert!(real.unwrap() < late.chance * 0.5);
+        let real = chance_of(&cloze(false), late.help, &by_id(&[at(0.2)]), &serving.parts);
+        assert!((real.unwrap() - 0.2 * late.chance).abs() < 1e-12);
+    }
+
+    /// The window widens to the nearest writable row, so a word beyond every
+    /// option at either end still fits the option nearest it.
+    #[test]
+    fn a_word_beyond_every_option_still_fits_the_nearest_one() {
+        let serving = Serving::default();
+        let rows: Vec<PoolRow> = active_kinds()
+            .flat_map(|kind| {
+                let [shortest, longest] = kind.lengths().unwrap();
+                (shortest..=longest).map(move |length| {
+                    let id = format!("{}-{length}", kind.as_str());
+                    row(synthetic(kind, &id, &["w"], usize::from(length)))
+                })
+            })
+            .collect();
+        for skill in [-12.0, -6.0, 0.0, 3.0, 8.0, 12.0] {
+            let words = [skilled(skill)];
+            let index = by_id(&words);
+            let fitting = rows
+                .iter()
+                .filter(|r| best_fit(r, &index, &serving).is_some());
+            assert!(fitting.count() > 0, "skill {skill}");
+        }
+        let (low, high) = window(serving.aim);
+        assert!(window_for(-12.0, &serving).0 < low);
+        assert!(window_for(12.0, &serving).1 > high);
+        assert_eq!(window_for(starting_skill(), &serving), (low, high));
     }
 
     #[test]

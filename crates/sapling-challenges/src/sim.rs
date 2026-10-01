@@ -22,8 +22,8 @@ use crate::challenge::Challenge;
 use crate::help::{can_listen, steps_of, HelpLevel};
 use crate::kinds::{kind_of, WireType};
 use crate::model::{
-    length_of, sigmoid, starting_base, starting_skill, starting_slope, tuning, Aim, Evidence,
-    Learner, Observation, Rates, MULTI_WORD,
+    length_of, sigmoid, starting_base, starting_skill, starting_slope, tuning, Evidence, Learner,
+    Observation, Rates, MULTI_WORD,
 };
 use crate::rng::Rng;
 
@@ -39,6 +39,10 @@ const STEERING: Rates = Rates {
     shared: 0.02,
     challenge: 0.1,
 };
+
+/// The whole chance the simulation steers its picks towards, fixed for the
+/// same reason as [`STEERING`].
+const STEERING_AIM: f64 = 0.8;
 
 #[derive(Debug, Clone, Copy)]
 pub struct SimOptions {
@@ -190,7 +194,6 @@ pub fn simulate(options: SimOptions) -> Simulation {
         .into_iter()
         .filter(|k| k.is_active())
         .collect();
-    let target = crate::model::target(Aim::Normal);
 
     for day in 0..options.days {
         let morning = START + day as f64 * DAY;
@@ -319,7 +322,9 @@ pub fn simulate(options: SimOptions) -> Simulation {
                     .min_by(|a, b| {
                         let pa = learner.predict(&observe(a.0, a.1, &vocabulary, now), MULTI_WORD);
                         let pb = learner.predict(&observe(b.0, b.1, &vocabulary, now), MULTI_WORD);
-                        (pa - target).abs().total_cmp(&(pb - target).abs())
+                        (pa - STEERING_AIM)
+                            .abs()
+                            .total_cmp(&(pb - STEERING_AIM).abs())
                     })
                     .expect("not empty")
             };

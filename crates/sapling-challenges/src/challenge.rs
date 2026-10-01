@@ -93,6 +93,10 @@ pub struct MultipleChoiceChallenge {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub explanation: Option<String>,
+    /// The length asked for, which difficulty is judged by (`length_of`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub length: Option<f64>,
     /// `KnowledgeItem` ids exercised by this challenge.
     pub item_ids: Vec<String>,
 }
@@ -139,6 +143,10 @@ pub struct ClozeChallenge {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub explanation: Option<String>,
+    /// The length asked for, which difficulty is judged by (`length_of`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub length: Option<f64>,
     pub item_ids: Vec<String>,
 }
 
@@ -184,6 +192,10 @@ pub struct MultiClozeChallenge {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub explanation: Option<String>,
+    /// The length asked for, which difficulty is judged by (`length_of`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub length: Option<f64>,
     pub item_ids: Vec<String>,
 }
 
@@ -210,6 +222,10 @@ pub struct TypedTranslationChallenge {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub explanation: Option<String>,
+    /// The length asked for, which difficulty is judged by (`length_of`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub length: Option<f64>,
     pub item_ids: Vec<String>,
 }
 
@@ -287,6 +303,10 @@ pub struct WordOrderChallenge {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub explanation: Option<String>,
+    /// The length asked for, which difficulty is judged by (`length_of`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub length: Option<f64>,
     pub item_ids: Vec<String>,
 }
 
@@ -330,6 +350,10 @@ pub struct SpotErrorChallenge {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub explanation: Option<String>,
+    /// The length asked for, which difficulty is judged by (`length_of`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub length: Option<f64>,
     pub item_ids: Vec<String>,
 }
 
@@ -472,6 +496,34 @@ impl Challenge {
             Challenge::WordOrder(c) => &c.item_ids,
             Challenge::SpotError(c) => &c.item_ids,
         }
+    }
+
+    /// The length the row was asked to be written at; `None` for a row written
+    /// before that was recorded, and for a match round.
+    pub fn asked_length(&self) -> Option<f64> {
+        match self {
+            Challenge::MultipleChoice(c) => c.length,
+            Challenge::Cloze(c) => c.length,
+            Challenge::MultiCloze(c) => c.length,
+            Challenge::TypedTranslation(c) => c.length,
+            Challenge::MatchPairs(_) => None,
+            Challenge::WordOrder(c) => c.length,
+            Challenge::SpotError(c) => c.length,
+        }
+    }
+
+    /// Records the length a freshly written row was asked for.
+    pub fn set_asked_length(&mut self, length: f64) {
+        let slot = match self {
+            Challenge::MultipleChoice(c) => &mut c.length,
+            Challenge::Cloze(c) => &mut c.length,
+            Challenge::MultiCloze(c) => &mut c.length,
+            Challenge::TypedTranslation(c) => &mut c.length,
+            Challenge::MatchPairs(_) => return,
+            Challenge::WordOrder(c) => &mut c.length,
+            Challenge::SpotError(c) => &mut c.length,
+        };
+        *slot = Some(length);
     }
 
     /// Whether this is `context-mc`'s target-language prompt.

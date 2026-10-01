@@ -45,7 +45,8 @@ answers**.
   help on screen: a cloze with 4 choices, with 6, or typed. Each help level has
   its own difficulty.
 - **Aim** — the success rate we want, for example 80%. The one setting that is
-  a matter of taste.
+  a matter of taste. It is set on the chance *given the word is remembered*
+  (§5), so Normal's 0.89 is the 80% a learner experiences at FSRS's 0.9.
 
 ## 3. The model
 
@@ -65,6 +66,10 @@ chance of a correct answer = memory × sigmoid(skill − difficulty)
 
 A challenge about several words uses the product of their memories and the
 **average** of their skills.
+
+This is what the model is scored on and learns from. Picking a challenge
+reads only the second half (§5): memory decides *which word* comes up,
+through FSRS's order, and never which challenge it gets.
 
 ### Learning from an answer
 
@@ -126,54 +131,62 @@ bank-size, extra-tile, hint, reading and listening ladders all go away.
 
 ## 5. The one check
 
-Serving and refilling ask the **same function**:
+Each number has one job. FSRS memory decides **which word** comes next (due
+first, most overdue first). Which **challenge** that word gets is decided by
+the chance it manages the challenge *given it remembers the word*:
 
 ```
-fits(word, challenge, help level, now) -> predicted chance, if inside the window
+fits(word, challenge, help level) -> sigmoid(skill − difficulty), if inside the window
 ```
 
-The **window** is a band around the aim, for example 65–92%. A challenge fits a
-word if at least one of its help levels puts the predicted chance inside the
-window.
+The **window** is a band around the aim, aim −17 to +4 points on that
+remembered chance (Normal: 72–93%). A challenge fits a word if at least one of
+its help levels lands inside it.
 
-`fits` reads each word's memory as **no lower than 0.9**, the recall FSRS
-schedules a review at and the one refill writes for. An overdue word's low
-memory is the schedule running late, not the challenge being hard: no
-challenge can make up for it, and the review it is owed is what restores it.
-On its true memory a word under about 0.71 would fit nothing (the whole
-chance at least 65%, the remembered part at most 92%), so it would never be
-served, never reviewed, and only slip further, while refill wrote it rows
-serving then turned down. The model's prediction itself still uses the true
-memory.
+The window is **widened, per word, just far enough to take in the nearest
+challenge that could be written** — every active type at each help level it
+is written with, at every length in its range. So "too hard" never applies to
+the easiest challenge there is (easiest type, shortest length, easiest help
+level), and "too easy" never to the hardest. Every word always has something
+writable that serving accepts, which is what lets serving wait for a word
+rather than skip it.
 
-- **Serving** takes the most urgent word (FSRS due first, most overdue first —
-  unchanged), and among its rested challenges and their help levels picks the
-  one whose predicted chance is closest to the aim. Freshness breaks a tie.
-- **Refill** asks, for each upcoming word: is there a rested challenge that
-  fits? If not, that word wants one written.
+- **Serving** takes the most urgent word and, among its available challenges
+  and their help levels, picks the one closest to the aim. Rested ones come
+  before ones still resting; freshness breaks a tie.
+- **Refill** writes for the upcoming words that have nothing available.
 
-Because both call `fits`, a challenge refill counts as covering a word is
-exactly one serving would show, and one serving would never show is never
-counted as coverage.
-
-The playable check (not reported, every word still exists) and the rest gap
-(`RESERVE_GAP`) stay as they are. They aren't about difficulty.
+Both read **one list** — the next words in urgency order, each with the
+challenge it would be served — through **one predicate**: a challenge is
+available to a word when it is playable (not reported, every word still
+exists), of a type still written, not yet shown in this stream, rested
+(`RESERVE_GAP`) or merely resting when the word is due, and it fits. Serving
+takes the head of the list; refill writes for the words in it with nothing.
+So a challenge refill counts as covering a word is exactly one serving would
+show, and a word serving waits for is exactly one refill writes for.
 
 ## 6. Writing new challenges
 
-A request to write a challenge is `{word, type, target difficulty}`, where the
-target difficulty is what would put the word at the aim.
+A request to write a challenge is `{word, type, length}`.
 
-- **Type:** the types that can reach the target with some help level and some
-  sentence length. Among those, one the word has never had wins, then one it
-  has fewest fitting rows of; a draw breaks the tie. Same idea as today.
-- **Sentence length:** worked out backwards from the difficulty formula using
-  the **middle** help level, then clamped to the type's allowed range. Writing
-  at the middle leaves room on both sides: if the word gets weaker the easier
-  help level still fits, and if it gets stronger the harder one does. One row
-  covers a wider range of skill, which is where the LLM savings come from.
-- The model is told the length only. It still writes every help the row could
-  need (full bank, extra tiles, hint, readings), as it does today.
+- **Type:** the types with some length at which a freshly written challenge,
+  at one of its help levels, fits the word (§5). Among those, one the word has
+  never had wins; a draw breaks the tie.
+- **Sentence length:** the check in §5 run backwards — the length that would
+  put the word at the aim at the **middle** help level, among the lengths in
+  the type's range that fit. Writing at the middle leaves room on both sides:
+  if the word gets weaker the easier help level still fits, and if it gets
+  stronger the harder one does. One challenge covers a wider range of skill,
+  which is where the LLM savings come from. Because the writer solves the
+  same function and the same widened window serving checks, a challenge
+  written as asked fits by construction.
+- The model is told the length only. It still writes every help the
+  challenge could need (full bank, extra tiles, hint, readings).
+- **The stored challenge records the length it was asked for**, and its
+  difficulty is read from that, not from what the model actually wrote: so a
+  challenge written as asked fits even when the writing drifts, and the
+  challenge's own correction (§3) learns how far it drifted from its answers.
+  A challenge from before that was recorded is measured from its shape.
 
 ## 7. Storage and replay
 
@@ -202,12 +215,12 @@ The numbers are:
 
 | Number | What it means | Starting value |
 |---|---|---|
-| Aim | Success rate we want | 0.80 |
-| Window | Predicted chances allowed | 0.65–0.92 |
+| Aim | Remembered chance we want | 0.89 (Normal) |
+| Window | Remembered chances allowed | aim −17 to +4 points, widened per word to the nearest writable challenge (§5) |
 | Word rate | How fast a word's skill moves | to be chosen by replay |
 | Shared rate | How fast type/help/length numbers move | to be chosen by replay |
 | Challenge rate | How fast one row's correction moves | to be chosen by replay |
-| Starting skill | A brand-new word's skill | the easiest help level of the easiest type at `newWordChance` (0.9): a word is added where the learner met it, and the first real log showed new words answered right far more often than the aim. It stays under the window's top, so a new word always fits the easiest question |
+| Starting skill | A brand-new word's skill | the easiest help level of the easiest type at `newWordChance` (0.9): a word is added where the learner met it, and the first real log showed new words answered right far more often than the aim |
 | Type-and-help starting numbers | One per row of §4's table | from today's `difficulty.json` bases, spread across the help levels |
 | Length slope starting values | Per type | from today's `promptWords` scale |
 
@@ -248,25 +261,30 @@ the answer history (§7) then gives the shared numbers, every word's skill and
 every row's correction real evidence from the first run. Rows that turn out
 far too hard or easy for every word simply stop fitting and are not served.
 
-## 11. Streaming (after the above)
+## 11. Streaming
 
 Sessions are replaced by one continuous stream that runs until you stop:
 
-- **Next challenge:** the most urgent word with a fitting rested challenge,
-  through `fits`. The serving rule in §5, one pick at a time.
-- **Refill:** when the number of upcoming words with a fitting challenge falls
-  below a low-water mark, a batch is written in the background. The mark has to
-  cover the time a batch takes to come back, at your answering pace, or the
-  stream stalls.
-- **After the due words:** words not yet due, soonest first, as the tail of a
-  session does today. Whether new words should ever join the stream is out of
+- **Next challenge:** the head of the list (§5) — the most urgent word and its
+  best available challenge, one pick at a time. The stream never skips the
+  head: while it has nothing, the screen waits for a refill written for it.
+- **Refill:** a batch is written in the background for the words among the
+  next few on the list that have nothing. How many is the low-water mark,
+  which covers the time a batch takes to come back at your answering pace, so
+  the batch lands before you reach those words. One batch at a time.
+- **After the due words:** words not yet due, soonest first. Whether new words should ever join the stream is out of
   scope; words still arrive only through `add_words`.
-- **Offline or no key:** the stream ends when nothing fits, and says so.
+- **Each word is asked for once:** the stream remembers the words it has
+  asked a batch for, until something of theirs is served, and never asks for
+  them again in between — so a batch that keeps missing a word costs one
+  request, not one per answer.
+- **Offline or no key:** when the head has nothing and no batch can be
+  written for it — or one was already asked for it — the stream ends, says
+  why, and offers to try again, which asks afresh.
 - **Pacing:** match rounds after every few early-word challenges, and never two
   near-window-edge challenges in a row if that turns out to matter — rules on
   the stream, not on a plan.
-- **Stopping:** stopping is always clean; answers are recorded as they happen,
-  as today.
+- **Stopping:** stopping is always clean; answers are recorded as they happen.
 
 ## 12. Decisions
 
@@ -283,9 +301,10 @@ Sessions are replaced by one continuous stream that runs until you stop:
    to the same challenge with its text shown (sound never blocks play).
 3. **No learner-wide sentence level.** Add it only if calibration on a real log
    shows long sentences are misjudged for words the learner knows well.
-4. **The aim is a profile setting**: Easier / Normal / Harder, mapping to 88%,
-   80% and 70%, Normal by default. The window moves with it (aim −15 to aim
-   +12 points). It is an additive optional field on the profile, so old
+4. **The aim is a profile setting**: Easier / Normal / Harder, mapping to a
+   remembered chance of 97%, 89% and 78% — the 88%, 80% and 70% a learner
+   experiences at FSRS's 0.9 memory — Normal by default. The window moves
+   with it (aim −17 to aim +4 points). It is an additive optional field on the profile, so old
    profiles read as Normal. A change takes effect on the next pick; nothing is
    rebuilt.
 5. **Rates are chosen on a simulated learner first.** The calibration command

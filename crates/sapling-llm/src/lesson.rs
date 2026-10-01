@@ -250,7 +250,7 @@ fn parse_entries(raw: &str, kind: WireType) -> Result<Vec<Generated>> {
 /// kind, about an entry's own word, each entry at most once.
 fn fill_request(challenges: Vec<Challenge>, request: &TypeRequest) -> Vec<Challenge> {
     let mut filled: Vec<Option<Challenge>> = vec![None; request.wants.len()];
-    for challenge in challenges {
+    for mut challenge in challenges {
         if kind_of(&challenge) != Some(request.kind) {
             continue;
         }
@@ -258,6 +258,8 @@ fn fill_request(challenges: Vec<Challenge>, request: &TypeRequest) -> Vec<Challe
         if let Some(at) =
             (0..filled.len()).find(|&i| filled[i].is_none() && cites(&request.wants[i].item.id))
         {
+            // Judged at the length asked for; the row's correction learns the drift.
+            challenge.set_asked_length(f64::from(request.wants[at].length));
             filled[at] = Some(challenge);
         }
     }
@@ -882,6 +884,8 @@ mod tests {
             for (challenge, kind) in result.challenges.iter().zip(kinds) {
                 assert!(challenge.item_ids().contains(&"a".to_owned()));
                 assert_eq!(challenge.check_shape(), Ok(()), "{kind:?}");
+                // Stamped with the length asked for, whatever the fixture's own.
+                assert_eq!(challenge.asked_length(), Some(3.0), "{kind:?}");
             }
             assert_eq!(result.challenges[7].item_ids(), ["a", "k"]);
             assert_eq!(result.usage, TokenUsage::default());

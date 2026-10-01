@@ -52,7 +52,7 @@ pub struct Aims {
     pub harder: f64,
 }
 
-/// The band around the aim a predicted chance may sit in, in points either side.
+/// The band around the aim a remembered chance may sit in, in points either side.
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 pub struct Window {
     pub below: f64,
@@ -96,7 +96,8 @@ pub fn tuning() -> &'static Tuning {
     })
 }
 
-/// The success rate an aim asks for.
+/// The chance an aim asks for *given the word is remembered*: at FSRS's 0.9
+/// memory, Normal's 0.89 is the 80% a learner experiences.
 pub fn target(aim: Aim) -> f64 {
     let aims = &tuning().aims;
     match aim {
@@ -106,7 +107,7 @@ pub fn target(aim: Aim) -> f64 {
     }
 }
 
-/// The predicted chances a pick may land on: the aim, less and more.
+/// The remembered chances a pick may land on: the aim, less and more.
 pub fn window(aim: Aim) -> (f64, f64) {
     let target = target(aim);
     let w = &tuning().window;
@@ -150,8 +151,13 @@ pub fn words_in(text: &str) -> f64 {
     words
 }
 
-/// How long a challenge reads, on the one scale every kind's slope is per.
+/// How long a challenge reads, on the one scale every kind's slope is per:
+/// the length it was asked to be written at, or for a row from before that
+/// was recorded, its measured shape.
 pub fn length_of(challenge: &Challenge) -> f64 {
+    if let Some(length) = challenge.asked_length().filter(|l| l.is_finite()) {
+        return length;
+    }
     match challenge {
         Challenge::MultipleChoice(c) => words_in(&c.prompt),
         // The blank is a word of its own: the answer that goes there.
@@ -260,15 +266,22 @@ impl Shared {
 /// The chance of a correct answer: the product of the words' memories, times
 /// how likely the combined skill is to manage this difficulty.
 pub fn chance(memories: &[f64], skills: &[f64], difficulty: f64, multi: MultiWord) -> f64 {
-    if skills.is_empty() {
+    let Some(skill) = combined(skills, multi) else {
         return 0.0;
-    }
+    };
     let memory: f64 = memories.iter().map(|m| m.clamp(0.0, 1.0)).product();
-    let skill = match multi {
+    memory * sigmoid(skill - difficulty)
+}
+
+/// The one skill a challenge about these words is judged by.
+pub fn combined(skills: &[f64], multi: MultiWord) -> Option<f64> {
+    if skills.is_empty() {
+        return None;
+    }
+    Some(match multi {
         MultiWord::Lowest => skills.iter().copied().fold(f64::INFINITY, f64::min),
         MultiWord::Average => skills.iter().sum::<f64>() / skills.len() as f64,
-    };
-    memory * sigmoid(skill - difficulty)
+    })
 }
 
 /// One word's part in one answer.
@@ -451,11 +464,12 @@ mod tests {
     #[test]
     fn the_aims_and_windows_are_the_profile_settings() {
         assert_eq!(Aim::default(), Aim::Normal);
-        assert_eq!(target(Aim::Normal), 0.8);
-        assert_eq!(target(Aim::Easier), 0.88);
-        assert_eq!(target(Aim::Harder), 0.7);
+        // At FSRS's 0.9 memory these are the 88/80/70% a learner experiences.
+        for (aim, felt) in [(Aim::Easier, 0.88), (Aim::Normal, 0.8), (Aim::Harder, 0.7)] {
+            assert!((0.9 * target(aim) - felt).abs() < 0.01, "{aim:?}");
+        }
         let (low, high) = window(Aim::Normal);
-        assert!((low - 0.65).abs() < 1e-9 && (high - 0.92).abs() < 1e-9);
+        assert!((low - 0.72).abs() < 1e-9 && (high - 0.93).abs() < 1e-9);
         let (_, high) = window(Aim::Easier);
         assert!(high <= 1.0);
     }
@@ -554,6 +568,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(length_of(&cloze), 4.0);
+        // A row stamped with the length it was asked for is judged at that, `null` read as absent.
+        let mut asked = cloze.clone();
+        asked.set_asked_length(7.0);
+        assert_eq!(length_of(&asked), 7.0);
+        let stored = serde_json::to_value(&asked).unwrap();
+        assert_eq!(stored["length"], serde_json::json!(7.0));
+        assert_eq!(length_of(&Challenge::from_value(stored).unwrap()), 7.0);
+        let mut unset = serde_json::to_value(&cloze).unwrap();
+        unset["length"] = serde_json::Value::Null;
+        assert_eq!(length_of(&Challenge::from_value(unset).unwrap()), 4.0);
         let multi = Challenge::from_value(serde_json::json!({ "id": "m", "type": "multi-cloze", "direction": "toTarget",
             "passage": "___1___ leo. ___2___ bebe.", "gaps": [
                 { "itemId": "a", "acceptedAnswers": ["Yo"] }, { "itemId": "b", "acceptedAnswers": ["Ella"] }],

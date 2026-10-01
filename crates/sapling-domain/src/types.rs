@@ -180,8 +180,8 @@ pub struct Profile {
 }
 
 /// How hard the learner wants their challenges: the success rate the
-/// difficulty model aims at (`sapling-challenges`' `data/model.json` maps
-/// easier, normal and harder to 88%, 80% and 70%).
+/// difficulty model aims at (`sapling-challenges`' `data/model.json`; at
+/// FSRS's 0.9 memory, easier, normal and harder come to about 88%, 80% and 70%).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum Aim {

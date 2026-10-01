@@ -18,7 +18,6 @@ use std::path::{Path, PathBuf};
 
 use ts_rs::{Config, TypeVisitor, TS};
 
-use sapling_challenges::pool::UPCOMING;
 use sapling_challenges::stream::MATCH_PAIRS_EVERY;
 use sapling_db::core::{ExportEnvelope, EXPORT_VERSION};
 use sapling_domain::events::{
@@ -164,7 +163,7 @@ fn challenges(names: &[String]) -> String {
     }
     let _ = writeln!(
         out,
-        "] as const;\n\nexport const UPCOMING = {UPCOMING};\n\nexport const MATCH_PAIRS_EVERY = {MATCH_PAIRS_EVERY};"
+        "] as const;\n\nexport const MATCH_PAIRS_EVERY = {MATCH_PAIRS_EVERY};"
     );
     out
 }

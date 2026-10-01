@@ -1,8 +1,8 @@
 /**
  * The practice stream against a real store: each pick reads what the last
  * answer wrote, a shown challenge never comes back in the same stream, match
- * rounds pace early words, and a stream with nothing left says whether writing
- * more would help. The picking itself is Rust's (`crates/sapling-challenges`'
+ * rounds pace early words, and a head with nothing waits and says what a
+ * refill would write for. The picking itself is Rust's (`crates/sapling-challenges`'
  * `stream.rs`) and tested there.
  */
 
@@ -13,7 +13,7 @@ import { setBackendForTesting } from '$lib/db/backend';
 import { makeTestBackend } from '$lib/db/backend.testing';
 import type { Challenge, KnowledgeItem, Profile } from '$lib/types';
 import { applyResult } from './engine';
-import { PracticeStream, shouldRefill, type StreamOutlook } from './stream';
+import { PracticeStream } from './stream';
 
 const NOW = 1_700_000_000_000;
 const DAY = 24 * 60 * 60 * 1000;
@@ -74,7 +74,7 @@ describe('PracticeStream', () => {
 		const shown: string[] = [];
 		for (;;) {
 			const step = await stream.next();
-			if (step.kind === 'empty') break;
+			if (step.kind === 'blocked') break;
 			expect(step.kind).toBe('challenge');
 			if (step.kind !== 'challenge') continue;
 			shown.push(step.challenge.id);
@@ -95,10 +95,11 @@ describe('PracticeStream', () => {
 	});
 
 	it('puts a match round after every fourth early-word challenge, only with one to follow', async () => {
-		const words = Array.from({ length: 6 }, (_, i) => word(`w${i}`));
+		// Unanswered in the store, so every word stays new and `w0` stays first.
+		const words = Array.from({ length: 3 }, (_, i) => word(`w${i}`));
 		await upsertItems(words);
 		await addToPool(
-			words.map((w, i) => recognition(`c${i}`, w.id)),
+			Array.from({ length: 6 }, (_, i) => recognition(`c${i}`, 'w0')),
 			NOW
 		);
 		const stream = new PracticeStream({ clock: ticking(), device, seed: 1 });
@@ -106,9 +107,8 @@ describe('PracticeStream', () => {
 		const kinds: string[] = [];
 		for (;;) {
 			const step = await stream.next();
-			if (step.kind === 'empty') break;
+			if (step.kind === 'blocked') break;
 			kinds.push(step.kind);
-			// Unanswered in the store, so every word stays new: early material.
 			stream.noteAnswered(step.challenge, 8_000);
 		}
 		expect(kinds).toEqual([
@@ -122,58 +122,51 @@ describe('PracticeStream', () => {
 		]);
 	});
 
-	it('says whether writing more would help once nothing fits', async () => {
+	it('waits on its most urgent word, and claims a refill for it once', async () => {
 		await upsertItems([word('a'), word('b')]);
 		await addToPool([recognition('ca', 'a')], NOW);
 		const stream = new PracticeStream({ clock: ticking(), device });
 
-		expect((await stream.next()).kind).toBe('challenge');
-		const empty = await stream.next();
-		expect(empty.kind).toBe('empty');
-		if (empty.kind !== 'empty') return;
-		// `b` never had a challenge: a top-up has something to write.
-		expect(empty.outlook.wants).toBeGreaterThan(0);
-		expect(empty.outlook.ready).toBe(0);
-		expect(empty.outlook.lowWater).toBeGreaterThanOrEqual(4);
-	});
-});
+		const first = await stream.next();
+		expect(first.kind).toBe('challenge');
+		if (first.kind !== 'challenge') return;
+		await applyResult(first.challenge, { verdict: 'correct', answerGiven: 'a', now: NOW });
+		// `b` never had a challenge: the stream waits on it rather than reviewing `a` ahead.
+		expect(await stream.next()).toEqual({ kind: 'blocked', asked: false });
+		const scope = await stream.refill();
+		expect(scope).toMatchObject({ served: ['ca'], asked: [] });
+		expect(scope?.limit).toBeGreaterThanOrEqual(4);
+		// Both words ahead are asked for now, so a second claim has nothing to ask.
+		expect(await stream.next()).toEqual({ kind: 'blocked', asked: true });
+		expect(await stream.refill()).toBeNull();
 
-describe('shouldRefill', () => {
-	const outlook = (over: Partial<StreamOutlook> = {}): StreamOutlook => ({
-		ready: 2,
-		upcoming: 20,
-		due: 10,
-		stranded: 0,
-		wants: 6,
-		lowWater: 5,
-		...over
+		await addToPool([recognition('cb', 'b')], NOW);
+		const next = await stream.next();
+		expect(next.kind === 'challenge' && next.challenge.id).toBe('cb');
 	});
 
-	it('asks for a batch when the ready words fall under the mark and one can be written', () => {
-		expect(shouldRefill(outlook(), { canWrite: true, writing: false })).toBe(true);
-		expect(shouldRefill(outlook({ ready: 5 }), { canWrite: true, writing: false })).toBe(false);
-	});
-
-	it('asks for a stranded due word however many words ahead are ready', () => {
-		const ahead = outlook({ ready: 15, stranded: 3 });
-		expect(shouldRefill(ahead, { canWrite: true, writing: false })).toBe(true);
-		// Once asked for three, it asks again only when a refill rescued some.
-		expect(shouldRefill(ahead, { canWrite: true, writing: false, strandedMark: 3 })).toBe(false);
-		expect(
-			shouldRefill(outlook({ ready: 15, stranded: 2 }), {
-				canWrite: true,
-				writing: false,
-				strandedMark: 3
-			})
-		).toBe(true);
-	});
-
-	it('never asks without a key or a connection, twice at once, or for nothing', () => {
-		expect(shouldRefill(outlook(), { canWrite: false, writing: false })).toBe(false);
-		expect(shouldRefill(outlook(), { canWrite: true, writing: true })).toBe(false);
-		expect(shouldRefill(outlook({ wants: 0 }), { canWrite: true, writing: false })).toBe(false);
-		const stranded = outlook({ ready: 15, stranded: 3 });
-		expect(shouldRefill(stranded, { canWrite: false, writing: false })).toBe(false);
-		expect(shouldRefill(stranded, { canWrite: true, writing: true })).toBe(false);
+	it('ends on a head already asked for whose rows came back not fitting, until a retry', async () => {
+		await upsertItems([word('b')]);
+		const stream = new PracticeStream({ clock: ticking(), device });
+		expect(await stream.refill()).not.toBeNull();
+		// What came back is a typed cloze, far too hard for a new word.
+		await addToPool(
+			[
+				{
+					id: 'typed',
+					type: 'cloze',
+					direction: 'toTarget',
+					sentence: 'Yo ___ ayer.',
+					acceptedAnswers: ['corrí'],
+					itemIds: ['b']
+				}
+			],
+			NOW
+		);
+		expect(await stream.next()).toEqual({ kind: 'blocked', asked: true });
+		expect(await stream.refill()).toBeNull();
+		stream.resetAsked();
+		expect(await stream.next()).toEqual({ kind: 'blocked', asked: false });
+		expect(await stream.refill()).not.toBeNull();
 	});
 });
