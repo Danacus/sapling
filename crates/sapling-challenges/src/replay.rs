@@ -200,7 +200,9 @@ pub fn busiest_profile(events: &[SyncEvent]) -> Option<String> {
 
 /// One profile's log folded the way the merge rules fold it: the first add of
 /// an item or challenge wins, a delete wins over everything, a review is one
-/// per `(item, at, device)` and an amendment replaces the one it names.
+/// per `(item, at, device)`, an amendment replaces the one it names, and an
+/// overturn sets the verdict its answer replays at (`correct` over `almost`
+/// should two name one answer), wherever in the log either sits.
 pub fn input_from_events(events: &[SyncEvent], profile: &str) -> ReplayInput {
     let mut items: Vec<ReplayItem> = Vec::new();
     let mut seen_items: HashSet<String> = HashSet::new();
@@ -209,6 +211,7 @@ pub fn input_from_events(events: &[SyncEvent], profile: &str) -> ReplayInput {
     let mut challenges: HashMap<String, Challenge> = HashMap::new();
     let mut results: Vec<ReplayResult> = Vec::new();
     let mut seen_results: HashSet<String> = HashSet::new();
+    let mut overturns: HashMap<(String, u64), Verdict> = HashMap::new();
     let key =
         |item: &str, at: f64, device: &str| (item.to_owned(), at.to_bits(), device.to_owned());
 
@@ -259,6 +262,14 @@ pub fn input_from_events(events: &[SyncEvent], profile: &str) -> ReplayInput {
                         .or_insert(challenge);
                 }
             }
+            Payload::ResultOverturned(p) => {
+                let verdict = overturns
+                    .entry((p.challenge_id.clone(), p.answered_at.to_bits()))
+                    .or_insert(p.verdict);
+                if p.verdict == Verdict::Correct {
+                    *verdict = Verdict::Correct;
+                }
+            }
             Payload::ResultLogged(p) if seen_results.insert(event.id.clone()) => {
                 results.push(ReplayResult {
                     id: event.id.clone(),
@@ -272,6 +283,11 @@ pub fn input_from_events(events: &[SyncEvent], profile: &str) -> ReplayInput {
         }
     }
     items.retain(|item| !deleted.contains(&item.id));
+    for result in &mut results {
+        if let Some(verdict) = overturns.get(&(result.challenge_id.clone(), result.at.to_bits())) {
+            result.verdict = *verdict;
+        }
+    }
     ReplayInput {
         items,
         reviews: reviews
@@ -369,6 +385,61 @@ mod tests {
         let mut gone = input();
         gone.items.clear();
         assert!(observations(&gone).is_empty());
+    }
+
+    /// An overturned answer replays at the verdict it was overturned to,
+    /// whether the overturn comes before or after it in the log.
+    #[test]
+    fn an_overturn_replays_its_answer_at_the_new_verdict_in_either_order() {
+        let envelope = |id: &str, kind: &str, payload: Value| json!({ "id": id, "type": kind, "at": 1, "device": "d", "payload": payload });
+        let added = [
+            envelope(
+                "e1",
+                "itemAdded",
+                json!({ "id": "w", "kind": "vocab", "term": "leer", "meaning": "read", "introducedAt": 0 }),
+            ),
+            envelope(
+                "e2",
+                "challengeAdded",
+                json!({ "challenge": serde_json::to_value(cloze("c", "w")).unwrap(), "generatedAt": 0 }),
+            ),
+        ];
+        let answer = envelope(
+            "e3",
+            "resultLogged",
+            json!({ "challengeId": "c", "verdict": "wrong", "answerGiven": "x", "at": DAY, "shown": "typed" }),
+        );
+        let other = envelope(
+            "e4",
+            "resultLogged",
+            json!({ "challengeId": "c", "verdict": "wrong", "answerGiven": "x", "at": 2.0 * DAY, "shown": "typed" }),
+        );
+        let overturn = |id: &str, verdict: &str| {
+            envelope(
+                id,
+                "resultOverturned",
+                json!({ "challengeId": "c", "answeredAt": DAY, "verdict": verdict }),
+            )
+        };
+        let outcomes = |log: Vec<Value>| -> Vec<f64> {
+            let export = json!({ "version": 3, "exportedAt": 0, "events": log }).to_string();
+            let events = parse_export(&export).unwrap();
+            observations(&input_from_events(&events, "singleton"))
+                .iter()
+                .map(|o| o.outcome)
+                .collect()
+        };
+        let mut after = added.to_vec();
+        after.extend([answer.clone(), other.clone(), overturn("e5", "correct")]);
+        assert_eq!(outcomes(after), [1.0, 0.0]);
+        let mut before = added.to_vec();
+        before.extend([
+            overturn("e5", "almost"),
+            overturn("e6", "correct"),
+            answer,
+            other,
+        ]);
+        assert_eq!(outcomes(before), [1.0, 0.0]);
     }
 
     #[test]

@@ -91,6 +91,11 @@ pub struct StreamArgs {
     #[serde(default)]
     #[ts(optional)]
     pub served: Option<Vec<String>>,
+    /// No batch can help a head with nothing: pass it for the first word
+    /// further down the list that has something. Absent, the head waits.
+    #[serde(default)]
+    #[ts(optional)]
+    pub pass: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, TS)]
@@ -234,9 +239,9 @@ challenges! {
         hideReadingProbability(args: StrengthArgs) -> f64 {
             hide_reading_probability(args.strength)
         }
-        /// The most urgent word and its challenge — a position into `pool` at its help level — absent while it has nothing.
+        /// The most urgent word and its challenge — a position into `pool` at its help level — absent while it has nothing, unless `pass` lets it be the first word further down with something.
         streamHead(args: StreamArgs) -> Option<Head> {
-            stream::head(&args.pool, &args.words, args.now, &args.serving.unwrap_or_default(), &args.served.unwrap_or_default())
+            stream::head(&args.pool, &args.words, args.now, &args.serving.unwrap_or_default(), &args.served.unwrap_or_default(), args.pass.unwrap_or(false))
         }
         /// How many words ahead the stream keeps written for, at this pace.
         lowWaterMark(args: LowWaterArgs) -> usize {
@@ -322,10 +327,23 @@ mod tests {
         assert_eq!(head["next"]["shown"], json!("plain"));
         let blocked = call(
             "streamHead",
-            json!({ "pool": [row], "words": words, "now": 1, "served": ["c"] }),
+            json!({ "pool": [row.clone()], "words": words, "now": 1, "served": ["c"] }),
         )
         .unwrap();
         assert_eq!(blocked, json!({ "word": "w" }));
+        // Passed, a head with nothing gives way to the next word with something.
+        let mut other = row;
+        other["id"] = json!("d");
+        other["itemIds"] = json!(["x"]);
+        let two = json!([words[0], { "id": "x", "term": "u", "meaning": "n" }]);
+        let passed = call(
+            "streamHead",
+            json!({ "pool": [other], "words": two, "now": 1, "pass": true }),
+        )
+        .unwrap();
+        assert_eq!(passed["word"], json!("w"));
+        assert_eq!(passed["instead"], json!("x"));
+        assert_eq!(passed["next"]["at"], json!(0));
     }
 
     #[test]

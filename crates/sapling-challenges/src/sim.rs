@@ -141,6 +141,23 @@ pub fn synthetic(kind: WireType, id: &str, items: &[&str], length: usize) -> Val
     row
 }
 
+/// A [`synthetic`] row as a language with a reading writes it: the reading
+/// beside its target-language text, the shape `help.rs`' `has_readings` reads.
+pub fn with_readings(mut row: Value) -> Value {
+    let along = |row: &Value, key: &str| {
+        Value::Array(vec![json!("r"); row[key].as_array().map_or(0, Vec::len)])
+    };
+    match row["type"].as_str() {
+        Some("multiple-choice" | "typed-translation") => row["promptRomanization"] = json!("r"),
+        Some("cloze") => row["sentenceRomanization"] = json!("r ___"),
+        Some("multi-cloze") => row["passageRomanization"] = json!("___1___ r ___2___"),
+        Some("word-order") => row["tilesRomanization"] = along(&row, "tiles"),
+        Some("spot-error") => row["tokensRomanization"] = along(&row, "tokens"),
+        _ => {}
+    }
+    row
+}
+
 /// The lengths a simulated row is drawn from, per kind.
 fn length_range(kind: WireType) -> (usize, usize) {
     match kind {

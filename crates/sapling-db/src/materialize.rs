@@ -16,8 +16,9 @@ use crate::sql::{Error, Param, Result, Row, Sql};
 use sapling_domain::day::LocalDay;
 use sapling_domain::events::{
     typed_event, ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted,
-    ItemAdded, ItemDeleted, ItemReviewed, ItemUpdated, Payload, RawEvent, ReviewAmended, SyncEvent,
-    TextDeleted, WordLookedUp, WordMarked, PATCHABLE_COLUMNS, PROFILE_ID, SCOPED_EVENT_TYPE,
+    ItemAdded, ItemDeleted, ItemReviewed, ItemUpdated, Payload, RawEvent, ResultOverturned,
+    ReviewAmended, SyncEvent, TextDeleted, WordLookedUp, WordMarked, PATCHABLE_COLUMNS, PROFILE_ID,
+    SCOPED_EVENT_TYPE,
 };
 use sapling_domain::types::{
     ChallengeResult, Conversation, ConversationExchange, Profile, ReadingText,
@@ -460,6 +461,22 @@ impl<'a> Materializer<'a> {
         learned::on_result(self.sql, id, p)
     }
 
+    /// One overturn per answer; should two name it, `correct` outranks
+    /// `almost`, so the arrival order never decides.
+    fn result_overturned(&self, p: &ResultOverturned) -> Result<()> {
+        self.sql.exec(
+            "INSERT INTO overturns (challengeId, answeredAt, verdict) VALUES (?, ?, ?)
+             ON CONFLICT (challengeId, answeredAt) DO UPDATE SET verdict =
+               CASE WHEN excluded.verdict = 'correct' THEN 'correct' ELSE verdict END",
+            &[
+                Param::text(&p.challenge_id),
+                Param::number(p.answered_at),
+                Param::text(p.verdict.as_str()),
+            ],
+        )?;
+        learned::on_overturn(self.sql, &p.challenge_id, p.answered_at)
+    }
+
     fn profile_updated(&self, profile_id: &str, at: f64, p: &Profile) -> Result<()> {
         let row = self.sql.query(
             "SELECT updatedAt FROM profile WHERE id = ?",
@@ -649,6 +666,7 @@ impl<'a> Materializer<'a> {
             Payload::ConversationStarted(p) => self.conversation_started(p),
             Payload::TurnAdded(p) => self.turn_added(event.at, p),
             Payload::ConversationDeleted(p) => self.conversation_deleted(p),
+            Payload::ResultOverturned(p) => self.result_overturned(p),
         }
     }
 

@@ -1,0 +1,255 @@
+{
+	"meta": {
+		"deviceId": "fixture-device",
+		"now": 1710244800000,
+		"orderFree": true,
+		"note": "Two overturned answers. A cloze answered wrong is overturned the way the practice screen does it: its Again review superseded by a Good at the answer's own instant (a reviewAmended with the same identity as the review it replaces, so either can arrive first) and a resultOverturned naming the answer by challenge and `at`. A two-word passage graded wrong on one gap and almost on the other is overturned to `almost`, and its overturn sits ahead of the answer in the log, so it has to wait for it. The difficulty numbers are those of answers accepted on the spot; `recentResults` still shows what was answered."
+	},
+	"events": [
+		{
+			"seq": 1,
+			"id": "ev-add-leer",
+			"type": "itemAdded",
+			"at": 1710061200000,
+			"device": "dev-a",
+			"payload": {
+				"id": "item-leer",
+				"kind": "vocab",
+				"term": "leer",
+				"meaning": "to read",
+				"introducedAt": 1710061200000
+			}
+		},
+		{
+			"seq": 2,
+			"id": "ev-add-beber",
+			"type": "itemAdded",
+			"at": 1710061260000,
+			"device": "dev-a",
+			"payload": {
+				"id": "item-beber",
+				"kind": "vocab",
+				"term": "beber",
+				"meaning": "to drink",
+				"introducedAt": 1710061260000
+			}
+		},
+		{
+			"seq": 3,
+			"id": "ev-ch-cloze",
+			"type": "challengeAdded",
+			"at": 1710061320000,
+			"device": "dev-a",
+			"payload": {
+				"challenge": {
+					"id": "ch-cloze",
+					"type": "cloze",
+					"direction": "toTarget",
+					"sentence": "Yo ___ un libro.",
+					"acceptedAnswers": [
+						"leo"
+					],
+					"wordBank": [
+						"leo",
+						"bebo",
+						"como",
+						"vivo"
+					],
+					"translationHint": "I read a book.",
+					"itemIds": [
+						"item-leer"
+					],
+					"length": 4
+				},
+				"generatedAt": 1710061320000
+			}
+		},
+		{
+			"seq": 4,
+			"id": "ev-ch-multi",
+			"type": "challengeAdded",
+			"at": 1710061320000,
+			"device": "dev-a",
+			"payload": {
+				"challenge": {
+					"id": "ch-multi",
+					"type": "multi-cloze",
+					"direction": "toTarget",
+					"passage": "Yo ___1___ un libro y ___2___ agua.",
+					"gaps": [
+						{
+							"itemId": "item-leer",
+							"acceptedAnswers": [
+								"leo"
+							]
+						},
+						{
+							"itemId": "item-beber",
+							"acceptedAnswers": [
+								"bebo"
+							]
+						}
+					],
+					"wordBank": [
+						"leo",
+						"bebo",
+						"como",
+						"vivo"
+					],
+					"itemIds": [
+						"item-leer",
+						"item-beber"
+					],
+					"length": 8
+				},
+				"generatedAt": 1710061320000
+			}
+		},
+		{
+			"seq": 5,
+			"id": "ev-review-cloze",
+			"type": "itemReviewed",
+			"at": 1710061800000,
+			"device": "dev-a",
+			"payload": {
+				"device": "dev-a",
+				"at": 1710061800000,
+				"itemId": "item-leer",
+				"grade": 1
+			}
+		},
+		{
+			"seq": 6,
+			"id": "ev-result-cloze",
+			"type": "resultLogged",
+			"at": 1710061800000,
+			"device": "dev-a",
+			"payload": {
+				"challengeId": "ch-cloze",
+				"verdict": "wrong",
+				"answerGiven": "lea",
+				"at": 1710061800000,
+				"shown": "pick-4"
+			}
+		},
+		{
+			"seq": 7,
+			"id": "ev-amend-cloze",
+			"type": "reviewAmended",
+			"at": 1710061820000,
+			"device": "dev-a",
+			"payload": {
+				"device": "dev-a",
+				"at": 1710061800000,
+				"itemId": "item-leer",
+				"grade": 3,
+				"replaces": 1710061800000
+			}
+		},
+		{
+			"seq": 8,
+			"id": "ev-overturn-cloze",
+			"type": "resultOverturned",
+			"at": 1710061820000,
+			"device": "dev-a",
+			"payload": {
+				"challengeId": "ch-cloze",
+				"answeredAt": 1710061800000,
+				"verdict": "correct"
+			}
+		},
+		{
+			"seq": 9,
+			"id": "ev-overturn-multi",
+			"type": "resultOverturned",
+			"at": 1710061940000,
+			"device": "dev-a",
+			"payload": {
+				"challengeId": "ch-multi",
+				"answeredAt": 1710061920000,
+				"verdict": "almost"
+			}
+		},
+		{
+			"seq": 10,
+			"id": "ev-review-multi-leer",
+			"type": "itemReviewed",
+			"at": 1710061920000,
+			"device": "dev-a",
+			"payload": {
+				"device": "dev-a",
+				"at": 1710061920000,
+				"itemId": "item-leer",
+				"grade": 2
+			}
+		},
+		{
+			"seq": 11,
+			"id": "ev-review-multi-beber",
+			"type": "itemReviewed",
+			"at": 1710061920000,
+			"device": "dev-a",
+			"payload": {
+				"device": "dev-a",
+				"at": 1710061920000,
+				"itemId": "item-beber",
+				"grade": 1
+			}
+		},
+		{
+			"seq": 12,
+			"id": "ev-result-multi",
+			"type": "resultLogged",
+			"at": 1710061920000,
+			"device": "dev-a",
+			"payload": {
+				"challengeId": "ch-multi",
+				"verdict": "wrong",
+				"answerGiven": "1: lei · 2: bebe",
+				"at": 1710061920000,
+				"shown": "answers"
+			}
+		},
+		{
+			"seq": 13,
+			"id": "ev-amend-multi-beber",
+			"type": "reviewAmended",
+			"at": 1710061940000,
+			"device": "dev-a",
+			"payload": {
+				"device": "dev-a",
+				"at": 1710061920000,
+				"itemId": "item-beber",
+				"grade": 3,
+				"replaces": 1710061920000
+			}
+		},
+		{
+			"seq": 14,
+			"id": "ev-review-later",
+			"type": "itemReviewed",
+			"at": 1710063000000,
+			"device": "dev-a",
+			"payload": {
+				"device": "dev-a",
+				"at": 1710063000000,
+				"itemId": "item-beber",
+				"grade": 3
+			}
+		},
+		{
+			"seq": 15,
+			"id": "ev-result-later",
+			"type": "resultLogged",
+			"at": 1710063000000,
+			"device": "dev-a",
+			"payload": {
+				"challengeId": "ch-multi",
+				"verdict": "correct",
+				"answerGiven": "1: leo · 2: bebo",
+				"at": 1710063000000,
+				"shown": "extra-2"
+			}
+		}
+	]
+}

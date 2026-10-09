@@ -5,7 +5,9 @@
 //! **One list, one predicate.** [`upcoming`] is the next words in urgency
 //! order — due first, most overdue first, then the rest soonest first — each
 //! with the row it would be served, if any is [`available`]. Serving takes the
-//! head and never skips it: a head with nothing waits for a refill. Refill
+//! head: a head with nothing waits for a refill while one is running or can be
+//! started for it, and only when none can help is it passed for the first word
+//! further down the same list that has something ([`head`]'s `pass`). Refill
 //! writes for exactly the words in the first [`low_water_mark`] of the same
 //! list that have nothing (`topup.rs`), so the two can never disagree.
 //!
@@ -113,6 +115,75 @@ fn better(a: (&PoolRow, Fit), b: (&PoolRow, Fit), cx: &Context) -> bool {
         .is_lt()
 }
 
+/// The list, walked lazily: every word in urgency order, and for any of them
+/// the row it would be served now. [`upcoming`] takes the first `n`; [`head`]
+/// stops at the first word with something when it may pass the head.
+struct Walk<'w, 'a> {
+    cx: Context<'a>,
+    about: HashMap<&'a str, Vec<usize>>,
+    pool: &'a [Option<PoolRow>],
+    order: Vec<&'w Word>,
+}
+
+impl<'w, 'a> Walk<'w, 'a>
+where
+    'w: 'a,
+{
+    fn new(
+        pool: &'a [Option<PoolRow>],
+        words: &'w [Word],
+        now: f64,
+        serving: &'a Serving,
+        served: &'a [String],
+    ) -> Self {
+        let mut about: HashMap<&str, Vec<usize>> = HashMap::new();
+        for (at, row) in pool.iter().enumerate() {
+            for item in row.iter().flat_map(|r| r.challenge.item_ids()) {
+                about.entry(item.as_str()).or_default().push(at);
+            }
+        }
+        Walk {
+            cx: Context {
+                now,
+                known: known_ids(words),
+                served: served.iter().map(String::as_str).collect(),
+                words: by_id(words),
+                serving,
+            },
+            about,
+            pool,
+            order: by_urgency(words, now),
+        }
+    }
+
+    /// The row `word` would be served now, if any is available.
+    fn ahead(&self, word: &'w Word) -> Ahead<'w> {
+        let cx = &self.cx;
+        let due = word.is_due(cx.now);
+        let mut best: Option<(usize, &PoolRow, Fit)> = None;
+        for &at in self.about.get(word.id.as_str()).into_iter().flatten() {
+            let Some(row) = self.pool[at].as_ref() else {
+                continue;
+            };
+            let Some(fit) = available(row, due, cx) else {
+                continue;
+            };
+            if best.is_none_or(|(_, r, f)| better((row, fit), (r, f), cx)) {
+                best = Some((at, row, fit));
+            }
+        }
+        Ahead {
+            word,
+            next: best.map(|(at, _, fit)| Next {
+                at,
+                shown: fit.help.id(),
+                chance: fit.chance,
+                due,
+            }),
+        }
+    }
+}
+
 /// The next `n` words in urgency order, each with the row it would be served.
 pub fn upcoming<'w>(
     pool: &[Option<PoolRow>],
@@ -122,73 +193,62 @@ pub fn upcoming<'w>(
     served: &[String],
     n: usize,
 ) -> Vec<Ahead<'w>> {
-    let cx = Context {
-        now,
-        known: known_ids(words),
-        served: served.iter().map(String::as_str).collect(),
-        words: by_id(words),
-        serving,
-    };
-    let mut about: HashMap<&str, Vec<usize>> = HashMap::new();
-    for (at, row) in pool.iter().enumerate() {
-        for item in row.iter().flat_map(|r| r.challenge.item_ids()) {
-            about.entry(item.as_str()).or_default().push(at);
-        }
-    }
-    by_urgency(words, now)
-        .into_iter()
+    let walk = Walk::new(pool, words, now, serving, served);
+    walk.order
+        .iter()
         .take(n)
-        .map(|word| {
-            let due = word.is_due(now);
-            let mut best: Option<(usize, &PoolRow, Fit)> = None;
-            for &at in about.get(word.id.as_str()).into_iter().flatten() {
-                let Some(row) = pool[at].as_ref() else {
-                    continue;
-                };
-                let Some(fit) = available(row, due, &cx) else {
-                    continue;
-                };
-                if best.is_none_or(|(_, r, f)| better((row, fit), (r, f), &cx)) {
-                    best = Some((at, row, fit));
-                }
-            }
-            Ahead {
-                word,
-                next: best.map(|(at, _, fit)| Next {
-                    at,
-                    shown: fit.help.id(),
-                    chance: fit.chance,
-                    due,
-                }),
-            }
-        })
+        .map(|word| walk.ahead(word))
         .collect()
 }
 
-/// The head of the list: the most urgent word, and its challenge unless it
-/// has nothing. `None` only when there are no words.
+/// The head of the list: the most urgent word, and the challenge to serve —
+/// its own, or, when the caller let the stream pass a head with nothing, the
+/// first word further down that has one (`instead` names that word). `None`
+/// only when there are no words.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct Head {
     pub word: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub next: Option<Next>,
+    /// The word `next` is about when it is not the head's: the head had
+    /// nothing, and no batch could help it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub instead: Option<String>,
 }
 
-/// `served` being the ids this stream has already shown.
+/// `served` being the ids this stream has already shown. With `pass`, a head
+/// with nothing is passed for the first word further down the same list that
+/// has an available row — what the stream does only when no batch can help
+/// the head (`session.md`); without it, the head waits.
 pub fn head(
     pool: &[Option<PoolRow>],
     words: &[Word],
     now: f64,
     serving: &Serving,
     served: &[String],
+    pass: bool,
 ) -> Option<Head> {
-    upcoming(pool, words, now, serving, served, 1)
-        .pop()
-        .map(|a| Head {
-            word: a.word.id.clone(),
-            next: a.next,
-        })
+    let walk = Walk::new(pool, words, now, serving, served);
+    let first = walk.ahead(walk.order.first()?);
+    let word = first.word.id.clone();
+    if first.next.is_some() || !pass {
+        return Some(Head {
+            word,
+            next: first.next,
+            instead: None,
+        });
+    }
+    let further = walk.order[1..]
+        .iter()
+        .map(|w| walk.ahead(w))
+        .find(|a| a.next.is_some());
+    Some(Head {
+        word,
+        next: further.as_ref().and_then(|a| a.next.clone()),
+        instead: further.map(|a| a.word.id.clone()),
+    })
 }
 
 /// The head's challenge, or `None` while the head has nothing.
@@ -199,7 +259,7 @@ pub fn next_pick(
     serving: &Serving,
     served: &[String],
 ) -> Option<Next> {
-    head(pool, words, now, serving, served)?.next
+    head(pool, words, now, serving, served, false)?.next
 }
 
 /// How many words ahead refill keeps written for: enough to keep answering
@@ -397,9 +457,10 @@ pub(crate) mod tests {
     }
 
     /// The head is the most urgent word whatever is ready behind it: serving
-    /// waits for it, and refill reads the same list and writes for it.
+    /// waits for it unless told no batch can help, and refill reads the same
+    /// list and writes for it.
     #[test]
-    fn the_head_never_skips_and_refill_reads_the_same_list() {
+    fn the_head_waits_unless_passed_and_refill_reads_the_same_list() {
         let words = [
             fresh("first", -2.0 * DAY),
             fresh("second", -DAY),
@@ -408,6 +469,10 @@ pub(crate) mod tests {
         let pool = rows(&[row("c2", &["second"]), row("c3", &["third"])]);
         let serving = Serving::default();
         assert!(next_pick(&pool, &words, NOW, &serving, &[]).is_none());
+        let passed = head(&pool, &words, NOW, &serving, &[], true).unwrap();
+        assert_eq!(passed.word, "first");
+        assert_eq!(passed.instead.as_deref(), Some("second"));
+        assert_eq!(passed.next.map(|n| n.at), Some(0));
         let list = upcoming(&pool, &words, NOW, &serving, &[], 3);
         let order: Vec<(&str, bool)> = list
             .iter()

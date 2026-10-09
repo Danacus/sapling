@@ -1,4 +1,4 @@
-//! The event model: seventeen immutable facts, and the only thing sync moves.
+//! The event model: eighteen immutable facts, and the only thing sync moves.
 //!
 //! The envelope `id` is the set-union key — an id already in `events` is never
 //! materialised twice — so no payload carries an id of its own. `at` is when
@@ -33,6 +33,7 @@ use ts_rs::TS;
 
 use crate::types::{
     absent_or, ChallengeResult, Conversation, ConversationExchange, ItemKind, Profile, ReadingText,
+    Verdict,
 };
 
 /// Every kind of fact the log holds.
@@ -56,10 +57,11 @@ pub enum EventType {
     ConversationStarted,
     TurnAdded,
     ConversationDeleted,
+    ResultOverturned,
 }
 
 impl EventType {
-    pub const ALL: [EventType; 17] = [
+    pub const ALL: [EventType; 18] = [
         EventType::ItemAdded,
         EventType::ItemReviewed,
         EventType::ReviewAmended,
@@ -77,6 +79,7 @@ impl EventType {
         EventType::ConversationStarted,
         EventType::TurnAdded,
         EventType::ConversationDeleted,
+        EventType::ResultOverturned,
     ];
 
     /// The wire name — the `type` column.
@@ -99,6 +102,7 @@ impl EventType {
             EventType::ConversationStarted => "conversationStarted",
             EventType::TurnAdded => "turnAdded",
             EventType::ConversationDeleted => "conversationDeleted",
+            EventType::ResultOverturned => "resultOverturned",
         }
     }
 
@@ -328,6 +332,24 @@ pub struct ConversationDeleted {
     pub conversation_id: String,
 }
 
+/// An answer an escalation overturned: graded `wrong`, disputed, and the
+/// model agreed it should have counted. It names the `resultLogged` it
+/// overturns by content — its challenge and the `at` it was answered at — so
+/// it can arrive before that answer and still find it, and says what the
+/// answer counts as instead: `correct`, or `almost` where a gap the overturn
+/// left alone was only almost. The difficulty model replays the answer at that
+/// verdict, as if it had been accepted on the spot; the result row keeps what
+/// was answered. A device whose build predates the type logs and skips it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(rename = "ResultOverturnedPayload")]
+#[serde(rename_all = "camelCase")]
+pub struct ResultOverturned {
+    pub challenge_id: String,
+    /// The overturned answer's own `at`.
+    pub answered_at: f64,
+    pub verdict: Verdict,
+}
+
 /// One parsed payload; the variant is the event type.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
@@ -349,6 +371,7 @@ pub enum Payload {
     ConversationStarted(Conversation),
     TurnAdded(ConversationExchange),
     ConversationDeleted(ConversationDeleted),
+    ResultOverturned(ResultOverturned),
 }
 
 impl Payload {
@@ -371,6 +394,7 @@ impl Payload {
             Payload::ConversationStarted(_) => EventType::ConversationStarted,
             Payload::TurnAdded(_) => EventType::TurnAdded,
             Payload::ConversationDeleted(_) => EventType::ConversationDeleted,
+            Payload::ResultOverturned(_) => EventType::ResultOverturned,
         }
     }
 
@@ -403,6 +427,7 @@ pub fn parse_payload(kind: EventType, raw: &Value) -> Option<Payload> {
         EventType::ConversationStarted => typed(raw, Payload::ConversationStarted),
         EventType::TurnAdded => typed(raw, Payload::TurnAdded),
         EventType::ConversationDeleted => typed(raw, Payload::ConversationDeleted),
+        EventType::ResultOverturned => typed(raw, Payload::ResultOverturned),
     }
 }
 
@@ -592,6 +617,10 @@ mod tests {
             (
                 EventType::ConversationDeleted,
                 json!({ "conversationId": "c" }),
+            ),
+            (
+                EventType::ResultOverturned,
+                json!({ "challengeId": "c", "answeredAt": 7, "verdict": "correct" }),
             ),
         ]
     }

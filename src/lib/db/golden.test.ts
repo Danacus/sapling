@@ -119,7 +119,10 @@ function idsIn(events: RawEvent[]) {
 			...events
 				.filter((e) => e.type === 'challengeAdded')
 				.map((e) => field((e.payload as { challenge?: unknown }).challenge, 'id')),
-			...of(['challengeServed', 'challengeReported', 'resultLogged'], 'challengeId')
+			...of(
+				['challengeServed', 'challengeReported', 'resultLogged', 'resultOverturned'],
+				'challengeId'
+			)
 		]),
 		texts: unique([...of(['textAdded'], 'id'), ...of(['textDeleted', 'wordLookedUp'], 'textId')]),
 		conversations: unique([

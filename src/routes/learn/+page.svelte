@@ -51,8 +51,12 @@
 	/**
 	 * Something fits now, or the stream can write something that will: with a
 	 * key and a connection, practice starts on a batch it writes itself.
+	 * Without one, a first word with nothing is passed for the next word that
+	 * has something, so any word with something is enough.
 	 */
-	const canStart = $derived(plan !== null && (plan.first !== null || (wants > 0 && streamWrites)));
+	const canStart = $derived(
+		plan !== null && (plan.first !== null || plan.anything || (wants > 0 && streamWrites))
+	);
 	const hasWords = $derived((plan?.items.length ?? 0) > 0);
 	const aheadOfSchedule = $derived(canStart && dueCount === 0);
 	/**

@@ -15,8 +15,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::fits::{inside, window_for, Serving};
-use crate::help::HelpLevel;
+use crate::fits::{inside, window_for, written_levels, Serving};
 use crate::kinds::{active_kinds, kind_of, ChallengeKind, Want, WantItem, WireType};
 use crate::model::{logit, sigmoid, target};
 use crate::pool::{is_playable, known_ids, PoolRow};
@@ -49,15 +48,17 @@ pub struct TopUpCoverage {
 
 /// The length to write a row of `kind` at for this word: the one closest to
 /// putting the word at the aim at the kind's middle help level, among those
-/// whose row would fit; `None` when none would.
+/// whose row would fit; `None` when none would. The help levels are the ones
+/// the row will be served at (`fits.rs`' `written_levels`) — with its reading
+/// hidden when the setting hides every reading, heard first where it can be —
+/// so the length is solved against the screens serving will judge it on.
 pub fn length_for(word: &Word, kind: WireType, serving: &Serving) -> Option<u8> {
     let [shortest, longest] = kind.lengths()?;
     let parts = &serving.parts;
     let skill = word.skill();
     let window = window_for(skill, serving);
-    let steps = kind.written_steps();
-    let base = |i: usize| parts.base(kind, HelpLevel::step(steps[i]));
-    let middle = (base(0) + base(steps.len() - 1)) / 2.0;
+    let levels = written_levels(kind, serving);
+    let middle = (parts.base(kind, *levels.first()?) + parts.base(kind, *levels.last()?)) / 2.0;
     let slope = parts.slope(kind);
     let ideal = if slope.abs() < 1e-6 {
         (f64::from(shortest) + f64::from(longest)) / 2.0
@@ -65,8 +66,8 @@ pub fn length_for(word: &Word, kind: WireType, serving: &Serving) -> Option<u8> 
         (skill - logit(target(serving.aim)) - middle) / slope
     };
     let fits_at = |length: u8| {
-        steps.iter().any(|step| {
-            let d = parts.difficulty(kind, HelpLevel::step(*step), f64::from(length), 0.0);
+        levels.iter().any(|help| {
+            let d = parts.difficulty(kind, *help, f64::from(length), 0.0);
             inside(sigmoid(skill - d), window)
         })
     };
@@ -398,6 +399,51 @@ pub(crate) mod tests {
             length_for(&fresh("a"), WireType::TranslateToTarget, &normal),
             None
         );
+    }
+
+    /// Readings off serves a row with readings only with them hidden, so a
+    /// struggling word is asked only lengths whose hidden row fits it; a
+    /// language without readings writes the same whatever the setting.
+    #[test]
+    fn the_length_is_solved_at_the_levels_the_row_will_be_served_at() {
+        use crate::fits::best_fit;
+        use crate::serve::RomanizationMode;
+        use crate::sim::{synthetic, with_readings};
+        use crate::word::by_id;
+        let with = |readings: bool, mode: RomanizationMode| Serving {
+            readings,
+            romanization_mode: mode,
+            ..Serving::default()
+        };
+        for skill in [-3.0, 1.6, 2.5, 4.0, 6.0] {
+            let w = skilled("a", skill);
+            let index = by_id(std::slice::from_ref(&w));
+            let off = with(true, RomanizationMode::Off);
+            for kind in active_kinds() {
+                if let Some(length) = length_for(&w, kind, &off) {
+                    let value = with_readings(synthetic(kind, "c", &["a"], length.into()));
+                    let mut challenge = Challenge::from_value(value).unwrap();
+                    challenge.set_asked_length(f64::from(length));
+                    let row = PoolRow {
+                        challenge,
+                        generated_at: NOW,
+                        times_served: 0.0,
+                        last_served_at: None,
+                        reported: false,
+                        topic: None,
+                        correction: None,
+                    };
+                    assert!(best_fit(&row, &index, &off).is_some(), "{skill} {kind:?}");
+                }
+                for mode in [RomanizationMode::Off, RomanizationMode::On] {
+                    assert_eq!(
+                        length_for(&w, kind, &with(false, mode)),
+                        length_for(&w, kind, &Serving::default()),
+                        "{skill} {kind:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

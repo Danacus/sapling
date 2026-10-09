@@ -33,6 +33,7 @@ import {
 	getDifficultyParts,
 	getPool,
 	getProfile,
+	overturnResult,
 	recordServe,
 	reportChallenge as flagChallengeReported,
 	updateItemAfterReview
@@ -150,6 +151,11 @@ export interface StreamOptions {
 	serving?: Serving;
 	/** The challenge ids this stream has already shown: never picked again. */
 	served?: readonly string[];
+	/**
+	 * No batch can help a head with nothing: pass it for the first word further
+	 * down the same list that has something. Absent, the head waits.
+	 */
+	pass?: boolean;
 }
 
 /** One challenge the stream serves, at the help level it is served at. */
@@ -174,22 +180,27 @@ function streamArgs(
 		words: asWords(items),
 		now,
 		...(opts.serving === undefined ? {} : { serving: opts.serving }),
-		...(opts.served === undefined ? {} : { served: [...opts.served] })
+		...(opts.served === undefined ? {} : { served: [...opts.served] }),
+		...(opts.pass ? { pass: true } : {})
 	};
 }
 
-/** The head of the stream: its most urgent word, and that word's pick unless it has nothing. */
+/** The head of the stream: its most urgent word, and the pick to serve unless there is none. */
 export interface StreamHead {
 	word: string;
 	pick: SessionPick | null;
+	/** Set when the head was passed: the word further down that `pick` is about. */
+	instead?: string;
 }
 
 /**
  * Rust's (`crates/sapling-challenges`' `stream.rs`): the most urgent word (due
  * words first, most overdue first, then the words not yet due) and its
  * available row whose best help level sits closest to the aim — `pick: null`
- * while that word has nothing, which a refill is what fixes; `null` only with
- * no words at all. What plays is the row as stored, minus its bookkeeping.
+ * while that word has nothing, which a refill is what fixes, unless `pass`
+ * lets it be the first word further down with something (`instead`); `null`
+ * only with no words at all. What plays is the row as stored, minus its
+ * bookkeeping.
  */
 export function streamHead(
 	pool: readonly ChallengeRow[],
@@ -209,7 +220,8 @@ export function streamHead(
 					chance: next.chance,
 					due: next.due
 				}
-			: null
+			: null,
+		...(head.instead === undefined ? {} : { instead: head.instead })
 	};
 }
 
@@ -357,15 +369,21 @@ export function planRefill(
 		// The romanization rides along for one reason: the prompt needs it to
 		// tell two same-spelled cards apart. It is dropped again
 		// for every word whose spelling is unambiguous, which is nearly all of them.
+		// The skill rides along for the writer alone, never the prompt: a passage
+		// about two words is judged by their average, so a row is counted as a
+		// want filled only once it fits them together (`lesson.rs`' `fill_request`,
+		// against the same `serving` the wants were planned with).
 		...(items.length
 			? {
 					knownItems: items.map((item) => ({
 						id: item.id,
 						term: item.term,
-						...(item.romanization ? { romanization: item.romanization } : {})
+						...(item.romanization ? { romanization: item.romanization } : {}),
+						...(item.skill === undefined ? {} : { skill: item.skill })
 					}))
 				}
 			: {}),
+		...(opts.serving === undefined ? {} : { serving: opts.serving }),
 		...(topic ? { topic } : {})
 	};
 }
@@ -513,6 +531,11 @@ export interface PracticeOverview {
 	/** The first challenge the stream would serve; `null` while its first word has nothing. */
 	first: SessionPick | null;
 	/**
+	 * Whether any word in the list has something: what the stream serves, by
+	 * passing its head, when no batch can be written for that word.
+	 */
+	anything: boolean;
+	/**
 	 * How well the pool covers the upcoming words, and what a press would
 	 * write — read off the list the stream serves from (`topUpCoverage`). The start screen's figure and the Generate
 	 * button's label in one: "N of M due words have fresh challenges" is exactly
@@ -546,10 +569,12 @@ export async function practiceOverview(opts: OverviewOptions = {}): Promise<Prac
 		getProfile()
 	]);
 	const serving = servingFor(profile, parts, opts.device);
+	const first = nextPick(pool, items, now, { serving });
 	return {
 		items,
 		dueCount: items.filter((item) => isDue(item, now)).length,
-		first: nextPick(pool, items, now, { serving }),
+		first,
+		anything: first !== null || nextPick(pool, items, now, { serving, pass: true }) !== null,
 		topUp: topUpCoverage(pool, items, now, serving)
 	};
 }
@@ -674,9 +699,10 @@ export async function applyResult(
  * is any item the challenge names but that review skipped (deleted mid-session)
  * — absence from `reviewed` is the signal.
  *
- * No interaction with {@link applyOverturn}: an overturn only ever fires on a
- * `wrong` verdict and a self-assessment only on a `correct` one, so the two
- * paths are disjoint by construction and never race for the same card.
+ * No race with {@link applyOverturn}: an overturn only ever fires on a
+ * `wrong` verdict and a self-assessment only on a `correct` one, and both
+ * supersede the newest review rather than stacking on it — so whichever
+ * comes last is the one review the answer leaves.
  */
 export async function amendResult(
 	challenge: Challenge,
@@ -692,38 +718,74 @@ export async function amendResult(
 	}
 }
 
+/** What an overturned answer needs to be undone exactly. */
+export interface OverturnedAnswer {
+	/**
+	 * The answer's own instant — {@link AnswerOutcome.now}, which its reviews
+	 * and its result share. The superseding reviews land at it, and the
+	 * overturn names the result by it.
+	 */
+	answeredAt: number;
+	/** What {@link applyResult} returned: the items it filed a review for. */
+	reviewed: ReadonlySet<string>;
+	/**
+	 * The per-gap verdicts of a composite answer; only the gaps graded wrong
+	 * are overturned. Absent for a one-verdict format, whose whole challenge
+	 * was wrong.
+	 */
+	itemVerdicts?: readonly { itemId: string; verdict: Verdict }[];
+}
+
 /**
- * Compensating review for an answer the escalation overturned: the learner was
- * graded `wrong`, disputed it, and the model agreed the answer should have
- * counted (see `escalate`'s `overturn`).
+ * What an overturned answer counts as: every gap graded wrong becomes
+ * correct, so the worst verdict left is `almost` where a gap was almost, and
+ * `correct` otherwise.
+ */
+export function overturnedVerdict(
+	itemVerdicts?: readonly { itemId: string; verdict: Verdict }[]
+): Verdict {
+	return itemVerdicts?.some((item) => item.verdict === 'almost') ? 'almost' : 'correct';
+}
+
+/**
+ * Undoes an answer the escalation overturned — the learner was graded
+ * `wrong`, disputed it, and the model agreed it should have counted (see
+ * `escalate`'s `overturn`) — **exactly**: afterwards the store holds what an
+ * answer accepted on the spot would have left, for FSRS and for the
+ * difficulty model alike.
  *
- * Every item on the challenge gets one `Good` review, exactly as if the answer
- * had been accepted in the first place.
+ * - **FSRS.** Each wrong item's `Again` review is *superseded* by a `Good` at
+ *   the answer's own instant (`replaceLast`, as {@link amendResult} re-grades
+ *   one), and the core refolds the card from the item's whole log — so it
+ *   lands where a single `Good` would have, not where "failed, then recalled"
+ *   would. A gap that was right keeps its review.
+ * - **The difficulty model.** The answer is logged as overturned
+ *   (`overturnResult`, a `resultOverturned` event naming it by challenge and
+ *   `at`), and the replay reads it at {@link overturnedVerdict} — so the word's
+ *   skill and the row's correction move as for a success, not a miss. The
+ *   result row itself keeps what was answered: it is history, and the review
+ *   screens show it.
  *
- * **This does not undo the `Again` review {@link applyResult} already wrote.**
- * FSRS has no inverse — the lapse it recorded stays on the card, and the item
- * lands where a "failed then recalled" pair would rather than where a clean
- * pass would. That is deliberate: a dispute is rare, and a card that is
- * slightly too conservative beats leaving a genuinely-known word stuck in
- * relearning. The result log entry is likewise left alone; only the card moves.
- *
- * Match-pairs is skipped for the same reason as in {@link applyResult}: those
- * rounds never touch SRS state at all.
+ * Answers the verdict the answer now counts as. Match-pairs never reviews and
+ * never reaches here; it is a no-op that answers `correct`.
  */
 export async function applyOverturn(
 	challenge: Challenge,
-	now: number = Date.now(),
-	/**
-	 * For a composite challenge, only the items the original answer actually
-	 * graded wrong should receive compensation. Omit it for legacy one-verdict
-	 * formats, whose whole challenge received the wrong grade.
-	 */
-	wrongItemIds?: ReadonlySet<string>
-): Promise<void> {
-	if (!storedDefFor(challenge).reviewsSrs) return;
+	answer: OverturnedAnswer
+): Promise<Verdict> {
+	const verdict = overturnedVerdict(answer.itemVerdicts);
+	if (!storedDefFor(challenge).reviewsSrs) return verdict;
 
+	const verdictOf = new Map(answer.itemVerdicts?.map((item) => [item.itemId, item.verdict]));
 	for (const itemId of challenge.itemIds) {
-		if (wrongItemIds && !wrongItemIds.has(itemId)) continue;
-		await updateItemAfterReview(itemId, { at: now, grade: Grade.Good });
+		if (!answer.reviewed.has(itemId)) continue;
+		if ((verdictOf.get(itemId) ?? 'wrong') !== 'wrong') continue;
+		await updateItemAfterReview(
+			itemId,
+			{ at: answer.answeredAt, grade: Grade.Good },
+			{ replaceLast: true }
+		);
 	}
+	await overturnResult({ challengeId: challenge.id, answeredAt: answer.answeredAt, verdict });
+	return verdict;
 }

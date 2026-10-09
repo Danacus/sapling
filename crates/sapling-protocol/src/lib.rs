@@ -43,7 +43,7 @@ use ts_rs::TS;
 use sapling_challenges::model::Shared;
 use sapling_db::core::LanguageProfile;
 use sapling_db::{Core, Error, Result, ReviewOutcome};
-use sapling_domain::events::{parse_payload, EventType, Payload, RawEvent};
+use sapling_domain::events::{parse_payload, EventType, Payload, RawEvent, ResultOverturned};
 use sapling_domain::types::{
     ChallengeResult, Conversation, ConversationDetail, ConversationExchange, ConversationSummary,
     DailyActivity, GradeEntry, KnowledgeItem, Profile, ReadingText,
@@ -382,6 +382,11 @@ backend! {
         /// Logs one answered challenge.
         addResult(result: ChallengeResult) {
             core.add_result(&result)
+        }
+        /// An escalation overturned an answered challenge: the difficulty
+        /// model replays it at `overturn.verdict`, as if accepted on the spot.
+        overturnResult(overturn: ResultOverturned) {
+            core.overturn_result(&overturn)
         }
         /// The most recent results, newest first.
         recentResults(limit: f64) -> Vec<ChallengeResult> {

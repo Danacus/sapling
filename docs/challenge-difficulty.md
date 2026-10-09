@@ -145,11 +145,17 @@ its help levels lands inside it.
 
 The window is **widened, per word, just far enough to take in the nearest
 challenge that could be written** — every active type at each help level it
-is written with, at every length in its range. So "too hard" never applies to
-the easiest challenge there is (easiest type, shortest length, easiest help
-level), and "too easy" never to the hardest. Every word always has something
-writable that serving accepts, which is what lets serving wait for a word
-rather than skip it.
+will be *served* at, at every length in its range. The help levels are the
+ones the stored row will offer: each step it is written with, its reading
+shown, hidden or both as the readings setting allows when the target language
+is written with one (a language in a non-Latin script; the model writes a
+reading beside every target-language string there), and listening where it
+can be heard. With readings off, a Mandarin row is only ever served with its
+reading hidden, so it is only those levels a writer may count on. So "too
+hard" never applies to the easiest challenge there is (easiest type, shortest
+length, easiest help level), and "too easy" never to the hardest. Every word
+always has something writable that serving accepts, which is what lets
+serving wait for a word while a batch can still be written for it.
 
 - **Serving** takes the most urgent word and, among its available challenges
   and their help levels, picks the one closest to the aim. Rested ones come
@@ -165,16 +171,26 @@ takes the head of the list; refill writes for the words in it with nothing.
 So a challenge refill counts as covering a word is exactly one serving would
 show, and a word serving waits for is exactly one refill writes for.
 
+A challenge about **several words** (a multi-cloze passage) is judged by their
+average skill, and fits or not whichever of its words it is served for. A
+passage is asked for one word, but the model pairs it with others; a partner
+far stronger or weaker moves the average out of the window, and such a row
+would leave its word asked for with nothing. So the writer keeps a passage
+only as the filling of a want it fits, judged at that want's length against
+the words' skills as the planner read them; one that fits no want is dropped
+and its want stays unfilled, like a request that failed.
+
 ## 6. Writing new challenges
 
 A request to write a challenge is `{word, type, length}`.
 
 - **Type:** the types with some length at which a freshly written challenge,
-  at one of its help levels, fits the word (§5). Among those, one the word has
+  at one of the help levels it will be served at, fits the word (§5). Among those, one the word has
   never had wins; a draw breaks the tie.
 - **Sentence length:** the check in §5 run backwards — the length that would
-  put the word at the aim at the **middle** help level, among the lengths in
-  the type's range that fit. Writing at the middle leaves room on both sides:
+  put the word at the aim at the **middle** help level it will be served at
+  (between its easiest and its hardest), among the lengths in the type's range
+  that fit. Writing at the middle leaves room on both sides:
   if the word gets weaker the easier help level still fits, and if it gets
   stronger the harder one does. One challenge covers a wider range of skill,
   which is where the LLM savings come from. Because the writer solves the
@@ -194,6 +210,17 @@ A request to write a challenge is `{word, type, length}`.
 optional `shown` field naming the help level. The field is additive, so old
 events keep parsing. For old events the help level is reconstructed from the
 word's strength at the time through today's ladders, once, during replay.
+
+**An overturned answer counts as answered correctly right away.** When an
+escalation agrees a `wrong` answer should have counted, each wrong word's
+`Again` review is superseded by a `Good` at the answer's own instant (the card
+refolds from the word's whole log), and a `resultOverturned` event names the
+answer by its challenge and `at` and says what it counts as: `correct`, or
+`almost` where a gap of a passage was almost. Replay reads the answer at that
+verdict, wherever the overturn sits in the log — one landing before its answer
+waits for it, one landing after marks the fold for a replay — so the skill and
+the correction move as for a success. The result row keeps what was answered.
+An older build logs the event and skips it.
 
 **Skills and learned numbers are derived data**, like FSRS card state:
 
@@ -266,8 +293,11 @@ far too hard or easy for every word simply stop fitting and are not served.
 Sessions are replaced by one continuous stream that runs until you stop:
 
 - **Next challenge:** the head of the list (§5) — the most urgent word and its
-  best available challenge, one pick at a time. The stream never skips the
-  head: while it has nothing, the screen waits for a refill written for it.
+  best available challenge, one pick at a time. While the head has nothing and
+  a batch for it is on its way or can be started, the screen waits for it.
+  Only when no batch can help — it was asked for already, a batch failed or
+  was cancelled, no key, no connection — is the head passed, for the first
+  word further down the same list with something available.
 - **Refill:** a batch is written in the background for the words among the
   next few on the list that have nothing. How many is the low-water mark,
   which covers the time a batch takes to come back at your answering pace, so
@@ -277,9 +307,10 @@ Sessions are replaced by one continuous stream that runs until you stop:
 - **Each word is asked for once:** the stream remembers the words it has
   asked a batch for, until something of theirs is served, and never asks for
   them again in between — so a batch that keeps missing a word costs one
-  request, not one per answer.
-- **Offline or no key:** when the head has nothing and no batch can be
-  written for it — or one was already asked for it — the stream ends, says
+  request, not one per answer. A batch that failed or was cancelled wrote
+  nothing, so its words are given back and may be asked for again.
+- **Offline or no key:** when no word in the list has anything and no batch
+  can be written — or every one was already asked for — the stream ends, says
   why, and offers to try again, which asks afresh.
 - **Pacing:** match rounds after every few early-word challenges, and never two
   near-window-edge challenges in a row if that turns out to matter — rules on

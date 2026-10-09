@@ -7,8 +7,9 @@
   most urgent word with a challenge that fits it, at the help level closest to
   the learner's aim — with a free match round after every few challenges about
   early words. There is no plan to walk and no end but the learner's: when the
-  most urgent word has nothing, the stream waits for a batch written for it, or
-  says why it cannot.
+  most urgent word has nothing, the stream waits for a batch written for it;
+  when no batch can help it, it passes it for the next word that has something;
+  and only when no word has anything does it stop and say why.
 
   Rules and writes live in `$lib/session/engine` and `$lib/session/stream`; this
   file owns pacing, motion and everything the learner sees. It writes nothing
@@ -35,13 +36,14 @@
 		amendResult,
 		applyOverturn,
 		applyResult,
+		overturnedVerdict,
 		reportChallenge,
 		sessionSummary,
 		type AnswerEvent,
 		type SessionAnswer
 	} from '$lib/session/engine';
 	import { motionMs } from '$lib/session/motion';
-	import { PracticeStream, type StreamStep } from '$lib/session/stream';
+	import { PracticeStream, type NextOptions, type StreamStep } from '$lib/session/stream';
 	import type { Grade } from '$lib/srs';
 	import { runSync } from '$lib/sync';
 	import { startTask } from '$lib/tasks';
@@ -66,6 +68,8 @@
 		closestAccepted?: string;
 		/** Per-gap evidence for composite challenges; retained for an overturn. */
 		itemVerdicts?: AnswerEvent['itemVerdicts'];
+		/** The answer's instant, which its reviews and its result share; what an overturn names it by. */
+		answeredAt: number;
 		explanation?: string;
 		/** An escalation overturned a `wrong` grade; see {@link overturnCurrent}. */
 		overturned?: boolean;
@@ -150,11 +154,13 @@
 	/* Refill ------------------------------------------------------------------ */
 
 	/**
-	 * The `top-up` tasks this screen started, by id — not task state (the
-	 * runner owns that, `.claude/rules/tasks.md`), only "which records are
-	 * mine", so a batch finishing can be timed and can wake a waiting stream.
+	 * The `top-up` tasks this screen started, by id, with the words each asked
+	 * for — not task state (the runner owns that, `.claude/rules/tasks.md`),
+	 * only "which records are mine", so a batch finishing can be timed and can
+	 * wake a waiting stream, and one that fails can give its words back. A
+	 * batch the learn screen started is tracked with no words.
 	 */
-	let refills = new Set<string>();
+	let refills = new Map<string, string[]>();
 	/** Records already acted on, so a settled refill is handled once. */
 	let handled = new Set<string>();
 
@@ -166,18 +172,37 @@
 		return !mock && (typeof navigator === 'undefined' || navigator.onLine !== false);
 	}
 
-	/** Starts a top-up for the words ahead that want one; whether it did. */
-	async function refill(): Promise<boolean> {
+	/**
+	 * The refill being claimed right now. There is only ever one: every caller
+	 * joins it, and {@link advance} waits for it before picking — otherwise a
+	 * quick Continue reads `writing` before the claim after the last answer
+	 * has started its task, finds the head already asked for, and stops the
+	 * stream while the batch for that very word is starting.
+	 */
+	let claiming: Promise<boolean> | null = null;
+
+	/** Starts a top-up for the words ahead that want one, or joins the claim in flight; whether it did. */
+	function refill(): Promise<boolean> {
+		claiming ??= claimRefill().finally(() => {
+			claiming = null;
+		});
+		return claiming;
+	}
+
+	async function claimRefill(): Promise<boolean> {
 		if (!profile || writing || !canWrite()) return false;
-		const scope = await stream.refill();
-		if (!scope) return false;
-		refills.add(startTask('top-up', { profile, ...scope }).id);
+		const claim = await stream.refill();
+		if (!claim) return false;
+		refills.set(startTask('top-up', { profile, ...claim.scope }).id, claim.words);
 		return true;
 	}
 
 	/**
-	 * A refill settled: time it for the next mark, and if the stream was
-	 * waiting, pick again — or stop and say why.
+	 * A refill settled: time it for the next mark, give a failed or cancelled
+	 * one's words back to the stream, and if the stream was waiting, pick again.
+	 * After a batch that wrote nothing the head is passed rather than asked for
+	 * again on the spot — a batch that keeps failing must not loop — and if
+	 * nothing anywhere is left, the stream stops with the batch's error.
 	 */
 	$effect(() => {
 		for (const record of taskStore.tasks) {
@@ -187,9 +212,14 @@
 			if (record.status === 'done' && record.startedAt && record.finishedAt) {
 				stream.noteBatch(record.finishedAt - record.startedAt);
 			}
+			if (record.status !== 'done') stream.release(refills.get(record.id) ?? []);
 			if (phase !== 'waiting') continue;
 			if (record.status === 'done') void advance();
-			else void finish(record.error ?? 'Writing more challenges was cancelled.');
+			else
+				void advance({
+					pass: true,
+					why: record.error ?? 'Writing more challenges was cancelled.'
+				});
 		}
 	});
 
@@ -307,47 +337,61 @@
 	const answered = $derived(answers.length);
 
 	/**
-	 * The next pick, once this answer's writes have landed. While the most
-	 * urgent word has nothing, the stream waits for a batch written for it.
+	 * The next pick, once this answer's writes have landed and any refill being
+	 * claimed has started its task. While the most urgent word has nothing, the
+	 * stream waits for a batch written for it — or passes it, `pass`, when none
+	 * can help; `why` is what to say should nothing at all be left.
 	 */
-	async function advance(): Promise<void> {
+	async function advance(opts: NextOptions & { why?: string } = {}): Promise<void> {
 		feedback = null;
 		await pendingWrite;
-		const step = await stream.next();
+		// A claim that failed started nothing; the pick goes on without it.
+		await claiming?.catch(() => false);
+		const step = await stream.next({ pass: opts.pass });
 		items = stream.items;
 		if (step.kind === 'blocked') {
-			await blocked(step.asked);
+			await blocked(step.asked, opts);
 			return;
 		}
 		phase = 'playing';
 		show(step);
 	}
 
-	/** The next word has nothing: wait for a batch, start one, or — once one was asked for it — stop. */
-	async function blocked(asked: boolean): Promise<void> {
-		if (writing) {
+	/**
+	 * The head has nothing. Wait while a batch is on its way (one that may be
+	 * for it, or must finish before one for it can start), or start one for it
+	 * if it was not asked for yet; when no batch can help — it was asked for
+	 * already, a batch failed, no key, no connection — pass it for the next word
+	 * with something. Only when even that finds nothing does the stream stop.
+	 */
+	async function blocked(asked: boolean, opts: NextOptions & { why?: string }): Promise<void> {
+		if (writing && topUp) {
 			// Someone else's batch (the learn screen's) wakes this stream too.
-			if (topUp) refills.add(topUp.id);
+			if (!refills.has(topUp.id)) refills.set(topUp.id, []);
 			phase = 'waiting';
 			return;
 		}
-		if (!asked && (await refill())) {
-			phase = 'waiting';
+		if (!opts.pass) {
+			if (!asked && (await refill().catch(() => false))) {
+				phase = 'waiting';
+				return;
+			}
+			await advance({ ...opts, pass: true });
 			return;
 		}
-		await finish(endReasonFor(asked));
+		await finish(opts.why ?? endReasonFor(asked));
 	}
 
-	/** Why a stream whose next word has nothing cannot go on, in the learner's words. */
+	/** Why a stream with nothing left for any word cannot go on, in the learner's words. */
 	function endReasonFor(asked: boolean): string {
-		if (asked) {
-			return 'Nothing that fits your next word could be written just now. Try again, or come back later.';
-		}
 		if (mock) {
 			return 'Nothing left that fits. Add your OpenRouter key in Settings and practice writes more as you go.';
 		}
-		if (canWrite()) return 'Nothing to practise right now. Come back later, or add words.';
-		return "You're offline, so no new challenges can be written for your next word.";
+		if (!canWrite()) return "You're offline, and nothing written so far fits your words.";
+		if (asked) {
+			return 'Nothing that fits your words could be written just now. Try again, or come back later.';
+		}
+		return 'Nothing to practise right now. Come back later, or add words.';
 	}
 
 	/** Back into the stream after it stopped itself: the store may have moved since. */
@@ -404,11 +448,15 @@
 		];
 		stream.noteAnswered(challenge, event.responseMs);
 
+		// The one instant the answer's reviews and its result share, and that an
+		// overturn names it by.
+		const answeredAt = Date.now();
 		feedback = {
 			challenge,
 			verdict: event.verdict,
 			answerGiven: event.answerGiven,
 			correctAnswer: correctAnswerText(challenge),
+			answeredAt,
 			...(event.closestAccepted ? { closestAccepted: event.closestAccepted } : {}),
 			...(event.itemVerdicts ? { itemVerdicts: event.itemVerdicts } : {}),
 			...(challenge.explanation ? { explanation: challenge.explanation } : {}),
@@ -425,7 +473,7 @@
 			responseMs: event.responseMs,
 			...(event.itemVerdicts ? { itemVerdicts: event.itemVerdicts } : {}),
 			...(currentPresentation ? { shown: currentPresentation.shown } : {}),
-			now: Date.now()
+			now: answeredAt
 		}).catch(() => {
 			// A failed write must not eat the stream; the answer is already logged.
 			return new Set<string>();
@@ -467,16 +515,18 @@
 
 	/**
 	 * The learner disputed a `wrong` grade and the explain call agreed with them
-	 * (`overturn: true`). Everything the original answer cost is handed back:
+	 * (`overturn: true`). The answer is undone exactly, as if it had been
+	 * accepted on the spot:
 	 *
 	 * - **Banner**: repaints as accepted (`FeedbackBanner`'s `overturned`).
-	 * - **Summary**: the logged answer flips to `correct`, so `sessionSummary`
+	 * - **Summary**: the logged answer flips to what it now counts as —
+	 *   `correct`, or `almost` where a gap was almost — so `sessionSummary`
 	 *   recomputes correct/wrong and accuracy on its own.
-	 * - **SRS**: `applyOverturn` writes one `Good` review per item, chained
-	 *   *after* the original write so it lands on top of the `Again`.
-	 *
-	 * What it deliberately does **not** do: rewrite the result log. The learner
-	 * really did answer this at the time, and the entry is history.
+	 * - **SRS and the difficulty model**: `applyOverturn` supersedes each wrong
+	 *   word's `Again` with a `Good` at the answer's own instant and logs the
+	 *   answer as overturned, which the difficulty replay reads as that
+	 *   verdict. Chained *after* the original write, so the review it
+	 *   supersedes is already there. The result row keeps what was answered.
 	 */
 	function overturnCurrent(): void {
 		const fb = feedback;
@@ -484,19 +534,20 @@
 
 		feedback = { ...fb, overturned: true };
 
+		const verdict = overturnedVerdict(fb.itemVerdicts);
 		answers = answers.map((answer) =>
-			answer.challengeId === fb.challenge.id ? { ...answer, verdict: 'correct' } : answer
+			answer.challengeId === fb.challenge.id ? { ...answer, verdict } : answer
 		);
 
-		// After the pending `applyResult`: the Again review must already be on the
-		// card before the compensating Good review goes on top of it.
-		const wrongItemIds = fb.itemVerdicts
-			? new Set(
-					fb.itemVerdicts.filter((item) => item.verdict === 'wrong').map((item) => item.itemId)
-				)
-			: undefined;
+		const reviewed = pendingReviewed;
 		pendingWrite = pendingWrite
-			.then(() => applyOverturn(fb.challenge, Date.now(), wrongItemIds))
+			.then(async () => {
+				await applyOverturn(fb.challenge, {
+					answeredAt: fb.answeredAt,
+					reviewed: await reviewed,
+					...(fb.itemVerdicts ? { itemVerdicts: fb.itemVerdicts } : {})
+				});
+			})
 			.catch(() => {
 				// A failed write must not eat the session; the banner already repainted.
 			});

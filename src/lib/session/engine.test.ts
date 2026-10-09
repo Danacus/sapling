@@ -36,6 +36,7 @@ import {
 	nextPick,
 	planRefill,
 	planTopUp,
+	servingFor,
 	sessionSummary,
 	spokenAnswerFor,
 	type SessionAnswer
@@ -317,6 +318,24 @@ describe('planRefill', () => {
 			{ id: 'a', term: 'term-a', romanization: 'cháng' },
 			{ id: 'b', term: 'term-b' }
 		]);
+	});
+
+	it('hands the writer each word’s skill and the serving the wants were planned against', () => {
+		// A passage about two words is judged by their average: the writer keeps
+		// one only when it fits them together, against these very numbers.
+		const items = [{ ...item('a', -1 * DAY), skill: 2.5 }, item('b', -1 * DAY)];
+		const parts = { bases: {}, slopes: {} };
+		const device = { romanizationMode: 'off' as const, audio: false };
+		const serving = servingFor(profile({ targetLanguage: 'Mandarin Chinese' }), parts, device);
+		const plan = planRefill([], items, profile(), NOW, { serving });
+
+		expect(plan.knownItems).toEqual([
+			{ id: 'a', term: 'term-a', skill: 2.5 },
+			{ id: 'b', term: 'term-b' }
+		]);
+		expect(plan.serving).toEqual(serving);
+		expect(serving.readings).toBe(true);
+		expect(servingFor(profile(), parts, device).readings).toBe(false);
 	});
 
 	it('wants two challenges per upcoming word, due first and then review-ahead', () => {

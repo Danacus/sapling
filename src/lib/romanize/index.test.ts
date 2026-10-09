@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { hasLocalRomanizer, loadRomanizer, romanizerFor } from './index';
+import { hasLocalRomanizer, loadRomanizer, romanizerFor, writtenWithReadings } from './index';
 
 describe('hasLocalRomanizer', () => {
 	it('accepts every spelling of Mandarin that resolves to a zh tag', () => {
@@ -36,6 +36,24 @@ describe('hasLocalRomanizer', () => {
 		expect(hasLocalRomanizer('Klingon')).toBe(false);
 		expect(hasLocalRomanizer(undefined)).toBe(false);
 		expect(hasLocalRomanizer('')).toBe(false);
+	});
+});
+
+describe('writtenWithReadings', () => {
+	it('is the languages written in a script other than Latin', () => {
+		for (const language of [
+			'Mandarin Chinese',
+			'Japanese',
+			'Korean',
+			'Russian',
+			'Cantonese',
+			'ar'
+		]) {
+			expect(writtenWithReadings(language), language).toBe(true);
+		}
+		for (const language of ['Spanish', 'Dutch', 'Vietnamese', 'tl', 'Klingon', undefined]) {
+			expect(writtenWithReadings(language), String(language)).toBe(false);
+		}
 	});
 });
 

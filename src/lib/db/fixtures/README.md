@@ -44,11 +44,20 @@ Reads are always taken under `TZ=UTC` (`getDailyActivity` buckets by local day).
 
 ## Fixtures
 
-- `broad` — every event type once, one device. Six pool challenge types plus
-  one of an unknown type that must stay in the log and out of the pool; a
-  re-graded review; a reported challenge; results either side of midnight UTC;
-  texts with YouTube and file media; a word marked then unmarked; a deleted
-  conversation.
+- `broad` — every event type once but `resultOverturned` (which `overturn`
+  covers), one device. Six pool challenge types plus one of an unknown type
+  that must stay in the log and out of the pool; a re-graded review; a
+  reported challenge; results either side of midnight UTC; texts with YouTube
+  and file media; a word marked then unmarked; a deleted conversation.
+- `overturn` — two answers an escalation overturned, as the practice screen
+  writes it: the wrong word's `Again` superseded by a `Good` at the answer's
+  own instant (a `reviewAmended` with the replaced review's identity, so either
+  may arrive first) and a `resultOverturned` naming the answer by challenge and
+  `at`. One is a cloze overturned to `correct`; the other a two-word passage
+  graded `almost` on one gap and `wrong` on the other, overturned to `almost`,
+  whose overturn sits *ahead* of its answer in the log. The difficulty numbers
+  are those of answers accepted on the spot; `recentResults` still shows what
+  was answered.
 - `two-devices-lww` — profile and word marks from two devices, the newer copy
   arriving first for half of them; reviews from two devices landing out of time
   order, so the card must fold the same whichever arrives first.

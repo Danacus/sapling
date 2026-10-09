@@ -22,7 +22,8 @@ use sapling_challenges::stream::MATCH_PAIRS_EVERY;
 use sapling_db::core::{ExportEnvelope, EXPORT_VERSION};
 use sapling_domain::events::{
     ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted, EventType, ItemAdded,
-    ItemDeleted, ItemReviewed, ItemUpdated, ReviewAmended, TextDeleted, WordLookedUp, WordMarked,
+    ItemDeleted, ItemReviewed, ItemUpdated, ResultOverturned, ReviewAmended, TextDeleted,
+    WordLookedUp, WordMarked,
 };
 use sapling_domain::types::{
     ChallengeResult, Conversation, ConversationExchange, Profile, ReadingText,
@@ -90,6 +91,7 @@ fn payloads(cfg: &Config) -> String {
             EventType::ConversationStarted => payload::<Conversation>(cfg),
             EventType::TurnAdded => payload::<ConversationExchange>(cfg),
             EventType::ConversationDeleted => payload::<ConversationDeleted>(cfg),
+            EventType::ResultOverturned => payload::<ResultOverturned>(cfg),
         };
         let module = path.with_extension("");
         let _ = writeln!(

@@ -40,6 +40,12 @@ CREATE TABLE IF NOT EXISTS results (
   answerGiven TEXT NOT NULL, at INTEGER NOT NULL, shown TEXT);
 CREATE INDEX IF NOT EXISTS results_at ON results(at);
 CREATE INDEX IF NOT EXISTS results_challenge ON results(challengeId);
+-- Answers an escalation overturned (`resultOverturned`), by the answer's
+-- challenge and `at`: the verdict the difficulty model replays it at. Apart
+-- from `results`, so an overturn that lands before its answer waits here.
+CREATE TABLE IF NOT EXISTS overturns (
+  challengeId TEXT NOT NULL, answeredAt INTEGER NOT NULL, verdict TEXT NOT NULL,
+  PRIMARY KEY (challengeId, answeredAt));
 
 -- The difficulty model's shared numbers (`learned.rs`): `base:<kind>/<help
 -- level>` and `slope:<kind>`. A key not here is at its starting value.
@@ -127,7 +133,10 @@ pub fn review_key(item_id: &str, at: f64, device: &str) -> String {
 /// Bumped for 10 when a written row began recording the length it was asked
 /// for, which `length_of` reads before the measured shape: a device that
 /// folded such rows under an older build measured them instead.
-pub const DERIVED_SCHEMA_VERSION: u32 = 10;
+///
+/// Bumped for 11 when `overturns` arrived: an older build logged and skipped
+/// every `resultOverturned` it was sent, and the rebuild is what applies them.
+pub const DERIVED_SCHEMA_VERSION: u32 = 11;
 
 /// Every read table the materializer owns; `events` and `meta` survive a rebuild.
 ///
@@ -135,11 +144,12 @@ pub const DERIVED_SCHEMA_VERSION: u32 = 10;
 /// activity read folds the base tables at read time instead, since a day is
 /// made of reviews, lookups and added words as much as of answers. A database
 /// from before still carries the empty table; nothing reads or drops it.
-pub const DERIVED_TABLES: [&str; 15] = [
+pub const DERIVED_TABLES: [&str; 16] = [
     "items",
     "reviews",
     "challenges",
     "results",
+    "overturns",
     "tombstones",
     "profile",
     "texts",

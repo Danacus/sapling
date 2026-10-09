@@ -27,7 +27,7 @@ use sapling_domain::day::LocalDay;
 use sapling_domain::events::{
     parse_envelope, ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted,
     EventType, ItemAdded, ItemDeleted, ItemFields, ItemReviewed, ItemUpdated, Payload, RawEvent,
-    ReviewAmended, SyncEvent, TextDeleted, WordLookedUp, WordMarked, PROFILE_ID,
+    ResultOverturned, ReviewAmended, SyncEvent, TextDeleted, WordLookedUp, WordMarked, PROFILE_ID,
 };
 use sapling_domain::types::{
     ChallengeResult, Conversation, ConversationDetail, ConversationExchange,
@@ -703,6 +703,12 @@ impl Core {
 
     pub fn add_result(&self, result: &ChallengeResult) -> Result<()> {
         self.commit(Payload::ResultLogged(result.clone()))
+    }
+
+    /// An escalation overturned an answer: it counts as `overturn.verdict`
+    /// from now on, for the difficulty model.
+    pub fn overturn_result(&self, overturn: &ResultOverturned) -> Result<()> {
+        self.commit(Payload::ResultOverturned(overturn.clone()))
     }
 
     /// The most recent results, newest first.

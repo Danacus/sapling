@@ -31,11 +31,14 @@ import { servingFor, type DeviceServing } from './serving';
 
 /** What the stream serves next. */
 export type StreamStep =
-	| ({ kind: 'challenge' } & SessionPick)
+	/** `instead`: the head had nothing and was passed, and this is about that word further down. */
+	| ({ kind: 'challenge'; instead?: string } & SessionPick)
 	| { kind: 'round'; challenge: MatchPairsChallenge }
 	/**
 	 * The most urgent word has nothing available: the stream waits for a
-	 * refill, unless one was already asked for it — then no batch will help.
+	 * refill, unless one was already asked for it — then no batch will help,
+	 * and the caller asks again with `pass`. Passed, `blocked` means no word
+	 * in the list has anything at all.
 	 */
 	| { kind: 'blocked'; asked: boolean };
 
@@ -44,6 +47,24 @@ export interface RefillScope {
 	served: string[];
 	asked: string[];
 	limit: number;
+}
+
+/**
+ * A claimed refill: the task's scope, and the words it asks for — which the
+ * caller hands back to {@link PracticeStream.release} should the batch fail
+ * or be cancelled.
+ */
+export interface RefillClaim {
+	scope: RefillScope;
+	words: string[];
+}
+
+export interface NextOptions {
+	/**
+	 * No batch can help the head: pass it for the first word further down the
+	 * list that has something (`stream.rs`' `head`).
+	 */
+	pass?: boolean;
 }
 
 export interface PracticeStreamOptions {
@@ -71,8 +92,9 @@ export class PracticeStream {
 	readonly #served = new Set<string>();
 	/**
 	 * Words a refill was asked for and nothing has been served of since: never
-	 * asked for again, so rows that came back not fitting, a word a batch
-	 * dropped and a failed batch all end at one request.
+	 * asked for again, so rows that came back not fitting and a word a batch
+	 * dropped end at one request. A batch that failed or was cancelled wrote
+	 * nothing, and gives its words back ({@link release}).
 	 */
 	readonly #asked = new Set<string>();
 	readonly #paces: number[] = [];
@@ -106,11 +128,13 @@ export class PracticeStream {
 	/**
 	 * The next thing to show: the head word's challenge at its help level, a
 	 * free match round when enough early-word challenges have passed and there
-	 * is a challenge to follow it, or `blocked` while the head has nothing.
+	 * is a challenge to follow it, or `blocked` while the head has nothing. With
+	 * `pass` — the caller found no batch can help the head — a head with
+	 * nothing gives way to the first word further down that has something.
 	 */
-	async next(): Promise<StreamStep> {
+	async next(opts: NextOptions = {}): Promise<StreamStep> {
 		const { pool, items, serving, now, served } = await this.#read();
-		const head = streamHead(pool, items, now, { serving, served });
+		const head = streamHead(pool, items, now, { serving, served, pass: opts.pass });
 		const pick = head?.pick;
 		if (!pick) return { kind: 'blocked', asked: head ? this.#asked.has(head.word) : false };
 		if (this.#earlySinceRound >= MATCH_PAIRS_EVERY) {
@@ -120,23 +144,34 @@ export class PracticeStream {
 		}
 		this.#served.add(pick.challenge.id);
 		for (const id of pick.challenge.itemIds) this.#asked.delete(id);
-		return { kind: 'challenge', ...pick };
+		return { kind: 'challenge', ...pick, ...(head.instead ? { instead: head.instead } : {}) };
 	}
 
 	/**
 	 * Claims a refill: what it should write for — the next words up to the
 	 * mark, sized from the learner's pace, less those already asked for — or
 	 * `null` when none of them wants anything. The words it wants are asked for
-	 * from here on; the caller starts the task.
+	 * from here on; the caller starts the task, and hands the words back to
+	 * {@link release} if it fails or is cancelled.
 	 */
-	async refill(): Promise<RefillScope | null> {
+	async refill(): Promise<RefillClaim | null> {
 		const { pool, items, serving, now, served } = await this.#read();
 		const limit = lowWaterMark(median(this.#paces), this.#batchMs);
 		const asked = [...this.#asked];
 		const wants = planTopUp(pool, items, now, { serving, served, asked, limit });
 		if (wants.length === 0) return null;
-		for (const want of wants) this.#asked.add(want.item.id);
-		return { served, asked, limit };
+		const words = [...new Set(wants.map((want) => want.item.id))];
+		for (const word of words) this.#asked.add(word);
+		return { scope: { served, asked, limit }, words };
+	}
+
+	/**
+	 * A refill that asked for these words wrote nothing: it failed or was
+	 * cancelled. They may be asked for again — otherwise a failed batch would
+	 * leave them waiting on a request that never comes back.
+	 */
+	release(words: readonly string[]): void {
+		for (const word of words) this.#asked.delete(word);
 	}
 
 	/** Forget what was asked for: a retry asks again. */

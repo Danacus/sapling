@@ -10,7 +10,9 @@
 //! Anything that could change an answer already folded marks the fold
 //! **dirty** instead: an answer older than the newest one folded, a review
 //! older than it (it changes a memory), a challenge or word arriving after
-//! answers that name it, a word deleted from under them. A dirty fold is
+//! answers that name it, a word deleted from under them, an overturn of an
+//! answer already in (`overturns`: the answer replays at the verdict it was
+//! overturned to, wherever it sits in the log). A dirty fold is
 //! replayed whole from the read tables once, when the transaction settles
 //! ([`settle`]). Both paths run the same arithmetic in the same order, so they
 //! land on the same numbers — which the golden fixtures' reverse-arrival and
@@ -23,7 +25,7 @@ use sapling_challenges::replay::{
     observations, ReplayInput, ReplayItem, ReplayResult, ReplayReview,
 };
 use sapling_challenges::Challenge;
-use sapling_domain::types::ChallengeResult;
+use sapling_domain::types::{ChallengeResult, Verdict};
 
 use crate::sql::{Param, Result, Row, Sql};
 
@@ -131,6 +133,34 @@ pub fn on_item_changed(sql: &dyn Sql, item_id: &str) -> Result<()> {
     }
 }
 
+/// An overturn changes the verdict of an answer that may be folded already;
+/// one that lands before its answer is read by [`on_result`] instead.
+pub fn on_overturn(sql: &dyn Sql, challenge_id: &str, answered_at: f64) -> Result<()> {
+    let there = !sql
+        .query(
+            "SELECT 1 FROM results WHERE challengeId = ? AND at = ? LIMIT 1",
+            &[Param::text(challenge_id), Param::number(answered_at)],
+        )?
+        .is_empty();
+    if there {
+        mark_dirty(sql)
+    } else {
+        Ok(())
+    }
+}
+
+/// The verdict an answer replays at: what an overturn made it, else its own.
+fn overturned(sql: &dyn Sql, result: &ChallengeResult) -> Result<Option<Verdict>> {
+    let rows = sql.query(
+        "SELECT verdict FROM overturns WHERE challengeId = ? AND answeredAt = ?",
+        &[Param::text(&result.challenge_id), Param::number(result.at)],
+    )?;
+    Ok(match rows.first() {
+        Some(row) => verdict_of(row.text("verdict")?),
+        None => None,
+    })
+}
+
 fn parts_of(sql: &dyn Sql, keys: &[String]) -> Result<HashMap<String, f64>> {
     if keys.is_empty() {
         return Ok(HashMap::new());
@@ -161,7 +191,7 @@ fn reviews_of(rows: &[Row]) -> Result<Vec<ReplayReview>> {
         .collect()
 }
 
-fn verdict_of(text: &str) -> Option<sapling_domain::types::Verdict> {
+fn verdict_of(text: &str) -> Option<Verdict> {
     serde_json::from_value(serde_json::Value::String(text.to_owned())).ok()
 }
 
@@ -232,7 +262,7 @@ pub fn on_result(sql: &dyn Sql, id: &str, result: &ChallengeResult) -> Result<()
         results: vec![ReplayResult {
             id: id.to_owned(),
             challenge_id: result.challenge_id.clone(),
-            verdict: result.verdict,
+            verdict: overturned(sql, result)?.unwrap_or(result.verdict),
             at: result.at,
             shown: result.shown.clone(),
         }],
@@ -341,7 +371,10 @@ pub fn refold(sql: &dyn Sql) -> Result<()> {
         })
         .collect();
     let rows = sql.query(
-        "SELECT id, challengeId, verdict, at, shown FROM results",
+        "SELECT r.id AS id, r.challengeId AS challengeId,
+                COALESCE(o.verdict, r.verdict) AS verdict, r.at AS at, r.shown AS shown
+         FROM results r
+         LEFT JOIN overturns o ON o.challengeId = r.challengeId AND o.answeredAt = r.at",
         &[],
     )?;
     let mut results = Vec::with_capacity(rows.len());

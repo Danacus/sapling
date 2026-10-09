@@ -147,7 +147,12 @@ fn ids_in(events: &[Value]) -> Ids {
                 .filter(|e| e["type"] == "challengeAdded")
                 .map(|e| field(&e["payload"]["challenge"], "id"))
                 .chain(of(
-                    &["challengeServed", "challengeReported", "resultLogged"],
+                    &[
+                        "challengeServed",
+                        "challengeReported",
+                        "resultLogged",
+                        "resultOverturned",
+                    ],
                     "challengeId",
                 )),
         ),

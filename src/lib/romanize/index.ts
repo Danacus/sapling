@@ -87,6 +87,63 @@ export function hasLocalRomanizer(language: string | undefined): boolean {
 }
 
 /**
+ * Primary subtags of the languages written in a script other than Latin —
+ * every non-Latin one `bcp47For` can answer, plus their close neighbours. The
+ * lesson prompt has the model write a `reading` beside every target-language
+ * string for exactly these ("always null when the target language is written
+ * in the Latin script").
+ */
+const WRITTEN_WITH_READINGS: ReadonlySet<string> = new Set([
+	'am',
+	'ar',
+	'be',
+	'bg',
+	'bn',
+	'el',
+	'fa',
+	'gu',
+	'he',
+	'hi',
+	'hy',
+	'ja',
+	'ka',
+	'kk',
+	'km',
+	'kn',
+	'ko',
+	'lo',
+	'mk',
+	'ml',
+	'mn',
+	'mr',
+	'my',
+	'ne',
+	'pa',
+	'ru',
+	'si',
+	'sr',
+	'ta',
+	'te',
+	'th',
+	'uk',
+	'ur',
+	'yue',
+	'zh'
+]);
+
+/**
+ * Whether a challenge written in this language carries readings: whether the
+ * language is written in a script other than Latin. It is what the practice
+ * stream's difficulty check assumes of a row not written yet
+ * (`crates/sapling-challenges`' `Serving.readings`), because the readings
+ * setting decides at which help levels such a row is served. An unknown
+ * language reads as Latin, as `bcp47For` reads it as English.
+ */
+export function writtenWithReadings(language: string | undefined): boolean {
+	return WRITTEN_WITH_READINGS.has(bcp47For(language).split('-')[0].toLowerCase());
+}
+
+/**
  * Load this language's romanizer, or resolve `null` when it has none.
  *
  * Call it once where a page or session starts — it fetches the implementation's

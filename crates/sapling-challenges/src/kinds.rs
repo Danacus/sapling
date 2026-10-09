@@ -118,6 +118,14 @@ impl WireType {
             _ => &[Step::Plain],
         }
     }
+
+    /// Whether a freshly written row of this kind can be heard before it is
+    /// read — `help.rs`' `can_listen` for a row the resolver wrote, which
+    /// always has its prompt.
+    pub fn can_listen(self) -> bool {
+        let stored = self.stored();
+        stored.kind == "multiple-choice" && stored.direction == Direction::ToNative
+    }
 }
 
 /// Every kind still written, in registry order (a seeded pick depends on it).

@@ -1,8 +1,8 @@
 /**
  * The practice stream against a real store: each pick reads what the last
  * answer wrote, a shown challenge never comes back in the same stream, match
- * rounds pace early words, and a head with nothing waits and says what a
- * refill would write for. The picking itself is Rust's (`crates/sapling-challenges`'
+ * rounds pace early words, a head with nothing waits and says what a refill
+ * would write for, and is passed only when the caller says no batch can help. The picking itself is Rust's (`crates/sapling-challenges`'
  * `stream.rs`) and tested there.
  */
 
@@ -133,9 +133,10 @@ describe('PracticeStream', () => {
 		await applyResult(first.challenge, { verdict: 'correct', answerGiven: 'a', now: NOW });
 		// `b` never had a challenge: the stream waits on it rather than reviewing `a` ahead.
 		expect(await stream.next()).toEqual({ kind: 'blocked', asked: false });
-		const scope = await stream.refill();
-		expect(scope).toMatchObject({ served: ['ca'], asked: [] });
-		expect(scope?.limit).toBeGreaterThanOrEqual(4);
+		const claim = await stream.refill();
+		expect(claim?.scope).toMatchObject({ served: ['ca'], asked: [] });
+		expect(claim?.scope.limit).toBeGreaterThanOrEqual(4);
+		expect(claim?.words).toEqual(['b', 'a']);
 		// Both words ahead are asked for now, so a second claim has nothing to ask.
 		expect(await stream.next()).toEqual({ kind: 'blocked', asked: true });
 		expect(await stream.refill()).toBeNull();
@@ -168,5 +169,31 @@ describe('PracticeStream', () => {
 		stream.resetAsked();
 		expect(await stream.next()).toEqual({ kind: 'blocked', asked: false });
 		expect(await stream.refill()).not.toBeNull();
+	});
+
+	it('gives a failed refill’s words back, so they can be asked for again', async () => {
+		await upsertItems([word('b')]);
+		const stream = new PracticeStream({ clock: ticking(), device });
+		const claim = await stream.refill();
+		expect(claim?.words).toEqual(['b']);
+		expect(await stream.next()).toEqual({ kind: 'blocked', asked: true });
+		stream.release(claim?.words ?? []);
+		expect(await stream.next()).toEqual({ kind: 'blocked', asked: false });
+		expect(await stream.refill()).not.toBeNull();
+	});
+
+	it('passes a head no batch can help for the next word with something, and only then', async () => {
+		await upsertItems([word('a'), word('b'), word('c')]);
+		await addToPool([recognition('cc', 'c')], NOW);
+		const stream = new PracticeStream({ clock: ticking(), device });
+
+		expect(await stream.next()).toEqual({ kind: 'blocked', asked: false });
+		const passed = await stream.next({ pass: true });
+		expect(passed.kind === 'challenge' && [passed.challenge.id, passed.instead]).toEqual([
+			'cc',
+			'c'
+		]);
+		// Shown, it is gone for this stream: nothing left anywhere to pass to.
+		expect(await stream.next({ pass: true })).toEqual({ kind: 'blocked', asked: false });
 	});
 });

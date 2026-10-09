@@ -3,7 +3,7 @@
  * what happens to a learner's SRS card and getting any of them wrong corrupts
  * scheduling silently: `applyResult` (the grade, and which items it filed one
  * for), `amendResult` (the learner re-rated a correct answer) and
- * `applyOverturn` (a dispute was won) — plus `updateItemAfterReview` itself,
+ * `applyOverturn` (a dispute was won, and undone exactly) — plus `updateItemAfterReview` itself,
  * which is the one call all three go through.
  *
  * They run against a **real store** — the same WASM SQLite and the same merge
@@ -19,7 +19,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { getItem, updateItemAfterReview } from '$lib/db';
+import { getItem, recentResults, updateItemAfterReview } from '$lib/db';
 import { setBackendForTesting } from '$lib/db/backend';
 import { makeTestBackend, type TestBackend } from '$lib/db/backend.testing';
 import { CardState, Grade } from '$lib/srs';
@@ -305,73 +305,98 @@ describe('amendResult', () => {
 });
 
 describe('applyOverturn', () => {
-	it('writes one Good review per item on the challenge', async () => {
+	/**
+	 * The card a fresh item lands on after one review of `grade` at `at`: what
+	 * an answer accepted on the spot leaves.
+	 */
+	async function foldedAlone(grade: Grade, at: number): Promise<FsrsCardState | undefined> {
+		await seed('ref');
+		await updateItemAfterReview('ref', { at, grade });
+		return cardOf('ref');
+	}
+
+	it('supersedes the Again with a Good at the answer, as if accepted on the spot', async () => {
 		await seed('i1');
-		await seed('i2');
-
-		await applyOverturn(cloze, NOW);
-
-		for (const id of ['i1', 'i2']) {
-			expect(await historyOf(id)).toEqual([{ at: NOW, grade: Grade.Good }]);
-			const card = (await cardOf(id)) as FsrsCardState;
-			// A Good review schedules the card into the future.
-			expect(card.due).toBeGreaterThan(NOW);
-			expect(card.reps).toBe(1);
-		}
-	});
-
-	it('stacks on top of the Again review the wrong answer already wrote', async () => {
-		await seed('i1');
-		// What `applyResult` leaves behind for a wrong answer.
-		await applyResult(
-			{ ...cloze, itemIds: ['i1'] },
-			{
-				verdict: 'wrong',
-				answerGiven: 'como',
-				now: NOW - 1000
-			}
-		);
-
-		await applyOverturn({ ...cloze, itemIds: ['i1'] }, NOW);
-
-		// The lapse is not rewritten — the compensating review is appended to it.
-		expect(await historyOf('i1')).toEqual([
-			{ at: NOW - 1000, grade: Grade.Again },
-			{ at: NOW, grade: Grade.Good }
-		]);
-	});
-
-	it('only compensates the multi-cloze items that were actually wrong', async () => {
-		await seed('i1');
-		await seed('i2');
-		await applyResult(multiCloze, {
+		const reviewed = await applyResult(single, {
 			verdict: 'wrong',
-			answerGiven: '1: Yo · 2: Tú',
-			itemVerdicts: [
-				{ itemId: 'i1', verdict: 'correct' },
-				{ itemId: 'i2', verdict: 'wrong' }
-			],
+			answerGiven: 'como',
 			now: NOW - 1000
 		});
 
-		await applyOverturn(multiCloze, NOW, new Set(['i2']));
+		const verdict = await applyOverturn(single, { answeredAt: NOW - 1000, reviewed });
 
+		expect(verdict).toBe('correct');
 		expect(await historyOf('i1')).toEqual([{ at: NOW - 1000, grade: Grade.Good }]);
-		expect(await historyOf('i2')).toEqual([
-			{ at: NOW - 1000, grade: Grade.Again },
-			{ at: NOW, grade: Grade.Good }
-		]);
+		expect(await cardOf('i1')).toEqual(await foldedAlone(Grade.Good, NOW - 1000));
 	});
 
-	it('skips items that no longer exist, and match-pairs rounds entirely', async () => {
+	it('only overturns the multi-cloze gaps that were wrong, and counts the rest', async () => {
 		await seed('i1');
+		await seed('i2');
+		const itemVerdicts = [
+			{ itemId: 'i1', verdict: 'almost' as const },
+			{ itemId: 'i2', verdict: 'wrong' as const }
+		];
+		const reviewed = await applyResult(multiCloze, {
+			verdict: 'wrong',
+			answerGiven: '1: Yó · 2: Tú',
+			itemVerdicts,
+			now: NOW - 1000
+		});
 
-		await applyOverturn({ ...cloze, itemIds: ['i1', 'gone'] }, NOW);
-		expect(await historyOf('i1')).toHaveLength(1);
+		const verdict = await applyOverturn(multiCloze, {
+			answeredAt: NOW - 1000,
+			reviewed,
+			itemVerdicts
+		});
+
+		expect(verdict).toBe('almost');
+		expect(await historyOf('i1')).toEqual([{ at: NOW - 1000, grade: Grade.Hard }]);
+		expect(await historyOf('i2')).toEqual([{ at: NOW - 1000, grade: Grade.Good }]);
+	});
+
+	it('logs the answer as overturned, so the difficulty model learns a success', async () => {
+		await seed('i1');
+		await seed('i2');
+		const wrong = async (now: number) => {
+			const reviewed = await applyResult(single, {
+				verdict: 'wrong',
+				answerGiven: 'como',
+				shown: 'typed',
+				now
+			});
+			return reviewed;
+		};
+		// Not pooled, the answer teaches nothing either way: pool the row first.
+		await store.commit('challengeAdded', { challenge: single, generatedAt: NOW - 5000 });
+		const reviewed = await wrong(NOW - 1000);
+		const missed = (await getItem('i1'))?.skill ?? 0;
+
+		await applyOverturn(single, { answeredAt: NOW - 1000, reviewed });
+
+		const overturned = (await getItem('i1'))?.skill ?? 0;
+		expect(overturned).toBeGreaterThan(missed);
+		// The result log keeps what was answered.
+		expect((await recentResults(1))[0]).toMatchObject({ verdict: 'wrong', at: NOW - 1000 });
+	});
+
+	it('skips items the answer never reviewed, and match-pairs rounds entirely', async () => {
+		await seed('i1');
+		const reviewed = await applyResult(
+			{ ...cloze, itemIds: ['i1', 'gone'] },
+			{ verdict: 'wrong', answerGiven: 'como', now: NOW - 1000 }
+		);
+
+		await applyOverturn(
+			{ ...cloze, itemIds: ['i1', 'gone'] },
+			{ answeredAt: NOW - 1000, reviewed }
+		);
+		expect(await historyOf('i1')).toEqual([{ at: NOW - 1000, grade: Grade.Good }]);
 		expect(await getItem('gone')).toBeUndefined();
 
-		await applyOverturn(match, NOW);
-		// Still just the one review from the cloze above.
+		expect(await applyOverturn(match, { answeredAt: NOW, reviewed: new Set(['i1']) })).toBe(
+			'correct'
+		);
 		expect(await historyOf('i1')).toHaveLength(1);
 	});
 });

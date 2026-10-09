@@ -155,3 +155,94 @@ fn deleting_a_word_forgets_its_answers() {
     rebuilt.import_data(&full.export_data().unwrap()).unwrap();
     assert_eq!(learned(&rebuilt), after);
 }
+
+/// Every word's card, keyed by id.
+fn cards(core: &Core) -> BTreeMap<String, Value> {
+    core.get_all_items(false)
+        .unwrap()
+        .into_iter()
+        .map(|item| (item.id, item.fsrs_card))
+        .collect()
+}
+
+/// An overturn is an answer accepted on the spot: each wrong word's `Again`
+/// is superseded by a `Good` at the answer's own instant, and the answer
+/// replays as `correct`. So a core lands — however the log arrives — exactly
+/// where a log that answered correctly in the first place does, cards and
+/// learned numbers alike.
+#[test]
+fn an_overturned_answer_counts_as_answered_correctly_right_away() {
+    let (_, events) = log();
+    let wrong: Vec<usize> = events
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e["type"] == "resultLogged" && e["payload"]["verdict"] == "wrong")
+        .map(|(i, _)| i)
+        .collect();
+    let at = wrong[wrong.len() / 2];
+    let answered = events[at]["payload"]["at"].as_f64().unwrap();
+    let challenge = events[at]["payload"]["challengeId"].clone();
+    let reviews: Vec<usize> = (0..at)
+        .filter(|&j| {
+            events[j]["type"] == "itemReviewed"
+                && events[j]["payload"]["at"].as_f64() == Some(answered)
+        })
+        .collect();
+    assert!(!reviews.is_empty());
+
+    // The log as the app writes an overturn: amendments, then the overturn.
+    let mut overturned = events.clone();
+    let mut append = |kind: &str, payload: Value| {
+        let n = overturned.len() + 1;
+        overturned.push(serde_json::json!({ "id": format!("o{n}"), "type": kind,
+            "at": answered + 5_000.0, "device": "sim", "payload": payload, "seq": n as f64 }));
+    };
+    for &j in &reviews {
+        append(
+            "reviewAmended",
+            serde_json::json!({ "device": "sim", "at": answered, "itemId": events[j]["payload"]["itemId"],
+                "grade": 3, "replaces": answered }),
+        );
+    }
+    append(
+        "resultOverturned",
+        serde_json::json!({ "challengeId": challenge, "answeredAt": answered, "verdict": "correct" }),
+    );
+
+    // The log of a learner who was accepted in the first place.
+    let mut right = events.clone();
+    right[at]["payload"]["verdict"] = Value::from("correct");
+    for &j in &reviews {
+        right[j]["payload"]["grade"] = Value::from(3);
+    }
+    let expected = core();
+    expected.apply_remote(&right).unwrap();
+    let (numbers, schedule) = (learned(&expected), cards(&expected));
+    assert_ne!(numbers, {
+        let plain = core();
+        plain.apply_remote(&events).unwrap();
+        learned(&plain)
+    });
+
+    let in_order = core();
+    for page in overturned.chunks(97) {
+        in_order.apply_remote(page).unwrap();
+    }
+    assert_eq!(learned(&in_order), numbers);
+    assert_eq!(cards(&in_order), schedule);
+
+    let reversed = core();
+    let backwards: Vec<Value> = overturned.iter().rev().cloned().collect();
+    for page in backwards.chunks(211) {
+        reversed.apply_remote(page).unwrap();
+    }
+    assert_eq!(learned(&reversed), numbers);
+    assert_eq!(cards(&reversed), schedule);
+
+    let imported = core();
+    imported
+        .import_data(&in_order.export_data().unwrap())
+        .unwrap();
+    assert_eq!(learned(&imported), numbers);
+    assert_eq!(cards(&imported), schedule);
+}
