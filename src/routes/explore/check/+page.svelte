@@ -29,7 +29,15 @@
 	import type { Profile } from '$lib/types';
 	import BackLink from '$lib/ui/BackLink.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
-	import { CHECK_COUNT, GRID_SIZE, STARTER_COUNT, fetchGrid, firstCheck, nextStep } from './check';
+	import {
+		CHECK_COUNT,
+		GRID_SIZE,
+		STARTER_COUNT,
+		byIntroduction,
+		fetchGrid,
+		firstCheck,
+		nextStep
+	} from './check';
 	import type { TakenWord } from './check';
 
 	/** Nudges, not choices: the topic box takes anything. */
@@ -40,9 +48,10 @@
 	let loading = $state(true);
 	let loadError = $state('');
 	let profile = $state<Profile | undefined>(undefined);
+	/** Oldest first, words added this run appended: the order `exclude` reads. */
 	let library = $state.raw<TakenWord[]>([]);
 	/** How a check run opens, from the library as it was loaded (`firstCheck`). */
-	let opening = $state.raw<ReturnType<typeof firstCheck>>({ step: 'start', seed: [] });
+	let opening = $state<CheckStep>('start');
 	let mockMode = $state(false);
 
 	/** `start` is the intro (check) or the topic picker (starter). */
@@ -68,7 +77,7 @@
 				// `undefined` means the root layout is about to redirect to onboarding.
 				if (!loadedProfile) return;
 				profile = loadedProfile;
-				library = items.map(({ term, romanization }) => ({ term, romanization }));
+				library = byIntroduction(items);
 				opening = firstCheck(items);
 				mockMode = isMockMode();
 				loading = false;
@@ -107,9 +116,6 @@
 			},
 			library,
 			shown,
-			// Steers the run off the words the learner already has; a starter
-			// grid is about its topic instead.
-			seed: starter ? [] : opening.seed,
 			limit: starter ? STARTER_COUNT : GRID_SIZE,
 			count: starter ? STARTER_COUNT : CHECK_COUNT
 		});
@@ -167,7 +173,7 @@
 		busy = true;
 		error = '';
 		try {
-			await load(opening.step);
+			await load(opening);
 		} catch (cause) {
 			error = cause instanceof Error ? cause.message : 'Could not fetch words. Try again.';
 		} finally {

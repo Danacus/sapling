@@ -1,7 +1,7 @@
 /**
  * The decisions behind "Check what you know", kept out of the page so they
  * can be tested in node: which proposed words are new, how hard the next grid
- * is, and how one grid is fetched.
+ * is, what the model is told to leave out, and how one grid is fetched.
  *
  * Deliberately dumb. There is no frequency rank and no estimate of how many
  * words the learner knows: a grid is whatever the model proposes, minus what
@@ -10,25 +10,29 @@
  * is stored — a tapped word becomes an ordinary card through `addWords`, and a
  * run that stops halfway has already kept everything it added.
  *
- * The repeat filter is the client's and never the model's: `recent` tells the
- * model what it already listed, but a model that repeats itself anyway must
- * not show the learner the same word twice or offer one they already have.
+ * The model is told everything to leave out — the whole library and the run,
+ * newest last (`excludeTerms`) — because one that saw only the last few grids
+ * listed the earlier ones again and a grid of twenty filtered down to five.
+ * The tail of that list is also what the step is relative to, so the library
+ * goes in by when each word was added. Still, the repeat filter is the
+ * client's and never the model's: a model that repeats itself anyway must not
+ * show the learner the same word twice or offer one they already have.
  */
 
 import { wordBatch } from '$lib/llm';
 import type { CallOptions, CheckStep, SuggestedWord, WordBatchArgs } from '$lib/llm';
-import { sameCard } from '$lib/text';
+import { sameCard, termKey } from '$lib/text';
 
 /** Tiles in one check grid. */
 export const GRID_SIZE = 20;
-/** Fewer survivors than this and the grid is fetched once more before showing. */
-export const MIN_GRID = 8;
-/** What a check batch asks for: room for the filter to drop a third. */
-export const CHECK_COUNT = 30;
+/** What a check batch asks for: twice the grid, room for the filter to drop half. */
+export const CHECK_COUNT = 40;
 /** What a starter batch asks for: a topic's dozen first words. */
 export const STARTER_COUNT = 12;
-/** The latest shown terms a request carries (the call caps there too). */
-export const RECENT_LIMIT = 60;
+/** The most terms `exclude` carries, the newest kept (the call caps there too). */
+export const EXCLUDE_LIMIT = 2000;
+/** Calls one grid may take before it is shown short. */
+export const MAX_FETCHES = 3;
 
 /** Share tapped at or above which the next grid steps harder. */
 const HARDER_AT = 0.7;
@@ -76,72 +80,90 @@ export function freshWords(
 	return fresh;
 }
 
-/** The last {@link RECENT_LIMIT} terms of `shown`, oldest first. */
-export function recentTerms(shown: readonly { term: string }[]): string[] {
-	return shown.slice(-RECENT_LIMIT).map((word) => word.term);
+/**
+ * `terms` as the model's `exclude`: trimmed, blanks dropped, each once at its
+ * *last* place (by `termKey`), and only the newest {@link EXCLUDE_LIMIT}. The
+ * last place, because a word added this run sits in both the library and the
+ * run, and it is the run's order the step reads off the tail.
+ */
+export function excludeTerms(terms: readonly string[]): string[] {
+	const seen = new Set<string>();
+	const kept: string[] = [];
+	for (let i = terms.length - 1; i >= 0 && kept.length < EXCLUDE_LIMIT; i--) {
+		const term = terms[i]?.trim() ?? '';
+		if (!term) continue;
+		const key = termKey(term);
+		if (seen.has(key)) continue;
+		seen.add(key);
+		kept.push(term);
+	}
+	return kept.reverse();
+}
+
+/** The library oldest first, so its newest words end up last in `exclude`. */
+export function byIntroduction(
+	library: readonly (TakenWord & { introducedAt: number })[]
+): TakenWord[] {
+	return [...library]
+		.sort((a, b) => a.introducedAt - b.introducedAt)
+		.map(({ term, romanization }) => ({ term, romanization }));
 }
 
 /**
  * How a check run opens. An empty library starts at the very most common
  * words. A library that already holds words would get those same common words
- * back, nearly all of them filtered away, so the run instead opens at `same`
- * with the latest-added library terms as `recent`: "about as hard as what I
- * last added, none of these". Still no estimate — just the newest cards as the
- * reference point.
+ * back, nearly all of them filtered away, so the run instead opens at `same`:
+ * "about as hard as the last words in `exclude`", which are the latest-added
+ * library terms ({@link byIntroduction}). Still no estimate — just the newest
+ * cards as the reference point.
  */
-export function firstCheck(library: readonly { term: string; introducedAt: number }[]): {
-	step: CheckStep;
-	seed: string[];
-} {
-	if (library.length === 0) return { step: 'start', seed: [] };
-	const seed = [...library]
-		.sort((a, b) => a.introducedAt - b.introducedAt)
-		.slice(-RECENT_LIMIT)
-		.map((item) => item.term);
-	return { step: 'same', seed };
+export function firstCheck(library: readonly unknown[]): CheckStep {
+	return library.length === 0 ? 'start' : 'same';
 }
 
 export interface GridRequest {
-	args: Omit<WordBatchArgs, 'recent' | 'count'>;
-	/** The library: never offered again. */
+	args: Omit<WordBatchArgs, 'exclude' | 'count'>;
+	/** The library, oldest first ({@link byIntroduction}): never offered again. */
 	library: readonly TakenWord[];
 	/** Everything shown this run, oldest first: never offered again either. */
 	shown: readonly SuggestedWord[];
-	/**
-	 * Library terms sent as `recent` ahead of `shown`, oldest first
-	 * ({@link firstCheck}); a hint only, since the library is filtered anyway.
-	 */
-	seed?: readonly string[];
 	/** Tiles wanted; a check grid is {@link GRID_SIZE}. */
 	limit: number;
-	/** Words to ask the model for. */
+	/** Words to ask the model for, per call. */
 	count: number;
 }
 
 /**
- * One grid: a batch, filtered; and if too little of it survives, one more
- * batch — told about the first one's words too, so it moves on — filtered
- * against everything including the first's survivors. Never a third: a model
- * that keeps repeating itself gets a short grid rather than a loop.
+ * One grid: batches, each filtered against the library, the run and the grid
+ * so far, until `limit` survive or {@link MAX_FETCHES} calls are spent. Each
+ * later call's `exclude` also names every word the earlier replies listed,
+ * kept or not, so it moves on. A model that keeps repeating itself gets a
+ * short grid rather than a loop; an empty one is the page's error.
+ *
+ * A later call that fails leaves the grid with what it has — the learner sees
+ * a short grid rather than an error over words already in hand — unless that
+ * is nothing, or the caller aborted.
  */
 export async function fetchGrid(
 	request: GridRequest,
 	opts: CallOptions = {},
 	fetchBatch: typeof wordBatch = wordBatch
 ): Promise<SuggestedWord[]> {
-	const { args, library, shown, seed = [], limit, count } = request;
-	const taken = [...library, ...shown];
-	const steer = seed.map((term) => ({ term }));
-	const first = await fetchBatch(
-		{ ...args, count, recent: recentTerms([...steer, ...shown]) },
-		opts
-	);
-	const grid = freshWords(first.words, taken, limit);
-	if (grid.length >= Math.min(MIN_GRID, limit)) return grid;
-
-	const second = await fetchBatch(
-		{ ...args, count, recent: recentTerms([...steer, ...shown, ...first.words]) },
-		opts
-	);
-	return [...grid, ...freshWords(second.words, [...taken, ...grid], limit - grid.length)];
+	const { args, library, shown, limit, count } = request;
+	const taken: TakenWord[] = [...library, ...shown];
+	const listed: SuggestedWord[] = [];
+	const grid: SuggestedWord[] = [];
+	for (let call = 0; call < MAX_FETCHES && grid.length < limit; call++) {
+		const exclude = excludeTerms([...taken, ...listed].map((word) => word.term));
+		let words: SuggestedWord[];
+		try {
+			words = (await fetchBatch({ ...args, count, exclude }, opts)).words;
+		} catch (cause) {
+			if (grid.length === 0 || opts.signal?.aborted) throw cause;
+			break;
+		}
+		grid.push(...freshWords(words, [...taken, ...grid], limit - grid.length));
+		listed.push(...words);
+	}
+	return grid;
 }

@@ -38,7 +38,7 @@ export async function getBatch(args: BatchArgs, opts: BatchOptions = {}): Promis
 /**
  * A grid of words for "Check what you know". The model only proposes: the
  * caller filters out what the learner already has or has seen, because
- * `recent` is a hint the model may ignore.
+ * `exclude` is a hint the model may ignore.
  */
 export function wordBatch(args: WordBatchArgs, opts: CallOptions = {}): Promise<WordBatch> {
 	return callLlm('wordBatch', args, opts);

@@ -5,10 +5,14 @@
 //! step harder, the same or a step easier than the ones it last listed, and the
 //! host decides the step from how many were tapped.
 //!
-//! The host also filters what comes back against the library and everything
-//! already shown, and never trusts `recent` to have done it: the list is only
-//! a hint that keeps most of a batch new, bounded so the prompt does not grow
-//! with the run.
+//! `exclude` is everything the learner already has or has been shown — the
+//! whole library and the run so far, newest last — because a model that sees
+//! only the last few grids lists the earlier ones again and a grid shrinks to
+//! a handful once they are filtered. Its tail doubles as the step's reference:
+//! "harder" and "easier" are relative to the last words in it. It is capped at
+//! [`MAX_EXCLUDE_WORDS`], the newest kept, so a huge library costs a bounded
+//! prompt. The host still filters what comes back against the library and
+//! everything shown, and never trusts `exclude` to have done it.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -30,9 +34,10 @@ const WORDS_ZH: &str = include_str!("../fixtures/word-batch-zh.json");
 /// The most words one batch asks for: a grid of twenty, with room for the
 /// host's repeat filter to drop some.
 pub const MAX_BATCH_WORDS: usize = 40;
-/// The most already-shown terms a request carries, the latest ones: enough to
-/// steer the model off the last two grids without the prompt growing per batch.
-pub const MAX_RECENT_WORDS: usize = 60;
+/// The most terms `exclude` carries, the newest ones: a library past
+/// `ADVANCED_WORDS` with a run on top, at a few tokens a term, without the
+/// prompt growing without bound.
+pub const MAX_EXCLUDE_WORDS: usize = 2000;
 /// What a batch asks for when the host does not say.
 const DEFAULT_COUNT: usize = 30;
 
@@ -46,7 +51,7 @@ pub enum WordBatchMode {
     Starter,
 }
 
-/// How hard the next check batch is, relative to the recent words.
+/// How hard the next check batch is, relative to the last words in `exclude`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum CheckStep {
@@ -77,10 +82,11 @@ pub struct WordBatchArgs {
     #[serde(default)]
     #[ts(optional)]
     pub count: Option<usize>,
-    /// Terms already shown this run, oldest first; only the last
-    /// [`MAX_RECENT_WORDS`] are sent.
+    /// Every term the learner has or has been shown, newest last; blanks and
+    /// repeats (by term key, the later place kept) dropped, and only the last
+    /// [`MAX_EXCLUDE_WORDS`] sent.
     #[serde(default)]
-    pub recent: Vec<String>,
+    pub exclude: Vec<String>,
 }
 
 /// One word in the grid. Never stored as such: a tapped one is handed to
@@ -131,7 +137,7 @@ struct Payload<'a> {
     about: Option<String>,
     count: usize,
     // Last: it is what differs from one batch to the next.
-    recent: Vec<&'a str>,
+    exclude: Vec<&'a str>,
 }
 
 fn count_of(args: &WordBatchArgs) -> usize {
@@ -140,16 +146,20 @@ fn count_of(args: &WordBatchArgs) -> usize {
         .clamp(1, MAX_BATCH_WORDS)
 }
 
-/// The last [`MAX_RECENT_WORDS`] non-blank terms, trimmed, in order.
-fn recent_of(args: &WordBatchArgs) -> Vec<&str> {
-    let terms: Vec<&str> = args
-        .recent
+/// The non-blank terms, trimmed, each once at its last place, in order; the
+/// last [`MAX_EXCLUDE_WORDS`] of them.
+fn exclude_of(args: &WordBatchArgs) -> Vec<&str> {
+    let mut seen = std::collections::HashSet::new();
+    let mut terms: Vec<&str> = args
+        .exclude
         .iter()
+        .rev()
         .map(|term| term.trim())
-        .filter(|term| !term.is_empty())
+        .filter(|term| !term.is_empty() && seen.insert(term_key(term)))
+        .take(MAX_EXCLUDE_WORDS)
         .collect();
-    let skip = terms.len().saturating_sub(MAX_RECENT_WORDS);
-    terms[skip..].to_vec()
+    terms.reverse();
+    terms
 }
 
 pub fn word_batch_request(args: &WordBatchArgs) -> ChatRequest {
@@ -167,7 +177,7 @@ pub fn word_batch_request(args: &WordBatchArgs) -> ChatRequest {
             .map(|topic| truncated(topic, MAX_TOPIC_CHARS)),
         about: non_blank(profile.about.as_deref()).map(|about| truncated(about, MAX_ABOUT_CHARS)),
         count: count_of(args),
-        recent: recent_of(args),
+        exclude: exclude_of(args),
     };
     ChatRequest {
         messages: vec![
@@ -215,7 +225,7 @@ pub fn parse_word_batch(raw: &str) -> Result<WordBatch> {
 }
 
 /// A window onto a fixed list, easiest first, that moves the way a live batch
-/// would: it starts after the last recent word it finds, a step harder skips a
+/// would: it starts after the last word of `exclude` it has, a step harder skips a
 /// few ahead and a step easier backs up a few — into words already shown, which
 /// is what exercises the host's repeat filter. A starter batch starts at a
 /// place the topic picks. Deterministic, so a test can name what comes back.
@@ -227,18 +237,19 @@ fn mock_words(args: &WordBatchArgs) -> String {
     };
     let pool: Reply = serde_json::from_str(source).expect("a fixture is JSON");
     let len = pool.words.len();
-    let recent = recent_of(args);
+    let exclude = exclude_of(args);
     let start = match args.mode {
         WordBatchMode::Starter => non_blank(args.topic.as_deref())
             .map(|topic| topic.bytes().map(usize::from).sum::<usize>())
             .unwrap_or(0),
         WordBatchMode::Check => {
-            let after = recent
-                .last()
-                .and_then(|last| {
+            let after = exclude
+                .iter()
+                .rev()
+                .find_map(|term| {
                     pool.words
                         .iter()
-                        .position(|word| term_key(&word.term) == term_key(last))
+                        .position(|word| term_key(&word.term) == term_key(term))
                 })
                 .map_or(0, |at| at + 1);
             match args.step.unwrap_or_default() {
@@ -280,7 +291,7 @@ mod tests {
             step: None,
             topic: None,
             count: None,
-            recent: vec![],
+            exclude: vec![],
         }
     }
 
@@ -303,9 +314,11 @@ mod tests {
         check.step = Some(CheckStep::Harder);
         check.topic = Some("ignored in check mode".into());
         check.count = Some(500);
-        check.recent = (0..80)
+        // 2,500 terms, a blank, and an early term again at the end: the repeat
+        // moves to the end, and the oldest beyond the cap fall off.
+        check.exclude = (0..2500)
             .map(|i| format!("w{i}"))
-            .chain([" ".into()])
+            .chain([" ".into(), " W2400 ".into()])
             .collect();
 
         let request = word_batch_request(&check);
@@ -318,17 +331,25 @@ mod tests {
             .collect();
         assert_eq!(
             keys,
-            ["native", "target", "level", "mode", "step", "about", "count", "recent"]
+            ["native", "target", "level", "mode", "step", "about", "count", "exclude"]
         );
         assert_eq!(payload["level"], "intermediate");
         assert_eq!(payload["mode"], "check");
         assert_eq!(payload["step"], "harder");
         assert_eq!(payload["about"].as_str().unwrap().len(), MAX_ABOUT_CHARS);
         assert_eq!(payload["count"], MAX_BATCH_WORDS);
-        let recent = payload["recent"].as_array().unwrap();
-        assert_eq!(recent.len(), MAX_RECENT_WORDS);
-        assert_eq!(recent[0], "w20");
-        assert_eq!(recent[MAX_RECENT_WORDS - 1], "w79");
+        let exclude: Vec<&str> = payload["exclude"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|term| term.as_str().unwrap())
+            .collect();
+        assert_eq!(exclude.len(), MAX_EXCLUDE_WORDS);
+        // Still 2,500 distinct, the repeat moved last; the newest 2,000 kept.
+        assert_eq!(exclude[0], "w500");
+        assert_eq!(exclude[MAX_EXCLUDE_WORDS - 2], "w2499");
+        assert_eq!(exclude[MAX_EXCLUDE_WORDS - 1], "W2400");
+        assert!(!exclude.contains(&"w2400"));
         assert_eq!(request.temperature, Some(0.7));
     }
 
@@ -337,18 +358,21 @@ mod tests {
         let payload_of = |a: &WordBatchArgs| payload(&word_batch_request(a));
         assert_eq!(
             payload_of(&args("Spanish", WordBatchMode::Check)),
-            json!({ "native": "English", "target": "Spanish", "level": "beginner", "mode": "check", "step": "start", "count": DEFAULT_COUNT, "recent": [] })
+            json!({ "native": "English", "target": "Spanish", "level": "beginner", "mode": "check", "step": "start", "count": DEFAULT_COUNT, "exclude": [] })
         );
 
         let mut starter = args("Spanish", WordBatchMode::Starter);
         starter.step = Some(CheckStep::Easier);
         starter.topic = Some(format!(" {} ", "t".repeat(200)));
         starter.count = Some(12);
+        starter.exclude = vec!["casa".into(), "agua".into()];
         let payload = payload_of(&starter);
         assert!(payload.get("step").is_none());
         assert_eq!(payload["mode"], "starter");
         assert_eq!(payload["topic"].as_str().unwrap().len(), MAX_TOPIC_CHARS);
         assert_eq!(payload["count"], 12);
+        // A starter grid stays off the library too.
+        assert_eq!(payload["exclude"], json!(["casa", "agua"]));
     }
 
     #[test]
@@ -422,7 +446,9 @@ mod tests {
         // The next batch starts after the last word shown, so a same-step run
         // moves on; a harder one skips ahead, an easier one backs into words
         // already shown, which the host has to filter.
-        check.recent = vec!["casa".into(), "agua".into()];
+        // A term the list does not have (a library word typed in elsewhere) is
+        // passed over for the last one it does.
+        check.exclude = vec!["casa".into(), "agua".into(), "zzz".into()];
         check.step = Some(CheckStep::Same);
         assert_eq!(terms(&run(&check)), ["comer", "bueno", "día", "hablar"]);
         check.step = Some(CheckStep::Harder);

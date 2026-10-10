@@ -1,8 +1,9 @@
 /**
- * The check screen's decisions: the step rule, the repeat filter, and one grid
- * fetched — against a scripted batch for the refetch rule, and through the
- * real wasm mock for the whole path, whose easier step backs into words
- * already shown so the filter has something to drop.
+ * The check screen's decisions: the step rule, the repeat filter, what the
+ * model is told to leave out, and one grid fetched — against a scripted batch
+ * for the refetch rule, and through the real wasm mock for the whole path,
+ * whose easier step backs into words already shown so the filter has
+ * something to drop.
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -11,14 +12,16 @@ import { loadWasmCore } from '$lib/db/backend.testing';
 import type { SuggestedWord, WordBatch, WordBatchArgs } from '$lib/llm';
 import {
 	CHECK_COUNT,
+	EXCLUDE_LIMIT,
 	GRID_SIZE,
-	MIN_GRID,
-	RECENT_LIMIT,
+	MAX_FETCHES,
+	STARTER_COUNT,
+	byIntroduction,
+	excludeTerms,
 	fetchGrid,
 	firstCheck,
 	freshWords,
-	nextStep,
-	recentTerms
+	nextStep
 } from './check';
 
 beforeAll(loadWasmCore);
@@ -74,118 +77,172 @@ describe('freshWords', () => {
 });
 
 describe('firstCheck', () => {
-	it('opens an empty library at the most common words, with nothing recent', () => {
-		expect(firstCheck([])).toEqual({ step: 'start', seed: [] });
-	});
-
-	it('opens a library at the same step as its latest-added words', () => {
-		const library = Array.from({ length: 80 }, (_, i) => ({
-			term: `w${i}`,
-			// Out of order, so the sort is what puts the newest last.
-			introducedAt: i % 2 === 0 ? i : 1000 + i
-		}));
-		const { step, seed } = firstCheck(library);
-		expect(step).toBe('same');
-		expect(seed).toHaveLength(RECENT_LIMIT);
-		// The 40 odd ones are newest; the newest of all comes last.
-		expect(seed.slice(-40)).toEqual(library.filter((_, i) => i % 2 === 1).map((w) => w.term));
-		expect(seed.at(-1)).toBe('w79');
-		expect(firstCheck([{ term: 'casa', introducedAt: 1 }])).toEqual({
-			step: 'same',
-			seed: ['casa']
-		});
+	it('opens an empty library at the most common words, any other at the same step', () => {
+		expect(firstCheck([])).toBe('start');
+		expect(firstCheck([{ term: 'casa', introducedAt: 1 }])).toBe('same');
 	});
 });
 
-describe('recentTerms', () => {
-	it('sends only the latest terms', () => {
-		const shown = words(...Array.from({ length: 80 }, (_, i) => `w${i}`));
-		const recent = recentTerms(shown);
-		expect(recent).toHaveLength(RECENT_LIMIT);
-		expect(recent[0]).toBe('w20');
-		expect(recent.at(-1)).toBe('w79');
+describe('byIntroduction', () => {
+	it('puts the newest library word last, so it ends `exclude`', () => {
+		const library = [
+			{ term: 'c', introducedAt: 30, romanization: null },
+			{ term: 'a', introducedAt: 10 },
+			{ term: 'b', introducedAt: 20 }
+		];
+		expect(byIntroduction(library)).toEqual([
+			{ term: 'a', romanization: undefined },
+			{ term: 'b', romanization: undefined },
+			{ term: 'c', romanization: null }
+		]);
+	});
+});
+
+describe('excludeTerms', () => {
+	it('keeps each term once, at its last place, without blanks', () => {
+		expect(excludeTerms([' casa ', 'perro', '', '  ', 'Casa', 'gato', 'PERRO'])).toEqual([
+			'Casa',
+			'gato',
+			'PERRO'
+		]);
+	});
+
+	it('keeps only the newest terms past the cap', () => {
+		const terms = Array.from({ length: EXCLUDE_LIMIT + 500 }, (_, i) => `w${i}`);
+		const exclude = excludeTerms(terms);
+		expect(exclude).toHaveLength(EXCLUDE_LIMIT);
+		expect(exclude[0]).toBe('w500');
+		expect(exclude.at(-1)).toBe(`w${EXCLUDE_LIMIT + 499}`);
 	});
 });
 
 describe('fetchGrid', () => {
 	const args = { profile, wordCount: 0, mode: 'check' as const, step: 'same' as const };
+	const many = (prefix: string, n: number) =>
+		words(...Array.from({ length: n }, (_, i) => `${prefix}${i}`));
 
-	function scripted(...replies: SuggestedWord[][]) {
+	function scripted(...replies: (SuggestedWord[] | Error)[]) {
 		const asked: WordBatchArgs[] = [];
 		const fetchBatch = async (request: WordBatchArgs): Promise<WordBatch> => {
 			asked.push(request);
-			return { words: replies[asked.length - 1] ?? [] };
+			const reply = replies[asked.length - 1] ?? [];
+			if (reply instanceof Error) throw reply;
+			return { words: reply };
 		};
 		return { asked, fetchBatch };
 	}
 
-	it('shows the first batch when enough of it is new', async () => {
-		const { asked, fetchBatch } = scripted(words(...Array.from({ length: 10 }, (_, i) => `w${i}`)));
+	it('stops after one call when it fills the grid', async () => {
+		const { asked, fetchBatch } = scripted(many('w', 30), many('v', 30));
 		const grid = await fetchGrid(
 			{ args, library: [], shown: [], limit: GRID_SIZE, count: CHECK_COUNT },
 			{},
 			fetchBatch
 		);
-		expect(grid).toHaveLength(10);
+		expect(grid.map((w) => w.term)).toEqual(many('w', GRID_SIZE).map((w) => w.term));
 		expect(asked).toHaveLength(1);
 		expect(asked[0]?.count).toBe(CHECK_COUNT);
 	});
 
-	it('fetches once more when too little survives, and never a third time', async () => {
+	it('excludes the library, then the run, then every earlier reply', async () => {
+		const library = words('a', 'b');
+		const shown = words('c', 'A');
+		const { asked, fetchBatch } = scripted(words('a', 'd', 'e'), words('d', 'f'), many('w', 30));
+		await fetchGrid({ args, library, shown, limit: GRID_SIZE, count: CHECK_COUNT }, {}, fetchBatch);
+		// `A` was shown after `a` was added, so it takes `a`'s place.
+		expect(asked.map((request) => request.exclude)).toEqual([
+			['b', 'c', 'A'],
+			['b', 'c', 'a', 'd', 'e'],
+			['b', 'c', 'a', 'e', 'd', 'f']
+		]);
+	});
+
+	it('fills across calls and gives up short after three', async () => {
 		const library = words('a', 'b', 'c');
-		const shown = words('d', 'e');
 		const { asked, fetchBatch } = scripted(
-			words('a', 'b', 'c', 'd', 'e', 'f'),
+			words('a', 'b', 'f'),
 			words('f', 'g', 'a'),
-			words('h', 'i', 'j', 'k', 'l', 'm', 'n', 'o')
+			words('b', 'h'),
+			many('never', 30)
 		);
 		const grid = await fetchGrid(
-			{ args, library, shown, limit: GRID_SIZE, count: CHECK_COUNT },
+			{ args, library, shown: [], limit: GRID_SIZE, count: CHECK_COUNT },
 			{},
 			fetchBatch
 		);
-		expect(grid.map((w) => w.term)).toEqual(['f', 'g']);
-		expect(grid.length).toBeLessThan(MIN_GRID);
-		expect(asked).toHaveLength(2);
-		// The second ask also names what the first one listed, so it moves on.
-		expect(asked[0]?.recent).toEqual(['d', 'e']);
-		expect(asked[1]?.recent).toEqual(['d', 'e', 'a', 'b', 'c', 'd', 'e', 'f']);
+		expect(grid.map((w) => w.term)).toEqual(['f', 'g', 'h']);
+		expect(asked).toHaveLength(MAX_FETCHES);
 	});
 
-	it('sends the seed ahead of what was shown', async () => {
-		const { asked, fetchBatch } = scripted(words(...Array.from({ length: 10 }, (_, i) => `w${i}`)));
+	it('takes only what the grid still has room for', async () => {
+		const { asked, fetchBatch } = scripted(many('w', 15), many('v', 15));
+		const grid = await fetchGrid(
+			{ args, library: [], shown: [], limit: GRID_SIZE, count: CHECK_COUNT },
+			{},
+			fetchBatch
+		);
+		expect(grid).toHaveLength(GRID_SIZE);
+		expect(grid.at(-1)?.term).toBe('v4');
+		expect(asked).toHaveLength(2);
+	});
+
+	it('shows what it has when a later call fails, and fails with nothing', async () => {
+		const kept = scripted(words('a', 'b'), new Error('offline'));
+		const grid = await fetchGrid(
+			{ args, library: [], shown: [], limit: GRID_SIZE, count: CHECK_COUNT },
+			{},
+			kept.fetchBatch
+		);
+		expect(grid.map((w) => w.term)).toEqual(['a', 'b']);
+		expect(kept.asked).toHaveLength(2);
+
+		const lost = scripted(words('a'), new Error('offline'));
+		await expect(
+			fetchGrid(
+				{ args, library: words('a'), shown: [], limit: GRID_SIZE, count: CHECK_COUNT },
+				{},
+				lost.fetchBatch
+			)
+		).rejects.toThrow('offline');
+	});
+
+	it('sends a starter grid the library too', async () => {
+		const { asked, fetchBatch } = scripted(many('w', STARTER_COUNT));
 		await fetchGrid(
 			{
-				args,
-				library: [],
-				shown: words('d'),
-				seed: ['a', 'b'],
-				limit: GRID_SIZE,
-				count: CHECK_COUNT
+				args: { profile, wordCount: 2, mode: 'starter', topic: 'food' },
+				library: words('casa', 'agua'),
+				shown: [],
+				limit: STARTER_COUNT,
+				count: STARTER_COUNT
 			},
 			{},
 			fetchBatch
 		);
-		expect(asked[0]?.recent).toEqual(['a', 'b', 'd']);
+		expect(asked).toHaveLength(1);
+		expect(asked[0]?.exclude).toEqual(['casa', 'agua']);
 	});
 
 	it('moves a second run past the library through the real mock', async () => {
-		const library = words(...Array.from({ length: 30 }, (_, i) => `x${i}`));
 		const first = await fetchGrid({
 			args: { ...args, step: 'start' },
 			library: [],
 			shown: [],
-			limit: 30,
+			limit: GRID_SIZE,
 			count: CHECK_COUNT
 		});
-		// A learner who already added the first thirty mock words opens at
-		// `same` after them, and gets a full grid of new ones.
-		const { step, seed } = firstCheck(first.map((w, i) => ({ term: w.term, introducedAt: i })));
+		expect(first).toHaveLength(GRID_SIZE);
+		// A learner who added the first grid and, later, thirty words the mock
+		// does not list opens at `same` after the last mock word they have, and
+		// gets a full grid of new ones.
+		const items = [
+			...first.map((w, i) => ({ term: w.term, introducedAt: i })),
+			...many('x', 30).map((w, i) => ({ term: w.term, introducedAt: 1000 + i }))
+		];
 		const grid = await fetchGrid({
-			args: { ...args, step },
-			library: [...library, ...first],
+			args: { ...args, step: firstCheck(items) },
+			library: byIntroduction(items),
 			shown: [],
-			seed,
 			limit: GRID_SIZE,
 			count: CHECK_COUNT
 		});
@@ -214,7 +271,7 @@ describe('fetchGrid', () => {
 			count: CHECK_COUNT
 		});
 		const before = new Set(first.map((w) => w.term));
-		expect(next.length).toBeGreaterThanOrEqual(MIN_GRID);
+		expect(next).toHaveLength(GRID_SIZE);
 		expect(next.filter((w) => before.has(w.term))).toEqual([]);
 		expect(next.map((w) => w.term)).not.toContain('casa');
 	});

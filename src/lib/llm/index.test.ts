@@ -142,7 +142,7 @@ describe('wordBatch', () => {
 	const profile = { nativeLanguage: 'English', targetLanguage: 'Chinese' };
 
 	it('answers words through the real parser, readings included', async () => {
-		const batch = await wordBatch({ profile, wordCount: 0, mode: 'check', count: 3, recent: [] });
+		const batch = await wordBatch({ profile, wordCount: 0, mode: 'check', count: 3, exclude: [] });
 		expect(batch.words).toEqual([
 			{ term: '家', meaning: 'home', romanization: 'jiā' },
 			{ term: '水', meaning: 'water', romanization: 'shuǐ' },
@@ -150,19 +150,19 @@ describe('wordBatch', () => {
 		]);
 	});
 
-	it('moves on past the recent words and varies a starter by topic', async () => {
+	it('moves on past the excluded words and varies a starter by topic', async () => {
 		const next = await wordBatch({
 			profile,
 			wordCount: 0,
 			mode: 'check',
 			step: 'same',
 			count: 1,
-			recent: ['家', '水']
+			exclude: ['家', '水']
 		});
 		expect(next.words.map((w) => w.term)).toEqual(['吃']);
 
 		const starter = (topic: string) =>
-			wordBatch({ profile, wordCount: 0, mode: 'starter', topic, count: 12, recent: [] });
+			wordBatch({ profile, wordCount: 0, mode: 'starter', topic, count: 12, exclude: [] });
 		const [food, travel] = await Promise.all([starter('food'), starter('travel')]);
 		expect(food.words).toHaveLength(12);
 		expect(travel.words).not.toEqual(food.words);

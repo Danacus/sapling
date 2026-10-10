@@ -250,7 +250,7 @@ mod tests {
             &mock,
             "wordBatch",
             &format!(
-                r#"[{{"profile":{PROFILE},"wordCount":0,"mode":"check","step":"start","count":2,"recent":[]}}]"#
+                r#"[{{"profile":{PROFILE},"wordCount":0,"mode":"check","step":"start","count":2,"exclude":[]}}]"#
             ),
         )
         .unwrap();
