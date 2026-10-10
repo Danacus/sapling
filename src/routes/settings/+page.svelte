@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { tick } from 'svelte';
+
 	import { browser } from '$app/environment';
 
 	import {
@@ -269,6 +271,12 @@
 				usageRequests = readUsage('ll.usage.requests');
 
 				loading = false;
+				// A link to a field (the home screen's "Add a key" goes to
+				// #settings-api-key) arrives while the spinner is up, so the
+				// browser's own jump to the hash found nothing: do it now.
+				void tick().then(() => {
+					if (!cancelled) focusFromHash();
+				});
 			})
 			.catch((cause) => {
 				if (cancelled) return;
@@ -305,6 +313,15 @@
 	/** e.g. "37 MB of 105 MB" — both halves come from the cache module. */
 	const audioCacheSize = $derived(formatCacheSize(audioBytes));
 	const audioCacheCap = formatCacheSize(AUDIO_CACHE_MAX_BYTES);
+
+	function focusFromHash() {
+		const id = decodeURIComponent(location.hash.slice(1));
+		if (!id) return;
+		const target = document.getElementById(id);
+		if (!target) return;
+		target.scrollIntoView({ block: 'center' });
+		target.focus({ preventScroll: true });
+	}
 
 	function readUsage(key: string): number {
 		try {
@@ -710,18 +727,14 @@
 							{profile.nativeLanguage}
 						</span>
 					</p>
-					<p class="readonly-row">
-						<span class="readonly-label">Level</span>
-						<span class="readonly-value capitalize">{profile.level}</span>
-					</p>
 					<!--
-				  Read-only on purpose: level, interests and the self-description are
-				  edited in one place (/profile) so there is never a second copy of
-				  that form to keep in step with this one.
+				  Read-only on purpose: the self-description is edited in one place
+				  (/profile) so there is never a second copy of that form to keep in
+				  step with this one. No level: it is read off the word list.
 				-->
 					<p class="hint profile-link">
 						<a href="/profile">
-							Edit level, interests and about you
+							Edit about you
 							<svg class="ico jump-ico" viewBox="0 0 24 24" aria-hidden="true">
 								<path d="M4.8 12h14" />
 								<path d="m13.4 6.6 5.4 5.4-5.4 5.4" />
@@ -1410,8 +1423,7 @@
 		margin: 0.85rem 0 1.15rem;
 	}
 
-	/* Ruled ledger rows: the fact on the left, its value on the right, the same
-	   hairline between them the word list uses. */
+	/* A ledger row: the fact on the left, its value on the right. */
 	.readonly-row {
 		display: flex;
 		align-items: baseline;
@@ -1420,10 +1432,6 @@
 		margin: 0;
 		padding: 0.5rem 0;
 		font-size: 0.95rem;
-	}
-
-	.readonly-row + .readonly-row {
-		border-top: 1px solid var(--border);
 	}
 
 	.readonly-label {
@@ -1438,10 +1446,6 @@
 	.readonly-value {
 		text-align: right;
 		font-weight: 600;
-	}
-
-	.readonly-value.capitalize {
-		text-transform: capitalize;
 	}
 
 	.muted {

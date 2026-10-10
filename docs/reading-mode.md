@@ -35,8 +35,12 @@ in the garden with an FSRS strength, marked as known, or not yet met.
    following a recording, the current line), and a word card for whatever was
    tapped — led by a paid **What does this mean?** for a word nothing explains
    yet.
-3. **Marks.** From the word card the learner can *add* a new word to the garden
-   (through `add_words`, verbatim) or mark it *known*. Both are events and sync.
+3. **Keeping a word.** From the word card the learner can *add* a word to the
+   garden (through `add_words`, verbatim) — the one way to keep one, a word they
+   already know included: it becomes an ordinary fresh card and FSRS learns how
+   well it is known from real answers. New *known* marks are no longer made; a
+   word marked known before that (an old `wordMarked`) still reads as known and
+   can be unmarked. Both are events and sync.
 
 A text is immutable once stored, and it is **only the text**: its segments as
 the source cut them — one per subtitle cue, one per paragraph — with a cue's
@@ -71,12 +75,17 @@ glossed nor drilled. Three acts, kept distinct:
   what gets scheduled and must not fill up by accident) and it is not a
   review — but a lookup on a *tracked* word is FSRS evidence, so the fact is
   kept now for the slice that interprets it (§7).
-- **"I know this" — a status declaration**, LingQ's ✓: `wordMarked`. Not a
-  review. Known words stop being highlighted, lose their reading under
-  `'adaptive'`, and are handed to the generator as vocabulary it may use
-  freely, so texts get richer without the garden holding every function word.
-  Explicit only.
-- **"Add to my words"** — `add_words`, verbatim: the word becomes tracked.
+- **"Add to my words"** — `add_words`, verbatim: the word becomes tracked. It
+  is the only way to keep a word, one the learner already knows included: a
+  known word is a fresh card like any other, and FSRS sorts out how well it is
+  known from the answers it gets rather than from a declaration.
+- **Legacy marks — a status declaration, no longer made.** The card used to
+  offer "I know this" (LingQ's ✓, `wordMarked`, not a review). It is gone, but
+  the marks already in the log stay as they are: those words still read as
+  `known` — not highlighted, no reading under `'adaptive'`, handed to the
+  generator as vocabulary it may use freely — and their card offers **Unmark**
+  beside Add. Nothing migrates or deletes them, and the event, its merge rule
+  and `wordMarks` are unchanged.
 
 ### Events
 
@@ -156,10 +165,14 @@ the same parsers, every reply pinned with a strict `schemars` schema and a
 wasm build on the window thread (`$lib/llm/core.ts`) and never imports
 `$lib/db`.
 
-**Generate**. Input: profile (languages, level, interests,
-`about` capped like `MAX_ABOUT_CHARS`), the vocabulary as terms (capped), a set
-of *focus* words (due items, most overdue first, up to ~12, with meanings), an
-optional topic. Output envelope:
+**Generate**. Input: profile (languages and `about`, capped like
+`MAX_ABOUT_CHARS`), the vocabulary as terms (capped), a set of *focus* words
+(due items, most overdue first, up to ~12, with meanings), an optional topic,
+and `wordCount` — how many words the garden holds. The level is never asked
+for: it is `level_for(wordCount)` (`sapling-llm`; under 150 beginner, under 600
+elementary, under 2000 intermediate, then advanced), the garden's size rather
+than the vocabulary's, which also carries legacy known marks. With no topic the
+subject comes from `about`, else the model's own choice. Output envelope:
 
 ```
 { title, paragraphs: [string] }
@@ -181,8 +194,9 @@ model setting of its own — they use the learner's stored model, else
 
 **Look up**. One word, for the card the reader opens on a
 word nothing explains — which, since a text carries no meanings, is every word
-that is neither tracked nor looked up already. Input `{ profile, term, sentence,
-title? }` — the tapped word exactly as the text spells it, and **the sentence it
+that is neither tracked nor looked up already. Input `{ profile, wordCount, term,
+sentence, title? }` (`wordCount` picks the level the answer is pitched at, as
+for Generate) — the tapped word exactly as the text spells it, and **the sentence it
 stands in**, so a word with several senses comes back in the one it is actually
 being used in. The sentence is cut out of the word's segment by `sentenceAt`
 (`pages.ts`) — the same `Intl.Segmenter` sentence split pagination uses, at the
@@ -292,9 +306,8 @@ underline; `known` and `plain` bare.
 
 Word card: term (display face), reading; `SpeakButton`; for `tracked` the
 maturity label ("in your garden · growing") and the item's meaning, and no
-actions; for `known` a looked-up meaning if there is one, and **Unmark** (→
-`markWord(term, false)`). For `plain` — a word neither in the garden nor marked
-known — the card is built around one question:
+actions. For `plain` — a word neither in the garden nor marked known — and for
+`known` — a legacy mark — the card is built around one question:
 
 1. **What does this mean?** — the primary button while the word has no
    looked-up answer and the Meaning field is empty (once the learner has typed a
@@ -313,7 +326,11 @@ known — the card is built around one question:
 4. **Add to my words** (→ `addWordsTool.run({ words: [{ term, meaning,
    romanization }] }, defaultToolContext())` from `$lib/assistant`, with the
    two fields as the learner left them; a blank Reading sends no
-   `romanization`) and **I know this** (→ `markWord(term, true)`).
+   `romanization`). On a `known` word the add also unmarks it (→
+   `markWord(term, false)`), so the card is the word's only status and deleting
+   it later does not bring back a mark nobody declared since.
+5. **Unmark** (→ `markWord(term, false)`), on a `known` word only. Nothing on
+   the card makes a new mark.
 
 A lookup in flight disables only its own button ("Looking it up…"); a failure is
 an error line on the card and leaves the fields as they were. **Nothing about
@@ -386,8 +403,8 @@ under the same condition.
 - `add_words` is **`addWords` from `$lib/assistant`**: the assistant's own
   Rust executor, run through the `llm` export with no model.
 - A **`tracked` word's card carries no actions** — only its bed label. Adding it
-  again is a no-op and marking a scheduled word "known" would mean two answers
-  to one question; the garden is where a tracked word is managed, and a reading
+  again is a no-op and a scheduled word's strength is the answer to how well it
+  is known; the garden is where a tracked word is managed, and a reading
   session is not the place to leave for it (an "Open garden" link was tried and
   dropped for exactly that reason).
 - **Unmarking names the stored spelling.** `wordMarks` is keyed by the term

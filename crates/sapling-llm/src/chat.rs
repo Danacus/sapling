@@ -11,7 +11,7 @@ use sapling_domain::types::ConversationAction;
 use crate::client::{ChatRequest, Completion, Llm, Message, Transport};
 use crate::text::template;
 use crate::tools::{self, count_words, mock_call, word_lines, LoopError, ToolContext, ToolName};
-use crate::LearnerProfile;
+use crate::{level_for, LearnerProfile};
 
 const PROMPT: &str = include_str!("../prompts/chat.txt");
 const MOCK: &str = include_str!("../fixtures/chat.json");
@@ -68,7 +68,7 @@ pub fn system_prompt(profile: &LearnerProfile, word_count: usize) -> String {
         &[
             ("target", &profile.target_language),
             ("native", &profile.native_language),
-            ("level", profile.level.as_str()),
+            ("level", level_for(word_count).as_str()),
             ("words", &count_words(word_count)),
         ],
     )
@@ -191,7 +191,6 @@ mod tests {
     use crate::tools::tests::item;
     use crate::tools::MemoryTools;
     use pollster::block_on;
-    use sapling_domain::types::Level;
     use serde_json::json;
 
     fn args(text: &str, history: Vec<ChatTurn>) -> ChatArgs {
@@ -199,8 +198,6 @@ mod tests {
             profile: LearnerProfile {
                 native_language: "English".into(),
                 target_language: "Spanish".into(),
-                level: Level::Beginner,
-                interests: vec![],
                 about: None,
             },
             history,
@@ -217,6 +214,8 @@ mod tests {
         let prompt = system_prompt(&args("", vec![]).profile, 1);
         assert!(prompt.starts_with("You manage the vocabulary list of a learner of Spanish whose native language is English, at beginner level. Their list currently holds 1 word."));
         assert!(!prompt.contains('{'));
+        let grown = system_prompt(&args("", vec![]).profile, crate::INTERMEDIATE_WORDS);
+        assert!(grown.contains("at intermediate level. Their list currently holds 600 words."));
     }
 
     #[test]

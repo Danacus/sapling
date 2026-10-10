@@ -11,7 +11,8 @@
 	import { addRecentTopic, getRecentTopics } from '$lib/ui/prefs';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
-	const TOPIC_SUGGESTIONS = [
+	/** Fixed suggestions: the learner's interests no longer add any. */
+	const topicChips = [
 		'Ordering in a restaurant',
 		'Talking about your hobbies',
 		'Making plans with a friend',
@@ -70,11 +71,6 @@
 			wants > 0 &&
 			(plan.first === null || covered * 2 <= upcoming)
 	);
-
-	const topicChips = $derived([
-		...TOPIC_SUGGESTIONS,
-		...(profile?.interests ?? []).slice(0, 2).map((interest) => `Chatting about ${interest}`)
-	]);
 
 	const visibleChips = $derived.by(() => {
 		if (showAllChips) return topicChips;

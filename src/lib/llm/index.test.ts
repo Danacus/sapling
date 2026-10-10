@@ -11,7 +11,7 @@ import type { Presentation } from '$lib/challenges/serve';
 import { ALL_READINGS } from '$lib/challenges/serve';
 import { loadWasmCore } from '$lib/db/backend.testing';
 import type { ClozeChallenge, WordOrderChallenge } from '$lib/types';
-import { describeShown, getBatch, getEscalation, isMockMode } from './index';
+import { describeShown, getBatch, getEscalation, isMockMode, wordBatch } from './index';
 import type { BatchArgs, ProgressStep, Want, WireType } from './index';
 
 beforeAll(loadWasmCore);
@@ -39,7 +39,7 @@ function batch(
 		length: 6
 	}));
 	return {
-		profile: { nativeLanguage: 'English', targetLanguage, level: 'beginner', interests: [] },
+		profile: { nativeLanguage: 'English', targetLanguage },
 		wants,
 		knownItems: [
 			{ id: 'w1', term: 'la cuenta' },
@@ -135,5 +135,36 @@ describe('getEscalation', () => {
 		});
 		expect(reply.overturn).toBe(false);
 		expect(reply.answer).toContain('"el cuenta" was graded "wrong"');
+	});
+});
+
+describe('wordBatch', () => {
+	const profile = { nativeLanguage: 'English', targetLanguage: 'Chinese' };
+
+	it('answers words through the real parser, readings included', async () => {
+		const batch = await wordBatch({ profile, wordCount: 0, mode: 'check', count: 3, recent: [] });
+		expect(batch.words).toEqual([
+			{ term: '家', meaning: 'home', romanization: 'jiā' },
+			{ term: '水', meaning: 'water', romanization: 'shuǐ' },
+			{ term: '吃', meaning: 'to eat', romanization: 'chī' }
+		]);
+	});
+
+	it('moves on past the recent words and varies a starter by topic', async () => {
+		const next = await wordBatch({
+			profile,
+			wordCount: 0,
+			mode: 'check',
+			step: 'same',
+			count: 1,
+			recent: ['家', '水']
+		});
+		expect(next.words.map((w) => w.term)).toEqual(['吃']);
+
+		const starter = (topic: string) =>
+			wordBatch({ profile, wordCount: 0, mode: 'starter', topic, count: 12, recent: [] });
+		const [food, travel] = await Promise.all([starter('food'), starter('travel')]);
+		expect(food.words).toHaveLength(12);
+		expect(travel.words).not.toEqual(food.words);
 	});
 });

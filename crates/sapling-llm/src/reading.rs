@@ -11,7 +11,7 @@ use sapling_domain::types::{Level, Segment};
 
 use crate::client::{ChatRequest, ErrorKind, Llm, LlmError, Message, Result, Transport};
 use crate::json::{fenced, fill, parse_reply, strict_schema};
-use crate::{is_mandarin, non_blank, truncated, LearnerProfile, MAX_ABOUT_CHARS};
+use crate::{is_mandarin, level_for, non_blank, truncated, LearnerProfile, MAX_ABOUT_CHARS};
 
 pub const MAX_VOCABULARY_TERMS: usize = 400;
 /// Every focus word must be used; past a dozen a text turns into a bingo card.
@@ -35,6 +35,7 @@ pub struct FocusWord {
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct GenerateTextArgs {
     pub profile: LearnerProfile,
     /// Every term the learner can read: what the text is built from.
@@ -44,11 +45,19 @@ pub struct GenerateTextArgs {
     #[serde(default)]
     #[ts(optional)]
     pub topic: Option<String>,
+    /// How many words the learner's library holds, which the level is read
+    /// off ([`level_for`]). Not `vocabulary`'s length: that also carries the
+    /// words marked known, which are not in the library.
+    pub word_count: usize,
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct LookupWordArgs {
     pub profile: LearnerProfile,
+    /// How many words the learner's library holds: the level the explanation
+    /// is pitched at ([`level_for`]).
+    pub word_count: usize,
     /// Exactly as the text spells it.
     pub term: String,
     /// The sentence it stands in, which picks the sense.
@@ -120,10 +129,9 @@ struct GeneratePayload<'a> {
     target: &'a str,
     level: Level,
     sentence_count: u32,
-    // Before `interests`: the topic outranks them, and earlier keys weigh more.
+    // Before `about`: the topic outranks it, and earlier keys weigh more.
     #[serde(skip_serializing_if = "Option::is_none")]
     topic: Option<String>,
-    interests: &'a [String],
     #[serde(skip_serializing_if = "Option::is_none")]
     about: Option<String>,
     focus: Vec<Value>,
@@ -184,13 +192,13 @@ fn request(system: &str, payload: &impl Serialize, schema: (&str, Value)) -> Cha
 
 pub fn generate_request(args: &GenerateTextArgs) -> ChatRequest {
     let profile = &args.profile;
+    let level = level_for(args.word_count);
     let payload = GeneratePayload {
         native: &profile.native_language,
         target: &profile.target_language,
-        level: profile.level,
-        sentence_count: sentence_count(profile.level),
+        level,
+        sentence_count: sentence_count(level),
         topic: non_blank(args.topic.as_deref()).map(|topic| truncated(topic, MAX_TOPIC_CHARS)),
-        interests: &profile.interests,
         about: non_blank(profile.about.as_deref()).map(|about| truncated(about, MAX_ABOUT_CHARS)),
         focus: args
             .focus
@@ -215,7 +223,7 @@ pub fn lookup_request(args: &LookupWordArgs) -> ChatRequest {
     let payload = LookupPayload {
         native: &profile.native_language,
         target: &profile.target_language,
-        level: profile.level,
+        level: level_for(args.word_count),
         term: args.term.trim(),
         sentence: args.sentence.trim(),
         title: non_blank(args.title.as_deref()),
@@ -364,11 +372,12 @@ mod tests {
         LearnerProfile {
             native_language: "English".into(),
             target_language: target.into(),
-            level: Level::Elementary,
-            interests: vec!["cooking".into()],
             about: None,
         }
     }
+
+    /// A library that reads as elementary.
+    const ELEMENTARY: usize = crate::ELEMENTARY_WORDS;
 
     fn user_payload(request: &ChatRequest) -> Value {
         match &request.messages[1] {
@@ -383,6 +392,7 @@ mod tests {
             vocabulary: vec![],
             focus: vec![],
             topic: None,
+            word_count: ELEMENTARY,
         }
     }
 
@@ -415,7 +425,6 @@ mod tests {
                 "level",
                 "sentenceCount",
                 "topic",
-                "interests",
                 "about",
                 "focus",
                 "vocabulary"
@@ -442,6 +451,7 @@ mod tests {
 
         let lookup = user_payload(&lookup_request(&LookupWordArgs {
             profile: profile("Spanish"),
+            word_count: ELEMENTARY,
             term: " gato ".into(),
             sentence: " El gato duerme. ".into(),
             title: Some(" ".into()),
@@ -459,6 +469,32 @@ mod tests {
         other.profile = profile("Mandarin");
         other.topic = Some("trains".into());
         assert_eq!(a.messages[0], generate_request(&other).messages[0]);
+    }
+
+    #[test]
+    fn the_level_and_length_follow_the_library() {
+        let at = |word_count: usize| {
+            let mut args = generate_args();
+            args.word_count = word_count;
+            let payload = user_payload(&generate_request(&args));
+            (payload["level"].clone(), payload["sentenceCount"].clone())
+        };
+        assert_eq!(at(0), (json!("beginner"), json!(6)));
+        assert_eq!(
+            at(crate::INTERMEDIATE_WORDS),
+            (json!("intermediate"), json!(10))
+        );
+        assert_eq!(at(crate::ADVANCED_WORDS), (json!("advanced"), json!(12)));
+
+        let lookup = user_payload(&lookup_request(&LookupWordArgs {
+            profile: profile("Spanish"),
+            word_count: crate::ADVANCED_WORDS,
+            term: "gato".into(),
+            sentence: "El gato duerme.".into(),
+            title: None,
+        }));
+        assert_eq!(lookup["level"], "advanced");
+        assert!(!GENERATE_PROMPT.contains("interests"));
     }
 
     #[test]
@@ -533,6 +569,7 @@ mod tests {
             &mock,
             &LookupWordArgs {
                 profile: profile("Spanish"),
+                word_count: 0,
                 term: " \"mesa\" ".into(),
                 sentence: "Una mesa.".into(),
                 title: None,

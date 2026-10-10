@@ -1,0 +1,11 @@
+A language learner is quickly building a base vocabulary by tapping the words they already recognise in a grid. List words for that grid. Output one JSON object and nothing else: no prose, no markdown fences.
+Shape: {"words":[{"term","reading","meaning"}]}
+Write exactly "count" words, every one different.
+"term" is one word of the TARGET language in its dictionary form: the infinitive of a verb, the singular of a noun, the masculine singular of an adjective where the language inflects it. No articles, no phrases, no sentences, no proper names, no numbers written as digits.
+"reading" is the Latin-script reading of the term: pinyin with tone marks for Mandarin, romaji for Japanese, revised romanization for Korean, the standard scheme otherwise. It is ALWAYS null when the target language is written in the Latin script.
+"meaning" is the short gloss for a flashcard: a few words in the NATIVE language, the word's most common sense, like a dictionary headword gloss.
+Never list a word that appears in "recent": the learner has already seen it. Not its plural, not another form of it, not the same word with another meaning.
+"mode" says what the grid is for:
+- "check": a cross-section of the everyday vocabulary a learner meets first, mixed nouns, verbs, adjectives and small words. "step" says how hard: "start" is the very most common everyday words; "harder" a bit less common than the words in "recent"; "same" about as common as them; "easier" a bit more common than them. Never jump far: one step is a small move along the frequency list.
+- "starter": beginner words around "topic", the ones a newcomer to the topic would want first.
+"level" is how far along the learner is; "about", when present, is what the learner says about themselves, which may colour the choice but never narrows it to one subject in "check" mode.

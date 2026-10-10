@@ -19,7 +19,7 @@ use crate::json::{fenced, parse_reply, strict_schema};
 use crate::reading::MAX_TOPIC_CHARS;
 use crate::text::{same_romanization, template};
 use crate::tools::{self, mock_call, word_lines, LoopError, ToolContext, ToolName};
-use crate::{non_blank, truncated, LearnerProfile};
+use crate::{level_for, non_blank, truncated, LearnerProfile};
 
 const SCENARIO_PROMPT: &str = include_str!("../prompts/scenario.txt");
 const TEACHER_PROMPT: &str = include_str!("../prompts/teacher.txt");
@@ -37,8 +37,13 @@ const MAX_SCENARIO_TOKENS: u32 = 2000;
 pub const ROUND_LIMIT_REPLY: &str = "…";
 
 #[derive(Debug, Clone, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct ScenarioArgs {
     pub profile: LearnerProfile,
+    /// How many words the learner's library holds: the level the scene is
+    /// pitched at ([`level_for`]). The host counts, since this call lends no
+    /// word list; a turn reads its own off the [`ToolContext`].
+    pub word_count: usize,
     /// Blank means "you choose".
     #[serde(default)]
     #[ts(optional)]
@@ -131,7 +136,7 @@ pub fn scenario_request(args: &ScenarioArgs) -> ChatRequest {
     let system = template(
         SCENARIO_PROMPT,
         &[
-            ("level", profile.level.as_str()),
+            ("level", level_for(args.word_count).as_str()),
             ("target", &profile.target_language),
             ("native", &profile.native_language),
         ],
@@ -249,16 +254,18 @@ pub fn system_prompt(
     items: &[KnowledgeItem],
 ) -> String {
     let target = profile.target_language.as_str();
+    // `items` is the whole word list the host lent, so its size is the library's.
+    let level = level_for(items.len());
     let rules = template(
         TEACHER_PROMPT,
         &[
-            ("level", profile.level.as_str()),
+            ("level", level.as_str()),
             ("target", target),
             ("native", &profile.native_language),
             ("setting", &scenario.setting),
             ("teacher_role", &scenario.teacher_role),
             ("learner_role", &scenario.learner_role),
-            ("reply_length", reply_length(profile.level)),
+            ("reply_length", reply_length(level)),
         ],
     );
     let block = word_block(items);
@@ -474,14 +481,19 @@ mod tests {
     use pollster::block_on;
     use sapling_domain::types::{ConversationAction, LearnerRole};
 
-    fn profile(level: Level) -> LearnerProfile {
+    fn profile() -> LearnerProfile {
         LearnerProfile {
             native_language: "English".into(),
             target_language: "Mandarin".into(),
-            level,
-            interests: vec![],
             about: None,
         }
+    }
+
+    /// A word list of `n` distinct words.
+    fn library(n: usize) -> Vec<KnowledgeItem> {
+        (0..n)
+            .map(|i| item(&format!("w{i}"), &format!("词{i}"), None))
+            .collect()
     }
 
     fn scene() -> ConversationScenario {
@@ -518,7 +530,7 @@ mod tests {
 
     fn turn_args(text: &str, history: Vec<ConversationTurn>) -> TurnArgs {
         TurnArgs {
-            profile: profile(Level::Beginner),
+            profile: profile(),
             scenario: scene(),
             history,
             text: text.into(),
@@ -585,7 +597,8 @@ mod tests {
     #[test]
     fn the_scenario_request_is_strict_and_carries_the_topic() {
         let request = scenario_request(&ScenarioArgs {
-            profile: profile(Level::Elementary),
+            profile: profile(),
+            word_count: crate::ELEMENTARY_WORDS,
             topic: Some(format!(" {} ", "x".repeat(200))),
         });
         let (name, schema) = request.schema.unwrap();
@@ -603,6 +616,13 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+        let fresh = scenario_request(&ScenarioArgs {
+            profile: profile(),
+            word_count: 0,
+            topic: None,
+        });
+        assert!(matches!(&fresh.messages[0], Message::System(system)
+            if system.starts_with("You set up role-play scenes for a beginner learner")));
     }
 
     #[test]
@@ -610,7 +630,8 @@ mod tests {
         let scene = block_on(start(
             &Llm::new(&Fake::default(), None),
             &ScenarioArgs {
-                profile: profile(Level::Beginner),
+                profile: profile(),
+                word_count: 0,
                 topic: Some("football".into()),
             },
         ))
@@ -631,15 +652,28 @@ mod tests {
         old.introduced_at = 1.0;
         let mut new = item("b", "水", None);
         new.introduced_at = 2.0;
-        let prompt = system_prompt(&profile(Level::Advanced), &scene(), &[old, new]);
+        let prompt = system_prompt(&profile(), &scene(), &[old, new]);
         assert!(
             prompt.contains("The scene: A tea house. You are the waiter. The learner is a guest.")
         );
-        assert!(prompt.contains("two or three sentences, then one question."));
+        assert!(prompt.contains("one short sentence, then one short question."));
         assert!(prompt.ends_with("\n水 = meaning of 水\n茶 (chá) = meaning of 茶"));
         assert!(!prompt.contains("{target}") && !prompt.contains("{reply_length}"));
-        let empty = system_prompt(&profile(Level::Beginner), &scene(), &[]);
+        let empty = system_prompt(&profile(), &scene(), &[]);
         assert!(empty.ends_with("use only the most common words of Mandarin."));
+    }
+
+    #[test]
+    fn the_teacher_is_pitched_at_the_level_the_word_list_reads_as() {
+        let at = |n: usize| system_prompt(&profile(), &scene(), &library(n));
+        let beginner = at(crate::ELEMENTARY_WORDS - 1);
+        assert!(beginner.starts_with("You are role-playing a conversation with a beginner learner"));
+        let intermediate = at(crate::INTERMEDIATE_WORDS);
+        assert!(intermediate.contains("with a intermediate learner"));
+        assert!(intermediate.contains("one or two short sentences, then one question."));
+        let advanced = at(crate::ADVANCED_WORDS);
+        assert!(advanced.contains("with a advanced learner"));
+        assert!(advanced.contains("two or three sentences, then one question."));
     }
 
     #[test]

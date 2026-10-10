@@ -31,6 +31,12 @@ export type TeacherTurn = ConversationTeacherTurn;
 
 export interface ScenarioArgs {
 	profile: LearnerProfile;
+	/**
+	 * How many words the learner's library holds: Rust reads the level the
+	 * scene is pitched at off it. The caller counts, since this call lends no
+	 * word list (a turn reads its own through the tool context).
+	 */
+	wordCount: number;
 	/** Blank means "you choose". */
 	topic?: string;
 }

@@ -8,7 +8,7 @@
  * never introduces any — so the caller has only the pool to persist.
  */
 
-import type { BatchArgs, BatchResult } from '$lib/db/generated/index';
+import type { BatchArgs, BatchResult, WordBatch, WordBatchArgs } from '$lib/db/generated/index';
 import type { ReasoningEffort } from '$lib/db/settings';
 import { callLlm } from './core';
 import type { CallOptions } from './core';
@@ -35,6 +35,15 @@ export async function getBatch(args: BatchArgs, opts: BatchOptions = {}): Promis
 	);
 }
 
+/**
+ * A grid of words for "Check what you know". The model only proposes: the
+ * caller filters out what the learner already has or has seen, because
+ * `recent` is a hint the model may ignore.
+ */
+export function wordBatch(args: WordBatchArgs, opts: CallOptions = {}): Promise<WordBatch> {
+	return callLlm('wordBatch', args, opts);
+}
+
 export { describeShown, getEscalation } from './escalation';
 export type { EscalationArgs } from './escalation';
 
@@ -50,6 +59,7 @@ export type {
 	BatchArgs,
 	BatchResult,
 	ChallengeKind,
+	CheckStep,
 	EscalationReply,
 	FocusWord,
 	GenerateTextArgs,
@@ -61,14 +71,18 @@ export type {
 	ProgressStepId,
 	ReadingTextDraft,
 	Shown,
+	SuggestedWord,
 	TokenUsage,
 	TranslateLineArgs,
 	Want,
 	WantItem,
-	WireType
+	WireType,
+	WordBatch,
+	WordBatchArgs,
+	WordBatchMode
 } from '$lib/db/generated/index';
 
-export { MOCK_FLAG_KEY, isMockMode, setMockMode } from './mock';
+export { MOCK_FLAG_KEY, isMockForced, isMockMode, setMockMode } from './mock';
 
 export { getUsageTotals, recordUsage, resetUsage } from './usage';
 export type { UsageTotals } from './usage';

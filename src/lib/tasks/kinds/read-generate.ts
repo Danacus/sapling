@@ -22,6 +22,11 @@ export interface ReadGenerateInput {
 	/** Words the text must use at least once — the schedule's, most overdue first. */
 	focus: FocusWord[];
 	topic?: string;
+	/**
+	 * How many words the garden holds — not `vocabulary`'s length, which also
+	 * counts the words marked known. Rust reads the level off it.
+	 */
+	wordCount: number;
 }
 
 /** What landed: enough for the page to open it, and for the tray to name it. */
@@ -44,6 +49,7 @@ export const readGenerateTask = {
 				profile: input.profile,
 				vocabulary: input.vocabulary,
 				focus: input.focus,
+				wordCount: input.wordCount,
 				...(input.topic ? { topic: input.topic } : {})
 			},
 			{ signal: ctx.signal }

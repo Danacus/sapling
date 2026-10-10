@@ -21,6 +21,7 @@
 		addConversation,
 		addExchange,
 		deleteConversation,
+		getAllItems,
 		getConversations,
 		getProfile
 	} from '$lib/db';
@@ -103,7 +104,10 @@
 		const chosen = topic.trim();
 
 		try {
-			const scene = await startConversation({ profile, topic });
+			// Read at the press, not on load: the level the scene is pitched at is
+			// the library's size, and the list may have grown since.
+			const wordCount = (await getAllItems()).length;
+			const scene = await startConversation({ profile, wordCount, topic });
 			const conversation: Conversation = {
 				id: newUuid(),
 				scenario: scene,

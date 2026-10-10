@@ -459,6 +459,7 @@
 			profile,
 			vocabulary,
 			focus: reviewItems.map((item) => ({ term: item.term, meaning: item.meaning })),
+			wordCount: items.length,
 			...(chosen ? { topic: chosen } : {})
 		});
 		mine.add(id);

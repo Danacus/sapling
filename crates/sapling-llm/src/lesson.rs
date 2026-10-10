@@ -24,7 +24,7 @@ use crate::json::{fenced, fill, strip_fences};
 use crate::kinds::{kind_of, Lesson, WireType};
 use crate::text::{term_key, Rng};
 use crate::wire::{batch_schema, has_instruction, resolve, Generated, Resolver};
-use crate::{is_mandarin, non_blank, truncated, LearnerProfile, MAX_ABOUT_CHARS};
+use crate::{is_mandarin, level_for, non_blank, truncated, LearnerProfile, MAX_ABOUT_CHARS};
 
 /// Wants one request carries: six of one type keep the model on task.
 pub const REQUEST_ITEMS: usize = 6;
@@ -206,11 +206,12 @@ fn payload(args: &BatchArgs, request: &TypeRequest) -> String {
     let mut out = Map::new();
     out.insert("native".into(), json!(profile.native_language));
     out.insert("target".into(), json!(profile.target_language));
-    out.insert("level".into(), json!(profile.level));
+    // `knownItems` is the whole collection, so its size is the library's.
+    let library = args.known_items.as_ref().map_or(0, Vec::len);
+    out.insert("level".into(), json!(level_for(library)));
     if let Some(topic) = non_blank(args.topic.as_deref()) {
         out.insert("topic".into(), json!(topic));
     }
-    out.insert("interests".into(), json!(profile.interests));
     if let Some(about) = non_blank(profile.about.as_deref()) {
         out.insert("about".into(), json!(truncated(about, MAX_ABOUT_CHARS)));
     }
@@ -574,7 +575,6 @@ mod tests {
     use crate::client::{Endpoint, HttpRequest, HttpResponse, ProgressStep};
     use pollster::block_on;
     use sapling_challenges::model::length_of;
-    use sapling_domain::types::Level;
     use std::future::{ready, Future};
     use std::rc::Rc;
 
@@ -632,8 +632,6 @@ mod tests {
         LearnerProfile {
             native_language: "English".into(),
             target_language: target.into(),
-            level: Level::Beginner,
-            interests: vec!["food".into()],
             about: None,
         }
     }
@@ -805,17 +803,9 @@ mod tests {
             .collect();
         assert_eq!(
             keys,
-            [
-                "native",
-                "target",
-                "level",
-                "topic",
-                "interests",
-                "about",
-                "known",
-                "items"
-            ]
+            ["native", "target", "level", "topic", "about", "known", "items"]
         );
+        assert_eq!(payload["level"], "beginner");
         assert_eq!(payload["topic"], "restaurant");
         assert_eq!(payload["about"].as_str().unwrap().len(), MAX_ABOUT_CHARS);
         assert_eq!(
@@ -833,6 +823,31 @@ mod tests {
         assert_eq!(index["长 (zhǎng)"], "k2");
         assert_eq!(index["长"], "k1");
         assert_eq!(index["pedir"], "b");
+    }
+
+    #[test]
+    fn the_payload_level_is_the_library_size_and_no_interests_travel() {
+        let mut batch = args(vec![want("a", "agua", WireType::RecognizeMc, 1)]);
+        let level = |batch: &BatchArgs| -> Value {
+            let requests = group_into_requests(&batch.wants, 6);
+            serde_json::from_str::<Value>(&payload(batch, &requests[0])).unwrap()["level"].clone()
+        };
+        assert_eq!(level(&batch), "beginner");
+        let library = |n: usize| {
+            (0..n)
+                .map(|i| KnownItem {
+                    id: format!("k{i}"),
+                    term: format!("t{i}"),
+                    romanization: None,
+                    skill: None,
+                })
+                .collect::<Vec<_>>()
+        };
+        batch.known_items = Some(library(crate::INTERMEDIATE_WORDS));
+        assert_eq!(level(&batch), "intermediate");
+        batch.known_items = Some(library(crate::ADVANCED_WORDS));
+        assert_eq!(level(&batch), "advanced");
+        assert!(!system_prompt(WireType::Cloze).contains("interest"));
     }
 
     #[test]

@@ -253,9 +253,7 @@ describe('planRefill', () => {
 		expect(plan).toEqual({
 			profile: {
 				nativeLanguage: 'English',
-				targetLanguage: 'Spanish',
-				level: 'beginner',
-				interests: ['cooking', 'football']
+				targetLanguage: 'Spanish'
 			},
 			wants: []
 		});
@@ -274,14 +272,11 @@ describe('planRefill', () => {
 		expect(Object.keys(plan).sort()).toEqual(['knownItems', 'profile', 'wants']);
 	});
 
-	it('carries only the profile fields the prompt needs', () => {
-		const plan = planRefill([], [], profile(), NOW);
-		expect(Object.keys(plan.profile).sort()).toEqual([
-			'interests',
-			'level',
-			'nativeLanguage',
-			'targetLanguage'
-		]);
+	it('carries only the profile fields the prompt needs: no level, no interests', () => {
+		// The stored level and interests are deprecated, kept for old builds
+		// only; the level is read off `knownItems` in Rust.
+		const plan = planRefill([], [], profile({ level: 'advanced' }), NOW);
+		expect(Object.keys(plan.profile).sort()).toEqual(['nativeLanguage', 'targetLanguage']);
 		expect(plan.profile).not.toHaveProperty('model');
 		expect(plan.profile).not.toHaveProperty('createdAt');
 	});

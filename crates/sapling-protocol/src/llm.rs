@@ -14,6 +14,7 @@ use sapling_llm::lesson::{self, BatchArgs, BatchResult};
 use sapling_llm::reading::TranslateLineArgs;
 use sapling_llm::reading::{self, GenerateTextArgs, GlossEntry, LookupWordArgs, ReadingTextDraft};
 use sapling_llm::tools::{self as word_tools, AddWordsParams, LoopError, ToolContext, ToolOutcome};
+use sapling_llm::word_batch::{self, WordBatch, WordBatchArgs};
 use sapling_llm::{Llm, LlmError, Transport};
 
 use crate::required;
@@ -117,6 +118,10 @@ llm! {
         translateLine(args: TranslateLineArgs) -> String {
             reading::translate_line(llm, &args)
         }
+        /// A grid of everyday or topic words for "Check what you know".
+        wordBatch(args: WordBatchArgs) -> WordBatch {
+            word_batch::word_batch(llm, &args)
+        }
         /// A top-up: one request per wire type, a few at a time. Reports progress.
         generateBatch(args: BatchArgs) -> BatchResult {
             lesson::generate_batch(llm, &args)
@@ -183,6 +188,8 @@ mod tests {
         }
     }
 
+    /// A stored profile, deprecated `level` and `interests` included: it reads
+    /// as a `LearnerProfile`, which ignores both.
     const PROFILE: &str = r#"{"nativeLanguage":"English","targetLanguage":"Spanish","level":"beginner","interests":[],"model":"m","createdAt":1}"#;
 
     fn call(llm: &Llm<Offline>, method: &str, args: &str) -> Result<Value, String> {
@@ -237,6 +244,26 @@ mod tests {
     }
 
     #[test]
+    fn a_mock_word_batch_answers_its_words() {
+        let mock = Llm::new(Offline, None);
+        let answer = call(
+            &mock,
+            "wordBatch",
+            &format!(
+                r#"[{{"profile":{PROFILE},"wordCount":0,"mode":"check","step":"start","count":2,"recent":[]}}]"#
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            answer["result"]["words"],
+            json!([
+                { "term": "casa", "meaning": "house" },
+                { "term": "agua", "meaning": "water" }
+            ])
+        );
+    }
+
+    #[test]
     fn a_mock_top_up_answers_its_challenges() {
         let mock = Llm::new(Offline, None);
         let want = r#"{"item":{"id":"w","term":"hola","meaning":"hi"},"kind":{"type":"recognize-mc"},"length":1}"#;
@@ -262,7 +289,7 @@ mod tests {
         let error = call(
             &live,
             "lookUpWord",
-            &format!(r#"[{{"profile":{PROFILE},"term":"a","sentence":"a"}}]"#),
+            &format!(r#"[{{"profile":{PROFILE},"wordCount":0,"term":"a","sentence":"a"}}]"#),
         )
         .unwrap_err();
         let error: Value = serde_json::from_str(&error).unwrap();

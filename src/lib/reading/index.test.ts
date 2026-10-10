@@ -17,9 +17,7 @@ beforeAll(loadWasmCore);
 
 const profile: LearnerProfile = {
 	nativeLanguage: 'English',
-	targetLanguage: 'Spanish',
-	level: 'beginner',
-	interests: []
+	targetLanguage: 'Spanish'
 };
 
 describe('the reading entry points', () => {
@@ -28,7 +26,12 @@ describe('the reading entry points', () => {
 	});
 
 	it('generateReadingText returns a whole draft of untimed segments', async () => {
-		const text = await generateReadingText({ profile, vocabulary: ['mesa'], focus: [] });
+		const text = await generateReadingText({
+			profile,
+			vocabulary: ['mesa'],
+			focus: [],
+			wordCount: 1
+		});
 
 		expect(text.title).toBeTruthy();
 		expect(text.segments.length).toBeGreaterThan(0);
@@ -38,6 +41,7 @@ describe('the reading entry points', () => {
 	it('lookUpWord returns one gloss for the word it was given', async () => {
 		const entry = await lookUpWord({
 			profile,
+			wordCount: 1,
 			term: 'cuenta',
 			sentence: 'La cuenta no era cara.',
 			title: 'En el restaurante'

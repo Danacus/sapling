@@ -15,14 +15,12 @@ beforeAll(loadWasmCore);
 
 const profile: LearnerProfile = {
 	nativeLanguage: 'English',
-	targetLanguage: 'Spanish',
-	level: 'beginner',
-	interests: []
+	targetLanguage: 'Spanish'
 };
 
 describe('startConversation', () => {
 	it('returns a teacher-first scene with its opener and the topic', async () => {
-		const scene = await startConversation({ profile, topic: 'helados' });
+		const scene = await startConversation({ profile, wordCount: 0, topic: 'helados' });
 		expect(scene.firstSpeaker).toBe('teacher');
 		expect(scene.opener?.text).toBeTruthy();
 		expect(scene.openerTranslation).toBeTruthy();
@@ -40,7 +38,7 @@ describe('sendTurn', () => {
 			newId: () => crypto.randomUUID(),
 			now: () => Date.now()
 		};
-		const scene = await startConversation({ profile });
+		const scene = await startConversation({ profile, wordCount: 0 });
 		const turns: ConversationTurn[] = [];
 
 		for (const text of ['helado = ice cream', 'un helado', 'agua']) {

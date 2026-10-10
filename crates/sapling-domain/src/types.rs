@@ -38,7 +38,8 @@ where
 /* Enumerations — zod `z.enum`/`z.literal`, so an unknown string is a parse error */
 /* -------------------------------------------------------------------------- */
 
-/// CEFR-ish proficiency buckets used to steer generation difficulty.
+/// CEFR-ish proficiency buckets a prompt is pitched at. Derived from the size
+/// of the learner's library (`sapling-llm`'s `level_for`), never asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum Level {
@@ -147,8 +148,16 @@ pub struct Profile {
     pub native_language: String,
     /// Language being learned.
     pub target_language: String,
+    /// **Deprecated: never read.** The learner used to pick a level; every
+    /// prompt now reads it off the library instead (`sapling-llm`'s
+    /// `level_for`). Still required here because an older build on another
+    /// synced device needs it to parse a profile, so a new profile is written
+    /// `beginner` and an edited one keeps whatever it had.
     pub level: Level,
-    /// Free-form topics used to personalize generated content.
+    /// **Deprecated: never read.** Topics the learner once picked; `about`
+    /// personalises better and is all a prompt carries now. Kept, like
+    /// `level`, for older builds only: a new profile writes `[]` and an edit
+    /// keeps the stored list.
     pub interests: Vec<String>,
     /// The learner describing themselves in their own words — job, city,
     /// family, tastes, whatever they care to say. Written on the profile page

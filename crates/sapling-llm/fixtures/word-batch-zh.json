@@ -1,0 +1,304 @@
+{
+  "words": [
+    {
+      "term": "家",
+      "reading": "jiā",
+      "meaning": "home"
+    },
+    {
+      "term": "水",
+      "reading": "shuǐ",
+      "meaning": "water"
+    },
+    {
+      "term": "吃",
+      "reading": "chī",
+      "meaning": "to eat"
+    },
+    {
+      "term": "好",
+      "reading": "hǎo",
+      "meaning": "good"
+    },
+    {
+      "term": "天",
+      "reading": "tiān",
+      "meaning": "day, sky"
+    },
+    {
+      "term": "说",
+      "reading": "shuō",
+      "meaning": "to speak"
+    },
+    {
+      "term": "大",
+      "reading": "dà",
+      "meaning": "big"
+    },
+    {
+      "term": "朋友",
+      "reading": "péngyou",
+      "meaning": "friend"
+    },
+    {
+      "term": "时间",
+      "reading": "shíjiān",
+      "meaning": "time"
+    },
+    {
+      "term": "做",
+      "reading": "zuò",
+      "meaning": "to do, to make"
+    },
+    {
+      "term": "去",
+      "reading": "qù",
+      "meaning": "to go"
+    },
+    {
+      "term": "小",
+      "reading": "xiǎo",
+      "meaning": "small"
+    },
+    {
+      "term": "晚上",
+      "reading": "wǎnshang",
+      "meaning": "evening"
+    },
+    {
+      "term": "书",
+      "reading": "shū",
+      "meaning": "book"
+    },
+    {
+      "term": "喝",
+      "reading": "hē",
+      "meaning": "to drink"
+    },
+    {
+      "term": "新",
+      "reading": "xīn",
+      "meaning": "new"
+    },
+    {
+      "term": "城市",
+      "reading": "chéngshì",
+      "meaning": "city"
+    },
+    {
+      "term": "工作",
+      "reading": "gōngzuò",
+      "meaning": "work"
+    },
+    {
+      "term": "住",
+      "reading": "zhù",
+      "meaning": "to live"
+    },
+    {
+      "term": "高兴",
+      "reading": "gāoxìng",
+      "meaning": "happy"
+    },
+    {
+      "term": "路",
+      "reading": "lù",
+      "meaning": "road"
+    },
+    {
+      "term": "桌子",
+      "reading": "zhuōzi",
+      "meaning": "table"
+    },
+    {
+      "term": "睡觉",
+      "reading": "shuìjiào",
+      "meaning": "to sleep"
+    },
+    {
+      "term": "热",
+      "reading": "rè",
+      "meaning": "hot"
+    },
+    {
+      "term": "商店",
+      "reading": "shāngdiàn",
+      "meaning": "shop"
+    },
+    {
+      "term": "面包",
+      "reading": "miànbāo",
+      "meaning": "bread"
+    },
+    {
+      "term": "开",
+      "reading": "kāi",
+      "meaning": "to open"
+    },
+    {
+      "term": "快",
+      "reading": "kuài",
+      "meaning": "fast"
+    },
+    {
+      "term": "窗户",
+      "reading": "chuānghu",
+      "meaning": "window"
+    },
+    {
+      "term": "到",
+      "reading": "dào",
+      "meaning": "to arrive"
+    },
+    {
+      "term": "累",
+      "reading": "lèi",
+      "meaning": "tired"
+    },
+    {
+      "term": "旅行",
+      "reading": "lǚxíng",
+      "meaning": "to travel"
+    },
+    {
+      "term": "厨房",
+      "reading": "chúfáng",
+      "meaning": "kitchen"
+    },
+    {
+      "term": "学习",
+      "reading": "xuéxí",
+      "meaning": "to study"
+    },
+    {
+      "term": "满",
+      "reading": "mǎn",
+      "meaning": "full"
+    },
+    {
+      "term": "会议",
+      "reading": "huìyì",
+      "meaning": "meeting"
+    },
+    {
+      "term": "森林",
+      "reading": "sēnlín",
+      "meaning": "forest"
+    },
+    {
+      "term": "忘记",
+      "reading": "wàngjì",
+      "meaning": "to forget"
+    },
+    {
+      "term": "空",
+      "reading": "kōng",
+      "meaning": "empty"
+    },
+    {
+      "term": "收获",
+      "reading": "shōuhuò",
+      "meaning": "harvest"
+    },
+    {
+      "term": "房租",
+      "reading": "fángzū",
+      "meaning": "rent"
+    },
+    {
+      "term": "等",
+      "reading": "děng",
+      "meaning": "to wait"
+    },
+    {
+      "term": "好吃",
+      "reading": "hǎochī",
+      "meaning": "tasty"
+    },
+    {
+      "term": "枕头",
+      "reading": "zhěntou",
+      "meaning": "pillow"
+    },
+    {
+      "term": "膝盖",
+      "reading": "xīgài",
+      "meaning": "knee"
+    },
+    {
+      "term": "搬家",
+      "reading": "bānjiā",
+      "meaning": "to move house"
+    },
+    {
+      "term": "节省",
+      "reading": "jiéshěng",
+      "meaning": "to save"
+    },
+    {
+      "term": "温",
+      "reading": "wēn",
+      "meaning": "lukewarm"
+    },
+    {
+      "term": "砖",
+      "reading": "zhuān",
+      "meaning": "brick"
+    },
+    {
+      "term": "发展",
+      "reading": "fāzhǎn",
+      "meaning": "to develop"
+    },
+    {
+      "term": "骄傲",
+      "reading": "jiāo'ào",
+      "meaning": "proud"
+    },
+    {
+      "term": "罢工",
+      "reading": "bàgōng",
+      "meaning": "strike"
+    },
+    {
+      "term": "论文",
+      "reading": "lùnwén",
+      "meaning": "essay, thesis"
+    },
+    {
+      "term": "疲惫",
+      "reading": "píbèi",
+      "meaning": "exhausted"
+    },
+    {
+      "term": "利用",
+      "reading": "lìyòng",
+      "meaning": "to make use of"
+    },
+    {
+      "term": "期限",
+      "reading": "qīxiàn",
+      "meaning": "deadline"
+    },
+    {
+      "term": "支撑",
+      "reading": "zhīchēng",
+      "meaning": "to hold up"
+    },
+    {
+      "term": "稀少",
+      "reading": "xīshǎo",
+      "meaning": "scarce"
+    },
+    {
+      "term": "表现",
+      "reading": "biǎoxiàn",
+      "meaning": "performance"
+    },
+    {
+      "term": "谦虚",
+      "reading": "qiānxū",
+      "meaning": "modest"
+    }
+  ]
+}

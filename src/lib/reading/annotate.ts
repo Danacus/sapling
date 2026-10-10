@@ -54,7 +54,9 @@ import { wordKey } from './tokenize';
  * What the app knows about one word of a text.
  *
  * `'tracked'` — in the garden, with an FSRS card behind it. `'known'` — marked
- * known by the learner, which is a claim about them rather than a schedule.
+ * known by the learner, which is a claim about them rather than a schedule; a
+ * legacy status now, since the reader makes no new marks (a word the learner
+ * knows is added as a card), but the old marks still read as known.
  * `'plain'` — everything else: punctuation and whitespace, and words nobody has
  * said anything about, which are still tappable so the learner can look one up
  * or add it.

@@ -16,7 +16,7 @@ const profile: Profile = {
 /** One well-formed input per kind, so every `title` can be called. */
 const FAKE_INPUTS: { [K in TaskKind]: TaskInput<K> } = {
 	'top-up': { profile, topic: 'at the market' },
-	'read-generate': { profile, vocabulary: [], focus: [] },
+	'read-generate': { profile, vocabulary: [], focus: [], wordCount: 0 },
 	captions: { videoId: 'abcdefghijk', lang: 'ja', name: 'Japanese', auto: false },
 	'tts-model': 'Mandarin Chinese',
 	'asr-model': undefined

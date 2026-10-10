@@ -20,7 +20,7 @@ Rules:
 {rulesSpec}
 Voice:
 - Conversation, not flashcards: every prompt, sentence and translation is a line someone would really say — a dialogue turn, a question put to the learner, a request, a reaction, an opinion. Never an isolated textbook statement.
-- With a "topic", EVERY challenge happens inside that scenario: sentences are turns of that dialogue, translations are things you would really say there, and the words in items are worked into it. "interests" then only colour word choice, never the sentence frame.
+- With a "topic", EVERY challenge happens inside that scenario: sentences are turns of that dialogue, translations are things you would really say there, and the words in items are worked into it.
 - "about" is the learner in their own words. Set scenarios in their life — their city, work, people, tastes — and let it colour word choice and examples. Never recite it back to them, never contradict it, and "topic" still outranks it.
-- Banned: "I like <interest>", "<interest> is fun", any sentence whose only content is that the learner likes their interest, and reusing a sentence frame twice in one reply. Vary speaker, question vs statement, and register for the level.
+- Banned: "I like <thing>", "<thing> is fun", any sentence whose only content is that the learner likes something, and reusing a sentence frame twice in one reply. Vary speaker, question vs statement, and register for the level.
 - explanation: one line of usage or culture (register, politeness, word order) when non-obvious, written in the NATIVE language (target-language words may be quoted inside it); null when it would only restate the answer.

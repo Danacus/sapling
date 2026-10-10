@@ -5,6 +5,7 @@
 	import {
 		getAllItems,
 		getConversations,
+		getApiKey,
 		getDailyActivity,
 		getProfile,
 		getTexts,
@@ -13,6 +14,7 @@
 		streakFrom
 	} from '$lib/db';
 	import type { ConversationSummary } from '$lib/db';
+	import { isMockForced } from '$lib/llm';
 	import { isDue } from '$lib/srs';
 	import type { KnowledgeItem, Profile, ReadingText } from '$lib/types';
 	import Spinner from '$lib/ui/Spinner.svelte';
@@ -28,6 +30,10 @@
 	let texts = $state<ReadingText[]>([]);
 	let streakDays = $state(0);
 	let now = $state(Date.now());
+	// Whether a model can write the first words. The no-key empty state says
+	// so rather than sending the learner to a check that cannot fetch a grid;
+	// the forced mock counts as a model, so development walks the keyed path.
+	let canGenerate = $state(false);
 
 	$effect(() => {
 		if (!browser) return;
@@ -44,6 +50,7 @@
 				conversations = loadedConversations;
 				texts = loadedTexts;
 				streakDays = streakFrom(days.map((entry) => entry.day));
+				canGenerate = getApiKey() !== undefined || isMockForced();
 				now = Date.now();
 				loading = false;
 			})
@@ -64,13 +71,23 @@
 	const reviewsToday = $derived(activity.find((entry) => entry.day === today)?.count ?? 0);
 
 	const recommendation = $derived.by(() => {
+		if (items.length === 0 && !canGenerate) {
+			return {
+				kicker: 'Start your garden',
+				title: 'Add a model key to generate your first words',
+				copy: 'Sapling writes words, lessons and conversations through OpenRouter with your own key. Without one you can still import a text and read it.',
+				label: 'Add a key in Settings',
+				href: '/settings#settings-api-key',
+				secondary: { label: 'or import a text', href: '/read' }
+			};
+		}
 		if (items.length === 0) {
 			return {
 				kicker: 'Start your garden',
 				title: `Plant your first ${targetLanguage} words`,
-				copy: 'Meet useful words in a conversation or a text. The ones you keep will return here for practice.',
-				label: 'Explore your language',
-				href: '/explore'
+				copy: 'Tap the words you already recognise, or start from a topic. The ones you keep will return here for practice.',
+				label: 'Check what you know',
+				href: '/explore/check'
 			};
 		}
 		if (dueCount > 0) {
@@ -217,6 +234,11 @@
 					<path d="M4.8 12h14" /><path d="m13.4 6.6 5.4 5.4-5.4 5.4" />
 				</svg>
 			</a>
+			{#if recommendation.secondary}
+				<a class="hero-secondary" href={recommendation.secondary.href}
+					>{recommendation.secondary.label}</a
+				>
+			{/if}
 		</section>
 
 		<div class="today-grid" class:without-continue={continueItems.length === 0}>
@@ -460,6 +482,14 @@
 		padding: 0.9rem 1.2rem;
 		text-decoration: none;
 	}
+	/* The quieter second way in, under the action: a text link, so the hero
+	   still has one obvious thing to press. */
+	.hero-secondary {
+		justify-self: start;
+		margin-top: -0.75rem;
+		color: var(--text-muted);
+		font-size: 0.92rem;
+	}
 	.today-grid {
 		display: grid;
 		gap: var(--gap);
@@ -663,6 +693,10 @@
 			min-height: 22rem;
 		}
 		.hero-action {
+			justify-self: end;
+		}
+		.hero-secondary {
+			grid-column: 2;
 			justify-self: end;
 		}
 		.today-grid {

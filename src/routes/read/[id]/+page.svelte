@@ -34,7 +34,7 @@
   a lookup on a garden word is still `Again`, in either view.
 
   This page owns every write. `$lib/reading` never touches the database: it is
-  handed the vocabulary and hands back words, and adding, marking and looking up
+  handed the vocabulary and hands back words, and adding, unmarking and looking up
   all happen here through the repositories — which is what puts them in the sync
   log for free. Reading is also review, scoped to the page: a lookup on a garden
   word is `Again` and confirming the page is `Good` for the rest of its garden
@@ -43,11 +43,15 @@
   survives a reload and agrees with the drill.
 
   The card offers what the word's status leaves open: a tracked word only its
-  bed, a known one Unmark, and a word nobody has said anything about **"What
-  does this mean?"** first — a paid lookup sent with the sentence the word
-  stands in — then editable meaning and reading fields that the answer fills
-  and the learner may correct or type without asking, "Add to my words" and "I
-  know this". The answer is two things: a short gloss that fills the Meaning
+  bed, and any other word **"What does this mean?"** first — a paid lookup sent
+  with the sentence the word stands in — then editable meaning and reading
+  fields that the answer fills and the learner may correct or type without
+  asking, and "Add to my words". Adding is the only way to keep a word: there
+  is no "I know this" any more, because a word the learner already knows is
+  just a fresh card that FSRS learns the truth about from real answers. A word
+  marked known before that (an old `wordMarked`) still reads as known and its
+  card adds Unmark beside Add; adding it unmarks it too, so the card is the
+  word's only status. The answer is two things: a short gloss that fills the Meaning
   field, and a longer explanation shown read-only above it, which is never
   filed with the word. The answer lands in `extraGlossary`, which the card reads for
   every occurrence of that word for the rest of this open; it is not stored,
@@ -1048,6 +1052,8 @@
 		try {
 			const entry = await lookUpWord({
 				profile,
+				// The library, not `knownTerms`: the level is read off its size.
+				wordCount: items.length,
 				term: target.text,
 				sentence: sentenceFor(at) || target.text,
 				title: text.title
@@ -1153,6 +1159,10 @@
 					...(reading ? { romanization: reading } : {})
 				}
 			]);
+			// A legacy mark would otherwise outlive the card: the word reads as
+			// tracked while the card exists, but deleting the card later would bring
+			// back a "known" nobody had declared since. The card is the status now.
+			if (target.status === 'known') await markWord(storedMark(target), false);
 			await refresh();
 		} catch (cause) {
 			cardError = cause instanceof Error ? cause.message : 'Could not add that word.';
@@ -1161,21 +1171,28 @@
 		}
 	}
 
-	/** "I know this", and taking it back. A status declaration, never a review. */
-	async function mark(known: boolean) {
+	/**
+	 * The spelling a legacy mark is stored under. `wordMarks` is keyed by the term
+	 * verbatim while a word's *status* is matched by key, so unmarking has to name
+	 * the spelling the mark was stored under rather than the one this text uses.
+	 */
+	function storedMark(target: ReadingWord): string {
+		return knownTerms.find((term) => wordKey(term) === target.key) ?? target.text;
+	}
+
+	/**
+	 * Takes back a mark made before marking was retired. New marks are no longer
+	 * made — a known word is added as a card instead — but the old ones still
+	 * read as known, so they can still be removed. A status change, never a review.
+	 */
+	async function unmark() {
 		const target = card;
 		if (!target?.key || writing) return;
 
 		writing = true;
 		cardError = '';
 		try {
-			// `wordMarks` is keyed by the term verbatim while a word's *status* is
-			// matched by key, so unmarking has to name the spelling the mark was
-			// stored under rather than the one this text happens to use.
-			const stored = known
-				? target.text
-				: (knownTerms.find((term) => wordKey(term) === target.key) ?? target.text);
-			await markWord(stored, known);
+			await markWord(storedMark(target), false);
 			await refresh();
 		} catch (cause) {
 			cardError = cause instanceof Error ? cause.message : 'Could not save that.';
@@ -1822,7 +1839,7 @@
 						<!-- An untracked word's meaning is in its field below, where it can be
 						     corrected before it is filed; shown here too, it would be said
 						     twice. -->
-						{#if cardGloss && card.status !== 'plain'}
+						{#if cardGloss && card.status === 'tracked'}
 							<p class="word-meaning">{cardGloss.meaning}</p>
 						{/if}
 
@@ -1839,16 +1856,9 @@
 							<hr class="stitch" />
 						{/if}
 
-						{#if card.status === 'tracked'}{:else if card.status === 'known'}
-							<button
-								type="button"
-								class="btn btn-ghost btn-block"
-								disabled={writing}
-								onclick={() => void mark(false)}
-							>
-								Unmark
-							</button>
-						{:else}
+						<!-- Every untracked word gets the same card: adding is the one way
+						     to keep a word, a known one included. -->
+						{#if card.status !== 'tracked'}
 							<!-- The card's main action while the word has no meaning behind
 							     it — and only on a press, because it is paid. Primary until
 							     the learner has a meaning of their own in the field, when Add
@@ -1911,14 +1921,18 @@
 								>
 									Add to my words
 								</button>
-								<button
-									type="button"
-									class="btn btn-ghost"
-									disabled={writing}
-									onclick={() => void mark(true)}
-								>
-									I know this
-								</button>
+								<!-- Only a mark made before marking was retired: it can be
+								     taken back, and none is made here any more. -->
+								{#if card.status === 'known'}
+									<button
+										type="button"
+										class="btn btn-ghost"
+										disabled={writing}
+										onclick={() => void unmark()}
+									>
+										Unmark
+									</button>
+								{/if}
 							</div>
 						{/if}
 

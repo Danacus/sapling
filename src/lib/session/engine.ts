@@ -353,8 +353,8 @@ export function planRefill(
 		profile: {
 			nativeLanguage: profile.nativeLanguage,
 			targetLanguage: profile.targetLanguage,
-			level: profile.level,
-			interests: profile.interests,
+			// No level and no interests: Rust reads the level off `knownItems`
+			// (the whole collection), and `about` is the one personalisation.
 			// The learner's self-description, when they wrote one. Omitted rather
 			// than sent blank, so a profile that never filled it in costs nothing;
 			// the prompt builder does the length capping.

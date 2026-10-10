@@ -1,0 +1,304 @@
+{
+  "words": [
+    {
+      "term": "casa",
+      "reading": null,
+      "meaning": "house"
+    },
+    {
+      "term": "agua",
+      "reading": null,
+      "meaning": "water"
+    },
+    {
+      "term": "comer",
+      "reading": null,
+      "meaning": "to eat"
+    },
+    {
+      "term": "bueno",
+      "reading": null,
+      "meaning": "good"
+    },
+    {
+      "term": "día",
+      "reading": null,
+      "meaning": "day"
+    },
+    {
+      "term": "hablar",
+      "reading": null,
+      "meaning": "to speak"
+    },
+    {
+      "term": "grande",
+      "reading": null,
+      "meaning": "big"
+    },
+    {
+      "term": "amigo",
+      "reading": null,
+      "meaning": "friend"
+    },
+    {
+      "term": "tiempo",
+      "reading": null,
+      "meaning": "time"
+    },
+    {
+      "term": "hacer",
+      "reading": null,
+      "meaning": "to do, to make"
+    },
+    {
+      "term": "ir",
+      "reading": null,
+      "meaning": "to go"
+    },
+    {
+      "term": "pequeño",
+      "reading": null,
+      "meaning": "small"
+    },
+    {
+      "term": "noche",
+      "reading": null,
+      "meaning": "night"
+    },
+    {
+      "term": "libro",
+      "reading": null,
+      "meaning": "book"
+    },
+    {
+      "term": "beber",
+      "reading": null,
+      "meaning": "to drink"
+    },
+    {
+      "term": "nuevo",
+      "reading": null,
+      "meaning": "new"
+    },
+    {
+      "term": "ciudad",
+      "reading": null,
+      "meaning": "city"
+    },
+    {
+      "term": "trabajo",
+      "reading": null,
+      "meaning": "work"
+    },
+    {
+      "term": "vivir",
+      "reading": null,
+      "meaning": "to live"
+    },
+    {
+      "term": "feliz",
+      "reading": null,
+      "meaning": "happy"
+    },
+    {
+      "term": "calle",
+      "reading": null,
+      "meaning": "street"
+    },
+    {
+      "term": "mesa",
+      "reading": null,
+      "meaning": "table"
+    },
+    {
+      "term": "dormir",
+      "reading": null,
+      "meaning": "to sleep"
+    },
+    {
+      "term": "caliente",
+      "reading": null,
+      "meaning": "hot"
+    },
+    {
+      "term": "tienda",
+      "reading": null,
+      "meaning": "shop"
+    },
+    {
+      "term": "pan",
+      "reading": null,
+      "meaning": "bread"
+    },
+    {
+      "term": "abrir",
+      "reading": null,
+      "meaning": "to open"
+    },
+    {
+      "term": "rápido",
+      "reading": null,
+      "meaning": "fast"
+    },
+    {
+      "term": "ventana",
+      "reading": null,
+      "meaning": "window"
+    },
+    {
+      "term": "camino",
+      "reading": null,
+      "meaning": "path, road"
+    },
+    {
+      "term": "llegar",
+      "reading": null,
+      "meaning": "to arrive"
+    },
+    {
+      "term": "cansado",
+      "reading": null,
+      "meaning": "tired"
+    },
+    {
+      "term": "viaje",
+      "reading": null,
+      "meaning": "trip"
+    },
+    {
+      "term": "cocina",
+      "reading": null,
+      "meaning": "kitchen"
+    },
+    {
+      "term": "aprender",
+      "reading": null,
+      "meaning": "to learn"
+    },
+    {
+      "term": "lleno",
+      "reading": null,
+      "meaning": "full"
+    },
+    {
+      "term": "reunión",
+      "reading": null,
+      "meaning": "meeting"
+    },
+    {
+      "term": "bosque",
+      "reading": null,
+      "meaning": "forest"
+    },
+    {
+      "term": "olvidar",
+      "reading": null,
+      "meaning": "to forget"
+    },
+    {
+      "term": "vacío",
+      "reading": null,
+      "meaning": "empty"
+    },
+    {
+      "term": "cosecha",
+      "reading": null,
+      "meaning": "harvest"
+    },
+    {
+      "term": "alquiler",
+      "reading": null,
+      "meaning": "rent"
+    },
+    {
+      "term": "esperar",
+      "reading": null,
+      "meaning": "to wait, to hope"
+    },
+    {
+      "term": "sabroso",
+      "reading": null,
+      "meaning": "tasty"
+    },
+    {
+      "term": "almohada",
+      "reading": null,
+      "meaning": "pillow"
+    },
+    {
+      "term": "rodilla",
+      "reading": null,
+      "meaning": "knee"
+    },
+    {
+      "term": "mudarse",
+      "reading": null,
+      "meaning": "to move house"
+    },
+    {
+      "term": "ahorrar",
+      "reading": null,
+      "meaning": "to save money"
+    },
+    {
+      "term": "tibio",
+      "reading": null,
+      "meaning": "lukewarm"
+    },
+    {
+      "term": "ladrillo",
+      "reading": null,
+      "meaning": "brick"
+    },
+    {
+      "term": "desarrollar",
+      "reading": null,
+      "meaning": "to develop"
+    },
+    {
+      "term": "orgulloso",
+      "reading": null,
+      "meaning": "proud"
+    },
+    {
+      "term": "huelga",
+      "reading": null,
+      "meaning": "strike"
+    },
+    {
+      "term": "ensayo",
+      "reading": null,
+      "meaning": "essay, rehearsal"
+    },
+    {
+      "term": "agotado",
+      "reading": null,
+      "meaning": "exhausted, sold out"
+    },
+    {
+      "term": "aprovechar",
+      "reading": null,
+      "meaning": "to make the most of"
+    },
+    {
+      "term": "plazo",
+      "reading": null,
+      "meaning": "deadline, term"
+    },
+    {
+      "term": "sostener",
+      "reading": null,
+      "meaning": "to hold up"
+    },
+    {
+      "term": "escaso",
+      "reading": null,
+      "meaning": "scarce"
+    },
+    {
+      "term": "desempeño",
+      "reading": null,
+      "meaning": "performance"
+    }
+  ]
+}

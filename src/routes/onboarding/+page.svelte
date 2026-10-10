@@ -5,19 +5,27 @@
 	import {
 		createProfile,
 		DEFAULT_MODEL,
+		getApiKey,
 		getModel,
 		saveProfile,
 		setApiKey,
 		setModel
 	} from '$lib/db';
+	import { isMockForced } from '$lib/llm';
 	import { isSyncAvailable, isValidPhrase, normalizePhrase, pairDevice } from '$lib/sync';
-	import type { Level, Profile } from '$lib/types';
+	import type { Profile } from '$lib/types';
 	import InlineStatus from '$lib/ui/InlineStatus.svelte';
-	import InterestPicker from '$lib/ui/InterestPicker.svelte';
-	import LevelPicker from '$lib/ui/LevelPicker.svelte';
+
+	import { FINISH_HREF, onboardingSteps, startHref, type StartingPoint } from './steps';
 
 	const adding = page.url.searchParams.has('add');
-	const TOTAL_STEPS = adding ? 2 : 3;
+	// Languages, then the model and key — which a new language reuses, so
+	// adding one skips it — then, when there is a model to write words with,
+	// "How much do you know?", which hands off to /explore/check. No stored
+	// level and no interests: the level is read off the word list, and
+	// "About me" on /profile personalises. `steps.ts` holds the branching.
+	const storedKey = adding && getApiKey() !== undefined;
+	const mockForced = isMockForced();
 
 	/** Datalist suggestions; learners may still type anything. */
 	const LANGUAGES = [
@@ -60,22 +68,27 @@
 
 	let nativeLanguage = $state('');
 	let targetLanguage = $state('');
-	let level = $state<Level | undefined>(undefined);
-	let interests = $state<string[]>([]);
 	let apiKey = $state('');
 	let model = $state(adding ? getModel() : DEFAULT_MODEL);
 
 	let saving = $state(false);
 	let error = $state('');
 
+	// Live: typing a key on the model step is what adds the level step, so the
+	// dots and the button there follow it.
+	const steps = $derived(
+		onboardingSteps({ adding, keyed: storedKey || apiKey.trim().length > 0, mockForced })
+	);
+	const totalSteps = $derived(steps.length);
+	const current = $derived(steps[Math.min(step, totalSteps) - 1]);
+	const target = $derived(targetLanguage.trim());
+
 	const canContinue = $derived(
-		step === 1
+		current === 'languages'
 			? nativeLanguage.trim().length > 0 &&
 					targetLanguage.trim().length > 0 &&
 					nativeLanguage.trim().toLowerCase() !== targetLanguage.trim().toLowerCase()
-			: step === 2
-				? level !== undefined
-				: true
+			: true
 	);
 
 	function back() {
@@ -86,10 +99,15 @@
 	function next() {
 		error = '';
 		if (!canContinue) return;
-		if (step < TOTAL_STEPS) step += 1;
+		if (step < totalSteps) step += 1;
 	}
 
-	async function finish() {
+	/** The level step's answer: save, then into the matching check mode. */
+	function begin(start: StartingPoint) {
+		void finish(startHref(start));
+	}
+
+	async function finish(href: string = FINISH_HREF) {
 		if (saving) return;
 		error = '';
 		saving = true;
@@ -98,8 +116,10 @@
 			const profile: Profile = {
 				nativeLanguage: nativeLanguage.trim(),
 				targetLanguage: targetLanguage.trim(),
-				level: level ?? 'beginner',
-				interests,
+				// Deprecated and never read; written only so an older build on
+				// another synced device can still parse the profile.
+				level: 'beginner',
+				interests: [],
 				model: chosenModel,
 				createdAt: Date.now()
 			};
@@ -112,7 +132,7 @@
 				if (apiKey.trim()) setApiKey(apiKey);
 			}
 
-			await goto('/');
+			await goto(href);
 		} catch (cause) {
 			error = cause instanceof Error ? cause.message : 'Could not save your profile.';
 			saving = false;
@@ -161,7 +181,7 @@
 <main class="shell">
 	<section class="card ll-rise">
 		<nav class="dots" aria-label="Onboarding progress">
-			{#each { length: TOTAL_STEPS } as _, index (index)}
+			{#each { length: totalSteps } as _, index (index)}
 				<span
 					class="dot"
 					class:active={index + 1 === step}
@@ -171,7 +191,7 @@
 			{/each}
 		</nav>
 
-		{#if step === 1}
+		{#if current === 'languages'}
 			<header class="head">
 				<span class="mark" aria-hidden="true">
 					<svg class="ico" viewBox="0 0 24 24">
@@ -217,32 +237,7 @@
 						.toLowerCase()}
 				<p class="hint">Pick two different languages to get started.</p>
 			{/if}
-		{:else if step === 2}
-			<header class="head">
-				<span class="mark" aria-hidden="true">
-					<svg class="ico" viewBox="0 0 24 24">
-						<circle cx="12" cy="12" r="7.4" />
-						<circle cx="12" cy="12" r="3.2" />
-						<path d="M12 4.6V2.4M12 21.6v-2.2M4.6 12H2.4M21.6 12h-2.2" />
-					</svg>
-				</span>
-				<h1>Tune it to you</h1>
-				<p class="sub">
-					This shapes the words and sentences we generate in {targetLanguage.trim() ||
-						'your new language'}.
-				</p>
-			</header>
-
-			<div class="field">
-				<span class="label">Your level</span>
-				<LevelPicker bind:level />
-			</div>
-
-			<div class="field">
-				<span class="label">Interests</span>
-				<InterestPicker bind:interests label="Interests" />
-			</div>
-		{:else}
+		{:else if current === 'model'}
 			<header class="head">
 				<span class="mark" aria-hidden="true">
 					<svg class="ico" viewBox="0 0 24 24">
@@ -253,7 +248,9 @@
 					</svg>
 				</span>
 				<h1>Connect a model</h1>
-				<p class="sub">Lessons are generated through OpenRouter with your own key.</p>
+				<p class="sub">
+					Words, lessons and conversations are written through OpenRouter with your own key.
+				</p>
 			</header>
 
 			<label class="field">
@@ -290,6 +287,57 @@
 					{/each}
 				</datalist>
 			</label>
+
+			{#if !apiKey.trim()}
+				<p class="keyless">
+					Without a key Sapling can't generate words, lessons or conversations. Importing your own
+					text and reading it still work, and you can add a key later in Settings.
+				</p>
+			{/if}
+		{:else}
+			<header class="head">
+				<span class="mark" aria-hidden="true">
+					<svg class="ico" viewBox="0 0 24 24">
+						<rect x="4" y="4" width="7" height="7" rx="1.6" />
+						<rect x="13" y="4" width="7" height="7" rx="1.6" />
+						<rect x="4" y="13" width="7" height="7" rx="1.6" />
+						<path d="m14 16.4 2 2 3.4-3.8" />
+					</svg>
+				</span>
+				<h1>How much {target} do you know?</h1>
+				<p class="sub">Either way, you'll have words to practise in a minute.</p>
+			</header>
+
+			<div class="choices">
+				<button type="button" class="choice" onclick={() => begin('scratch')} disabled={saving}>
+					<span class="choice-mark" aria-hidden="true">
+						<svg class="ico" viewBox="0 0 24 24">
+							<path d="M12 21v-8.6" />
+							<path d="M12 16.2c-3.3 0-5.2-1.9-5.2-5.2 3.3 0 5.2 1.9 5.2 5.2Z" />
+							<path d="M12 12.6c0-3.8 2-5.8 5.6-5.8 0 3.8-2 5.8-5.6 5.8Z" />
+						</svg>
+					</span>
+					<span class="choice-copy">
+						<strong>Starting from scratch</strong>
+						<span>We'll start you with a few words on a topic you pick.</span>
+					</span>
+				</button>
+
+				<button type="button" class="choice" onclick={() => begin('some')} disabled={saving}>
+					<span class="choice-mark" aria-hidden="true">
+						<svg class="ico" viewBox="0 0 24 24">
+							<rect x="4" y="4" width="7" height="7" rx="1.6" />
+							<rect x="13" y="4" width="7" height="7" rx="1.6" />
+							<rect x="4" y="13" width="7" height="7" rx="1.6" />
+							<path d="m14 16.4 2 2 3.4-3.8" />
+						</svg>
+					</span>
+					<span class="choice-copy">
+						<strong>I know some already</strong>
+						<span>Tap the words you recognise to fill your garden.</span>
+					</span>
+				</button>
+			</div>
 		{/if}
 
 		{#if error}
@@ -301,19 +349,31 @@
 				<button type="button" class="btn btn-ghost" onclick={back} disabled={saving}>Back</button>
 			{/if}
 
-			{#if step < TOTAL_STEPS}
+			{#if current === 'level'}
+				<!-- The choice cards are this step's way forward; saving shows here. -->
+				{#if saving}
+					<p class="saving grow" role="status">Saving…</p>
+				{/if}
+			{:else if step < totalSteps}
 				<button type="button" class="btn btn-primary grow" onclick={next} disabled={!canContinue}>
 					Continue
 				</button>
 			{:else}
-				<button type="button" class="btn btn-primary grow" onclick={finish} disabled={saving}>
+				<button
+					type="button"
+					class="btn btn-primary grow"
+					onclick={() => void finish()}
+					disabled={saving}
+				>
 					{saving ? 'Saving…' : adding ? 'Add language' : 'Start learning'}
 				</button>
 			{/if}
 		</footer>
 
-		{#if !adding && step === TOTAL_STEPS && !apiKey.trim()}
-			<button type="button" class="skip" onclick={finish} disabled={saving}>Skip for now</button>
+		{#if !adding && current === 'model' && step === totalSteps}
+			<button type="button" class="skip" onclick={() => void finish()} disabled={saving}
+				>Skip for now</button
+			>
 		{/if}
 	</section>
 
@@ -355,8 +415,9 @@
 	/* Width and horizontal padding are the global `.shell`'s job — this stays
 	   at the default `--measure`. One focused card, one column, at every
 	   width: `place-items: center` already gives it air on a wide screen by
-	   leaving the space either side empty, and none of the three steps has
-	   content that reads better stretched wider. */
+	   leaving the space either side empty, and no step has content that
+	   reads better stretched wider — the level step's two choices included,
+	   which stack rather than sit side by side. */
 	.shell {
 		display: grid;
 		place-items: center;
@@ -466,7 +527,106 @@
 		box-shadow: var(--ring);
 	}
 
+	/* The keyless note: what skipping costs, said plainly, set as a hint
+	   rather than a warning — skipping is a legitimate way in. */
+	.keyless {
+		margin: 1rem 0 0;
+		padding: 0.75rem 0.9rem;
+		border: 1px dashed var(--border-strong);
+		border-radius: var(--radius-sm);
+		color: var(--text-muted);
+		font-size: 0.9rem;
+		line-height: 1.5;
+	}
+
+	/* The level step's choices: Explore's door idea (a mark, a title, a
+	   line of copy) cut down to the card's measure and stacked. */
+	.choices {
+		display: grid;
+		gap: 0.75rem;
+	}
+
+	.choice {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		align-items: center;
+		gap: 1rem;
+		width: 100%;
+		padding: 1.1rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: var(--surface);
+		color: var(--text);
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
+		transition:
+			transform 0.16s ease,
+			border-color 0.16s ease,
+			box-shadow 0.16s ease;
+	}
+
+	.choice:hover:not(:disabled) {
+		transform: translateY(-2px);
+		border-color: var(--border-strong);
+		box-shadow: 0 14px 34px rgb(60 50 20 / 14%);
+	}
+
+	.choice:focus-visible {
+		outline: none;
+		box-shadow: var(--ring);
+	}
+
+	.choice:disabled {
+		opacity: 0.6;
+		cursor: default;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.choice {
+			transition: none;
+		}
+	}
+
+	.choice-mark {
+		display: grid;
+		place-items: center;
+		width: 2.75rem;
+		height: 2.75rem;
+		border-radius: var(--radius);
+		background: var(--primary-soft);
+		color: var(--primary-strong);
+	}
+
+	.choice-mark .ico {
+		width: 1.35rem;
+		height: 1.35rem;
+	}
+
+	.choice-copy {
+		display: flex;
+		min-width: 0;
+		flex-direction: column;
+		gap: 0.2rem;
+	}
+
+	.choice-copy strong {
+		font-family: var(--font-display);
+		font-size: 1.15rem;
+	}
+
+	.choice-copy > span {
+		color: var(--text-muted);
+		line-height: 1.4;
+	}
+
 	/* Footer --------------------------------------------------------------- */
+
+	.saving {
+		margin: 0;
+		color: var(--text-muted);
+		text-align: right;
+	}
 
 	.actions {
 		display: flex;

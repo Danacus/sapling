@@ -35,6 +35,13 @@ all reused; nothing about them changes.
 **Keep the conversation going.** Reply in character, in the target language, at
 the learner's level. Ask questions back; never let the exchange die.
 
+The level is never asked for: it is read off how many words the learner's list
+holds (`sapling-llm`'s `level_for` — under 150 beginner, under 600 elementary,
+under 2000 intermediate, then advanced), so it grows as the list does. A turn
+counts the list the tool context lends; the scene call lends none, so the page
+passes the count when the learner presses start. Both the level the prompts
+name and the reply's length rule follow it.
+
 **Correct — but only real mistakes.** A correction is a *language* error:
 grammar, spelling, agreement, word choice, unnatural phrasing. It is never a
 comment on what the learner said. If the learner asks for a pizza in an ice

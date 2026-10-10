@@ -16,9 +16,7 @@ beforeAll(loadWasmCore);
 
 const profile: LearnerProfile = {
 	nativeLanguage: 'English',
-	targetLanguage: 'Spanish',
-	level: 'beginner',
-	interests: []
+	targetLanguage: 'Spanish'
 };
 
 function over(backend: TestBackend): ToolContext {

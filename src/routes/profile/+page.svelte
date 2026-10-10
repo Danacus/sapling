@@ -1,6 +1,9 @@
 <!--
-  Everything the generator is told about the *person*: who they are, what they
-  care about, and how far along they are. App configuration (key, model, voice,
+  Everything the generator is told about the *person*: who they are, in their
+  own words. How far along they are is not asked — every prompt reads the level
+  off the size of their word list — and the old interests list is gone too:
+  "About me" personalises better. The stored profile still carries both for
+  older builds, and a save here keeps whatever they held. App configuration (key, model, voice,
   backups) stays on /settings — the split is person-facts here, machine-facts
   there, so neither page has to explain why half of it is about the other.
 
@@ -15,16 +18,13 @@
 
 	import { getProfile, saveProfile } from '$lib/db';
 	import { MAX_ABOUT_CHARS } from '$lib/llm';
-	import type { Aim, Level, Profile } from '$lib/types';
+	import type { Aim, Profile } from '$lib/types';
 	import BackLink from '$lib/ui/BackLink.svelte';
-	import InterestPicker from '$lib/ui/InterestPicker.svelte';
-	import LevelPicker from '$lib/ui/LevelPicker.svelte';
 	import InlineStatus from '$lib/ui/InlineStatus.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	type Status = 'idle' | 'saved' | 'error';
 
-	/** Same four cards as onboarding, so the level means the same thing here. */
 	const ABOUT_PLACEHOLDER =
 		'e.g. I am a nurse in Valencia, I live with my partner and two kids, and I climb most weekends.';
 
@@ -32,12 +32,9 @@
 	let loadError = $state('');
 	let profile = $state<Profile | undefined>(undefined);
 
-	// The editable copies. Kept apart from `profile` so an abandoned edit is
+	// The editable copy. Kept apart from `profile` so an abandoned edit is
 	// discarded by a reload rather than half-persisted.
 	let about = $state('');
-	let level = $state<Level>('beginner');
-	let interests = $state<string[]>([]);
-	let interestPicker = $state<InterestPicker | undefined>(undefined);
 
 	let saving = $state(false);
 	let saveStatus = $state<Status>('idle');
@@ -83,8 +80,6 @@
 				if (cancelled) return;
 				profile = loaded;
 				about = loaded?.about ?? '';
-				level = loaded?.level ?? 'beginner';
-				interests = [...(loaded?.interests ?? [])];
 				loading = false;
 			})
 			.catch((cause) => {
@@ -109,18 +104,12 @@
 		saving = true;
 		saveStatus = 'idle';
 
-		// A tag still sitting in the input is one the learner clearly meant to add;
-		// making them press Enter first would just lose it silently.
-		interestPicker?.commitDraft();
-
 		const trimmed = about.trim();
 		try {
-			const updated: Profile = {
-				...profile,
-				level,
-				interests: [...interests],
-				about: trimmed
-			};
+			// The spread keeps the deprecated `level` and `interests` exactly as
+			// stored: nothing reads them, but an older build on another device
+			// still parses them.
+			const updated: Profile = { ...profile, about: trimmed };
 			// Absent rather than empty: a cleared self-description should look
 			// exactly like never having written one — in storage, in the export, and
 			// to the prompt builder, which only checks for non-blank.
@@ -186,16 +175,6 @@
 				<p class="hint count" class:tight={aboutRemaining <= 50}>
 					{aboutRemaining} character{aboutRemaining === 1 ? '' : 's'} left
 				</p>
-			</div>
-
-			<div class="field">
-				<span class="label">Interests</span>
-				<InterestPicker bind:interests bind:this={interestPicker} label="Add an interest" />
-			</div>
-
-			<div class="field">
-				<span class="label">Your level</span>
-				<LevelPicker bind:level />
 			</div>
 
 			<div class="actions-row">
@@ -370,8 +349,8 @@
 		margin: 0 0 1.25rem;
 	}
 
-	/* Three choices in one row even on a phone: short labels, and the same
-	   pressed-card hand as the level picker above them. */
+	/* Three choices in one row even on a phone: short labels, in the app's
+	   pressed-card hand. */
 	.aims {
 		display: grid;
 		grid-template-columns: repeat(3, minmax(0, 1fr));

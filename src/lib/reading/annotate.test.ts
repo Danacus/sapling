@@ -92,6 +92,17 @@ describe('annotateSentence', () => {
 		expect(statusOf(words, 'cuenta')).not.toHaveProperty('gloss');
 	});
 
+	// A legacy-marked word the learner then adds is a card: the reader unmarks it
+	// on add, but even a mark still standing must not hide the card behind it.
+	it('reads a word with a card as tracked even while a legacy mark stands', () => {
+		const words = annotateSentence(
+			'mesa',
+			tokenizeByTerms,
+			ctx({ items: [item('mesa')], knownTerms: ['Mesa'] })
+		);
+		expect(words[0]).toMatchObject({ status: 'tracked', itemId: 'id-mesa' });
+	});
+
 	it('matches case-insensitively, on the one normalization', () => {
 		const words = annotateSentence('MESA', tokenizeByTerms, ctx({ items: [item('mesa')] }));
 		expect(words[0]).toMatchObject({ status: 'tracked', key: 'mesa', itemId: 'id-mesa' });

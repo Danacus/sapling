@@ -1,6 +1,16 @@
 <script lang="ts">
 	const DOORS = [
 		{
+			title: 'Check what you know',
+			copy: 'Tap the words you recognise to fill your garden quickly.',
+			href: '/explore/check',
+			kind: 'check',
+			aside: {
+				label: 'New to the language? Start with a topic',
+				href: '/explore/check?mode=starter'
+			}
+		},
+		{
 			title: 'Have a conversation',
 			copy: 'Talk through a scene and collect useful words from what you say.',
 			href: '/converse',
@@ -37,40 +47,53 @@
 
 	<div class="doors">
 		{#each DOORS as door, index (door.href)}
-			<a
-				class="card door ll-rise"
-				style={`animation-delay: ${100 + index * 60}ms`}
-				href={door.href}
-			>
-				<span class="mark" aria-hidden="true">
-					{#if door.kind === 'conversation'}
-						<svg viewBox="0 0 24 24"
-							><path d="M4.6 6.4h9.6v7.2H8.2l-3.6 3v-3H4.6Z" /><path
-								d="M10.6 9.4h8.8v6.2h-2.4v2.6l-3-2.6h-3.4Z"
-							/></svg
-						>
-					{:else if door.kind === 'read'}
-						<svg viewBox="0 0 24 24"
-							><path d="M12 7.4C9.9 6 7 5.4 3.8 5.6v11.6c3.2-.2 6.1.4 8.2 1.8" /><path
-								d="M12 7.4c2.1-1.4 5-2 8.2-1.8v11.6c-3.2-.2-6.1.4-8.2 1.8"
-							/><path d="M12 7.4v11.6" /></svg
-						>
-					{:else}
-						<svg viewBox="0 0 24 24"
-							><path
-								d="M20.3 12.2c0 4-3.7 7.2-8.2 7.2a9.4 9.4 0 0 1-2.5-.3L4.6 20.5l1.3-3.7a6.9 6.9 0 0 1-2.2-4.6C3.7 8.2 7.4 5 11.9 5s8.4 3.2 8.4 7.2Z"
-							/><path d="M9 11.9h.01M12 11.9h.01M15 11.9h.01" /></svg
-						>
-					{/if}
-				</span>
-				<span class="door-copy">
-					<strong>{door.title}</strong>
-					<span>{door.copy}</span>
-				</span>
-				<svg class="arrow" viewBox="0 0 24 24" aria-hidden="true"
-					><path d="M4.8 12h14" /><path d="m13.4 6.6 5.4 5.4-5.4 5.4" /></svg
-				>
-			</a>
+			<div class="door-wrap ll-rise" style={`animation-delay: ${100 + index * 60}ms`}>
+				<a class="card door" href={door.href}>
+					<span class="mark" aria-hidden="true">
+						{#if door.kind === 'check'}
+							<svg viewBox="0 0 24 24"
+								><rect x="4" y="4" width="7" height="7" rx="1.6" /><rect
+									x="13"
+									y="4"
+									width="7"
+									height="7"
+									rx="1.6"
+								/><rect x="4" y="13" width="7" height="7" rx="1.6" /><path
+									d="m14 16.4 2 2 3.4-3.8"
+								/></svg
+							>
+						{:else if door.kind === 'conversation'}
+							<svg viewBox="0 0 24 24"
+								><path d="M4.6 6.4h9.6v7.2H8.2l-3.6 3v-3H4.6Z" /><path
+									d="M10.6 9.4h8.8v6.2h-2.4v2.6l-3-2.6h-3.4Z"
+								/></svg
+							>
+						{:else if door.kind === 'read'}
+							<svg viewBox="0 0 24 24"
+								><path d="M12 7.4C9.9 6 7 5.4 3.8 5.6v11.6c3.2-.2 6.1.4 8.2 1.8" /><path
+									d="M12 7.4c2.1-1.4 5-2 8.2-1.8v11.6c-3.2-.2-6.1.4-8.2 1.8"
+								/><path d="M12 7.4v11.6" /></svg
+							>
+						{:else}
+							<svg viewBox="0 0 24 24"
+								><path
+									d="M20.3 12.2c0 4-3.7 7.2-8.2 7.2a9.4 9.4 0 0 1-2.5-.3L4.6 20.5l1.3-3.7a6.9 6.9 0 0 1-2.2-4.6C3.7 8.2 7.4 5 11.9 5s8.4 3.2 8.4 7.2Z"
+								/><path d="M9 11.9h.01M12 11.9h.01M15 11.9h.01" /></svg
+							>
+						{/if}
+					</span>
+					<span class="door-copy">
+						<strong>{door.title}</strong>
+						<span>{door.copy}</span>
+					</span>
+					<svg class="arrow" viewBox="0 0 24 24" aria-hidden="true"
+						><path d="M4.8 12h14" /><path d="m13.4 6.6 5.4 5.4-5.4 5.4" /></svg
+					>
+				</a>
+				{#if 'aside' in door}
+					<a class="aside" href={door.aside.href}>{door.aside.label}</a>
+				{/if}
+			</div>
 		{/each}
 	</div>
 </main>
@@ -114,7 +137,20 @@
 		gap: var(--gap);
 	}
 
+	.door-wrap {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+
+	.aside {
+		padding-inline: 0.4rem;
+		color: var(--text-muted);
+		font-size: 0.88rem;
+	}
+
 	.door {
+		flex: 1;
 		display: grid;
 		grid-template-columns: auto minmax(0, 1fr) auto;
 		align-items: center;
@@ -188,7 +224,7 @@
 		}
 
 		.doors {
-			grid-template-columns: repeat(3, minmax(0, 1fr));
+			grid-template-columns: repeat(2, minmax(0, 1fr));
 		}
 
 		.door {
@@ -203,6 +239,12 @@
 
 		.door-copy {
 			align-self: end;
+		}
+	}
+
+	@media (min-width: 72rem) {
+		.doors {
+			grid-template-columns: repeat(4, minmax(0, 1fr));
 		}
 	}
 
