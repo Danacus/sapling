@@ -1,17 +1,15 @@
-//! The kinds a challenge is planned and written as: each wire type's stored
-//! `{type, direction}` and, while it is still generated, the range of lengths
-//! it may be written at (`data/kinds.json`) — the one difficulty knob a
-//! request carries. What the model is told about a kind is `sapling-llm`'s.
+//! Rank-ordered generic view over every plugin's `type.json` kinds.
 
+use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::challenge::{Challenge, Direction};
 use crate::help::Step;
+use crate::types::TYPE_SOURCES;
+use crate::{Challenge, Direction};
 
-/// One kind of challenge the model can be asked to write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
 pub enum WireType {
@@ -23,117 +21,158 @@ pub enum WireType {
     WordOrder,
     Cloze,
     MultiCloze,
-    /// Retired: still parsed and resolved, never planned.
     TranslateToTarget,
 }
 
-// A variant left out of `WireType::ALL` fails here, as long as the last one stays last.
-const _: () = assert!(WireType::ALL.len() == WireType::TranslateToTarget as usize + 1);
-
-/// The stored shape a kind resolves to. `promptIsTarget` tells `context-mc`
-/// from `produce-mc`.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StoredShape {
-    #[serde(rename = "type")]
-    pub kind: String,
-    pub direction: Direction,
-    #[serde(default)]
-    pub prompt_is_target: bool,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct KindSpec {
-    #[serde(rename = "type")]
-    pub kind: WireType,
-    pub stored: StoredShape,
-    /// The shortest and longest a row of this kind is written, on the
-    /// model's length scale; absent once the kind is retired.
-    #[serde(default)]
-    pub lengths: Option<[u8; 2]>,
-}
-
 impl WireType {
-    /// Registry order: the planner's tie-break order and the escalation gloss order.
     pub const ALL: [WireType; 9] = [
-        WireType::RecognizeMc,
-        WireType::ProduceMc,
-        WireType::ContextMc,
-        WireType::TranslateToNative,
-        WireType::SpotError,
-        WireType::WordOrder,
-        WireType::Cloze,
-        WireType::MultiCloze,
-        WireType::TranslateToTarget,
+        Self::RecognizeMc,
+        Self::ProduceMc,
+        Self::ContextMc,
+        Self::TranslateToNative,
+        Self::SpotError,
+        Self::WordOrder,
+        Self::Cloze,
+        Self::MultiCloze,
+        Self::TranslateToTarget,
     ];
-
     pub const fn as_str(self) -> &'static str {
         match self {
-            WireType::RecognizeMc => "recognize-mc",
-            WireType::ProduceMc => "produce-mc",
-            WireType::ContextMc => "context-mc",
-            WireType::TranslateToNative => "translate-to-native",
-            WireType::SpotError => "spot-error",
-            WireType::WordOrder => "word-order",
-            WireType::Cloze => "cloze",
-            WireType::MultiCloze => "multi-cloze",
-            WireType::TranslateToTarget => "translate-to-target",
+            Self::RecognizeMc => "recognize-mc",
+            Self::ProduceMc => "produce-mc",
+            Self::ContextMc => "context-mc",
+            Self::TranslateToNative => "translate-to-native",
+            Self::SpotError => "spot-error",
+            Self::WordOrder => "word-order",
+            Self::Cloze => "cloze",
+            Self::MultiCloze => "multi-cloze",
+            Self::TranslateToTarget => "translate-to-target",
         }
     }
-
-    fn specs() -> &'static [KindSpec] {
-        static SPECS: OnceLock<Vec<KindSpec>> = OnceLock::new();
-        SPECS.get_or_init(|| {
-            serde_json::from_str(include_str!("../data/kinds.json")).expect("data/kinds.json")
-        })
-    }
-
     pub fn kind_spec(self) -> &'static KindSpec {
-        WireType::specs()
+        specs()
             .iter()
             .find(|spec| spec.kind == self)
-            .expect("every wire type is in data/kinds.json")
+            .expect("every wire type is registered")
     }
-
     pub fn stored(self) -> &'static StoredShape {
         &self.kind_spec().stored
     }
-
-    /// `None` once retired: a retired kind is neither written nor served.
     pub fn lengths(self) -> Option<[u8; 2]> {
         self.kind_spec().lengths
     }
-
     pub fn is_active(self) -> bool {
         self.lengths().is_some()
     }
-
-    /// The steps a freshly written row of this kind can be shown at — the
-    /// resolver always writes the full bank, tray and hint — easiest first.
-    pub fn written_steps(self) -> &'static [Step] {
-        match self {
-            WireType::Cloze => &[Step::Pick4, Step::Pick6, Step::Typed],
-            WireType::MultiCloze => &[Step::Answers, Step::Extra2],
-            WireType::WordOrder => &[Step::Tiles, Step::Extra2],
-            _ => &[Step::Plain],
-        }
+    pub fn written_steps(self) -> Vec<Step> {
+        self.kind_spec()
+            .written_steps
+            .iter()
+            .map(|step| Step::parse(step).expect("a declared step"))
+            .collect()
     }
-
-    /// Whether a freshly written row of this kind can be heard before it is
-    /// read — `help.rs`' `can_listen` for a row the resolver wrote, which
-    /// always has its prompt.
     pub fn can_listen(self) -> bool {
-        let stored = self.stored();
-        stored.kind == "multiple-choice" && stored.direction == Direction::ToNative
+        self.kind_spec().can_listen
+    }
+    pub fn base(self, step: Step) -> Option<f64> {
+        self.kind_spec().bases.get(step.as_str()).copied()
+    }
+    pub fn slope(self) -> f64 {
+        self.kind_spec().slope
     }
 }
 
-/// Every kind still written, in registry order (a seeded pick depends on it).
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredShape {
+    pub kind: String,
+    pub direction: Direction,
+    pub prompt_is_target: bool,
+}
+
+#[derive(Debug)]
+pub struct KindSpec {
+    pub kind: WireType,
+    pub rank: u8,
+    pub stored: StoredShape,
+    pub lengths: Option<[u8; 2]>,
+    pub written_steps: Vec<String>,
+    pub can_listen: bool,
+    pub bases: BTreeMap<String, f64>,
+    pub slope: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TypeData {
+    steps: Vec<String>,
+    kinds: Vec<KindData>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct KindData {
+    id: WireType,
+    rank: u8,
+    direction: Direction,
+    #[serde(default)]
+    prompt_is_target: bool,
+    #[serde(default)]
+    lengths: Option<[u8; 2]>,
+    written_steps: Vec<String>,
+    can_listen: bool,
+    bases: BTreeMap<String, f64>,
+    slope: f64,
+}
+
+fn specs() -> &'static [KindSpec] {
+    static SPECS: OnceLock<Vec<KindSpec>> = OnceLock::new();
+    SPECS.get_or_init(|| {
+        let mut all = Vec::new();
+        for (source, challenge_type) in TYPE_SOURCES.iter().zip(crate::ChallengeType::ALL) {
+            let data: TypeData = serde_json::from_str(source).expect("a plugin type.json");
+            for kind in data.kinds {
+                assert!(
+                    kind.written_steps
+                        .iter()
+                        .all(|step| data.steps.contains(step)),
+                    "a kind may list only declared steps"
+                );
+                all.push(KindSpec {
+                    kind: kind.id,
+                    rank: kind.rank,
+                    stored: StoredShape {
+                        kind: challenge_type.as_str().to_owned(),
+                        direction: kind.direction,
+                        prompt_is_target: kind.prompt_is_target,
+                    },
+                    lengths: kind.lengths,
+                    written_steps: kind.written_steps,
+                    can_listen: kind.can_listen,
+                    bases: kind.bases,
+                    slope: kind.slope,
+                });
+            }
+        }
+        all.sort_by_key(|kind| kind.rank);
+        for (index, kind) in all.iter().enumerate() {
+            assert_eq!(
+                kind.rank as usize,
+                index + 1,
+                "kind ranks must be unique and contiguous"
+            );
+        }
+        assert_eq!(
+            all.iter().map(|kind| kind.kind).collect::<Vec<_>>(),
+            WireType::ALL
+        );
+        all
+    })
+}
+
 pub fn active_kinds() -> impl Iterator<Item = WireType> {
     WireType::ALL.into_iter().filter(|kind| kind.is_active())
 }
 
-/// The kind a stored challenge was written as; `None` for a match-pairs round.
 pub fn kind_of(challenge: &Challenge) -> Option<WireType> {
     WireType::ALL.into_iter().find(|kind| {
         let stored = kind.stored();
@@ -143,7 +182,6 @@ pub fn kind_of(challenge: &Challenge) -> Option<WireType> {
     })
 }
 
-/// The word a want is about.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct WantItem {
     pub id: String,
@@ -157,73 +195,34 @@ pub struct ChallengeKind {
     pub kind: WireType,
 }
 
-/// One challenge to write: a word, a kind, and how long to write it — worked
-/// out backwards from the difficulty that would put the word at the aim.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct Want {
     pub item: WantItem,
     pub kind: ChallengeKind,
-    /// Words (tiles, for a word-order) the row should have.
     pub length: u8,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::challenge::ChallengeType;
-    use serde_json::json;
 
     #[test]
-    fn the_data_lists_every_kind_in_registry_order() {
-        let listed: Vec<WireType> = WireType::specs().iter().map(|spec| spec.kind).collect();
-        assert_eq!(listed, WireType::ALL);
-        for kind in WireType::ALL {
-            assert_eq!(serde_json::to_value(kind).unwrap(), json!(kind.as_str()));
-            assert!(
-                ChallengeType::parse(&kind.stored().kind).is_some(),
-                "{kind:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn only_the_retired_kind_is_unwritten_and_every_range_is_a_range() {
-        let retired: Vec<WireType> = WireType::ALL
-            .into_iter()
-            .filter(|k| !k.is_active())
-            .collect();
-        assert_eq!(retired, [WireType::TranslateToTarget]);
+    fn plugin_data_has_every_kind_in_rank_order() {
+        assert_eq!(
+            specs().iter().map(|spec| spec.kind).collect::<Vec<_>>(),
+            WireType::ALL
+        );
+        assert_eq!(
+            WireType::ALL
+                .into_iter()
+                .filter(|kind| !kind.is_active())
+                .collect::<Vec<_>>(),
+            [WireType::TranslateToTarget]
+        );
         for kind in active_kinds() {
             let [shortest, longest] = kind.lengths().unwrap();
-            assert!(1 <= shortest && shortest <= longest, "{kind:?}");
+            assert!(shortest > 0 && shortest <= longest);
             assert!(!kind.written_steps().is_empty());
         }
-    }
-
-    #[test]
-    fn a_stored_row_reads_back_as_its_kind() {
-        let mc = |direction: &str, target: Option<bool>| {
-            let mut row = json!({ "id": "m", "type": "multiple-choice", "direction": direction, "prompt": "p",
-                "options": ["a", "b", "c", "d"], "correctIndex": 0, "itemIds": [] });
-            if let Some(target) = target {
-                row["promptIsTarget"] = json!(target);
-            }
-            kind_of(&Challenge::from_value(row).unwrap())
-        };
-        assert_eq!(mc("toNative", None), Some(WireType::RecognizeMc));
-        assert_eq!(mc("toTarget", None), Some(WireType::ProduceMc));
-        assert_eq!(mc("toTarget", Some(true)), Some(WireType::ContextMc));
-        let typed = Challenge::from_value(
-            json!({ "id": "t", "type": "typed-translation", "direction": "toTarget",
-            "prompt": "p", "acceptedAnswers": ["a"], "itemIds": [] }),
-        )
-        .unwrap();
-        assert_eq!(kind_of(&typed), Some(WireType::TranslateToTarget));
-        let round = Challenge::from_value(
-            json!({ "id": "p", "type": "match-pairs", "direction": "toNative",
-            "pairs": [], "itemIds": [] }),
-        )
-        .unwrap();
-        assert_eq!(kind_of(&round), None);
     }
 }

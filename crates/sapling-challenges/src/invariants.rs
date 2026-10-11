@@ -10,7 +10,6 @@
 
 use sapling_srs::ItemSrs;
 
-use crate::challenge::Challenge;
 use crate::fits::{best_fit, fits_fresh, Serving};
 use crate::help::HelpLevel;
 use crate::kinds::{kind_of, Want, WireType};
@@ -24,6 +23,7 @@ use crate::sim::{synthetic, with_readings};
 use crate::stream::{head, low_water_mark, next_pick, upcoming};
 use crate::topup::{plan_top_up, Scope};
 use crate::word::{by_id, Word};
+use crate::Challenge;
 
 const DAY: f64 = 86_400_000.0;
 const START: f64 = 1_700_000_000_000.0;

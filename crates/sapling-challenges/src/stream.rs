@@ -20,12 +20,12 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::challenge::MatchPairsChallenge;
 use crate::fits::{best_fit, Fit, Serving};
 use crate::kinds::kind_of;
 use crate::match_pairs::make_match_pairs;
 use crate::pool::{is_playable, is_rested, known_ids, PoolRow};
 use crate::rng::Rng;
+use crate::types::MatchPairsChallenge;
 use crate::word::{by_id, ById, Word};
 
 /// A free match round comes after every this many challenges about early words.
@@ -300,11 +300,11 @@ pub fn match_round(words: &[Word], rng: &mut Rng) -> Option<MatchPairsChallenge>
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::challenge::Challenge;
     use crate::kinds::WireType;
     use crate::pool::RESERVE_GAP;
     use crate::topup::tests::{pooled, word, DAY, NOW};
     use crate::topup::Scope;
+    use crate::Challenge;
     use serde_json::json;
 
     fn fresh(id: &str, offset: f64) -> Word {

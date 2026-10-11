@@ -1,0 +1,231 @@
+<!--
+  Word order: build the sentence out of shuffled tiles.
+
+  A tray the learner fills and a bank of tiles below it. Tapping a bank tile
+  appends it to the tray; tapping a tray tile takes it back out. Nothing
+  submits on its own — a misplaced tap must always be recoverable before
+  committing, exactly as in multiple choice.
+
+  The tray always shows `answerTokens.length` slots — placed tiles, then a
+  dashed empty slot for each one still missing — so the target length is
+  visible before the first tap, not discovered by building a correct-looking
+  fragment and having it rejected. Once every slot is filled the remaining
+  bank tiles disable themselves (`TapOption`'s own disabled skin, not a
+  scoped override): there is nowhere left to put them, and taking a tray tile
+  back re-enables the bank. Check stays disabled until the count matches,
+  since a short arrangement can never be right.
+
+  `challenge.prompt` is the native-language anchor, always written by
+  generation; whether it is *shown* is the session's serve-time call
+  (`presentation.showHint`, from `$lib/challenges/serve`), and some rows
+  written by an earlier build lack it altogether. Where it shows it is the prompt, the way it always
+  was: the native sentence says what to build, not in which order, so it is
+  support rather than the answer. Without it the tiles are the whole puzzle.
+
+  Grading compares the *texts* the learner arranged to `answerTokens`, never the
+  tile indices they came from. That is what keeps a sentence using the same word
+  twice (or a distractor that happens to read like a real tile) from failing an
+  arrangement that is, on the page, exactly right. It is an exact comparison and
+  never 'almost': the learner chose from a closed set rather than spelling
+  anything, so there is no typo to be generous about.
+
+  The tray is joined for display with `joinTokens`, the same helper the resolver
+  used to build `challenge.answer` — so what the learner reads back is assembled
+  by the same rule as the answer it is graded against, spaces or no spaces.
+-->
+<script lang="ts">
+	import type { ChallengeProps } from '$lib/challenges/props';
+	import { readingSlot } from '$lib/challenges/readings';
+	import { joinTokens } from '$lib/text';
+	import { createAnswerLock } from '$lib/challenges/blocks/answer-lock.svelte.js';
+	import CheckButton from '$lib/challenges/blocks/CheckButton.svelte';
+	import PromptHeader from '$lib/challenges/blocks/PromptHeader.svelte';
+	import TapOption from '$lib/challenges/blocks/TapOption.svelte';
+	import WordBank from '$lib/challenges/blocks/WordBank.svelte';
+
+	// Both languages are offered to every challenge component; this one needs
+	// neither — the prompt is native, the tiles are target, and both are printed
+	// rather than spoken.
+	let { challenge, screen, onanswer, tokenize = null }: ChallengeProps<'word-order'> = $props();
+
+	const readings = $derived({ sentence: screen.readings, byTerm: new Map<string, boolean>() });
+	const showHint = $derived(screen.showHint);
+
+	/**
+	 * Tile *positions* the learner has placed, in the order they placed them.
+	 * Positions rather than texts, so two tiles reading the same word stay two
+	 * distinct tiles on screen; the texts behind them are what grading uses.
+	 */
+	let placed = $state<number[]>([]);
+
+	const lock = createAnswerLock(
+		() => challenge.id,
+		() => {
+			placed = [];
+		}
+	);
+
+	/**
+	 * The stored tile positions this served challenge shows — the resolved
+	 * presentation's distractor count, which is every stored tray entry when
+	 * `presentation` was not supplied, so a bare render (tests) keeps showing
+	 * every stored tile.
+	 */
+	const visibleIndices = $derived(screen.tiles);
+
+	const bank = $derived(
+		challenge.tiles
+			.map((text, index) => ({ index, text }))
+			.filter((tile) => visibleIndices.includes(tile.index) && !placed.includes(tile.index))
+	);
+
+	const chosen = $derived(placed.map((index) => challenge.tiles[index]));
+	const sentence = $derived(joinTokens(chosen));
+
+	/** A short answer can never be right, so Check stays disabled until every slot is filled. */
+	const full = $derived(placed.length === challenge.answerTokens.length);
+	const ready = $derived(full && !lock.locked);
+
+	/**
+	 * Empty slots after the placed tiles, one per tile the sentence still
+	 * needs — the tray's dashed-frame emptiness, now per missing word instead
+	 * of one message across the whole box, so the learner can see the target
+	 * length before they've placed anything and watch it close as they go.
+	 */
+	const openSlots = $derived(
+		Array.from({ length: Math.max(0, challenge.answerTokens.length - placed.length) })
+	);
+
+	const askedIn = $derived(challenge.instruction ?? 'Put the words in order');
+
+	/** One tile's reading decision: its own word's roll, tray and bank both. */
+	function slotFor(index: number) {
+		return readingSlot(
+			tokenize,
+			readings,
+			challenge.tiles[index],
+			challenge.tilesRomanization?.[index]
+		);
+	}
+
+	function place(index: number): void {
+		if (lock.locked || placed.includes(index)) return;
+		placed = [...placed, index];
+	}
+
+	function remove(position: number): void {
+		if (lock.locked) return;
+		placed = placed.filter((_, at) => at !== position);
+	}
+
+	/**
+	 * Exact sequence equality, by text. See the component note.
+	 *
+	 * Punctuation-only tiles are ignored on both sides: the resolver no longer
+	 * produces them, but rows generated before it merged punctuation into its
+	 * neighbouring word still carry tiles like "？" — and forgetting one is not
+	 * a language mistake worth failing the arrangement over.
+	 */
+	function submit(): void {
+		if (!ready) return;
+		onanswer({ positions: placed }, lock.commit());
+	}
+
+	function onFormSubmit(event: SubmitEvent): void {
+		event.preventDefault();
+		submit();
+	}
+</script>
+
+<form class="word-order" onsubmit={onFormSubmit}>
+	<PromptHeader kicker={askedIn} prompt={showHint ? challenge.prompt : undefined} size="md" />
+
+	<div
+		class="tray"
+		class:filled={placed.length > 0}
+		aria-label={`Your sentence, ${placed.length} of ${challenge.answerTokens.length} words placed`}
+	>
+		{#each placed as index, position (position)}
+			{@const slot = slotFor(index)}
+			<TapOption
+				text={challenge.tiles[index]}
+				reading={slot.reading}
+				tokens={slot.tokens}
+				state="selected"
+				disabled={lock.locked}
+				label={`Remove ${challenge.tiles[index]}`}
+				onclick={() => remove(position)}
+			/>
+		{/each}
+		{#each openSlots as _, position (position)}
+			<span class="slot" aria-hidden="true"></span>
+		{/each}
+	</div>
+
+	<WordBank label="Available words">
+		{#each bank as tile (tile.index)}
+			{@const slot = slotFor(tile.index)}
+			<TapOption
+				text={tile.text}
+				reading={slot.reading}
+				tokens={slot.tokens}
+				disabled={lock.locked || full}
+				onclick={() => place(tile.index)}
+			/>
+		{/each}
+	</WordBank>
+
+	<CheckButton type="submit" disabled={!ready} />
+</form>
+
+<style>
+	.word-order {
+		display: flex;
+		flex-direction: column;
+	}
+
+	/*
+	  The slot the sentence gets written into: tinted paper inside a stitched
+	  frame, closed at the foot by a solid rule the tiles sit on. The dashed
+	  frame is the app's one motif doing the job it does everywhere else —
+	  marking a space that is waiting to be filled in.
+	*/
+	.tray {
+		display: flex;
+		flex-wrap: wrap;
+		align-content: flex-start;
+		gap: 0.55rem;
+		min-height: 5.5rem;
+		margin-bottom: 1.4rem;
+		padding: 0.7rem;
+		border: 1px dashed var(--border-strong);
+		border-bottom: 3px solid var(--border-strong);
+		border-radius: var(--radius) var(--radius) 0 0;
+		background: color-mix(in srgb, var(--surface-alt) 60%, transparent);
+		transition: border-color 0.2s ease;
+	}
+
+	.tray.filled {
+		border-bottom-color: var(--accent);
+	}
+
+	/*
+	  A slot the sentence still needs: the same dashed frame the tray itself
+	  wears before anything is placed, now one per missing word instead of one
+	  message across the whole box — it is what lets the learner see the
+	  target length up front and watch it close as they place tiles.
+	*/
+	.slot {
+		flex: 0 0 auto;
+		width: 2.4rem;
+		height: 2.4rem;
+		border: 1px dashed var(--border-strong);
+		border-radius: var(--radius-sm);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.tray {
+			transition: none;
+		}
+	}
+</style>

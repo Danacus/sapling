@@ -3257,6 +3257,7 @@ dependencies = [
  "getrandom 0.4.3",
  "sapling-domain",
  "sapling-srs",
+ "schemars 1.2.2",
  "serde",
  "serde_json",
  "ts-rs",

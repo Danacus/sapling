@@ -7,9 +7,9 @@
 //! [`MIN_ROUND_PAIRS`] rather than none when words run short: it is pacing
 //! between challenges, not a difficulty of its own.
 
-use crate::challenge::{Direction, MatchPair, MatchPairsChallenge, MatchPairsTag};
 use crate::rng::shuffled;
 use crate::text::{js_trim, label_key};
+use crate::types::{Direction, MatchPair, MatchPairsChallenge, MatchPairsTag};
 use crate::word::Word;
 
 /// Pairs in a round.
@@ -72,7 +72,7 @@ pub fn make_match_pairs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::challenge::Challenge;
+    use crate::Challenge;
 
     fn word(id: &str, term: &str, meaning: &str) -> Word {
         Word {

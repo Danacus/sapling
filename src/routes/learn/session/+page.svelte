@@ -25,9 +25,7 @@
 	import { onDestroy } from 'svelte';
 	import { fade, fly, scale } from 'svelte/transition';
 
-	import { audioTextsFor, correctAnswerText } from '$lib/challenges/display';
-	import { presentationFor, type Presentation } from '$lib/challenges/serve';
-	import { storedDefFor } from '$lib/challenges/types';
+	import { challengeInfo, correctFeedback, gradeAny, serveAny } from '$lib/challenges/plugin';
 	import { getDailyActivity, getProfile, streakFrom } from '$lib/db';
 	import { isMockMode } from '$lib/llm';
 	import { loadRomanizer, type Romanizer } from '$lib/romanize';
@@ -41,7 +39,6 @@
 		sessionSummary,
 		type SessionAnswer
 	} from '$lib/session/engine';
-	import type { AnswerEvent } from '$lib/challenges/props';
 	import { motionMs } from '$lib/ui/motion';
 	import { PracticeStream, type NextOptions, type StreamStep } from '$lib/session/stream';
 	import type { Grade } from '$lib/srs';
@@ -49,12 +46,21 @@
 	import { startTask } from '$lib/tasks';
 	import { taskStore } from '$lib/tasks/store.svelte';
 	import { getTtsEngine, preloadVoice, sherpaSupports, warmSpeech } from '$lib/tts';
-	import type { Challenge, KnowledgeItem, Profile, Verdict } from '$lib/types';
+	import type {
+		Challenge,
+		ChallengeAnswer,
+		Feedback as PluginFeedback,
+		Graded,
+		KnowledgeItem,
+		Profile,
+		Served,
+		Verdict
+	} from '$lib/types';
 	import { getRomanizationMode } from '$lib/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
-	import ChallengeHost from '../ChallengeHost.svelte';
+	import ChallengeHost from '$lib/challenges/ChallengeHost.svelte';
 	import FeedbackBanner from '../FeedbackBanner.svelte';
 
 	/** `waiting`: the most urgent word has nothing, and a batch is being written for it. */
@@ -67,7 +73,7 @@
 		correctAnswer: string;
 		closestAccepted?: string;
 		/** Per-gap evidence for composite challenges; retained for an overturn. */
-		itemVerdicts?: AnswerEvent['itemVerdicts'];
+		itemVerdicts?: Graded['itemVerdicts'];
 		/** The answer's instant, which its reviews and its result share; what an overturn names it by. */
 		answeredAt: number;
 		explanation?: string;
@@ -81,7 +87,19 @@
 		 * (`$lib/llm`), which needs it to know what the learner's screen
 		 * actually showed rather than assuming the full stored row was on it.
 		 */
-		presentation?: Presentation;
+		served: Served;
+		plugin: PluginFeedback;
+		reviews: boolean;
+		pooled: boolean;
+	}
+
+	interface FiledAnswer {
+		answerGiven: string;
+		verdict: Verdict;
+		responseMs: number;
+		closestAccepted?: string;
+		itemVerdicts?: Graded['itemVerdicts'];
+		plugin: PluginFeedback;
 	}
 
 	let phase = $state<Phase>('loading');
@@ -112,7 +130,8 @@
 	 * they still need. The readings travel inside the same object so a
 	 * component has one serve-time prop, not two.
 	 */
-	let currentPresentation = $state<Presentation | undefined>(undefined);
+	let currentServed = $state<Served | undefined>(undefined);
+	let currentGraded = $state<Graded | undefined>(undefined);
 	/**
 	 * The learner's local romanizer, once its chunk has landed. `null` until then
 	 * — and forever, for a language that has none; see {@link boot}.
@@ -407,13 +426,11 @@
 		const challenge = step.challenge;
 		const at = Date.now();
 		challengeShownAt = at;
-		currentPresentation = presentationFor(
-			challenge,
-			step.kind === 'challenge' ? step.shown : 'plain'
-		);
+		currentServed = serveAny(challenge, step.kind === 'challenge' ? step.shown : 'plain');
+		currentGraded = undefined;
 		current = challenge;
 		// The words drilled here for the first time, before this answer gives them a history.
-		if (storedDefFor(challenge).reviewsSrs) {
+		if (challengeInfo(challenge.type).reviews) {
 			const seen = new Set(newWords.map((word) => word.id));
 			const first = items.filter(
 				(item) =>
@@ -426,16 +443,34 @@
 		// Warm this challenge's own audio while the learner is still reading it.
 		// Fire-and-forget: a failed warm just means the real `speak` synthesizes as
 		// it always did, and sound never blocks play.
-		void warmTexts(audioTextsFor(challenge), warmGeneration);
+		void warmTexts(currentServed.audio, warmGeneration);
 	}
 
-	function handleAnswer(event: AnswerEvent): void {
+	function handleAnswer(answer: ChallengeAnswer, responseMs: number): void {
 		const challenge = current;
-		if (!challenge || feedback) return;
+		const served = currentServed;
+		if (!challenge || !served || feedback) return;
+		const graded = gradeAny(challenge, served.shown, answer);
+		currentGraded = graded;
+		fileAnswer({
+			answerGiven: graded.logged,
+			verdict: graded.verdict,
+			responseMs,
+			...(graded.closestAccepted ? { closestAccepted: graded.closestAccepted } : {}),
+			...(graded.itemVerdicts ? { itemVerdicts: graded.itemVerdicts } : {}),
+			plugin: graded.feedback
+		});
+	}
+
+	function fileAnswer(event: FiledAnswer): void {
+		const challenge = current;
+		const served = currentServed;
+		if (!challenge || !served || feedback) return;
 
 		// The challenge's own def answers "does this feed SRS?", so the screen
 		// never names a type: a round that does not review carries no item ids.
-		const reviewsSrs = storedDefFor(challenge).reviewsSrs;
+		const traits = challengeInfo(challenge.type);
+		const reviewsSrs = traits.reviews;
 
 		answers = [
 			...answers,
@@ -455,12 +490,15 @@
 			challenge,
 			verdict: event.verdict,
 			answerGiven: event.answerGiven,
-			correctAnswer: correctAnswerText(challenge),
+			correctAnswer: event.plugin.correctAnswerText,
 			answeredAt,
 			...(event.closestAccepted ? { closestAccepted: event.closestAccepted } : {}),
 			...(event.itemVerdicts ? { itemVerdicts: event.itemVerdicts } : {}),
 			...(challenge.explanation ? { explanation: challenge.explanation } : {}),
-			...(currentPresentation ? { presentation: currentPresentation } : {})
+			served,
+			plugin: event.plugin,
+			reviews: traits.reviews,
+			pooled: traits.pooled
 		};
 
 		// Fire-and-follow: the banner animates now, the write lands underneath it.
@@ -472,7 +510,7 @@
 			answerGiven: event.answerGiven,
 			responseMs: event.responseMs,
 			...(event.itemVerdicts ? { itemVerdicts: event.itemVerdicts } : {}),
-			...(currentPresentation ? { shown: currentPresentation.shown } : {}),
+			shown: served.shown,
 			now: answeredAt
 		}).catch(() => {
 			// A failed write must not eat the stream; the answer is already logged.
@@ -562,11 +600,13 @@
 	 */
 	function skipCurrent(): void {
 		const challenge = current;
-		if (!challenge || feedback || !storedDefFor(challenge).reviewsSrs) return;
-		handleAnswer({
+		const served = currentServed;
+		if (!challenge || !served || feedback || !challengeInfo(challenge.type).reviews) return;
+		fileAnswer({
 			answerGiven: SKIP_ANSWER,
 			verdict: 'wrong',
-			responseMs: Date.now() - challengeShownAt
+			responseMs: Date.now() - challengeShownAt,
+			plugin: correctFeedback(challenge, served.shown)
 		});
 	}
 
@@ -895,14 +935,15 @@
 						<div class="challenge" in:fly={{ y: 9, duration: motionMs(320) }}>
 							<ChallengeHost
 								challenge={current}
+								served={currentServed!}
+								graded={currentGraded}
 								onanswer={handleAnswer}
 								{targetLanguage}
 								{nativeLanguage}
-								presentation={currentPresentation}
 								{tokenize}
 							/>
 
-							{#if storedDefFor(current).reviewsSrs && !feedback}
+							{#if challengeInfo(current.type).reviews && !feedback}
 								<button type="button" class="btn btn-ghost skip-btn" onclick={skipCurrent}>
 									Skip
 								</button>
@@ -924,7 +965,10 @@
 				closestAccepted={feedback.closestAccepted}
 				itemVerdicts={feedback.itemVerdicts}
 				explanation={feedback.explanation}
-				presentation={feedback.presentation}
+				served={feedback.served}
+				plugin={feedback.plugin}
+				reviews={feedback.reviews}
+				pooled={feedback.pooled}
 				skipped={feedback.answerGiven === SKIP_ANSWER}
 				{nativeLanguage}
 				{targetLanguage}

@@ -8,8 +8,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
-use crate::challenge::Challenge;
 use crate::word::Word;
+use crate::Challenge;
 
 /// How long a served challenge rests before it is planned again: long enough
 /// that the sentence is re-read rather than recognized.

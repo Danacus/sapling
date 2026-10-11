@@ -1,10 +1,10 @@
 ---
 paths:
   - "src/lib/llm/**"
-  - "crates/sapling-llm/lessons/**"
+  - "crates/sapling-challenges/src/types/**/lessons/**"
   - "crates/sapling-llm/prompts/**"
   - "crates/sapling-llm/src/lesson.rs"
-  - "crates/sapling-llm/src/wire.rs"
+  - "crates/sapling-challenges/src/generation.rs"
   - "crates/sapling-llm/src/kinds.rs"
   - "crates/sapling-llm/src/escalation.rs"
   - "crates/sapling-llm/src/word_batch.rs"
@@ -17,7 +17,7 @@ Stateless: data in, data out, never touches the DB. Every model call runs in Rus
 
 ## The seam
 
-**The planner decides, this layer writes.** The wants come from `sapling-challenges`' top-up planner against the pool (`session.md`); `getBatch(args, {signal, onProgress, itemsPerRequest, reasoningEffort})` hands them to Rust and gets back `{challenges, failedRequests, usage}`. `BatchArgs`, `BatchResult`, `Want` (`{item, kind, length}`), `WantItem`, `ChallengeKind`, `WireType`, `KnownItem` and `ProgressStep` are generated from Rust; the kinds themselves — each wire type's stored shape and length range, in registry order (a seeded top-up pick depends on it) — are `sapling-challenges`' `data/kinds.json`, and `lessons/<type>.json` holds only what the model is told. `getEscalation` builds `shown` — what the learner's screen displayed, from `$lib/challenges/serve`'s `visibleBank`/`visibleTiles` — and Rust does the rest. Local romanization (`$lib/romanize`) stays TypeScript; a `TargetText`'s `reading` is just content the resolver passes into the stored `*Romanization` fields.
+**The planner decides, this layer writes.** Wants come from `sapling-challenges`' top-up planner; `getBatch` hands them to Rust and returns challenges, failures and usage. Kinds, wire schemas, resolvers, length ranges and lesson specs are owned by each registered challenge plugin under `sapling-challenges/src/types/<type>/`; explicit ranks preserve seeded order. `getEscalation` receives the exact served `ChallengeScreen`. Local romanization stays TypeScript; a `TargetText` reading is content the resolver carries into stored reading fields.
 
 `getBatch` returns **challenges and nothing else**: a lesson is written *about* the vocabulary it is given and introduces none. New words enter through `add_words`.
 
@@ -34,7 +34,7 @@ Stateless: data in, data out, never touches the DB. Every model call runs in Rus
 - **Progress** is one step per id — `build-prompt`, `request` (naming the model and the request count), `retry` once, `validate` — sent through the wasm `progress` callback; `select-items` and `save` are the session's.
 - **The mock** answers each request with that type's own fixtures, one per want, `{item}` bound to the want's word and `{other}` to another word the learner has (a multi-cloze with no second word fills nothing). Spanish or Mandarin by target language. Ids and shuffles are random in both modes.
 
-## The resolver (`wire.rs`)
+## Plugin resolvers (`sapling-challenges`)
 
 **The model emits content, never presentation.** Nine wire types on one primitive, `TargetText = {text, reading}` (reading null for Latin scripts); every field is either target-language or native, never conditionally. The resolver picks direction from the type, shuffles options and computes `correctIndex`, places the cloze blank between `before` and `after`, numbers multi-cloze gaps, shuffles tiles, swaps the spot-error word in, and derives `acceptedAnswers` (text, reading, both diacritic-folded). A reading appears only where every piece has one, and a cloze's reading never includes the answer's. It drops a challenge only for a structural defect (no resolvable citation, wrong option count, both sides in one no-space script, a position outside the sentence, a multi-cloze gap without its own word or chip); anything cosmetic is trimmed. **The stored shape is `sapling-challenges`' `Challenge` union** (`challenges.md`) — additive optional fields only: the resolver's output is parsed into it and must pass `check_shape`, or the challenge is dropped like any other structural defect, and `lesson.rs`' mock test resolves every kind in both scenarios through that gate and reads each back as its kind. Mock fixtures for the kinds a brand-new word is written as (recognize-mc, produce-mc) are one- or two-word prompts: mock mode serves through the same `fits`, and a longer fixture would not fit a new word and mock mode would have nothing to play.
 
@@ -46,4 +46,4 @@ Stateless: data in, data out, never touches the DB. Every model call runs in Rus
 
 The only mid-session spend, user-initiated. `prompts/escalation.txt` with the `escalationSpec`s spliced in (registry order), the stored challenge plus `shown`, `{answer, overturn}` in reply; anything else is prose and never an overturn. When `shown.nativeLine` is false the overturn rule relaxes to "correct for what was shown". The mock never overturns.
 
-**Adding a wire type** is a data file, a `WireType` variant and a wire struct — the `add-challenge-type` skill has the procedure; `prompt-tuning` covers content changes.
+**Adding a wire type** means extending its owning plugin's wire shape, `type.json` and lesson file — the `add-challenge-type` skill has the procedure; `prompt-tuning` covers content changes.

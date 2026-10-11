@@ -10,6 +10,7 @@ sapling-domain = { path = "../sapling-domain" }
 sapling-srs = { path = "../sapling-srs" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+schemars = "1"
 ts-rs = { version = "12.0.1", features = ["no-serde-warnings"] }
 # NFC, NFD and diacritic folding, as the answer matcher normalizes.
 unicode-normalization = "0.1"

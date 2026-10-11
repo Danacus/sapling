@@ -10,53 +10,22 @@ use serde::Deserialize;
 use serde_json::Value;
 use ts_rs::TS;
 
-use sapling_challenges::challenge::MatchPairsChallenge;
-use sapling_challenges::challenge::{MultiClozeChallenge, WordOrderChallenge};
 use sapling_challenges::fits::Serving;
-use sapling_challenges::grade::{self, MultiClozeGrade};
 use sapling_challenges::help::HelpLevel;
-use sapling_challenges::matcher::{self, AnswerMatch};
 use sapling_challenges::pool::lenient_rows;
-use sapling_challenges::serve::{self, Presentation};
 use sapling_challenges::stream::{self, Head};
 use sapling_challenges::topup::{self, Scope, TopUpCoverage};
+use sapling_challenges::types::MatchPairsChallenge;
 use sapling_challenges::word::{hide_reading_probability, maturity_for_strength, Maturity};
-use sapling_challenges::{Challenge, PoolRow, Rng, Want, Word};
-use sapling_domain::types::Verdict;
+use sapling_challenges::{
+    Challenge, ChallengeAnswer, ChallengeType, ChallengeTypeInfo, Graded, PoolRow, Rng, Served,
+    Want, Word,
+};
 
 use crate::required;
 
 #[derive(Debug, Deserialize, TS)]
-pub struct CheckChallengeArgs {
-    pub challenge: Challenge,
-    pub answer: String,
-    /// The help level the answer was given at (`ChallengeResult.shown`): it
-    /// decides whether a cloze was typed or tapped from its bank. Absent, or
-    /// a level this build does not know, is the bare render — every stored
-    /// bank entry on screen.
-    #[serde(default)]
-    #[ts(optional)]
-    pub shown: Option<String>,
-}
-
-#[derive(Debug, Deserialize, TS)]
-pub struct GradeMultiClozeArgs {
-    pub challenge: MultiClozeChallenge,
-    pub answers: Vec<String>,
-}
-
-#[derive(Debug, Deserialize, TS)]
-pub struct ValidateAnswerArgs {
-    pub given: String,
-    pub accepted: Vec<String>,
-    /// Whether a near miss can earn `almost`; on unless `false`.
-    #[serde(default)]
-    #[ts(optional)]
-    pub fuzzy: Option<bool>,
-}
-
-#[derive(Debug, Deserialize, TS)]
-pub struct PresentationArgs {
+pub struct ServeArgs {
     pub challenge: Challenge,
     /// The help level serving picked (`Planned.shown`); a level this build
     /// does not know shows the row at its easiest step.
@@ -64,21 +33,19 @@ pub struct PresentationArgs {
 }
 
 #[derive(Debug, Deserialize, TS)]
-pub struct VisibleBankArgs {
+pub struct GradeArgs {
     pub challenge: Challenge,
-    pub size: usize,
-}
-
-#[derive(Debug, Deserialize, TS)]
-pub struct VisibleTilesArgs {
-    pub challenge: WordOrderChallenge,
-    pub count: usize,
+    pub shown: String,
+    pub answer: ChallengeAnswer,
 }
 
 #[derive(Debug, Deserialize, TS)]
 pub struct StrengthArgs {
     pub strength: f64,
 }
+
+#[derive(Debug, Deserialize, TS)]
+pub struct RegistryArgs {}
 
 /// A pool as the host read it; a row this build cannot read keeps its place
 /// and is never picked.
@@ -207,32 +174,28 @@ macro_rules! challenges {
 
 challenges! {
     {
-        /// Grades any challenge from the one string its component reports, as
-        /// given at help level `shown`.
-        checkChallenge(args: CheckChallengeArgs) -> Verdict {
-            let shown = args.shown.as_deref().and_then(HelpLevel::parse);
-            grade::check(&args.challenge, &args.answer, shown)
+        /// Serves a row at one help level through its registered plugin.
+        serveChallenge(args: ServeArgs) -> Served {
+            let easiest = HelpLevel::step(args.challenge.steps()[0]);
+            let level = HelpLevel::parse(&args.shown).unwrap_or(easiest);
+            args.challenge.serve(level)
         }
-        /// A passage, gap by gap: the overall verdict and each gap's own.
-        gradeMultiCloze(args: GradeMultiClozeArgs) -> MultiClozeGrade {
-            grade::grade_multi_cloze(&args.challenge, &args.answers)
+        /// Grades a plugin-shaped answer and returns all feedback and logging facts.
+        gradeChallenge(args: GradeArgs) -> Graded {
+            let easiest = HelpLevel::step(args.challenge.steps()[0]);
+            let level = HelpLevel::parse(&args.shown).unwrap_or(easiest);
+            args.challenge.grade(level, &args.answer).expect("protocol answer tag matches challenge tag")
         }
-        /// A free-text answer against accepted ones: verdict and nearest answer.
-        validateAnswer(args: ValidateAnswerArgs) -> AnswerMatch {
-            matcher::validate_answer(&args.given, &args.accepted, args.fuzzy.unwrap_or(true))
+        /// Returns canonical feedback for a skipped challenge through its plugin.
+        correctFeedback(args: ServeArgs) -> sapling_challenges::Feedback {
+            let easiest = HelpLevel::step(args.challenge.steps()[0]);
+            let level = HelpLevel::parse(&args.shown).unwrap_or(easiest);
+            let answer = args.challenge.correct_answer(level);
+            args.challenge.grade(level, &answer).expect("a plugin's correct answer matches itself").feedback
         }
-        /// Everything a served challenge shows at the help level it was picked at.
-        presentationFor(args: PresentationArgs) -> Presentation {
-            let easiest = HelpLevel::step(sapling_challenges::help::steps_of(&args.challenge)[0]);
-            serve::presentation_for(&args.challenge, HelpLevel::parse(&args.shown).unwrap_or(easiest))
-        }
-        /// The bank positions a cloze or multi-cloze shows at `size`.
-        visibleBank(args: VisibleBankArgs) -> Vec<usize> {
-            serve::visible_bank(&args.challenge, args.size)
-        }
-        /// The tray positions a word-order shows with `count` distractors.
-        visibleTiles(args: VisibleTilesArgs) -> Vec<usize> {
-            serve::visible_tiles(&args.challenge, args.count)
+        /// Compile-time registry facts consumed by the frontend session.
+        challengeTypes(_args: RegistryArgs) -> Vec<ChallengeTypeInfo> {
+            ChallengeType::ALL.iter().map(|kind| kind.info()).collect()
         }
         /// A word's maturity bucket, from its strength.
         maturityOf(args: StrengthArgs) -> Maturity {
@@ -292,14 +255,10 @@ mod tests {
 
     #[test]
     fn a_call_answers_its_json() {
-        let answer = call(
-            "validateAnswer",
-            json!({ "given": "cafe", "accepted": ["café"] }),
-        )
-        .unwrap();
+        let answer = call("challengeTypes", json!({})).unwrap();
         assert_eq!(
-            answer,
-            json!({ "verdict": "almost", "closestAccepted": "café", "distance": 0 })
+            answer[0],
+            json!({ "type": "multiple-choice", "reviews": true, "pooled": true })
         );
         assert_eq!(
             call("maturityOf", json!({ "strength": 0.9 })).unwrap(),
@@ -350,8 +309,8 @@ mod tests {
             call("nope", json!({})).unwrap_err(),
             "Unknown challenges method nope"
         );
-        assert!(call("checkChallenge", json!({}))
+        assert!(call("gradeChallenge", json!({}))
             .unwrap_err()
-            .starts_with("checkChallenge: argument 0"));
+            .starts_with("gradeChallenge: argument 0"));
     }
 }

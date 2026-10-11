@@ -44,7 +44,7 @@ import { getBatch, isMockMode } from '$lib/llm';
 import type { BatchArgs, OnProgress, TokenUsage, Want } from '$lib/llm';
 import { Grade, isDue } from '$lib/srs';
 import { asWords, callChallenges } from '$lib/challenges/core';
-import { storedDefFor } from '$lib/challenges/types';
+import { challengeInfo } from '$lib/challenges/plugin';
 import type { Challenge, KnowledgeItem, MatchPairsChallenge, Profile, Verdict } from '$lib/types';
 import { servingFor, type DeviceServing, type Serving } from './serving';
 
@@ -564,7 +564,7 @@ export async function practiceOverview(opts: OverviewOptions = {}): Promise<Prac
  * is a no-op (there is nothing to fix but the generator's item list).
  */
 export async function reportChallenge(challenge: Challenge): Promise<void> {
-	if (!storedDefFor(challenge).pooled) return;
+	if (!challengeInfo(challenge.type).pooled) return;
 	await flagChallengeReported(challenge.id);
 }
 
@@ -631,7 +631,7 @@ export async function applyResult(
 	const now = outcome.now ?? Date.now();
 	// Ephemeral match-pairs rounds review nothing and were never pooled: the
 	// core skips the stamp for a challenge its pool does not hold.
-	const reviews = storedDefFor(challenge).reviewsSrs;
+	const reviews = challengeInfo(challenge.type).reviews;
 	const { reviewed } = await recordAnswer({
 		result: {
 			challengeId: challenge.id,
@@ -678,7 +678,7 @@ export async function amendResult(
 	reviewed: ReadonlySet<string>,
 	now: number = Date.now()
 ): Promise<void> {
-	if (!storedDefFor(challenge).reviewsSrs) return;
+	if (!challengeInfo(challenge.type).reviews) return;
 
 	for (const itemId of challenge.itemIds) {
 		if (!reviewed.has(itemId)) continue;
@@ -742,7 +742,7 @@ export async function applyOverturn(
 	answer: OverturnedAnswer
 ): Promise<Verdict> {
 	const verdict = overturnedVerdict(answer.itemVerdicts);
-	if (!storedDefFor(challenge).reviewsSrs) return verdict;
+	if (!challengeInfo(challenge.type).reviews) return verdict;
 
 	const verdictOf = new Map(answer.itemVerdicts?.map((item) => [item.itemId, item.verdict]));
 	for (const itemId of challenge.itemIds) {

@@ -18,8 +18,8 @@
 #![forbid(unsafe_code)]
 
 pub mod calibrate;
-pub mod challenge;
 pub mod fits;
+pub mod generation;
 pub mod grade;
 pub mod help;
 #[cfg(test)]
@@ -32,15 +32,20 @@ pub mod model;
 pub mod pool;
 pub mod replay;
 pub mod rng;
+pub mod schema;
 pub mod serve;
 pub mod sim;
 pub mod stream;
 pub mod text;
 pub mod topup;
+pub mod types;
 pub mod word;
 
-pub use challenge::{Challenge, ChallengeType, Direction, STORED_TYPES};
 pub use kinds::{kind_of, ChallengeKind, Want, WantItem, WireType};
 pub use pool::PoolRow;
 pub use rng::Rng;
+pub use types::{
+    Challenge, ChallengeAnswer, ChallengeScreen, ChallengeType, ChallengeTypeInfo, Direction,
+    Feedback, Graded, Served, STORED_TYPES,
+};
 pub use word::Word;

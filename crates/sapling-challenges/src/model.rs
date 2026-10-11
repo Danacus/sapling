@@ -23,10 +23,10 @@ use std::sync::OnceLock;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::challenge::Challenge;
 use crate::help::{HelpLevel, Step};
 use crate::kinds::WireType;
 use crate::text::{is_word_char, uses_inter_word_spaces};
+use crate::Challenge;
 
 /// How a challenge about several words combines their skills.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,10 +83,6 @@ pub struct Tuning {
     pub hidden: f64,
     /// What listening adds to a type's `plain` starting number.
     pub listening: f64,
-    /// Each kind's starting number per step, in the order `help.rs` lists them.
-    pub bases: HashMap<String, BTreeMap<String, f64>>,
-    /// Each kind's starting length slope, per word.
-    pub slopes: HashMap<String, f64>,
 }
 
 pub fn tuning() -> &'static Tuning {
@@ -158,36 +154,7 @@ pub fn length_of(challenge: &Challenge) -> f64 {
     if let Some(length) = challenge.asked_length().filter(|l| l.is_finite()) {
         return length;
     }
-    match challenge {
-        Challenge::MultipleChoice(c) => words_in(&c.prompt),
-        // The blank is a word of its own: the answer that goes there.
-        Challenge::Cloze(c) => words_in(&c.sentence.replace("___", " ")) + 1.0,
-        Challenge::MultiCloze(c) => words_in(&strip_markers(&c.passage)) + c.gaps.len() as f64,
-        Challenge::TypedTranslation(c) => words_in(&c.prompt),
-        Challenge::MatchPairs(c) => c.pairs.len() as f64,
-        Challenge::WordOrder(c) => c.answer_tokens.len() as f64,
-        Challenge::SpotError(c) => c.tokens.len() as f64,
-    }
-}
-
-/// A passage with its `___N___` markers taken out.
-fn strip_markers(passage: &str) -> String {
-    let mut out = String::with_capacity(passage.len());
-    let mut rest = passage;
-    while !rest.is_empty() {
-        if let Some(after) = rest.strip_prefix("___") {
-            let digits = after.len() - after.trim_start_matches(|c: char| c.is_ascii_digit()).len();
-            if digits > 0 && after[digits..].starts_with("___") {
-                out.push(' ');
-                rest = &after[digits + 3..];
-                continue;
-            }
-        }
-        let c = rest.chars().next().expect("not empty");
-        out.push(c);
-        rest = &rest[c.len_utf8()..];
-    }
-    out
+    challenge.measure()
 }
 
 /* ---- Starting values ---------------------------------------------------- */
@@ -202,9 +169,7 @@ pub fn part_key(kind: WireType, help: HelpLevel) -> String {
 /// the reading or listening adds.
 pub fn starting_base(kind: WireType, help: HelpLevel) -> f64 {
     let t = tuning();
-    let Some(steps) = t.bases.get(kind.as_str()) else {
-        return 0.0;
-    };
+    let steps = &kind.kind_spec().bases;
     let first = steps.values().copied().fold(f64::INFINITY, f64::min);
     let first = if first.is_finite() { first } else { 0.0 };
     if help.listening {
@@ -215,7 +180,7 @@ pub fn starting_base(kind: WireType, help: HelpLevel) -> f64 {
 }
 
 pub fn starting_slope(kind: WireType) -> f64 {
-    tuning().slopes.get(kind.as_str()).copied().unwrap_or(0.0)
+    kind.slope()
 }
 
 /// A brand-new word's skill: just above the easiest help level of the easiest
@@ -489,11 +454,8 @@ mod tests {
 
     #[test]
     fn every_listed_step_starts_harder_than_the_one_before() {
-        for (kind, steps) in &tuning().bases {
-            let kind = WireType::ALL
-                .into_iter()
-                .find(|k| k.as_str() == kind)
-                .expect("a kind");
+        for kind in WireType::ALL {
+            let steps = &kind.kind_spec().bases;
             let order = [
                 Step::Plain,
                 Step::Pick4,

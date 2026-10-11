@@ -18,14 +18,14 @@ use serde_json::{json, Value};
 
 use sapling_srs::{current_retrievability, new_card_state, review_card, FsrsCardState, Grade};
 
-use crate::challenge::Challenge;
-use crate::help::{can_listen, steps_of, HelpLevel};
+use crate::help::HelpLevel;
 use crate::kinds::{kind_of, WireType};
 use crate::model::{
     length_of, sigmoid, starting_base, starting_skill, starting_slope, tuning, Evidence, Learner,
     Observation, Rates, MULTI_WORD,
 };
 use crate::rng::Rng;
+use crate::Challenge;
 
 const DAY: f64 = 86_400_000.0;
 const REST: f64 = 3.0 * DAY;
@@ -290,10 +290,10 @@ pub fn simulate(options: SimOptions) -> Simulation {
                 if rows[r].last_served.is_some_and(|at| now - at < REST) {
                     continue;
                 }
-                for step in steps_of(&rows[r].challenge) {
+                for step in rows[r].challenge.steps() {
                     options_here.push((r, HelpLevel::step(step)));
                 }
-                if can_listen(&rows[r].challenge) {
+                if rows[r].challenge.can_listen() {
                     options_here.push((r, HelpLevel::LISTENING));
                 }
             }

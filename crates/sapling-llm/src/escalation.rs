@@ -2,6 +2,7 @@
 //! can win: `overturn` re-grades the answer as correct, so anything that is not
 //! unambiguously `{answer, overturn}` degrades to prose and never overturns.
 
+use sapling_challenges::ChallengeScreen;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use ts_rs::TS;
@@ -16,26 +17,15 @@ const MOCK: &str = include_str!("../fixtures/escalation.txt");
 
 pub const DEFAULT_QUESTION: &str = "Explain the correct answer and whether my answer should count.";
 
-/// What the learner's screen showed, which can be less than the stored row.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct Shown {
-    pub native_line: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub word_bank: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub tiles: Option<Vec<String>>,
-}
-
 #[derive(Debug, Clone, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct EscalationArgs {
     /// The stored challenge, as served.
     #[ts(type = "unknown")]
     pub challenge: Value,
-    pub shown: Shown,
+    /// The registered type's own served screen, without flattening it into a
+    /// shared presentation shape.
+    pub shown: ChallengeScreen,
     pub answer_given: String,
     /// The local grader's verdict.
     pub verdict: String,
@@ -128,15 +118,16 @@ mod tests {
     use super::*;
     use crate::client::fake::{live, Fake};
     use pollster::block_on;
+    use sapling_challenges::types::WordOrderScreen;
 
     fn args(question: Option<&str>) -> EscalationArgs {
         EscalationArgs {
             challenge: json!({ "id": "c", "type": "word-order", "tiles": ["a", "b"] }),
-            shown: Shown {
-                native_line: false,
-                word_bank: None,
-                tiles: Some(vec!["a".into()]),
-            },
+            shown: ChallengeScreen::WordOrder(WordOrderScreen {
+                show_hint: false,
+                tiles: vec![0],
+                readings: true,
+            }),
             answer_given: "b a".into(),
             verdict: "wrong".into(),
             user_question: question.map(str::to_owned),
@@ -171,7 +162,7 @@ mod tests {
         let context: Value = serde_json::from_str(context).unwrap();
         assert_eq!(
             context["shown"],
-            json!({ "nativeLine": false, "tiles": ["a"] })
+            json!({ "type": "word-order", "screen": { "showHint": false, "tiles": [0], "readings": true } })
         );
         assert_eq!(context["answerGiven"], "b a");
         assert_eq!(question, format!("Question: {DEFAULT_QUESTION}"));

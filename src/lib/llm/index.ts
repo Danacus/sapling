@@ -70,7 +70,6 @@ export type {
 	ProgressStep,
 	ProgressStepId,
 	ReadingTextDraft,
-	Shown,
 	SuggestedWord,
 	TokenUsage,
 	TranslateLineArgs,

@@ -16,14 +16,11 @@
 <script lang="ts">
 	import { fly, slide } from 'svelte/transition';
 
-	import { answerReading, spokenAnswerFor } from '$lib/challenges/display';
-	import type { Presentation } from '$lib/challenges/serve';
-	import { storedDefFor } from '$lib/challenges/types';
 	import { getEscalation, LlmError } from '$lib/llm';
 	import { motionMs } from '$lib/ui/motion';
 	import { Grade } from '$lib/srs';
 	import { speak } from '$lib/tts';
-	import type { Challenge, Verdict } from '$lib/types';
+	import type { Challenge, Feedback, Served, Verdict } from '$lib/types';
 	import { getRomanizationMode } from '$lib/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
@@ -36,7 +33,10 @@
 		closestAccepted,
 		itemVerdicts,
 		explanation,
-		presentation,
+		served,
+		plugin,
+		reviews,
+		pooled,
 		nativeLanguage,
 		targetLanguage,
 		skipped = false,
@@ -63,7 +63,10 @@
 		 * dispute is judged against what was on screen, not the full stored row;
 		 * see `EscalationArgs.presentation`.
 		 */
-		presentation?: Presentation;
+		served: Served;
+		plugin: Feedback;
+		reviews: boolean;
+		pooled: boolean;
 		nativeLanguage: string;
 		targetLanguage: string;
 		/**
@@ -125,9 +128,7 @@
 	 * overturned answer was argued back, not recalled; and a type that does not
 	 * feed SRS has no card to regrade at all.
 	 */
-	const canAssess = $derived(
-		verdict === 'correct' && !skipped && !overturned && storedDefFor(challenge).reviewsSrs
-	);
+	const canAssess = $derived(verdict === 'correct' && !skipped && !overturned && reviews);
 
 	/**
 	 * Preselected Good, which is exactly what the answer already scored — so a
@@ -209,7 +210,7 @@
 	 * when the challenge is shown — that is what makes the auto-play below land
 	 * instantly instead of a second or two after the grade.
 	 */
-	const spokenAnswer = $derived(spokenAnswerFor(challenge));
+	const spokenAnswer = $derived(plugin.spokenAnswer);
 
 	/**
 	 * Auto-play the answer once, the moment the banner appears.
@@ -237,10 +238,10 @@
 	 * and for anything queued before the field existed; each of those simply
 	 * renders no line.
 	 *
-	 * Which field that is per challenge type is `$lib/challenges/display`'s
-	 * business; the learner's romanization preference is this component's.
+	 * Which field that is belongs to the Rust plugin's feedback; the learner's
+	 * romanization preference is this component's.
 	 */
-	const reading = $derived(showRomanization ? (answerReading(challenge) ?? '') : '');
+	const reading = $derived(showRomanization ? (plugin.answerReading ?? '') : '');
 
 	async function ask(): Promise<void> {
 		if (asking) return;
@@ -254,7 +255,7 @@
 				verdict,
 				nativeLanguage,
 				targetLanguage,
-				...(presentation ? { presentation } : {}),
+				screen: served.screen,
 				...(question.trim() ? { userQuestion: question.trim() } : {})
 			});
 			answer = result.answer;
@@ -413,7 +414,7 @@
 			<button type="button" class="btn btn-ghost explain-btn" onclick={toggleExplain}>
 				{showExplain ? 'Hide' : 'Explain'}
 			</button>
-			{#if onreport && storedDefFor(challenge).pooled}
+			{#if onreport && pooled}
 				<button
 					type="button"
 					class="btn btn-ghost report-btn"

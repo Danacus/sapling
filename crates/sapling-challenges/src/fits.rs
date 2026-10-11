@@ -18,13 +18,13 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::challenge::Challenge;
-use crate::help::{can_listen, has_readings, steps_of, HelpLevel, Step};
+use crate::help::{HelpLevel, Step};
 use crate::kinds::{active_kinds, kind_of, WireType};
 use crate::model::{combined, length_of, sigmoid, target, window, Aim, Shared, MULTI_WORD};
 use crate::pool::PoolRow;
 use crate::serve::RomanizationMode;
 use crate::word::ById;
+use crate::Challenge;
 
 /// What a pick is made against besides the pool and the words: the learned
 /// shared numbers, the learner's aim, the two things that bound which help
@@ -88,9 +88,9 @@ fn levels(steps: &[Step], readings: bool, listen: bool, serving: &Serving) -> Ve
 /// easiest first: its own steps, its own readings, whether it can be heard.
 pub fn help_levels(challenge: &Challenge, serving: &Serving) -> Vec<HelpLevel> {
     levels(
-        &steps_of(challenge),
-        has_readings(challenge),
-        can_listen(challenge),
+        &challenge.steps(),
+        challenge.has_readings(),
+        challenge.can_listen(),
         serving,
     )
 }
@@ -100,12 +100,8 @@ pub fn help_levels(challenge: &Challenge, serving: &Serving) -> Vec<HelpLevel> {
 /// hint), a reading where the language has one, and listening where it can be
 /// heard — exactly what [`help_levels`] reads off the row once it is stored.
 pub fn written_levels(kind: WireType, serving: &Serving) -> Vec<HelpLevel> {
-    levels(
-        kind.written_steps(),
-        serving.readings,
-        kind.can_listen(),
-        serving,
-    )
+    let steps = kind.written_steps();
+    levels(&steps, serving.readings, kind.can_listen(), serving)
 }
 
 /// Every difficulty a freshly written row can have: each active kind at each

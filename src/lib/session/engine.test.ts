@@ -27,7 +27,6 @@ import type {
 	Verdict,
 	WordOrderChallenge
 } from '$lib/types';
-import { spokenAnswerFor } from '$lib/challenges/display';
 import { MATCH_PAIRS_EVERY } from '$lib/db/generated/challenges';
 import {
 	isEarlyChallenge,

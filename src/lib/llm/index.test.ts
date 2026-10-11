@@ -7,8 +7,6 @@
 
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import type { Presentation } from '$lib/challenges/serve';
-import { ALL_READINGS } from '$lib/challenges/serve';
 import { loadWasmCore } from '$lib/db/backend.testing';
 import type { ClozeChallenge, WordOrderChallenge } from '$lib/types';
 import { describeShown, getBatch, getEscalation, isMockMode, wordBatch } from './index';
@@ -91,31 +89,12 @@ describe('getBatch', () => {
 });
 
 describe('getEscalation', () => {
-	const presentation = (fields: Partial<Presentation>): Presentation => ({
-		showHint: true,
-		bankSize: 0,
-		distractorTiles: 0,
-		readings: ALL_READINGS,
-		listening: false,
-		shown: 'plain',
-		...fields
-	});
-
-	it('reports only what the served presentation showed', () => {
-		const cloze: ClozeChallenge = {
-			id: 'c',
-			type: 'cloze',
-			direction: 'toTarget',
-			sentence: 'Nos trae la ___, por favor?',
-			acceptedAnswers: ['cuenta'],
-			wordBank: ['cuenta', 'carta', 'propina', 'mesa'],
-			itemIds: ['i']
+	it('passes the exact registered screen through', () => {
+		const screen = {
+			type: 'cloze' as const,
+			screen: { showHint: false, bank: [0, 1], readings: true }
 		};
-		expect(describeShown(cloze, presentation({ bankSize: 2, showHint: false }))).toEqual({
-			nativeLine: false,
-			wordBank: ['cuenta', 'carta']
-		});
-		expect(describeShown(cloze).wordBank).toHaveLength(4);
+		expect(describeShown(screen)).toBe(screen);
 	});
 
 	it('answers from the mock and never overturns', async () => {
@@ -127,6 +106,10 @@ describe('getEscalation', () => {
 				prompt: 'the bill',
 				acceptedAnswers: ['la cuenta'],
 				itemIds: ['i']
+			},
+			screen: {
+				type: 'typed-translation',
+				screen: { readings: true }
 			},
 			answerGiven: 'el cuenta',
 			verdict: 'wrong',

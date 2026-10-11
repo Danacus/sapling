@@ -33,20 +33,6 @@ pub struct Fixtures {
     pub mandarin: Vec<Value>,
 }
 
-fn source(kind: WireType) -> &'static str {
-    match kind {
-        WireType::RecognizeMc => include_str!("../lessons/recognize-mc.json"),
-        WireType::ProduceMc => include_str!("../lessons/produce-mc.json"),
-        WireType::ContextMc => include_str!("../lessons/context-mc.json"),
-        WireType::TranslateToNative => include_str!("../lessons/translate-to-native.json"),
-        WireType::SpotError => include_str!("../lessons/spot-error.json"),
-        WireType::WordOrder => include_str!("../lessons/word-order.json"),
-        WireType::Cloze => include_str!("../lessons/cloze.json"),
-        WireType::MultiCloze => include_str!("../lessons/multi-cloze.json"),
-        WireType::TranslateToTarget => include_str!("../lessons/translate-to-target.json"),
-    }
-}
-
 /// A wire type's lesson spec.
 pub trait Lesson {
     fn spec(self) -> &'static Spec;
@@ -61,7 +47,13 @@ impl Lesson for WireType {
         let specs = SPECS.get_or_init(|| {
             WireType::ALL
                 .iter()
-                .map(|kind| serde_json::from_str(source(*kind)).expect("a lesson spec"))
+                .map(|kind| {
+                    serde_json::from_str(
+                        sapling_challenges::types::lesson_source(kind.as_str())
+                            .expect("a registered lesson spec"),
+                    )
+                    .expect("a lesson spec")
+                })
                 .collect()
         });
         &specs[WireType::ALL

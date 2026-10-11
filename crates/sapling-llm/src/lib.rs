@@ -19,7 +19,7 @@ pub mod lesson;
 pub mod reading;
 pub mod text;
 pub mod tools;
-pub mod wire;
+pub use sapling_challenges::generation as wire;
 pub mod word_batch;
 
 pub use client::{

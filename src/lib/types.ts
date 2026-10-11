@@ -13,6 +13,9 @@
 export type {
 	Aim,
 	Challenge,
+	ChallengeAnswer,
+	ChallengeScreen,
+	ChallengeTypeInfo,
 	ChallengeResult,
 	ClozeChallenge,
 	Conversation,
@@ -25,6 +28,8 @@ export type {
 	ConversationTeacherTurn,
 	Direction,
 	FsrsCardState,
+	Feedback,
+	Graded,
 	GradeEntry,
 	HistoryEntry,
 	ImportedSource,
@@ -42,6 +47,7 @@ export type {
 	ReadingText,
 	Segment,
 	SpotErrorChallenge,
+	Served,
 	SubtitleFormat,
 	TextSource,
 	TypedTranslationChallenge,
@@ -50,12 +56,19 @@ export type {
 } from './db/generated/index';
 import type {
 	Challenge,
+	ChallengeAnswer,
+	ChallengeScreen,
 	ConversationLearnerTurn,
 	ConversationTeacherTurn
 } from './db/generated/index';
 
 /** Narrowing helper: the `type` tag of a `Challenge`. */
 export type ChallengeType = Challenge['type'];
+
+/** The stored member, served screen and submitted answer belonging to one tag. */
+export type ChallengeOf<T extends ChallengeType> = Extract<Challenge, { type: T }>;
+export type ScreenOf<T extends ChallengeType> = Extract<ChallengeScreen, { type: T }>['screen'];
+export type AnswerOf<T extends ChallengeType> = Extract<ChallengeAnswer, { type: T }>['answer'];
 
 /** One row of a stored transcript. */
 export type StoredConversationTurn = ConversationLearnerTurn | ConversationTeacherTurn;

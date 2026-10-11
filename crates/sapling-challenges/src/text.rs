@@ -81,6 +81,86 @@ pub fn is_word_char(c: char) -> bool {
     )
 }
 
+/// Whether a legacy word-order tile consists only of punctuation.
+pub fn is_punctuation_only(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().all(|c| {
+            use unicode_general_category::{get_general_category, GeneralCategory as G};
+            matches!(
+                get_general_category(c),
+                G::ConnectorPunctuation
+                    | G::DashPunctuation
+                    | G::OpenPunctuation
+                    | G::ClosePunctuation
+                    | G::InitialPunctuation
+                    | G::FinalPunctuation
+                    | G::OtherPunctuation
+            )
+        })
+}
+
+/// Nothing but punctuation, symbols and whitespace: never a generated tile.
+pub fn is_tile_punctuation_only(text: &str) -> bool {
+    !text.is_empty() && text.chars().all(|c| !c.is_alphanumeric())
+}
+
+fn clings_left(token: &str) -> bool {
+    token
+        .chars()
+        .next()
+        .is_some_and(|c| ")]}»,.;:!?…、。，；：！？」』）】".contains(c))
+}
+
+fn clings_right(text: &str) -> bool {
+    text.chars()
+        .next_back()
+        .is_some_and(|c| "([{«¿¡「『（【".contains(c))
+}
+
+pub fn join_tokens<S: AsRef<str>>(tokens: &[S]) -> String {
+    let parts: Vec<&str> = tokens
+        .iter()
+        .map(|token| token.as_ref().trim())
+        .filter(|token| !token.is_empty())
+        .collect();
+    if !uses_inter_word_spaces(&parts.concat()) {
+        return parts.concat();
+    }
+    let mut out = String::new();
+    for part in parts {
+        if !out.is_empty() && !clings_left(part) && !clings_right(&out) {
+            out.push(' ');
+        }
+        out.push_str(part);
+    }
+    out
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Token {
+    pub text: String,
+    pub reading: Option<String>,
+}
+
+pub fn merge_punctuation(tokens: Vec<Token>) -> Vec<Token> {
+    let mut out: Vec<Token> = Vec::new();
+    let mut lead = String::new();
+    for mut token in tokens {
+        if is_tile_punctuation_only(&token.text) {
+            match out.last_mut() {
+                Some(last) => last.text = join_tokens(&[last.text.as_str(), &token.text]),
+                None => lead.push_str(token.text.trim()),
+            }
+            continue;
+        }
+        if !lead.is_empty() {
+            token.text = std::mem::take(&mut lead) + &token.text;
+        }
+        out.push(token);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

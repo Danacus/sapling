@@ -17,11 +17,11 @@ use sapling_domain::events::{parse_envelope, typed_event, Payload, SyncEvent};
 use sapling_domain::types::Verdict;
 use sapling_srs::{current_retrievability, new_card_state, review_card, word_strength, Grade};
 
-use crate::challenge::Challenge;
 use crate::help::HelpLevel;
 use crate::kinds::kind_of;
 use crate::legacy::legacy_help_level;
 use crate::model::{length_of, tuning, Evidence, Observation};
+use crate::Challenge;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReplayItem {

@@ -17,7 +17,7 @@
 
 import { getAllItems, getDifficultyParts, getPool, getProfile } from '$lib/db';
 import { MATCH_PAIRS_EVERY } from '$lib/db/generated/challenges';
-import { storedDefFor } from '$lib/challenges/types';
+import { challengeInfo } from '$lib/challenges/plugin';
 import type { Challenge, KnowledgeItem, MatchPairsChallenge } from '$lib/types';
 import {
 	isEarlyChallenge,
@@ -181,7 +181,7 @@ export class PracticeStream {
 
 	/** An answer was given: its time feeds the pace, its words the round counter. */
 	noteAnswered(challenge: Challenge, responseMs: number): void {
-		if (!storedDefFor(challenge).reviewsSrs) return;
+		if (!challengeInfo(challenge.type).reviews) return;
 		if (Number.isFinite(responseMs) && responseMs > 0) {
 			this.#paces.push(responseMs);
 			if (this.#paces.length > PACE_WINDOW) this.#paces.shift();

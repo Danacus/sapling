@@ -198,9 +198,9 @@ pub fn coverage(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::challenge::Challenge;
     use crate::model::Aim;
     use crate::pool::RESERVE_GAP;
+    use crate::Challenge;
     use sapling_srs::ItemSrs;
     use serde_json::json;
 

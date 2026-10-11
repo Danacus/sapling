@@ -9,8 +9,8 @@
 //! was random, so an old answer's reading counts as hidden where the roll was
 //! more likely to hide it than not.
 
-use crate::challenge::Challenge;
-use crate::help::{help_level_of, HelpLevel};
+use crate::help::{HelpLevel, Step};
+use crate::Challenge;
 
 /// The rung floors the ladders were read at.
 const FLOORS: [f64; 4] = [0.15, 0.3, 0.45, 0.7];
@@ -51,13 +51,33 @@ pub fn legacy_help_level(challenge: &Challenge, weakest_strength: f64) -> HelpLe
         ),
         _ => (0, 0),
     };
-    help_level_of(
-        challenge,
-        bank,
-        tiles,
-        weakest_strength < READING_HIDDEN_FROM,
-        false,
-    )
+    let step = match challenge {
+        Challenge::Cloze(_) => match bank {
+            0 => Step::Typed,
+            1..=4 => Step::Pick4,
+            _ => Step::Pick6,
+        },
+        Challenge::MultiCloze(c) => {
+            if bank <= c.gaps.len() {
+                Step::Answers
+            } else {
+                Step::Extra2
+            }
+        }
+        Challenge::WordOrder(_) => {
+            if tiles == 0 {
+                Step::Tiles
+            } else {
+                Step::Extra2
+            }
+        }
+        _ => Step::Plain,
+    };
+    if weakest_strength >= READING_HIDDEN_FROM && challenge.has_readings() {
+        HelpLevel::hidden(step)
+    } else {
+        HelpLevel::step(step)
+    }
 }
 
 #[cfg(test)]
