@@ -39,10 +39,10 @@
 		overturnedVerdict,
 		reportChallenge,
 		sessionSummary,
-		type AnswerEvent,
 		type SessionAnswer
 	} from '$lib/session/engine';
-	import { motionMs } from '$lib/session/motion';
+	import type { AnswerEvent } from '$lib/challenges/props';
+	import { motionMs } from '$lib/ui/motion';
 	import { PracticeStream, type NextOptions, type StreamStep } from '$lib/session/stream';
 	import type { Grade } from '$lib/srs';
 	import { runSync } from '$lib/sync';
@@ -50,7 +50,7 @@
 	import { taskStore } from '$lib/tasks/store.svelte';
 	import { getTtsEngine, preloadVoice, sherpaSupports, warmSpeech } from '$lib/tts';
 	import type { Challenge, KnowledgeItem, Profile, Verdict } from '$lib/types';
-	import { getRomanizationMode } from '$lib/ui/prefs';
+	import { getRomanizationMode } from '$lib/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
@@ -486,8 +486,8 @@
 	/**
 	 * The learner rated a correct answer Hard / Good / Easy before continuing.
 	 *
-	 * Explicit self-assessment is the only route to an FSRS `Easy` (see
-	 * `gradeFromResult`), so this is the learner steering their own schedule
+	 * Explicit self-assessment is the only route to an FSRS `Easy` (an answer
+	 * files its verdict, which the core grades — `grade_of`), so this is the learner steering their own schedule
 	 * rather than a guess made from response time. `amendResult` *replaces* the
 	 * history entry and the core refolds the word's log from scratch, so
 	 * switching between grades stays exact however often it happens.

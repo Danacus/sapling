@@ -16,7 +16,7 @@
 <script lang="ts">
 	import { fly } from 'svelte/transition';
 
-	import { motionMs } from '$lib/session/motion';
+	import { motionMs } from '$lib/ui/motion';
 	import { cancelTask, dismissTask, retryTask } from '$lib/tasks';
 	import type { Task } from '$lib/tasks';
 	import { taskStore } from '$lib/tasks/store.svelte';

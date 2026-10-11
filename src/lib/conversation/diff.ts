@@ -21,7 +21,9 @@
  * inventing spaces the script does not have.
  */
 
-import { foldDiacritics } from '$lib/text';
+// `spanGap` is the same rule at a join, `$lib/text`'s: the merge below needs
+// it within a span and the converse page between two, so neither restates it.
+import { foldDiacritics, spanGap } from '$lib/text';
 import type { ConversationCorrection as Correction } from '$lib/db/generated/index';
 
 /** `same` is unchanged text, `removed` came out, `added` went in. */
@@ -59,25 +61,8 @@ const UNSPACED =
 /** One unspaced character, or a run of everything else up to the next space. */
 const TOKEN = new RegExp(`[${UNSPACED}]|[^\\s${UNSPACED}]+`, 'gu');
 
-/** True of a character that its script writes flush against its neighbour. */
-const UNSPACED_CHAR = new RegExp(`[${UNSPACED}]`, 'u');
-
 function tokens(text: string): string[] {
 	return text.match(TOKEN) ?? [];
-}
-
-/**
- * What goes between two pieces of text that were adjacent in the message: a
- * space, unless either side belongs to a script that writes without them.
- *
- * The UI needs the same answer between two spans that the merge below needs
- * within one, so it is exported rather than duplicated in the template — an
- * inserted 有 must sit flush against 你, and an inserted `wil` must not.
- */
-export function spanGap(left: string, right: string): string {
-	const before = [...left].pop() ?? '';
-	const after = [...right][0] ?? '';
-	return UNSPACED_CHAR.test(before) || UNSPACED_CHAR.test(after) ? '' : ' ';
 }
 
 /**

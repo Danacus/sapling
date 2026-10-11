@@ -11,7 +11,7 @@
 <script lang="ts">
 	import { fade } from 'svelte/transition';
 
-	import { motionMs } from '$lib/session/motion';
+	import { motionMs } from '$lib/ui/motion';
 	import type { TaskStep } from '$lib/tasks';
 
 	let {

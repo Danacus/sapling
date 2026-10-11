@@ -48,15 +48,6 @@ function writeNumber(key: string, value: number): void {
 	}
 }
 
-function removeKey(key: string): void {
-	if (!hasStorage()) return;
-	try {
-		localStorage.removeItem(key);
-	} catch {
-		/* ignore */
-	}
-}
-
 function sanitize(n: unknown): number {
 	return typeof n === 'number' && Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
 }
@@ -80,11 +71,4 @@ export function getUsageTotals(): UsageTotals {
 		completionTokens: readNumber(COMPLETION_KEY),
 		requests: readNumber(REQUESTS_KEY)
 	};
-}
-
-/** Forgets the counters. */
-export function resetUsage(): void {
-	removeKey(PROMPT_KEY);
-	removeKey(COMPLETION_KEY);
-	removeKey(REQUESTS_KEY);
 }

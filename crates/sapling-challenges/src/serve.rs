@@ -114,8 +114,13 @@ fn select_positions(bank: usize, answers: &[usize], size: usize) -> Vec<usize> {
 }
 
 /// The bank positions a served cloze or multi-cloze shows at `size`; empty for
-/// a row with no bank, and for any other type.
+/// a row with no bank, for a size of 0 (a cloze served `typed` shows no bank —
+/// "never fewer than the answers" is about a bank that is shown, and a lone
+/// chip holding the answer is no typing exercise), and for any other type.
 pub fn visible_bank(challenge: &Challenge, size: usize) -> Vec<usize> {
+    if size == 0 {
+        return Vec::new();
+    }
     let (bank, answers): (&[String], Vec<Option<&String>>) = match challenge {
         Challenge::Cloze(c) => (
             c.word_bank.as_deref().unwrap_or_default(),
@@ -275,6 +280,13 @@ mod tests {
         let two = multi(&["a", "b"], &["x", "y"], &["d1", "x", "d2", "y", "d3"]);
         assert_eq!(visible_bank(&two, 1), [1, 3]);
         assert!(visible_bank(&cloze(&[]), 3).is_empty());
+    }
+
+    #[test]
+    fn a_cloze_served_typed_shows_no_bank_not_its_answer_alone() {
+        let c = cloze(&BIG_BANK);
+        let typed = presentation_for(&c, HelpLevel::step(Step::Typed));
+        assert!(visible_bank(&c, typed.bank_size).is_empty());
     }
 
     #[test]

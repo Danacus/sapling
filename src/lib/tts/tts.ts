@@ -58,10 +58,11 @@
  */
 
 import { inTauri } from '$lib/platform';
+import { bcp47For } from '$lib/text';
 
 import { readClip, writeClip } from './audio-store';
 import { audioCacheKey, audioCacheUrl, LruCache } from './cache';
-import { bcp47For, sherpaSupports, sherpaVoiceFor, type SherpaVoice } from './languages';
+import { sherpaSupports, sherpaVoiceFor, type SherpaVoice } from './languages';
 import { browserModelDownloadBytes, RUNTIME_DOWNLOAD_BYTES, type TtsModelId } from './models';
 // Type-only, so the browser bundle still never references the desktop module.
 import type { NativeVoiceStatus } from './native';
@@ -81,7 +82,6 @@ export type { TtsProgress } from './sherpa';
 export type { KokoroSpeaker } from './languages';
 export { getTtsEngine, getTtsVoice, DEFAULT_TTS_ENGINE, DEFAULT_TTS_VOICE } from './prefs';
 export {
-	bcp47For,
 	isMandarin,
 	kokoroSupports,
 	kokoroSpeakerFor,

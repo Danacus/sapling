@@ -1,13 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
-	DEFAULT_TTS_DEVICE,
 	DEFAULT_TTS_ENGINE,
 	DEFAULT_TTS_VOICE,
-	getTtsDevice,
 	getTtsEngine,
 	getTtsVoice,
-	setTtsDevice,
 	setTtsEngine,
 	setTtsVoice
 } from './prefs';
@@ -96,26 +93,5 @@ describe('tts voice preference', () => {
 		delete globals.localStorage;
 		expect(getTtsVoice()).toBe(DEFAULT_TTS_VOICE);
 		expect(() => setTtsVoice('zf_018')).not.toThrow();
-	});
-});
-
-// Vestigial since the move to sherpa-onnx (WASM is CPU-only); kept readable so
-// an existing stored value stays inert rather than being reinterpreted.
-describe('tts device preference (legacy)', () => {
-	it('defaults to auto', () => {
-		expect(getTtsDevice()).toBe('auto');
-		expect(DEFAULT_TTS_DEVICE).toBe('auto');
-	});
-
-	it('round-trips the CPU override', () => {
-		setTtsDevice('wasm');
-		expect(getTtsDevice()).toBe('wasm');
-		setTtsDevice('auto');
-		expect(getTtsDevice()).toBe('auto');
-	});
-
-	it('reads a corrupted value as the default', () => {
-		localStorage.setItem('ll.ttsDevice', 'cuda');
-		expect(getTtsDevice()).toBe(DEFAULT_TTS_DEVICE);
 	});
 });

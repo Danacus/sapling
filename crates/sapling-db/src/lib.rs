@@ -22,5 +22,5 @@ pub mod materialize;
 pub mod schema;
 pub mod sql;
 
-pub use crate::core::{Core, ReviewOutcome};
+pub use crate::core::{AnswerFiled, AnswerRecord, Core, ReviewOutcome};
 pub use crate::sql::{Error, Param, Result, Row, Sql, SqlValue};

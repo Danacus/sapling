@@ -22,6 +22,8 @@ struct MemoryStore {
     log: RefCell<Vec<(RawEvent, Option<f64>)>>,
     cursor: Cell<f64>,
     cursor_writes: Cell<usize>,
+    /// The room the stamps and cursor describe.
+    room: RefCell<Option<String>>,
     /// A store call that fails, by name.
     broken: Option<&'static str>,
 }
@@ -115,6 +117,22 @@ impl SyncStore for MemoryStore {
         ready(Ok(log
             .iter()
             .any(|(event, _)| event.kind == "profileUpdated")))
+    }
+
+    fn follow_room(&self, room: String) -> impl Future<Output = StoreResult<bool>> {
+        if let Err(error) = self.check("follow_room") {
+            return ready(Err(error));
+        }
+        let mut held = self.room.borrow_mut();
+        if held.as_deref() == Some(&*room) {
+            return ready(Ok(false));
+        }
+        for row in self.log.borrow_mut().iter_mut() {
+            row.1 = None;
+        }
+        self.cursor.set(0.0);
+        *held = Some(room);
+        ready(Ok(true))
     }
 }
 
@@ -221,11 +239,15 @@ fn remote(seq: usize) -> Value {
 
 /// Puts rows in the relay's room the way another device would.
 fn seed(relay: &MemoryRelay, events: Vec<Value>) {
+    seed_room(relay, PHRASE, events);
+}
+
+fn seed_room(relay: &MemoryRelay, phrase: &str, events: Vec<Value>) {
     let body = json!({ "events": events }).to_string();
     let request = Request {
         method: Method::Post,
         url: format!("{SERVER}/push"),
-        headers: vec![("Authorization".to_owned(), format!("Bearer {PHRASE}"))],
+        headers: vec![("Authorization".to_owned(), format!("Bearer {phrase}"))],
         body: Some(body),
     };
     let response = pollster::block_on(relay.send(request)).expect("seed");
@@ -438,6 +460,85 @@ fn the_summary_counts_both_directions() {
     // The own event comes back on the pull: a stamp, counted as received.
     assert_eq!(outcome.summary, "Sent 1, received 1.");
     assert_eq!(store.log.borrow().len(), 1);
+}
+
+/* ---- following another library ------------------------------------------ */
+
+const OTHER: &str = "ZYXWVTSRQPNMKJHGFEDC";
+
+#[test]
+fn following_another_room_sends_everything_again_and_pulls_it_from_zero() {
+    let relay = MemoryRelay::default();
+    let store = MemoryStore::with_local(2);
+    sync(&relay, &store);
+    assert_eq!(store.cursor.get(), 2.0);
+    // The other library already holds two events of its own, so its seqs
+    // overlap the cursor this device earned in the first room.
+    seed_room(&relay, OTHER, vec![remote(1), remote(2)]);
+
+    let switched = pollster::block_on(run(&relay, &store, SERVER, OTHER));
+
+    assert!(switched.ok, "{switched:?}");
+    assert_eq!(switched.pushed, 2, "local events reach the new room");
+    let ids: Vec<Value> = relay
+        .log(OTHER)
+        .iter()
+        .map(|row| row["id"].clone())
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            json!("remote-1"),
+            json!("remote-2"),
+            json!("e1"),
+            json!("e2")
+        ]
+    );
+    assert_eq!(store.log.borrow().len(), 4, "the room's own events arrive");
+    assert_eq!(store.cursor.get(), 4.0);
+    assert_eq!(store.seqs(), [Some(3.0), Some(4.0), Some(1.0), Some(2.0)]);
+}
+
+#[test]
+fn going_back_to_a_room_is_a_redundant_resend_and_nothing_more() {
+    let relay = MemoryRelay::default();
+    let store = MemoryStore::with_local(1);
+    sync(&relay, &store);
+    pollster::block_on(run(&relay, &store, SERVER, OTHER));
+
+    let back = sync(&relay, &store);
+
+    assert!(back.ok);
+    // The first room answers the seq it already gave: no second row there.
+    assert_eq!(relay.log(PHRASE).len(), 1);
+    assert_eq!(store.seqs(), [Some(1.0)]);
+    assert_eq!(sync(&relay, &store).summary, "Already up to date.");
+}
+
+#[test]
+fn a_room_is_its_phrase_however_typed_on_its_server() {
+    assert_eq!(
+        room_key(SERVER, PHRASE),
+        room_key(&format!("{SERVER}/"), "abcde-fghjk-mnpqr-stvwx")
+    );
+    assert_ne!(room_key(SERVER, PHRASE), room_key(SERVER, OTHER));
+    assert_ne!(
+        room_key(SERVER, PHRASE),
+        room_key("https://other.example", PHRASE)
+    );
+    assert_eq!(room_key(SERVER, PHRASE).len(), 16);
+}
+
+#[test]
+fn a_store_that_cannot_follow_the_room_stops_the_cycle_before_it_pushes() {
+    let store = MemoryStore {
+        broken: Some("follow_room"),
+        ..MemoryStore::with_local(1)
+    };
+    let server = scripted(|_| Ok((200, json!({}))));
+    let outcome = sync(&server, &store);
+    assert_eq!(outcome.message.as_deref(), Some("follow_room broke"));
+    assert!(server.calls.borrow().is_empty());
 }
 
 /* ---- probe --------------------------------------------------------------- */

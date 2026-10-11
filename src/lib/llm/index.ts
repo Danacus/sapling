@@ -82,7 +82,7 @@ export type {
 	WordBatchMode
 } from '$lib/db/generated/index';
 
-export { MOCK_FLAG_KEY, isMockForced, isMockMode, setMockMode } from './mock';
+export { isMockForced, isMockMode } from './mock';
 
-export { getUsageTotals, recordUsage, resetUsage } from './usage';
+export { getUsageTotals, recordUsage } from './usage';
 export type { UsageTotals } from './usage';

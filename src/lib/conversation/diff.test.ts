@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { alignedForm, correctionSpans, diffCorrection, hasChanges, spanGap } from './diff';
+import { alignedForm, correctionSpans, diffCorrection, hasChanges } from './diff';
 
 describe('diffCorrection', () => {
 	it('returns one unchanged span when nothing changed', () => {
@@ -191,21 +191,5 @@ describe('diffCorrection on a script written without spaces', () => {
 			{ kind: 'removed', text: '학생 이에요' },
 			{ kind: 'added', text: '학생이에요' }
 		]);
-	});
-});
-
-describe('spanGap', () => {
-	it('spaces two Latin spans', () => {
-		expect(spanGap('ik wil', 'een')).toBe(' ');
-	});
-
-	it('leaves no gap where either side is written without spaces', () => {
-		expect(spanGap('我', '要')).toBe('');
-		expect(spanGap('coffee', '？')).toBe(' ');
-		expect(spanGap('我要', 'coffee')).toBe('');
-	});
-
-	it('handles an empty side', () => {
-		expect(spanGap('', 'ik')).toBe(' ');
 	});
 });

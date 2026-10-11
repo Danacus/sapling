@@ -9,7 +9,6 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-sapling-challenges = { path = "../sapling-challenges" }
 sapling-db = { path = "../sapling-db" }
 sapling-domain = { path = "../sapling-domain" }
 sapling-llm = { path = "../sapling-llm" }

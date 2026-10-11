@@ -108,3 +108,20 @@ export function joinTokens(tokens: readonly string[]): string {
 	}
 	return out.trim();
 }
+
+/**
+ * What goes between two pieces of text that were adjacent in a message: a
+ * space, unless the character either side of the join belongs to a script that
+ * writes without them — an inserted 有 sits flush against 你, an inserted `wil`
+ * does not.
+ *
+ * Decided at the join, unlike {@link joinTokens}, which decides for a whole
+ * sentence: a correction span and a dictated phrase both meet text of whatever
+ * script came before them. The conversation diff merges and renders its spans
+ * with it, and dictation splices a transcript into the composer with it.
+ */
+export function spanGap(left: string, right: string): string {
+	const before = [...left].pop() ?? '';
+	const after = [...right][0] ?? '';
+	return NO_SPACE_SCRIPT.test(before) || NO_SPACE_SCRIPT.test(after) ? '' : ' ';
+}

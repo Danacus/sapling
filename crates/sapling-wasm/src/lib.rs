@@ -14,7 +14,7 @@
 //!
 //! [`llm`] is separate and needs no database: the window thread calls it with
 //! its own `fetch` as the transport. [`challenges`] likewise, synchronously,
-//! with the window's word segmenter. And [`sync`], with `fetch` again and the
+//! with nothing lent at all. And [`sync`], with `fetch` again and the
 //! window's `Backend` as the store, beside the pairing phrase's four helpers.
 
 use std::future::Future;
@@ -339,28 +339,11 @@ pub async fn llm(
         .map_err(|e| JsValue::from_str(&e))
 }
 
-/// One challenge decision: the method and its argument array as JSON, and
-/// `countWords(text) -> number`, the host's word segmenter (without one, the
-/// fallback that counts a no-space script by characters). Answers JSON; throws
-/// plain text for a malformed call.
+/// One challenge decision: the method and its argument array as JSON. Answers
+/// JSON; throws plain text for a malformed call. The host lends nothing.
 #[wasm_bindgen]
-pub fn challenges(
-    method: &str,
-    args_json: &str,
-    count_words: Option<Function>,
-) -> std::result::Result<String, JsValue> {
-    let host = |text: &str| -> usize {
-        count_words
-            .as_ref()
-            .and_then(|count| count.call1(&JsValue::NULL, &JsValue::from_str(text)).ok())
-            .and_then(|count| count.as_f64())
-            .map_or_else(
-                || sapling_challenges::text::fallback_word_count(text),
-                |count| count as usize,
-            )
-    };
-    sapling_protocol::dispatch_challenges_json(method, args_json, &host)
-        .map_err(|e| JsValue::from_str(&e))
+pub fn challenges(method: &str, args_json: &str) -> std::result::Result<String, JsValue> {
+    sapling_protocol::dispatch_challenges_json(method, args_json).map_err(|e| JsValue::from_str(&e))
 }
 
 /// `request(requestJson) -> Promise<string>`: `{method, url, headers, body?}`
@@ -414,6 +397,7 @@ export interface SyncHost {
   getPullCursor(): Promise<number>;
   setPullCursor(cursor: number): Promise<void>;
   hasProfile(): Promise<boolean>;
+  followSyncRoom(room: string): Promise<boolean>;
 }
 "#;
 
@@ -451,6 +435,12 @@ extern "C" {
 
     #[wasm_bindgen(method, catch, js_name = hasProfile)]
     fn js_has_profile(this: &SyncHost) -> std::result::Result<js_sys::Promise, JsValue>;
+
+    #[wasm_bindgen(method, catch, js_name = followSyncRoom)]
+    fn js_follow_sync_room(
+        this: &SyncHost,
+        room: &str,
+    ) -> std::result::Result<js_sys::Promise, JsValue>;
 }
 
 async fn stored(
@@ -524,6 +514,15 @@ impl sapling_sync::SyncStore for SyncHost {
         async move {
             stored(promise).await?.as_bool().ok_or_else(|| {
                 sapling_sync::StoreError("hasProfile() did not resolve to a boolean".into())
+            })
+        }
+    }
+
+    fn follow_room(&self, room: String) -> impl Future<Output = sapling_sync::StoreResult<bool>> {
+        let promise = self.js_follow_sync_room(&room);
+        async move {
+            stored(promise).await?.as_bool().ok_or_else(|| {
+                sapling_sync::StoreError("followSyncRoom() did not resolve to a boolean".into())
             })
         }
     }

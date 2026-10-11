@@ -42,7 +42,7 @@ use ts_rs::TS;
 
 use sapling_challenges::model::Shared;
 use sapling_db::core::LanguageProfile;
-use sapling_db::{Core, Error, Result, ReviewOutcome};
+use sapling_db::{AnswerFiled, AnswerRecord, Core, Error, Result, ReviewOutcome};
 use sapling_domain::events::{parse_payload, EventType, Payload, RawEvent, ResultOverturned};
 use sapling_domain::types::{
     ChallengeResult, Conversation, ConversationDetail, ConversationExchange, ConversationSummary,
@@ -379,7 +379,20 @@ backend! {
 
         /* ---- Results ---------------------------------------------------- */
 
-        /// Logs one answered challenge.
+        /// Files one answered challenge whole, in one transaction: a review
+        /// for each of `itemIds` still there, graded from its verdict (its
+        /// `itemVerdicts` entry, else the result's: wrong → Again, almost →
+        /// Hard, correct → Good), the result row, and the pool's serve stamp
+        /// when the pool holds the challenge. Answers the words it reviewed.
+        ///
+        /// The stamp lands at *answer* time, which is what makes an early quit
+        /// self-cleaning: a challenge shown but never answered was never
+        /// stamped.
+        recordAnswer(answer: AnswerRecord) -> AnswerFiled {
+            core.record_answer(&answer)
+        }
+        /// Logs one answered challenge's result row alone — `recordAnswer` is
+        /// how play files an answer; this is for seeding a log.
         addResult(result: ChallengeResult) {
             core.add_result(&result)
         }
@@ -536,6 +549,14 @@ backend! {
         /// Moves the pull cursor.
         setPullCursor(cursor: f64) {
             core.set_pull_cursor(cursor)
+        }
+        /// Makes `room` — `sapling-sync`'s key for a relay and a phrase — the
+        /// room the push stamps and the pull cursor describe. When they
+        /// described another (or none is recorded), both are cleared first, so
+        /// the next cycle sends the whole log and pulls from zero. Answers
+        /// whether anything was cleared.
+        followSyncRoom(room: String) -> bool {
+            core.follow_sync_room(&room)
         }
     }
 }

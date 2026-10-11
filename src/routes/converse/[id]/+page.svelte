@@ -30,10 +30,11 @@
 
 	import { appendDictation, dictationAvailable, listen } from '$lib/asr';
 	import type { DictationSession } from '$lib/asr';
-	import { alignedForm, correctionSpans, sendTurn, spanGap } from '$lib/conversation';
+	import { alignedForm, correctionSpans, sendTurn } from '$lib/conversation';
 	import type { ConversationTurn, Scenario } from '$lib/conversation';
 	import { addExchange, getConversation, getProfile } from '$lib/db';
 	import { isMockMode } from '$lib/llm';
+	import { spanGap } from '$lib/text';
 	import { stopSpeaking } from '$lib/tts';
 	import type { Profile } from '$lib/types';
 	import BackLink from '$lib/ui/BackLink.svelte';

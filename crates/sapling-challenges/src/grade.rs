@@ -3,6 +3,14 @@
 //! `"a::b"` pair. Typed answers earn `almost` for a near miss; tapped ones were
 //! chosen from a closed set and are exact. Type-blind otherwise: nothing here
 //! reads demand or difficulty.
+//!
+//! Whether an answer was typed or tapped is a fact about the *screen*, not
+//! only the type: a cloze served with a word bank is answered by tapping a
+//! chip, the same row served `typed` by typing. So [`check`] takes the help
+//! level the answer was given at (`shown`), and a chip is graded exactly — it
+//! is the answer chip or it is not, and a distractor one letter or one accent
+//! away from the answer is still a distractor. A multi-cloze is bank-only, so
+//! every gap is exact.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -10,7 +18,9 @@ use ts_rs::TS;
 use sapling_domain::types::Verdict;
 
 use crate::challenge::{Challenge, MultiClozeChallenge};
-use crate::matcher::{check_answer, normalize};
+use crate::help::HelpLevel;
+use crate::matcher::{check_answer, normalize, validate_answer};
+use crate::serve::{presentation_for, visible_bank};
 use crate::text::{is_js_space, js_trim};
 
 /// The numbered marker for one zero-based gap.
@@ -34,6 +44,7 @@ pub struct MultiClozeGrade {
     pub item_verdicts: Vec<GapVerdict>,
 }
 
+/// Every gap is filled from the bank, so every gap is graded exactly.
 pub fn grade_multi_cloze(challenge: &MultiClozeChallenge, answers: &[String]) -> MultiClozeGrade {
     let item_verdicts: Vec<GapVerdict> = challenge
         .gaps
@@ -41,10 +52,12 @@ pub fn grade_multi_cloze(challenge: &MultiClozeChallenge, answers: &[String]) ->
         .enumerate()
         .map(|(index, gap)| GapVerdict {
             item_id: gap.item_id.clone(),
-            verdict: check_answer(
+            verdict: validate_answer(
                 answers.get(index).map_or("", String::as_str),
                 &gap.accepted_answers,
-            ),
+                false,
+            )
+            .verdict,
         })
         .collect();
     let any = |verdict| item_verdicts.iter().any(|g| g.verdict == verdict);
@@ -81,7 +94,19 @@ fn same(a: &str, b: &str) -> bool {
     normalize(a, false) == normalize(b, false)
 }
 
-pub fn check(challenge: &Challenge, answer: &str) -> Verdict {
+/// Whether a cloze or multi-cloze was answered from its bank at help level
+/// `shown`: the screen that level is (`serve.rs`) shows chips. No level is the
+/// bare render, which shows every stored entry.
+pub fn bank_shown(challenge: &Challenge, shown: Option<HelpLevel>) -> bool {
+    let size = shown.map_or(usize::MAX, |help| {
+        presentation_for(challenge, help).bank_size
+    });
+    !visible_bank(challenge, size).is_empty()
+}
+
+/// Grades `answer` as given at help level `shown` (`None`: the bare render,
+/// everything stored on screen).
+pub fn check(challenge: &Challenge, answer: &str, shown: Option<HelpLevel>) -> Verdict {
     let exact = |hit: bool| {
         if hit {
             Verdict::Correct
@@ -94,7 +119,9 @@ pub fn check(challenge: &Challenge, answer: &str) -> Verdict {
             Some(option) => check_answer(answer, std::slice::from_ref(option)),
             None => Verdict::Wrong,
         },
-        Challenge::Cloze(c) => check_answer(answer, &c.accepted_answers),
+        Challenge::Cloze(c) => {
+            validate_answer(answer, &c.accepted_answers, !bank_shown(challenge, shown)).verdict
+        }
         Challenge::TypedTranslation(c) => check_answer(answer, &c.accepted_answers),
         Challenge::MultiCloze(c) => grade_multi_cloze(c, &serialized_answers(answer)).verdict,
         // Graded a tap at a time in the component; one resolved pair as `a::b` or `a|b`.
@@ -139,9 +166,9 @@ mod tests {
             json!({ "id": "c1", "type": "cloze", "direction": "toTarget",
             "sentence": "Ich ___ nach Hause.", "acceptedAnswers": ["gehe"], "translationHint": "I am going home.", "itemIds": ["i"] }),
         );
-        assert_eq!(check(&cloze, "gehe"), Correct);
-        assert_eq!(check(&cloze, "gehee"), Almost);
-        assert_eq!(check(&cloze, "komme"), Wrong);
+        assert_eq!(check(&cloze, "gehe", None), Correct);
+        assert_eq!(check(&cloze, "gehee", None), Almost);
+        assert_eq!(check(&cloze, "komme", None), Wrong);
     }
 
     #[test]
@@ -150,9 +177,9 @@ mod tests {
             json!({ "id": "t1", "type": "typed-translation", "direction": "toTarget",
             "prompt": "good morning", "acceptedAnswers": ["buenos días", "buenos dias"], "itemIds": ["i"] }),
         );
-        assert_eq!(check(&typed, "Buenos Días"), Correct);
-        assert_eq!(check(&typed, "buenos dias"), Correct);
-        assert_eq!(check(&typed, "buenos dia"), Almost);
+        assert_eq!(check(&typed, "Buenos Días", None), Correct);
+        assert_eq!(check(&typed, "buenos dias", None), Correct);
+        assert_eq!(check(&typed, "buenos dia", None), Almost);
     }
 
     #[test]
@@ -161,9 +188,9 @@ mod tests {
             json!({ "id": "m1", "type": "multiple-choice", "direction": "toNative",
             "prompt": "casa", "options": ["house", "car", "tree", "dog"], "correctIndex": 0, "itemIds": ["i"] }),
         );
-        assert_eq!(check(&mc, "house"), Correct);
-        assert_eq!(check(&mc, "House"), Correct);
-        assert_eq!(check(&mc, "car"), Wrong);
+        assert_eq!(check(&mc, "house", None), Correct);
+        assert_eq!(check(&mc, "House", None), Correct);
+        assert_eq!(check(&mc, "car", None), Wrong);
     }
 
     #[test]
@@ -172,11 +199,11 @@ mod tests {
             json!({ "id": "p1", "type": "match-pairs", "direction": "toTarget",
             "pairs": [{ "a": "hola", "b": "hello" }, { "a": "adiós", "b": "goodbye" }], "itemIds": ["i"] }),
         );
-        assert_eq!(check(&pairs, "hola::hello"), Correct);
-        assert_eq!(check(&pairs, "adiós|goodbye"), Correct);
-        assert_eq!(check(&pairs, "hola::goodbye"), Wrong);
-        assert_eq!(check(&pairs, "not a pair"), Wrong);
-        assert_eq!(check(&pairs, "hola::hello|x"), Wrong);
+        assert_eq!(check(&pairs, "hola::hello", None), Correct);
+        assert_eq!(check(&pairs, "adiós|goodbye", None), Correct);
+        assert_eq!(check(&pairs, "hola::goodbye", None), Wrong);
+        assert_eq!(check(&pairs, "not a pair", None), Wrong);
+        assert_eq!(check(&pairs, "hola::hello|x", None), Wrong);
     }
 
     #[test]
@@ -186,9 +213,9 @@ mod tests {
             "tiles": ["Hause.", "Ich", "nach", "gehe", "komme"], "answerTokens": ["Ich", "gehe", "nach", "Hause."],
             "answer": "Ich gehe nach Hause.", "itemIds": ["i"] }),
         );
-        assert_eq!(check(&wo, "Ich gehe nach Hause."), Correct);
-        assert_eq!(check(&wo, "Ich nach gehe Hause."), Wrong);
-        assert_eq!(check(&wo, "Ich gehe nach Hausee."), Wrong);
+        assert_eq!(check(&wo, "Ich gehe nach Hause.", None), Correct);
+        assert_eq!(check(&wo, "Ich nach gehe Hause.", None), Wrong);
+        assert_eq!(check(&wo, "Ich gehe nach Hausee.", None), Wrong);
     }
 
     #[test]
@@ -198,9 +225,9 @@ mod tests {
             "tokens": ["Ich", "komme", "nach", "Hause."], "correctIndex": 1, "intendedWord": "gehe",
             "correctedSentence": "Ich gehe nach Hause.", "meaning": "I am going home.", "itemIds": ["i"] }),
         );
-        assert_eq!(check(&spot, "komme"), Correct);
-        assert_eq!(check(&spot, "gehe"), Wrong);
-        assert_eq!(check(&spot, "Hause."), Wrong);
+        assert_eq!(check(&spot, "komme", None), Correct);
+        assert_eq!(check(&spot, "gehe", None), Wrong);
+        assert_eq!(check(&spot, "Hause.", None), Wrong);
     }
 
     fn passage() -> MultiClozeChallenge {
@@ -228,16 +255,65 @@ mod tests {
                 },
             ]
         );
-        let near = grade_multi_cloze(&passage(), &["Yo".into(), "bebbo".into()]);
-        assert_eq!(near.verdict, Almost);
         assert_eq!(grade_multi_cloze(&passage(), &["Yo".into()]).verdict, Wrong);
+    }
+
+    #[test]
+    fn a_passage_gap_is_filled_from_the_bank_so_a_near_chip_is_wrong() {
+        let mut near = passage();
+        near.word_bank.push("bebó".into());
+        near.word_bank.push("bebe".into());
+        for chip in ["bebó", "bebe"] {
+            let graded = grade_multi_cloze(&near, &["Yo".into(), chip.into()]);
+            assert_eq!(graded.verdict, Wrong, "{chip}");
+            assert_eq!(graded.item_verdicts[1].verdict, Wrong);
+        }
+        // Case and punctuation are not a different chip.
+        assert_eq!(
+            grade_multi_cloze(&near, &["yo".into(), "bebo".into()]).verdict,
+            Correct
+        );
+    }
+
+    fn banked_cloze() -> Challenge {
+        challenge(
+            json!({ "id": "c2", "type": "cloze", "direction": "toTarget",
+            "sentence": "Yo ___ café.", "acceptedAnswers": ["bebo"],
+            "wordBank": ["como", "bebo", "bebe", "bebó", "leo", "corro"], "itemIds": ["i"] }),
+        )
+    }
+
+    #[test]
+    fn a_cloze_chip_is_the_answer_chip_or_it_is_wrong() {
+        let cloze = banked_cloze();
+        for shown in [
+            None,
+            HelpLevel::parse("pick-4"),
+            HelpLevel::parse("pick-6-hidden"),
+        ] {
+            assert_eq!(check(&cloze, "bebo", shown), Correct, "{shown:?}");
+            // One letter away, and one accent away: both distractors.
+            assert_eq!(check(&cloze, "bebe", shown), Wrong, "{shown:?}");
+            assert_eq!(check(&cloze, "bebó", shown), Wrong, "{shown:?}");
+        }
+    }
+
+    #[test]
+    fn the_same_cloze_typed_keeps_its_near_misses() {
+        let cloze = banked_cloze();
+        let typed = HelpLevel::parse("typed");
+        assert_eq!(check(&cloze, "bebo", typed), Correct);
+        assert_eq!(check(&cloze, "bebe", typed), Almost);
+        assert_eq!(check(&cloze, "bebó", typed), Almost);
+        assert!(!bank_shown(&cloze, typed));
+        assert!(bank_shown(&cloze, None));
     }
 
     #[test]
     fn a_logged_passage_answer_grades_as_it_was_given() {
         let multi = Challenge::MultiCloze(passage());
-        assert_eq!(check(&multi, "1: Yo · 2: bebo"), Correct);
-        assert_eq!(check(&multi, "1: Yo · 2: —"), Wrong);
+        assert_eq!(check(&multi, "1: Yo · 2: bebo", None), Correct);
+        assert_eq!(check(&multi, "1: Yo · 2: —", None), Wrong);
         assert_eq!(
             serialized_answers("1:  Yo · 2:bebo · como"),
             ["Yo", "bebo", "como"]

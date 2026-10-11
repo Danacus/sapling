@@ -26,13 +26,13 @@
  *
  * ## Purity
  *
- * `$lib/tts/languages` (a pure leaf, for the free-text → BCP-47 guess) and
- * `./types` are the only imports. No DB, no session, no `$lib/llm` — a romanizer
+ * `$lib/text` (a pure leaf, for the free-text → BCP-47 guess) and `./types`
+ * are the only imports. No DB, no session, no `$lib/llm` — a romanizer
  * is a pure function of text plus vocabulary, and keeping it that way is what
  * lets the whole thing be unit-tested in node.
  */
 
-import { bcp47For } from '$lib/tts/languages';
+import { bcp47For } from '$lib/text';
 
 import type { Romanizer } from './types';
 

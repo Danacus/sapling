@@ -50,4 +50,8 @@ impl SyncStore for CoreHandle {
     fn has_profile(&self) -> impl Future<Output = StoreResult<bool>> {
         self.sync_call(|core| core.get_profile().map(|profile| profile.is_some()))
     }
+
+    fn follow_room(&self, room: String) -> impl Future<Output = StoreResult<bool>> {
+        self.sync_call(move |core| core.follow_sync_room(&room))
+    }
 }

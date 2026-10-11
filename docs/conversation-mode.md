@@ -136,8 +136,8 @@ typed 我要什么咖啡 for 我有什么咖啡 handed the aligner a single toke
 entire sentence struck through and rewritten — the one outcome the inline markup
 exists to avoid. So `tokens` in `diff.ts` cuts those scripts one character at a
 time and leaves everything else on whitespace, and `spanGap` — the same rule,
-exported because the template needs the same answer between two spans that the
-merge needs inside one — puts them back together without inventing spaces the
+kept in `$lib/text` because the template needs the same answer between two
+spans that the merge needs inside one, and dictation the same again — puts them back together without inventing spaces the
 script does not have. Hangul is deliberately not in that set: Korean spaces its
 words.
 

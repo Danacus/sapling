@@ -57,6 +57,11 @@ export const recordServe = forward('recordServe');
 export const reportChallenge = forward('reportChallenge');
 export const getChallengesByIds = forward('getChallengesByIds');
 
+/**
+ * Files one answered challenge whole — its reviews, its result, its serve
+ * stamp — in one transaction; {@link Backend.recordAnswer}.
+ */
+export const recordAnswer = forward('recordAnswer');
 export const addResult = forward('addResult');
 export const overturnResult = forward('overturnResult');
 export const recentResults = forward('recentResults');

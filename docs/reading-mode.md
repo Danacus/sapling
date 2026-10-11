@@ -282,7 +282,7 @@ Status: punctuation/whitespace-only (`isPunctuationOnly` from `$lib/text`) →
 set → `known`; else `plain` with a key (tappable, no gloss — the card leads
 with **What does this mean?** and takes a typed meaning either way).
 
-Reading visibility, under the learner's `RomanizationMode` (`$lib/ui/prefs`):
+Reading visibility, under the learner's `RomanizationMode` (`$lib/prefs`):
 `'on'` keeps every reading, `'off'` nulls every reading; `'adaptive'`: `known`
 → null; `tracked` → one roll per **card** per text open with
 `hideReadingProbability(strengthOf(item))` from `$lib/challenges/serve`

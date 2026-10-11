@@ -1,11 +1,15 @@
 /**
- * Small, dependency-free `localStorage` preferences for the UI layer.
+ * Small, dependency-free `localStorage` preferences: how this device shows
+ * things (readings, listening, theme) and the topics the learner typed lately.
  *
  * Deliberately separate from `$lib/db/settings` (device secrets and the
  * chosen model) — these are display preferences with no bearing on what gets
- * sent anywhere, so they live next to the components that read them. Every
- * accessor is guarded so the module is safe to import from a non-browser
- * context (SSR-less here, but tests still run in node).
+ * sent anywhere. A leaf at the top of `$lib` rather than inside `$lib/ui`,
+ * because what reads them is not only components: the session's serving
+ * bounds (`session/serving.ts`) and the reader's annotation (`reading/`) do
+ * too, and a domain module importing `$lib/ui` tied every folder into one
+ * cycle. Every accessor is guarded so the module is safe to import from a
+ * non-browser context (SSR-less here, but tests still run in node).
  */
 
 const ROMANIZATION_MODE_KEY = 'll.romanizationMode';

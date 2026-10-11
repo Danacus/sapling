@@ -1,14 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { KnowledgeItem } from '$lib/types';
-import {
-	Grade,
-	dueAt,
-	gradeFromResult,
-	isDue,
-	retrievabilityOf,
-	selectSessionItems,
-	strengthOf
-} from './scheduler';
+import { dueAt, isDue, retrievabilityOf, selectSessionItems, strengthOf } from './scheduler';
 
 /** Fixed instant: 2026-01-01T00:00:00.000Z. Every test computes off this. */
 const NOW = Date.UTC(2026, 0, 1, 0, 0, 0);
@@ -36,25 +28,6 @@ function item(overrides: Partial<KnowledgeItem> = {}): KnowledgeItem {
 function dueItem(id: string, due: number): KnowledgeItem {
 	return item({ id, srs: { due, retrievability: 1, strength: 0.5 } });
 }
-
-describe('gradeFromResult', () => {
-	it('maps wrong to Again', () => {
-		expect(gradeFromResult('wrong')).toBe(Grade.Again);
-	});
-
-	it('maps almost to Hard', () => {
-		expect(gradeFromResult('almost')).toBe(Grade.Hard);
-	});
-
-	it('maps correct to Good', () => {
-		expect(gradeFromResult('correct')).toBe(Grade.Good);
-	});
-
-	it('never assigns Easy — only the learner can (see amendResult)', () => {
-		const verdicts = ['wrong', 'almost', 'correct'] as const;
-		for (const verdict of verdicts) expect(gradeFromResult(verdict)).not.toBe(Grade.Easy);
-	});
-});
 
 describe('reading the derived schedule', () => {
 	it('isDue is a plain comparison against the caller’s now', () => {

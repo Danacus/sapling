@@ -46,7 +46,7 @@ someone to run the check by hand.
   two pragmas, `journal_mode = WAL` and `synchronous = NORMAL`, which are
   properties of the file and the connection and not of the data. NORMAL is what
   makes WAL worth having: at SQLite's default FULL every commit fsyncs the WAL,
-  and one Check writes three or more back to back. Under WAL, NORMAL is still
+  and a learner commits once per Check and again per re-grade. Under WAL, NORMAL is still
   durable against an application crash and gives up only the last transaction on
   a power cut. `PRAGMA synchronous = …` answers nothing, so unlike `journal_mode`
   it is read back to know it took. A behaviour that differs between the browser
@@ -231,8 +231,8 @@ someone to run the check by hand.
   `spawn_blocking`.** A synchronous Tauri command runs on the main thread — the
   GTK loop that composites the webview — so a second of ONNX inference there is
   a frozen window, and so is a commit's fsync: `dispatch` blocks until the core
-  thread has answered, and `applyResult` makes three or more such calls on every
-  Check. That is every command but `derived_schema_version` and `tts_stop`,
+  thread has answered, and every Check is a commit (`recordAnswer`) plus the
+  reads the next pick makes. That is every command but `derived_schema_version` and `tts_stop`,
   including the two `_status` ones, which wait for no lock at all but do read the
   disk, from a screen a learner opens mid-phrase. **Neither `TtsHandle::status`
   nor `AsrHandle::status` may take its engine mutex**: that mutex is held across

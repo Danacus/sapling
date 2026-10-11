@@ -1,8 +1,8 @@
 //! The challenge decisions by name, like the `llm!` table but synchronous and
 //! needing nothing from the host: grading, what a served challenge shows, and
-//! the two planners. (The host still lends a word counter; nothing reads it
-//! now that difficulty is measured by the model's own `words_in`.) Each method takes one argument
-//! object; the table also generates the TypeScript `Challenges` interface and
+//! the two planners. The host lends nothing — not even a word counter: a
+//! length the difficulty model learns from is the model's own `words_in`. Each
+//! method takes one argument object; the table also generates the TypeScript `Challenges` interface and
 //! `CHALLENGE_METHODS` (`challenges.ts`). A seed, where a method takes one,
 //! replays its draws; without one it draws from the OS.
 
@@ -19,7 +19,6 @@ use sapling_challenges::matcher::{self, AnswerMatch};
 use sapling_challenges::pool::lenient_rows;
 use sapling_challenges::serve::{self, Presentation};
 use sapling_challenges::stream::{self, Head};
-use sapling_challenges::text::WordCount;
 use sapling_challenges::topup::{self, Scope, TopUpCoverage};
 use sapling_challenges::word::{hide_reading_probability, maturity_for_strength, Maturity};
 use sapling_challenges::{Challenge, PoolRow, Rng, Want, Word};
@@ -31,6 +30,13 @@ use crate::required;
 pub struct CheckChallengeArgs {
     pub challenge: Challenge,
     pub answer: String,
+    /// The help level the answer was given at (`ChallengeResult.shown`): it
+    /// decides whether a cloze was typed or tapped from its bank. Absent, or
+    /// a level this build does not know, is the bare render — every stored
+    /// bank entry on screen.
+    #[serde(default)]
+    #[ts(optional)]
+    pub shown: Option<String>,
 }
 
 #[derive(Debug, Deserialize, TS)]
@@ -155,7 +161,7 @@ pub struct TopUpArgs {
 
 macro_rules! challenges {
     (
-        |$count:ident| {
+        {
             $(
                 $(#[doc = $doc:literal])*
                 $method:ident($arg:ident: $ty:ty) -> $ret:ty $body:block
@@ -164,12 +170,7 @@ macro_rules! challenges {
     ) => {
         /// Runs one challenge decision by name.
         #[allow(non_snake_case)]
-        pub fn dispatch_challenges(
-            method: &str,
-            args: &[Value],
-            $count: WordCount,
-        ) -> Result<Value, String> {
-            let _ = $count;
+        pub fn dispatch_challenges(method: &str, args: &[Value]) -> Result<Value, String> {
             match method {
                 $(
                     stringify!($method) => {
@@ -205,10 +206,12 @@ macro_rules! challenges {
 }
 
 challenges! {
-    |count| {
-        /// Grades any challenge from the one string its component reports.
+    {
+        /// Grades any challenge from the one string its component reports, as
+        /// given at help level `shown`.
         checkChallenge(args: CheckChallengeArgs) -> Verdict {
-            grade::check(&args.challenge, &args.answer)
+            let shown = args.shown.as_deref().and_then(HelpLevel::parse);
+            grade::check(&args.challenge, &args.answer, shown)
         }
         /// A passage, gap by gap: the overall verdict and each gap's own.
         gradeMultiCloze(args: GradeMultiClozeArgs) -> MultiClozeGrade {
@@ -271,24 +274,19 @@ challenges! {
 
 /// [`dispatch_challenges`] over the wire: the answer as JSON, a malformed call
 /// as plain text.
-pub fn dispatch_challenges_json(
-    method: &str,
-    args_json: &str,
-    count: WordCount,
-) -> Result<String, String> {
+pub fn dispatch_challenges_json(method: &str, args_json: &str) -> Result<String, String> {
     let args: Vec<Value> = serde_json::from_str(args_json)
         .map_err(|e| format!("{method}: arguments are not a JSON array: {e}"))?;
-    dispatch_challenges(method, &args, count).map(|value| value.to_string())
+    dispatch_challenges(method, &args).map(|value| value.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sapling_challenges::text::fallback_word_count;
     use serde_json::json;
 
     fn call(method: &str, args: Value) -> Result<Value, String> {
-        dispatch_challenges_json(method, &json!([args]).to_string(), &fallback_word_count)
+        dispatch_challenges_json(method, &json!([args]).to_string())
             .map(|answer| serde_json::from_str(&answer).unwrap())
     }
 

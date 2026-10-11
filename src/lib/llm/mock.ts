@@ -6,8 +6,11 @@
 
 import { getApiKey } from '$lib/db/settings';
 
-/** localStorage flag that forces the mock even when a key is present. */
-export const MOCK_FLAG_KEY = 'll.mockMode';
+/**
+ * localStorage flag that forces the mock even when a key is present. Set by
+ * hand (devtools) during development; nothing in the app writes it.
+ */
+const MOCK_FLAG_KEY = 'll.mockMode';
 
 /**
  * Whether the learner switched the mock on, as opposed to having no key. A
@@ -26,15 +29,4 @@ export function isMockForced(): boolean {
 /** Guarded: safe to call from node. */
 export function isMockMode(): boolean {
 	return isMockForced() || !getApiKey();
-}
-
-/** Turns the mock on or off for this device. */
-export function setMockMode(on: boolean): void {
-	if (typeof localStorage === 'undefined') return;
-	try {
-		if (on) localStorage.setItem(MOCK_FLAG_KEY, '1');
-		else localStorage.removeItem(MOCK_FLAG_KEY);
-	} catch {
-		/* ignore */
-	}
 }

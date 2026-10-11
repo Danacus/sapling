@@ -1,17 +1,20 @@
 <!--
   Cloze: one blank in a sentence.
 
-  Two input modes, chosen by the challenge itself:
-  - `wordBank` present → tappable chips. Tapping fills the blank, tapping the
+  Two input modes, chosen by the served presentation (the help level):
+  - a bank on screen → tappable chips. Tapping fills the blank, tapping the
     same chip again clears it. This is the beginner-friendly mode; the answer
     space is bounded, so the learner is reading and choosing rather than
     spelling.
-  - no `wordBank` → an inline text input sitting *inside* the sentence, so the
+  - no bank (none stored, or served `typed`) → an inline text input sitting *inside* the sentence, so the
     gap keeps its place in the reading order instead of turning into a
     disconnected field below.
 
-  Both modes grade through `validateAnswer`, which is what makes an accent slip
-  an 'almost' rather than a 'wrong'.
+  Both modes grade through `validateAnswer`, but only a typed answer is fuzzy —
+  that is what makes an accent slip an 'almost' rather than a 'wrong'. A tapped
+  chip is graded exactly: it is the answer chip or it is not, and a distractor
+  one letter or one accent off the answer is still a distractor (the same rule
+  as Rust's `checkChallenge`, `grade.rs`).
 
   The sentence line is the one prompt no block renders: it is not text with a
   speaker next to it, it is an interactive line with a control *in* it, and the
@@ -171,7 +174,9 @@
 
 	function submit(): void {
 		if (!ready) return;
-		const { verdict, closestAccepted } = validateAnswer(answer, challenge.acceptedAnswers);
+		const { verdict, closestAccepted } = validateAnswer(answer, challenge.acceptedAnswers, {
+			fuzzy: !usesBank
+		});
 		// No speech here: the feedback banner auto-plays the completed sentence
 		// for every challenge type in one place, so cloze stays consistent with
 		// the rest instead of being the one type that speaks for itself.

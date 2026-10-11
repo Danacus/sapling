@@ -118,7 +118,7 @@
 	import { cardKey, usesInterWordSpaces } from '$lib/text';
 	import { speak, stopSpeaking, ttsAvailable, warmSpeech } from '$lib/tts';
 	import type { KnowledgeItem, Profile, ReadingText } from '$lib/types';
-	import { getRomanizationMode } from '$lib/ui/prefs';
+	import { getRomanizationMode } from '$lib/prefs';
 	import BackLink from '$lib/ui/BackLink.svelte';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';

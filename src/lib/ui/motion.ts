@@ -1,11 +1,14 @@
 /**
- * Motion budget for the session screen.
+ * Motion budget for every JS-driven transition — the session screen, the
+ * feedback banner, the task tray.
  *
  * CSS animations are switched off with a `prefers-reduced-motion` media query
  * (see `src/app.css`), but Svelte's JS-driven transitions (`fly`, `scale`,
  * `fade`) are not covered by CSS at all — their durations are numbers we pass
- * in. This module is that one number, so every transition on the learn screen
- * collapses to an instant cut for learners who asked for less movement.
+ * in. This module is that one number, so every such transition collapses to
+ * an instant cut for learners who asked for less movement. It lives in
+ * `$lib/ui` because it is a fact about rendering: when it sat in
+ * `$lib/session`, the task tray importing it tied `ui` to `session`.
  */
 
 /** True when the OS/browser asks for reduced motion. Safe outside the browser. */

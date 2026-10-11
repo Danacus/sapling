@@ -3408,7 +3408,6 @@ name = "sapling-wasm"
 version = "0.1.0"
 dependencies = [
  "js-sys",
- "sapling-challenges",
  "sapling-db",
  "sapling-domain",
  "sapling-llm",

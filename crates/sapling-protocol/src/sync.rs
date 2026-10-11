@@ -137,6 +137,9 @@ mod tests {
         fn has_profile(&self) -> impl Future<Output = StoreResult<bool>> {
             ready(Ok(false))
         }
+        fn follow_room(&self, _: String) -> impl Future<Output = StoreResult<bool>> {
+            ready(Ok(false))
+        }
     }
 
     struct Offline;

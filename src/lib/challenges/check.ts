@@ -11,9 +11,13 @@ import { callChallenges } from './core';
 
 export type { AnswerMatch, MultiClozeGrade };
 
-/** Grades any challenge from the one string its component reports. */
-export function checkChallenge(challenge: Challenge, answer: string): Verdict {
-	return callChallenges('checkChallenge', { challenge, answer });
+/**
+ * Grades any challenge from the one string its component reports, as given at
+ * help level `shown` — which decides whether a cloze was typed (near misses
+ * count) or tapped from its bank (exact). Absent is the bare render.
+ */
+export function checkChallenge(challenge: Challenge, answer: string, shown?: string): Verdict {
+	return callChallenges('checkChallenge', { challenge, answer, shown });
 }
 
 /**

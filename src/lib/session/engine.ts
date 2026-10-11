@@ -27,37 +27,30 @@
  */
 
 import {
-	addResult,
 	addToPool,
 	getAllItems,
 	getDifficultyParts,
 	getPool,
 	getProfile,
 	overturnResult,
-	recordServe,
+	recordAnswer,
 	reportChallenge as flagChallengeReported,
 	updateItemAfterReview
 } from '$lib/db';
 import type { ChallengeRow, ReasoningEffort } from '$lib/db';
 import { challengeOf } from '$lib/db';
-import { MATCH_PAIRS_EVERY } from '$lib/db/generated/challenges';
 import type { TopUpCoverage } from '$lib/db/generated/index';
 import { getBatch, isMockMode } from '$lib/llm';
 import type { BatchArgs, OnProgress, TokenUsage, Want } from '$lib/llm';
-import { Grade, gradeFromResult, isDue } from '$lib/srs';
+import { Grade, isDue } from '$lib/srs';
 import { asWords, callChallenges } from '$lib/challenges/core';
 import { storedDefFor } from '$lib/challenges/types';
 import type { Challenge, KnowledgeItem, MatchPairsChallenge, Profile, Verdict } from '$lib/types';
 import { servingFor, type DeviceServing, type Serving } from './serving';
 
-export { deviceServing, servingFor, type DeviceServing, type Serving } from './serving';
-
 /* -------------------------------------------------------------------------- */
 /* Tuning                                                                      */
 /* -------------------------------------------------------------------------- */
-
-/** How many early-word challenges a match round follows — `crates/sapling-challenges`' `stream.rs`. */
-export { MATCH_PAIRS_EVERY };
 
 /**
  * `answerGiven` written when the learner presses "Too hard — skip".
@@ -69,18 +62,6 @@ export { MATCH_PAIRS_EVERY };
  * less of the word.
  */
 export const SKIP_ANSWER = '(skipped)';
-
-/* -------------------------------------------------------------------------- */
-/* The component contract                                                      */
-/* -------------------------------------------------------------------------- */
-
-/**
- * The challenge component contract and the answer event it emits, both declared
- * in `$lib/challenges/props` — a rendering contract, next to the components
- * that implement it, and now the one place both halves live. Re-exported here
- * so every existing importer of this module keeps finding them.
- */
-export type { AnswerEvent, ChallengeProps } from '$lib/challenges/props';
 
 /* -------------------------------------------------------------------------- */
 /* Session accounting (pure)                                                   */
@@ -134,13 +115,6 @@ export function sessionSummary(answers: SessionAnswer[]): SessionSummary {
 		itemsPracticed: items.size
 	};
 }
-
-/**
- * The canonical target-language audio for a challenge's answer — a
- * presentation fact (`$lib/challenges/display`), exported here where the
- * session screen has always found it.
- */
-export { spokenAnswerFor } from '$lib/challenges/display';
 
 /* -------------------------------------------------------------------------- */
 /* The stream's decisions (pure)                                               */
@@ -605,10 +579,10 @@ export interface AnswerOutcome {
 	answerGiven: string;
 	/**
 	 * Time from "challenge shown" to "answer submitted". Recorded, not graded on:
-	 * see {@link AnswerEvent.responseMs}.
+	 * see `AnswerEvent.responseMs` (`$lib/challenges/props`).
 	 */
 	responseMs?: number;
-	/** See {@link AnswerEvent.itemVerdicts}; absent preserves one verdict per challenge. */
+	/** See `AnswerEvent.itemVerdicts`; absent preserves one verdict per challenge. */
 	itemVerdicts?: readonly { itemId: string; verdict: Verdict }[];
 	/**
 	 * The help level the challenge was shown at — the served presentation's
@@ -622,8 +596,12 @@ export interface AnswerOutcome {
 
 /**
  * Persists one answer: SRS card updates, the result log entry, and the pool's
- * serve stamp. All database writes for an answered challenge happen here, so
- * components never import a repository.
+ * serve stamp — one `recordAnswer`, so one transaction in the core: a crash
+ * can no longer leave a review filed without its result. All database writes
+ * for an answered challenge happen here, so components never import a
+ * repository. What goes across is verdicts, never grades: the verdict → FSRS
+ * grade mapping (wrong → Again, almost → Hard, correct → Good, each word of a
+ * composite answer at its own gap's verdict) is the core's (`grade_of`).
  *
  * The stamp lands at *answer* time, not when the session was planned, and that
  * asymmetry is what makes an early quit self-cleaning: challenges the learner
@@ -651,33 +629,23 @@ export async function applyResult(
 	outcome: AnswerOutcome
 ): Promise<Set<string>> {
 	const now = outcome.now ?? Date.now();
-	const reviewed = new Set<string>();
-
-	if (storedDefFor(challenge).reviewsSrs) {
-		const verdictByItem = new Map(outcome.itemVerdicts?.map((item) => [item.itemId, item.verdict]));
-		for (const itemId of challenge.itemIds) {
-			const verdict = verdictByItem.get(itemId) ?? outcome.verdict;
-			const { existed } = await updateItemAfterReview(itemId, {
-				at: now,
-				grade: gradeFromResult(verdict)
-			});
-			if (existed) reviewed.add(itemId);
-		}
-	}
-
-	await addResult({
-		challengeId: challenge.id,
-		verdict: outcome.verdict,
-		answerGiven: outcome.answerGiven,
-		at: now,
-		...(outcome.shown === undefined ? {} : { shown: outcome.shown })
+	// Ephemeral match-pairs rounds review nothing and were never pooled: the
+	// core skips the stamp for a challenge its pool does not hold.
+	const reviews = storedDefFor(challenge).reviewsSrs;
+	const { reviewed } = await recordAnswer({
+		result: {
+			challengeId: challenge.id,
+			verdict: outcome.verdict,
+			answerGiven: outcome.answerGiven,
+			at: now,
+			...(outcome.shown === undefined ? {} : { shown: outcome.shown })
+		},
+		itemIds: reviews ? [...challenge.itemIds] : [],
+		...(reviews && outcome.itemVerdicts
+			? { itemVerdicts: outcome.itemVerdicts.map((item) => ({ ...item })) }
+			: {})
 	});
-
-	// Ephemeral match-pairs rounds were never pooled; `recordServe` no-ops on a
-	// missing id, so this stays a single unconditional call.
-	await recordServe(challenge.id, now);
-
-	return reviewed;
+	return new Set(reviewed);
 }
 
 /**

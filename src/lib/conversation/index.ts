@@ -61,5 +61,5 @@ export function sendTurn(
 	);
 }
 
-export { alignedForm, correctionSpans, diffCorrection, hasChanges, spanGap } from './diff';
+export { alignedForm, correctionSpans, diffCorrection, hasChanges } from './diff';
 export type { DiffKind, DiffOptions, DiffSpan } from './diff';

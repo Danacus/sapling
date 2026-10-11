@@ -8,7 +8,7 @@
 	import { startTask } from '$lib/tasks';
 	import { taskStore } from '$lib/tasks/store.svelte';
 	import type { Profile } from '$lib/types';
-	import { addRecentTopic, getRecentTopics } from '$lib/ui/prefs';
+	import { addRecentTopic, getRecentTopics } from '$lib/prefs';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	/** Fixed suggestions: the learner's interests no longer add any. */

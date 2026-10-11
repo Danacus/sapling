@@ -17,9 +17,9 @@
  * by overwriting a stored card with an arithmetic result.
  */
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { getItem, recentResults, updateItemAfterReview } from '$lib/db';
+import { addToPool, getItem, getPool, recentResults, updateItemAfterReview } from '$lib/db';
 import { setBackendForTesting } from '$lib/db/backend';
 import { makeTestBackend, type TestBackend } from '$lib/db/backend.testing';
 import { CardState, Grade } from '$lib/srs';
@@ -172,6 +172,28 @@ describe('applyResult', () => {
 
 		const none = await applyResult(match, { verdict: 'correct', answerGiven: '', now: NOW });
 		expect(none.size).toBe(0);
+	});
+
+	it('files the reviews, the result and the serve stamp in one write', async () => {
+		await seed('i1');
+		await addToPool([single], NOW);
+		const writes = vi.spyOn(store, 'recordAnswer');
+		const piecemeal = [
+			vi.spyOn(store, 'reviewItem'),
+			vi.spyOn(store, 'addResult'),
+			vi.spyOn(store, 'recordServe')
+		];
+
+		await applyResult(single, { verdict: 'correct', answerGiven: 'leo', shown: 'typed', now: NOW });
+
+		expect(writes).toHaveBeenCalledTimes(1);
+		for (const call of piecemeal) expect(call).not.toHaveBeenCalled();
+		expect(await historyOf('i1')).toEqual([{ at: NOW, grade: Grade.Good }]);
+		expect(await recentResults(1)).toEqual([
+			{ challengeId: 'c1', verdict: 'correct', answerGiven: 'leo', at: NOW, shown: 'typed' }
+		]);
+		const [row] = await getPool();
+		expect(row).toMatchObject({ timesServed: 1, lastServedAt: NOW });
 	});
 
 	it('grades each multi-cloze item from its own gap, while logging one overall verdict', async () => {

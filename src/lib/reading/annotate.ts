@@ -47,7 +47,7 @@ import { strengthOf } from '$lib/srs';
 import { cardKey, isPunctuationOnly, readingKey } from '$lib/text';
 import type { KnowledgeItem } from '$lib/types';
 import type { GlossEntry } from '$lib/llm';
-import type { RomanizationMode } from '$lib/ui/prefs';
+import type { RomanizationMode } from '$lib/prefs';
 import { wordKey } from './tokenize';
 
 /**

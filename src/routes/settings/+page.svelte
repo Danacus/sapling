@@ -28,7 +28,7 @@
 		dictationDownloadBytes,
 		dictationModelInstalled
 	} from '$lib/asr';
-	import { REQUEST_ITEMS } from '$lib/llm';
+	import { getUsageTotals, REQUEST_ITEMS, type UsageTotals } from '$lib/llm';
 	import { inTauri } from '$lib/platform';
 	import { startTask } from '$lib/tasks';
 	import { taskStore } from '$lib/tasks/store.svelte';
@@ -40,10 +40,10 @@
 		isSyncAvailable,
 		isSyncEnabled,
 		lastSyncOutcome,
+		pairDevice as pairWithPhrase,
 		probeSync,
 		runSync,
 		setSyncEnabled,
-		setSyncPhrase,
 		SYNC_URL,
 		type SyncProbeResult,
 		type SyncRecord
@@ -79,7 +79,7 @@
 		setThemeMode,
 		type RomanizationMode,
 		type ThemeMode
-	} from '$lib/ui/prefs';
+	} from '$lib/prefs';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	type Status = 'idle' | 'saved' | 'error';
@@ -171,9 +171,7 @@
 	let requestItemsInput = $state('');
 
 	// Usage -------------------------------------------------------------------------
-	let usagePromptTokens = $state(0);
-	let usageCompletionTokens = $state(0);
-	let usageRequests = $state(0);
+	let usage = $state<UsageTotals>({ promptTokens: 0, completionTokens: 0, requests: 0 });
 
 	// Sync --------------------------------------------------------------------------
 	// Everything here takes effect on the *next* boot: the sync backend is chosen
@@ -187,6 +185,8 @@
 	let pairInput = $state('');
 	/** Adopting a *different* phrase re-points this device, so it asks first. */
 	let pairStage = $state<'idle' | 'confirm'>('idle');
+	/** Pairing runs a first cycle, which takes a moment. */
+	let pairing = $state(false);
 	let syncStatus = $state<Status>('idle');
 	let syncMessage = $state('');
 	let syncNeedsReload = $state(false);
@@ -266,9 +266,7 @@
 					if (!cancelled) dictationCoversTarget = covers;
 				});
 
-				usagePromptTokens = readUsage('ll.usage.promptTokens');
-				usageCompletionTokens = readUsage('ll.usage.completionTokens');
-				usageRequests = readUsage('ll.usage.requests');
+				usage = getUsageTotals();
 
 				loading = false;
 				// A link to a field (the home screen's "Add a key" goes to
@@ -321,16 +319,6 @@
 		if (!target) return;
 		target.scrollIntoView({ block: 'center' });
 		target.focus({ preventScroll: true });
-	}
-
-	function readUsage(key: string): number {
-		try {
-			const raw = localStorage.getItem(key);
-			const parsed = raw ? parseInt(raw, 10) : 0;
-			return Number.isFinite(parsed) ? parsed : 0;
-		} catch {
-			return 0;
-		}
 	}
 
 	function flash(setStatus: (value: Status) => void, delay = 1800) {
@@ -411,27 +399,38 @@
 	}
 
 	/**
-	 * Adopts a phrase from another device.
+	 * Adopts a phrase from another device — the same pairing onboarding does
+	 * (`$lib/sync`'s `pairDevice`): store the phrase, turn sync on, run one
+	 * cycle now. Following a different library starts over against it, so
+	 * everything this device holds is sent there and that library's whole log
+	 * comes down (`sapling-sync`'s `room_key`).
 	 *
 	 * Confirmed rather than immediate when it replaces a *different* phrase:
-	 * this device stops syncing with whatever it was syncing with, and anything
-	 * it holds that never reached that library stays only on this device.
+	 * this device stops following the library it was in, and its own words
+	 * join the new one.
 	 */
-	function pairDevice() {
-		const adopting = setSyncPhrase(pairInput);
-		if (adopting === undefined) {
+	async function pairDevice() {
+		if (pairing) return;
+		pairing = true;
+		const outcome = await pairWithPhrase(pairInput);
+		pairing = false;
+		if (outcome.message === BAD_PHRASE) {
 			syncStatus = 'error';
 			syncMessage = BAD_PHRASE;
 			return;
 		}
-		syncPhrase = adopting;
-		setSyncEnabled(true);
+		syncPhrase = getSyncPhrase();
 		syncEnabled = isSyncEnabled();
+		lastRun = lastSyncOutcome();
 		pairInput = '';
 		pairStage = 'idle';
 		syncNeedsReload = true;
-		syncStatus = 'saved';
-		syncMessage = 'Paired. Reload to start syncing.';
+		// The phrase is stored either way; a cycle that failed is retried by
+		// the next one, on reload or from "Sync now".
+		syncStatus = outcome.ok ? 'saved' : 'error';
+		syncMessage = outcome.ok
+			? 'Paired and synced. Reload to see the library.'
+			: `Paired, but the first sync failed: ${outcome.message ?? 'unknown error'}`;
 		void checkSyncConnection();
 	}
 
@@ -441,7 +440,7 @@
 			pairStage = 'confirm';
 			return;
 		}
-		pairDevice();
+		void pairDevice();
 	}
 
 	/** Forgets the phrase and turns sync off. The local library is untouched. */
@@ -1084,15 +1083,15 @@
 				<dl class="usage-grid">
 					<div class="usage-item">
 						<dt>Requests</dt>
-						<dd>{usageRequests.toLocaleString()}</dd>
+						<dd>{usage.requests.toLocaleString()}</dd>
 					</div>
 					<div class="usage-item">
 						<dt>Prompt tokens</dt>
-						<dd>{usagePromptTokens.toLocaleString()}</dd>
+						<dd>{usage.promptTokens.toLocaleString()}</dd>
 					</div>
 					<div class="usage-item">
 						<dt>Completion tokens</dt>
-						<dd>{usageCompletionTokens.toLocaleString()}</dd>
+						<dd>{usage.completionTokens.toLocaleString()}</dd>
 					</div>
 				</dl>
 				<p class="hint">Cost depends on your model.</p>
@@ -1198,7 +1197,8 @@
 						/>
 						{#if pairStage === 'confirm'}
 							<p class="hint">
-								This device will follow that library instead. Anything only it knows stops syncing.
+								This device will follow that library instead, and everything on it joins that
+								library.
 							</p>
 						{/if}
 						<div class="actions-row">
@@ -1206,8 +1206,11 @@
 								type="button"
 								class="btn btn-primary"
 								onclick={requestPair}
-								disabled={pairInput.trim() === ''}
+								disabled={pairing || pairInput.trim() === ''}
 							>
+								{#if pairing}
+									<Spinner />
+								{/if}
 								{pairStage === 'confirm' ? 'Yes, pair' : 'Pair this device'}
 							</button>
 						</div>

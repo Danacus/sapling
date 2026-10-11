@@ -8,14 +8,14 @@
  * a message the learner endorsed, exactly as it does for a typed one.
  */
 
-import { spanGap } from '$lib/conversation/diff';
+import { spanGap } from '$lib/text';
 
 /**
  * `existing` with `transcript` appended, joined the way the script joins words.
  *
- * The separator is `spanGap`'s, not a space: a dictated 我想要 must sit flush
- * against what is already there and a dictated `please` must not — the same rule
- * the correction spans are rebuilt with, borrowed rather than re-derived.
+ * The separator is `$lib/text`'s `spanGap`, not a space: a dictated 我想要 must
+ * sit flush against what is already there and a dictated `please` must not —
+ * the same rule the conversation's correction spans are rebuilt with.
  *
  * Empty transcripts return `existing` untouched, which is what makes this safe
  * to call on every interim result: the caller keeps the pre-dictation text and

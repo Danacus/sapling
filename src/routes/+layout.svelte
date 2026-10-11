@@ -8,7 +8,7 @@
 	import { isSyncEnabled, runSync } from '$lib/sync';
 	import { preloadReloadGuard } from '$lib/ui/preload-reload';
 	import AppNav from '$lib/ui/AppNav.svelte';
-	import { applyTheme, getThemeMode } from '$lib/ui/prefs';
+	import { applyTheme, getThemeMode } from '$lib/prefs';
 	import Spinner from '$lib/ui/Spinner.svelte';
 	import TaskTray from '$lib/ui/TaskTray.svelte';
 

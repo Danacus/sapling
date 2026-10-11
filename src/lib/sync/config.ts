@@ -1,7 +1,7 @@
 /**
  * Device-local sync settings.
  *
- * Same rules as `db/settings.ts` and `ui/prefs.ts`, and for the same reason:
+ * Same rules as `db/settings.ts` and `prefs.ts`, and for the same reason:
  * the pairing phrase is a secret, so it lives in `localStorage` under the
  * `ll.*` convention, never in the store and therefore never in the JSON export.
  * A backup file that carried the phrase would hand every reader of it the whole

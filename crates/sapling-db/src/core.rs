@@ -15,13 +15,14 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use serde::de::value::{Error as EnumError, StrDeserializer};
 use serde::de::IntoDeserializer;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use ts_rs::TS;
 
 use crate::materialize::{open_schema, raw_from_row, Materializer, LOG_ORDER};
 use crate::schema::{ACTIVE_PROFILE_KEY, DERIVED_TABLES};
 use crate::sql::{Error, Param, Result, Row, Sql};
+use sapling_challenges::grade::GapVerdict;
 use sapling_challenges::model::Shared;
 use sapling_domain::day::LocalDay;
 use sapling_domain::events::{
@@ -34,7 +35,7 @@ use sapling_domain::types::{
     ConversationLearnerTurn, ConversationSummary, ConversationTeacherTurn, DailyActivity,
     GradeEntry, HistoryEntry, KnowledgeItem, Profile, ReadingText, Verdict,
 };
-use sapling_srs::{item_srs, FsrsCardState};
+use sapling_srs::{item_srs, FsrsCardState, Grade};
 
 /// Envelope version `export_data` writes and a v3 `import_data` reads.
 pub const EXPORT_VERSION: f64 = 3.0;
@@ -43,6 +44,10 @@ pub const EXPORT_VERSION: f64 = 3.0;
 const LEGACY_IMPORT_VERSIONS: [f64; 2] = [1.0, 2.0];
 
 const PULL_CURSOR_KEY: &str = "pullCursor";
+
+/// The relay room (`sapling-sync`'s `room_key`) the pull cursor and the
+/// events' `seq` stamps are positions in.
+const SYNC_ROOM_KEY: &str = "syncRoom";
 
 /// Columns `get_all_items` reads by default — everything but `recentGrades`.
 const ITEM_COLUMNS_LEAN: &str =
@@ -62,6 +67,43 @@ pub struct ReviewOutcome {
     pub prior: Value,
     #[ts(type = "unknown")]
     pub card: Value,
+}
+
+/// One answered challenge, as `recordAnswer` files it.
+#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AnswerRecord {
+    /// The result row, exactly as it is logged; its `at` is the instant every
+    /// review and the serve stamp share.
+    pub result: ChallengeResult,
+    /// The words the answer reviews — the challenge's `itemIds`, or none for a
+    /// type that touches no schedule (a match round).
+    pub item_ids: Vec<String>,
+    /// A composite answer's verdict per word (a multi-cloze's gaps); a word
+    /// not listed is reviewed at the result's verdict.
+    #[serde(default)]
+    #[ts(optional)]
+    pub item_verdicts: Option<Vec<GapVerdict>>,
+}
+
+/// What `recordAnswer` filed: the words it reviewed — the answer's minus any
+/// no longer there — which is what a later re-grade may supersede.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+pub struct AnswerFiled {
+    pub reviewed: Vec<String>,
+}
+
+/// The FSRS grade an answer's verdict files: `wrong` → Again, `almost` →
+/// Hard, `correct` → Good. Never Easy — that is the learner's own call, made
+/// after the answer through a re-grade (`reviewItem` with `replaceLast`),
+/// because a fast answer can be a lucky one and Easy stretches the next
+/// interval further than any other grade.
+pub fn grade_of(verdict: Verdict) -> f64 {
+    f64::from(match verdict {
+        Verdict::Wrong => Grade::Again,
+        Verdict::Almost => Grade::Hard,
+        Verdict::Correct => Grade::Good,
+    } as u8)
 }
 
 /// Shape of the JSON `exportData` produces: the whole log, in log order.
@@ -705,6 +747,62 @@ impl Core {
         self.commit(Payload::ResultLogged(result.clone()))
     }
 
+    /// Files one answered challenge whole, in one transaction: a review per
+    /// word (`itemReviewed`, at the answer's instant, graded from its verdict
+    /// by [`grade_of`]), the result (`resultLogged`) and the pool's serve stamp
+    /// (`challengeServed`) — the same events, in the same order, that
+    /// `reviewItem` × N, `addResult` and `recordServe` used to write as N + 2
+    /// transactions, so a crash between them can no longer leave a review
+    /// without its result. A word that no longer exists is skipped, and so is
+    /// the stamp for a challenge the pool never held (a match round).
+    pub fn record_answer(&self, answer: &AnswerRecord) -> Result<AnswerFiled> {
+        let result = &answer.result;
+        let verdict_of: BTreeMap<&str, Verdict> = answer
+            .item_verdicts
+            .iter()
+            .flatten()
+            .map(|gap| (gap.item_id.as_str(), gap.verdict))
+            .collect();
+        let mut reviewed = Vec::new();
+        let mut facts = Vec::new();
+        for item_id in &answer.item_ids {
+            let known = !self
+                .sql
+                .query("SELECT 1 FROM items WHERE id = ?", &[Param::text(item_id)])?
+                .is_empty();
+            if !known || reviewed.contains(item_id) {
+                continue;
+            }
+            let verdict = verdict_of
+                .get(item_id.as_str())
+                .copied()
+                .unwrap_or(result.verdict);
+            facts.push(Payload::ItemReviewed(ItemReviewed {
+                device: self.device_id.clone(),
+                at: result.at,
+                item_id: item_id.clone(),
+                grade: grade_of(verdict),
+            }));
+            reviewed.push(item_id.clone());
+        }
+        facts.push(Payload::ResultLogged(result.clone()));
+        let pooled = !self
+            .sql
+            .query(
+                "SELECT 1 FROM challenges WHERE id = ?",
+                &[Param::text(&result.challenge_id)],
+            )?
+            .is_empty();
+        if pooled {
+            facts.push(Payload::ChallengeServed(ChallengeServed {
+                challenge_id: result.challenge_id.clone(),
+                at: result.at,
+            }));
+        }
+        self.commit_all(facts)?;
+        Ok(AnswerFiled { reviewed })
+    }
+
     /// An escalation overturned an answer: it counts as `overturn.verdict`
     /// from now on, for the difficulty model.
     pub fn overturn_result(&self, overturn: &ResultOverturned) -> Result<()> {
@@ -1144,6 +1242,45 @@ impl Core {
                 Param::text(cursor.to_string()),
             ],
         )
+    }
+
+    /// Makes `room` the relay room the push stamps and the pull cursor
+    /// describe, clearing both first when they described another — or when no
+    /// room is recorded, which is every device that synced before rooms were:
+    /// it may already have been re-pointed once and carry another room's
+    /// position, and a whole resend is harmless where a skipped event is not.
+    /// One transaction; answers whether anything was cleared.
+    ///
+    /// Clearing the stamps only moves pushed rows back into the `seq IS NULL`
+    /// group of `LOG_ORDER`, in `rowid` order — the order this device applied
+    /// them in — so the read tables are untouched and nothing is rebuilt.
+    pub fn follow_sync_room(&self, room: &str) -> Result<bool> {
+        self.transaction(|| {
+            let rows = self.sql.query(
+                "SELECT value FROM meta WHERE key = ?",
+                &[Param::text(SYNC_ROOM_KEY)],
+            )?;
+            let held = rows
+                .first()
+                .map(|row| row.opt_text("value"))
+                .transpose()?
+                .flatten();
+            if held == Some(room) {
+                return Ok(false);
+            }
+            self.sql
+                .exec("UPDATE events SET seq = NULL WHERE seq IS NOT NULL", &[])?;
+            self.sql.exec(
+                "DELETE FROM meta WHERE key = ?",
+                &[Param::text(PULL_CURSOR_KEY)],
+            )?;
+            self.sql.exec(
+                "INSERT INTO meta (key, value) VALUES (?, ?)
+				 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                &[Param::text(SYNC_ROOM_KEY), Param::text(room)],
+            )?;
+            Ok(true)
+        })
     }
 }
 

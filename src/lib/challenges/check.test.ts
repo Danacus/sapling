@@ -33,6 +33,22 @@ describe('checkChallenge', () => {
 		expect(checkChallenge(wordOrder, 'Ich gehe nach Hause.')).toBe('correct');
 		expect(checkChallenge(wordOrder, 'Ich gehe nach Hausee.')).toBe('wrong');
 	});
+
+	it('grades a cloze chip exactly and the same row typed fuzzily, by the help level', () => {
+		const cloze: ClozeChallenge = {
+			id: 'c2',
+			type: 'cloze',
+			direction: 'toTarget',
+			sentence: 'Yo ___ café.',
+			acceptedAnswers: ['bebo'],
+			wordBank: ['como', 'bebo', 'bebe', 'bebó'],
+			itemIds: ['item1']
+		};
+		expect(checkChallenge(cloze, 'bebe', 'pick-4')).toBe('wrong');
+		expect(checkChallenge(cloze, 'bebó')).toBe('wrong');
+		expect(checkChallenge(cloze, 'bebo', 'pick-4')).toBe('correct');
+		expect(checkChallenge(cloze, 'bebe', 'typed')).toBe('almost');
+	});
 });
 
 describe('validateAnswer', () => {

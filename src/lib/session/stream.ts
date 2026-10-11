@@ -16,10 +16,10 @@
  */
 
 import { getAllItems, getDifficultyParts, getPool, getProfile } from '$lib/db';
+import { MATCH_PAIRS_EVERY } from '$lib/db/generated/challenges';
 import { storedDefFor } from '$lib/challenges/types';
 import type { Challenge, KnowledgeItem, MatchPairsChallenge } from '$lib/types';
 import {
-	MATCH_PAIRS_EVERY,
 	isEarlyChallenge,
 	lowWaterMark,
 	matchRound,

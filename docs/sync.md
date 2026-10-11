@@ -55,7 +55,8 @@ Applied once per event id, in arrival order (`seq`, else insertion order).
 SQLite-WASM (OPFS, SAH-pool VFS) in one dedicated module Worker
 (`sqlite.worker.ts`). The window talks to it in domain terms, never SQL: the
 `Backend` interface in `protocol.ts` — the repository functions, the sync
-operations (`pendingEvents`, `markPushed`, `applyRemote`, the pull cursor) and
+operations (`pendingEvents`, `markPushed`, `applyRemote`, the pull cursor,
+`followSyncRoom`) and
 export/import — is implemented by the Rust core (`crates/sapling-db`,
 compiled to wasm and lent the Worker's database through `host.ts`) and
 forwarded by `client.ts`, one `postMessage` per call. `events` is the facts
@@ -86,6 +87,21 @@ empty pull (`limit=0`) that tells a refused phrase from an unreachable server.
 `pair` runs one cycle and reports whether a profile came down the log; it never
 writes one, so a second device can join before onboarding would write a
 profile that wins last-write-wins everywhere.
+
+**The `seq` stamps and the pull cursor are positions in one room's log**, so
+each cycle starts by telling the store which room it is about to talk to
+(`room_key`: a hash of the relay URL and the normalised phrase, recorded in
+local `meta` as `syncRoom`; `SyncStore::follow_room`, the `Backend`'s
+`followSyncRoom`). When the recorded room differs — the learner paired with
+another phrase, from Settings, onboarding or anywhere else — or none is
+recorded yet, every stamp and the cursor are cleared in one transaction: the
+next push sends the whole local log to the new room and the next pull reads it
+from `after=0`. That is safe because both directions union by event id — the
+relay answers a re-pushed id with the `seq` it already holds and the client
+only stamps a pulled event it already has — so following a library costs a
+resend, never an event. Re-pairing therefore *merges* this device's library
+into the one it now follows. A device that synced before rooms were recorded
+makes that full resend once.
 
 The web host runs it on the window thread through the wasm build's `sync`
 export (`src/lib/sync/core.ts`), lending `fetch` and the window's `Backend`.

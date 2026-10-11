@@ -23,7 +23,7 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
   to — and nothing on the window thread may bypass the client to reach the
   Worker. Repositories are the only store access.
 - API key and prefs live in **localStorage** (`ll.*` keys, via `db/settings.ts`
-  and `ui/prefs.ts`) — never in the store, and never in the JSON export.
+  and `$lib/prefs`) — never in the store, and never in the JSON export.
 - **The SQLite SAH-pool VFS is exclusive.** Only one tab can hold `/sapling.db`
   at a time; a second tab's boot fails with "Sapling is already open in another
   tab." — close the other tab and reload. There is no leader election.

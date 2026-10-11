@@ -207,6 +207,26 @@ describe('pairDevice', () => {
 		expect(getSyncPhrase()).toBe(PHRASE);
 	});
 
+	it('re-pairing to another library sends it everything and pulls it from the start', async () => {
+		await store.commit('itemAdded', word(1));
+		const first = logServer();
+		await pairDevice(PHRASE, first.impl);
+		expect(await store.getPullCursor()).toBe(1);
+
+		// Another room, whose own history sits at seqs this device has passed.
+		const second = logServer([
+			{ id: 'remote-2', type: 'itemAdded', at: T0, device: 'devB', payload: word(2) }
+		]);
+		const outcome = await pairDevice('ZYXWV-TSRQP-NMKJH-GFEDC', second.impl);
+
+		expect(outcome.ok).toBe(true);
+		expect(second.log.map((row) => row.id)).toHaveLength(2);
+		expect(second.calls.find((call) => call.method === 'GET')?.url).toContain('after=0');
+		const terms = (await store.getAllItems()).map((item) => item.term).sort();
+		expect(terms).toEqual(['term1', 'term2']);
+		expect(await store.getPullCursor()).toBe(2);
+	});
+
 	it('rejects a phrase that is not one, storing nothing and asking no one', async () => {
 		const fetchImpl = vi.fn<typeof fetch>();
 

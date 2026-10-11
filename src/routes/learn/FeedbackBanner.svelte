@@ -20,11 +20,11 @@
 	import type { Presentation } from '$lib/challenges/serve';
 	import { storedDefFor } from '$lib/challenges/types';
 	import { getEscalation, LlmError } from '$lib/llm';
-	import { motionMs } from '$lib/session/motion';
+	import { motionMs } from '$lib/ui/motion';
 	import { Grade } from '$lib/srs';
 	import { speak } from '$lib/tts';
 	import type { Challenge, Verdict } from '$lib/types';
-	import { getRomanizationMode } from '$lib/ui/prefs';
+	import { getRomanizationMode } from '$lib/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 

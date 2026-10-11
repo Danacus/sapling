@@ -1,16 +1,12 @@
-//! The few string rules grading and the local builders share with the
-//! resolvers (`sapling-llm` re-exports them), and word counting.
+//! The few string rules grading, the local builders and the difficulty model
+//! share with the resolvers (`sapling-llm` re-exports them).
 //!
-//! A word count is the host's to give: Chinese and Japanese write no spaces,
-//! so counting words is a dictionary lookup, and the browser has one
-//! (`Intl.Segmenter`, behind `$lib/text`'s `segmentWords`). The wasm host lends
-//! it as a callback; [`fallback_word_count`] is what `segmentWords` falls back
-//! to without one, and what native callers get.
+//! Nothing here asks the host to count words: a length the difficulty model
+//! learns from is derived data every device and the Worker must reproduce, so
+//! it is `model.rs`' own `words_in` over these script tests, never a host's
+//! segmenter.
 
 use unicode_normalization::UnicodeNormalization;
-
-/// How many word-like segments a text holds.
-pub type WordCount<'a> = &'a dyn Fn(&str) -> usize;
 
 /// `"nǐ hǎo"` → `"ni hao"`: NFD with the combining diacritics dropped.
 pub fn fold_diacritics(value: &str) -> String {
@@ -85,30 +81,6 @@ pub fn is_word_char(c: char) -> bool {
     )
 }
 
-/// `segmentWords`' own fallback, counted: word runs where the script spaces its
-/// words, one word per character where it does not.
-pub fn fallback_word_count(text: &str) -> usize {
-    let chars: Vec<char> = text.chars().collect();
-    let mut words = 0;
-    let mut i = 0;
-    while i < chars.len() {
-        if !is_word_char(chars[i]) {
-            i += 1;
-            continue;
-        }
-        words += 1;
-        if !uses_inter_word_spaces(&chars[i].to_string()) {
-            i += 1;
-            continue;
-        }
-        i += 1;
-        while i < chars.len() && is_word_char(chars[i]) && !is_no_space_script(chars[i]) {
-            i += 1;
-        }
-    }
-    words
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,15 +90,6 @@ mod tests {
         assert_eq!(fold_diacritics("nǐ hǎo"), "ni hao");
         assert_eq!(fold_diacritics("el agua está fría"), "el agua esta fria");
         assert_eq!(fold_diacritics("菜单"), "菜单");
-    }
-
-    #[test]
-    fn the_fallback_counts_spaced_words_and_single_characters() {
-        assert_eq!(fallback_word_count("Yo leo un libro."), 4);
-        assert_eq!(fallback_word_count("  ¿Qué tal?  "), 2);
-        assert_eq!(fallback_word_count("我们想买单"), 5);
-        assert_eq!(fallback_word_count("买单 please"), 3);
-        assert_eq!(fallback_word_count(""), 0);
     }
 
     #[test]

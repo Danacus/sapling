@@ -135,6 +135,58 @@ fn two_devices_converge_through_the_relay() {
 }
 
 #[test]
+fn following_another_library_sends_it_everything_and_pulls_it_from_the_start() {
+    let relay = MemoryRelay::default();
+    let first = phrase::mint(&[3; PHRASE_LENGTH]);
+    let second = phrase::mint(&[5; PHRASE_LENGTH]);
+    let laptop = device("follow-laptop");
+    let phone = device("follow-phone");
+    add_word(&laptop, 1);
+    add_word(&laptop, 2);
+    sync(&relay, &laptop, &first);
+    assert_eq!(on(&laptop, Core::get_pull_cursor), 2.0);
+    // The second library already has a history of its own, at seqs the
+    // laptop's cursor has already passed in the first.
+    add_word(&phone, 3);
+    add_word(&phone, 4);
+    sync(&relay, &phone, &second);
+
+    let switched = sync(&relay, &laptop, &second);
+
+    assert_eq!(switched.pushed, 2, "{switched:?}");
+    assert_eq!(terms(&laptop), ["term1", "term2", "term3", "term4"]);
+    assert_eq!(relay.log(&second).len(), 4);
+    assert_eq!(on(&laptop, Core::get_pull_cursor), 4.0);
+    sync(&relay, &phone, &second);
+    assert_eq!(terms(&phone), terms(&laptop));
+
+    // And back again: a resend the first room answers with the seqs it gave.
+    sync(&relay, &laptop, &first);
+    assert_eq!(relay.log(&first).len(), 4);
+    assert_eq!(count(&laptop, "events"), 4.0);
+}
+
+#[test]
+fn the_same_room_keeps_its_position() {
+    let core = device("follow-same");
+    add_word(&core, 1);
+    let room = sapling_sync::room_key(SERVER, &phrase::mint(&[1; PHRASE_LENGTH]));
+    // No room recorded yet: cleared, which on a fresh device clears nothing.
+    let room_again = room.clone();
+    assert!(on(&core, move |core| core.follow_sync_room(&room_again)));
+    let id = log(&core)[0].0.clone();
+    on(&core, move |core| core.mark_pushed(&[(id, 1.0)]));
+    on(&core, |core| core.set_pull_cursor(7.0));
+    let same = room.clone();
+    assert!(!on(&core, move |core| core.follow_sync_room(&same)));
+    assert_eq!(on(&core, Core::get_pull_cursor), 7.0);
+    assert_eq!(log(&core)[0].1, Some(1.0));
+    assert!(on(&core, |core| core.follow_sync_room("elsewhere")));
+    assert_eq!(on(&core, Core::get_pull_cursor), 0.0);
+    assert!(log(&core).iter().all(|(_, seq)| seq.is_none()));
+}
+
+#[test]
 fn an_own_event_coming_back_is_a_stamp_not_a_second_row() {
     let relay = MemoryRelay::default();
     let phrase = phrase::mint(&[7; PHRASE_LENGTH]);

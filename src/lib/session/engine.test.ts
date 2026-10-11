@@ -17,7 +17,6 @@ import { challengeOf } from '$lib/db';
 import { loadWasmCore } from '$lib/db/backend.testing';
 import { getBatch, isMockMode } from '$lib/llm';
 import type { ProgressStep } from '$lib/llm';
-import { gradeFromResult, Grade } from '$lib/srs';
 import type {
 	Challenge,
 	ClozeChallenge,
@@ -28,19 +27,19 @@ import type {
 	Verdict,
 	WordOrderChallenge
 } from '$lib/types';
+import { spokenAnswerFor } from '$lib/challenges/display';
+import { MATCH_PAIRS_EVERY } from '$lib/db/generated/challenges';
 import {
-	MATCH_PAIRS_EVERY,
 	isEarlyChallenge,
 	lowWaterMark,
 	matchRound,
 	nextPick,
 	planRefill,
 	planTopUp,
-	servingFor,
 	sessionSummary,
-	spokenAnswerFor,
 	type SessionAnswer
 } from './engine';
+import { servingFor } from './serving';
 
 const NOW = 1_700_000_000_000;
 const DAY = 24 * 60 * 60 * 1000;
@@ -427,11 +426,8 @@ describe('planRefill', () => {
 /* -------------------------------------------------------------------------- */
 
 describe('a skipped challenge', () => {
-	it('grades FSRS Again', () => {
-		// A skip is "I could not produce it", which is exactly what Again encodes.
-		expect(gradeFromResult('wrong')).toBe(Grade.Again);
-	});
-
+	// A skip is "I could not produce it": a `wrong` verdict, which the core
+	// files as FSRS Again (`overturn.test.ts` pins the grade through a real store).
 	it('counts as a wrong answer in the session summary', () => {
 		const summary = sessionSummary([
 			{ challengeId: 'a', type: 'cloze', verdict: 'correct', itemIds: ['i1'] },

@@ -6,9 +6,13 @@
  * it folds the review log into the stored card, and it derives the numbers a
  * screen reads — `due`, `retrievability`, `strength` — attaching them to every
  * item a `Backend` read returns as {@link KnowledgeItem.srs}. What is left on
- * this side is the vocabulary a caller needs to *speak* to it (grades and the
- * verdict mapping), the accessors that read those derived numbers off an item,
- * and one selection over them.
+ * this side is the vocabulary a caller needs to *speak* to it (grades, for the
+ * re-grades a caller files itself), the accessors that read those derived
+ * numbers off an item, and one selection over them. An answer is filed as its
+ * verdict (`recordAnswer`), and the verdict → grade mapping — wrong → Again,
+ * almost → Hard, correct → Good, never Easy, which only the learner's own
+ * post-answer assessment gives — is the core's (`crates/sapling-db`'s
+ * `grade_of`).
  *
  * That is the whole point of the split: a review is filed as `{at, grade}` and
  * the card comes back from the store. Nothing here predicts one, so nothing here
@@ -21,7 +25,7 @@
  * needs a refetch to notice, not a re-render.
  */
 
-import type { KnowledgeItem, Verdict } from '$lib/types';
+import type { KnowledgeItem } from '$lib/types';
 
 export type { ItemSrs } from '$lib/types';
 
@@ -58,33 +62,6 @@ export type CardState = (typeof CardState)[keyof typeof CardState];
  * on {@link KnowledgeItem.srs}. Its `state` is a {@link CardState}.
  */
 export type { FsrsCardState } from '$lib/types';
-
-/**
- * Maps a validation verdict onto an FSRS grade.
- *
- * - `'wrong'` → Again
- * - `'almost'` → Hard
- * - `'correct'` → Good
- *
- * Note what is missing: nothing here ever returns Easy. It used to be inferred
- * from a sub-4s response time, capped for answers the learner merely picked off
- * a list — but both halves were guesses at a thing the learner can simply be
- * asked. A fast answer can be a lucky one, a slow one can be a certain one
- * typed carefully, and Easy stretches the next interval further than any other
- * grade, so a wrong guess is expensive. Easy is now only ever assigned by the
- * learner's own post-answer assessment; see `amendResult` in
- * `$lib/session/engine`.
- */
-export function gradeFromResult(verdict: Verdict): Grade {
-	switch (verdict) {
-		case 'wrong':
-			return Grade.Again;
-		case 'almost':
-			return Grade.Hard;
-		case 'correct':
-			return Grade.Good;
-	}
-}
 
 /**
  * When the schedule next owes this word.

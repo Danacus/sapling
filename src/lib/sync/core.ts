@@ -61,7 +61,8 @@ async function syncHost(): Promise<SyncHost> {
 		applyRemote: (json) => backend.applyRemote(JSON.parse(json) as unknown[]),
 		getPullCursor: () => backend.getPullCursor(),
 		setPullCursor: (cursor) => backend.setPullCursor(cursor),
-		hasProfile: async () => (await backend.getProfile()) !== undefined
+		hasProfile: async () => (await backend.getProfile()) !== undefined,
+		followSyncRoom: (room) => backend.followSyncRoom(room)
 	};
 }
 

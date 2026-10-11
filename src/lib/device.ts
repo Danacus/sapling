@@ -8,7 +8,7 @@
  * anything to do with syncing any more, so neither lives in a sync module.
  *
  * The device id is a device-local fact in `localStorage`, under the same `ll.*`
- * convention as `db/settings.ts` and `ui/prefs.ts`, and for the same reason:
+ * convention as `db/settings.ts` and `prefs.ts`, and for the same reason:
  * it must never reach the events log, and so never the JSON export. Every access is
  * wrapped — private-mode and storage-disabled browsers throw on `localStorage`
  * — because failing here would take the app down over a preference.

@@ -12,7 +12,7 @@ import type { Shared } from '$lib/db/generated/index';
 import { writtenWithReadings } from '$lib/romanize';
 import { ttsAvailable } from '$lib/tts';
 import type { Profile } from '$lib/types';
-import { getListeningMode, getRomanizationMode } from '$lib/ui/prefs';
+import { getListeningMode, getRomanizationMode } from '$lib/prefs';
 
 export type { Serving };
 

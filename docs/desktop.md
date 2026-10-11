@@ -125,7 +125,7 @@ commands and captions three, and both have a section below.
 
 `dispatch` and `commit_all` are `async` and wait on `spawn_blocking`, like the
 long speech commands: a synchronous Tauri command runs on the main thread,
-and `applyResult` makes three or more persistence calls on every Check. Because
+and a Check is a commit (`recordAnswer`) plus the reads the next pick makes. Because
 that puts them on a thread pool, `tauri.ts` chains each `invoke` behind the
 previous one so calls reach the core in the order the window made them — the
 Worker's message queue gives that for free and the pool does not. Symptom if it
@@ -409,8 +409,8 @@ the fp32 export as well — a gigabyte downloaded to keep a sixth of it.
 
 **Which languages route here** is the host's answer, not a list on the web side:
 `asr_status` carries `languages` (`zh`, `en`, `ja`, `ko`, `yue`), `src/lib/asr/`
-resolves the learner's free-text language through the same `bcp47For` the voice
-uses, takes the primary subtag, and asks whether it is in that list. Everything
+resolves the learner's free-text language through the same `bcp47For`
+(`$lib/text`) the voice uses, takes the primary subtag, and asks whether it is in that list. Everything
 else keeps Web Speech where it exists and gets no button where it does not. So
 swapping the model is a `ModelSpec` change plus its `LANGUAGES` constant, and
 nothing at all in the window.

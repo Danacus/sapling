@@ -45,7 +45,7 @@
  */
 
 import { inTauri } from '$lib/platform';
-import { bcp47For } from '$lib/tts/languages';
+import { bcp47For } from '$lib/text';
 
 import { dictateWithWebSpeech, webSpeechRecognitionAvailable } from './webspeech';
 import type { DictationHandlers, DictationSession } from './webspeech';

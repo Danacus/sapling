@@ -15,7 +15,10 @@
 //! - **Interruption costs a redundant request, never an event.** A push stamps
 //!   `seq` only on what the server acknowledged; the cursor advances only after
 //!   its page has been applied. Both directions are safe to repeat — the log
-//!   unions by event id at both ends.
+//!   unions by event id at both ends — which is also what makes following a
+//!   different library safe: the stamps and cursor belong to one room
+//!   ([`room_key`]), and a cycle against another clears them and sends and
+//!   fetches everything again.
 //! - **One cycle at a time.** Several triggers overlap by design; joining the
 //!   cycle already running is the host's to do, because only the host knows
 //!   what "already running" means on its threads.
@@ -82,6 +85,40 @@ pub trait SyncStore {
     fn set_pull_cursor(&self, cursor: f64) -> impl Future<Output = StoreResult<()>>;
     /// Whether this device now has a library — what pairing asks after its cycle.
     fn has_profile(&self) -> impl Future<Output = StoreResult<bool>>;
+    /// Makes `room` ([`room_key`]) the one this device's push stamps and pull
+    /// cursor describe. When they described another room — or none is
+    /// recorded — every stamp and the cursor are cleared first, in one
+    /// transaction, so the next push sends the whole log and the next pull
+    /// starts at zero. Answers whether it cleared anything.
+    fn follow_room(&self, room: String) -> impl Future<Output = StoreResult<bool>>;
+}
+
+/// Which room on which relay a phrase names, as this device records it beside
+/// its sync position — never the phrase itself, and never the relay's own room
+/// name (that hash is the Worker's, and nothing here needs to agree with it).
+///
+/// A `seq` is a position in *one* room's log, and the pull cursor is one too:
+/// carried over to another room they claim events were pushed that never were,
+/// and skip that room's first events as already pulled. So the cycle hands
+/// this key to [`SyncStore::follow_room`] before anything else, and a device
+/// that follows a different library — a new phrase from Settings, from
+/// onboarding, from anywhere — starts over against it whatever path changed
+/// the phrase. The relay's URL is part of the key for the same reason: the
+/// same phrase on another server is another log.
+///
+/// 64-bit FNV-1a: an identity, not a secret — the phrase it is taken over has
+/// 100 bits and already sits in the host's own storage.
+pub fn room_key(url: &str, phrase: &str) -> String {
+    let normalized = phrase::normalize(phrase);
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in ["sapling:room:v1", url.trim_end_matches('/'), &normalized]
+        .join("\n")
+        .bytes()
+    {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
 }
 
 /// What one cycle did. `ok` is the only field a caller has to look at.
@@ -233,6 +270,9 @@ pub async fn run<T: Transport, S: SyncStore>(
     };
     let (mut pushed, mut pulled) = (0, 0);
     let result = async {
+        // Before anything is read: a position in another room's log is no
+        // position in this one (`room_key`).
+        store.follow_room(room_key(url, phrase)).await?;
         push(&relay, store, &mut pushed).await?;
         pull(&relay, store, &mut pulled).await
     }
