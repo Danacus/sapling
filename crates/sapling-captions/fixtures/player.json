@@ -1,0 +1,35 @@
+{
+  "playabilityStatus": { "status": "OK" },
+  "videoDetails": { "videoId": "02w8LwJCgQY", "title": "Vandaag wordt er gestemd in Israël" },
+  "captions": {
+    "playerCaptionsTracklistRenderer": {
+      "captionTracks": [
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=02w8LwJCgQY&ei=x&caps=asr&opi=1&xoaf=5&expire=1793214693&sparams=ip,ipbits,expire,v,ei,caps,opi,xoaf&signature=AB.CD&key=yt8&kind=asr&lang=nl&fmt=srv3",
+          "name": { "runs": [{ "text": "Dutch (auto-generated)" }] },
+          "vssId": "a.nl",
+          "languageCode": "nl",
+          "kind": "asr",
+          "isTranslatable": true,
+          "trackName": ""
+        },
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=02w8LwJCgQY&ei=x&key=yt8&lang=nl",
+          "name": { "simpleText": "Dutch" },
+          "vssId": ".nl",
+          "languageCode": "nl",
+          "isTranslatable": true,
+          "trackName": ""
+        },
+        {
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=02w8LwJCgQY&ei=x&key=yt8&lang=de",
+          "name": { "simpleText": "  " },
+          "vssId": ".de",
+          "languageCode": "de",
+          "trackName": ""
+        }
+      ],
+      "translationLanguages": [{ "languageCode": "en", "languageName": { "runs": [{ "text": "English" }] } }]
+    }
+  }
+}

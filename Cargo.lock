@@ -3246,8 +3246,11 @@ dependencies = [
 name = "sapling-captions"
 version = "0.0.1"
 dependencies = [
+ "pollster",
+ "sapling-import",
  "serde",
  "serde_json",
+ "ureq 3.4.0",
 ]
 
 [[package]]

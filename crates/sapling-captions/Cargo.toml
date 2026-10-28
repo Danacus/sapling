@@ -2,7 +2,7 @@
 name = "sapling-captions"
 version = "0.0.1"
 edition = "2021"
-description = "A video's caption tracks through yt-dlp on PATH: status, list, and one track fetched as raw json3 text."
+description = "A video's caption tracks through yt-dlp on PATH (status, list, one track as raw json3), and the same over an injected HTTP transport through InnerTube."
 publish = false
 
 # No process crate and no pin: `std::process::Command` over whatever yt-dlp is
@@ -10,3 +10,9 @@ publish = false
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+
+# `innertube` takes its HTTP from the host; ureq is the example's transport only.
+[dev-dependencies]
+pollster = "0.4"
+sapling-import = { path = "../sapling-import" }
+ureq = { version = "3", default-features = false, features = ["rustls"] }

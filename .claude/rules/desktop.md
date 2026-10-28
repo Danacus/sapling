@@ -32,7 +32,10 @@ someone to run the check by hand.
   verify, stage, rename, `available_threads`) and knows nothing about speech;
   **`sapling-speech`** is the voice and dictation on sherpa-onnx, features `tts`
   and `asr` by default plus `playback` (rodio and `tts::play`), with the model
-  pins in `src/specs.rs`; **`sapling-captions`** is yt-dlp status/list/fetch.
+  pins in `src/specs.rs`; **`sapling-captions`** is yt-dlp status/list/fetch,
+  plus a spike, `innertube.rs`, that lists and fetches tracks over an injected
+  HTTP transport (InnerTube `player` as the ANDROID client, then the track's
+  timedtext as `json3`) and is wired into nothing yet.
   A crate outside `sapling-desktop` cannot see Tauri's `desktop` cfg alias, so
   none of them uses it: where a target matters, the desktop manifest decides
   (a target-scoped dependency entry) and the crate exposes a feature.
