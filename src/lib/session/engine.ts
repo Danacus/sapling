@@ -611,7 +611,7 @@ export interface AnswerOutcome {
  * **Match-pairs deliberately touches no SRS state.** A matching round is a
  * recognition drill built locally from words the learner already has; letting it
  * feed FSRS would inflate stability for items that were never actually recalled
- * (and would let a learner farm easy "Easy" grades for free). It is logged, and
+ * (and would let a learner farm free reviews). It is logged, and
  * that is all. Its `itemIds` are still carried on the challenge for
  * traceability — we simply do not grade against them.
  *
@@ -619,10 +619,9 @@ export interface AnswerOutcome {
  * outlive its item if the learner reset their data mid-session.
  *
  * Returns the ids it actually filed a review for — the challenge's items minus
- * any that no longer exist. That set is what {@link amendResult} needs to know
- * *which* reviews it may re-grade; the cards themselves it does not need, because
- * the rewind is the core's. Match-pairs returns an empty set; callers with
- * nothing to amend can ignore the value.
+ * any that no longer exist. That set is what {@link applyOverturn} needs to know
+ * *which* reviews it may supersede; the cards themselves it does not need,
+ * because the rewind is the core's. Match-pairs returns an empty set.
  */
 export async function applyResult(
 	challenge: Challenge,
@@ -646,44 +645,6 @@ export async function applyResult(
 			: {})
 	});
 	return new Set(reviewed);
-}
-
-/**
- * Re-grades the review {@link applyResult} just wrote, because the learner said
- * so: after a correct answer the banner offers Hard / Good / Easy, and touching
- * it means "that was not a plain Good".
- *
- * The rewind is exact rather than compensating, and it is the core's: `replaceLast`
- * makes the new entry *supersede* the one that review appended, and the
- * materializer then refolds the item's whole log from its introduction. So the
- * card lands where a single review at this grade would have left it, not where
- * a nudge from the Good would. A second *appended* review would instead inflate
- * `reps` and double-count the answer in the item's recent grades. Refolding is
- * also what makes repeated calls safe: assessing Easy and then Hard lands exactly
- * where assessing Hard once would, because neither builds on the card it is
- * about to replace.
- *
- * Match-pairs is a no-op, for the reason given in {@link applyResult}, and so
- * is any item the challenge names but that review skipped (deleted mid-session)
- * — absence from `reviewed` is the signal.
- *
- * No race with {@link applyOverturn}: an overturn only ever fires on a
- * `wrong` verdict and a self-assessment only on a `correct` one, and both
- * supersede the newest review rather than stacking on it — so whichever
- * comes last is the one review the answer leaves.
- */
-export async function amendResult(
-	challenge: Challenge,
-	grade: Grade,
-	reviewed: ReadonlySet<string>,
-	now: number = Date.now()
-): Promise<void> {
-	if (!challengeInfo(challenge.type).reviews) return;
-
-	for (const itemId of challenge.itemIds) {
-		if (!reviewed.has(itemId)) continue;
-		await updateItemAfterReview(itemId, { at: now, grade }, { replaceLast: true });
-	}
 }
 
 /** What an overturned answer needs to be undone exactly. */
@@ -723,8 +684,7 @@ export function overturnedVerdict(
  * difficulty model alike.
  *
  * - **FSRS.** Each wrong item's `Again` review is *superseded* by a `Good` at
- *   the answer's own instant (`replaceLast`, as {@link amendResult} re-grades
- *   one), and the core refolds the card from the item's whole log — so it
+ *   the answer's own instant (`replaceLast`), and the core refolds the card from the item's whole log — so it
  *   lands where a single `Good` would have, not where "failed, then recalled"
  *   would. A gap that was right keeps its review.
  * - **The difficulty model.** The answer is logged as overturned

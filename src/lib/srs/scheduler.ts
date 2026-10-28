@@ -10,8 +10,7 @@
  * re-grades a caller files itself), the accessors that read those derived
  * numbers off an item, and one selection over them. An answer is filed as its
  * verdict (`recordAnswer`), and the verdict → grade mapping — wrong → Again,
- * almost → Hard, correct → Good, never Easy, which only the learner's own
- * post-answer assessment gives — is the core's (`crates/sapling-db`'s
+ * almost → Hard, correct → Good, never Easy — is the core's (`crates/sapling-db`'s
  * `grade_of`).
  *
  * That is the whole point of the split: a review is filed as `{at, grade}` and

@@ -2,9 +2,8 @@
  * The database-touching engine functions worth a test, because each one decides
  * what happens to a learner's SRS card and getting any of them wrong corrupts
  * scheduling silently: `applyResult` (the grade, and which items it filed one
- * for), `amendResult` (the learner re-rated a correct answer) and
- * `applyOverturn` (a dispute was won, and undone exactly) — plus `updateItemAfterReview` itself,
- * which is the one call all three go through.
+ * for) and `applyOverturn` (a dispute was won, and undone exactly) — plus
+ * `updateItemAfterReview` itself, which is the one call both go through.
  *
  * They run against a **real store** — the same WASM SQLite and the same merge
  * rules the browser runs, in memory. So what is asserted below is the behaviour
@@ -26,7 +25,7 @@ import { CardState, Grade } from '$lib/srs';
 import type { FsrsCardState } from '$lib/srs';
 import type { Challenge } from '$lib/types';
 
-import { amendResult, applyOverturn, applyResult } from './engine';
+import { applyOverturn, applyResult } from './engine';
 
 const NOW = 1_700_000_000_000;
 
@@ -130,7 +129,7 @@ describe('applyResult', () => {
 		};
 		const banked: Challenge = { ...single, wordBank: ['leo', 'como', 'bebo'] };
 
-		// Easy is the learner's to give now — nothing here infers it.
+		// Nothing infers Easy from an answer.
 		for (const challenge of [mc, typed, banked, single]) {
 			expect(await gradeFor(challenge)).toBe(Grade.Good);
 		}
@@ -248,81 +247,6 @@ describe('updateItemAfterReview', () => {
 			prior: null,
 			card: null
 		});
-	});
-});
-
-describe('amendResult', () => {
-	/** Plays a correct answer through `applyResult`, as the session would. */
-	async function answeredCorrectly(): Promise<Set<string>> {
-		await seed('i1');
-		return applyResult(single, { verdict: 'correct', answerGiven: 'leo', now: NOW });
-	}
-
-	/**
-	 * The card a fresh item lands on after a single review of `grade` at
-	 * {@link NOW} — the same store, folding the same one-review history.
-	 *
-	 * The expectation is drawn from the core because there is nowhere else to
-	 * draw it from: an FSRS card is the core's to compute, and this file's job is
-	 * to check that a re-grade *lands* on the single-review card rather than on
-	 * a stack of two.
-	 */
-	async function foldedAlone(id: string, grade: Grade): Promise<FsrsCardState | undefined> {
-		await seed(id);
-		await updateItemAfterReview(id, { at: NOW, grade });
-		return cardOf(id);
-	}
-
-	it('rewrites the review instead of stacking a second one', async () => {
-		const reviewed = await answeredCorrectly();
-		expect(await historyOf('i1')).toHaveLength(1);
-
-		await amendResult(single, Grade.Easy, reviewed, NOW);
-
-		expect(await historyOf('i1')).toEqual([{ at: NOW, grade: Grade.Easy }]);
-		// The card follows the rewritten history: one Easy review, not a Good
-		// with an Easy stacked on top of it.
-		expect(await cardOf('i1')).toEqual(await foldedAlone('ref', Grade.Easy));
-	});
-
-	it('amending twice equals amending once with the last grade', async () => {
-		const reviewed = await answeredCorrectly();
-
-		await amendResult(single, Grade.Easy, reviewed, NOW);
-		await amendResult(single, Grade.Hard, reviewed, NOW);
-
-		expect(await historyOf('i1')).toEqual([{ at: NOW, grade: Grade.Hard }]);
-		expect(await cardOf('i1')).toEqual(await foldedAlone('ref', Grade.Hard));
-	});
-
-	it('leaves items the review skipped, and match-pairs rounds, untouched', async () => {
-		const reviewed = await answeredCorrectly();
-		// Present on the challenge but absent from the set: never reviewed.
-		await seed('i2');
-
-		await amendResult({ ...cloze, itemIds: ['i1', 'i2'] }, Grade.Easy, reviewed, NOW);
-		expect(await historyOf('i2')).toEqual([]);
-
-		await amendResult(match, Grade.Easy, reviewed, NOW);
-		expect(await historyOf('i1')).toHaveLength(1);
-	});
-
-	it('re-grades every reviewed multi-cloze item after an all-correct passage', async () => {
-		await seed('i1');
-		await seed('i2');
-		const reviewed = await applyResult(multiCloze, {
-			verdict: 'correct',
-			answerGiven: '1: Yo · 2: Ella',
-			itemVerdicts: [
-				{ itemId: 'i1', verdict: 'correct' },
-				{ itemId: 'i2', verdict: 'correct' }
-			],
-			now: NOW
-		});
-
-		await amendResult(multiCloze, Grade.Easy, reviewed, NOW);
-		expect((await historyOf('i1')).at(-1)?.grade).toBe(Grade.Easy);
-		expect((await historyOf('i2')).at(-1)?.grade).toBe(Grade.Easy);
 	});
 });
 

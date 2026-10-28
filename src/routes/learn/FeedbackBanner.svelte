@@ -18,7 +18,6 @@
 
 	import { getEscalation, LlmError } from '$lib/llm';
 	import { motionMs } from '$lib/ui/motion';
-	import { Grade } from '$lib/srs';
 	import { speak } from '$lib/tts';
 	import type { Challenge, Clip, Feedback, Served, Verdict } from '$lib/types';
 	import ClipStage from '$lib/challenges/blocks/ClipStage.svelte';
@@ -47,7 +46,6 @@
 		clip,
 		oncontinue,
 		onoverturn,
-		onassess,
 		onreport
 	}: {
 		challenge: Challenge;
@@ -97,12 +95,6 @@
 		 */
 		onoverturn?: () => void;
 		/**
-		 * The learner re-rated a correct answer. Fires on every change away from
-		 * the current selection, including back to `Good`; the page re-grades the
-		 * review from its pre-answer state, so the last call wins.
-		 */
-		onassess?: (grade: Grade) => void;
-		/**
 		 * The learner flagged this challenge as broken. Fired at most once; the
 		 * page excludes it from the pool for good. Absent for locally built
 		 * match-pairs rounds, which have no pool row to flag.
@@ -123,34 +115,6 @@
 	let asking = $state(false);
 	let answer = $state('');
 	let askError = $state('');
-
-	/* Self-assessment ------------------------------------------------------- */
-
-	const ASSESS_CHOICES = [
-		{ grade: Grade.Hard, label: 'Hard' },
-		{ grade: Grade.Good, label: 'Good' },
-		{ grade: Grade.Easy, label: 'Easy' }
-	] as const;
-
-	/**
-	 * Only a clean `correct` is worth asking about. `almost` already means "you
-	 * fumbled it" (auto-Hard) and `wrong` means Again; a skip never tried; an
-	 * overturned answer was argued back, not recalled; and a type that does not
-	 * feed SRS has no card to regrade at all.
-	 */
-	const canAssess = $derived(verdict === 'correct' && !skipped && !overturned && reviews);
-
-	/**
-	 * Preselected Good, which is exactly what the answer already scored — so a
-	 * learner who ignores this row gets the neutral default and no extra write.
-	 */
-	let assessed = $state<Grade>(Grade.Good);
-
-	function assess(grade: Grade): void {
-		if (grade === assessed) return;
-		assessed = grade;
-		onassess?.(grade);
-	}
 
 	/* Reporting -------------------------------------------------------------- */
 
@@ -370,25 +334,6 @@
 					end={clip.end}
 					onfail={() => (clipFailed = true)}
 				/>
-			</div>
-		{/if}
-
-		{#if canAssess}
-			<div class="assess" role="group" aria-label="How easy was it?">
-				<span class="assess-label">How easy was it?</span>
-				<div class="assess-choices">
-					{#each ASSESS_CHOICES as choice (choice.grade)}
-						<button
-							type="button"
-							class="assess-btn"
-							class:selected={assessed === choice.grade}
-							aria-pressed={assessed === choice.grade}
-							onclick={() => assess(choice.grade)}
-						>
-							{choice.label}
-						</button>
-					{/each}
-				</div>
 			</div>
 		{/if}
 
@@ -617,63 +562,6 @@
 
 	.heard-title span {
 		color: var(--text);
-		font-weight: 700;
-	}
-
-	/* Self-assessment ------------------------------------------------------- */
-
-	.assess {
-		display: flex;
-		align-items: center;
-		flex-wrap: wrap;
-		gap: 0.4rem 0.6rem;
-		margin-top: 0.85rem;
-	}
-
-	.assess-label {
-		font-size: 0.78rem;
-		font-weight: 500;
-		color: var(--text-muted);
-	}
-
-	.assess-choices {
-		display: flex;
-		gap: 0.3rem;
-	}
-
-	/* True chips, in the app's settled chip voice: hairline, pill, Karla 500,
-	   and the picked one filled with a tint of the verdict's own tone. */
-	.assess-btn {
-		padding: 0.3rem 0.75rem;
-		border: 1px solid color-mix(in srgb, var(--tone) 40%, transparent);
-		border-radius: 999px;
-		background: transparent;
-		color: var(--text-muted);
-		font: inherit;
-		font-size: 0.8rem;
-		font-weight: 500;
-		cursor: pointer;
-		transition:
-			border-color 0.15s ease,
-			background 0.15s ease,
-			color 0.15s ease;
-	}
-
-	.assess-btn:hover {
-		border-color: var(--tone);
-		background: color-mix(in srgb, var(--tone) 10%, transparent);
-		color: var(--text);
-	}
-
-	.assess-btn:focus-visible {
-		outline: none;
-		box-shadow: var(--ring);
-	}
-
-	.assess-btn.selected {
-		border-color: var(--tone);
-		background: color-mix(in srgb, var(--tone) 24%, var(--surface));
-		color: var(--tone-strong);
 		font-weight: 700;
 	}
 

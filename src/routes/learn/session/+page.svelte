@@ -16,8 +16,8 @@
   itself. Starting a refill is the one thing it does about one, because it
   starts a task: after each answer, when the stream says the words ahead want
   something, it starts a `top-up` task for them — one at a time. `pendingWrite`
-  is awaited before each pick, because a self-assessment must land on top of
-  the review it re-grades and the next pick must see this answer.
+  is awaited before each pick, because an overturn must land on top of the
+  review it supersedes and the next pick must see this answer.
 -->
 <script lang="ts">
 	import { browser } from '$app/environment';
@@ -32,7 +32,6 @@
 	import { targetTagOf } from '$lib/text';
 	import {
 		SKIP_ANSWER,
-		amendResult,
 		applyOverturn,
 		applyResult,
 		overturnedVerdict,
@@ -42,7 +41,6 @@
 	} from '$lib/session/engine';
 	import { motionMs } from '$lib/ui/motion';
 	import { PracticeStream, type NextOptions, type StreamStep } from '$lib/session/stream';
-	import type { Grade } from '$lib/srs';
 	import { runSync } from '$lib/sync';
 	import { startTask } from '$lib/tasks';
 	import { taskStore } from '$lib/tasks/store.svelte';
@@ -161,18 +159,17 @@
 
 	/**
 	 * The in-flight `applyResult`. Never dropped on the floor: the UI advances
-	 * without waiting for it, but {@link advance} awaits it, so a rating given
-	 * as the learner reaches for Continue still lands on top of the review it
-	 * re-grades rather than racing it — and the next pick sees this answer.
+	 * without waiting for it, but {@link advance} awaits it, so the next pick
+	 * sees this answer.
 	 */
 	let pendingWrite: Promise<void> = Promise.resolve();
 
 	/**
 	 * The same write, kept for its value: which items on the current challenge
-	 * actually got a review. {@link assessCurrent} needs it so a re-grade replaces
-	 * one of *those* rather than appending a fresh review to a word the answer
-	 * skipped. Never rejects — a failed write yields an empty set, and amending
-	 * nothing is the right outcome there.
+	 * actually got a review. {@link overturnCurrent} needs it so an overturn
+	 * replaces one of *those* rather than appending a fresh review to a word the
+	 * answer skipped. Never rejects — a failed write yields an empty set, and
+	 * overturning nothing is the right outcome there.
 	 */
 	let pendingReviewed: Promise<Set<string>> = Promise.resolve(new Set());
 
@@ -512,7 +509,7 @@
 
 		// Fire-and-follow: the banner animates now, the write lands underneath it.
 		// The one promise is held twice — as `pendingReviewed` for its value (the
-		// items a self-assessment may re-grade) and as `pendingWrite` for its
+		// items an overturn may supersede) and as `pendingWrite` for its
 		// completion, which is what the stream awaits before the next pick.
 		pendingReviewed = applyResult(challenge, {
 			verdict: event.verdict,
@@ -541,36 +538,6 @@
 				if (generation === clipGeneration && feedback) clip = found;
 			})
 			.catch(() => {});
-	}
-
-	/**
-	 * The learner rated a correct answer Hard / Good / Easy before continuing.
-	 *
-	 * Explicit self-assessment is the only route to an FSRS `Easy` (an answer
-	 * files its verdict, which the core grades — `grade_of`), so this is the learner steering their own schedule
-	 * rather than a guess made from response time. `amendResult` *replaces* the
-	 * history entry and the core refolds the word's log from scratch, so
-	 * switching between grades stays exact however often it happens.
-	 *
-	 * Chained onto `pendingWrite` for the usual reason: the original review must
-	 * be on the card (and its history entry appended) before the amend rewrites
-	 * it. `continueSession` awaits the same chain, so even a rating given as the
-	 * learner reaches for Continue lands before the next challenge is pulled.
-	 *
-	 * The session summary is untouched: it counts verdicts, not grades — "that
-	 * was hard" is not a less correct answer.
-	 */
-	function assessCurrent(grade: Grade): void {
-		const fb = feedback;
-		if (!fb) return;
-		const reviewed = pendingReviewed;
-		pendingWrite = pendingWrite
-			.then(async () => {
-				await amendResult(fb.challenge, grade, await reviewed, Date.now());
-			})
-			.catch(() => {
-				// A failed write must not eat the session; the answer is already logged.
-			});
 	}
 
 	/**
@@ -651,8 +618,7 @@
 
 	async function continueSession(): Promise<void> {
 		// Drop the banner first so it slides out while the write finishes; the
-		// next pick waits for it (a self-assessment given at the last moment is
-		// chained onto the same promise).
+		// next pick waits for it.
 		feedback = null;
 		await advance();
 	}
@@ -1002,7 +968,6 @@
 				{clip}
 				oncontinue={() => void continueSession()}
 				onoverturn={overturnCurrent}
-				onassess={assessCurrent}
 				onreport={reportCurrent}
 			/>
 		{/if}

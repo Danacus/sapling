@@ -94,10 +94,8 @@ pub struct AnswerFiled {
 }
 
 /// The FSRS grade an answer's verdict files: `wrong` → Again, `almost` →
-/// Hard, `correct` → Good. Never Easy — that is the learner's own call, made
-/// after the answer through a re-grade (`reviewItem` with `replaceLast`),
-/// because a fast answer can be a lucky one and Easy stretches the next
-/// interval further than any other grade.
+/// Hard, `correct` → Good. Never Easy: a fast answer can be a lucky one, and
+/// Easy stretches the next interval further than any other grade.
 pub fn grade_of(verdict: Verdict) -> f64 {
     f64::from(match verdict {
         Verdict::Wrong => Grade::Again,

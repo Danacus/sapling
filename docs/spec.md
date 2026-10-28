@@ -225,7 +225,7 @@ Open questions
 
 ### Answering and feedback
 
-Purpose: grade instantly and locally, show the right answer, and let the learner steer their schedule or dispute a grade.
+Purpose: grade instantly and locally, show the right answer, and let the learner dispute a grade.
 
 Behaviour
 - Every reviewing challenge has a **Skip** button until answered. Skip is a `wrong` answer in every respect (FSRS Again, skill falls); the banner says "Skipped — the answer was:".
@@ -234,16 +234,15 @@ Behaviour
   - Detail: "Correct form: …" (almost, showing the closest accepted form), "Answer: …" (wrong), "Also fine: …" (overturned); the answer's reading underneath unless readings are Off.
   - The canonical target-language answer **auto-plays once**; "Hear it" replays.
   - The challenge's model-written explanation, if it has one.
-  - **How easy was it? Hard / Good / Easy** — only after a clean `correct` (not almost, not skipped, not overturned, not a match round). Pre-selected Good; changing it re-grades the review exactly (the latest choice wins).
   - **Explain** — one press asks the model whether the answer should count and why; a follow-up box allows further questions ("Think you were right? Say why…" after a wrong answer). One press = one model call.
   - **Report** — flags the challenge as broken; it is excluded forever. The stream does not advance (the learner may still want it explained). Not offered on match rounds.
   - **Continue** (Enter anywhere outside a text field).
 - **Overturn**: if the explain call agrees a `wrong` answer should have counted, the banner repaints green and the answer counts as `correct` (or `almost` where a blank was almost).
 
 Rules
-- Verdict → FSRS grade: wrong → Again, almost → Hard, correct → Good. **Easy only comes from the learner's own assessment**; response time never infers a grade.
+- Verdict → FSRS grade: wrong → Again, almost → Hard, correct → Good. Never Easy; response time never infers a grade.
 - A multi-blank answer reviews each word with its own blank's verdict; the overall verdict is the worst blank.
-- A self-assessment or overturn *replaces* the answer's review (the card is refolded as if that grade had been given at the answer's instant); it never stacks a second review.
+- An overturn *replaces* the answer's review (the card is refolded as if that grade had been given at the answer's instant); it never stacks a second review.
 - An overturn replaces each wrong word's Again with Good, and the difficulty model learns the answer as a success. The stored result keeps what was answered.
 - The dispute is judged against what the learner's screen actually showed (visible bank/tiles, whether the native line was shown); without the native line, any correct answer to what was visible counts.
 - Match rounds never touch any card or skill; they are logged only.
@@ -251,7 +250,6 @@ Rules
 
 Open questions
 - An overturn does not add the learner's answer to the challenge's accepted answers, so the same answer is graded wrong again next time the row is served.
-- Hard/Good/Easy on a multi-word challenge re-grades every word on it identically.
 - `almost` is auto-Hard with no way for the learner to say "that was fine".
 - Explain is offered on match rounds (a locally built drill) and in mock mode (where it never overturns).
 - The banner component has a "Finish" label path for a last challenge that the stream never uses.
@@ -368,7 +366,7 @@ Behaviour
 
 Rules
 - One scheduler implementation; screens only read derived numbers.
-- Reviews can be *replaced* (self-assessment, overturn) — the card refolds from the log, never compensates.
+- Reviews can be *replaced* (overturn) — the card refolds from the log, never compensates.
 - **Strength is display only**: the strength bar, the garden's sprouting/growing/rooted beds, the reader's colours, and the match-round "early word" threshold. It never decides what is served or how hard.
 - Early review (review-ahead) is graded like any review; FSRS simply banks a smaller gain.
 - Numbers are snapshots as of the last read; a page left open across a due time needs a refetch.
