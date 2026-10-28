@@ -7,7 +7,15 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { crossedEnd, firstTimed, nextTimed, prevTimed, segmentAt, startOf } from './follow';
+import {
+	crossedPause,
+	firstTimed,
+	nextTimed,
+	pauseAt,
+	prevTimed,
+	segmentAt,
+	startOf
+} from './follow';
 import type { Timed } from './follow';
 
 /** Three cues with real gaps between them, the way subtitles actually sit. */
@@ -92,29 +100,76 @@ describe('segmentAt', () => {
 	});
 });
 
-describe('crossedEnd', () => {
-	it('is true exactly on the sample that passes the end', () => {
-		expect(crossedEnd(cues, 0, 1800, 2000)).toBe(true);
-		expect(crossedEnd(cues, 0, 1800, 2200)).toBe(true);
+describe('pauseAt', () => {
+	it('is the end of a line followed by a gap', () => {
+		expect(pauseAt(cues, 0)).toBe(2000);
+		expect(pauseAt(cues, 1)).toBe(4500);
+	});
+
+	it('is the next line’s start where captions overlap', () => {
+		const rolling: Timed[] = [
+			{ start: 1000, end: 3500 },
+			{ start: 3000, end: 5500 },
+			{ start: 5000, end: 7000 }
+		];
+		expect(pauseAt(rolling, 0)).toBe(3000);
+		expect(pauseAt(rolling, 1)).toBe(5000);
+		expect(pauseAt(overlapping, 0)).toBe(2000);
+	});
+
+	it('is the end of the last line', () => {
+		expect(pauseAt(cues, 2)).toBe(7000);
+	});
+
+	it('looks past an untimed neighbour to the next timed line', () => {
+		const spliced: Timed[] = [{ start: 1000, end: 6000 }, {}, { start: 5000, end: 7000 }];
+		expect(pauseAt(spliced, 0)).toBe(5000);
+		expect(pauseAt(mixed, 0)).toBe(2000);
+	});
+
+	it('ignores a next line sharing the start, or the line would end before it began', () => {
+		const shared: Timed[] = [
+			{ start: 1000, end: 2000 },
+			{ start: 1000, end: 3000 }
+		];
+		expect(pauseAt(shared, 0)).toBe(2000);
+	});
+
+	it('is undefined for an untimed segment or an index off either end', () => {
+		expect(pauseAt(mixed, 1)).toBeUndefined();
+		expect(pauseAt(cues, -1)).toBeUndefined();
+		expect(pauseAt(cues, 9)).toBeUndefined();
+	});
+});
+
+describe('crossedPause', () => {
+	it('is true exactly on the sample that passes the pause point', () => {
+		expect(crossedPause(cues, 0, 1800, 2000)).toBe(true);
+		expect(crossedPause(cues, 0, 1800, 2200)).toBe(true);
+	});
+
+	it('crosses at the next line’s start where cues overlap', () => {
+		expect(crossedPause(overlapping, 0, 1800, 2100)).toBe(true);
+		expect(crossedPause(overlapping, 0, 2100, 2300)).toBe(false);
 	});
 
 	it('is false on every later sample, so auto-pause fires once', () => {
-		expect(crossedEnd(cues, 0, 2000, 2200)).toBe(false);
-		expect(crossedEnd(cues, 0, 2200, 2400)).toBe(false);
+		expect(crossedPause(cues, 0, 2000, 2200)).toBe(false);
+		expect(crossedPause(cues, 0, 2200, 2400)).toBe(false);
 	});
 
 	it('is false while the line is still running', () => {
-		expect(crossedEnd(cues, 0, 1200, 1400)).toBe(false);
+		expect(crossedPause(cues, 0, 1200, 1400)).toBe(false);
 	});
 
-	it('is false for a seek backwards over the end', () => {
-		expect(crossedEnd(cues, 0, 2500, 1200)).toBe(false);
+	it('is false for a seek backwards over the pause point', () => {
+		expect(crossedPause(cues, 0, 2500, 1200)).toBe(false);
 	});
 
 	it('is false for a segment with no timings, and for an index off the end', () => {
-		expect(crossedEnd(mixed, 1, 0, 999_999)).toBe(false);
-		expect(crossedEnd(cues, 9, 0, 999_999)).toBe(false);
-		expect(crossedEnd(cues, -1, 0, 999_999)).toBe(false);
+		expect(crossedPause(mixed, 1, 0, 999_999)).toBe(false);
+		expect(crossedPause(cues, 9, 0, 999_999)).toBe(false);
+		expect(crossedPause(cues, -1, 0, 999_999)).toBe(false);
 	});
 });
 

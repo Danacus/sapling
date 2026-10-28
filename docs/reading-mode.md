@@ -516,8 +516,11 @@ last one that *started* (cues do not tile a recording, and a highlight blinking
 off in every silence would flicker through a conversation); `start` is
 inclusive; an untimed segment is skipped and never landed on; and before the
 first cue there is no current line. Auto-pause
-asks `crossedEnd` whether the boundary fell **between two samples**, so it fires
-once per crossing rather than on every tick until the next line starts.
+stops on the line just heard: `pauseAt` is its end or the next line's start,
+whichever comes first (captions overlap), and the reader arms a timer to stop
+just short of it, since a sample past it is already inside the next line.
+`crossedPause` is the fallback, asked **between two samples** so it fires once
+per crossing.
 
 **Nothing but the file's name is stored.** A 700 MB mp4 goes in neither the
 events log nor OPFS, so `ReadingMedia` is a reference and the `File` handle can

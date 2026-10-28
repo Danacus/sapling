@@ -86,10 +86,11 @@
 		updateItemAfterReview
 	} from '$lib/db';
 	import {
-		crossedEnd,
+		crossedPause,
 		firstTimed,
 		nextTimed,
 		objectUrl,
+		pauseAt,
 		prevTimed,
 		rememberFile,
 		segmentAt,
@@ -281,12 +282,16 @@
 	let currentMs = $state(0);
 	/** Mirrors the element's own paused flag, so the button can say which it is. */
 	let mediaPaused = $state(true);
-	/**
-	 * The previous sample, kept outside `$state` on purpose: it exists only to ask
-	 * `crossedEnd` whether a boundary fell between two ticks, and nothing renders
-	 * it.
-	 */
+	/** Wider than one ~250 ms sample, so some sample always lands before the boundary. */
+	const PAUSE_LOOKAHEAD_MS = 400;
+	/** Stop this far early, so the next line's first sound and highlight never arrive. */
+	const PAUSE_LEAD_MS = 80;
+	/** The previous sample, for `crossedPause`'s between-two-ticks fallback; nothing renders it. */
 	let lastMs = 0;
+	/** The pending auto-pause, armed when a line's `pauseAt` is within `PAUSE_LOOKAHEAD_MS`. */
+	let pauseTimer: ReturnType<typeof setTimeout> | undefined;
+	/** The line auto-pause last stopped on, so pressing play does not stop on it again. */
+	let pausedOn = -1;
 	/**
 	 * Stop at the end of every line. Off by default and not remembered: it turns
 	 * a video into a drill, which is a mood rather than a setting.
@@ -666,11 +671,12 @@
 	 * recording was a new file rather than a rewrite of this page.
 	 *
 	 * Everything that could be wrong about following the clock is in
-	 * `$lib/media/follow`, which is pure; this is only the wiring. `lastMs` is
-	 * what makes auto-pause fire *once*: the end of a line falls between two
-	 * samples exactly one time, whereas "is the clock past the end" is true for
-	 * every sample until the next line starts and would pause again the instant
-	 * the learner pressed play.
+	 * `$lib/media/follow`, which is pure; this is only the wiring. Auto-pause
+	 * cannot wait for a sample past the line's `pauseAt`: samples are ~250 ms
+	 * apart and by then the next line is audible and highlighted. So a sample
+	 * that finds the boundary close arms a timer to stop `PAUSE_LEAD_MS` before
+	 * it (assuming 1x, as `Player` has no rate), and the crossing check catches
+	 * what the timer missed.
 	 */
 	$effect(() => {
 		const el = videoEl;
@@ -707,17 +713,41 @@
 				lastMs = ms;
 				currentMs = ms;
 				mediaPaused = built.paused();
+				clearPauseTimer();
 
-				if (!autoPause || built.paused()) return;
-				// The line that was running at the previous sample: at the moment of a
-				// crossing the next one has not started, so this is still the line
-				// whose end was just passed.
+				// The line running at the previous sample is the one whose boundary a
+				// crossing just passed. Asked before `pausedOn` resets, so the sample
+				// that carries a resumed line into the next is not a second stop.
 				const running = segmentAt(segments, before);
-				if (running >= 0 && crossedEnd(segments, running, before, ms)) built.pause();
+				const crossed =
+					running >= 0 && running !== pausedOn && crossedPause(segments, running, before, ms);
+				const now = segmentAt(segments, ms);
+				// A jump back, or a different line, is a fresh hearing.
+				if (ms < before || now !== pausedOn) pausedOn = -1;
+				if (!autoPause || built.paused()) return;
+
+				if (crossed) {
+					pausedOn = running;
+					built.pause();
+					return;
+				}
+
+				const at = now >= 0 && now !== pausedOn ? pauseAt(segments, now) : undefined;
+				if (at === undefined || at <= ms || at - ms > PAUSE_LOOKAHEAD_MS) return;
+				pauseTimer = setTimeout(
+					() => {
+						pauseTimer = undefined;
+						if (!autoPause || built.paused()) return;
+						pausedOn = now;
+						built.pause();
+					},
+					Math.max(0, at - PAUSE_LEAD_MS - ms)
+				);
 			})
 		);
 
 		return () => {
+			clearPauseTimer();
 			stop();
 			built.destroy();
 			if (player === built) player = undefined;
@@ -767,6 +797,15 @@
 		rememberFile(text.id, file);
 	}
 
+	function clearPauseTimer() {
+		clearTimeout(pauseTimer);
+		pauseTimer = undefined;
+	}
+
+	$effect(() => {
+		if (!autoPause) clearPauseTimer();
+	});
+
 	/** Play, or pause — the one control the native bar also offers, kept for the keyboard. */
 	function toggleMedia() {
 		if (!player) return;
@@ -785,6 +824,8 @@
 	function seekTo(i: number, andPlay = false) {
 		const at = startOf(segments, i);
 		if (!player || at === undefined) return;
+		clearPauseTimer();
+		pausedOn = -1;
 		player.seek(at);
 		lastMs = at;
 		currentMs = at;

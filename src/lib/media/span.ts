@@ -15,7 +15,7 @@ export function paddedSpan(start: number, end: number): { from: number; to: numb
 
 /**
  * Whether playback has just run past `to`. Asked between the last sample and
- * this one, as `crossedEnd` is, so it is true once per crossing and a seek back
+ * this one, as `crossedPause` is, so it is true once per crossing and a seek back
  * over the stop is not one.
  */
 export function crossedStop(to: number, prevMs: number, ms: number): boolean {

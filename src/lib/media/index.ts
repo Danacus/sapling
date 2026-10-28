@@ -42,7 +42,15 @@
 
 export { captionsAvailable, fetchCaptions, listCaptions } from './captions';
 export type { CaptionsListing, CaptionTrack } from './captions';
-export { crossedEnd, firstTimed, nextTimed, prevTimed, segmentAt, startOf } from './follow';
+export {
+	crossedPause,
+	firstTimed,
+	nextTimed,
+	pauseAt,
+	prevTimed,
+	segmentAt,
+	startOf
+} from './follow';
 export type { Timed } from './follow';
 export { forgetFile, objectUrl, rememberFile, takeFile } from './files';
 export { deadPlayer } from './player';

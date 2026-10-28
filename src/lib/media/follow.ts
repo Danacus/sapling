@@ -68,27 +68,34 @@ export function segmentAt(segments: readonly Timed[], ms: number): number {
 }
 
 /**
- * Whether playback has just run off the end of segment `i`.
- *
- * The auto-pause question, and it is asked between two samples rather than
- * against the present alone: `timeupdate` fires every 200-odd milliseconds, so
- * "is `ms` past the end" would be true for every sample until the next line
- * starts and would pause again the moment the learner pressed play. Asking
- * whether the boundary fell *between* the last position and this one makes it
- * true exactly once per crossing.
- *
- * A seek backwards over the end is not a crossing (the interval is empty
- * backwards), and neither is a jump that lands before the segment began.
+ * When segment `i` is done, for auto-pause: its end, or the start of the next
+ * timed segment if that comes first. Captions keep a line on screen until after
+ * the next one is spoken, so stopping at `end` alone would stop inside the next
+ * line. A next segment sharing `i`'s start is ignored, or the line would be done
+ * before it began. `undefined` for a segment with no timings.
  */
-export function crossedEnd(
+export function pauseAt(segments: readonly Timed[], i: number): number | undefined {
+	const segment = segments[i];
+	if (!timed(segment)) return undefined;
+	const next = segments[nextTimed(segments, i)];
+	return timed(next) && next.start > segment.start
+		? Math.min(segment.end, next.start)
+		: segment.end;
+}
+
+/**
+ * Whether playback has just run past segment `i`'s `pauseAt`, asked between two
+ * samples so it is true once per crossing and a seek backwards over it is not
+ * one. The fallback for when the page's timer did not stop it first.
+ */
+export function crossedPause(
 	segments: readonly Timed[],
 	i: number,
 	prevMs: number,
 	ms: number
 ): boolean {
-	const segment = segments[i];
-	if (!timed(segment)) return false;
-	return prevMs < segment.end && ms >= segment.end;
+	const at = pauseAt(segments, i);
+	return at !== undefined && prevMs < at && ms >= at;
 }
 
 /** The next segment after `i` that has timings, or `-1` — the "next line" button. */
