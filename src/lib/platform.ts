@@ -4,9 +4,9 @@
  * Exactly one question — "is this the Tauri desktop shell?" — with one
  * implementation, because the answer decides several unrelated things (which
  * `Backend` transport `db/backend.ts` opens, which voice `tts/tts.ts` speaks
- * through, which host `media/youtube-host.ts` frames the player in, whether a
- * video's captions can be fetched at all (`media/captions.ts`), and
- * whether Settings shows the native-voice row) and a second copy of the test
+ * through, which host `media/youtube-host.ts` frames the player in, who asks
+ * YouTube for a video's captions (`media/captions.ts`), and whether Settings
+ * shows the native-voice row) and a second copy of the test
  * would eventually disagree with the first. Each area asks it at its own seam.
  *
  * The check is deliberately a property on `window` rather than a build-time
@@ -17,7 +17,7 @@
  *
  * Callers must keep everything host-specific behind a **dynamic** import gated
  * on this, so a browser never fetches the chunk — see `db/tauri.ts`,
- * `tts/native.ts` and `media/captions.ts`, none of which the web bundle loads.
+ * `tts/native.ts` and `media/captions.ts`'s import of `@tauri-apps/api`.
  */
 export function inTauri(): boolean {
 	return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;

@@ -12,7 +12,7 @@
 //! `sapling-store` (the database file, the device id, the clock and the time
 //! zone), `sapling-speech` (the voice, dictation and the desktop's player),
 //! `sapling-models` (the pinned-archive install speech shares) and
-//! `sapling-captions` (yt-dlp). This file is the commands over them, the
+//! `sapling-captions` (YouTube's caption tracks). This file is the commands over them, the
 //! handler lists and `setup`; `permissions.rs` is the one thing that has to be
 //! Tauri glue because it answers a WebKitGTK signal. The store hands out the
 //! `Core` and speaks no protocol, so the persistence commands call
@@ -50,17 +50,13 @@
 //! the model download) over one shared `sapling-models`; the only thing either
 //! has to itself is the desktop's player.
 //!
-//! **The third capability is a video's captions** (`sapling-captions`, desktop
-//! targets only), and it is the smallest: yt-dlp is run, a `json3` track comes back as
-//! text, and the window parses it with the subtitle parser it already has. A
-//! browser page cannot obtain a caption track at all — no CORS on YouTube's
-//! timedtext endpoints, no track list in the IFrame API — so this closes the
-//! one gap in reading mode that had no in-app answer. It brings no dependency
-//! (`std::process::Command`) and pins nothing: yt-dlp is found on PATH or it is
-//! not, because it ages against YouTube in weeks and a pin here would be a pin
-//! on the breakage.
+//! **The third capability is a video's captions** (`sapling-captions`), and it
+//! is the smallest: the track list and one `json3` track over HTTP, which the
+//! window parses with the subtitle parser it already has. The browser relays
+//! the same requests through an opaque-origin frame; this window's origin is
+//! one YouTube's `player` endpoint refuses, so the host makes them itself.
 //!
-//! ## The same host, minus the *player* and the captions, on Android
+//! ## The same host, minus the *player*, on Android
 //!
 //! This crate also builds as an Android app — CI only, and `docs/desktop.md`
 //! says what that is for. Persistence is untouched there, because a file in the
@@ -76,13 +72,6 @@
 //! while everything else about speech reads `feature = "speech"` and builds
 //! everywhere. `desktop` is Tauri's own cfg alias for "not Android or iOS",
 //! emitted by `tauri_build::build()`.
-//!
-//! **The captions are missing there for a plainer reason**: there is no yt-dlp
-//! on a phone and no PATH to look for one on, so the crate is a desktop-only
-//! dependency and its three commands read `#[cfg(desktop)]` — the same alias, and a target gate rather
-//! than a feature, because there is nothing to link and nothing to make
-//! optional. A phone still *reads* a text imported this way: the import is an
-//! event, so it syncs like every other.
 //!
 //! **Capture is the window's on both hosts**, which is why there is no
 //! microphone anywhere in this crate. `getUserMedia` works in both webviews,
@@ -116,19 +105,14 @@ pub mod permissions;
 
 use std::sync::Arc;
 
-// `AppHandle` is wanted by the two model downloads (to emit progress) and by
-// `captions_fetch` (to find the app-data directory), which are gated on
-// different things.
-#[cfg(any(feature = "speech", desktop))]
+// The two model downloads emit progress through it.
+#[cfg(feature = "speech")]
 use tauri::AppHandle;
 #[cfg(feature = "speech")]
 use tauri::Emitter;
 use tauri::{Manager, State};
 
-// Desktop targets only: there is no yt-dlp on a phone, and this is a target
-// gate rather than a feature because there is nothing to link.
-#[cfg(desktop)]
-use sapling_captions as captions;
+use sapling_captions::{native as captions, CaptionTrack, CaptionsListing};
 #[cfg(feature = "speech")]
 use sapling_speech::asr::{self, AsrHandle};
 #[cfg(all(feature = "speech", desktop))]
@@ -433,75 +417,29 @@ fn tts_stop(player: State<'_, Arc<PlayerHandle>>) {
 
 // -- A video's captions -----------------------------------------------------
 //
-// Three commands, desktop targets only, and no managed state between them:
-// there is no engine to keep warm and no lock to take — each one runs a program
-// and reads what it wrote. Everything about *which* track is worth fetching and
-// what a transcript then becomes stays in `src/lib/media/captions.ts` and
-// `sapling-import` (reached through the protocol, like every other build);
-// these commands do not parse a caption file and must not learn how.
-
-/// Whether yt-dlp and Deno are on this machine's PATH, and at what versions.
-///
-/// Cheap and lock-free — two `--version` calls — because the composer asks it
-/// on every visit to decide whether to offer the action at all. `async` for the
-/// reason the two `_status` commands are: it waits on two child processes, and
-/// the main thread is the GTK loop that composites the window.
-#[cfg(desktop)]
-#[tauri::command]
-async fn captions_status() -> Result<captions::CaptionsStatus, String> {
-    tauri::async_runtime::spawn_blocking(captions::status)
-        .await
-        .map_err(|cause| format!("the caption tools could not be probed: {cause}"))
-}
+// Two commands on every target and no managed state: each is two HTTP requests
+// to YouTube. What a track becomes stays in `src/lib/media/captions.ts` and
+// `sapling-import`; these hand back `json3` unparsed.
 
 /// Every caption track a video has, manual ones first.
-///
-/// `async` because yt-dlp takes seconds over this — it fetches the watch page
-/// and runs the player's JavaScript — and a synchronous command would freeze
-/// the window for all of it.
-#[cfg(desktop)]
 #[tauri::command]
-async fn captions_list(url: String) -> Result<captions::CaptionsListing, String> {
-    tauri::async_runtime::spawn_blocking(move || captions::list(&url))
+async fn captions_list(video_id: String) -> Result<CaptionsListing, String> {
+    tauri::async_runtime::spawn_blocking(move || captions::list(&video_id))
         .await
-        .map_err(|cause| format!("yt-dlp could not be started: {cause}"))?
+        .map_err(|cause| format!("the captions could not be asked for: {cause}"))?
 }
 
-/// One track, as raw `json3` text.
-///
-/// The command does not parse it: `sapling-import` reads it through the
-/// protocol's `importSource`, beside SRT and VTT, and a second parser here would
-/// be one that silently disagrees with the first. So this is text in the return value, not a typed
-/// cue list — and unlike audio it is small enough that JSON is the right
-/// carrier: a long transcript is a few hundred kilobytes of the string it
-/// already is, with nothing to re-encode.
-///
-/// `async` for the reason [`captions_list`] is, and then some — this one waits
-/// on a second network fetch as well.
-#[cfg(desktop)]
+/// One track, as raw `json3` text — small enough that JSON is the right carrier.
 #[tauri::command]
-async fn captions_fetch(
-    app: AppHandle,
-    url: String,
-    lang: String,
-    auto: bool,
-) -> Result<String, String> {
-    // The one writable directory this host is sure of, and the same one the
-    // database and the models live in.
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|cause| format!("there is nowhere to write the track: {cause}"))?;
-    tauri::async_runtime::spawn_blocking(move || captions::fetch(&dir, &url, &lang, auto))
+async fn captions_fetch(video_id: String, track: CaptionTrack) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || captions::fetch(&video_id, &track))
         .await
-        .map_err(|cause| format!("yt-dlp could not be started: {cause}"))?
+        .map_err(|cause| format!("the captions could not be asked for: {cause}"))?
 }
 
-/// The command list. Persistence is every host's; **speech** adds eight, of
-/// which the two players are desktop-only, and **captions** add three that are
-/// desktop-only outright — so the two gates multiply out to four arms rather
-/// than three, and each one is written out because `generate_handler!` takes a
-/// literal list and not a computed one.
+/// The command list. Persistence and captions are every host's; **speech** adds
+/// eight, of which the two players are desktop-only — three arms, each written
+/// out because `generate_handler!` takes a literal list and not a computed one.
 #[cfg(all(feature = "speech", desktop))]
 macro_rules! commands {
     () => {
@@ -517,7 +455,6 @@ macro_rules! commands {
             asr_status,
             asr_download,
             asr_transcribe,
-            captions_status,
             captions_list,
             captions_fetch
         ]
@@ -536,29 +473,23 @@ macro_rules! commands {
             tts_synthesize,
             asr_status,
             asr_download,
-            asr_transcribe
-        ]
-    };
-}
-
-#[cfg(all(not(feature = "speech"), desktop))]
-macro_rules! commands {
-    () => {
-        tauri::generate_handler![
-            dispatch,
-            commit_all,
-            derived_schema_version,
-            captions_status,
+            asr_transcribe,
             captions_list,
             captions_fetch
         ]
     };
 }
 
-#[cfg(all(not(feature = "speech"), not(desktop)))]
+#[cfg(not(feature = "speech"))]
 macro_rules! commands {
     () => {
-        tauri::generate_handler![dispatch, commit_all, derived_schema_version]
+        tauri::generate_handler![
+            dispatch,
+            commit_all,
+            derived_schema_version,
+            captions_list,
+            captions_fetch
+        ]
     };
 }
 

@@ -116,11 +116,10 @@ verbatim; matching is the reading module's job (§5).
 
 **Import is local and free** (`crates/sapling-import`, pure, tested). The
 learner's route to a text is usually a video, and the subtitle file is the one
-artefact of it they can get. **In the desktop app they no longer have to get
-it**: the shell runs yt-dlp itself and a YouTube link becomes a track through
-this same door (§7, `.claude/rules/desktop.md`). Everywhere else they still bring
-one — `yt-dlp --write-subs --write-auto-subs --sub-format vtt` at a terminal, a
-yt-dlp app such as YTDLnis on a phone, or the "Show transcript" panel copied.
+artefact of it they need. **For a YouTube video they do not have to get it**:
+the app fetches the caption track itself and a link becomes a track through this
+same door (`.claude/rules/media.md`). For anything else they bring one — or the
+"Show transcript" panel copied.
 There is **one door**: the page hands whatever it has to the protocol's
 `importSource`, which recognises SRT, VTT, `json3` and the panel (its `format`,
 absent for prose) — the only `Backend` method that touches no table. The window
@@ -695,23 +694,6 @@ instead of `youtubePlayer`, and is as host-blind as it was already player-blind.
 - Questions about the text (LLM, chat-style).
 - Target-language explanations on tap (immersion glosses).
 - Per-word timing (karaoke); audio-first presentation.
-- **Fetching a video's captions — *in a browser*.** The caption tracks are not
-  readable from a page: no CORS on the timedtext endpoints, and the player API
-  exposes none of it, so pasting a link alone can never produce the text there.
-  A web build still starts a YouTube text from a subtitle file the learner
-  obtained themselves (`yt-dlp` at a terminal, a yt-dlp app such as YTDLnis on
-  a phone, or the "Show transcript" panel copied). **The desktop app closes
-  it**: that host can run a program, so a link plus one tap fetches the track
-  and the composer imports it like any other subtitle file
-  (`crates/sapling-captions/src/lib.rs`, `src/lib/media/captions.ts`, the
-  `captions` task, and `json3` as a fourth import format —
-  `.claude/rules/desktop.md`). Desktop-only is sufficient rather than a gap: an
-  import is an event, so a text fetched there syncs to every paired device and
-  the phone opens it like any other text, and an Android learner who wants the
-  file itself hands YTDLnis's output to the existing picker, `json3` included.
-  What is still out is a *browser* answer, which would take a server or an
-  extension — this app has neither by design, and the sync Worker sequences
-  events and reads no payload.
 - **Anything else about the embedded player**: the keyboard once the iframe has
   focus, a playlist rather than a video, a start offset from a `t=` parameter.
 - Editing a text. Meanings for more than the one word the learner asks about,

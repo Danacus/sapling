@@ -15,7 +15,7 @@
  * the desktop shell (`tauri://localhost`) frames a hosted copy of `youtube.ts`
  * and drives it over `postMessage` — `youtube-framed.ts` and
  * `embed-protocol.ts`, chosen by `youtube-host.ts`, which is what the reader
- * calls and the only place `inTauri()` is asked in this area.
+ * calls.
  *
  * Everything that could be *wrong* about following a subtitle track is in
  * `follow.ts`, which is pure and tested: which line is current, when a line has
@@ -27,20 +27,20 @@
  * exactly one boundary.
  *
  * `captions.ts` is the other host-shaped thing here, and it points the opposite
- * way: not how a video is *played* but how its subtitle track is *obtained*. A
- * browser cannot read a YouTube caption track at all, so the desktop shell runs
- * yt-dlp and hands back the file, which then goes through `$lib/reading`'s
- * ordinary subtitle door. It is the second module in this area to ask
- * `inTauri()`, for the same reason `youtube-host.ts` does.
+ * way: not how a video is *played* but how its subtitle track is *obtained* —
+ * the Rust core asks YouTube over a transport each host lends (a sandboxed
+ * frame in a browser, `youtube-relay.ts`; the native host in Tauri), and the
+ * file goes through the ordinary subtitle import door.
  *
- * Stateless like `$lib/reading`: **nothing here imports `$lib/db`.** The one
+ * Stateless like `$lib/reading`: **nothing here touches the store** (only
+ * `captions.ts` reaches into `$lib/db`, for the wasm core). The one
  * piece of state is `files.ts`'s session cache of `File` handles, which is a
  * cache of something the OS owns, not a fact about the learner — a recording is
  * never stored, only its name (see `$lib/types`' `ReadingMedia`).
  */
 
 export { captionsAvailable, fetchCaptions, listCaptions } from './captions';
-export type { CaptionsListing, CaptionsTools, CaptionTrack } from './captions';
+export type { CaptionsListing, CaptionTrack } from './captions';
 export { crossedEnd, firstTimed, nextTimed, prevTimed, segmentAt, startOf } from './follow';
 export type { Timed } from './follow';
 export { forgetFile, objectUrl, rememberFile, takeFile } from './files';

@@ -3250,6 +3250,7 @@ dependencies = [
  "sapling-import",
  "serde",
  "serde_json",
+ "ts-rs",
  "ureq 3.4.0",
 ]
 
@@ -3347,6 +3348,7 @@ name = "sapling-protocol"
 version = "0.1.0"
 dependencies = [
  "pollster",
+ "sapling-captions",
  "sapling-challenges",
  "sapling-db",
  "sapling-domain",
@@ -3412,6 +3414,7 @@ name = "sapling-wasm"
 version = "0.1.0"
 dependencies = [
  "js-sys",
+ "sapling-captions",
  "sapling-db",
  "sapling-domain",
  "sapling-llm",

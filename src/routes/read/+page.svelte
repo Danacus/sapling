@@ -50,16 +50,14 @@
   session cache, so the reader opening a second later already has it and every
   later open asks for it again.
 
-  **On the desktop app the YouTube link is also a *source*, and that reorders the
-  three parts.** The shell can run yt-dlp, so a link alone can produce the text
-  (`$lib/media/captions.ts`) — which is why the recording group is live from the
-  start on a host that has it, instead of waiting for timings that the group is
-  now one of the ways to obtain. Only the *file* picker still waits, because a
-  recording with no subtitles to follow is still a reference nothing can use.
-  What the fetch produces is a `json3` file and it is handed to `sourceFile`
-  exactly as an upload is, so there is still one derivation behind the card, the
-  count, the button and the import. Nothing about any of this renders in a
-  browser: the probe answers `undefined` there and every branch below is gone.
+  **The YouTube link is also a *source*, and that reorders the three parts.** A
+  link alone can produce the text (`$lib/media/captions.ts` fetches its caption
+  track) — which is why the recording group is live from the start instead of
+  waiting for timings that the group is one of the ways to obtain. Only the
+  *file* picker still waits, because a recording with no subtitles to follow is
+  still a reference nothing can use. What the fetch produces is a `json3` file
+  and it is handed to `sourceFile` exactly as an upload is, so there is still one
+  derivation behind the card, the count, the button and the import.
 -->
 <script lang="ts">
 	import { browser } from '$app/environment';
@@ -70,7 +68,7 @@
 	import { newUuid } from '$lib/device';
 	import { isMockMode } from '$lib/llm';
 	import { captionsAvailable, listCaptions, rememberFile, videoIdFrom } from '$lib/media';
-	import type { CaptionsTools, CaptionTrack } from '$lib/media';
+	import type { CaptionTrack } from '$lib/media';
 	import { MAX_FOCUS_WORDS, MAX_TOPIC_CHARS } from '$lib/reading';
 	import { selectSessionItems } from '$lib/srs';
 	import { SETTLED, rootOf, startTask, taskOutcome } from '$lib/tasks';
@@ -154,17 +152,7 @@
 	let mediaLink = $state('');
 	/** The file input, so choosing a link can visibly empty it. */
 	let mediaInput = $state<HTMLInputElement | null>(null);
-	/**
-	 * What the host can do about captions, once the probe has answered.
-	 *
-	 * Three states and they are all meaningful. `undefined` is "not asked yet, or
-	 * there is nobody to ask" — a browser, forever — and nothing about captions
-	 * renders. An object with no `ytdlp` is "this *is* the desktop app and the
-	 * program is missing", which earns one line naming it. An object with
-	 * `ytdlp` is the action.
-	 */
-	let captionTools = $state<CaptionsTools | undefined>(undefined);
-	/** The tracks the host found, while the learner is choosing one. */
+	/** The tracks the video has, while the learner is choosing one. */
 	let tracks = $state<CaptionTrack[] | undefined>(undefined);
 	/** The listing call in flight. Not a task: it is one question, not a job. */
 	let listingTracks = $state(false);
@@ -189,7 +177,7 @@
 	 */
 	const fetchingCaptions = $derived(taskStore.running.some((task) => task.kind === 'captions'));
 	/** Whether this host can fetch a video's captions at all. */
-	const canFetchCaptions = $derived(captionTools?.ytdlp !== undefined);
+	const canFetchCaptions = captionsAvailable();
 	let composeError = $state('');
 
 	/**
@@ -257,24 +245,6 @@
 				loadError = cause instanceof Error ? cause.message : 'Could not open your library.';
 				loading = false;
 			});
-
-		return () => {
-			cancelled = true;
-		};
-	});
-
-	/**
-	 * Asks the host whether it can fetch captions. Memoised one layer down, so
-	 * every visit to this page costs nothing after the first, and it never
-	 * rejects — a host with no such command is simply a host with none.
-	 */
-	$effect(() => {
-		if (!browser) return;
-
-		let cancelled = false;
-		void captionsAvailable().then((tools) => {
-			if (!cancelled) captionTools = tools;
-		});
 
 		return () => {
 			cancelled = true;
@@ -557,7 +527,7 @@
 	}
 
 	/**
-	 * What captions the video has, asked of the host.
+	 * What captions the video has, asked of YouTube.
 	 *
 	 * Awaited here rather than run as a task, unlike the fetch: it is one
 	 * question whose whole answer is a list to choose from, and a list that
@@ -579,7 +549,7 @@
 			tracks = listing.tracks;
 		} catch (cause) {
 			captionsError =
-				cause instanceof Error ? cause.message : 'Could not ask yt-dlp about that video.';
+				cause instanceof Error ? cause.message : 'Could not ask YouTube about that video.';
 		} finally {
 			listingTracks = false;
 		}
@@ -876,9 +846,9 @@
 					  timings, with the legend saying why. A `<fieldset>` makes every
 					  control inside inert in one attribute.
 
-					  **Except where the link is also the source.** On a host that can run
-					  yt-dlp the group is live from the start, because pasting a link there
-					  is how the timings are *obtained*; only the file picker keeps its own
+					  **Except where the link is also the source.** Where captions can be
+					  fetched the group is live from the start, because pasting a link is
+					  how the timings are *obtained*; only the file picker keeps its own
 					  guard, since a recording nothing can follow is a reference nothing can
 					  use.
 					-->
@@ -923,18 +893,12 @@
 						</div>
 
 						<!--
-						  Fetching the captions. Only ever on a host that answered the probe:
-						  in a browser `captionTools` stays `undefined` and this whole block
-						  does not exist. The button shows once there is a video to ask
+						  Fetching the captions. The button shows once there is a video to ask
 						  about; the track list takes its place while the learner chooses.
 						-->
-						{#if captionTools}
+						{#if canFetchCaptions}
 							<div class="captions">
-								{#if !canFetchCaptions}
-									<p class="hint captions-note">
-										Install <strong>yt-dlp</strong> to fetch a video's captions.
-									</p>
-								{:else if tracks}
+								{#if tracks}
 									<p class="captions-head">Which captions?</p>
 									<ul class="tracks">
 										{#each tracks as track (`${track.auto}:${track.lang}`)}
@@ -968,11 +932,6 @@
 											Fetch captions
 										{/if}
 									</button>
-									{#if !captionTools.deno}
-										<p class="hint captions-note">
-											Without <strong>Deno</strong> installed, some tracks may not be listed.
-										</p>
-									{/if}
 								{/if}
 								{#if captionsError}
 									<p class="error captions-error" role="alert">{captionsError}</p>
@@ -1566,11 +1525,6 @@
 	.captions-back:focus-visible {
 		outline: none;
 		box-shadow: var(--ring);
-	}
-
-	.captions-note {
-		margin: 0.5rem 0 0;
-		font-size: 0.8rem;
 	}
 
 	.captions-error {

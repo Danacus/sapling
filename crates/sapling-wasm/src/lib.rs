@@ -16,6 +16,7 @@
 //! its own `fetch` as the transport. [`challenges`] likewise, synchronously,
 //! with nothing lent at all. And [`sync`], with `fetch` again and the
 //! window's `Backend` as the store, beside the pairing phrase's four helpers.
+//! And [`captions`], with the window's relay to YouTube as the transport.
 
 use std::future::Future;
 
@@ -369,6 +370,20 @@ impl sapling_sync::Transport for JsRequest {
         if let Some(body) = request.body {
             json["body"] = Value::String(body);
         }
+        let answer = self.call(json);
+        async move {
+            let (status, body) = answer.await?;
+            Ok(sapling_sync::Response { status, body })
+        }
+    }
+}
+
+impl JsRequest {
+    /// `request(json)`, resolved to `(status, body)`.
+    fn call(
+        &self,
+        json: Value,
+    ) -> impl Future<Output = std::result::Result<(u16, String), String>> {
         let promise = self
             .0
             .call1(&JsValue::NULL, &JsValue::from_str(&json.to_string()));
@@ -379,10 +394,33 @@ impl sapling_sync::Transport for JsRequest {
                 .as_string()
                 .and_then(|text| serde_json::from_str(&text).ok())
                 .ok_or("request() did not resolve to {status, body}")?;
-            Ok(sapling_sync::Response {
-                status: answer["status"].as_u64().unwrap_or(0) as u16,
-                body: answer["body"].as_str().unwrap_or_default().to_owned(),
-            })
+            Ok((
+                answer["status"].as_u64().unwrap_or(0) as u16,
+                answer["body"].as_str().unwrap_or_default().to_owned(),
+            ))
+        }
+    }
+}
+
+/// The same `request`, with no headers: a POST body goes as `text/plain`.
+impl sapling_captions::innertube::Transport for JsRequest {
+    fn send(
+        &self,
+        request: sapling_captions::innertube::Request,
+    ) -> impl Future<Output = std::result::Result<sapling_captions::innertube::Response, String>>
+    {
+        let method = match request.method {
+            sapling_captions::innertube::Method::Get => "GET",
+            sapling_captions::innertube::Method::Post => "POST",
+        };
+        let mut json = serde_json::json!({ "method": method, "url": request.url });
+        if let Some(body) = request.body {
+            json["body"] = Value::String(body);
+        }
+        let answer = self.call(json);
+        async move {
+            let (status, body) = answer.await?;
+            Ok(sapling_captions::innertube::Response { status, body })
         }
     }
 }
@@ -540,6 +578,20 @@ pub async fn sync(
     store: Option<SyncHost>,
 ) -> std::result::Result<String, JsValue> {
     sapling_protocol::dispatch_sync_json(&JsRequest(request), store.as_ref(), &method, &args_json)
+        .await
+        .map_err(|e| JsValue::from_str(&e))
+}
+
+/// One captions call: the method and its argument array as JSON, and the
+/// host's `request` to YouTube. Resolves to the answer as JSON; rejects with
+/// plain text for the learner.
+#[wasm_bindgen]
+pub async fn captions(
+    method: String,
+    args_json: String,
+    request: Function,
+) -> std::result::Result<String, JsValue> {
+    sapling_protocol::dispatch_captions_json(&JsRequest(request), &method, &args_json)
         .await
         .map_err(|e| JsValue::from_str(&e))
 }

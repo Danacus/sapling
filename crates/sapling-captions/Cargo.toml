@@ -2,17 +2,27 @@
 name = "sapling-captions"
 version = "0.0.1"
 edition = "2021"
-description = "A video's caption tracks through yt-dlp on PATH (status, list, one track as raw json3), and the same over an injected HTTP transport through InnerTube."
+description = "A YouTube video's caption tracks through InnerTube over an injected HTTP transport: the track list, and one track as raw json3. `native` adds a ureq transport."
 publish = false
 
-# No process crate and no pin: `std::process::Command` over whatever yt-dlp is
-# on PATH, because yt-dlp ages against YouTube in weeks.
+[features]
+# The transport a native host lends: ureq, blocking, with its own roots. The
+# wasm build lends the window's relay instead and leaves this off.
+native = ["dep:ureq", "dep:pollster"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+# The TypeScript side of the wire is generated from these types (`pnpm core:types`,
+# see `sapling-protocol`'s `typescript` tests). The derive is inert outside that.
+ts-rs = { version = "12.0.1", features = ["no-serde-warnings"] }
+ureq = { version = "3", default-features = false, features = ["rustls"], optional = true }
+pollster = { version = "0.4", optional = true }
 
-# `innertube` takes its HTTP from the host; ureq is the example's transport only.
 [dev-dependencies]
 pollster = "0.4"
 sapling-import = { path = "../sapling-import" }
-ureq = { version = "3", default-features = false, features = ["rustls"] }
+
+[[example]]
+name = "transcript"
+required-features = ["native"]

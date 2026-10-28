@@ -1,5 +1,5 @@
 //! A video's caption tracks straight from YouTube, over an injected HTTP
-//! transport — no yt-dlp, no process, no HTTP crate.
+//! transport.
 //!
 //! One route works without a PO token: InnerTube's `player` endpoint asked as
 //! the ANDROID client, whose caption `baseUrl`s are not in the `exp=xpe`
@@ -8,8 +8,11 @@
 //! `sapling-import` unchanged. The WEB transcript panel (`get_transcript`)
 //! answers `FAILED_PRECONDITION` to a client that is not a real browser session.
 //!
-//! The transport is the host's, as in `sapling-sync`: native here through an
-//! example over ureq, a browser-extension relay later.
+//! The `player` POST answers 403 to any `Origin` but none, YouTube's own or
+//! `null`, so a page cannot ask it from its own origin: the browser relays both
+//! requests through an opaque-origin frame. That is why a [`Request`] carries
+//! no headers at all — a POST body goes as `text/plain`, which keeps both
+//! requests "simple" (no CORS preflight) — and every transport must send it so.
 
 use std::future::Future;
 
@@ -31,7 +34,7 @@ pub enum Method {
 pub struct Request {
     pub method: Method,
     pub url: String,
-    pub headers: Vec<(String, String)>,
+    /// Sent as `text/plain`.
     pub body: Option<String>,
 }
 
@@ -73,7 +76,6 @@ pub async fn fetch_track<T: Transport>(
         Request {
             method: Method::Get,
             url,
-            headers: Vec::new(),
             body: None,
         },
     )
@@ -86,10 +88,10 @@ pub async fn fetch_track<T: Transport>(
 }
 
 async fn send_ok<T: Transport>(transport: &T, request: Request) -> Result<String, String> {
-    let url = request.url.clone();
+    let path = request.url.split('?').next().unwrap_or_default().to_owned();
     let response = transport.send(request).await?;
     if !(200..300).contains(&response.status) {
-        return Err(format!("{url} answered {}", response.status));
+        return Err(format!("YouTube answered {} ({path})", response.status));
     }
     Ok(response.body)
 }
@@ -107,7 +109,6 @@ pub fn player_request(video_id: &str) -> Request {
     Request {
         method: Method::Post,
         url: PLAYER_URL.to_owned(),
-        headers: vec![("Content-Type".to_owned(), "application/json".to_owned())],
         body: Some(body.to_string()),
     }
 }

@@ -76,20 +76,21 @@ sapling-speech = { path = "../sapling-speech", optional = true, default-features
 # the app is distributed**: it leaves a shipped build inspectable by anyone with
 # a cable, and on macOS it reaches for private APIs the App Store rejects.
 tauri = { version = "2", features = ["devtools"] }
+# A video's caption tracks, over ureq: this window's origin is one YouTube's
+# `player` endpoint refuses, so the host asks instead, on every target.
+sapling-captions = { path = "../sapling-captions", features = ["native"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 
-# -- Playback and captions are desktop capabilities ---------------------------
+# -- Playback is a desktop capability ------------------------------------------
 #
 # This is the whole of what a phone does differently. `playback` is rodio,
 # which exists because *WebKitGTK* cannot play a clip without a second of
 # latency per word and its Web Audio output is unusable
 # (`crates/sapling-speech/src/tts/play.rs` has the measurements); Android's
 # WebView is Chromium, where `<audio>` over a blob is the ordinary path and
-# works. `sapling-captions` runs yt-dlp off PATH, and a phone has neither. So
-# both are target-scoped here, `tts_play`/`tts_stop` and the three caption
-# commands are gated on `desktop`, and everything else is one configuration on
-# every target. `desktop` is Tauri's own cfg alias (`tauri_build::build()` emits
+# works. So it is target-scoped here, `tts_play`/`tts_stop` are gated on
+# `desktop`, and everything else is one configuration on every target. `desktop` is Tauri's own cfg alias (`tauri_build::build()` emits
 # it) and means exactly this table's condition — which is why the condition is
 # spelled here and not in the crates, which cannot see the alias.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
@@ -98,7 +99,6 @@ sapling-speech = { path = "../sapling-speech", optional = true, default-features
 	"asr",
 	"playback",
 ] }
-sapling-captions = { path = "../sapling-captions" }
 
 # -- One Linux-only dependency, and it is a permission prompt ----------------
 #

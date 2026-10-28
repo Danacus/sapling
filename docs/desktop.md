@@ -121,7 +121,7 @@ exposes exactly the three commands `WasmCore` exposes to the database Worker —
 `src/lib/db/tauri.ts` is one `invoke` per `Backend` call, chosen by
 `backend.ts` when `inTauri()`; every argument still goes through `toPlain()`,
 because `client.ts` owns the proxy for both transports. Speech adds eight more
-commands and captions three, and both have a section below.
+commands and captions two, and both have a section below.
 
 `dispatch` and `commit_all` are `async` and wait on `spawn_blocking`, like the
 long speech commands: a synchronous Tauri command runs on the main thread,
@@ -579,87 +579,48 @@ the library ignores.
 
 ## Captions
 
-The third capability, and the first that exists on desktop targets **only**.
-Reading mode's design doc listed "fetching a video's captions" under *not in
-this slice* as a permanent limitation, and it was one for a page: YouTube's
-timedtext endpoints send no CORS headers and the IFrame API exposes no track
-list, so a browser can never turn a link into a transcript, and closing it
-needed either a server or an extension. A host that can run a program needs
-neither. `sapling-captions` runs yt-dlp; `src/lib/media/captions.ts` is the other
-end; the `captions` task carries the wait; and the track enters the composer
-through exactly the door an uploaded `.srt` goes through.
+The third capability, and one every target has. A YouTube link in the composer
+can become the text: `sapling-captions` lists the video's caption tracks and
+fetches one as `json3`; `src/lib/media/captions.ts` is the other end; the
+`captions` task carries the wait; and the track enters the composer through
+exactly the door an uploaded `.srt` goes through.
 
-**The commands**, three, all `#[cfg(desktop)]`:
+**One implementation, two transports.** `innertube.rs` asks InnerTube's
+`player` endpoint as the ANDROID client (no API key, cookie, User-Agent or PO
+token), takes the chosen track's signed `baseUrl` with `fmt=json3`, and GETs it.
+YouTube's `player` POST answers 403 to any `Origin` other than none, a
+youtube.com one or `null`; timedtext accepts any. A browser page therefore
+relays both requests through a hidden `sandbox="allow-scripts"` srcdoc frame
+(opaque origin, so `Origin: null`; a `text/plain` POST, so no preflight) — see
+`.claude/rules/media.md`. A Tauri window's origin is refused, so this host makes
+the requests itself, over ureq with no `Origin` (`sapling-captions`' `native`
+feature).
+
+**The commands**, two, on every target:
 
 | command | answers |
 |---|---|
-| `captions_status()` | the `yt-dlp` and `deno` versions on PATH, or `null` for each that is not there |
-| `captions_list(url)` | `{ id, title, tracks: [{ lang, name, auto }] }`, manual tracks first |
-| `captions_fetch(url, lang, auto)` | one `json3` track as **raw text**, unparsed |
+| `captions_list(videoId)` | `{ id, title, tracks: [{ lang, name, auto }] }`, manual tracks first |
+| `captions_fetch(videoId, track)` | one `json3` track as **raw text**, unparsed |
 
-All three are `async` over `spawn_blocking`, like every command here that waits:
-the listing fetches a watch page and runs the player's JavaScript (seconds), the
-fetch does that and then a second request, and even the status starts two child
-processes. There is no managed state and no lock between them — nothing to keep
-warm, so each call is a program run and a file read.
+Both are `async` over `spawn_blocking`, like every command here that waits. A
+fetch asks the player again before the GET, because a `baseUrl` is signed and
+expires. There is no managed state.
 
-**yt-dlp comes from PATH and is deliberately not pinned.** `sapling-models` pins
-a URL, an exact byte count and a sha256 for every model, because a model's bytes
-are a constant and a different set of them is a different voice. yt-dlp is the
-opposite kind of dependency: YouTube changes its player every few weeks, yt-dlp
-ships a fix within days, and the answer a learner needs is always "update
-yt-dlp" — so a pinned copy here would be a pinned *breakage* on a schedule
-nobody controls. **Deno** is the same fact one step out: since late 2025 yt-dlp
-wants an external JavaScript runtime for full YouTube extraction and warns
-without one. Captions usually still come back, so `captions_status` reports it
-rather than requiring it, and the composer names whichever is missing. Both are
-in the `desktop` devShell so `pnpm desktop:dev` has the feature and the crate's
-skip-if-absent test actually runs.
+**The host does not parse a caption file.** `captions_fetch` hands back the
+text YouTube sent, and `crates/sapling-import` — which reads SRT, VTT and a
+copied transcript panel, and is pure and tested — reads `json3` as a fourth
+format. One parser in the repo, not a window one and a host one that drift.
+`json3` is the format asked for because its offsets are milliseconds already
+and it has no rolling window to undo, and because every YouTube track has one.
 
-**No new dependency, and no plugin.** `std::process::Command` and the
-`serde_json` already in the manifest. Not `tauri-plugin-shell`: three fixed
-argument vectors need no scope file, and a plugin would put configuration
-between this module and the one program it runs.
-
-**The host does not parse a caption file.** `captions_fetch` hands back yt-dlp's
-bytes as they were written, and `crates/sapling-import` — which reads SRT,
-VTT and a copied transcript panel, and is pure and tested — reads `json3` as a
-fourth format. One parser in the repo, not a window one and a host
-one that drift. `json3` is the format asked for because its offsets are
-milliseconds already and it has no rolling window to undo, and because every
-YouTube track has one.
-
-`captions_fetch` writes into a swept `captions.partial` under the app-data
-directory, with `-o …/captions.%(ext)s` so the one file yt-dlp writes is found
-by extension, and removes the directory whether the fetch worked or not. The
-argument vectors and the listing parser are pure functions with unit tests
-beside them; `sapling-captions`' `tests/captions.rs` covers what needs the real program and **skips
-itself, printing why, when yt-dlp is not on PATH**, exactly as the speech tests
-skip without a model. Its one end-to-end test is `#[ignore]`d as well, because
-it reaches YouTube and a suite that did that on every run would be red for
-reasons that have nothing to do with this code:
+The request builders and the player parser are unit-tested over a fake
+transport and fixtures (`crates/sapling-captions/fixtures/`). What only YouTube
+can answer is checked by hand, live:
 
 ```sh
-nix develop .#desktop -c cargo test -p sapling-captions --test captions -- --ignored --nocapture
+cargo run -p sapling-captions --features native --example transcript -- <video_id> [lang] [--auto]
 ```
-
-**The machine translations are filtered out**, and without that the feature
-would be unusable: YouTube translates its own speech recognition into every
-language it knows and yt-dlp lists all of them under `automatic_captions`, so an
-unfiltered list is around two hundred rows. The signal is YouTube's own `tlang`
-query parameter — the translation target — present on every translated URL and
-on no original. Measured on one video: 7 tracks offered where the raw maps hold
-about 200.
-
-**Android has none of it**, and that is a target gate rather than a Cargo
-feature: there is nothing to link and nothing to make optional, and the point of
-the gate is that the phone's compiler never sees the code. It costs a phone
-nothing, because an import is an event — a text fetched on the desktop syncs to
-every paired device and the phone reads it like any other text — and a learner
-who wants the file itself on Android can get it from a yt-dlp app such as
-YTDLnis and hand it to the composer's existing picker, `json3` included. The two
-gates (`speech`, `desktop`) multiply out, so `commands!` in `lib.rs` has four
-arms rather than three.
 
 ## Android
 
@@ -1117,14 +1078,6 @@ pkg-config for at build time. It is the easy kind — it fails loudly at build
 time, and at *runtime* on NixOS nothing further is needed, because the ALSA
 default device reaches PipeWire through its ALSA plugin.
 
-Captions add two, and they are unlike everything else in this list: `yt-dlp`
-and `deno` are **programs on PATH**, not libraries to link, and the crate looks
-for them there rather than pinning them (see [Captions](#captions)). They are in
-the shell so `pnpm desktop:dev` has the feature and `sapling-captions`'
-`tests/captions.rs` runs
-instead of skipping; a learner's machine gets them however that machine gets
-programs, and a shell without them costs nothing but the feature.
-
 It used to add two more, and both came off when the voice moved to k2-fsa's own
 crate: `rustPlatform.bindgenHook`, for a bindings crate that no longer runs
 bindgen, and `stdenv.cc.cc.lib` on `LD_LIBRARY_PATH`, which was the third
@@ -1148,9 +1101,7 @@ source: `cargoLock` vendors from `Cargo.lock` (no hash to re-bless on a bump),
 `generate_context!` embeds it, and `SHERPA_ONNX_LIB_DIR` above. `wrapGAppsHook3`
 turns the runtime-only traps into wrapper lines — `GIO_EXTRA_MODULES` for
 `glib-networking`, `GST_PLUGIN_SYSTEM_PATH_1_0` for the five GStreamer
-packages, `XDG_DATA_DIRS` for the gsettings schemas — and `yt-dlp` and `deno`
-are `--suffix`ed onto PATH, so the captions feature works out of the box and a
-copy the user installed still wins. It installs a `.desktop` entry and the
+packages, `XDG_DATA_DIRS` for the gsettings schemas. It installs a `.desktop` entry and the
 512 px icon as `sapling`. The two web build variables are package arguments
 whose defaults are this deployment's own sync Worker and embed page, so
 `nix run .` is the app as deployed; `.override` points it elsewhere (`null`

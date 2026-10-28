@@ -9,7 +9,8 @@
 //! prompt caps, from the table in `llm.rs`), `challenges.ts` (the synchronous
 //! `Challenges` interface and `CHALLENGE_METHODS`, from `challenges.rs`),
 //! `sync.ts` (the `Sync` interface, `SYNC_METHODS` and the phrase's constants,
-//! from `sync.rs`),
+//! from `sync.rs`), `captions.ts` (the `Captions` interface and
+//! `CAPTION_METHODS`, from `captions.rs`),
 //! `Payloads.ts` (each event type's payload) and `index.ts`, which re-exports
 //! every type file.
 
@@ -34,6 +35,7 @@ use sapling_llm::{Endpoint, LlmError, ProgressStep, TokenUsage, MAX_ABOUT_CHARS}
 use sapling_srs::FsrsCardState;
 use sapling_sync::{BAD_PHRASE, PHRASE_LENGTH};
 
+use crate::captions::{caption_methods, visit_caption_types};
 use crate::challenges::{challenge_methods, visit_challenge_types};
 use crate::llm::{llm_methods, visit_llm_types};
 use crate::sync::{sync_methods, visit_sync_types};
@@ -191,6 +193,23 @@ fn sync(names: &[String]) -> String {
     out
 }
 
+/// `captions.ts`: the captions table as a TypeScript interface.
+fn captions(names: &[String]) -> String {
+    let cfg = Config::new().with_large_int("number");
+    let methods = caption_methods(&cfg);
+    let mut out = format!(
+        "import type {{ {} }} from './index';\n\n/** A YouTube video's captions, over the host's relay to YouTube. */\nexport interface Captions {{\n",
+        names.join(", ")
+    );
+    members(&mut out, &methods, true);
+    out.push_str("}\n\nexport const CAPTION_METHODS = [\n");
+    for method in &methods {
+        let _ = writeln!(out, "  '{}',", method.name);
+    }
+    out.push_str("] as const;\n");
+    out
+}
+
 /// `backend.ts`: the method table as a TypeScript interface.
 fn backend(names: &[String]) -> String {
     let cfg = Config::new().with_large_int("number");
@@ -238,6 +257,7 @@ fn typescript() {
     ProgressStep::export_all(&cfg).expect("export");
     visit_challenge_types(&mut Export(&cfg));
     visit_sync_types(&mut Export(&cfg));
+    visit_caption_types(&mut Export(&cfg));
     std::fs::write(dir.join("Payloads.ts"), payloads(&cfg)).expect("write");
 
     let mut names: Vec<String> = std::fs::read_dir(&dir)
@@ -255,4 +275,5 @@ fn typescript() {
     std::fs::write(dir.join("llm.ts"), llm(&names)).expect("write");
     std::fs::write(dir.join("challenges.ts"), challenges(&names)).expect("write");
     std::fs::write(dir.join("sync.ts"), sync(&names)).expect("write");
+    std::fs::write(dir.join("captions.ts"), captions(&names)).expect("write");
 }

@@ -32,10 +32,11 @@ someone to run the check by hand.
   verify, stage, rename, `available_threads`) and knows nothing about speech;
   **`sapling-speech`** is the voice and dictation on sherpa-onnx, features `tts`
   and `asr` by default plus `playback` (rodio and `tts::play`), with the model
-  pins in `src/specs.rs`; **`sapling-captions`** is yt-dlp status/list/fetch,
-  plus a spike, `innertube.rs`, that lists and fetches tracks over an injected
-  HTTP transport (InnerTube `player` as the ANDROID client, then the track's
-  timedtext as `json3`) and is wired into nothing yet.
+  pins in `src/specs.rs`; **`sapling-captions`** lists a YouTube video's caption tracks and fetches
+  one as `json3` over an injected HTTP transport (`innertube.rs`: InnerTube
+  `player` as the ANDROID client, then the track's timedtext URL), with a ureq
+  transport behind its `native` feature (`native.rs`) — the wasm build lends
+  the browser's relay instead (`media.md`).
   A crate outside `sapling-desktop` cannot see Tauri's `desktop` cfg alias, so
   none of them uses it: where a target matters, the desktop manifest decides
   (a target-scoped dependency entry) and the crate exposes a feature.
@@ -70,35 +71,22 @@ someone to run the check by hand.
   build runs. The line that does not move: a host still contains no merge rule
   and no SQL against the read tables.
 
-- **A video's captions are the third capability, and the first that is
-  desktop-only outright** (`sapling-captions`, a desktop-only dependency whose
-  three commands are `#[cfg(desktop)]`). It passes the
-  same test: a URL in, a caption file out, no domain knowledge. It exists
-  because a *page* cannot do it at all — YouTube's timedtext endpoints send no
-  CORS headers and the IFrame API exposes no track list, so a browser can never
-  turn a link into a transcript and `docs/reading-mode.md` §7 said so as a
-  permanent limitation. `captions_status` reports whether `yt-dlp` and `deno`
-  are on PATH, `captions_list` parses `--dump-single-json` into
-  `{ id, title, tracks }`, `captions_fetch` writes one `json3` track into a
-  swept `captions.partial` under the app-data directory and hands back **its raw
-  text**. Four things about it are the contract. **PATH, not a pin**:
-  `sapling-models` pins a URL, a byte count and a sha256 because a model's bytes are a constant,
-  while yt-dlp ages against YouTube in weeks and its fix is always "update" — so
-  a pin here would be a pin on the breakage, and Deno (yt-dlp's JavaScript
-  runtime since late 2025) is reported rather than required for the same reason.
-  **No process crate**: `std::process::Command` and `serde_json`, and
-  deliberately not `tauri-plugin-shell` — three fixed argument
-  vectors need no scope file. **The host never parses a caption file**: the
-  app has one subtitle parser (`crates/sapling-import`, where `json3` is a
-  format beside SRT and VTT, reached through the protocol's `importSource`), and a second one here would be one that
-  silently disagrees. **Android never meets it** — no yt-dlp and no PATH to look
-  on — and it is a *target gate* rather than a Cargo feature because there is
-  nothing to link and nothing to make optional. That costs a phone nothing:
-  an import is an event, so a text fetched on the desktop syncs to every paired
-  device and the phone reads it like any other, and a learner on Android who
-  wants the file itself can get it from a yt-dlp app such as YTDLnis and hand it
-  to the existing picker, `json3` included. The two gates multiply out, so
-  `commands!` has **four** arms rather than three.
+- **A video's captions are the third capability, and the one every target
+  has** (`sapling-captions` with `native`, and two commands, `captions_list`
+  and `captions_fetch`). It passes the same test: a video id in, a caption file
+  out, no domain knowledge. The host lends it for a reason particular to
+  YouTube: the `player` POST answers 403 to any `Origin` other than none, a
+  youtube.com one or `null`, and a Tauri window's origin is none of those — so
+  where the browser relays the requests through an opaque-origin frame
+  (`media.md`), this host makes them itself over ureq, which sends no `Origin`.
+  It is the **same Rust either way** (`innertube.rs`); only the transport
+  differs. **The host never parses a caption file**: `captions_fetch` hands
+  back the `json3` text YouTube sent, and the app has one subtitle parser
+  (`crates/sapling-import`, reached through the protocol's `importSource`) — a
+  second one here would be one that silently disagrees. Both commands are
+  `async` and run on `spawn_blocking`, since each is a network round trip
+  (two for a fetch, because a track's `baseUrl` is signed and expires, so the
+  player is asked again).
 
 - **One feature, `speech`, covers both directions**, on by default. It was `tts`
   until dictation arrived, and it is one feature because synthesis and
@@ -176,11 +164,10 @@ someone to run the check by hand.
   Each command is `sapling_protocol::dispatch_json` (or `commit_facts_json`)
   inside `Database::core()?.run(…)`; the store underneath knows no method
   names.
-  **Speech adds exactly eight more, and captions three** — `tts_status`, `tts_download`,
+  **Speech adds exactly eight more, and captions two** — `tts_status`, `tts_download`,
   `tts_synthesize`, `asr_status`, `asr_download`, `asr_transcribe` on every
-  target, `tts_play`, `tts_stop` on desktop targets only, and
-  `captions_status`, `captions_list`, `captions_fetch` on desktop targets only
-  — and they are not
+  target, `tts_play`, `tts_stop` on desktop targets only, and `captions_list`,
+  `captions_fetch` on every target — and they are not
   part of that protocol and never touch it. Audio crosses as bytes in every
   direction and never as JSON, wherever the IPC can carry bytes: `tts_synthesize`
   answers a `tauri::ipc::Response`, and `tts_play` and `asr_transcribe` take a
@@ -390,9 +377,9 @@ someone to run the check by hand.
   that Android is not a second host. Persistence, the device id, the clock, the
   calendar **and all of speech** are the same code over the same app-data
   directory — the same sherpa-onnx, the same 365 MB Kokoro archive, the same
-  163 MB SenseVoice archive, the same six status/download/work commands. Only
-  `sapling-speech`'s `playback` feature (rodio) and `sapling-captions` are
-  target-scoped — a second `sapling-speech` entry under
+  163 MB SenseVoice archive, the same six status/download/work commands — and
+  the same two caption commands. Only `sapling-speech`'s `playback` feature
+  (rodio) is target-scoped — a second `sapling-speech` entry under
   `[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]`
   adds the feature, and resolver 2 applies it only where that target is built —
   and only `tts::play`, `tts_play` and `tts_stop` are gated
@@ -402,8 +389,8 @@ someone to run the check by hand.
   reverse — narrowing a synthesis or recognition gate back to `desktop` — is a
   bug nobody's compiler sees, and costs the phone its voice or its ears.
   `cargo tree -p sapling-desktop --target aarch64-linux-android` is how the
-  dependency half is checked: no `rodio`, no `cpal`, no `sapling-captions`,
-  and `sapling-speech` with `tts` and `asr` only; everything else identical.
+  dependency half is checked: no `rodio`, no `cpal`, and `sapling-speech` with
+  `tts` and `asr` only; everything else identical.
 - **Android's microphone permission is a manifest edit and nothing more.** wry's
   own `RustWebChromeClient.onPermissionRequest` already answers the WebView's
   `AUDIO_CAPTURE` request by launching a runtime request for `RECORD_AUDIO` *and*
@@ -486,8 +473,8 @@ someone to run the check by hand.
   `playback` wants `alsa-lib` and stays out of it because no default member
   enables it. `pnpm desktop:check` reaches the rest with `-p sapling-desktop -p
   sapling-speech -p sapling-captions` in one invocation, so feature unification
-  builds speech *with* `playback` there and the captions test meets a real
-  yt-dlp. Keep all of them rustfmt-clean — `cargo fmt --check` walks every
+  builds speech *with* `playback` there and `sapling-captions` *with* `native`,
+  which its `transcript` example needs (a live list-and-fetch, run by hand). Keep all of them rustfmt-clean — `cargo fmt --check` walks every
   member, default or not. New source files must be `git add`ed before nix can
   see them.
 
@@ -506,8 +493,7 @@ someone to run the check by hand.
   "Packaging".
 
 - **The speech tests are skip-if-absent, and that is the contract.** They are
-  `sapling-speech`'s, as the captions test is `sapling-captions`' and the
-  persistence test `sapling-store`'s — each test lives with the code it covers.
+  `sapling-speech`'s, as the persistence test is `sapling-store`'s — each test lives with the code it covers.
   `tests/voice.rs` synthesizes Mandarin, English and a mixed sentence against
   the *real* 365 MB model and asserts finite, audible samples of a plausible
   length; `tests/dictation.rs` transcribes the `test_wavs/` that ship inside the

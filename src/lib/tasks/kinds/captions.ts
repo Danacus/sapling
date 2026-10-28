@@ -1,14 +1,13 @@
 /**
- * `captions` — a YouTube video's subtitle track, fetched by the desktop host.
+ * `captions` — a YouTube video's subtitle track, fetched from YouTube.
  *
- * A task rather than an awaited call because it is two network round trips
- * through a program that has to read a watch page and run its JavaScript: ten
- * seconds is ordinary and a minute is possible, and the composer must not be a
- * frozen form for either. The runner owns the status and the tray carries the
- * failure, so the page holds nothing but the source card the result becomes.
+ * A task rather than an awaited call because it is two network round trips,
+ * and the composer must not be a frozen form while they run. The runner owns
+ * the status and the tray carries the failure, so the page holds nothing but
+ * the source card the result becomes.
  *
- * **The result carries the file, not a parse of it.** What comes back from the
- * host is raw `json3`, and this def hands the composer exactly that — because
+ * **The result carries the file, not a parse of it.** What comes back is raw
+ * `json3`, and this def hands the composer exactly that — because
  * `json3` is an *import format* (the core's `importSource`), so the fetched
  * text enters the identical path an uploaded `.srt` does: one `sourceFile`, one
  * `plan` derivation behind the card, the counter, the button and the import. A
@@ -38,22 +37,20 @@ export interface CaptionsInput extends CaptionTrack {
 export interface CaptionsResult {
 	/** What to call the track where an uploaded file's name would go. */
 	name: string;
-	/** The track exactly as yt-dlp wrote it: `json3`, for the composer to import. */
+	/** The track exactly as YouTube sent it: `json3`, for the composer to import. */
 	text: string;
 	/** How many lines (cues) it holds — what {@link captionsTask.summary} says. */
 	lines: number;
 }
 
 export const captionsTask = {
-	// Not serial: nothing here writes anything, and two videos' captions are two
-	// independent programs. The rate limit that matters is YouTube's, and one
-	// learner fetching one track at a time is nowhere near it.
+	// Not serial: nothing here writes anything. The rate limit that matters is
+	// YouTube's, and one learner fetching one track at a time is nowhere near it.
 	serial: false,
 
-	// yt-dlp is a child process the host waits on and cannot be asked to stop
-	// mid-fetch, so cancelling drops the record without ending the work — which
-	// is what `cancellable: false` says, and what makes the tray word its button
-	// "Stop watching" (`tts-model` is the same shape).
+	// The requests take no signal, so cancelling drops the record without
+	// ending the work — which is what `cancellable: false` says, and what makes
+	// the tray word its button "Stop watching" (`tts-model` is the same shape).
 	cancellable: false,
 
 	title(input) {
@@ -63,7 +60,7 @@ export const captionsTask = {
 	async run(input, ctx) {
 		// Two steps, because the seconds go to two different things and a ledger
 		// that said one thing for a minute would not be telling anyone anything.
-		ctx.step('fetch', 'Asking yt-dlp');
+		ctx.step('fetch', 'Asking YouTube');
 		const text = await fetchCaptions(input.videoId, input);
 
 		ctx.step('read', `Reading ${input.name}`);

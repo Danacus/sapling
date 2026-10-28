@@ -579,7 +579,7 @@ Rules:
 
 Open questions:
 - Texts can only be deleted from inside the reader. Conversations can be deleted straight from their shelf.
-- On the desktop app with yt-dlp installed, the Recording group is enabled even for prose. A YouTube link entered alongside untimed prose is silently dropped at Add. The legend says *optional* in that state, which hides the problem.
+- Because captions can be fetched, the Recording group is enabled even for prose. A YouTube link entered alongside untimed prose is silently dropped at Add. The legend says *optional* in that state, which hides the problem.
 - The default title of fetched captions is the *track* name (e.g. "English"), not the video's title, even though the caption listing returns the video title.
 - Which 400 vocabulary terms the generator sees, for a garden larger than that, is simply the first 400 in storage order. There is no rule.
 - Legacy *known* marks still feed the generator as "freely usable" vocabulary, but they do not count toward the level.
@@ -840,30 +840,27 @@ Open questions:
 
 ---
 
-### Fetching captions (desktop only)
+### Fetching captions
 
-**Purpose:** on the desktop app, a YouTube link alone can produce the text: the host runs yt-dlp to fetch a caption track. A browser cannot do this (no CORS on YouTube's caption endpoints, and no track list in the player API).
+**Purpose:** a YouTube link alone can produce the text: the app fetches one of the video's caption tracks from YouTube.
 
 Behaviour:
-- **The probe has three outcomes**, and the composer asks it on each visit:
-  - **No host to ask** (browser, or the Android app): nothing about captions renders.
-  - **Desktop app without yt-dlp on PATH:** one line, "Install **yt-dlp** to fetch a video's captions."
-  - **Desktop app with yt-dlp:** the Recording group is enabled from the start. Once the link names a video, a **Fetch captions** button appears. If Deno is missing, a note says some tracks may not be listed.
+- Available on every host. The Recording group is enabled from the start, and once the link names a video a **Fetch captions** button appears.
 - **Fetch captions** lists the video's tracks directly. This is an awaited question, not a background task.
   - Manual tracks come first, then automatic ones, which are marked *auto*.
   - "Never mind" dismisses the list.
   - A video with no tracks says so.
   - Editing the link clears the list.
-- Picking a track starts a **captions task**, which shows "Asking yt-dlp", then "Reading <track>".
+- Picking a track starts a **captions task**, which shows "Asking YouTube", then "Reading <track>".
   - The result is the raw `json3` file. It becomes the source card exactly as an uploaded file would, and the link stays in place, so Add attaches the video as the recording.
   - A track with nothing readable in it fails in the task tray.
   - The task cannot be stopped mid-fetch. The tray offers "Stop watching", which drops the record and leaves the work running.
-- **yt-dlp handling:**
-  - yt-dlp comes from PATH and is deliberately not pinned, because the fix is always "update yt-dlp".
-  - The host only ever receives a normalised watch URL rebuilt from a validated id.
-  - On failure, the last three lines of yt-dlp's error output reach the learner.
-  - Temporary files are staged in a swept app-data folder and removed after each fetch.
-- Text fetched on desktop syncs like any other import, so phones open it normally.
+- **How YouTube is asked:**
+  - One implementation in the Rust core asks YouTube's player endpoint for the track list, then fetches the chosen track. No key, cookie or account is involved.
+  - YouTube refuses that request from an ordinary web page's origin, so in a browser it goes through a hidden sandboxed frame that may only reach YouTube's own hosts, and sends no credentials. The desktop and Android apps make the requests natively.
+  - Only a validated video id is ever sent.
+  - On failure, the learner sees what YouTube answered.
+- A fetched text syncs like any other import.
 
 Rules:
 - The host never parses captions. All parsing happens in the import rules above, so there is one subtitle parser.
@@ -1409,7 +1406,7 @@ The page has a back link to Today and lays out its cards in two balanced columns
 
 - **Native persistence:** WebKitGTK has no OPFS, so the database is a SQLite file (see Storage and durability per host).
 - **Native speech:** synthesis, low-latency playback, and on-device dictation, with the models downloaded on demand into the app data directory.
-- **YouTube captions:** a YouTube link in the reading composer can list and fetch subtitle tracks. This uses `yt-dlp` (and preferably `deno`) found on the system PATH, deliberately not pinned. Machine-translated tracks are filtered out, and missing tools are named in the composer. A fetched track goes through the same import path as an uploaded subtitle file.
+- **YouTube captions natively:** the webview's origin is one YouTube refuses, so the app fetches caption tracks itself.
 - **Embedded YouTube player:** YouTube refuses to play inside the app's custom scheme, so the player runs in a separately hosted page that the app frames and controls. If the build has no embed page configured, a YouTube text says so where the video would be and stays readable.
 - **The microphone permission** is granted by the app, because the webview has no prompt of its own.
 
@@ -1423,7 +1420,7 @@ The page has a back link to Today and lays out its cards in two balanced columns
 
 - **A reload on a deep route is unsupported,** because there is no shell fallback on the custom scheme. Yet the app reloads in several places: after an import (from `/settings`), the sync "Reload now" button, and the stale-chunk heal.
 - Not yet done: a CSP, devtools still enabled in release builds, no window-state persistence, no macOS or Windows builds, unsigned packages, and the voice download cannot be cancelled.
-- Captions depend on whatever `yt-dlp` the machine has. Should the product guarantee anything about them?
+- Captions depend on an undocumented YouTube endpoint answering as its Android client. Should the product guarantee anything about them?
 - Whether the desktop build should sync by default is undecided.
 
 ---
@@ -1437,12 +1434,12 @@ The page has a back link to Today and lays out its cards in two balanced columns
 - Native persistence.
 - Native synthesis, played through the webview's audio element.
 - Native dictation, with microphone permissions declared. A device without a microphone can still install, and dictation becomes typing.
+- YouTube caption fetching, made natively.
 - Everything else in the web app.
 - Release builds signed with a stable key, so each APK installs over the last and keeps its data.
 
 #### What it lacks
 
-- YouTube caption fetching. Captions fetched on a desktop still reach the phone through sync, and the learner can hand a subtitle file to the composer.
 - Host-side audio playback (not needed on Android).
 - Service-worker offline caching. Registration fails harmlessly, because the app ships its own assets.
 
@@ -1459,7 +1456,7 @@ The page has a back link to Today and lays out its cards in two balanced columns
 
 #### Behaviour
 
-- `nix run .` builds and opens the desktop app with this deployment's sync relay and YouTube embed page built in. Both can be overridden or turned off when packaging. The package brings its own webview, media plugins and network modules, installs a desktop entry and icon, and puts `yt-dlp` and `deno` on PATH as a fallback, so captions work out of the box while a user-installed copy still wins.
+- `nix run .` builds and opens the desktop app with this deployment's sync relay and YouTube embed page built in. Both can be overridden or turned off when packaging. The package brings its own webview, media plugins and network modules, and installs a desktop entry and icon.
 - An AppImage, built in CI on an old Ubuntu baseline, bundles the media plugins and needs the system WebKitGTK.
 
 #### Guarantees

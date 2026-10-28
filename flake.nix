@@ -91,23 +91,6 @@
           pkgs.gst_all_1.gst-libav # mp3/aac, for anything the reader plays
         ];
 
-        # The captions capability (`crates/sapling-captions`)
-        # shells out to these two, and it finds them on PATH rather than
-        # pinning them — yt-dlp ages against YouTube in weeks, so a pinned
-        # copy would be a pinned breakage. They are in the shell so `pnpm
-        # desktop:dev` has the feature at all and so the crate's
-        # skip-if-absent tests actually run, and on the packaged binary's PATH
-        # because on NixOS the package *is* how a machine gets programs.
-        #
-        # Deno is the JavaScript runtime yt-dlp has wanted for full YouTube
-        # extraction since late 2025. Without one it warns and may drop
-        # formats — captions usually still come back, which is why
-        # `captions_status` reports it instead of requiring it.
-        desktopTools = [
-          pkgs.yt-dlp
-          pkgs.deno
-        ];
-
         # The Tauri shell, kept apart from the default one on purpose: the web
         # build must never need a GTK stack to produce a static site, and CI
         # builds the app in `default`. `crates/sapling-desktop` is not a
@@ -121,7 +104,7 @@
           # ships pregenerated bindings, so nothing in this tree runs bindgen.
           nativeBuildInputs = [ pkgs.pkg-config ];
           buildInputs = desktopLibs ++ gst;
-          packages = [ pkgs.cargo-tauri ] ++ desktopTools;
+          packages = [ pkgs.cargo-tauri ];
           shellHook = ''
             export GIO_MODULE_DIR=${pkgs.glib-networking}/lib/gio/modules/
             export GST_PLUGIN_SYSTEM_PATH_1_0="${lib.makeSearchPathOutput "lib" "lib/gstreamer-1.0" gst}"
@@ -271,12 +254,6 @@
               postInstall = ''
                 rm -rf $out/lib
                 install -Dm644 static/icons/icon-512.png $out/share/icons/hicolor/512x512/apps/sapling.png
-              '';
-
-              # The crate looks the two programs up on PATH. `--suffix`, so a
-              # copy the user installed themselves still wins.
-              preFixup = ''
-                gappsWrapperArgs+=(--suffix PATH : ${lib.makeBinPath desktopTools})
               '';
 
               meta = {
