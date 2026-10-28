@@ -27,6 +27,7 @@
 	import { CardState } from '$lib/srs';
 	import { targetTagOf } from '$lib/text';
 	import type { KnowledgeItem, Profile } from '$lib/types';
+	import { balanceColumns } from '$lib/ui/balance';
 	import ProgressBar from '$lib/ui/ProgressBar.svelte';
 	import RubyText from '$lib/ui/RubyText.svelte';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
@@ -575,100 +576,102 @@
 								  and closed into a full frame once the ledger is a grid.
 								-->
 								<div class="detail ll-rise" id={`detail-${row.item.id}`}>
-									<dl class="facts">
-										<div class="fact">
-											<dt>State</dt>
-											<dd>{STATE_LABELS[row.state]}</dd>
+									<div class="spread-flow" use:balanceColumns>
+										<dl class="facts">
+											<div class="fact">
+												<dt>State</dt>
+												<dd>{STATE_LABELS[row.state]}</dd>
+											</div>
+											<div class="fact">
+												<dt>Due</dt>
+												<dd class:overdue={row.due}>{dueText(row)}</dd>
+												<p class="sub">{formatAbsolute(row.card.due)}</p>
+											</div>
+											<div class="fact">
+												<dt>Stability</dt>
+												<dd>{formatDays(row.card.stability)}</dd>
+											</div>
+											<div class="fact">
+												<dt>Difficulty</dt>
+												<dd>{row.card.difficulty.toFixed(1)}<span class="of">/10</span></dd>
+											</div>
+											<div class="fact">
+												<dt>Recall chance</dt>
+												<dd>{pct(row.retrievability)}</dd>
+											</div>
+											<div class="fact">
+												<dt>Interval</dt>
+												<dd>{formatDays(row.card.scheduled_days)}</dd>
+											</div>
+											<div class="fact">
+												<dt>Reviews</dt>
+												<dd>{row.card.reps}</dd>
+											</div>
+											<div class="fact">
+												<dt>Lapses</dt>
+												<dd>{row.card.lapses}</dd>
+											</div>
+											<div class="fact">
+												<dt>Accuracy</dt>
+												<dd>{row.accuracy === null ? '—' : pct(row.accuracy)}</dd>
+											</div>
+											<div class="fact">
+												<dt>First seen</dt>
+												<dd>{formatRelative(row.item.introducedAt, now)}</dd>
+												<p class="sub">{formatAbsolute(row.item.introducedAt)}</p>
+											</div>
+											<div class="fact">
+												<dt>Last review</dt>
+												<dd>
+													{row.lastReviewAt === null
+														? 'Never'
+														: formatRelative(row.lastReviewAt, now)}
+												</dd>
+												{#if row.lastReviewAt !== null}
+													<p class="sub">{formatAbsolute(row.lastReviewAt)}</p>
+												{/if}
+											</div>
+										</dl>
+
+										<div class="strength-block">
+											<div class="strength-line">
+												<span class="strength-label">Strength</span>
+												<span class="strength-value">{pct(row.strength)}</span>
+											</div>
+											<ProgressBar
+												value={row.strength}
+												color={strengthColor(row.strength)}
+												label={`Recall strength for ${row.item.term}`}
+											/>
 										</div>
-										<div class="fact">
-											<dt>Due</dt>
-											<dd class:overdue={row.due}>{dueText(row)}</dd>
-											<p class="sub">{formatAbsolute(row.card.due)}</p>
-										</div>
-										<div class="fact">
-											<dt>Stability</dt>
-											<dd>{formatDays(row.card.stability)}</dd>
-										</div>
-										<div class="fact">
-											<dt>Difficulty</dt>
-											<dd>{row.card.difficulty.toFixed(1)}<span class="of">/10</span></dd>
-										</div>
-										<div class="fact">
-											<dt>Recall chance</dt>
-											<dd>{pct(row.retrievability)}</dd>
-										</div>
-										<div class="fact">
-											<dt>Interval</dt>
-											<dd>{formatDays(row.card.scheduled_days)}</dd>
-										</div>
-										<div class="fact">
-											<dt>Reviews</dt>
-											<dd>{row.card.reps}</dd>
-										</div>
-										<div class="fact">
-											<dt>Lapses</dt>
-											<dd>{row.card.lapses}</dd>
-										</div>
-										<div class="fact">
-											<dt>Accuracy</dt>
-											<dd>{row.accuracy === null ? '—' : pct(row.accuracy)}</dd>
-										</div>
-										<div class="fact">
-											<dt>First seen</dt>
-											<dd>{formatRelative(row.item.introducedAt, now)}</dd>
-											<p class="sub">{formatAbsolute(row.item.introducedAt)}</p>
-										</div>
-										<div class="fact">
-											<dt>Last review</dt>
-											<dd>
-												{row.lastReviewAt === null
-													? 'Never'
-													: formatRelative(row.lastReviewAt, now)}
-											</dd>
-											{#if row.lastReviewAt !== null}
-												<p class="sub">{formatAbsolute(row.lastReviewAt)}</p>
+
+										{#if row.item.notes}
+											<p class="notes">{row.item.notes}</p>
+										{/if}
+
+										<div class="history">
+											<span class="history-label">Review history</span>
+											{#if reviewsOf(row.item) === 0}
+												<p class="sub none">
+													No reviews yet — this word is still waiting for its first.
+												</p>
+											{:else}
+												{@const shown = ticksOf(row.item).slice(-HISTORY_CAP)}
+												{@const earlier = reviewsOf(row.item) - shown.length}
+												<div class="ticks">
+													{#each shown as entry, index (`${entry.at}-${index}`)}
+														<span
+															class="tick"
+															style={`background: ${gradeColor(entry.grade)};`}
+															title={`${GRADE_LABELS[entry.grade] ?? 'Graded'} · ${formatAbsolute(entry.at)}`}
+														></span>
+													{/each}
+												</div>
+												<p class="sub">
+													Oldest to newest{earlier > 0 ? ` · ${earlier} earlier not shown` : ''}
+												</p>
 											{/if}
 										</div>
-									</dl>
-
-									<div class="strength-block">
-										<div class="strength-line">
-											<span class="strength-label">Strength</span>
-											<span class="strength-value">{pct(row.strength)}</span>
-										</div>
-										<ProgressBar
-											value={row.strength}
-											color={strengthColor(row.strength)}
-											label={`Recall strength for ${row.item.term}`}
-										/>
-									</div>
-
-									{#if row.item.notes}
-										<p class="notes">{row.item.notes}</p>
-									{/if}
-
-									<div class="history">
-										<span class="history-label">Review history</span>
-										{#if reviewsOf(row.item) === 0}
-											<p class="sub none">
-												No reviews yet — this word is still waiting for its first.
-											</p>
-										{:else}
-											{@const shown = ticksOf(row.item).slice(-HISTORY_CAP)}
-											{@const earlier = reviewsOf(row.item) - shown.length}
-											<div class="ticks">
-												{#each shown as entry, index (`${entry.at}-${index}`)}
-													<span
-														class="tick"
-														style={`background: ${gradeColor(entry.grade)};`}
-														title={`${GRADE_LABELS[entry.grade] ?? 'Graded'} · ${formatAbsolute(entry.at)}`}
-													></span>
-												{/each}
-											</div>
-											<p class="sub">
-												Oldest to newest{earlier > 0 ? ` · ${earlier} earlier not shown` : ''}
-											</p>
-										{/if}
 									</div>
 
 									<div class="forget-block">
@@ -1326,8 +1329,13 @@
 		font-size: 0.82rem;
 	}
 
-	.strength-block {
-		margin-top: 1rem;
+	/* Inside the detail: a run of independent blocks of very different heights,
+	   which is the `.spread-flow` case rather than the `.spread` one — two
+	   balanced columns at ≥48rem, a grid leaving a hole under every short block
+	   while it waited for the facts sheet. Forgetting sits below the flow, so it
+	   stays at the foot. The flow's gap is the blocks' own spacing. */
+	.detail .spread-flow {
+		--gap: 1rem;
 	}
 
 	.strength-line {
@@ -1353,15 +1361,11 @@
 	}
 
 	.notes {
-		margin: 1rem 0 0;
+		margin: 0;
 		padding: 0.55rem 0.7rem;
 		border-radius: var(--radius-sm);
 		background: color-mix(in srgb, var(--accent-soft) 55%, transparent);
 		font-size: 0.88rem;
-	}
-
-	.history {
-		margin-top: 1rem;
 	}
 
 	.history-label {
@@ -1627,24 +1631,6 @@
 			border: 1px dashed var(--border-strong);
 			border-radius: var(--radius);
 			background: color-mix(in srgb, var(--surface-alt) 45%, transparent);
-			columns: 2;
-			column-gap: var(--gap);
-		}
-
-		/* Inside it: a run of independent blocks of very different heights, which
-		   is the `.spread-flow` case rather than the `.spread` one. Multi-column
-		   reads in source order and balances itself, where a grid would leave a
-		   hole under every short block while it waited for the facts sheet.
-		   Forgetting spans back across both columns so it stays at the foot. */
-		.facts,
-		.strength-block,
-		.notes,
-		.history {
-			break-inside: avoid;
-		}
-
-		.forget-block {
-			column-span: all;
 		}
 
 		/* The band is as wide as the ledger; the sentences inside it are not. */

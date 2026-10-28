@@ -526,36 +526,38 @@ a {
 
 /*
   The other spread. `.spread` pairs things deliberately — one side means one
-  thing, the other means another — and it is right when the pairing carries
-  meaning. `.spread-flow` is for the opposite case: a long run of independent
-  cards where nothing in particular belongs opposite anything else, and the
-  only goal is two columns that end at roughly the same place.
+  thing, the other means another. `.spread-flow` is for a long run of
+  independent cards where nothing belongs opposite anything, and the only goal
+  is two columns that end at about the same place.
 
-  It is CSS multi-column rather than grid on purpose. A grid puts cards in
-  *rows*, so every short card leaves a gap under it while it waits for the tall
-  one beside it — with eight cards of wildly different heights that reads as
-  holes punched in the page. Columns flow instead, and they balance themselves,
-  so nothing has to be reordered by hand to keep the two sides even. That
-  matters more than it sounds: hand-tuned ordering has to be re-tuned every
-  time a card's content grows, and it silently divorces tab order from what the
-  eye sees. Here the reading order is the source order — down the first column,
-  then down the second — so whatever was last in the markup is still last on
-  screen, which is what keeps a "danger zone" at the foot of the page.
-
-  Cards carry their own bottom margin because `gap` does not apply to the flow
-  direction of a multi-column container.
+  It reads in source order — down the first column, then the second — so the
+  last card in the markup is last on screen (the danger zone stays at the
+  foot), and nothing is reordered by hand. At ≥48rem it is a column flex-wrap
+  whose height the `balanceColumns` action (`$lib/ui/balance.ts`) sets, as
+  `--flow-height`, to the taller column of the best split; that height is what
+  makes it wrap after the right card, the same in every engine. Unmeasured, it
+  has no height and stays one column.
 */
+.spread-flow {
+	display: grid;
+	gap: var(--gap);
+}
+
 @media (min-width: 48rem) {
 	.spread-flow {
-		column-count: 2;
-		column-gap: var(--gap);
+		display: flex;
+		flex-direction: column;
+		flex-wrap: wrap;
+		align-content: flex-start;
+		height: var(--flow-height, auto);
 	}
 
+	/* `> .card` too: `.card` sets its own width further down this file. */
+	.spread-flow > *,
 	.spread-flow > .card {
+		flex: none;
+		width: calc(50% - var(--gap) / 2);
 		max-width: none;
-		margin-bottom: var(--gap);
-		/* Without this a card is free to be split across the column break. */
-		break-inside: avoid;
 	}
 }
 

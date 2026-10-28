@@ -69,6 +69,7 @@
 	} from '$lib/tts';
 	import { targetTagOf } from '$lib/text';
 	import type { Profile } from '$lib/types';
+	import { balanceColumns } from '$lib/ui/balance';
 	import BackLink from '$lib/ui/BackLink.svelte';
 	import InlineStatus from '$lib/ui/InlineStatus.svelte';
 	import ModelPicker from '$lib/ui/ModelPicker.svelte';
@@ -722,7 +723,7 @@
 			<p class="error" role="alert">{loadError}</p>
 		</section>
 	{:else}
-		<div class="spread-flow">
+		<div class="spread-flow" use:balanceColumns>
 			<section class="card ll-rise" style="animation-delay: 60ms">
 				<div class="card-head">
 					<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
@@ -1332,29 +1333,16 @@
 	  the stack of header and the spread below it — stays scoped here. `--gap`
 	  rather than a literal keeps this in step with the gap inside the spread.
 
-	  The sections use `.spread-flow`, not `.spread`: they are eight independent
-	  cards of very different heights with no meaningful pairing between them, so
-	  what is wanted is two self-balancing columns in source order — which also
-	  keeps the danger zone at the foot of the page, where it belongs.
+	  The sections use `.spread-flow`, not `.spread`: they are independent cards
+	  of very different heights with no meaningful pairing between them, so what
+	  is wanted is two balanced columns in source order — which also keeps the
+	  danger zone at the foot of the page, where it belongs.
 	*/
 	.shell {
 		padding-block: 2rem 4rem;
 		display: flex;
 		flex-direction: column;
 		gap: var(--gap);
-	}
-
-	/* On phones the flow is a real stack; column layout only takes over at the
-	   global wide breakpoint. Without this, adjacent cards shared one border. */
-	.spread-flow {
-		display: grid;
-		gap: var(--gap);
-	}
-
-	@media (min-width: 48rem) {
-		.spread-flow {
-			display: block;
-		}
 	}
 
 	.loading {
