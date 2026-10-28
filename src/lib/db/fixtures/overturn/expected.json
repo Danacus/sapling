@@ -402,6 +402,10 @@
 	],
 	"getTexts": [],
 	"getText": {},
+	"clipFor": {
+		"beber": null,
+		"leer": null
+	},
 	"getKnownTerms": [],
 	"getConversations": [],
 	"getConversation": {},

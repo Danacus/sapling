@@ -26,7 +26,7 @@
 	import { fade, fly, scale } from 'svelte/transition';
 
 	import { challengeInfo, correctFeedback, gradeAny, serveAny } from '$lib/challenges/plugin';
-	import { getDailyActivity, getProfile, streakFrom } from '$lib/db';
+	import { clipFor, getDailyActivity, getProfile, streakFrom } from '$lib/db';
 	import { isMockMode } from '$lib/llm';
 	import { loadRomanizer, type Romanizer } from '$lib/romanize';
 	import { targetTagOf } from '$lib/text';
@@ -50,6 +50,7 @@
 	import type {
 		Challenge,
 		ChallengeAnswer,
+		Clip,
 		Feedback as PluginFeedback,
 		Graded,
 		KnowledgeItem,
@@ -139,6 +140,10 @@
 	 */
 	let romanizer = $state<Romanizer | null>(null);
 	let feedback = $state<Feedback | null>(null);
+	/** The answered words heard in a video, for the banner; found after the answer, never awaited. */
+	let clip = $state<Clip | undefined>(undefined);
+	/** Bumped per answer and per shown challenge, so a clip read that lands late is dropped. */
+	let clipGeneration = 0;
 	let answers = $state<SessionAnswer[]>([]);
 
 	/** Day streak after this stream, folded out of the answer log by {@link finish}. */
@@ -430,6 +435,8 @@
 		currentServed = serveAny(challenge, step.kind === 'challenge' ? step.shown : 'plain');
 		currentGraded = undefined;
 		current = challenge;
+		clipGeneration++;
+		clip = undefined;
 		// The words drilled here for the first time, before this answer gives them a history.
 		if (challengeInfo(challenge.type).reviews) {
 			const seen = new Set(newWords.map((word) => word.id));
@@ -501,6 +508,7 @@
 			reviews: traits.reviews,
 			pooled: traits.pooled
 		};
+		findClip(reviewsSrs ? challenge.itemIds : []);
 
 		// Fire-and-follow: the banner animates now, the write lands underneath it.
 		// The one promise is held twice — as `pendingReviewed` for its value (the
@@ -520,6 +528,19 @@
 		pendingWrite = pendingReviewed.then(() => undefined);
 		// While the banner is up: do the words ahead want a batch? One takes a while.
 		void pendingWrite.then(() => refill()).catch(() => {});
+	}
+
+	/** Asks for a cue of one of these words in an imported video; a failure is simply no clip. */
+	function findClip(itemIds: readonly string[]): void {
+		const generation = ++clipGeneration;
+		clip = undefined;
+		const terms = items.filter((item) => itemIds.includes(item.id)).map((item) => item.term);
+		if (terms.length === 0) return;
+		clipFor(terms)
+			.then((found) => {
+				if (generation === clipGeneration && feedback) clip = found;
+			})
+			.catch(() => {});
 	}
 
 	/**
@@ -978,6 +999,7 @@
 				targetLanguageTag={targetTag}
 				last={false}
 				overturned={feedback.overturned ?? false}
+				{clip}
 				oncontinue={() => void continueSession()}
 				onoverturn={overturnCurrent}
 				onassess={assessCurrent}

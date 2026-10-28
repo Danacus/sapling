@@ -115,6 +115,7 @@ function idsIn(events: RawEvent[]) {
 			...of(['itemAdded'], 'id'),
 			...of(['itemReviewed', 'reviewAmended', 'itemUpdated', 'itemDeleted'], 'itemId')
 		]),
+		terms: unique(of(['itemAdded'], 'term')),
 		challenges: unique([
 			...events
 				.filter((e) => e.type === 'challengeAdded')
@@ -167,6 +168,7 @@ async function probe(backend: Backend, events: RawEvent[]): Promise<Record<strin
 		getDailyActivity: await backend.getDailyActivity(),
 		getTexts: await backend.getTexts(),
 		getText: await byKey(ids.texts, (id) => backend.getText(id)),
+		clipFor: await byKey(ids.terms, (term) => backend.clipFor([term])),
 		getKnownTerms: [...(await backend.getKnownTerms())].sort(compare),
 		getConversations: await backend.getConversations(),
 		getConversation: await byKey(ids.conversations, (id) => backend.getConversation(id)),

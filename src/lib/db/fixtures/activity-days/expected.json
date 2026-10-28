@@ -387,6 +387,11 @@
 	"getText": {
 		"text-1": null
 	},
+	"clipFor": {
+		"你好": null,
+		"再见": null,
+		"谢谢": null
+	},
 	"getKnownTerms": [],
 	"getConversations": [],
 	"getConversation": {},

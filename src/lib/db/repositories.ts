@@ -71,6 +71,7 @@ export const getDailyActivity = forward('getDailyActivity');
 export const addText = forward('addText');
 export const getTexts = forward('getTexts');
 export const getText = forward('getText');
+export const clipFor = forward('clipFor');
 export const deleteText = forward('deleteText');
 export const markWord = forward('markWord');
 export const getKnownTerms = forward('getKnownTerms');

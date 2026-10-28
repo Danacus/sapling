@@ -19,7 +19,8 @@
  *
  * Everything that could be *wrong* about following a subtitle track is in
  * `follow.ts`, which is pure and tested: which line is current, when a line has
- * just ended, which line is next. The element wrapper is deliberately thin so
+ * just ended, which line is next; `span.ts` is the same for one cue played
+ * on its own. The element wrapper is deliberately thin so
  * there is nothing in it to test in a node environment that has no media.
  *
  * **Milliseconds above `video.ts`, seconds inside it** — the DOM's clock is
@@ -45,6 +46,7 @@ export { crossedEnd, firstTimed, nextTimed, prevTimed, segmentAt, startOf } from
 export type { Timed } from './follow';
 export { forgetFile, objectUrl, rememberFile, takeFile } from './files';
 export { deadPlayer } from './player';
+export { crossedStop, paddedSpan, SPAN_PAD_MS } from './span';
 export type { Player } from './player';
 export { videoPlayer } from './video';
 export { youtubePlayer } from './youtube';

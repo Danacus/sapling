@@ -119,6 +119,7 @@ fn unique<'a>(values: impl Iterator<Item = Option<&'a str>>) -> Vec<String> {
 
 struct Ids {
     items: Vec<String>,
+    terms: Vec<String>,
     challenges: Vec<String>,
     texts: Vec<String>,
     conversations: Vec<String>,
@@ -141,6 +142,7 @@ fn ids_in(events: &[Value]) -> Ids {
             ],
             "itemId",
         ))),
+        terms: unique(of(&["itemAdded"], "term")),
         challenges: unique(
             events
                 .iter()
@@ -231,6 +233,7 @@ fn probe(core: &Core, events: &[Value]) -> Value {
         "getDailyActivity": core.get_daily_activity().expect("get_daily_activity"),
         "getTexts": core.get_texts().expect("get_texts"),
         "getText": by_key(&ids.texts, |id| core.get_text(id).expect("get_text")),
+        "clipFor": by_key(&ids.terms, |term| core.clip_for(&[term.to_owned()]).expect("clip_for")),
         "getKnownTerms": known,
         "getConversations": core.get_conversations().expect("get_conversations"),
         "getConversation": by_key(&ids.conversations, |id| core.get_conversation(id).expect("get_conversation")),

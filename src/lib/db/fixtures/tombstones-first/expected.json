@@ -154,6 +154,10 @@
 		},
 		"text-z": null
 	},
+	"clipFor": {
+		"y": null,
+		"z": null
+	},
 	"getKnownTerms": [],
 	"getConversations": [
 		{

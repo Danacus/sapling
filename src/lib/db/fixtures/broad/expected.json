@@ -828,6 +828,19 @@
 		},
 		"text-3": null
 	},
+	"clipFor": {
+		"你好": {
+			"textId": "text-2",
+			"title": "Subtitles",
+			"videoId": "dQw4w9WgXcQ",
+			"start": 0,
+			"end": 1500,
+			"text": "你好吗？"
+		},
+		"再见": null,
+		"是…的": null,
+		"谢谢": null
+	},
 	"getKnownTerms": [
 		"早餐"
 	],

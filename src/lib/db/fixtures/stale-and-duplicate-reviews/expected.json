@@ -155,6 +155,9 @@
 	],
 	"getTexts": [],
 	"getText": {},
+	"clipFor": {
+		"r": null
+	},
 	"getKnownTerms": [],
 	"getConversations": [],
 	"getConversation": {},

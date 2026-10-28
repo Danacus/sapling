@@ -20,7 +20,8 @@
 	import { motionMs } from '$lib/ui/motion';
 	import { Grade } from '$lib/srs';
 	import { speak } from '$lib/tts';
-	import type { Challenge, Feedback, Served, Verdict } from '$lib/types';
+	import type { Challenge, Clip, Feedback, Served, Verdict } from '$lib/types';
+	import ClipStage from '$lib/challenges/blocks/ClipStage.svelte';
 	import { getRomanizationMode } from '$lib/prefs';
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
@@ -43,6 +44,7 @@
 		skipped = false,
 		last = false,
 		overturned = false,
+		clip,
 		oncontinue,
 		onoverturn,
 		onassess,
@@ -86,6 +88,8 @@
 		 * the banner just repaints itself green.
 		 */
 		overturned?: boolean;
+		/** One of the answered words heard in an imported video, when the page found one. */
+		clip?: Clip;
 		oncontinue: () => void;
 		/**
 		 * Fired once when the model agrees a `wrong` answer should have counted.
@@ -110,6 +114,9 @@
 	// and the post-answer reveal is the teaching moment.
 	/** Read once — the setting lives in Settings, not mid-session. */
 	const showRomanization = getRomanizationMode() !== 'off';
+
+	/** A clip whose player failed shows nothing, so the banner reads as it does without one. */
+	let clipFailed = $state(false);
 
 	let showExplain = $state(false);
 	let question = $state('');
@@ -354,6 +361,18 @@
 			<p class="explanation">{explanation}</p>
 		{/if}
 
+		{#if clip && !clipFailed}
+			<div class="heard">
+				<p class="heard-title">Heard in: <span>{clip.title}</span></p>
+				<ClipStage
+					videoId={clip.videoId}
+					start={clip.start}
+					end={clip.end}
+					onfail={() => (clipFailed = true)}
+				/>
+			</div>
+		{/if}
+
 		{#if canAssess}
 			<div class="assess" role="group" aria-label="How easy was it?">
 				<span class="assess-label">How easy was it?</span>
@@ -584,6 +603,23 @@
 		opacity: 0.85;
 	}
 
+	.heard {
+		margin-top: 0.85rem;
+		padding-left: 2.8rem;
+	}
+
+	.heard-title {
+		margin: 0 0 0.4rem;
+		font-size: 0.8rem;
+		color: var(--text-muted);
+		overflow-wrap: anywhere;
+	}
+
+	.heard-title span {
+		color: var(--text);
+		font-weight: 700;
+	}
+
 	/* Self-assessment ------------------------------------------------------- */
 
 	.assess {
@@ -746,7 +782,8 @@
 	}
 
 	@media (max-width: 480px) {
-		.explanation {
+		.explanation,
+		.heard {
 			padding-left: 0;
 		}
 	}

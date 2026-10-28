@@ -264,6 +264,10 @@
 	],
 	"getTexts": [],
 	"getText": {},
+	"clipFor": {
+		"ありがとう": null,
+		"こんにちは": null
+	},
 	"getKnownTerms": [
 		"y"
 	],

@@ -205,6 +205,11 @@
 	],
 	"getTexts": [],
 	"getText": {},
+	"clipFor": {
+		"山": null,
+		"本": null,
+		"水": null
+	},
 	"getKnownTerms": [],
 	"getConversations": [],
 	"getConversation": {},

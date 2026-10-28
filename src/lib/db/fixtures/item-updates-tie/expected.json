@@ -118,6 +118,9 @@
 	],
 	"getTexts": [],
 	"getText": {},
+	"clipFor": {
+		"さようなら": null
+	},
 	"getKnownTerms": [],
 	"getConversations": [],
 	"getConversation": {},

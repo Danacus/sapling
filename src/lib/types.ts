@@ -17,6 +17,7 @@ export type {
 	ChallengeScreen,
 	ChallengeTypeInfo,
 	ChallengeResult,
+	Clip,
 	ClozeChallenge,
 	Conversation,
 	ConversationAction,

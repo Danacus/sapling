@@ -43,7 +43,7 @@ use ts_rs::TS;
 
 use sapling_challenges::model::Shared;
 use sapling_db::core::LanguageProfile;
-use sapling_db::{AnswerFiled, AnswerRecord, Core, Error, Result, ReviewOutcome};
+use sapling_db::{AnswerFiled, AnswerRecord, Clip, Core, Error, Result, ReviewOutcome};
 use sapling_domain::events::{parse_payload, EventType, Payload, RawEvent, ResultOverturned};
 use sapling_domain::types::{
     ChallengeResult, Conversation, ConversationDetail, ConversationExchange, ConversationSummary,
@@ -437,6 +437,12 @@ backend! {
         /// device).
         getText(id: String) -> ReadingText | undefined {
             core.get_text(&id)
+        }
+        /// A word heard in a video: the shortest timed cue of a YouTube text
+        /// containing one of `terms` (case-insensitive; whole words where the
+        /// script spaces them), or `undefined`.
+        clipFor(terms: Vec<String>) -> Clip | undefined {
+            core.clip_for(&terms)
         }
         /// Forgets one text. Tombstoned, so a late copy from another device stays
         /// gone.
