@@ -13,12 +13,14 @@
 		setModel
 	} from '$lib/db';
 	import { isMockForced } from '$lib/llm';
+	import { isOpenRouterEndpoint } from '$lib/llm/openrouter-auth';
 	import { isSyncAvailable, isValidPhrase, normalizePhrase, pairDevice } from '$lib/sync';
 	import { languageOption } from '$lib/text';
 	import type { Profile } from '$lib/types';
 	import InlineStatus from '$lib/ui/InlineStatus.svelte';
 	import LanguagePicker from '$lib/ui/LanguagePicker.svelte';
 	import ModelPicker from '$lib/ui/ModelPicker.svelte';
+	import OpenRouterConnect from '$lib/ui/OpenRouterConnect.svelte';
 
 	import { FINISH_HREF, onboardingSteps, startHref, type StartingPoint } from './steps';
 
@@ -215,6 +217,10 @@
 					> — it stays in this browser.
 				</p>
 			</label>
+
+			{#if isOpenRouterEndpoint(getBaseUrl())}
+				<OpenRouterConnect onkey={(key) => (apiKey = key)} />
+			{/if}
 
 			<ModelPicker bind:value={model} baseUrl={getBaseUrl()} apiKey={apiKey || getApiKey()} />
 

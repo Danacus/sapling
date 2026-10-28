@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="robots" content="noindex" />
+		<title>Sapling · OpenRouter</title>
+		<style>
+			body {
+				margin: 0;
+				min-height: 100dvh;
+				display: grid;
+				place-items: center;
+				padding: 1rem;
+				box-sizing: border-box;
+				font:
+					1rem/1.5 system-ui,
+					sans-serif;
+				background: #f7f4ec;
+				color: #2b2a26;
+				text-align: center;
+			}
+			@media (prefers-color-scheme: dark) {
+				body {
+					background: #1d1c19;
+					color: #ece8dc;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<p id="line">Connecting Sapling…</p>
+		<script>
+			// OpenRouter lands here with ?code&state. A BroadcastChannel rather than
+			// `opener.postMessage`, because a sign-in that passes through a provider
+			// with COOP severs `window.opener`. The channel name is
+			// `CALLBACK_CHANNEL` in src/lib/llm/openrouter-auth.ts.
+			const params = new URLSearchParams(location.search);
+			const code = params.get('code');
+			const state = params.get('state');
+			const line = document.getElementById('line');
+			if (code && 'BroadcastChannel' in window) {
+				const channel = new BroadcastChannel('sapling-openrouter-auth');
+				channel.postMessage({ code, state });
+				channel.close();
+				line.textContent = 'Connected. You can close this window.';
+				window.close();
+			} else {
+				line.textContent = 'Nothing to connect here. You can close this window.';
+			}
+		</script>
+	</body>
+</html>

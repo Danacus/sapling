@@ -87,7 +87,7 @@ Behaviour
 - Any route visited without a profile redirects to onboarding.
 - Steps, shown as progress dots:
   1. **Languages**: "I speak" and "I want to learn", each a searchable language picker (fuzzy over English name, own name and code; a flag for a regional variant). Continue requires both picked and different.
-  2. **Connect a model**: OpenRouter API key (stored only in this browser) and a model name (free text with suggestions, a default pre-filled). Without a key, a note explains that words, lessons and conversations cannot be generated but importing and reading still work.
+  2. **Connect a model**: OpenRouter API key (stored only in this browser), or **Connect OpenRouter** to get one by signing in (as in Settings), and a model name (free text with suggestions, a default pre-filled). Without a key, a note explains that words, lessons and conversations cannot be generated but importing and reading still work.
   3. **How much {target} do you know?** — present only when a key was typed on step 2 (or, when adding a language, a key is already stored) or the developer mock flag is set. Two choices:
      - *Starting from scratch* → saves the profile and opens the word check in **starter** mode.
      - *I know some already* → saves the profile and opens the word check in **check** mode.
@@ -1246,6 +1246,7 @@ The page has a back link to Today and lays out its cards in two balanced columns
    - A *Test voices* link to `/tts-test`.
 4. **Language model**
    - *API key:* a password field. A saved key shows "••• saved", and a blank field keeps the saved key. "The key stays in this browser."
+   - **Connect OpenRouter** (only while the endpoint is blank or OpenRouter): gets a key by OpenRouter's sign-in and saves it at once, shown as "Connected". A browser signs in in a popup; the desktop and Android apps, or a blocked popup, show a link and a field for the code OpenRouter displays. A failed exchange says so in a line ("That code expired or was already used — try again.").
    - *Model:* free text with suggestions. Defaults to a built-in model.
    - *API endpoint:* optional. Blank means OpenRouter.
    - **Apply** saves all three together.

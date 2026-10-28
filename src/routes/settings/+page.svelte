@@ -29,6 +29,7 @@
 		dictationModelInstalled
 	} from '$lib/asr';
 	import { getUsageTotals, REQUEST_ITEMS, type UsageTotals } from '$lib/llm';
+	import { isOpenRouterEndpoint } from '$lib/llm/openrouter-auth';
 	import { inTauri } from '$lib/platform';
 	import { startTask } from '$lib/tasks';
 	import { taskStore } from '$lib/tasks/store.svelte';
@@ -71,6 +72,7 @@
 	import BackLink from '$lib/ui/BackLink.svelte';
 	import InlineStatus from '$lib/ui/InlineStatus.svelte';
 	import ModelPicker from '$lib/ui/ModelPicker.svelte';
+	import OpenRouterConnect from '$lib/ui/OpenRouterConnect.svelte';
 	import {
 		applyTheme,
 		getListeningMode,
@@ -577,6 +579,15 @@
 		}
 	}
 
+	/** A key from "Connect OpenRouter" is saved at once; the other fields wait for Apply. */
+	function saveConnectedKey(key: string) {
+		setApiKey(key);
+		apiKeySet = true;
+		apiKeyInput = '';
+		llmMessage = 'Connected';
+		flash((value) => (llmStatus = value), 3000);
+	}
+
 	/** Applies at once: the next top-up reads whatever is stored here. */
 	function chooseReasoningEffort(effort: ReasoningEffort) {
 		reasoningEffort = effort;
@@ -983,6 +994,9 @@
 					/>
 					<p class="hint">The key stays in this browser.</p>
 				</div>
+				{#if isOpenRouterEndpoint(baseUrlInput)}
+					<OpenRouterConnect onkey={saveConnectedKey} />
+				{/if}
 				<ModelPicker
 					bind:value={modelInput}
 					baseUrl={modelsBaseUrl}
