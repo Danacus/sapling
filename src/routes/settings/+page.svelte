@@ -70,6 +70,7 @@
 	import type { Profile } from '$lib/types';
 	import BackLink from '$lib/ui/BackLink.svelte';
 	import InlineStatus from '$lib/ui/InlineStatus.svelte';
+	import ModelPicker from '$lib/ui/ModelPicker.svelte';
 	import {
 		applyTheme,
 		getListeningMode,
@@ -85,14 +86,6 @@
 
 	type Status = 'idle' | 'saved' | 'error';
 
-	const MODEL_SUGGESTIONS = [
-		'google/gemini-3.7-flash',
-		'google/gemini-3.5-flash-lite',
-		'google/gemini-3.1-flash-lite',
-		'openai/gpt-5-nano',
-		'anthropic/claude-haiku-4.5',
-		'Qwen/Qwen3.6-35B-A3B-FP8'
-	];
 	const ROMANIZATION_MODES: { value: RomanizationMode; label: string }[] = [
 		{ value: 'off', label: 'Off' },
 		{ value: 'on', label: 'On' },
@@ -163,6 +156,13 @@
 	let apiKeySet = $state(false);
 	let apiKeyInput = $state('');
 	let modelInput = $state(DEFAULT_MODEL);
+	/** The endpoint field, settled for a moment, so typing a URL lists its models once. */
+	let modelsBaseUrl = $state<string | undefined>(undefined);
+	$effect(() => {
+		const url = baseUrlInput;
+		const timer = setTimeout(() => (modelsBaseUrl = url), 600);
+		return () => clearTimeout(timer);
+	});
 	let llmStatus = $state<Status>('idle');
 	let llmMessage = $state('');
 
@@ -226,6 +226,7 @@
 				apiKeySet = getApiKey() !== undefined;
 				modelInput = getModel();
 				baseUrlInput = getBaseUrl() ?? '';
+				modelsBaseUrl = baseUrlInput;
 				reasoningEffort = getReasoningEffort();
 				const storedItems = getRequestItems();
 				requestItemsInput = storedItems === undefined ? '' : String(storedItems);
@@ -982,23 +983,11 @@
 					/>
 					<p class="hint">The key stays in this browser.</p>
 				</div>
-				<div class="field">
-					<label class="label" for="settings-model">Model</label>
-					<input
-						id="settings-model"
-						class="input"
-						list="settings-models"
-						bind:value={modelInput}
-						placeholder={DEFAULT_MODEL}
-						autocomplete="off"
-						spellcheck="false"
-					/>
-					<datalist id="settings-models">
-						{#each MODEL_SUGGESTIONS as suggestion (suggestion)}
-							<option value={suggestion}></option>
-						{/each}
-					</datalist>
-				</div>
+				<ModelPicker
+					bind:value={modelInput}
+					baseUrl={modelsBaseUrl}
+					apiKey={apiKeyInput.trim() || getApiKey()}
+				/>
 				<!--
 			  Last, and set quieter: the endpoint is an expert knob. Blank is
 			  OpenRouter, which the placeholder already says.

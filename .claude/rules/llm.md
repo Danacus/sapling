@@ -46,4 +46,8 @@ Stateless: data in, data out, never touches the DB. Every model call runs in Rus
 
 The only mid-session spend, user-initiated. `prompts/escalation.txt` with the `escalationSpec`s spliced in (registry order), the stored challenge plus `shown`, `{answer, overturn}` in reply; anything else is prose and never an overturn. When `shown.nativeLine` is false the overturn rule relaxes to "correct for what was shown". The mock never overturns.
 
+## The model list (`models.ts`)
+
+The one call this layer makes itself, and it is no model call: `fetchModels(baseUrl, apiKey?)` reads `GET {baseUrl}/models` (blank is OpenRouter's, which needs no key; a key goes as Bearer when there is one) for `$lib/ui/ModelPicker.svelte`, the model field on onboarding and Settings. The endpoint and key are arguments, never read here. Parsed leniently — `data[].id`, plus OpenRouter's `name`, `context_length` and `pricing` when present — memoised one promise per endpoint for the page's lifetime, and **a failure is an empty list**, forgotten so the next call retries, never an error in the UI. There is no hardcoded model list anywhere: a typed id is always usable (`searchModels` offers it as itself when no listed id is exactly it, and the picker keeps it on blur), so an endpoint without `/models`, or no network, leaves a free-text field.
+
 **Adding a wire type** means extending its owning plugin's wire shape, `type.json` and lesson file — the `add-challenge-type` skill has the procedure; `prompt-tuning` covers content changes.

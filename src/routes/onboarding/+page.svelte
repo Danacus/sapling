@@ -6,6 +6,7 @@
 		createProfile,
 		DEFAULT_MODEL,
 		getApiKey,
+		getBaseUrl,
 		getModel,
 		saveProfile,
 		setApiKey,
@@ -17,6 +18,7 @@
 	import type { Profile } from '$lib/types';
 	import InlineStatus from '$lib/ui/InlineStatus.svelte';
 	import LanguagePicker from '$lib/ui/LanguagePicker.svelte';
+	import ModelPicker from '$lib/ui/ModelPicker.svelte';
 
 	import { FINISH_HREF, onboardingSteps, startHref, type StartingPoint } from './steps';
 
@@ -28,14 +30,6 @@
 	// "About me" on /profile personalises. `steps.ts` holds the branching.
 	const storedKey = adding && getApiKey() !== undefined;
 	const mockForced = isMockForced();
-
-	const MODELS = [
-		'google/gemini-2.5-flash-lite',
-		'google/gemini-2.5-flash',
-		'openai/gpt-4o-mini',
-		'anthropic/claude-3.5-haiku',
-		'meta-llama/llama-3.3-70b-instruct'
-	];
 
 	let step = $state(1);
 
@@ -222,22 +216,7 @@
 				</p>
 			</label>
 
-			<label class="field">
-				<span class="label">Model</span>
-				<input
-					class="input"
-					list="models"
-					bind:value={model}
-					placeholder={DEFAULT_MODEL}
-					autocomplete="off"
-					spellcheck="false"
-				/>
-				<datalist id="models">
-					{#each MODELS as option (option)}
-						<option value={option}></option>
-					{/each}
-				</datalist>
-			</label>
+			<ModelPicker bind:value={model} baseUrl={getBaseUrl()} apiKey={apiKey || getApiKey()} />
 
 			{#if !apiKey.trim()}
 				<p class="keyless">

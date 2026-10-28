@@ -83,5 +83,8 @@ export type {
 
 export { isMockForced, isMockMode } from './mock';
 
+export { fetchModels, modelDetail, searchModels } from './models';
+export type { ModelChoice, ModelInfo } from './models';
+
 export { getUsageTotals, recordUsage } from './usage';
 export type { UsageTotals } from './usage';
