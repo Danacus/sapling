@@ -26,9 +26,10 @@ in the garden with an FSRS strength, marked as known, or not yet met.
 ## 2. Shape of the feature
 
 1. **Library** (`/read`, "Media"). Every text the learner has kept, newest
-   first, and a composer with two doors: *Write one for me* (optional topic →
-   one LLM call) and *Import your own* (a paste or an uploaded file, plus an
-   optional recording → stored at once, no LLM call).
+   first, and a composer with three tabs (`?tab=`): *Video* (a YouTube link
+   whose captions are fetched, or a recording and its subtitle file → stored at
+   once, no LLM call), *Text* (a paste or a `.txt` file → the same) and *Write
+   one for me* (optional topic → one LLM call).
 2. **Reader** (`/read/[id]`). The text a page at a time (`?p=`), each page one
    continuous body of tappable words with ruby readings from the local
    romanizer, a Listen button, a paid **Translate** for the page's segments (or,
@@ -376,29 +377,21 @@ under the same condition.
 
 ### As built, where it differs from the above
 
-- **The import door is three parts, and an uploaded file is an object.** It grew
-  by accretion — a file input that poured raw VTT into the textarea, and a
-  recording section that only existed once a paste happened to validate — and
-  was restructured into *what the text is*, *how much of it there is*, *what it
-  plays alongside*. A file the learner uploads is recognised by its **content,
-  not its extension**: anything `importSource` gives a `format` becomes a card in
-  the textarea's place stating what it holds (`SRT subtitles · 214 cues ·
-  12:34`) with a × that gives the box back, and
-  anything else *is* a paste and lands in the box, where it can still be read
-  and edited. Exactly one of the two is on screen, which is how the page says
-  which is the source; `pasted` survives underneath a card. `plan` stays a
-  single derivation over one `importSource` answer for `sourceFile?.text ??
-  pasted` (an effect drops an answer whose source has since changed), so the
-  card, the count, the disabled button and the import cannot disagree. The count
-  row ("214 lines", "3 paragraphs") sits before the button whichever source is
-  in play, and a file with nothing readable in it says so there in red, since a
-  dead control cannot explain itself. The **recording group is always
-  rendered** and merely `disabled` (a real `<fieldset>`, one attribute for every
-  control in it) with a line saying subtitles are what a recording follows: a
-  control that materialises only when a paste parses is a feature nobody knows
-  the app has. Both file pickers hide the browser's own control inside a label
-  and wear a dashed slot instead — the native widget says "No file chosen" where
-  a verb belongs, and a dashed edge is where this journal puts things.
+- **Import is two tabs, and the recording leads the Video one.** Video and text
+  are different starting points, so they are different forms: the **Text** tab
+  is a box and a `.txt` upload and nothing else, and the **Video** tab starts
+  from the recording — a YouTube link whose caption tracks are listed as soon as
+  it names a video, a picked track becoming the subtitles — with "Or use your
+  own files" (a recording and its subtitle file) below it. Subtitles, fetched or
+  uploaded, are an **object, not a paste**: a card stating what they hold
+  (`SRT subtitles · 214 lines · 12:34`) with a × to remove it. An uploaded
+  subtitle file is recognised by its **content, not its extension**. Each form
+  derives everything it shows from one `importSource` answer over its one source
+  (an effect drops an answer whose source has since changed), so the card, the
+  count, the disabled button and the import cannot disagree. File pickers hide
+  the browser's own control inside a label and wear a dashed slot instead — the
+  native widget says "No file chosen" where a verb belongs, and a dashed edge is
+  where this journal puts things.
 - `add_words` is **`addWords` from `$lib/assistant`**: the assistant's own
   Rust executor, run through the `llm` export with no model.
 - A **`tracked` word's card carries no actions** — only its bed label. Adding it
@@ -634,8 +627,8 @@ the device it synced to (`data.md`).
 
 The recording is usually not a file at all. The learner watched something,
 pulled the subtitles out of it, and still has the video open in a tab — so the
-composer takes **either** a file **or** a YouTube link, exclusively, and the
-reader plays whichever the text names.
+Video tab leads with a YouTube link and keeps a file as the quieter second
+way, exclusively, and the reader plays whichever the text names.
 
 **The seam paid for itself.** `youtubePlayer` (`youtube.ts`) is the same five
 verbs and a clock over YouTube's IFrame API, and the reader's player effect

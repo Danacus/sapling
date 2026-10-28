@@ -1,102 +1,43 @@
 <!--
-  The reading library: every text the learner has kept, and the two doors to one
-  more.
+  The library: every text the learner has kept, and three ways to one more —
+  the composer (doing) opposite the shelf (state), composer first on a phone,
+  where an empty shelf is the common case.
 
-  A spread, and the pairing is the usual one — the *doing* (write me one, or
-  paste one in) opposite the *state* (what is already on the shelf). On a phone
-  the composer comes first, because an empty shelf is the common case on the day
-  someone finds this page.
-
-  The two doors are not alike in cost. *Write one for me* is a paid call —
-  `generateReadingText` writes a text out of the garden, and the `read-generate`
-  task makes the call and the save. *Import your own* is free and local: the
-  core's `importSource` cuts what was pasted or uploaded into the segments it is
-  stored as (one per subtitle cue, one per paragraph), and `add()` stores them
-  with `addText` straight away and opens the text — no model, no task, nothing
-  to wait for. Word meanings come later, one word at a time, from the reader's
-  lookup.
-
-  **The import door has three parts, in the order the questions arise**: what the
-  text is, how much of it there is, and what it should play alongside — and then
-  a title, last, because it is the one field the learner may leave as it comes
-  (the file's name, or the text's first line).
-  The door explains nothing in prose: every control is labelled by what it does,
-  and the only lines of copy are the ones a control cannot say for itself (why
-  it is disabled, what is attached, that a file is kept by name alone).
-
-  *What it is* has two shapes and shows one of them. A paste stays in the box —
-  prose, a copied transcript panel, anything typed. An **uploaded file is an
-  object, not a paste**: a subtitle file is a thousand lines of cue soup, and
-  pouring it into the textarea buried the only thing worth seeing, which is what
-  the app made of it. So it becomes a card stating what it is (format, cues,
-  duration) with a × that gives the box back. The file's *content* decides which
-  shape it takes, not its extension: anything the detector recognises becomes
-  the card, anything else is a paste and lands in the box, where it can still be
-  read and edited.
-
-  *How much* is one quiet line under the source, whichever source it is: the
-  lines of a subtitle file, the paragraphs of prose. Silent while the box is
-  empty; red where the button below is dead.
-
-  *What it plays alongside* is a group that is **always there**, disabled rather
-  than absent while the text has no timings — a control that materialises only
-  when a paste happens to parse is a feature nobody knows exists — with the
-  legend's note ("needs subtitles") as the whole explanation. One recording,
-  chosen two ways on one row — a file on this device, *or* a YouTube link — and
-  the fields clear each other, because "which of these two is it" is not a
-  question the reader should have to answer later. Attached now or never: a text
-  is immutable. What is *stored* is a reference either way: a video id, or a
-  file's name and nothing else. The file handle itself goes into `$lib/media`'s
-  session cache, so the reader opening a second later already has it and every
-  later open asks for it again.
-
-  **The YouTube link is also a *source*, and that reorders the three parts.** A
-  link alone can produce the text (`$lib/media/captions.ts` fetches its caption
-  track) — which is why the recording group is live from the start instead of
-  waiting for timings that the group is one of the ways to obtain. Only the
-  *file* picker still waits, because a recording with no subtitles to follow is
-  still a reference nothing can use. What the fetch produces is a `json3` file
-  and it is handed to `sourceFile` exactly as an upload is, so there is still one
-  derivation behind the card, the count, the button and the import.
+  Video and Text are free and local (`VideoImport`, `TextImport`: the core's
+  `importSource` cuts, `addText` stores). Write one for me is a paid call run as
+  the `read-generate` task, which also saves, so a text lands whether or not the
+  learner stayed. The tab is `?tab=` so Explore and the way back can name one.
 -->
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { onDestroy } from 'svelte';
 
-	import { addText, getAllItems, getKnownTerms, getProfile, getTexts, importSource } from '$lib/db';
-	import { newUuid } from '$lib/device';
+	import { getAllItems, getKnownTerms, getProfile, getTexts } from '$lib/db';
 	import { isMockMode } from '$lib/llm';
-	import { captionsAvailable, listCaptions, rememberFile, videoIdFrom } from '$lib/media';
-	import type { CaptionTrack } from '$lib/media';
 	import { MAX_FOCUS_WORDS, MAX_TOPIC_CHARS } from '$lib/reading';
 	import { selectSessionItems } from '$lib/srs';
 	import { SETTLED, rootOf, startTask, taskOutcome } from '$lib/tasks';
 	import type { Task } from '$lib/tasks';
 	import { taskStore } from '$lib/tasks/store.svelte';
-	import type {
-		ImportedSource,
-		KnowledgeItem,
-		Profile,
-		ReadingMedia,
-		ReadingText,
-		Segment,
-		SubtitleFormat
-	} from '$lib/types';
+	import type { KnowledgeItem, Profile, ReadingText } from '$lib/types';
 	import BackLink from '$lib/ui/BackLink.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
+	import { extent, tabFrom } from './compose';
+	import type { Tab } from './compose';
+	import TextImport from './TextImport.svelte';
+	import VideoImport from './VideoImport.svelte';
+
+	const TABS: readonly { id: Tab; label: string }[] = [
+		{ id: 'video', label: 'Video' },
+		{ id: 'text', label: 'Text' },
+		{ id: 'write', label: 'Write one for me' }
+	];
+
 	/** Nudges, not choices — the same shape `/converse` offers over its topic box. */
 	const EXAMPLE_TOPICS = ['A morning at the market', 'A letter from home', 'Something spooky'];
-
-	/**
-	 * How long a title taken from a text's first line may run. A title is a
-	 * shelf label, and a first line can be a whole paragraph.
-	 */
-	const TITLE_CHARS = 60;
-
-	/** Which composer is open. Not a mode: the two write the same kind of text. */
-	type Door = 'write' | 'paste';
 
 	let loading = $state(true);
 	let loadError = $state('');
@@ -105,114 +46,28 @@
 	let texts = $state<ReadingText[]>([]);
 	let mockMode = $state(false);
 
-	/** What a recognised file is called on screen, in the learner's terms. */
-	const FORMAT_NAMES: Record<SubtitleFormat, string> = {
-		srt: 'SRT subtitles',
-		vtt: 'WebVTT subtitles',
-		'youtube-transcript': 'YouTube transcript',
-		json3: 'YouTube captions'
-	};
-
-	let door = $state<Door>('write');
+	const tab = $derived(tabFrom(page.url.searchParams.get('tab')));
 	let topic = $state('');
-	let title = $state('');
-	let pasted = $state('');
-	/**
-	 * A subtitle file the learner uploaded, held as an *object* rather than poured
-	 * into the box.
-	 *
-	 * A subtitle file is not a paste. It is a thousand lines of cue soup nobody
-	 * wants to read, let alone edit, and dropping it into the textarea buried the
-	 * one thing the learner does want to see — what the app made of it. So the
-	 * file becomes a card that states its own facts, and the box stays what it is
-	 * for: text somebody typed or copied. The two are alternatives, and the card
-	 * standing in the box's place is how that is said.
-	 *
-	 * Its `text` is the source of truth for {@link plan} whenever it is set;
-	 * `pasted` is kept untouched underneath, so removing the file gives back
-	 * whatever was in the box before.
-	 */
-	let sourceFile = $state<{ name: string; text: string } | undefined>(undefined);
-	/**
-	 * The recording the subtitles were written for, if the learner has it.
-	 *
-	 * Optional in every sense: an import with no file is the ordinary text the
-	 * reader has always shown, and the only thing kept about a file that *is*
-	 * chosen is its name.
-	 */
-	let mediaFile = $state<File | undefined>(undefined);
-	/**
-	 * The other kind of recording: a link to the video the subtitles came from.
-	 *
-	 * The two are **exclusive** — a text has one recording, and offering a file
-	 * *and* a link would be asking which of two answers to the same question
-	 * counts. Choosing either clears the other, so what is on screen is always
-	 * what would be stored.
-	 */
-	let mediaLink = $state('');
-	/** The file input, so choosing a link can visibly empty it. */
-	let mediaInput = $state<HTMLInputElement | null>(null);
-	/** The tracks the video has, while the learner is choosing one. */
-	let tracks = $state<CaptionTrack[] | undefined>(undefined);
-	/** The listing call in flight. Not a task: it is one question, not a job. */
-	let listingTracks = $state(false);
-	/** The captions door's own failure line, kept apart from the import's. */
-	let captionsError = $state('');
-	/**
-	 * A text being written, if any — read from the task runner rather than kept
-	 * here, so it is still right after the learner has left and come back, and so
-	 * the tray can show the same job elsewhere.
-	 */
+	/** A text being written, read from the runner so it survives leaving and coming back. */
 	const busy = $derived(taskStore.running.some((task) => task.kind === 'read-generate'));
-	/**
-	 * An import being saved. Page state and not a task: it is one local write the
-	 * page awaits before it opens the text, over in a moment.
-	 */
-	let adding = $state(false);
-	/**
-	 * A captions fetch in flight, read from the runner for the reason
-	 * {@link busy} is. Kept separate from `busy` because it disables a
-	 * different set of things: the import is not running, but the source it would
-	 * import is about to be replaced.
-	 */
-	const fetchingCaptions = $derived(taskStore.running.some((task) => task.kind === 'captions'));
-	/** Whether this host can fetch a video's captions at all. */
-	const canFetchCaptions = captionsAvailable();
 	let composeError = $state('');
 
-	/**
-	 * Whether this page has been left. A composer task outlives the page, and
-	 * the one thing it must not do from the shelf is `goto` into a session the
-	 * learner has since started — so the text is opened only while this page
-	 * is still the one on screen, and otherwise simply waits in the library.
-	 */
+	// A finished text opens only while this page is on screen, never into
+	// whatever the learner has moved on to.
 	let left = false;
 	onDestroy(() => {
 		left = true;
 	});
 
 	/**
-	 * The ids whose outcome is this page's business — **not task state**, only
-	 * "which of the runner's records are mine".
-	 *
-	 * The runner owns everything about the jobs themselves. What it cannot tell
-	 * the page is which of a dozen records the page is the one waiting for, and
-	 * the promise `startTask` hands back cannot say either: Retry in the tray
-	 * re-runs a failed input as a **new** task with a new id and a new promise,
-	 * so the one this page was given resolves once, with the failure, and never
-	 * again. So the page keeps ids and matches records against them.
-	 *
-	 * Deliberately *not* `$state`: it is only ever added to right after a
-	 * `startTask`, or from inside the effect below, and both of those already
-	 * change the records that effect is watching — so making it reactive would
-	 * buy nothing and cost the effect a dependency on something it writes. (A
-	 * `$state(new Set())` would not even be reactive: Svelte proxies objects and
-	 * arrays, not Sets.)
+	 * Ids of the `read-generate` records this page started: which of the
+	 * runner's records are its business. Not `$state` — only ever added to
+	 * beside a change the effect below already watches.
 	 */
 	const mine = new Set<string>();
 	/** Records already acted on, so a re-run effect never fires an outcome twice. */
 	const handled = new Set<string>();
-	/** One `goto` per page: two texts landing at once must not race each other. */
+	/** One `goto` per page: two texts landing at once must not race. */
 	let navigating = false;
 
 	const dates = new Intl.DateTimeFormat(undefined, {
@@ -231,8 +86,7 @@
 		Promise.all([getProfile(), getAllItems(), getTexts()])
 			.then(([loadedProfile, loadedItems, loadedTexts]) => {
 				if (cancelled) return;
-				// `undefined` here means the root layout is about to redirect to
-				// onboarding — keep the spinner up rather than flashing an error.
+				// `undefined` means the root layout is about to redirect to onboarding.
 				if (!loadedProfile) return;
 				profile = loadedProfile;
 				items = loadedItems;
@@ -251,119 +105,19 @@
 		};
 	});
 
-	/**
-	 * What the text on the way in actually is, worked out once and used by every
-	 * line that describes it and by the button that spends the money.
-	 *
-	 * There is one door, not two: the learner pastes or uploads whatever they have
-	 * and the page recognises it. The core's `importSource` does the recognising
-	 * and the cutting — a subtitle file becomes one timed segment per cue,
-	 * anything else is prose and becomes one segment per paragraph. **One answer
-	 * over one source**, which is what keeps the card, the count, the button's
-	 * disabled state and the import from ever disagreeing about what is being
-	 * stored — the source is the uploaded file if there is one and the box
-	 * otherwise, and nothing downstream asks which.
-	 *
-	 * The answer is a round trip, so it lands in `$state` from an effect, and an
-	 * answer for a source that has since changed is dropped rather than shown.
-	 */
-	let imported = $state<{ source: string; result: ImportedSource }>({
-		source: '',
-		result: { cues: 0, durationMs: 0, segments: [] }
-	});
-
-	$effect(() => {
-		const source = sourceFile?.text ?? pasted;
-		let stale = false;
-		importSource(source).then(
-			(result) => {
-				if (!stale) imported = { source, result };
-			},
-			() => {}
-		);
-		return () => {
-			stale = true;
-		};
-	});
-
-	const plan = $derived(imported.result);
-
-	/**
-	 * What the text is called if the learner names nothing: an uploaded or
-	 * fetched file's name without its extension, or else the first line of the
-	 * text, cut to {@link TITLE_CHARS}. Shown as the title field's placeholder,
-	 * so the learner sees it before it is used and can type over it.
-	 */
-	const defaultTitle = $derived(
-		sourceFile ? sourceFile.name.replace(/\.[^./\\]+$/, '') : firstLine(plan.segments)
-	);
-
-	/** The first non-blank line of the first segment, shortened to a label. */
-	function firstLine(segments: readonly Segment[]): string {
-		const line = (segments[0]?.text ?? '')
-			.split('\n')
-			.map((part) => part.trim())
-			.find(Boolean);
-		if (!line) return '';
-		const chars = [...line];
-		return chars.length > TITLE_CHARS ? `${chars.slice(0, TITLE_CHARS).join('').trimEnd()}…` : line;
-	}
-
-	/** "12 lines" for subtitles, "3 paragraphs" for prose — what the text holds. */
-	function extent(segments: readonly Segment[]): string {
-		const n = segments.length;
-		const timed = segments.some((segment) => segment.start !== undefined);
-		return `${n} ${timed ? 'line' : 'paragraph'}${n === 1 ? '' : 's'}`;
-	}
-
-	/**
-	 * The video the link names, if it names one.
-	 *
-	 * Derived rather than parsed on submit, because the learner should see what
-	 * was understood while there is still a box to correct — a link that turns out
-	 * to be a playlist is worth knowing before the import is paid for.
-	 */
-	const linkId = $derived(videoIdFrom(mediaLink));
-
-	function pickDoor(next: Door) {
-		door = next;
-		// The other door's failure is not this one's news.
-		composeError = '';
-	}
-
-	/**
-	 * Everything the model may use freely: the garden, plus the words the learner
-	 * has marked known.
-	 *
-	 * That union *is* the point of the mark. A known word needs no gloss and no
-	 * card, so handing it over lets a text be written with the function words and
-	 * the furniture the learner already reads, instead of only out of the couple
-	 * of hundred terms the scheduler happens to be tracking.
-	 */
+	/** The garden plus legacy known marks: everything the model may use freely. */
 	async function vocabularyNow(): Promise<string[]> {
 		const known = await getKnownTerms();
 		return [...items.map((item) => item.term), ...known];
 	}
 
-	/**
-	 * Every outcome this page owes the learner a reaction to, watched as
-	 * **records** rather than awaited as promises.
-	 *
-	 * This is the whole reason the page keeps {@link mine}. Awaiting the promise
-	 * from `startTask` worked right up until the learner pressed Retry in the
-	 * tray: the retry is a new record with a new promise, the page was still
-	 * parked on the old one, and a text that had landed in the library never
-	 * opened and the failure never cleared. Records are what Retry produces more
-	 * of, so records are what this reads — oldest first, so that when several
-	 * land at once the newest is the one whose effect stands.
-	 */
+	// Outcomes are read from the runner's records, not the promise `startTask`
+	// returned: a Retry in the tray is a new record with a new promise.
 	$effect(() => {
 		const tasks = taskStore.tasks;
 		for (const task of tasks) {
 			if (handled.has(task.id) || !mine.has(rootOf(tasks, task.id))) continue;
-			// A retry of ours is ours, and adopting its id the moment it appears is
-			// what keeps the answer right after the records it descends from are
-			// dismissed — a dismissed record takes its link in the chain with it.
+			// Adopt a retry at once, so dismissing its ancestors keeps it ours.
 			mine.add(task.id);
 			if (!SETTLED.has(task.status)) continue;
 			handled.add(task.id);
@@ -371,40 +125,17 @@
 		}
 	});
 
-	/**
-	 * What one settled record of ours means here. The record says *that* it
-	 * ended and how; the value it produced comes from `taskOutcome`, which is
-	 * addressable by id precisely so a retry nobody kept the promise of can
-	 * still be read. A `cancelled` task means nothing on this page — the learner
-	 * dropped it themselves — so only the two real endings are handled.
-	 */
 	async function react(task: Task): Promise<void> {
-		if (task.kind === 'captions') {
-			const outcome = await taskOutcome('captions', task.id);
-			if (!outcome || left) return;
-			if (outcome.status === 'done') {
-				composeError = '';
-				sourceFile = { name: outcome.result.name, text: outcome.result.text };
-			} else if (outcome.status === 'failed') captionsError = outcome.error;
-			return;
-		}
-
 		if (task.kind !== 'read-generate') return;
 		const outcome = await taskOutcome(task.kind, task.id);
 		if (!outcome || left) return;
-		if (outcome.status === 'failed') {
-			// Replaces whatever was there, so a retry that fails again says so.
-			composeError = outcome.error;
-		} else if (outcome.status === 'done' && !navigating) {
-			// The shelf below is never refreshed for this: a text of ours that
-			// lands while the page is still here opens, and one that lands after
-			// the learner has gone is on the shelf the next time they arrive.
+		if (outcome.status === 'failed') composeError = outcome.error;
+		else if (outcome.status === 'done' && !navigating) {
 			navigating = true;
 			await goto(`/read/${outcome.result.id}`);
 		}
 	}
 
-	/** Door one: a text written out of the learner's own words. */
 	async function generate() {
 		if (!profile || busy) return;
 		composeError = '';
@@ -417,9 +148,7 @@
 			composeError = cause instanceof Error ? cause.message : 'Could not write a text just now.';
 			return;
 		}
-		// The focus list is the schedule's, so a text is a genuine review and not
-		// only pleasant reading — most overdue first, capped where the prompt caps
-		// it.
+		// The schedule's most overdue words, so a text is a genuine review too.
 		const { reviewItems } = selectSessionItems(items, {
 			now: Date.now(),
 			maxItems: MAX_FOCUS_WORDS
@@ -434,211 +163,6 @@
 		});
 		mine.add(id);
 	}
-
-	/**
-	 * A file the learner uploaded, sorted into one of the two things a file can be.
-	 *
-	 * **Its content decides, not its extension.** Anything the detector recognises
-	 * as cues becomes an object — a card that states what it holds, because
-	 * nobody wants a thousand timestamps in a textarea — and anything else *is* a
-	 * paste and goes into the box, where it can be read and edited like the text
-	 * it is. So a `.txt` that turns out to be an SRT is still a subtitle file, and
-	 * an `.srt` full of prose is still prose; the learner never has to know which
-	 * door they used.
-	 */
-	async function uploadFile(event: Event) {
-		const input = event.currentTarget as HTMLInputElement;
-		const file = input.files?.[0];
-		// Cleared straight away, so choosing the same file twice still fires.
-		input.value = '';
-		if (!file) return;
-
-		composeError = '';
-		try {
-			const text = await file.text();
-			if ((await importSource(text)).format) sourceFile = { name: file.name, text };
-			else {
-				// Prose: the box is where it belongs, and it replaces whatever object
-				// was standing in for it.
-				sourceFile = undefined;
-				pasted = text;
-			}
-		} catch {
-			composeError = 'Could not read that file.';
-		}
-	}
-
-	/** Puts the box back, with whatever was in it before the file arrived. */
-	function dropSource() {
-		sourceFile = undefined;
-		composeError = '';
-	}
-
-	/**
-	 * `mm:ss`, or `h:mm:ss` for anything long enough to need it.
-	 *
-	 * Local to the page because it is presentation, like the date formatter above:
-	 * how long a recording runs is not a fact `$lib/reading` has an opinion about.
-	 */
-	function clock(ms: number): string {
-		const total = Math.round(ms / 1000);
-		const seconds = `${total % 60}`.padStart(2, '0');
-		const minutes = Math.floor(total / 60) % 60;
-		const hours = Math.floor(total / 3600);
-		return hours > 0
-			? `${hours}:${`${minutes}`.padStart(2, '0')}:${seconds}`
-			: `${minutes}:${seconds}`;
-	}
-
-	/**
-	 * The recording, chosen beside the subtitles that describe it.
-	 *
-	 * Held only in memory until the import lands. Nothing is read from it here —
-	 * a video is hundreds of megabytes and the app wants none of it, only the
-	 * handle and, for the store, the name.
-	 */
-	function chooseRecording(event: Event) {
-		const input = event.currentTarget as HTMLInputElement;
-		mediaFile = input.files?.[0];
-		// A text has one recording: the file the learner just chose is the answer,
-		// so the link stops being one.
-		if (mediaFile) mediaLink = '';
-	}
-
-	/**
-	 * The other half of the same choice — a link to the video instead of a copy of
-	 * it.
-	 *
-	 * Written out rather than `bind:value`, because clearing the file input is
-	 * part of the same keystroke: an `<input type="file">` cannot be emptied by
-	 * assigning state (the browser owns its value), so the element is asked
-	 * directly, and doing that in the handler keeps the order of the two obvious.
-	 */
-	function enterLink(event: Event) {
-		const input = event.currentTarget as HTMLInputElement;
-		mediaLink = input.value;
-		// A track list belongs to the video it was asked about, so editing the link
-		// puts the question back rather than leaving last video's answer on screen.
-		tracks = undefined;
-		captionsError = '';
-		if (input.value.trim() === '') return;
-		mediaFile = undefined;
-		if (mediaInput) mediaInput.value = '';
-	}
-
-	/**
-	 * What captions the video has, asked of YouTube.
-	 *
-	 * Awaited here rather than run as a task, unlike the fetch: it is one
-	 * question whose whole answer is a list to choose from, and a list that
-	 * arrived in the tray after the learner had moved on would be no use to
-	 * anybody. It still takes seconds, so the control says so while it waits.
-	 */
-	async function askForTracks() {
-		if (!linkId) return;
-
-		tracks = undefined;
-		captionsError = '';
-		listingTracks = true;
-		try {
-			const listing = await listCaptions(linkId);
-			if (listing.tracks.length === 0) {
-				captionsError = 'That video has no caption tracks — nothing to fetch.';
-				return;
-			}
-			tracks = listing.tracks;
-		} catch (cause) {
-			captionsError =
-				cause instanceof Error ? cause.message : 'Could not ask YouTube about that video.';
-		} finally {
-			listingTracks = false;
-		}
-	}
-
-	/**
-	 * Fetches one track and makes it the text.
-	 *
-	 * What lands is the raw `json3` file, dropped into `sourceFile` exactly as an
-	 * upload is — so the card, the cost row, the button and `add()` all read it
-	 * through the one `plan` derivation and none of them learns where it came
-	 * from. The link stays in its field, so the video attaches as the recording
-	 * on the way out with no extra bookkeeping.
-	 *
-	 * Starting is all this does; what comes back arrives through the effect
-	 * above, along with every other outcome of ours.
-	 */
-	function fetchTrack(track: CaptionTrack) {
-		if (!linkId || fetchingCaptions) return;
-
-		captionsError = '';
-		// The list has done its job; the tray carries the wait from here.
-		tracks = undefined;
-		const { id } = startTask('captions', { videoId: linkId, ...track });
-		mine.add(id);
-	}
-
-	/**
-	 * Door two: a text the learner imported, cut by the core and stored as it is.
-	 *
-	 * No model and no task: the segments `importSource` produced are the stored
-	 * text, so this is one `addText` and a `goto`. The recording, when it is a
-	 * file, goes into `$lib/media`'s session cache against the new id first, so
-	 * the reader opening a moment later already has it.
-	 */
-	async function add() {
-		if (!profile || adding || busy) return;
-
-		// The effect's answer can trail a keystroke; never import a stale cut.
-		const source = sourceFile?.text ?? pasted;
-		const { segments } = imported.source === source ? imported.result : await importSource(source);
-		if (segments.length === 0) {
-			composeError = 'There is nothing to read in that yet.';
-			return;
-		}
-
-		composeError = '';
-		const own = title.trim();
-		const name = own || (sourceFile ? defaultTitle : firstLine(segments)) || 'Untitled';
-
-		// A reference and never the thing itself: an id for YouTube, and for a
-		// file only its name and type — the file never leaves this tab. Guarded
-		// on timings as well, because a media reference on a text whose segments
-		// have no offsets would point at a recording nothing could follow. The
-		// link wins where both are somehow set; the two inputs clear each other,
-		// so that is a tie that should not arise.
-		const timed = segments.some((segment) => segment.start !== undefined);
-		const media: ReadingMedia | undefined = !timed
-			? undefined
-			: linkId
-				? { kind: 'youtube', videoId: linkId }
-				: mediaFile
-					? {
-							kind: 'file',
-							name: mediaFile.name,
-							...(mediaFile.type ? { type: mediaFile.type } : {})
-						}
-					: undefined;
-
-		const text: ReadingText = {
-			id: newUuid(),
-			title: name,
-			source: 'imported',
-			segments,
-			...(media ? { media } : {}),
-			createdAt: Date.now()
-		};
-
-		adding = true;
-		try {
-			await addText(text);
-			if (media?.kind === 'file' && mediaFile) rememberFile(text.id, mediaFile);
-			if (!left) await goto(`/read/${text.id}`);
-		} catch (cause) {
-			composeError = cause instanceof Error ? cause.message : 'Could not import that text.';
-		} finally {
-			adding = false;
-		}
-	}
 </script>
 
 <svelte:head>
@@ -651,8 +175,6 @@
 			<Spinner />
 		</div>
 	{:else if loadError}
-		<!-- The way home comes with the error: a failed read is a screen the
-		     learner can be stuck on, and the desktop shell has no back arrow. -->
 		<header class="topbar">
 			<BackLink href="/explore" label="Back to explore" />
 		</header>
@@ -683,33 +205,33 @@
 				</p>
 			{/if}
 
-			<!-- Doing. First in source order, so the phone meets the composer before
-			     a shelf that may well be empty. -->
 			<section class="card compose-card ll-rise" style="animation-delay: 120ms">
-				<div class="doors" role="group" aria-label="Where the text comes from">
-					<button
-						type="button"
-						class="door"
-						class:is-on={door === 'write'}
-						aria-pressed={door === 'write'}
-						disabled={busy || adding}
-						onclick={() => pickDoor('write')}
-					>
-						Write one for me
-					</button>
-					<button
-						type="button"
-						class="door"
-						class:is-on={door === 'paste'}
-						aria-pressed={door === 'paste'}
-						disabled={busy || adding}
-						onclick={() => pickDoor('paste')}
-					>
-						Import your own
-					</button>
+				<nav class="tabs" aria-label="Add to your media">
+					{#each TABS as { id, label } (id)}
+						<a
+							class="tab"
+							class:is-on={tab === id}
+							href="?tab={id}"
+							aria-current={tab === id ? 'page' : undefined}
+							data-sveltekit-replacestate
+							data-sveltekit-noscroll
+							data-sveltekit-keepfocus
+						>
+							{label}
+						</a>
+					{/each}
+				</nav>
+
+				<!-- Both import forms stay mounted, so a half-filled form and a caption
+				     fetch in flight survive a tab switch. -->
+				<div hidden={tab !== 'video'}>
+					<VideoImport {busy} />
+				</div>
+				<div hidden={tab !== 'text'}>
+					<TextImport {busy} />
 				</div>
 
-				{#if door === 'write'}
+				{#if tab === 'write'}
 					<label class="field tight">
 						<span class="label">What about?</span>
 						<input
@@ -747,10 +269,6 @@
 						{busy ? 'Writing…' : composeError ? 'Try again' : 'Generate'}
 					</button>
 
-					<!-- An empty garden is allowed through: the model still writes
-					     something readable at the learner's level. It just has nothing of
-					     theirs to build from, which is worth one line here rather than
-					     discovering in the text. -->
 					<p class="hint">
 						{#if items.length === 0}
 							Your garden is empty, so this one is written from scratch.
@@ -758,241 +276,18 @@
 							Written from your {items.length} word{items.length === 1 ? '' : 's'}.
 						{/if}
 					</p>
-				{:else}
-					<!-- The text source: the box, or the file standing in its place. Never
-					     both — one of the two being *gone* is how the page says which one
-					     is the source. -->
-					{#if sourceFile}
-						<div class="field tight">
-							<p class="label">The text</p>
-							<div class="source-card ll-rise">
-								<svg class="ico source-mark" viewBox="0 0 24 24" aria-hidden="true">
-									<rect x="3.6" y="4.8" width="16.8" height="14.4" rx="2.2" />
-									<path d="M3.6 9.3h16.8M8.1 4.8v4.5M15.9 4.8v4.5" />
-									<path d="M8.4 13.4h7.2M8.4 16.1h4.4" />
-								</svg>
-								<div class="source-id">
-									<p class="source-kind">
-										{plan.format ? FORMAT_NAMES[plan.format] : 'Uploaded file'}
-									</p>
-									<p class="source-name">{sourceFile.name}</p>
-									<p class="source-facts">
-										{plan.cues} cue{plan.cues === 1 ? '' : 's'}{plan.durationMs > 0
-											? ` · ${clock(plan.durationMs)}`
-											: ''}
-									</p>
-								</div>
-								<button
-									type="button"
-									class="source-drop"
-									aria-label="Remove {sourceFile.name}"
-									disabled={adding}
-									onclick={dropSource}
-								>
-									<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-										<path d="m7 7 10 10M17 7 7 17" />
-									</svg>
-								</button>
-							</div>
-						</div>
-					{:else}
-						<label class="field tight paste-field">
-							<span class="label">The text</span>
-							<textarea
-								class="input paste-input"
-								rows="8"
-								placeholder="Paste an article, a song, a transcript…"
-								disabled={adding}
-								bind:value={pasted}></textarea>
-						</label>
 
-						<!-- The browser's own file control is the ugliest thing on the page
-						     and says "No file chosen" where a verb belongs, so the input is
-						     hidden inside its label and the label is the affordance. Dashed,
-						     because in this journal a dashed edge is where something is meant
-						     to be put. -->
-						<label class="file-btn">
-							<input
-								class="file-real"
-								type="file"
-								accept=".srt,.vtt,.txt,.json3,.json"
-								disabled={adding}
-								onchange={(event) => void uploadFile(event)}
-							/>
-							<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-								<path d="M12 16.4V4.9" />
-								<path d="m7.6 9.3 4.4-4.4 4.4 4.4" />
-								<path d="M4.6 15.1v2.8a1.6 1.6 0 0 0 1.6 1.6h11.6a1.6 1.6 0 0 0 1.6-1.6v-2.8" />
-							</svg>
-							<span>Upload a file</span>
-						</label>
+					{#if composeError}
+						<p class="error" role="alert">{composeError}</p>
 					{/if}
-
-					<!-- How much text is about to be stored, whichever source it came
-					     from. Silent while there is nothing; a file with nothing readable in
-					     it says so here, because the dead button cannot explain itself. -->
-					{#if plan.segments.length > 0 || sourceFile}
-						<p class="cost">
-							<span class="plan" class:trouble={plan.segments.length === 0}>
-								{plan.segments.length > 0 ? extent(plan.segments) : 'Nothing to read in that file'}
-							</span>
-						</p>
-					{/if}
-
-					<!--
-					  The recording. Always here, never conjured — a control that appears
-					  only once a paste happens to validate is a feature nobody knows the
-					  app has — and disabled rather than hidden while the text has no
-					  timings, with the legend saying why. A `<fieldset>` makes every
-					  control inside inert in one attribute.
-
-					  **Except where the link is also the source.** Where captions can be
-					  fetched the group is live from the start, because pasting a link is
-					  how the timings are *obtained*; only the file picker keeps its own
-					  guard, since a recording nothing can follow is a reference nothing can
-					  use.
-					-->
-					<fieldset
-						class="group"
-						disabled={adding || fetchingCaptions || (!plan.format && !canFetchCaptions)}
-					>
-						<legend class="group-legend">
-							Recording
-							<span class="group-note">
-								{!plan.format && !canFetchCaptions ? 'needs subtitles' : 'optional'}
-							</span>
-						</legend>
-
-						<!-- Two ways, one recording: each clears the other as it is used. -->
-						<div class="recording-row">
-							<label class="file-btn slim">
-								<input
-									class="file-real"
-									type="file"
-									accept="video/*,audio/*"
-									disabled={!plan.format}
-									bind:this={mediaInput}
-									onchange={chooseRecording}
-								/>
-								<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-									<rect x="3.4" y="6.2" width="12.4" height="11.6" rx="2" />
-									<path d="m15.8 12 4.8-3.2v6.4L15.8 12z" />
-								</svg>
-								<span>Video or audio file</span>
-							</label>
-							<span class="or" aria-hidden="true">or</span>
-							<input
-								class="input link-input"
-								type="url"
-								inputmode="url"
-								placeholder="YouTube link"
-								aria-label="YouTube link"
-								value={mediaLink}
-								oninput={enterLink}
-							/>
-						</div>
-
-						<!--
-						  Fetching the captions. The button shows once there is a video to ask
-						  about; the track list takes its place while the learner chooses.
-						-->
-						{#if canFetchCaptions}
-							<div class="captions">
-								{#if tracks}
-									<p class="captions-head">Which captions?</p>
-									<ul class="tracks">
-										{#each tracks as track (`${track.auto}:${track.lang}`)}
-											<li>
-												<button type="button" class="track" onclick={() => fetchTrack(track)}>
-													<span class="track-name">{track.name}</span>
-													<span class="track-tags">
-														<span class="track-lang">{track.lang}</span>
-														{#if track.auto}<span class="track-auto">auto</span>{/if}
-													</span>
-												</button>
-											</li>
-										{/each}
-									</ul>
-									<button type="button" class="captions-back" onclick={() => (tracks = undefined)}>
-										Never mind
-									</button>
-								{:else if linkId}
-									<button
-										type="button"
-										class="btn captions-go"
-										disabled={listingTracks || fetchingCaptions}
-										onclick={() => void askForTracks()}
-									>
-										{#if listingTracks}
-											<Spinner />
-											Looking…
-										{:else if fetchingCaptions}
-											Fetching…
-										{:else}
-											Fetch captions
-										{/if}
-									</button>
-								{/if}
-								{#if captionsError}
-									<p class="error captions-error" role="alert">{captionsError}</p>
-								{/if}
-							</div>
-						{/if}
-
-						<!-- What is attached, said only once something is. A file is kept by
-						     name alone — the one fact about it the learner cannot see. -->
-						{#if linkId}
-							<p class="hint media-hint">Plays from YouTube beside the text.</p>
-						{:else if mediaLink.trim()}
-							<p class="hint media-hint">That is not a YouTube link.</p>
-						{:else if mediaFile}
-							<p class="hint media-hint">
-								<strong>{mediaFile.name}</strong> — only its name is kept, so you'll pick the file again
-								when you open this.
-							</p>
-						{/if}
-					</fieldset>
-
-					<label class="field title-field">
-						<span class="label">Title <span class="group-note">optional</span></span>
-						<input
-							class="input"
-							type="text"
-							placeholder={defaultTitle || 'Named after its first line'}
-							disabled={adding}
-							bind:value={title}
-						/>
-					</label>
-
-					<button
-						type="button"
-						class="btn btn-primary btn-block go"
-						disabled={adding || busy || fetchingCaptions || plan.segments.length === 0}
-						onclick={() => void add()}
-					>
-						{#if adding}
-							Adding…
-						{:else if fetchingCaptions}
-							Fetching captions…
-						{:else if composeError}
-							Try again
-						{:else}
-							Add
-						{/if}
-					</button>
-				{/if}
-
-				{#if composeError}
-					<p class="error" role="alert">{composeError}</p>
 				{/if}
 			</section>
 
-			<!-- State: the shelf. -->
 			<section class="shelf ll-rise" style="animation-delay: 180ms">
 				<h2 class="shelf-head">Your media</h2>
 				{#if texts.length === 0}
 					<p class="hint empty">
-						Nothing on the shelf yet — the first thing you write or import lands here.
+						Nothing on the shelf yet — the first thing you import or have written lands here.
 					</p>
 				{:else}
 					<ul class="texts">
@@ -1091,10 +386,9 @@
 
 	/* The composer ------------------------------------------------------- */
 
-	/* Two doors onto one shelf, so they are a segmented control rather than two
-	   buttons: the choice is which composer is showing, not which feature the
-	   learner is using. */
-	.doors {
+	/* Three ways onto one shelf: a segmented control, since the choice is which
+	   form is showing. Links, so the tab is a URL fact a deep link can name. */
+	.tabs {
 		display: flex;
 		gap: 0.25rem;
 		margin-bottom: 1.1rem;
@@ -1104,461 +398,41 @@
 		background: var(--surface-alt);
 	}
 
-	.door {
-		flex: 1 1 0;
+	.tab {
+		flex: 1 1 auto;
 		min-width: 0;
 		padding: 0.5rem 0.6rem;
 		border: 1px solid transparent;
 		border-radius: var(--radius-sm);
-		background: transparent;
 		color: var(--text-muted);
-		font: inherit;
 		font-size: 0.85rem;
 		font-weight: 700;
-		cursor: pointer;
+		line-height: 1.25;
+		text-align: center;
+		text-decoration: none;
 		transition:
 			background 0.15s ease,
 			border-color 0.15s ease,
 			color 0.15s ease;
 	}
 
-	.door:hover:not(:disabled):not(.is-on) {
+	.tab:hover:not(.is-on) {
 		color: var(--text);
 	}
 
-	.door.is-on {
+	.tab.is-on {
 		border-color: var(--border);
 		background: var(--surface);
 		color: var(--text);
 	}
 
-	.door:focus-visible {
+	.tab:focus-visible {
 		outline: none;
 		box-shadow: var(--ring);
 	}
 
-	.door:disabled {
-		cursor: default;
-		opacity: 0.6;
-	}
-
-	/* The field a control follows immediately — the topic above its examples, the
-	   text above where it came from. Named rather than `:last-of-type`, which
-	   picked a different element depending on which branch was rendering. */
 	.field.tight {
 		margin-bottom: 0.75rem;
-	}
-
-	.paste-input {
-		min-height: 9rem;
-		line-height: 1.5;
-		resize: vertical;
-	}
-
-	/* The uploaded file, as an object -------------------------------------- */
-
-	/*
-	  A card in the box's place, wearing the same clothes as a text on the shelf:
-	  this *is* one, a few seconds early. `--surface-alt` rather than `--surface`
-	  so it reads as something laid on the page rather than another sheet of it.
-	*/
-	.source-card {
-		display: flex;
-		align-items: flex-start;
-		gap: 0.7rem;
-		padding: 0.85rem 0.9rem;
-		border: 1px solid var(--border-strong);
-		border-radius: var(--radius);
-		background: var(--surface-alt);
-	}
-
-	.source-mark {
-		margin-top: 0.15rem;
-		color: color-mix(in srgb, var(--primary) 70%, var(--text-muted));
-	}
-
-	.source-id {
-		flex: 1 1 auto;
-		min-width: 0;
-	}
-
-	.source-kind {
-		margin: 0;
-		font-size: 0.68rem;
-		font-weight: 700;
-		letter-spacing: 0.12em;
-		text-transform: uppercase;
-		color: color-mix(in srgb, var(--accent) 65%, var(--text-muted));
-	}
-
-	/* The display face, because a file the learner uploaded is a title, not a
-	   parameter — the shelf rows below name their texts the same way. */
-	.source-name {
-		margin: 0.1rem 0 0;
-		font-family: var(--font-display);
-		font-size: 1rem;
-		font-weight: 700;
-		letter-spacing: -0.01em;
-		line-height: 1.25;
-		overflow-wrap: anywhere;
-	}
-
-	/* What the file turned out to hold. Tabular figures so the numbers sit still
-	   while the learner swaps one file for another. */
-	.source-facts {
-		margin: 0.3rem 0 0;
-		font-size: 0.78rem;
-		font-variant-numeric: tabular-nums;
-		color: var(--text-muted);
-	}
-
-	.source-drop {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		flex: 0 0 auto;
-		width: 1.9rem;
-		height: 1.9rem;
-		padding: 0;
-		border: 1px solid transparent;
-		border-radius: var(--radius-sm);
-		background: none;
-		color: var(--text-muted);
-		cursor: pointer;
-		transition:
-			border-color 0.15s ease,
-			background 0.15s ease,
-			color 0.15s ease;
-	}
-
-	.source-drop:hover:not(:disabled) {
-		border-color: var(--border-strong);
-		background: var(--surface);
-		color: var(--text);
-	}
-
-	.source-drop:focus-visible {
-		outline: none;
-		box-shadow: var(--ring);
-	}
-
-	.source-drop:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-
-	/* Uploading a file ----------------------------------------------------- */
-
-	/*
-	  The browser draws a file input as a small grey button and the words "No file
-	  chosen", which is the least inviting thing on the page and says nothing
-	  about what to upload. So the input is hidden *inside* its own label — still
-	  focusable, still the accessible name — and the label is the affordance: a
-	  dashed slot, which in this journal is where something is meant to be put.
-	*/
-	.file-btn {
-		display: flex;
-		align-items: center;
-		gap: 0.55rem;
-		width: 100%;
-		margin-bottom: 0.9rem;
-		padding: 0.7rem 0.85rem;
-		border: 1px dashed var(--border-strong);
-		border-radius: var(--radius-sm);
-		background: color-mix(in srgb, var(--surface-alt) 55%, transparent);
-		color: var(--text-muted);
-		font-size: 0.85rem;
-		font-weight: 700;
-		text-align: left;
-		cursor: pointer;
-		transition:
-			border-color 0.15s ease,
-			background 0.15s ease,
-			color 0.15s ease;
-	}
-
-	.file-btn span {
-		min-width: 0;
-		overflow-wrap: anywhere;
-	}
-
-	/* The same slot, sized to share a row with the link beside it. */
-	.file-btn.slim {
-		flex: 1 1 11rem;
-		width: auto;
-		margin-bottom: 0;
-		padding-block: 0.6rem;
-	}
-
-	/* A `<label>` is never `:disabled` itself, but it can be the label *of*
-	   something that is — which covers both pickers, the one the fieldset turns
-	   off and the one `busy` does. Without this the slot still lights up under a
-	   cursor that cannot do anything with it. */
-	.file-btn:not(:has(:disabled)):hover {
-		border-color: var(--text-muted);
-		background: var(--surface-alt);
-		color: var(--text);
-	}
-
-	.file-btn:has(:disabled) {
-		cursor: not-allowed;
-	}
-
-	/* The ring belongs to the label, since that is what the eye sees; the input
-	   inside it is what actually holds focus. */
-	.file-btn:focus-within {
-		border-color: var(--accent);
-		box-shadow: var(--ring);
-	}
-
-	/* Hidden from the eye, not from the keyboard or the accessibility tree —
-	   `display: none` would take it out of the tab order and break the label. */
-	.file-real {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		margin: -1px;
-		padding: 0;
-		overflow: hidden;
-		clip-path: inset(50%);
-		white-space: nowrap;
-	}
-
-	/* The recording group ---------------------------------------------------- */
-
-	/*
-	  A real `<fieldset>`, for the one thing it does that nothing else does:
-	  `disabled` on it makes every control inside inert at once. That is what
-	  lets the group be *present but off* while the text has no timings, instead
-	  of appearing out of nowhere the moment a paste happens to parse.
-	*/
-	.group {
-		/* A fieldset's default `min-inline-size: min-content` is the one piece of
-		   its old browser behaviour that still bites: it refuses to be narrower
-		   than its widest child and would push the card past the phone. */
-		min-inline-size: 0;
-		margin: 0 0 1.1rem;
-		padding: 0.9rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		background: color-mix(in srgb, var(--surface-alt) 35%, transparent);
-		transition: opacity 0.2s ease;
-	}
-
-	.group:disabled {
-		opacity: 0.62;
-	}
-
-	/* A `<legend>` renders inside the top border unless it is told to be a block;
-	   here the border is the group's own edge and the label belongs above the
-	   controls, inside it. A browser that ignores this puts the label on the
-	   edge instead, which is the ordinary fieldset look and no worse. */
-	.group-legend {
-		display: block;
-		width: 100%;
-		margin-bottom: 0.6rem;
-		padding: 0;
-		font-size: 0.74rem;
-		font-weight: 700;
-		letter-spacing: 0.09em;
-		text-transform: uppercase;
-		color: var(--text-muted);
-	}
-
-	.group-note {
-		margin-left: 0.35rem;
-		font-weight: 400;
-		letter-spacing: 0.04em;
-		text-transform: none;
-		opacity: 0.8;
-	}
-
-	/* A file or a link, on one line: the two answers to the same question sit
-	   side by side, with the "or" between them doing the explaining. */
-	.recording-row {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 0.5rem 0.6rem;
-	}
-
-	.or {
-		flex: 0 0 auto;
-		font-size: 0.78rem;
-		font-weight: 700;
-		color: var(--text-muted);
-	}
-
-	.link-input {
-		flex: 1 1 12rem;
-		min-width: 0;
-		padding-block: 0.6rem;
-	}
-
-	.media-hint {
-		margin: 0.6rem 0 0;
-		font-size: 0.8rem;
-		overflow-wrap: anywhere;
-	}
-
-	.title-field {
-		margin-bottom: 1rem;
-	}
-
-	/* Fetching the captions ------------------------------------------------ */
-
-	/*
-	  A block that lives under the link it is about, and is either one button or
-	  the short list that button produced — never both, because the question
-	  "which track?" replaces the question "is there one?".
-	*/
-	.captions {
-		margin-top: 0.6rem;
-	}
-
-	.captions-go {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		gap: 0.5rem;
-		width: 100%;
-	}
-
-	.captions-head {
-		margin: 0 0 0.45rem;
-		font-size: 0.78rem;
-		font-weight: 700;
-		color: var(--text-muted);
-	}
-
-	/*
-	  Short by design — the machine translations are filtered out one layer down,
-	  so this is a handful of rows and not a language menu. The cap is there for
-	  the video that turns out to have twenty anyway: a list that scrolls inside
-	  itself keeps the button below it reachable on a phone.
-	*/
-	.tracks {
-		list-style: none;
-		margin: 0 0 0.5rem;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.35rem;
-		max-height: 13rem;
-		overflow-y: auto;
-	}
-
-	.track {
-		display: flex;
-		align-items: baseline;
-		justify-content: space-between;
-		gap: 0.6rem;
-		width: 100%;
-		padding: 0.55rem 0.7rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
-		background: var(--surface);
-		color: var(--text);
-		font: inherit;
-		font-size: 0.88rem;
-		text-align: left;
-		cursor: pointer;
-		transition:
-			border-color 0.15s ease,
-			background 0.15s ease;
-	}
-
-	.track:hover:not(:disabled) {
-		border-color: var(--border-strong);
-		background: var(--surface-alt);
-	}
-
-	.track:focus-visible {
-		outline: none;
-		box-shadow: var(--ring);
-	}
-
-	.track-name {
-		min-width: 0;
-		font-weight: 700;
-		overflow-wrap: anywhere;
-	}
-
-	.track-tags {
-		display: flex;
-		flex: 0 0 auto;
-		align-items: baseline;
-		gap: 0.35rem;
-	}
-
-	.track-lang {
-		font-size: 0.72rem;
-		font-variant-numeric: tabular-nums;
-		color: var(--text-muted);
-	}
-
-	/* Machine-written, and the quality difference is large enough to mark. */
-	.track-auto {
-		padding: 0.1rem 0.4rem;
-		border-radius: 999px;
-		background: var(--accent-soft);
-		color: var(--accent);
-		font-size: 0.65rem;
-		font-weight: 700;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
-	}
-
-	/* A way out of the list that is plainly not one of the choices in it. */
-	.captions-back {
-		padding: 0;
-		border: none;
-		background: none;
-		color: var(--text-muted);
-		font: inherit;
-		font-size: 0.8rem;
-		text-decoration: underline;
-		text-underline-offset: 0.2em;
-		cursor: pointer;
-	}
-
-	.captions-back:focus-visible {
-		outline: none;
-		box-shadow: var(--ring);
-	}
-
-	.captions-error {
-		margin-top: 0.6rem;
-		font-size: 0.82rem;
-	}
-
-	/*
-	  What is about to be sent and what it will cost, on one line under the source
-	  — whichever source that is. The two ends of a row that wraps: on a phone
-	  they stack in source order, and no breakpoint has to be spent saying so.
-	*/
-	.cost {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: baseline;
-		justify-content: space-between;
-		gap: 0.2rem 1rem;
-		margin-bottom: 0.9rem;
-	}
-
-	/* What the paste was recognised as. A note, not a warning: it is the same
-	   door either way, and the learner only needs to see that the app read the
-	   file rather than the timestamps. */
-	.plan {
-		margin: 0;
-		font-size: 0.8rem;
-		font-variant-numeric: tabular-nums;
-		color: var(--text-muted);
-	}
-
-	.plan.trouble {
-		color: var(--danger);
-		font-weight: 700;
 	}
 
 	.examples {
@@ -1693,22 +567,5 @@
 		margin: 0;
 		padding: 1rem 0;
 		text-wrap: balance;
-	}
-
-	@media (max-width: 400px) {
-		.doors {
-			flex-direction: column;
-		}
-
-		/* The row cannot hold a slot, an "or" and a field at this width, so the
-		   three stack and the "or" centres between them. */
-		.recording-row {
-			flex-direction: column;
-			align-items: stretch;
-		}
-
-		.or {
-			text-align: center;
-		}
 	}
 </style>

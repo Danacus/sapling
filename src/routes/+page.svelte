@@ -78,7 +78,7 @@
 				copy: 'Sapling writes words, lessons and conversations through OpenRouter with your own key. Without one you can still import a text and read it.',
 				label: 'Add a key in Settings',
 				href: '/settings#settings-api-key',
-				secondary: { label: 'or import a text', href: '/read' }
+				secondary: { label: 'or import a text', href: '/read?tab=text' }
 			};
 		}
 		if (items.length === 0) {

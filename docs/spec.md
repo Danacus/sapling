@@ -135,7 +135,7 @@ Purpose: one recommended next action, plus a glance at the collection and recent
 Behaviour
 - Header: "Learning {target}", title "Today", and a day-streak badge.
 - **Hero** — exactly one recommendation, first match wins:
-  1. No words and no model → "Add a model key to generate your first words" → Settings key field; secondary "or import a text" → reading.
+  1. No words and no model → "Add a model key to generate your first words" → Settings key field; secondary "or import a text" → Media's Text tab.
   2. No words → "Plant your first {target} words" → word check.
   3. Words due → "N words ready" → Practice (copy mentions reviews already done today, if any).
   4. Otherwise → "Your garden is caught up" → Explore.
@@ -499,9 +499,9 @@ Everything reached from **Explore**: the Media section (texts to read, listen to
 
 Behaviour:
 - Explore is a primary destination in the app's main navigation. It shows four doors, each with a title and one line of copy:
-  1. **Check what you know** (with a secondary link, "New to the language? Start with a topic", which opens the starter mode).
+  1. **Check what you know** (its intro links to the starter mode, "New to the language?").
   2. **Have a conversation** (goes to conversation mode).
-  3. **Read or watch** (goes to Media).
+  3. **Read or watch** (goes to Media's Video tab).
   4. **Ask the assistant** (goes to the chat).
 - Home links into these features from three places:
   - The recommendation card. With an empty garden and no API key, it points to Settings and offers "or import a text". With an empty garden and a key, it offers "Check what you know". When nothing is due, it offers "Explore something new".
@@ -511,7 +511,6 @@ Behaviour:
   *immersive* screens: the main app navigation is hidden there, and each screen has its own back link to its library.
 
 Open questions:
-- The Read door's copy says "bring subtitles from a video". The Media section's own rule is that "bring"/"brought" never appears in user-facing copy (a text is *imported* and a file is *uploaded*).
 - Home's "continue" list labels a text "Continue reading" or "Watch or read again". The reader never stores a position, though, so "continue" always opens at page 1 or at 0:00.
 - Home titles a conversation by its topic, falling back to the setting. The conversation shelf always titles it by the setting.
 
@@ -519,7 +518,7 @@ Open questions:
 
 ### Media library
 
-**Purpose:** the shelf of texts the learner keeps, and the composer with two doors for adding one more. Internally this is called "reading mode". The learner-facing name is **Media**, because a text can be read, listened to or watched.
+**Purpose:** the shelf of texts the learner keeps, and the composer with three tabs for adding one more. Internally this is called "reading mode". The learner-facing name is **Media**, because a text can be read, listened to or watched.
 
 Behaviour:
 - The page is laid out as a spread: the composer on one side and the shelf ("Your media") on the other. On a phone the composer comes first.
@@ -529,7 +528,7 @@ Behaviour:
   - the date;
   - its extent: "N lines" for a timed text, "N paragraphs" otherwise.
   - The shelf does not show whether a text has a recording attached. With no texts, it says "Nothing on the shelf yet — the first thing you write or import lands here."
-- **Two doors**, a segmented toggle: *Write one for me* and *Import your own*. Switching doors clears the other door's error.
+- **Three tabs**, a segmented control: *Video* (the default), *Text* and *Write one for me*. The tab is in the URL (`/read?tab=video|text|write`), so Explore can link to one and coming back lands on it. Each tab keeps its own form and error, and switching keeps what was typed.
 
 #### Write one for me (generation)
 - The learner can type an optional topic (capped at 120 characters) or pick an example chip, then press **Generate**. A hint underneath says either "Written from your N words" or "Your garden is empty, so this one is written from scratch".
@@ -552,21 +551,25 @@ Behaviour:
   - The subject is the topic if one was given, otherwise the learner's "about me", otherwise the model's own choice.
 - Each paragraph is stored as one untimed segment, the same unit an imported paragraph becomes.
 
-#### Import your own
-- Importing is free and local: there is no model call and no task. The door has three parts, in this order.
-  1. **The text.** A paste box plus an "Upload a file" control. An uploaded file is recognised by its *content*, never its extension.
-     - If the file is subtitles, it becomes a **source card** in place of the paste box, showing its format (SRT subtitles, WebVTT subtitles, YouTube transcript, YouTube captions), file name, cue count and duration, with a × to remove it.
-     - If the file is anything else, it is prose and goes into the paste box, where it can still be edited.
-     - Exactly one of the card and the box is on screen at a time. Whatever was typed in the box survives under a card and comes back when the card is removed.
-  2. **How much.** One line under the source: "214 lines" or "3 paragraphs". It is silent while the box is empty. A file with nothing readable in it says so in red: "Nothing to read in that file".
-  3. **Recording** (a fieldset that is always shown). A video/audio file picker *or* a YouTube link field, on one row with "or" between them.
-     - The two are mutually exclusive: using one clears the other.
-     - A typed link is checked live. One line says either "Plays from YouTube beside the text" or "That is not a YouTube link".
-     - A chosen file shows the line "only its name is kept, so you'll pick the file again when you open this".
-     - In a browser, the group is disabled until the text is recognised as subtitles. Its legend note reads *needs subtitles* while disabled and
-       *optional* once it is enabled.
-- **Title** (optional), last. It defaults to the uploaded or fetched file's name without its extension, or else the text's first line cut to 60 characters. The default is shown as the field's placeholder.
-- **Add** stores the text and opens it immediately. A recording is attached only if at least one segment is timed. A file recording is handed to the reader in memory, so the first open plays it without asking.
+#### Video
+- The default tab. Importing is free and local: there is no model call and no task.
+- **A YouTube link** is the primary control. It is checked live; text that names no video says "That is not a YouTube link".
+  - Once the link names a video, its caption tracks are listed automatically (see *Fetching captions*), with a spinner while YouTube is asked and the failure inline with "Try again". The same video is never listed twice.
+  - Each track is a chip: its name, its language, and an *auto* tag for machine captions. Picking one fetches it.
+- **The subtitles** become a **source card**: format (SRT subtitles, WebVTT subtitles, YouTube transcript, YouTube captions), name, line count and duration, with a × to remove it (which brings the chips back). Fetched captions belong to their video and are dropped when the link names a different one.
+- **"Or use your own files"**, below and quieter: a video/audio file and a subtitle file (`.srt`, `.vtt`, `.json3`, `.json`, or a `.txt` transcript).
+  - A subtitle file is recognised by its *content*, never its extension. A file with no timings is refused, pointing at the Text tab.
+  - A local recording needs a subtitle file. A YouTube link may take an uploaded subtitle file instead of a fetched track.
+  - The link and the recording file are mutually exclusive: using one clears the other.
+  - A chosen file shows "Only its name is kept, so you'll pick the file again when you open this".
+- **Title** (optional). It defaults to the video's title, else the uploaded file's name without its extension, else the first line. The default is the field's placeholder.
+- **Import** is enabled once there is a recording and timed subtitles. A line under it says what is missing when only half is there. It stores the text and opens it immediately; a file recording is handed to the reader in memory, so the first open plays it without asking.
+
+#### Text
+- Just text: a paste box ("Paste an article, a song, a story…") and an "Upload a .txt file" control that puts the file's text in the box. No recording controls.
+- One line under it counts what it holds: "3 paragraphs" (or "214 lines" if what was pasted is subtitles, which is accepted as is).
+- **Title** (optional), defaulting to the uploaded file's name, else the text's first line cut to 60 characters.
+- **Import** stores the text and opens it immediately.
 
 Rules:
 - A stored text is **immutable**, and it is **only the text**: title, source (generated or imported), optional topic, optional recording reference, segments, and creation time.
@@ -579,8 +582,6 @@ Rules:
 
 Open questions:
 - Texts can only be deleted from inside the reader. Conversations can be deleted straight from their shelf.
-- Because captions can be fetched, the Recording group is enabled even for prose. A YouTube link entered alongside untimed prose is silently dropped at Add. The legend says *optional* in that state, which hides the problem.
-- The default title of fetched captions is the *track* name (e.g. "English"), not the video's title, even though the caption listing returns the video title.
 - Which 400 vocabulary terms the generator sees, for a garden larger than that, is simply the first 400 in storage order. There is no rule.
 - Legacy *known* marks still feed the generator as "freely usable" vocabulary, but they do not count toward the level.
 
@@ -845,14 +846,12 @@ Open questions:
 **Purpose:** a YouTube link alone can produce the text: the app fetches one of the video's caption tracks from YouTube.
 
 Behaviour:
-- Available on every host. The Recording group is enabled from the start, and once the link names a video a **Fetch captions** button appears.
-- **Fetch captions** lists the video's tracks directly. This is an awaited question, not a background task.
+- Available on every host. Once the Video tab's link names a video, its tracks are listed directly. This is an awaited question, not a background task.
   - Manual tracks come first, then automatic ones, which are marked *auto*.
-  - "Never mind" dismisses the list.
   - A video with no tracks says so.
-  - Editing the link clears the list.
+  - The list shown is always the current link's: a link naming another video lists that one.
 - Picking a track starts a **captions task**, which shows "Asking YouTube", then "Reading <track>".
-  - The result is the raw `json3` file. It becomes the source card exactly as an uploaded file would, and the link stays in place, so Add attaches the video as the recording.
+  - The result is the raw `json3` file. It becomes the source card exactly as an uploaded file would, and the link stays in place, so Import attaches the video as the recording.
   - A track with nothing readable in it fails in the task tray.
   - The task cannot be stopped mid-fetch. The tray offers "Stop watching", which drops the record and leaves the work running.
 - **How YouTube is asked:**
@@ -1507,7 +1506,7 @@ A map from this spec to the current code, for orientation during a rewrite. Not 
 - Routes:
   - `src/routes/explore/+page.svelte`
   - `src/routes/explore/check/{+page.svelte,check.ts}`
-  - `src/routes/read/+page.svelte` (library and composer)
+  - `src/routes/read/+page.svelte` (library and composer), with `VideoImport.svelte`, `TextImport.svelte`, `FileSlot.svelte` and `compose.ts` beside it
   - `src/routes/read/[id]/+page.svelte` (reader and follow view)
   - `src/routes/chat/+page.svelte`
   - `src/routes/converse/+page.svelte`

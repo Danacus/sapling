@@ -4,11 +4,7 @@
 			title: 'Check what you know',
 			copy: 'Tap the words you recognise to fill your garden quickly.',
 			href: '/explore/check',
-			kind: 'check',
-			aside: {
-				label: 'New to the language? Start with a topic',
-				href: '/explore/check?mode=starter'
-			}
+			kind: 'check'
 		},
 		{
 			title: 'Have a conversation',
@@ -18,7 +14,7 @@
 		},
 		{
 			title: 'Read or watch',
-			copy: 'Generate a text, paste your own, or bring subtitles from a video.',
+			copy: 'Import a YouTube video or a text, or have one written at your level.',
 			href: '/read',
 			kind: 'read'
 		},
@@ -90,9 +86,6 @@
 						><path d="M4.8 12h14" /><path d="m13.4 6.6 5.4 5.4-5.4 5.4" /></svg
 					>
 				</a>
-				{#if 'aside' in door}
-					<a class="aside" href={door.aside.href}>{door.aside.label}</a>
-				{/if}
 			</div>
 		{/each}
 	</div>
@@ -141,12 +134,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.5rem;
-	}
-
-	.aside {
-		padding-inline: 0.4rem;
-		color: var(--text-muted);
-		font-size: 0.88rem;
 	}
 
 	.door {

@@ -9,7 +9,7 @@
  * **The result carries the file, not a parse of it.** What comes back is raw
  * `json3`, and this def hands the composer exactly that — because
  * `json3` is an *import format* (the core's `importSource`), so the fetched
- * text enters the identical path an uploaded `.srt` does: one `sourceFile`, one
+ * text enters the identical path an uploaded `.srt` does: one `subtitles` source, one
  * `plan` derivation behind the card, the counter, the button and the import. A
  * parsed cue list would have been a second, parallel source of truth for the
  * one thing that composer deliberately derives once.
