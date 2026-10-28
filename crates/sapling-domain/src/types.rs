@@ -146,8 +146,26 @@ pub enum TeacherRole {
 pub struct Profile {
     /// Language the learner already speaks, e.g. `'nl'` or `'English'`.
     pub native_language: String,
-    /// Language being learned.
+    /// Language being learned, by name: what every prompt reads.
     pub target_language: String,
+    /// The canonical BCP-47 tag the picker chose for `native_language`.
+    /// Absent on profiles typed as free text before the picker existed.
+    #[serde(
+        default,
+        deserialize_with = "absent_or",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional)]
+    pub native_language_tag: Option<String>,
+    /// The tag for `target_language`; voice, dictation and romanization route
+    /// on it, and with none they do nothing language-specific.
+    #[serde(
+        default,
+        deserialize_with = "absent_or",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional)]
+    pub target_language_tag: Option<String>,
     /// **Deprecated: never read.** The learner used to pick a level; every
     /// prompt now reads it off the library instead (`sapling-llm`'s
     /// `level_for`). Still required here because an older build on another

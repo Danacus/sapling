@@ -45,7 +45,7 @@
  */
 
 import { inTauri } from '$lib/platform';
-import { bcp47For } from '$lib/text';
+import { primarySubtag } from '$lib/text';
 
 import { dictateWithWebSpeech, webSpeechRecognitionAvailable } from './webspeech';
 import type { DictationHandlers, DictationSession } from './webspeech';
@@ -113,28 +113,29 @@ function hostDictation(): Promise<NativeDictation | undefined> {
  * both match `zh` while `yue` stays its own language, which is the line
  * `languages.ts` already draws for the voice.
  */
-function covers(dictation: NativeDictation | undefined, language: string | undefined): boolean {
-	if (!dictation) return false;
-	const [primary] = bcp47For(language).toLowerCase().split('-');
+function covers(dictation: NativeDictation | undefined, tag: string | undefined): boolean {
+	const primary = primarySubtag(tag);
+	if (!dictation || !primary) return false;
 	return dictation.status.languages.includes(primary);
 }
 
 /** …and whether it could actually transcribe it right now. */
-function ready(dictation: NativeDictation | undefined, language: string | undefined): boolean {
-	return covers(dictation, language) && dictation?.status.installed === true;
+function ready(dictation: NativeDictation | undefined, tag: string | undefined): boolean {
+	return covers(dictation, tag) && dictation?.status.installed === true;
 }
 
 /**
- * Whether dictation would work at all for `language`. `false` means: offer no
- * button.
+ * Whether dictation would work at all for the language `tag` names. `false`
+ * means: offer no button — always so with no tag.
  *
  * Asynchronous because the answer is the host's, and it is the call that warms
  * the probe {@link listen} then reads synchronously — so a caller that renders
  * the microphone on the strength of this has already made `listen` able to
  * route.
  */
-export async function dictationAvailable(language?: string): Promise<boolean> {
-	if (inTauri()) return ready(await hostDictation(), language);
+export async function dictationAvailable(tag?: string): Promise<boolean> {
+	if (!tag) return false;
+	if (inTauri()) return ready(await hostDictation(), tag);
 	return webSpeechRecognitionAvailable();
 }
 
@@ -156,8 +157,8 @@ function hostOnly(): boolean {
  * rather than only after it. Independent of whether the model is on disk;
  * {@link dictationAvailable} is the question about right now.
  */
-export async function dictationCoversLanguage(language?: string): Promise<boolean> {
-	return covers(await hostDictation(), language);
+export async function dictationCoversLanguage(tag?: string): Promise<boolean> {
+	return covers(await hostDictation(), tag);
 }
 
 /**
@@ -174,12 +175,13 @@ export async function dictationCoversLanguage(language?: string): Promise<boolea
  * no browser engine to fall back on there ({@link hostOnly}).
  */
 export function listen(
-	language: string | undefined,
+	tag: string | undefined,
 	handlers: DictationHandlers
 ): DictationSession | undefined {
-	if (ready(host, language)) return host?.dictate(handlers);
+	if (!tag) return undefined;
+	if (ready(host, tag)) return host?.dictate(handlers);
 	if (hostOnly()) return undefined;
-	return dictateWithWebSpeech(bcp47For(language), handlers);
+	return dictateWithWebSpeech(tag, handlers);
 }
 
 /**

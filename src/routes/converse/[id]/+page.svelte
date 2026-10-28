@@ -34,7 +34,7 @@
 	import type { ConversationTurn, Scenario } from '$lib/conversation';
 	import { addExchange, getConversation, getProfile } from '$lib/db';
 	import { isMockMode } from '$lib/llm';
-	import { spanGap } from '$lib/text';
+	import { spanGap, targetTagOf } from '$lib/text';
 	import { stopSpeaking } from '$lib/tts';
 	import type { Profile } from '$lib/types';
 	import BackLink from '$lib/ui/BackLink.svelte';
@@ -115,7 +115,7 @@
 				// nothing else, and only the browser engine is language-blind.
 				// Unawaited — the composer works without a microphone, and this
 				// call is also what warms the probe `listen()` reads.
-				void dictationAvailable(loadedProfile.targetLanguage).then((available) => {
+				void dictationAvailable(targetTagOf(loadedProfile)).then((available) => {
 					if (!cancelled) micSupported = available;
 				});
 
@@ -189,7 +189,7 @@
 		micError = '';
 		dictationBase = input;
 
-		const started = listen(profile?.targetLanguage, {
+		const started = listen(targetTagOf(profile), {
 			onTranscript: (text) => {
 				input = appendDictation(dictationBase, text);
 				void tick().then(autoGrow);
@@ -295,7 +295,7 @@
 {#snippet scriptLine(text: string)}
 	<p class="script-line">
 		<span>{text}</span>
-		<SpeakButton {text} lang={profile?.targetLanguage ?? ''} size="sm" />
+		<SpeakButton {text} lang={targetTagOf(profile)} size="sm" />
 	</p>
 {/snippet}
 
@@ -403,11 +403,7 @@
 						<div class="bubble teacher-bubble">
 							<div class="said">
 								<span class="said-text">{turn.reply.text}</span>
-								<SpeakButton
-									text={turn.reply.text}
-									lang={profile?.targetLanguage ?? ''}
-									size="sm"
-								/>
+								<SpeakButton text={turn.reply.text} lang={targetTagOf(profile)} size="sm" />
 							</div>
 							{#if turn.reply.reading}
 								<p class="reading">{turn.reply.reading}</p>

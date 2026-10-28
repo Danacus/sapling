@@ -15,13 +15,13 @@
 
 	let {
 		text,
-		lang = '',
+		lang,
 		label = '',
 		size = 'md'
 	}: {
 		/** The target-language string to say. Blank disables the button. */
 		text: string;
-		/** The profile's free-text `targetLanguage`, e.g. "Spanish". */
+		/** The target language's BCP-47 tag (`targetTagOf`); absent speaks untagged. */
 		lang?: string;
 		/** Optional visible caption next to the icon, e.g. "Hear it". */
 		label?: string;

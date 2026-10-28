@@ -78,7 +78,7 @@ export function cancelWebSpeech(): void {
  * all resolve quietly (with a warning), because audio must not be able to
  * stall a lesson.
  */
-export function speakWithWebSpeech(text: string, tag: string): Promise<void> {
+export function speakWithWebSpeech(text: string, tag: string | undefined): Promise<void> {
 	if (!webSpeechAvailable()) {
 		console.warn('[tts] This browser has no speech synthesis; skipping playback.');
 		return Promise.resolve();
@@ -87,10 +87,12 @@ export function speakWithWebSpeech(text: string, tag: string): Promise<void> {
 	return new Promise<void>((resolve) => {
 		try {
 			const utterance = new SpeechSynthesisUtterance(text);
-			utterance.lang = tag;
-
-			const voice = pickVoice(speechSynthesis.getVoices(), tag);
-			if (voice) utterance.voice = voice;
+			// No tag: the browser's own default voice, rather than a wrong language forced on it.
+			if (tag) {
+				utterance.lang = tag;
+				const voice = pickVoice(speechSynthesis.getVoices(), tag);
+				if (voice) utterance.voice = voice;
+			}
 
 			let settled = false;
 			const done = (): void => {

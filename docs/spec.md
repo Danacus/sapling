@@ -86,7 +86,7 @@ Purpose: a first-time learner leaves with a language pair, optionally a model ke
 Behaviour
 - Any route visited without a profile redirects to onboarding.
 - Steps, shown as progress dots:
-  1. **Languages**: "I speak" and "I want to learn", free text with suggestions. Continue requires both filled and different (case-insensitive).
+  1. **Languages**: "I speak" and "I want to learn", each a searchable language picker (fuzzy over English name, own name and code; a flag for a regional variant). Continue requires both picked and different.
   2. **Connect a model**: OpenRouter API key (stored only in this browser) and a model name (free text with suggestions, a default pre-filled). Without a key, a note explains that words, lessons and conversations cannot be generated but importing and reading still work.
   3. **How much {target} do you know?** — present only when a key was typed on step 2 (or, when adding a language, a key is already stored) or the developer mock flag is set. Two choices:
      - *Starting from scratch* → saves the profile and opens the word check in **starter** mode.
@@ -97,11 +97,10 @@ Behaviour
 
 Rules
 - No level is asked or stored; the learner's level is derived from library size wherever a prompt needs it (see Lesson writing).
-- The profile written here holds the two languages, the model, and a creation time. Deprecated `level`/`interests` fields are written with fixed values only so older builds can parse the profile.
+- The profile written here holds the two languages — each a BCP-47 tag plus its CLDR English name, which prompts and older builds read — the model, and a creation time. Deprecated `level`/`interests` fields are written with fixed values only so older builds can parse the profile.
 
 Open questions
 - With no key, the model step shows both a "Start learning" button and a "Skip for now" link that do exactly the same thing.
-- Languages are free text; script detection (whether readings exist) and mock content choice key off the language *name*. A misspelt or unusual name silently changes behaviour.
 
 ---
 
@@ -454,7 +453,7 @@ Purpose: facts about the person that shape lessons, and how hard practice aims.
 Behaviour
 - **About you**: one free-text "About me" (≤ 500 characters, live counter), saved only on "Save profile"; "Applies to new lessons only." A cleared field is removed entirely.
 - **Practice**: Easier / Normal / Harder ("About 9 / 8 / 7 in 10 right"); saves immediately on tap, takes effect on the next pick. Absent reads as Normal.
-- **Languages**: read-only "Learning {target} from {native}", fixed per library.
+- **Languages**: a language picker each for "Learning" and "From", saved on pick (two different languages, else refused and put back). Meant for a variant or a fix; another language is added from home. A profile whose name resolves to no language says so above the picker.
 
 Rules
 - No level and no interests are edited or read; deprecated stored values are preserved on save for older builds.
@@ -1237,7 +1236,7 @@ What the learner's data is, where it lives, how it survives and moves between de
 
 The page has a back link to Today and lays out its cards in two balanced columns on wide screens. Linking to a field (for example `/settings#settings-api-key` from the home screen's "Add a key") scrolls to it and focuses it once the page loads. The cards, in order:
 
-1. **Profile:** read-only "Learning <target> from <native>" plus an "Edit about you" link to `/profile`.
+1. **Profile:** read-only "Learning <target> from <native>" plus an "Edit about you" link to `/profile`; when the target language resolves to no tag, a line saying voice, dictation and readings are off, linking to `/profile` to choose it.
 2. **Display**
    - *Appearance:* System / Light / Dark (default System; System follows the device and updates live).
    - *Pronunciation (romanization):* Off / On / Adaptive (default On; Adaptive fades the reading as a word sticks).

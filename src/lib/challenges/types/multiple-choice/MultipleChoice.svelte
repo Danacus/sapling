@@ -45,7 +45,7 @@
 		challenge,
 		screen,
 		onanswer,
-		targetLanguage = '',
+		targetLanguageTag,
 		tokenize = null
 	}: ChallengeProps<'multiple-choice'> = $props();
 
@@ -94,7 +94,7 @@
 
 		let cancelled = false;
 		const startedAt = Date.now();
-		void speak(prompt, targetLanguage).then(() => {
+		void speak(prompt, targetLanguageTag).then(() => {
 			if (cancelled) return;
 			// Nothing audible happened; do not leave the learner staring at silence.
 			if (Date.now() - startedAt < MIN_AUDIBLE_MS) revealed = true;
@@ -191,7 +191,7 @@
 		reading={promptSlot.reading}
 		hidePrompt={hidingPrompt}
 		speakText={promptIsTarget ? challenge.prompt : ''}
-		speakLang={targetLanguage}
+		speakLang={targetLanguageTag}
 		speakLabel={hidingPrompt ? 'Play again' : ''}
 	/>
 

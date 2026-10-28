@@ -579,7 +579,7 @@ mod tests {
             ),
             (
                 EventType::ProfileUpdated,
-                json!({ "nativeLanguage": "en", "targetLanguage": "zh", "level": "beginner", "interests": ["food"], "about": "me", "model": "m", "createdAt": 8, "aim": "harder" }),
+                json!({ "nativeLanguage": "en", "targetLanguage": "zh", "nativeLanguageTag": "en", "targetLanguageTag": "zh-CN", "level": "beginner", "interests": ["food"], "about": "me", "model": "m", "createdAt": 8, "aim": "harder" }),
             ),
             (
                 EventType::TextAdded,

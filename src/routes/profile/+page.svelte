@@ -11,16 +11,19 @@
   toggles: a half-typed sentence must not become the thing every lesson is
   built around, so the write happens only when the learner says so. The one
   toggle here, how hard practice aims, saves the moment it is picked: it is a
-  setting, it rebuilds nothing, and it takes effect on the next pick.
+  setting, it rebuilds nothing, and it takes effect on the next pick. The
+  languages save the same way: a pick is a whole, valid choice.
 -->
 <script lang="ts">
 	import { browser } from '$app/environment';
 
 	import { getProfile, saveProfile } from '$lib/db';
 	import { MAX_ABOUT_CHARS } from '$lib/llm';
+	import { nativeTagOf, targetTagOf, type LanguageOption } from '$lib/text';
 	import type { Aim, Profile } from '$lib/types';
 	import BackLink from '$lib/ui/BackLink.svelte';
 	import InlineStatus from '$lib/ui/InlineStatus.svelte';
+	import LanguagePicker from '$lib/ui/LanguagePicker.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	type Status = 'idle' | 'saved' | 'error';
@@ -68,6 +71,46 @@
 		}
 	}
 
+	// The pickers' own copies, so a refused pick can be put back.
+	let nativeChoice = $state<string | undefined>();
+	let targetChoice = $state<string | undefined>();
+	let languageStatus = $state<Status>('idle');
+	let languageMessage = $state('');
+
+	async function chooseLanguage(side: 'native' | 'target', option: LanguageOption) {
+		if (!profile) return;
+		const current = side === 'native' ? nativeTagOf(profile) : targetTagOf(profile);
+		const other = side === 'native' ? targetTagOf(profile) : nativeTagOf(profile);
+		const restore = () => {
+			nativeChoice = nativeTagOf(profile);
+			targetChoice = targetTagOf(profile);
+		};
+		if (option.tag === other) {
+			restore();
+			languageMessage = 'Pick two different languages.';
+			languageStatus = 'error';
+			return;
+		}
+		const stored = side === 'native' ? profile.nativeLanguageTag : profile.targetLanguageTag;
+		if (option.tag === current && option.tag === stored) return;
+		// The CLDR English name goes beside the tag: prompts and older builds read it.
+		const updated: Profile =
+			side === 'native'
+				? { ...profile, nativeLanguage: option.name, nativeLanguageTag: option.tag }
+				: { ...profile, targetLanguage: option.name, targetLanguageTag: option.tag };
+		try {
+			await saveProfile(updated);
+			profile = updated;
+			languageMessage = 'Saved';
+			languageStatus = 'saved';
+			setTimeout(() => (languageStatus = 'idle'), 1800);
+		} catch (cause) {
+			restore();
+			languageMessage = cause instanceof Error ? cause.message : 'Could not save that.';
+			languageStatus = 'error';
+		}
+	}
+
 	$effect(() => {
 		if (!browser) return;
 
@@ -80,6 +123,8 @@
 				if (cancelled) return;
 				profile = loaded;
 				about = loaded?.about ?? '';
+				nativeChoice = nativeTagOf(loaded);
+				targetChoice = targetTagOf(loaded);
 				loading = false;
 			})
 			.catch((cause) => {
@@ -241,15 +286,25 @@
 					<h2>Languages</h2>
 				</div>
 				<hr class="stitch" />
-				<p class="readonly-row">
-					<span class="readonly-label">Learning</span>
-					<span class="readonly-value">
-						{profile.targetLanguage} <span class="muted">from</span>
-						{profile.nativeLanguage}
-					</span>
-				</p>
+				{#if !targetChoice}
+					<p class="hint unresolved" role="status">
+						Sapling can't tell which language “{profile.targetLanguage}” is. Choose it below so
+						voice, dictation and readings know what to do.
+					</p>
+				{/if}
+				<LanguagePicker
+					label="Learning"
+					bind:value={targetChoice}
+					onchange={(option) => void chooseLanguage('target', option)}
+				/>
+				<LanguagePicker
+					label="From"
+					bind:value={nativeChoice}
+					onchange={(option) => void chooseLanguage('native', option)}
+				/>
+				<InlineStatus status={languageStatus} message={languageMessage} />
 				<p class="hint">
-					Fixed for this library. Add or switch languages from <a href="/">home</a>.
+					For a variant or a fix. To learn another language, add one from <a href="/">home</a>.
 				</p>
 			</section>
 		{/if}
@@ -429,35 +484,11 @@
 		font-weight: 700;
 	}
 
-	/* A ruled ledger row: the fact left, its value right. */
-	.readonly-row {
-		display: flex;
-		align-items: baseline;
-		justify-content: space-between;
-		gap: 1rem;
+	/* A name typed before the picker that resolves to no language. */
+	.unresolved {
 		margin: 0 0 0.9rem;
-		padding-bottom: 0.6rem;
-		border-bottom: 1px solid var(--border);
-		font-size: 0.95rem;
-	}
-
-	.readonly-label {
-		flex: 0 0 auto;
-		font-size: 0.72rem;
-		font-weight: 700;
-		letter-spacing: 0.09em;
-		text-transform: uppercase;
-		color: var(--text-muted);
-	}
-
-	.readonly-value {
-		text-align: right;
+		color: var(--accent);
 		font-weight: 600;
-	}
-
-	.muted {
-		color: var(--text-muted);
-		font-weight: 400;
 	}
 
 	.actions-row {

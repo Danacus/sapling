@@ -11,7 +11,7 @@ import {
 
 describe('sherpaVoiceFor', () => {
 	it('routes Cantonese to the single-speaker VITS model', () => {
-		for (const language of ['Cantonese', 'yue']) {
+		for (const language of ['yue', 'yue-HK']) {
 			expect(sherpaVoiceFor(language), language).toMatchObject({
 				model: 'cantonese',
 				id: 0
@@ -21,8 +21,8 @@ describe('sherpaVoiceFor', () => {
 	});
 
 	it('keeps Mandarin and English on Kokoro', () => {
-		expect(sherpaVoiceFor('Mandarin Chinese')?.model).toBe('kokoro');
-		expect(sherpaVoiceFor('English')?.model).toBe('kokoro');
+		expect(sherpaVoiceFor('zh-CN')?.model).toBe('kokoro');
+		expect(sherpaVoiceFor('en')?.model).toBe('kokoro');
 	});
 });
 
@@ -31,19 +31,13 @@ describe('kokoroSpeakerFor', () => {
 	// (3 English voices + 100 Mandarin ones). Everything else must route to the
 	// Web Speech API instead of being read aloud with the wrong frontend.
 	it('picks an English voice for English', () => {
-		expect(kokoroSpeakerFor('English', 'auto')?.name).toBe('af_maple');
-		expect(kokoroSpeakerFor('American English', 'auto')?.name).toBe('af_maple');
-		expect(kokoroSpeakerFor('British English', 'auto')?.name).toBe('bf_vale');
+		expect(kokoroSpeakerFor('en', 'auto')?.name).toBe('af_maple');
+		expect(kokoroSpeakerFor('en-US', 'auto')?.name).toBe('af_maple');
+		expect(kokoroSpeakerFor('en-GB', 'auto')?.name).toBe('bf_vale');
 	});
 
 	it('picks a Mandarin voice for every way of writing Mandarin', () => {
-		for (const language of [
-			'Mandarin Chinese',
-			'Chinese',
-			'Mandarin',
-			'Simplified Chinese',
-			'zh'
-		]) {
+		for (const language of ['zh', 'zh-CN', 'zh-Hans', 'zh-SG', 'zh-Hans-CN']) {
 			expect(kokoroSpeakerFor(language, 'auto'), language).toEqual(DEFAULT_MANDARIN_SPEAKER);
 			expect(kokoroSupports(language), language).toBe(true);
 		}
@@ -51,32 +45,33 @@ describe('kokoroSpeakerFor', () => {
 	});
 
 	it('honours the chosen Mandarin voice, and only for Mandarin', () => {
-		expect(kokoroSpeakerFor('Mandarin Chinese', 'zm_010')?.id).toBe(59);
-		expect(kokoroSpeakerFor('Mandarin Chinese', 'zf_018')?.id).toBe(12);
+		expect(kokoroSpeakerFor('zh-CN', 'zm_010')?.id).toBe(59);
+		expect(kokoroSpeakerFor('zh-CN', 'zf_018')?.id).toBe(12);
 		// An English phrase must not come out of a Chinese speaker.
-		expect(kokoroSpeakerFor('English', 'zm_010')?.name).toBe('af_maple');
+		expect(kokoroSpeakerFor('en', 'zm_010')?.name).toBe('af_maple');
 	});
 
 	it('refuses every language Kokoro cannot actually pronounce', () => {
 		for (const language of [
-			'Spanish',
-			'French',
-			'Japanese',
-			'Hindi',
-			'Portuguese',
+			'es',
+			'fr',
+			'ja',
+			'hi',
+			'pt-BR',
 			// Kokoro v1.1-zh is Mandarin in Simplified script.
-			'Cantonese',
-			'Traditional Chinese'
+			'yue',
+			'zh-TW',
+			'zh-HK',
+			'zh-Hant'
 		]) {
 			expect(kokoroSpeakerFor(language, 'auto'), language).toBeUndefined();
 			expect(kokoroSupports(language), language).toBe(false);
 		}
 	});
 
-	it('does not claim support for an unknown language just because it defaults to en', () => {
-		// A name we cannot place falls back to `en`, and that *is* something
-		// Kokoro can speak — the alternative (silence) would be worse.
-		expect(kokoroSupports('Klingon')).toBe(true);
+	it('claims nothing for an unresolved language', () => {
+		expect(kokoroSupports(undefined)).toBe(false);
+		expect(sherpaSupports(undefined)).toBe(false);
 	});
 
 	it('offers speaker ids that match the upstream voices.bin ordering', () => {

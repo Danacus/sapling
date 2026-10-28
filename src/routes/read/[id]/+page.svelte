@@ -115,7 +115,7 @@
 	import { hasLocalRomanizer, loadRomanizer } from '$lib/romanize';
 	import type { Maturity } from '$lib/challenges/serve';
 	import { Grade } from '$lib/srs';
-	import { cardKey, usesInterWordSpaces } from '$lib/text';
+	import { cardKey, targetTagOf, usesInterWordSpaces } from '$lib/text';
 	import { speak, stopSpeaking, ttsAvailable, warmSpeech } from '$lib/tts';
 	import type { KnowledgeItem, Profile, ReadingText } from '$lib/types';
 	import { getRomanizationMode } from '$lib/prefs';
@@ -326,7 +326,7 @@
 	let finished = $state(false);
 	let summary = $state('');
 
-	const lang = $derived(profile?.targetLanguage ?? '');
+	const lang = $derived(targetTagOf(profile));
 
 	const ctx: AnnotateContext = $derived({ items, knownTerms, mode, rolls });
 
@@ -511,7 +511,7 @@
 	/**
 	 * Whether the card offers a reading field: for a word written in a script
 	 * other than Latin, decided by the word's own letters rather than the
-	 * profile's free-text language name, the way `$lib/text/script` decides
+	 * profile's language, the way `$lib/text/script` decides
 	 * spacing. A Latin-script word has no reading to file; a token of digits has
 	 * no letters and asks for none either.
 	 */
@@ -606,12 +606,12 @@
 				// its name.
 				mediaFile = takeFile(loadedText.id);
 
-				if (!hasLocalRomanizer(loadedProfile.targetLanguage)) return;
+				if (!hasLocalRomanizer(targetTagOf(loadedProfile))) return;
 				// A lazy chunk (pinyin's dictionary is not small), so the text renders
 				// with the fallback tokenizer immediately and re-renders with real
 				// per-word readings when it lands. A failed fetch simply leaves the
 				// fallback in place — readings are a nicety, the text is not.
-				void loadRomanizer(loadedProfile.targetLanguage)
+				void loadRomanizer(targetTagOf(loadedProfile))
 					.then((romanizer) => {
 						if (cancelled || !romanizer) return;
 						tokenize = (source, terms) => romanizer.tokenize(source, terms);

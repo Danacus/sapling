@@ -23,7 +23,7 @@
 		screen,
 		graded,
 		onanswer,
-		targetLanguage = '',
+		targetLanguageTag,
 		tokenize = null
 	}: ChallengeProps<'multi-cloze'> = $props();
 
@@ -144,7 +144,7 @@
 				</button>
 			{/if}
 		{/each}
-		<SpeakButton text={spokenPassage} lang={targetLanguage} />
+		<SpeakButton text={spokenPassage} lang={targetLanguageTag} />
 	</p>
 
 	{#if readings.sentence && challenge.passageRomanization && !tokenize}

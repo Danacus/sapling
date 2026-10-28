@@ -74,6 +74,24 @@ const challenge = {
 } as unknown as Challenge;
 
 describe('language profiles', () => {
+	it('round-trips the picked language tags beside the names', async () => {
+		await saveProfile({
+			nativeLanguage: 'English',
+			targetLanguage: 'Flemish',
+			nativeLanguageTag: 'en',
+			targetLanguageTag: 'nl-BE',
+			level: 'beginner',
+			interests: [],
+			model: 'model',
+			createdAt: 1
+		});
+		expect(await getProfile()).toMatchObject({
+			targetLanguage: 'Flemish',
+			nativeLanguageTag: 'en',
+			targetLanguageTag: 'nl-BE'
+		});
+	});
+
 	it('keeps each language library isolated and restores it when selected again', async () => {
 		await saveProfile({
 			nativeLanguage: 'English',

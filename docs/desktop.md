@@ -409,7 +409,7 @@ the fp32 export as well — a gigabyte downloaded to keep a sixth of it.
 
 **Which languages route here** is the host's answer, not a list on the web side:
 `asr_status` carries `languages` (`zh`, `en`, `ja`, `ko`, `yue`), `src/lib/asr/`
-resolves the learner's free-text language through the same `bcp47For`
+reads the profile's language tag through the same `targetTagOf`
 (`$lib/text`) the voice uses, takes the primary subtag, and asks whether it is in that list. Everything
 else keeps Web Speech where it exists and gets no button where it does not. So
 swapping the model is a `ModelSpec` change plus its `LANGUAGES` constant, and

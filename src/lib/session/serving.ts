@@ -11,6 +11,7 @@ import type { Serving } from '$lib/db/generated/index';
 import type { Shared } from '$lib/db/generated/index';
 import { writtenWithReadings } from '$lib/romanize';
 import { ttsAvailable } from '$lib/tts';
+import { targetTagOf } from '$lib/text';
 import type { Profile } from '$lib/types';
 import { getListeningMode, getRomanizationMode } from '$lib/prefs';
 
@@ -23,14 +24,14 @@ export interface DeviceServing {
 }
 
 /**
- * This device's bounds for `targetLanguage`: `off` readings shows none, `on`
+ * This device's bounds for the target language's tag: `off` readings shows none, `on`
  * always shows them, `adaptive` lets the pick decide; listening needs the
  * learner to want it and the device to be able to speak the language.
  */
-export function deviceServing(targetLanguage: string): DeviceServing {
+export function deviceServing(tag: string | undefined): DeviceServing {
 	return {
 		romanizationMode: getRomanizationMode(),
-		audio: getListeningMode() && ttsAvailable(targetLanguage)
+		audio: getListeningMode() && ttsAvailable(tag)
 	};
 }
 
@@ -41,14 +42,14 @@ export function deviceServing(targetLanguage: string): DeviceServing {
  * a length against — with readings off, only the hidden ones.
  */
 export function servingFor(
-	profile: Pick<Profile, 'aim' | 'targetLanguage'> | undefined,
+	profile: Pick<Profile, 'aim' | 'targetLanguage' | 'targetLanguageTag'> | undefined,
 	parts: Shared,
-	device: DeviceServing = deviceServing(profile?.targetLanguage ?? '')
+	device: DeviceServing = deviceServing(targetTagOf(profile))
 ): Serving {
 	return {
 		parts,
 		aim: profile?.aim ?? 'normal',
 		...device,
-		readings: writtenWithReadings(profile?.targetLanguage)
+		readings: writtenWithReadings(targetTagOf(profile))
 	};
 }

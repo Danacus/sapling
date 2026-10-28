@@ -26,7 +26,7 @@
 //! identifies zh, en, ja, ko and yue itself. So the engine is built once with
 //! `auto`, and the *routing* decision — which languages reach this host at all
 //! — stays where every other language decision in the app lives, in
-//! `src/lib/asr/` over `bcp47For`.
+//! `src/lib/asr/` over the profile's language tag.
 //!
 //! ## Inverse text normalization is on
 //!

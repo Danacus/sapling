@@ -11,6 +11,7 @@
 		onanswer,
 		targetLanguage = '',
 		nativeLanguage = '',
+		targetLanguageTag,
 		tokenize = null
 	}: {
 		challenge: Challenge;
@@ -19,6 +20,7 @@
 		onanswer: (answer: ChallengeAnswer, responseMs: number) => void;
 		targetLanguage?: string;
 		nativeLanguage?: string;
+		targetLanguageTag?: string;
 		tokenize?: ((text: string) => RomanizedToken[]) | null;
 	} = $props();
 
@@ -36,5 +38,6 @@
 	onanswer={answer}
 	{targetLanguage}
 	{nativeLanguage}
+	{targetLanguageTag}
 	{tokenize}
 />

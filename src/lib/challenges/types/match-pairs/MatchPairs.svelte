@@ -36,7 +36,7 @@
 		challenge,
 		screen,
 		onanswer,
-		targetLanguage = '',
+		targetLanguageTag,
 		tokenize = null
 	}: ChallengeProps<'match-pairs'> = $props();
 
@@ -224,7 +224,7 @@
 		if (busy || done || isMatchedLeft(pair)) return;
 		const selecting = selectedLeft !== pair;
 		selectedLeft = selecting ? pair : null;
-		if (selecting) void speak(challenge.pairs[pair].a, targetLanguage);
+		if (selecting) void speak(challenge.pairs[pair].a, targetLanguageTag);
 		resolve();
 	}
 

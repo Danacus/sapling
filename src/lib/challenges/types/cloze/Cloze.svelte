@@ -39,7 +39,7 @@
 		screen,
 		graded,
 		onanswer,
-		targetLanguage = '',
+		targetLanguageTag,
 		tokenize = null
 	}: ChallengeProps<'cloze'> = $props();
 
@@ -220,7 +220,7 @@
 			/>
 		{/if}
 		{#if rubyParts}<RubyText tokens={rubyParts.after} />{:else}<span>{parts.after}</span>{/if}
-		<SpeakButton text={spokenSentence} lang={targetLanguage} />
+		<SpeakButton text={spokenSentence} lang={targetLanguageTag} />
 	</p>
 	<!-- The stored one-line romanization, only where ruby is not already
 	     carrying the readings word by word. -->

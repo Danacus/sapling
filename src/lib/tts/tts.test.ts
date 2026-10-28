@@ -67,7 +67,7 @@ vi.mock('./native', () => native);
 vi.mock('./audio-store', () => store);
 
 /** The one language both engines are supposed to speak. */
-const MANDARIN = 'Mandarin Chinese';
+const MANDARIN = 'zh-CN';
 /** `zf_001`, the default Mandarin speaker — see `languages.ts`. */
 const ZF_001 = 3;
 
@@ -146,7 +146,7 @@ describe('choosing the host that speaks Kokoro', () => {
 	it('selects the Cantonese VITS model instead of falling back', async () => {
 		const { warmSpeech } = await loadTts();
 
-		await warmSpeech('今日天氣真係好好', 'Cantonese');
+		await warmSpeech('今日天氣真係好好', 'yue');
 
 		expect(sherpa.synthesize).toHaveBeenCalledWith('cantonese', '今日天氣真係好好', 0, 1);
 	});
@@ -187,7 +187,7 @@ describe('choosing the host that speaks Kokoro', () => {
 	it('preloads the model selected by language', async () => {
 		const { preloadVoice } = await loadTts();
 
-		await preloadVoice('Cantonese');
+		await preloadVoice('yue');
 
 		expect(sherpa.initSherpa).toHaveBeenCalledWith('cantonese');
 	});
@@ -206,7 +206,7 @@ describe('choosing the host that speaks Kokoro', () => {
 		const browser = await loadTts();
 		// The two mirrored runtime files, from `models.ts`.
 		expect(await browser.voiceDownloadBytes()).toBe(11903250 + 426654376);
-		expect(await browser.voiceDownloadBytes('Cantonese')).toBe(11903250 + 114426339);
+		expect(await browser.voiceDownloadBytes('yue')).toBe(11903250 + 114426339);
 
 		pretendTauri();
 		const desktop = await loadTts();

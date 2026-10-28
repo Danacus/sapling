@@ -13,8 +13,10 @@
 	} from '$lib/db';
 	import { isMockForced } from '$lib/llm';
 	import { isSyncAvailable, isValidPhrase, normalizePhrase, pairDevice } from '$lib/sync';
+	import { languageOption } from '$lib/text';
 	import type { Profile } from '$lib/types';
 	import InlineStatus from '$lib/ui/InlineStatus.svelte';
+	import LanguagePicker from '$lib/ui/LanguagePicker.svelte';
 
 	import { FINISH_HREF, onboardingSteps, startHref, type StartingPoint } from './steps';
 
@@ -27,35 +29,6 @@
 	const storedKey = adding && getApiKey() !== undefined;
 	const mockForced = isMockForced();
 
-	/** Datalist suggestions; learners may still type anything. */
-	const LANGUAGES = [
-		'English',
-		'Spanish',
-		'French',
-		'German',
-		'Italian',
-		'Portuguese',
-		'Dutch',
-		'Swedish',
-		'Norwegian',
-		'Danish',
-		'Polish',
-		'Czech',
-		'Greek',
-		'Turkish',
-		'Russian',
-		'Ukrainian',
-		'Arabic',
-		'Hebrew',
-		'Hindi',
-		'Mandarin Chinese',
-		'Cantonese',
-		'Japanese',
-		'Korean',
-		'Vietnamese',
-		'Indonesian'
-	];
-
 	const MODELS = [
 		'google/gemini-2.5-flash-lite',
 		'google/gemini-2.5-flash',
@@ -66,8 +39,10 @@
 
 	let step = $state(1);
 
-	let nativeLanguage = $state('');
-	let targetLanguage = $state('');
+	let nativeTag = $state<string | undefined>();
+	let targetTag = $state<string | undefined>();
+	const native = $derived(languageOption(nativeTag));
+	const targetOption = $derived(languageOption(targetTag));
 	let apiKey = $state('');
 	let model = $state(adding ? getModel() : DEFAULT_MODEL);
 
@@ -81,13 +56,11 @@
 	);
 	const totalSteps = $derived(steps.length);
 	const current = $derived(steps[Math.min(step, totalSteps) - 1]);
-	const target = $derived(targetLanguage.trim());
+	const target = $derived(targetOption?.name ?? '');
 
 	const canContinue = $derived(
 		current === 'languages'
-			? nativeLanguage.trim().length > 0 &&
-					targetLanguage.trim().length > 0 &&
-					nativeLanguage.trim().toLowerCase() !== targetLanguage.trim().toLowerCase()
+			? native !== undefined && targetOption !== undefined && native.tag !== targetOption.tag
 			: true
 	);
 
@@ -112,10 +85,15 @@
 		error = '';
 		saving = true;
 		try {
+			if (!native || !targetOption) return;
 			const chosenModel = model.trim() || DEFAULT_MODEL;
 			const profile: Profile = {
-				nativeLanguage: nativeLanguage.trim(),
-				targetLanguage: targetLanguage.trim(),
+				// The CLDR English name stays beside the tag: prompts and older
+				// builds read the name.
+				nativeLanguage: native.name,
+				targetLanguage: targetOption.name,
+				nativeLanguageTag: native.tag,
+				targetLanguageTag: targetOption.tag,
 				// Deprecated and never read; written only so an older build on
 				// another synced device can still parse the profile.
 				level: 'beginner',
@@ -204,37 +182,10 @@
 				<p class="sub">Which language are you bringing, and which one are you here for?</p>
 			</header>
 
-			<label class="field">
-				<span class="label">I speak</span>
-				<input
-					class="input"
-					list="languages"
-					bind:value={nativeLanguage}
-					placeholder="e.g. English"
-					autocomplete="off"
-				/>
-			</label>
+			<LanguagePicker label="I speak" bind:value={nativeTag} placeholder="e.g. English" />
+			<LanguagePicker label="I want to learn" bind:value={targetTag} placeholder="e.g. Spanish" />
 
-			<label class="field">
-				<span class="label">I want to learn</span>
-				<input
-					class="input"
-					list="languages"
-					bind:value={targetLanguage}
-					placeholder="e.g. Spanish"
-					autocomplete="off"
-				/>
-			</label>
-
-			<datalist id="languages">
-				{#each LANGUAGES as language (language)}
-					<option value={language}></option>
-				{/each}
-			</datalist>
-
-			{#if nativeLanguage.trim() && nativeLanguage.trim().toLowerCase() === targetLanguage
-						.trim()
-						.toLowerCase()}
+			{#if native && native.tag === targetOption?.tag}
 				<p class="hint">Pick two different languages to get started.</p>
 			{/if}
 		{:else if current === 'model'}

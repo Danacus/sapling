@@ -1,10 +1,10 @@
-/** The free-text → BCP-47 guess every language-aware area routes through. */
+/** Which tag a profile means: the stored one, else its legacy name once more. */
 import { describe, expect, it } from 'vitest';
 
-import { bcp47For, DEFAULT_LANGUAGE_TAG } from './language';
+import { legacyLanguageTag, nativeTagOf, primarySubtag, targetTagOf } from './language';
 
-describe('bcp47For', () => {
-	it('maps every language offered during onboarding', () => {
+describe('legacyLanguageTag', () => {
+	it('maps every language the old onboarding datalist offered', () => {
 		const expected: Record<string, string> = {
 			English: 'en',
 			Spanish: 'es',
@@ -32,38 +32,67 @@ describe('bcp47For', () => {
 			Vietnamese: 'vi',
 			Indonesian: 'id'
 		};
-
 		for (const [name, tag] of Object.entries(expected)) {
-			expect(bcp47For(name), name).toBe(tag);
+			expect(legacyLanguageTag(name), name).toBe(tag);
 		}
 	});
 
-	it('ignores case and surrounding whitespace', () => {
-		expect(bcp47For('  SPANISH ')).toBe('es');
-		expect(bcp47For('japanese')).toBe('ja');
+	it('ignores case, accents and surrounding whitespace', () => {
+		expect(legacyLanguageTag('  SPANISH ')).toBe('es');
+		expect(legacyLanguageTag('Español')).toBe('es');
+		expect(legacyLanguageTag('espanol')).toBe('es');
 	});
 
-	it('prefers the longest matching name, so "Mandarin Chinese" beats "Chinese"', () => {
-		expect(bcp47For('Mandarin Chinese (Simplified)')).toBe('zh-CN');
-		expect(bcp47For('Chinese')).toBe('zh-CN');
-		expect(bcp47For('Traditional Chinese')).toBe('zh-TW');
+	it('reads CLDR names and endonyms, regional ones included', () => {
+		expect(legacyLanguageTag('Vlaams')).toBe('nl-BE');
+		expect(legacyLanguageTag('Flemish')).toBe('nl-BE');
+		expect(legacyLanguageTag('Nederlands')).toBe('nl');
+		expect(legacyLanguageTag('Brazilian Portuguese')).toBe('pt-BR');
+		expect(legacyLanguageTag('British English')).toBe('en-GB');
+		expect(legacyLanguageTag('Swiss High German')).toBe('de-CH');
+		expect(legacyLanguageTag('日本語')).toBe('ja');
 	});
 
-	it('accepts a language tag typed directly, canonicalizing the region', () => {
-		expect(bcp47For('nl')).toBe('nl');
-		expect(bcp47For('pt-br')).toBe('pt-BR');
-		expect(bcp47For('EN-GB')).toBe('en-GB');
+	it('prefers the longest legacy name, so "Mandarin Chinese" beats "Chinese"', () => {
+		expect(legacyLanguageTag('Mandarin Chinese (Simplified)')).toBe('zh-CN');
+		expect(legacyLanguageTag('Chinese')).toBe('zh-CN');
+		expect(legacyLanguageTag('Traditional Chinese')).toBe('zh-TW');
 	});
 
-	it('handles endonyms and regional variants', () => {
-		expect(bcp47For('Español')).toBe('es');
-		expect(bcp47For('Brazilian Portuguese')).toBe('pt-BR');
-		expect(bcp47For('British English')).toBe('en-GB');
+	it('accepts a tag typed directly, canonicalized', () => {
+		expect(legacyLanguageTag('nl')).toBe('nl');
+		expect(legacyLanguageTag('pt-br')).toBe('pt-BR');
+		expect(legacyLanguageTag('EN-GB')).toBe('en-GB');
 	});
 
-	it('falls back to the default tag rather than throwing on nonsense', () => {
-		expect(bcp47For('Klingon')).toBe(DEFAULT_LANGUAGE_TAG);
-		expect(bcp47For('')).toBe(DEFAULT_LANGUAGE_TAG);
-		expect(bcp47For(undefined)).toBe(DEFAULT_LANGUAGE_TAG);
+	it('resolves nonsense to no tag, never to English', () => {
+		expect(legacyLanguageTag('Klingon')).toBeUndefined();
+		expect(legacyLanguageTag('')).toBeUndefined();
+		expect(legacyLanguageTag(undefined)).toBeUndefined();
+	});
+});
+
+describe('targetTagOf / nativeTagOf', () => {
+	it('prefers the stored tag over the name', () => {
+		expect(targetTagOf({ targetLanguage: 'Dutch', targetLanguageTag: 'nl-BE' })).toBe('nl-BE');
+		expect(nativeTagOf({ nativeLanguage: 'English', nativeLanguageTag: 'en-GB' })).toBe('en-GB');
+	});
+
+	it('falls back to the name when no tag is stored', () => {
+		expect(targetTagOf({ targetLanguage: 'Vlaams' })).toBe('nl-BE');
+		expect(nativeTagOf({ nativeLanguage: 'English' })).toBe('en');
+	});
+
+	it('is undefined for an unresolvable name or no profile', () => {
+		expect(targetTagOf({ targetLanguage: 'Klingon' })).toBeUndefined();
+		expect(targetTagOf(undefined)).toBeUndefined();
+	});
+});
+
+describe('primarySubtag', () => {
+	it('lowercases the language subtag and passes no tag through', () => {
+		expect(primarySubtag('zh-Hant-TW')).toBe('zh');
+		expect(primarySubtag('YUE')).toBe('yue');
+		expect(primarySubtag(undefined)).toBeUndefined();
 	});
 });

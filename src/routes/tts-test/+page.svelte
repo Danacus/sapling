@@ -23,8 +23,10 @@
 		type TtsEngine,
 		type TtsVoice
 	} from '$lib/tts';
+	import { languageOption, targetTagOf } from '$lib/text';
 	import type { Profile } from '$lib/types';
 	import BackLink from '$lib/ui/BackLink.svelte';
+	import LanguagePicker from '$lib/ui/LanguagePicker.svelte';
 
 	const CHINESE_SAMPLE = '你好，我想买三个苹果。';
 	const ENGLISH_SAMPLE = "Hello, I'd like three apples, please.";
@@ -35,7 +37,8 @@
 	let profile = $state<Profile | undefined>(undefined);
 
 	let text = $state(ENGLISH_SAMPLE);
-	let language = $state('');
+	/** A BCP-47 tag; `undefined` speaks untagged. */
+	let language = $state<string | undefined>();
 
 	// Mirrors Settings — same storage keys, so a change here shows up there too.
 	let ttsEngine = $state<TtsEngine>('kokoro');
@@ -58,12 +61,8 @@
 			.then((loadedProfile) => {
 				if (cancelled) return;
 				profile = loadedProfile;
-				if (loadedProfile?.targetLanguage) {
-					language = loadedProfile.targetLanguage;
-					if (isMandarin(loadedProfile.targetLanguage)) {
-						text = CHINESE_SAMPLE;
-					}
-				}
+				language = targetTagOf(loadedProfile);
+				if (isMandarin(language)) text = CHINESE_SAMPLE;
 				ttsEngine = getTtsEngine();
 				ttsVoice = getTtsVoice();
 				loading = false;
@@ -78,13 +77,11 @@
 		};
 	});
 
-	/** "Chinese", "English", plus the profile's own target language if it's a third thing. */
+	/** Mandarin, English, plus the profile's own target language if it's a third thing. */
 	const chips = $derived.by(() => {
-		const list = ['Chinese', 'English'];
-		const target = profile?.targetLanguage?.trim();
-		if (target && !list.some((name) => name.toLowerCase() === target.toLowerCase())) {
-			list.push(target);
-		}
+		const list = ['zh-CN', 'en'];
+		const target = targetTagOf(profile);
+		if (target && !list.includes(target)) list.push(target);
 		return list;
 	});
 
@@ -105,7 +102,7 @@
 		setTtsVoice(voice);
 	}
 
-	function pickLanguage(chip: string) {
+	function pickLanguage(chip: string | undefined) {
 		language = chip;
 	}
 
@@ -180,26 +177,17 @@
 				bind:value={text}></textarea>
 		</div>
 
-		<div class="field">
-			<span class="label" id="tts-lang-label">Language</span>
-			<input
-				class="input"
-				id="tts-lang"
-				aria-labelledby="tts-lang-label"
-				bind:value={language}
-				placeholder="e.g. Spanish"
-				autocomplete="off"
-				spellcheck="false"
-			/>
+		<div>
+			<LanguagePicker label="Language" bind:value={language} placeholder="e.g. Spanish" />
 			<div class="chip-row">
 				{#each chips as chip (chip)}
 					<button
 						type="button"
 						class="chip"
-						class:selected={chip.toLowerCase() === language.trim().toLowerCase()}
+						class:selected={chip === language}
 						onclick={() => pickLanguage(chip)}
 					>
-						{chip}
+						{languageOption(chip)?.name ?? chip}
 					</button>
 				{/each}
 			</div>

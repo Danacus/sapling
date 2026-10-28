@@ -19,6 +19,7 @@
 		onanswer,
 		targetLanguage = '',
 		nativeLanguage = '',
+		targetLanguageTag,
 		tokenize = null
 	}: ChallengeProps<'typed-translation'> = $props();
 
@@ -83,7 +84,7 @@
 		{promptTokens}
 		reading={promptSlot.reading}
 		speakText={promptIsTarget ? challenge.prompt : ''}
-		speakLang={targetLanguage}
+		speakLang={targetLanguageTag}
 	/>
 
 	<textarea

@@ -34,9 +34,8 @@ const CLINGS_RIGHT = /[([{«¿¡「『（【]$/u;
  * True when `text` is written in a script that separates words with spaces.
  *
  * Decided by the presence of any no-space character rather than by a language
- * name: the challenge carries its own text, and a profile's free-text
- * `targetLanguage` ("zh", "Mandarin", "中文", "Japanese") is a worse signal than
- * the characters themselves.
+ * tag: the challenge carries its own text, and its characters are a better
+ * signal than any profile setting.
  */
 export function usesInterWordSpaces(text: string): boolean {
 	return !NO_SPACE_SCRIPT.test(text);

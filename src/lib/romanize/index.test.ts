@@ -3,37 +3,24 @@ import { describe, expect, it } from 'vitest';
 import { hasLocalRomanizer, loadRomanizer, romanizerFor, writtenWithReadings } from './index';
 
 describe('hasLocalRomanizer', () => {
-	it('accepts every spelling of Mandarin that resolves to a zh tag', () => {
-		for (const language of [
-			'Mandarin Chinese',
-			'chinese',
-			'Mandarin',
-			'zh',
-			'zh-CN',
-			'zh-TW',
-			'zh-Hans',
-			'Simplified Chinese',
-			'Traditional Chinese'
-		]) {
+	it('accepts every zh tag', () => {
+		for (const language of ['zh', 'zh-CN', 'zh-TW', 'zh-Hans', 'zh-Hant-TW']) {
 			expect(hasLocalRomanizer(language), language).toBe(true);
 		}
 	});
 
 	it('rejects languages with no local implementation', () => {
-		for (const language of ['Japanese', 'Dutch', 'Korean', 'Russian', 'ja', 'nl']) {
+		for (const language of ['ja', 'nl', 'ko', 'ru']) {
 			expect(hasLocalRomanizer(language), language).toBe(false);
 		}
 	});
 
 	it('rejects Cantonese — jyutping is not pinyin', () => {
-		expect(hasLocalRomanizer('Cantonese')).toBe(false);
 		expect(hasLocalRomanizer('yue')).toBe(false);
+		expect(hasLocalRomanizer('yue-HK')).toBe(false);
 	});
 
-	it('rejects unknown and missing languages rather than guessing', () => {
-		// bcp47For falls back to 'en', so anything unrecognised lands outside the
-		// registry by construction.
-		expect(hasLocalRomanizer('Klingon')).toBe(false);
+	it('rejects a missing tag rather than guessing', () => {
 		expect(hasLocalRomanizer(undefined)).toBe(false);
 		expect(hasLocalRomanizer('')).toBe(false);
 	});
@@ -41,17 +28,10 @@ describe('hasLocalRomanizer', () => {
 
 describe('writtenWithReadings', () => {
 	it('is the languages written in a script other than Latin', () => {
-		for (const language of [
-			'Mandarin Chinese',
-			'Japanese',
-			'Korean',
-			'Russian',
-			'Cantonese',
-			'ar'
-		]) {
+		for (const language of ['zh-CN', 'ja', 'ko', 'ru', 'yue', 'ar', 'sr-Cyrl']) {
 			expect(writtenWithReadings(language), language).toBe(true);
 		}
-		for (const language of ['Spanish', 'Dutch', 'Vietnamese', 'tl', 'Klingon', undefined]) {
+		for (const language of ['es', 'nl-BE', 'vi', 'tl', undefined]) {
 			expect(writtenWithReadings(language), String(language)).toBe(false);
 		}
 	});
@@ -59,20 +39,20 @@ describe('writtenWithReadings', () => {
 
 describe('loadRomanizer / romanizerFor', () => {
 	it('resolves null for a language with no implementation, both ways', async () => {
-		expect(await loadRomanizer('Dutch')).toBeNull();
-		expect(romanizerFor('Dutch')).toBeNull();
+		expect(await loadRomanizer('nl')).toBeNull();
+		expect(romanizerFor('nl')).toBeNull();
 	});
 
 	it('hands the synchronous accessor the same instance once loaded', async () => {
-		const loaded = await loadRomanizer('Mandarin Chinese');
+		const loaded = await loadRomanizer('zh-CN');
 		expect(loaded).not.toBeNull();
-		expect(romanizerFor('Mandarin Chinese')).toBe(loaded);
+		expect(romanizerFor('zh-CN')).toBe(loaded);
 	});
 
-	it('caches across every spelling that shares a primary subtag', async () => {
+	it('caches across every tag that shares a primary subtag', async () => {
 		const cn = await loadRomanizer('zh-CN');
 		expect(await loadRomanizer('zh-TW')).toBe(cn);
-		expect(romanizerFor('chinese')).toBe(cn);
+		expect(romanizerFor('zh')).toBe(cn);
 	});
 
 	it('returns a working romanizer', async () => {

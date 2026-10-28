@@ -39,6 +39,7 @@
 		pooled,
 		nativeLanguage,
 		targetLanguage,
+		targetLanguageTag,
 		skipped = false,
 		last = false,
 		overturned = false,
@@ -69,6 +70,8 @@
 		pooled: boolean;
 		nativeLanguage: string;
 		targetLanguage: string;
+		/** For speech; absent when the language is unresolved. */
+		targetLanguageTag?: string;
 		/**
 		 * The learner pressed "Skip" rather than answering. Still a
 		 * `wrong` verdict everywhere else; it only changes what the banner says,
@@ -228,7 +231,7 @@
 	$effect(() => {
 		if (autoSpoken || !spokenAnswer) return;
 		autoSpoken = true;
-		void speak(spokenAnswer, targetLanguage);
+		void speak(spokenAnswer, targetLanguageTag);
 	});
 
 	/**
@@ -341,7 +344,7 @@
 						{#if reading}<p class="rom">{reading}</p>{/if}
 					{/if}
 					{#if spokenAnswer}
-						<SpeakButton text={spokenAnswer} lang={targetLanguage} label="Hear it" size="sm" />
+						<SpeakButton text={spokenAnswer} lang={targetLanguageTag} label="Hear it" size="sm" />
 					{/if}
 				</div>
 			</div>

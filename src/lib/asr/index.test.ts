@@ -106,26 +106,35 @@ describe('a browser', () => {
 		pretendWebSpeech();
 		const { dictationAvailable } = await loadAsr();
 
-		await expect(dictationAvailable('Mandarin Chinese')).resolves.toBe(true);
+		await expect(dictationAvailable('zh-CN')).resolves.toBe(true);
 		expect(native.nativeAsrStatus).not.toHaveBeenCalled();
 	});
 
 	it('dictates through Web Speech, in every language it has one for', async () => {
 		pretendWebSpeech();
 		const { dictationAvailable, listen } = await loadAsr();
-		await dictationAvailable('Mandarin Chinese');
+		await dictationAvailable('zh-CN');
 
-		expect(listen('Mandarin Chinese', handlers)).toBeDefined();
+		expect(listen('zh-CN', handlers)).toBeDefined();
 		expect(FakeRecognition.built).toBe(1);
 		expect(native.dictateNatively).not.toHaveBeenCalled();
+	});
+
+	it('offers nothing for an unresolved language, rather than guessing one', async () => {
+		pretendWebSpeech();
+		const { dictationAvailable, listen } = await loadAsr();
+
+		await expect(dictationAvailable(undefined)).resolves.toBe(false);
+		expect(listen(undefined, handlers)).toBeUndefined();
+		expect(FakeRecognition.built).toBe(0);
 	});
 
 	it('offers nothing where the browser has no recognizer — Firefox', async () => {
 		const { dictationAvailable, listen } = await loadAsr();
 
-		await expect(dictationAvailable('Mandarin Chinese')).resolves.toBe(false);
+		await expect(dictationAvailable('zh-CN')).resolves.toBe(false);
 		// `undefined` is the whole of the failure: no handler will ever fire.
-		expect(listen('Mandarin Chinese', handlers)).toBeUndefined();
+		expect(listen('zh-CN', handlers)).toBeUndefined();
 	});
 
 	it('has nothing to download', async () => {
@@ -141,8 +150,8 @@ describe('a Tauri host with the model downloaded', () => {
 		pretendTauri();
 		const { dictationAvailable, listen } = await loadAsr();
 
-		await expect(dictationAvailable('Mandarin Chinese')).resolves.toBe(true);
-		expect(listen('Mandarin Chinese', handlers)).toBeDefined();
+		await expect(dictationAvailable('zh-CN')).resolves.toBe(true);
+		expect(listen('zh-CN', handlers)).toBeDefined();
 		expect(native.dictateNatively).toHaveBeenCalledTimes(1);
 	});
 
@@ -151,11 +160,11 @@ describe('a Tauri host with the model downloaded', () => {
 		const { dictationAvailable } = await loadAsr();
 
 		// `zh-CN`, `zh-Hans` and `zh-TW` all resolve to a `zh` the model reads.
-		await expect(dictationAvailable('Chinese')).resolves.toBe(true);
-		await expect(dictationAvailable('Simplified Chinese')).resolves.toBe(true);
-		await expect(dictationAvailable('Traditional Chinese')).resolves.toBe(true);
-		await expect(dictationAvailable('Japanese')).resolves.toBe(true);
-		await expect(dictationAvailable('Korean')).resolves.toBe(true);
+		await expect(dictationAvailable('zh')).resolves.toBe(true);
+		await expect(dictationAvailable('zh-Hans')).resolves.toBe(true);
+		await expect(dictationAvailable('zh-TW')).resolves.toBe(true);
+		await expect(dictationAvailable('ja')).resolves.toBe(true);
+		await expect(dictationAvailable('ko')).resolves.toBe(true);
 	});
 
 	it('treats Cantonese as its own language, the way the voice does', async () => {
@@ -164,8 +173,8 @@ describe('a Tauri host with the model downloaded', () => {
 		const { dictationAvailable } = await loadAsr();
 
 		// `yue` is in the model's list or it is not; it is never a kind of `zh`.
-		await expect(dictationAvailable('Cantonese')).resolves.toBe(false);
-		await expect(dictationAvailable('Mandarin')).resolves.toBe(true);
+		await expect(dictationAvailable('yue')).resolves.toBe(false);
+		await expect(dictationAvailable('zh-CN')).resolves.toBe(true);
 	});
 
 	it('offers nothing for a language the model does not cover', async () => {
@@ -173,8 +182,8 @@ describe('a Tauri host with the model downloaded', () => {
 		const { dictationAvailable, listen } = await loadAsr();
 
 		// No Web Speech in either Tauri webview, so this is genuinely no button.
-		await expect(dictationAvailable('Dutch')).resolves.toBe(false);
-		expect(listen('Dutch', handlers)).toBeUndefined();
+		await expect(dictationAvailable('nl')).resolves.toBe(false);
+		expect(listen('nl', handlers)).toBeUndefined();
 		expect(native.dictateNatively).not.toHaveBeenCalled();
 	});
 
@@ -185,16 +194,16 @@ describe('a Tauri host with the model downloaded', () => {
 
 		await expect(dictationDownloadBytes()).resolves.toBe(163_002_883);
 		await expect(dictationModelInstalled()).resolves.toBe(true);
-		await expect(dictationCoversLanguage('Japanese')).resolves.toBe(true);
-		await expect(dictationCoversLanguage('Dutch')).resolves.toBe(false);
+		await expect(dictationCoversLanguage('ja')).resolves.toBe(true);
+		await expect(dictationCoversLanguage('nl')).resolves.toBe(false);
 	});
 
 	it('asks once and remembers the answer', async () => {
 		pretendTauri();
 		const { dictationAvailable, dictationDownloadBytes } = await loadAsr();
 
-		await dictationAvailable('Mandarin Chinese');
-		await dictationAvailable('Japanese');
+		await dictationAvailable('zh-CN');
+		await dictationAvailable('ja');
 		await dictationDownloadBytes();
 
 		expect(native.nativeAsrStatus).toHaveBeenCalledTimes(1);
@@ -207,26 +216,26 @@ describe('a Tauri host that has not downloaded the model', () => {
 		native.nativeAsrStatus.mockResolvedValue(NOT_DOWNLOADED);
 		const { dictationAvailable, dictationDownloadBytes, dictationCoversLanguage } = await loadAsr();
 
-		await expect(dictationAvailable('Mandarin Chinese')).resolves.toBe(false);
+		await expect(dictationAvailable('zh-CN')).resolves.toBe(false);
 		// Settings must still be able to offer the download, and must still be
 		// able to warn a Dutch learner that downloading it would change nothing.
 		await expect(dictationDownloadBytes()).resolves.toBe(163_002_883);
-		await expect(dictationCoversLanguage('Mandarin Chinese')).resolves.toBe(true);
+		await expect(dictationCoversLanguage('zh-CN')).resolves.toBe(true);
 	});
 
 	it('starts routing natively the moment the download finishes', async () => {
 		pretendTauri();
 		native.nativeAsrStatus.mockResolvedValue({ ...NOT_DOWNLOADED });
 		const { dictationAvailable, listen, preloadDictationModel } = await loadAsr();
-		await dictationAvailable('Mandarin Chinese');
-		expect(listen('Mandarin Chinese', handlers)).toBeUndefined();
+		await dictationAvailable('zh-CN');
+		expect(listen('zh-CN', handlers)).toBeUndefined();
 
 		await preloadDictationModel();
 
 		// Without this the button would stay hidden until the page next mounted,
 		// on the one screen where the learner has just been told it is ready.
-		await expect(dictationAvailable('Mandarin Chinese')).resolves.toBe(true);
-		expect(listen('Mandarin Chinese', handlers)).toBeDefined();
+		await expect(dictationAvailable('zh-CN')).resolves.toBe(true);
+		expect(listen('zh-CN', handlers)).toBeDefined();
 		expect(native.nativeAsrStatus).toHaveBeenCalledTimes(1);
 	});
 
@@ -271,8 +280,8 @@ describe('a Tauri host with no recognizer at all', () => {
 		recognizerlessHost();
 		const { dictationAvailable, listen } = await loadAsr();
 
-		await expect(dictationAvailable('Mandarin Chinese')).resolves.toBe(false);
-		expect(listen('Mandarin Chinese', handlers)).toBeUndefined();
+		await expect(dictationAvailable('zh-CN')).resolves.toBe(false);
+		expect(listen('zh-CN', handlers)).toBeUndefined();
 	});
 
 	it('reports nothing to download rather than rejecting into Settings', async () => {
@@ -297,8 +306,8 @@ describe('a Tauri host with no recognizer at all', () => {
 		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const { dictationAvailable } = await loadAsr();
 
-		await dictationAvailable('Mandarin Chinese');
-		await dictationAvailable('Japanese');
+		await dictationAvailable('zh-CN');
+		await dictationAvailable('ja');
 
 		expect(warn).toHaveBeenCalledTimes(1);
 		expect(native.nativeAsrStatus).toHaveBeenCalledTimes(1);
@@ -310,7 +319,7 @@ describe('listen without the probe', () => {
 		pretendWebSpeech();
 		const { listen } = await loadAsr();
 
-		expect(listen('Mandarin Chinese', handlers)).toBeDefined();
+		expect(listen('zh-CN', handlers)).toBeDefined();
 		expect(native.dictateNatively).not.toHaveBeenCalled();
 		expect(FakeRecognition.built).toBe(1);
 	});
@@ -324,7 +333,7 @@ describe('listen without the probe', () => {
 		pretendWebSpeech();
 		const { listen } = await loadAsr();
 
-		expect(listen('Mandarin Chinese', handlers)).toBeUndefined();
+		expect(listen('zh-CN', handlers)).toBeUndefined();
 		expect(native.dictateNatively).not.toHaveBeenCalled();
 		expect(FakeRecognition.built).toBe(0);
 	});

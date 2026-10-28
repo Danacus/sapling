@@ -26,13 +26,13 @@
  *
  * ## Purity
  *
- * `$lib/text` (a pure leaf, for the free-text → BCP-47 guess) and `./types`
+ * `$lib/text` (a pure leaf, for the primary subtag) and `./types`
  * are the only imports. No DB, no session, no `$lib/llm` — a romanizer
  * is a pure function of text plus vocabulary, and keeping it that way is what
  * lets the whole thing be unit-tested in node.
  */
 
-import { bcp47For } from '$lib/text';
+import { primarySubtag } from '$lib/text';
 
 import type { Romanizer } from './types';
 
@@ -43,12 +43,12 @@ export type { ReadableItem } from './item';
 /**
  * BCP-47 primary subtag → the module that implements it.
  *
- * Keyed on the *primary* subtag so every Mandarin spelling a learner might type
- * lands on one entry: `zh`, `zh-CN`, `zh-TW`, `zh-Hans` all resolve here.
+ * Keyed on the *primary* subtag so every Chinese tag lands on one entry: `zh`,
+ * `zh-CN`, `zh-TW`, `zh-Hans` all resolve here.
  *
- * Cantonese is deliberately absent even though it is "Chinese": `bcp47For` maps
- * "cantonese" to `yue`, whose primary subtag is not `zh`, so it is excluded for
- * free — and correctly, because Cantonese is romanized as jyutping and running
+ * Cantonese is deliberately absent even though it is "Chinese": its tag is
+ * `yue`, whose primary subtag is not `zh`, so it is excluded for free — and
+ * correctly, because Cantonese is romanized as jyutping and running
  * it through a pinyin dictionary would produce confident nonsense. Adding it
  * means adding a jyutping module, not widening this key.
  */
@@ -63,16 +63,12 @@ const pending = new Map<string, Promise<Romanizer>>();
 const ready = new Map<string, Romanizer>();
 
 /**
- * The registry key for a free-text language name, or `undefined` when there is
+ * The registry key for a language tag, or `undefined` when there is no tag or
  * no local implementation for it.
- *
- * Routes through `bcp47For`, which falls back to `en` for anything it does not
- * recognise — so an unknown or misspelled language is safely *excluded* rather
- * than guessed at.
  */
-function keyFor(language: string | undefined): string | undefined {
-	const primary = bcp47For(language).split('-')[0].toLowerCase();
-	return primary in LOADERS ? primary : undefined;
+function keyFor(tag: string | undefined): string | undefined {
+	const primary = primarySubtag(tag);
+	return primary && primary in LOADERS ? primary : undefined;
 }
 
 /**
@@ -82,13 +78,13 @@ function keyFor(language: string | undefined): string | undefined {
  * kick off {@link loadRomanizer} at all, and `false` means "keep using the
  * stored LLM reading".
  */
-export function hasLocalRomanizer(language: string | undefined): boolean {
-	return keyFor(language) !== undefined;
+export function hasLocalRomanizer(tag: string | undefined): boolean {
+	return keyFor(tag) !== undefined;
 }
 
 /**
  * Primary subtags of the languages written in a script other than Latin —
- * every non-Latin one `bcp47For` can answer, plus their close neighbours. The
+ * the common non-Latin ones and their close neighbours. The
  * lesson prompt has the model write a `reading` beside every target-language
  * string for exactly these ("always null when the target language is written
  * in the Latin script").
@@ -136,11 +132,12 @@ const WRITTEN_WITH_READINGS: ReadonlySet<string> = new Set([
  * language is written in a script other than Latin. It is what the practice
  * stream's difficulty check assumes of a row not written yet
  * (`crates/sapling-challenges`' `Serving.readings`), because the readings
- * setting decides at which help levels such a row is served. An unknown
- * language reads as Latin, as `bcp47For` reads it as English.
+ * setting decides at which help levels such a row is served. No tag reads as
+ * Latin.
  */
-export function writtenWithReadings(language: string | undefined): boolean {
-	return WRITTEN_WITH_READINGS.has(bcp47For(language).split('-')[0].toLowerCase());
+export function writtenWithReadings(tag: string | undefined): boolean {
+	const primary = primarySubtag(tag);
+	return primary !== undefined && WRITTEN_WITH_READINGS.has(primary);
 }
 
 /**
@@ -153,8 +150,8 @@ export function writtenWithReadings(language: string | undefined): boolean {
  * transient chunk-fetch failure can be retried rather than being remembered as
  * permanent.
  */
-export async function loadRomanizer(language: string | undefined): Promise<Romanizer | null> {
-	const key = keyFor(language);
+export async function loadRomanizer(tag: string | undefined): Promise<Romanizer | null> {
+	const key = keyFor(tag);
 	if (!key) return null;
 
 	let load = pending.get(key);
@@ -178,7 +175,7 @@ export async function loadRomanizer(language: string | undefined): Promise<Roman
  * same: render the stored LLM reading. Once {@link loadRomanizer} has resolved,
  * this returns the very same instance it did.
  */
-export function romanizerFor(language: string | undefined): Romanizer | null {
-	const key = keyFor(language);
+export function romanizerFor(tag: string | undefined): Romanizer | null {
+	const key = keyFor(tag);
 	return (key && ready.get(key)) || null;
 }

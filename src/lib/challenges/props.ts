@@ -9,5 +9,7 @@ export interface ChallengeProps<T extends ChallengeType> {
 	onanswer: (answer: AnswerOf<T>, responseMs: number) => void;
 	targetLanguage?: string;
 	nativeLanguage?: string;
+	/** The target language's BCP-47 tag, for speech; absent when unresolved. */
+	targetLanguageTag?: string;
 	tokenize?: ((text: string) => RomanizedToken[]) | null;
 }

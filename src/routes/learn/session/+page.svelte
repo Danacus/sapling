@@ -29,6 +29,7 @@
 	import { getDailyActivity, getProfile, streakFrom } from '$lib/db';
 	import { isMockMode } from '$lib/llm';
 	import { loadRomanizer, type Romanizer } from '$lib/romanize';
+	import { targetTagOf } from '$lib/text';
 	import {
 		SKIP_ANSWER,
 		amendResult,
@@ -278,7 +279,7 @@
 			// for this language — and resolving late are the same case as far as the
 			// components are concerned: they fall back to the stored, LLM-written
 			// romanization strings.
-			void loadRomanizer(loaded.targetLanguage).then((loadedRomanizer) => {
+			void loadRomanizer(targetTagOf(loaded)).then((loadedRomanizer) => {
 				romanizer = loadedRomanizer;
 			});
 			mock = isMockMode();
@@ -329,7 +330,7 @@
 	async function warmTexts(texts: string[], generation: number): Promise<void> {
 		for (const text of texts) {
 			if (generation !== warmGeneration) return;
-			await warmSpeech(text, targetLanguage);
+			await warmSpeech(text, targetTag);
 		}
 	}
 
@@ -342,8 +343,8 @@
 	 * place in the session where they are waiting on audio with nothing to read.
 	 */
 	function bootSpeech(): void {
-		if (getTtsEngine() !== 'kokoro' || !sherpaSupports(targetLanguage)) return;
-		void preloadVoice(targetLanguage).catch(() => {
+		if (getTtsEngine() !== 'kokoro' || !sherpaSupports(targetTag)) return;
+		void preloadVoice(targetTag).catch(() => {
 			// A failed preload is not the learner's problem: `speak` falls back.
 		});
 	}
@@ -740,6 +741,7 @@
 
 	const targetLanguage = $derived(profile?.targetLanguage ?? '');
 	const nativeLanguage = $derived(profile?.nativeLanguage ?? '');
+	const targetTag = $derived(targetTagOf(profile));
 
 	/** Read once — the toggle lives in Settings, not mid-session. */
 	const romanizationMode = getRomanizationMode();
@@ -855,7 +857,7 @@
 										<div class="word-text">
 											<span class="term-row">
 												<span class="term">{word.term}</span>
-												<SpeakButton text={word.term} lang={targetLanguage} size="sm" />
+												<SpeakButton text={word.term} lang={targetTag} size="sm" />
 											</span>
 											{#if showNewWordReadings && word.romanization}
 												<span class="rom">{word.romanization}</span>
@@ -940,6 +942,7 @@
 								onanswer={handleAnswer}
 								{targetLanguage}
 								{nativeLanguage}
+								targetLanguageTag={targetTag}
 								{tokenize}
 							/>
 
@@ -972,6 +975,7 @@
 				skipped={feedback.answerGiven === SKIP_ANSWER}
 				{nativeLanguage}
 				{targetLanguage}
+				targetLanguageTag={targetTag}
 				last={false}
 				overturned={feedback.overturned ?? false}
 				oncontinue={() => void continueSession()}

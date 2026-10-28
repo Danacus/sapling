@@ -57,7 +57,8 @@ CREATE TABLE IF NOT EXISTS difficultyFold (
 CREATE TABLE IF NOT EXISTS tombstones (itemId TEXT PRIMARY KEY);
 
 CREATE TABLE IF NOT EXISTS profile (
-  id TEXT PRIMARY KEY, nativeLanguage TEXT, targetLanguage TEXT, level TEXT, interests TEXT,
+  id TEXT PRIMARY KEY, nativeLanguage TEXT, targetLanguage TEXT,
+  nativeLanguageTag TEXT, targetLanguageTag TEXT, level TEXT, interests TEXT,
   about TEXT, model TEXT, createdAt INTEGER, updatedAt INTEGER NOT NULL DEFAULT 0, aim TEXT);
 
 CREATE TABLE IF NOT EXISTS texts (
@@ -136,7 +137,10 @@ pub fn review_key(item_id: &str, at: f64, device: &str) -> String {
 ///
 /// Bumped for 11 when `overturns` arrived: an older build logged and skipped
 /// every `resultOverturned` it was sent, and the rebuild is what applies them.
-pub const DERIVED_SCHEMA_VERSION: u32 = 11;
+///
+/// Bumped for 12 when `profile` gained `nativeLanguageTag` and
+/// `targetLanguageTag`, the picker's BCP-47 tags.
+pub const DERIVED_SCHEMA_VERSION: u32 = 12;
 
 /// Every read table the materializer owns; `events` and `meta` survive a rebuild.
 ///

@@ -1,9 +1,10 @@
 /**
- * Language → speech-engine mapping.
+ * Language tag → speech-engine mapping.
  *
- * The profile stores `targetLanguage` as free text, and the tag guessed from it
- * is `$lib/text`'s `bcp47For`; what lives here is which engine and speaker can
- * honestly pronounce that tag. Pure, so it can be unit-tested without a browser.
+ * Every function takes the profile's BCP-47 tag (`$lib/text`'s `targetTagOf`),
+ * `undefined` when the language is unresolved; what lives here is which engine
+ * and speaker can honestly pronounce that tag. Pure, so it can be unit-tested
+ * without a browser.
  *
  * ## What Kokoro covers here: Mandarin and English
  *
@@ -22,7 +23,7 @@
  * by Kokoro itself; the model registry makes Cantonese a separate choice.
  */
 
-import { bcp47For } from '$lib/text';
+import { primarySubtag } from '$lib/text';
 
 import { getTtsVoice, type TtsVoice } from './prefs';
 import type { TtsModelId } from './models';
@@ -85,13 +86,11 @@ export const DEFAULT_MANDARIN_SPEAKER = MANDARIN_SPEAKERS[0];
  * English always uses its own voice regardless of the preference.
  */
 export function kokoroSpeakerFor(
-	language: string | undefined,
+	tag: string | undefined,
 	voice: TtsVoice = getTtsVoice()
 ): KokoroSpeaker | undefined {
-	const [base, region] = bcp47For(language).toLowerCase().split('-');
-
-	if (base === 'en') return region === 'gb' ? BF_VALE : AF_MAPLE;
-	if (!isMandarin(language)) return undefined;
+	if (primarySubtag(tag) === 'en') return regionOf(tag) === 'GB' ? BF_VALE : AF_MAPLE;
+	if (!isMandarin(tag)) return undefined;
 
 	return MANDARIN_SPEAKERS.find((speaker) => speaker.name === voice) ?? DEFAULT_MANDARIN_SPEAKER;
 }
@@ -100,33 +99,47 @@ export function kokoroSpeakerFor(
  * Whether this language is Mandarin as far as the app is concerned — the one
  * question the voice picker, the speaker mapping and the mock fixtures all ask.
  *
- * `zh-TW` is Traditional script and `yue` is Cantonese; this model speaks
- * neither, so neither counts. Exported because a caller that re-derived the
- * rule had already drifted from it (it checked `zh-TW` but not `zh-Hant`).
+ * Chinese written in Simplified script once CLDR fills in the likely script:
+ * `zh-TW`, `zh-HK` and `zh-Hant` are Traditional and `yue` is Cantonese, and
+ * this model speaks none of them. Exported because a caller that re-derived
+ * the rule had already drifted from it.
  */
-export function isMandarin(language: string | undefined): boolean {
-	const [base, region] = bcp47For(language).toLowerCase().split('-');
-	return base === 'zh' && region !== 'tw' && region !== 'hant';
+export function isMandarin(tag: string | undefined): boolean {
+	const locale = localeOf(tag)?.maximize();
+	return locale?.language === 'zh' && locale.script === 'Hans';
+}
+
+function localeOf(tag: string | undefined): Intl.Locale | undefined {
+	if (!tag) return undefined;
+	try {
+		return new Intl.Locale(tag);
+	} catch {
+		return undefined;
+	}
+}
+
+function regionOf(tag: string | undefined): string | undefined {
+	return localeOf(tag)?.region;
 }
 
 /** Whether Kokoro covers this language at all. */
-export function kokoroSupports(language: string | undefined): boolean {
-	return kokoroSpeakerFor(language, 'auto') !== undefined;
+export function kokoroSupports(tag: string | undefined): boolean {
+	return kokoroSpeakerFor(tag, 'auto') !== undefined;
 }
 
 /** The sherpa model and speaker that can honestly pronounce this language. */
 export function sherpaVoiceFor(
-	language: string | undefined,
+	tag: string | undefined,
 	voice: TtsVoice = getTtsVoice()
 ): SherpaVoice | undefined {
-	if (bcp47For(language).toLowerCase().split('-')[0] === 'yue') {
+	if (primarySubtag(tag) === 'yue') {
 		return { model: 'cantonese', name: 'cantonese-xiaomaiiwn', id: 0, label: 'Cantonese' };
 	}
-	const speaker = kokoroSpeakerFor(language, voice);
+	const speaker = kokoroSpeakerFor(tag, voice);
 	return speaker ? { model: 'kokoro', ...speaker } : undefined;
 }
 
 /** Whether one of the installed-on-demand sherpa models covers this language. */
-export function sherpaSupports(language: string | undefined): boolean {
-	return sherpaVoiceFor(language, 'auto') !== undefined;
+export function sherpaSupports(tag: string | undefined): boolean {
+	return sherpaVoiceFor(tag, 'auto') !== undefined;
 }

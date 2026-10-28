@@ -66,6 +66,7 @@
 		type TtsEngine,
 		type TtsVoice
 	} from '$lib/tts';
+	import { targetTagOf } from '$lib/text';
 	import type { Profile } from '$lib/types';
 	import BackLink from '$lib/ui/BackLink.svelte';
 	import InlineStatus from '$lib/ui/InlineStatus.svelte';
@@ -250,7 +251,7 @@
 
 				// Crosses to the host on the desktop, and is already known on the
 				// web — either way it is not worth waiting for.
-				void voiceDownloadBytes(loadedProfile?.targetLanguage).then((bytes) => {
+				void voiceDownloadBytes(targetTagOf(loadedProfile)).then((bytes) => {
 					if (!cancelled) downloadSize = formatMb(bytes);
 				});
 
@@ -262,7 +263,7 @@
 				void dictationModelInstalled().then((installed) => {
 					if (!cancelled) dictationInstalled = installed;
 				});
-				void dictationCoversLanguage(loadedProfile?.targetLanguage).then((covers) => {
+				void dictationCoversLanguage(targetTagOf(loadedProfile)).then((covers) => {
 					if (!cancelled) dictationCoversTarget = covers;
 				});
 
@@ -293,8 +294,9 @@
 	 * voice — worth saying out loud rather than leaving them to wonder why the
 	 * download changed nothing.
 	 */
-	const sherpaCoversTarget = $derived(sherpaSupports(profile?.targetLanguage));
-	const mandarinTarget = $derived(isMandarin(profile?.targetLanguage));
+	const targetTag = $derived(targetTagOf(profile));
+	const sherpaCoversTarget = $derived(sherpaSupports(targetTag));
+	const mandarinTarget = $derived(isMandarin(targetTag));
 
 	/**
 	 * e.g. "439 MB" — never hard-coded, so the copy cannot drift.
@@ -499,7 +501,7 @@
 
 		// The task does the download and draws the progress bar; this only reports
 		// how it ended, in the same inline slot as every other action here.
-		const outcome = await startTask('tts-model', profile?.targetLanguage ?? 'English').done;
+		const outcome = await startTask('tts-model', targetTag ?? '').done;
 		if (outcome.status === 'done') {
 			preloadMessage = 'Voice model ready';
 			flash((value) => (preloadStatus = value), 3000);
@@ -726,6 +728,12 @@
 							{profile.nativeLanguage}
 						</span>
 					</p>
+					{#if !targetTag}
+						<p class="hint unresolved" role="status">
+							Sapling can't tell which language “{profile.targetLanguage}” is, so voice, dictation
+							and readings are off. <a href="/profile">Choose your language</a>.
+						</p>
+					{/if}
 					<!--
 				  Read-only on purpose: the self-description is edited in one place
 				  (/profile) so there is never a second copy of that form to keep in
@@ -1619,6 +1627,11 @@
 		margin: 0.35rem 0 0;
 		padding-top: 0.9rem;
 		border-top: 1px solid var(--border);
+	}
+
+	.unresolved {
+		color: var(--accent);
+		font-weight: 600;
 	}
 
 	.profile-link {

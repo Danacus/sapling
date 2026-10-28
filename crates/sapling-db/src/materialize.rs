@@ -489,12 +489,15 @@ impl<'a> Materializer<'a> {
         }
         self.sql.exec(
             "INSERT OR REPLACE INTO profile
-			   (id, nativeLanguage, targetLanguage, level, interests, about, model, createdAt, updatedAt, aim)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			   (id, nativeLanguage, targetLanguage, nativeLanguageTag, targetLanguageTag,
+			    level, interests, about, model, createdAt, updatedAt, aim)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             &[
                 Param::text(profile_id),
                 Param::text(&p.native_language),
                 Param::text(&p.target_language),
+                Param::opt_text(p.native_language_tag.as_deref()),
+                Param::opt_text(p.target_language_tag.as_deref()),
                 Param::text(p.level.as_str()),
                 Param::text(serde_json::to_string(&p.interests)?),
                 Param::opt_text(p.about.as_deref()),

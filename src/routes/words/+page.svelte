@@ -25,6 +25,7 @@
 	import { itemReadingTokens, loadRomanizer } from '$lib/romanize';
 	import type { Romanizer } from '$lib/romanize';
 	import { CardState } from '$lib/srs';
+	import { targetTagOf } from '$lib/text';
 	import type { KnowledgeItem, Profile } from '$lib/types';
 	import ProgressBar from '$lib/ui/ProgressBar.svelte';
 	import RubyText from '$lib/ui/RubyText.svelte';
@@ -159,7 +160,7 @@
 				// The local romanizer's chunk lands after the list has rendered;
 				// until then, and for languages without one, the stored readings
 				// carry the ruby. A failed fetch just keeps it that way.
-				loadRomanizer(loadedProfile?.targetLanguage)
+				loadRomanizer(targetTagOf(loadedProfile))
 					.then((loaded) => {
 						if (!cancelled) romanizer = loaded;
 					})
@@ -176,8 +177,7 @@
 		};
 	});
 
-	/** The real language name, for speech — never the display fallback. */
-	const speechLanguage = $derived(profile?.targetLanguage?.trim() ?? '');
+	const speechLanguage = $derived(targetTagOf(profile));
 
 	/** Every word, unfiltered: what the summary tiles count. */
 	const allRows = $derived(items.map((item) => toWordRow(item, now)));

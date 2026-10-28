@@ -58,7 +58,6 @@
  */
 
 import { inTauri } from '$lib/platform';
-import { bcp47For } from '$lib/text';
 
 import { readClip, writeClip } from './audio-store';
 import { audioCacheKey, audioCacheUrl, LruCache } from './cache';
@@ -278,8 +277,8 @@ export function onVoiceProgress(listener: (progress: TtsProgress) => void): () =
  * Never rejects: Settings fires this off without waiting for it
  * (`+page.svelte`), so a rejection here would be an unhandled one.
  */
-export async function voiceDownloadBytes(language?: string): Promise<number> {
-	const model = sherpaVoiceFor(language)?.model ?? 'kokoro';
+export async function voiceDownloadBytes(tag?: string): Promise<number> {
+	const model = sherpaVoiceFor(tag)?.model ?? 'kokoro';
 	if (!inTauri()) return browserModelDownloadBytes(model);
 	return (await hostVoice(model))?.downloadBytes ?? 0;
 }
@@ -349,10 +348,10 @@ export function stopSpeaking(): void {
  * buttons into a disabled affordance rather than hiding them, so the learner
  * can see the feature exists and where to switch it on.
  */
-export function ttsAvailable(language: string | undefined): boolean {
+export function ttsAvailable(tag: string | undefined): boolean {
 	const engine = getTtsEngine();
 	if (engine === 'off') return false;
-	if (engine === 'kokoro' && sherpaSupports(language)) return true;
+	if (engine === 'kokoro' && sherpaSupports(tag)) return true;
 	return webSpeechAvailable();
 }
 
@@ -362,15 +361,15 @@ export function ttsAvailable(language: string | undefined): boolean {
  * show an error — `speak()` itself never surfaces this.
  */
 export async function preloadKokoro(onProgress?: (progress: TtsProgress) => void): Promise<void> {
-	return preloadVoice('Mandarin Chinese', onProgress);
+	return preloadVoice('zh-CN', onProgress);
 }
 
-/** Downloads and warms the sherpa model selected for `language`. */
+/** Downloads and warms the sherpa model selected for `tag`. */
 export async function preloadVoice(
-	language: string,
+	tag: string | undefined,
 	onProgress?: (progress: TtsProgress) => void
 ): Promise<void> {
-	const model = sherpaVoiceFor(language)?.model ?? 'kokoro';
+	const model = sherpaVoiceFor(tag)?.model ?? 'kokoro';
 	const engine = await sherpa();
 	const unsubscribe = onProgress ? engine.onProgress(onProgress) : undefined;
 	try {
@@ -442,10 +441,10 @@ async function obtainClip(phrase: string, speaker: SherpaVoice): Promise<Blob> {
  * native host has no separate warm-up command, and the seconds it takes are
  * spent while the challenge is being read rather than after an answer.
  */
-export async function warmSpeech(text: string, language: string): Promise<void> {
+export async function warmSpeech(text: string, tag: string | undefined): Promise<void> {
 	const phrase = text?.trim();
 	if (!phrase || getTtsEngine() !== 'kokoro') return;
-	const speaker = sherpaVoiceFor(language);
+	const speaker = sherpaVoiceFor(tag);
 	if (!speaker) return;
 	try {
 		await obtainClip(phrase, speaker);
@@ -539,13 +538,13 @@ async function playClip(blob: Blob): Promise<void> {
 }
 
 /**
- * Speaks `text` in `language` (the profile's free-text `targetLanguage`) and
- * resolves when playback finishes.
+ * Speaks `text` in the language `tag` names (`$lib/text`'s `targetTagOf`) and
+ * resolves when playback finishes. No tag means the browser's default voice.
  *
- * Blank text, engine `off`, an unknown language or any engine failure all
- * resolve quietly. A second call cuts off the first.
+ * Blank text, engine `off` or any engine failure all resolve quietly. A second
+ * call cuts off the first.
  */
-export async function speak(text: string, language: string): Promise<void> {
+export async function speak(text: string, tag: string | undefined): Promise<void> {
 	const phrase = text?.trim();
 	if (!phrase) return;
 
@@ -555,7 +554,7 @@ export async function speak(text: string, language: string): Promise<void> {
 	stopSpeaking();
 
 	if (engine === 'kokoro') {
-		const speaker = sherpaVoiceFor(language);
+		const speaker = sherpaVoiceFor(tag);
 		if (speaker) {
 			try {
 				// Memory → disk → synthesize (see `obtainClip`); the disk layer never
@@ -571,7 +570,7 @@ export async function speak(text: string, language: string): Promise<void> {
 	}
 
 	try {
-		await speakWithWebSpeech(phrase, bcp47For(language));
+		await speakWithWebSpeech(phrase, tag);
 	} catch (cause) {
 		// speakWithWebSpeech already swallows its own errors; belt and braces.
 		console.warn('[tts] Could not speak that.', cause);

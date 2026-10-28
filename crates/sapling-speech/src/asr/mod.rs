@@ -76,7 +76,7 @@ pub const SAMPLE_RATE: i32 = 16_000;
 /// them.
 ///
 /// This is the whole of the routing contract with the window: `src/lib/asr/`
-/// resolves the learner's free-text language through `bcp47For`, takes the
+/// reads the profile's language tag (`$lib/text`'s `targetTagOf`), takes the
 /// primary subtag, and asks whether it is in this list. Everything else keeps
 /// Web Speech, or gets no microphone button at all.
 pub const LANGUAGES: &[&str] = &["zh", "en", "ja", "ko", "yue"];

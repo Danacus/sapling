@@ -479,6 +479,8 @@ impl Core {
         Ok(Some(Profile {
             native_language: row.text("nativeLanguage")?.to_owned(),
             target_language: row.text("targetLanguage")?.to_owned(),
+            native_language_tag: row.opt_text("nativeLanguageTag")?.map(str::to_owned),
+            target_language_tag: row.opt_text("targetLanguageTag")?.map(str::to_owned),
             level: parse_enum(row.text("level")?)?,
             interests: parse_json(row.text("interests")?)?,
             about: row.opt_text("about")?.map(str::to_owned),

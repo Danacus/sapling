@@ -36,7 +36,7 @@
 		reading = '',
 		hidePrompt = false,
 		speakText = '',
-		speakLang = '',
+		speakLang,
 		speakLabel = '',
 		size = 'lg'
 	}: {
@@ -66,7 +66,7 @@
 		hidePrompt?: boolean;
 		/** Non-empty adds a speaker button after the prompt, reading this text. */
 		speakText?: string;
-		/** The profile's `targetLanguage`, for `speak()`. */
+		/** The target language's tag, for `speak()`; absent speaks untagged. */
 		speakLang?: string;
 		/** Optional visible caption on the speaker button, e.g. "Play again". */
 		speakLabel?: string;

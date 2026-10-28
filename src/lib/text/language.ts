@@ -1,82 +1,24 @@
 /**
- * A free-text language name → a BCP-47 tag.
- *
- * The profile stores `targetLanguage` as free text ("Spanish", "Mandarin
- * Chinese", occasionally just "nl"), so everything downstream has to guess a
- * language tag from a human-written string: the voice routing (`$lib/tts`),
- * dictation (`$lib/asr`), which romanizer applies and whether a language is
- * written with readings (`$lib/romanize`). That guess is a fact about text, not
- * about any one of those, so it lives here — it sat in `$lib/tts` once, and the
- * romanizer and the recognizer importing a speech module for it tied three
- * areas together for one pure function.
+ * Which language a profile means, as a BCP-47 tag — what voice, dictation and
+ * the romanizer route on. The picker stores the tag beside the name; a profile
+ * typed as free text before the picker, or saved since by an older build
+ * (whose struct strips the tag), has only the name, which
+ * {@link legacyLanguageTag} reads instead. Nothing here guesses English: an
+ * unresolved language is no tag, and every consumer then does nothing
+ * language-specific.
  */
+import type { Profile } from '$lib/types';
 
-/** Used whenever a language name means nothing to us. */
-export const DEFAULT_LANGUAGE_TAG = 'en';
+import { canonicalTag, englishName, languageOptions, searchKey } from './language-options';
 
 /**
- * Language name → BCP-47 tag. Covers the onboarding datalist plus the aliases
- * people actually type; anything unknown falls back to
- * {@link DEFAULT_LANGUAGE_TAG}. Keys must be normalized (lowercase, single
- * spaces) — see {@link normalizeName}.
+ * Migration only: names learners typed before the picker existed. Anything a
+ * CLDR name or endonym already covers is matched through `languageOptions`
+ * instead. Keys are normalized (see {@link normalizeName}).
  */
-const LANGUAGE_TAGS: Readonly<Record<string, string>> = {
-	// Onboarding datalist ----------------------------------------------------
-	english: 'en',
-	spanish: 'es',
-	french: 'fr',
-	german: 'de',
-	italian: 'it',
-	portuguese: 'pt',
-	dutch: 'nl',
-	swedish: 'sv',
+const LEGACY_NAMES: Readonly<Record<string, string>> = {
 	norwegian: 'nb',
-	danish: 'da',
-	polish: 'pl',
-	czech: 'cs',
-	greek: 'el',
-	turkish: 'tr',
-	russian: 'ru',
-	ukrainian: 'uk',
-	arabic: 'ar',
-	hebrew: 'he',
-	hindi: 'hi',
 	'mandarin chinese': 'zh-CN',
-	japanese: 'ja',
-	korean: 'ko',
-	vietnamese: 'vi',
-	indonesian: 'id',
-
-	// Common variants and endonyms ------------------------------------------
-	'american english': 'en-US',
-	'british english': 'en-GB',
-	castilian: 'es',
-	espanol: 'es',
-	español: 'es',
-	francais: 'fr',
-	français: 'fr',
-	deutsch: 'de',
-	italiano: 'it',
-	'brazilian portuguese': 'pt-BR',
-	portugues: 'pt',
-	português: 'pt',
-	nederlands: 'nl',
-	flemish: 'nl-BE',
-	'norwegian bokmal': 'nb',
-	'norwegian bokmål': 'nb',
-	finnish: 'fi',
-	icelandic: 'is',
-	slovak: 'sk',
-	hungarian: 'hu',
-	romanian: 'ro',
-	bulgarian: 'bg',
-	croatian: 'hr',
-	serbian: 'sr',
-	persian: 'fa',
-	farsi: 'fa',
-	urdu: 'ur',
-	bengali: 'bn',
-	tamil: 'ta',
 	chinese: 'zh-CN',
 	mandarin: 'zh-CN',
 	putonghua: 'zh-CN',
@@ -84,63 +26,74 @@ const LANGUAGE_TAGS: Readonly<Record<string, string>> = {
 	中文: 'zh-CN',
 	'simplified chinese': 'zh-CN',
 	'traditional chinese': 'zh-TW',
-	cantonese: 'yue',
-	thai: 'th',
-	malay: 'ms',
+	castilian: 'es',
+	flemish: 'nl-BE',
+	vlaams: 'nl-BE',
+	'norwegian bokmal': 'nb',
+	farsi: 'fa',
+	bengali: 'bn',
 	filipino: 'tl',
-	tagalog: 'tl',
-	swahili: 'sw',
-	catalan: 'ca',
-	irish: 'ga',
-	welsh: 'cy'
+	tagalog: 'tl'
 };
 
 /** Longest keys first, so "mandarin chinese" wins over "chinese". */
-const LANGUAGE_KEYS_BY_LENGTH = Object.keys(LANGUAGE_TAGS).sort((a, b) => b.length - a.length);
+const LEGACY_KEYS_BY_LENGTH = Object.keys(LEGACY_NAMES).sort((a, b) => b.length - a.length);
 
-/** A BCP-47-ish tag typed directly, e.g. `nl`, `pt-BR`, `zh-Hans`. */
+/** A tag typed directly, e.g. `nl`, `pt-BR`, `zh-Hans`. */
 const TAG_PATTERN = /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i;
 
 function normalizeName(language: string): string {
-	return language
-		.toLowerCase()
-		.replace(/[(),./]/g, ' ')
-		.replace(/\s+/g, ' ')
-		.trim();
-}
-
-/** `pt-br` → `pt-BR`, `EN` → `en`. Cosmetic, but `utterance.lang` prefers it. */
-function canonicalizeTag(tag: string): string {
-	const [base, ...rest] = tag.split('-');
-	return [
-		base.toLowerCase(),
-		...rest.map((part) => (part.length === 2 ? part.toUpperCase() : part.toLowerCase()))
-	].join('-');
+	return searchKey(language.replace(/[(),./]/g, ' ').replace(/\s+/g, ' '));
 }
 
 /**
- * Best-effort BCP-47 tag for a free-text language name.
- *
- * Tries, in order: an exact name match, a bare language tag the learner typed
- * themselves, then the longest known language name contained in the string
- * (so "Mandarin Chinese (Simplified)" still lands on `zh-CN`). Falls back to
- * {@link DEFAULT_LANGUAGE_TAG} — a wrong-but-valid tag just makes the browser
- * pick its default voice, which beats throwing mid-lesson.
+ * A free-text language name → a tag, or `undefined` when it names nothing we
+ * know: a legacy alias, a tag typed as such, then any offered language's CLDR
+ * name or endonym, then a known name inside a longer one.
  */
-export function bcp47For(language: string | undefined): string {
+export function legacyLanguageTag(language: string | undefined): string | undefined {
 	const name = normalizeName(language ?? '');
-	if (!name) return DEFAULT_LANGUAGE_TAG;
+	if (!name) return undefined;
 
-	const exact = LANGUAGE_TAGS[name];
-	if (exact) return exact;
+	const alias = LEGACY_NAMES[name];
+	if (alias) return alias;
 
-	if (TAG_PATTERN.test(name) && !name.includes(' ')) return canonicalizeTag(name);
-
-	for (const key of LANGUAGE_KEYS_BY_LENGTH) {
-		// Word-boundary containment: "old english" must not match "english"'s
-		// neighbours, but "mandarin chinese dialect" should still match.
-		if (new RegExp(`(^|\\s)${key}(\\s|$)`).test(name)) return LANGUAGE_TAGS[key];
+	if (TAG_PATTERN.test(name)) {
+		const tag = canonicalTag(name);
+		if (tag && englishName(tag)) return tag;
 	}
 
-	return DEFAULT_LANGUAGE_TAG;
+	const named = languageOptions().find(
+		(option) =>
+			normalizeName(option.name) === name ||
+			(option.endonym !== undefined && normalizeName(option.endonym) === name)
+	);
+	if (named) return named.tag;
+
+	for (const key of LEGACY_KEYS_BY_LENGTH) {
+		if (new RegExp(`(^|\\s)${key}(\\s|$)`).test(name)) return LEGACY_NAMES[key];
+	}
+	const contained = languageOptions().find((option) =>
+		new RegExp(`(^|\\s)${normalizeName(option.name)}(\\s|$)`).test(name)
+	);
+	return contained?.tag;
+}
+
+/** The target language's tag: the stored one, else the name read once more. */
+export function targetTagOf(
+	profile: Pick<Profile, 'targetLanguage' | 'targetLanguageTag'> | undefined
+): string | undefined {
+	return canonicalTag(profile?.targetLanguageTag) ?? legacyLanguageTag(profile?.targetLanguage);
+}
+
+/** The native language's tag, resolved like {@link targetTagOf}. */
+export function nativeTagOf(
+	profile: Pick<Profile, 'nativeLanguage' | 'nativeLanguageTag'> | undefined
+): string | undefined {
+	return canonicalTag(profile?.nativeLanguageTag) ?? legacyLanguageTag(profile?.nativeLanguage);
+}
+
+/** `zh-Hant-TW` → `zh`; `undefined` for no tag. */
+export function primarySubtag(tag: string | undefined): string | undefined {
+	return tag ? tag.split('-')[0].toLowerCase() || undefined : undefined;
 }
