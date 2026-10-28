@@ -1,9 +1,11 @@
 <!--
   "Connect OpenRouter": a key by PKCE sign-in, beside the key field rather than
   instead of it. A browser opens a popup whose callback page answers over a
-  BroadcastChannel; a Tauri host (whose origin no callback can reach) and a
-  blocked popup take the headless flow, where OpenRouter shows a code to paste.
-  The caller stores the key.
+  BroadcastChannel. A Tauri host, whose origin no callback can reach, opens the
+  system browser and the host's loopback listener (`oauth_listen`) catches the
+  callback. A blocked popup, or a host that cannot listen or open, takes the
+  headless flow, where OpenRouter shows a code to paste. The caller stores the
+  key.
 -->
 <script lang="ts">
 	import {
@@ -28,13 +30,57 @@
 	let verifier = '';
 	let expectedState = '';
 	let channel: BroadcastChannel | undefined;
+	let unlisten: (() => void) | undefined;
 
 	function closeChannel() {
 		channel?.close();
 		channel = undefined;
+		unlisten?.();
+		unlisten = undefined;
 	}
 
 	$effect(() => closeChannel);
+
+	function showPaste(challenge: string) {
+		headlessUrl = authUrl(challenge);
+		pastedCode = '';
+		phase = 'paste';
+	}
+
+	async function openInBrowser(url: string) {
+		const { openUrl } = await import('@tauri-apps/plugin-opener');
+		await openUrl(url);
+	}
+
+	async function connectInTauri(challenge: string) {
+		try {
+			const { invoke } = await import('@tauri-apps/api/core');
+			const { listen } = await import('@tauri-apps/api/event');
+			const port = await invoke<number>('oauth_listen');
+			const state = randomToken();
+			expectedState = state;
+			unlisten = await listen<{ code: string; state: string | null }>(
+				'oauth://callback',
+				({ payload }) => {
+					if (payload.state !== state || state !== expectedState) return;
+					closeChannel();
+					void exchange(payload.code);
+				}
+			);
+			await openInBrowser(authUrl(challenge, `http://localhost:${port}/callback`, state));
+			phase = 'waiting';
+		} catch (cause) {
+			console.warn('OpenRouter sign-in through the browser failed; pasting instead', cause);
+			closeChannel();
+			showPaste(challenge);
+		}
+	}
+
+	function openPasteLink(event: MouseEvent) {
+		if (!inTauri()) return;
+		event.preventDefault();
+		void openInBrowser(headlessUrl).catch((cause) => console.warn(cause));
+	}
 
 	async function connect() {
 		error = '';
@@ -48,12 +94,8 @@
 				? window.open('', 'sapling-openrouter', 'popup,width=520,height=720')
 				: null;
 		const challenge = await challengeFor(verifier);
-		if (!popup) {
-			headlessUrl = authUrl(challenge);
-			pastedCode = '';
-			phase = 'paste';
-			return;
-		}
+		if (inTauri()) return connectInTauri(challenge);
+		if (!popup) return showPaste(challenge);
 		expectedState = randomToken();
 		channel = new BroadcastChannel(CALLBACK_CHANNEL);
 		channel.onmessage = (event: MessageEvent<{ code?: unknown; state?: unknown }>) => {
@@ -103,11 +145,17 @@
 	</div>
 
 	{#if phase === 'waiting'}
-		<p class="hint">Sign in in the window that opened. Pressing the button again starts over.</p>
+		<p class="hint">
+			{inTauri()
+				? 'Sign in in your browser, then come back here.'
+				: 'Sign in in the window that opened.'}
+			Pressing the button again starts over.
+		</p>
 	{:else if phase === 'paste' || (phase === 'exchanging' && headlessUrl)}
 		<p class="hint">
-			<a href={headlessUrl} target="_blank" rel="noreferrer noopener">Sign in at OpenRouter</a>,
-			then paste the code it shows.
+			<a href={headlessUrl} target="_blank" rel="noreferrer noopener" onclick={openPasteLink}
+				>Sign in at OpenRouter</a
+			>, then paste the code it shows.
 		</p>
 		<div class="row">
 			<input

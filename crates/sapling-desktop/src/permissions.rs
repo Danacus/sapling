@@ -6,9 +6,9 @@
 //! crate has no recorder, no device enumeration and no `rodio/recording`. What
 //! it turns out the window cannot do is *be asked*. WebKitGTK has no permission
 //! UI: it emits `permission-request` on the `WebKitWebView` and, when nothing
-//! handles the signal, **denies** the request. wry 0.55.1 connects WebGL,
-//! WebAudio and the clipboard settings and not that signal, and Tauri connects
-//! nothing either — so every dictation on this host failed instantly with a
+//! handles the signal, **denies** the request. wry 0.57.1 connects that signal
+//! only when it is given a permission handler, and Tauri gives it none unless
+//! the app registers one — so every dictation on this host failed instantly with a
 //! `NotAllowedError`, which `src/lib/asr/native.ts` correctly reports as
 //! "Microphone access is blocked. Allow it in your browser settings to
 //! dictate." There is no such setting: on this webview there is no prompt to

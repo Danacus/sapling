@@ -14,7 +14,8 @@
 //! `sapling-models` (the pinned-archive install speech shares) and
 //! `sapling-captions` (YouTube's caption tracks). This file is the commands over them, the
 //! handler lists and `setup`; `permissions.rs` is the one thing that has to be
-//! Tauri glue because it answers a WebKitGTK signal. The store hands out the
+//! Tauri glue because it answers a WebKitGTK signal, and `oauth.rs` is the
+//! loopback listener OpenRouter's sign-in returns to. The store hands out the
 //! `Core` and speaks no protocol, so the persistence commands call
 //! `sapling-protocol` themselves, on the store's core thread — and they are
 //! the exact surface `WasmCore` exposes to the Worker, name for name,
@@ -103,14 +104,14 @@
 #[cfg(target_os = "linux")]
 pub mod permissions;
 
-use std::sync::Arc;
+/// The loopback listener OpenRouter's sign-in comes back to.
+pub mod oauth;
 
-// The two model downloads emit progress through it.
-#[cfg(feature = "speech")]
-use tauri::AppHandle;
-#[cfg(feature = "speech")]
-use tauri::Emitter;
-use tauri::{Manager, State};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use sapling_captions::{native as captions, CaptionTrack, CaptionsListing};
 #[cfg(feature = "speech")]
@@ -437,7 +438,34 @@ async fn captions_fetch(video_id: String, track: CaptionTrack) -> Result<String,
         .map_err(|cause| format!("the captions could not be asked for: {cause}"))?
 }
 
-/// The command list. Persistence and captions are every host's; **speech** adds
+// -- OpenRouter sign-in ------------------------------------------------------
+
+const OAUTH_CALLBACK_EVENT: &str = "oauth://callback";
+/// OpenRouter's codes expire after ten minutes, so waiting longer is pointless.
+const OAUTH_WAIT: Duration = Duration::from_secs(10 * 60);
+/// Bumped by every listen, so a newer one retires the one before it.
+static OAUTH_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Listens on a free loopback port for one `GET /callback?code=…&state=…`,
+/// answers it with a page and emits `{code, state}` on [`OAUTH_CALLBACK_EVENT`].
+/// The window opens the sign-in with `http://localhost:<port>/callback`.
+#[tauri::command]
+fn oauth_listen(app: AppHandle) -> Result<u16, String> {
+    let listener =
+        oauth::bind().map_err(|cause| format!("could not listen for the sign-in: {cause}"))?;
+    let port = listener.port();
+    let generation = OAUTH_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    std::thread::spawn(move || {
+        let deadline = Instant::now() + OAUTH_WAIT;
+        let superseded = || OAUTH_GENERATION.load(Ordering::SeqCst) != generation;
+        if let Some(callback) = listener.wait(deadline, superseded) {
+            let _ = app.emit(OAUTH_CALLBACK_EVENT, callback);
+        }
+    });
+    Ok(port)
+}
+
+/// The command list. Persistence, captions and `oauth_listen` are every host's; **speech** adds
 /// eight, of which the two players are desktop-only — three arms, each written
 /// out because `generate_handler!` takes a literal list and not a computed one.
 #[cfg(all(feature = "speech", desktop))]
@@ -456,7 +484,8 @@ macro_rules! commands {
             asr_download,
             asr_transcribe,
             captions_list,
-            captions_fetch
+            captions_fetch,
+            oauth_listen
         ]
     };
 }
@@ -475,7 +504,8 @@ macro_rules! commands {
             asr_download,
             asr_transcribe,
             captions_list,
-            captions_fetch
+            captions_fetch,
+            oauth_listen
         ]
     };
 }
@@ -488,7 +518,8 @@ macro_rules! commands {
             commit_all,
             derived_schema_version,
             captions_list,
-            captions_fetch
+            captions_fetch,
+            oauth_listen
         ]
     };
 }
@@ -502,6 +533,7 @@ macro_rules! commands {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             // Tauri's per-app data directory: `~/.local/share/<identifier>` on
             // Linux, `~/Library/Application Support/<identifier>` on macOS,

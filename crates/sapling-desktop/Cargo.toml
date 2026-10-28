@@ -81,6 +81,9 @@ tauri = { version = "2", features = ["devtools"] }
 sapling-captions = { path = "../sapling-captions", features = ["native"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+# The system browser, for OpenRouter's sign-in (`oauth.rs`): a link in this
+# window goes nowhere.
+tauri-plugin-opener = "2"
 
 # -- Playback is a desktop capability ------------------------------------------
 #
@@ -110,9 +113,9 @@ sapling-speech = { path = "../sapling-speech", optional = true, default-features
 # — see `src/permissions.rs`. Answering it needs the `WebKitWebView` behind
 # `with_webview`, which is this crate.
 #
-# **Pinned `=2.0.2`, which is what Tauri 2.11.5 already locks** (via
-# `tauri-runtime-wry` and wry, both `=2.0`): `PlatformWebview::inner()` hands
-# back a `webkit2gtk::WebView` from *their* copy of the crate, and two
+# **Pinned `=2.0.2`, which is what Tauri 2.12.5 already locks** (via
+# `tauri-runtime-wry` 2.12.3's `=2.0` and wry 0.57.1's `=2.0.2`):
+# `PlatformWebview::inner()` hands back a `webkit2gtk::WebView` from *their* copy of the crate, and two
 # semver-compatible versions would be two unrelated types. `v2_40` is
 # `tauri-runtime-wry`'s own feature set for it, so nothing new is unified in —
 # the two properties read here arrive with it (`is-for-audio-device` at v2_8,

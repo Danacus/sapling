@@ -198,7 +198,7 @@
                   fileset = lib.fileset.unions [ ./package.json ./pnpm-lock.yaml ./pnpm-workspace.yaml ];
                 };
                 fetcherVersion = 4;
-                hash = "sha256-sHQdRYncc2qW+huJQ19RY5esm7vfYjYzaUXicypsOME=";
+                hash = "sha256-qdqcR80o77QkHiLClGWWBz2sln2Vq4ZRISP7Z3X/uhs=";
               };
 
               nativeBuildInputs = [

@@ -121,7 +121,8 @@ exposes exactly the three commands `WasmCore` exposes to the database Worker —
 `src/lib/db/tauri.ts` is one `invoke` per `Backend` call, chosen by
 `backend.ts` when `inTauri()`; every argument still goes through `toPlain()`,
 because `client.ts` owns the proxy for both transports. Speech adds eight more
-commands and captions two, and both have a section below.
+commands and captions two, and both have a section below; OpenRouter's sign-in
+adds one more and the opener plugin.
 
 `dispatch` and `commit_all` are `async` and wait on `spawn_blocking`, like the
 long speech commands: a synchronous Tauri command runs on the main thread,
@@ -441,9 +442,9 @@ rather than dropping samples.
 
 **The *permission* is the host's, though, and on Linux it has to be.**
 WebKitGTK has no permission prompt: it emits `permission-request` on the
-`WebKitWebView` and denies the request when nothing handles the signal. wry sets
-WebGL, WebAudio and clipboard settings on that view and never connects it, and
-Tauri connects nothing — so every desktop dictation failed at once with a
+`WebKitWebView` and denies the request when nothing handles the signal. wry
+connects it only when given a permission handler, and Tauri gives it none
+unless the app registers one — so every desktop dictation failed at once with a
 `NotAllowedError`, which the dictation layer reported as "Microphone access is
 blocked. Allow it in your browser settings to dictate.", naming a setting this
 webview does not have. `crates/sapling-desktop/src/permissions.rs` answers the
@@ -621,6 +622,28 @@ can answer is checked by hand, live:
 ```sh
 cargo run -p sapling-captions --features native --example transcript -- <video_id> [lang] [--auto]
 ```
+
+## OpenRouter sign-in
+
+"Connect OpenRouter" cannot use the browser's popup here: no callback can reach
+a `tauri://` (or Android `http://tauri.localhost`) window. So the window calls
+`oauth_listen`, which binds a free loopback port (`127.0.0.1`, and `::1` on the
+same port when free) and returns it, opens OpenRouter's `/auth` in the
+**system browser** with `callback_url=http://localhost:<port>/callback` through
+`tauri-plugin-opener`, and waits for the `oauth://callback` event. The listener
+(`crates/sapling-desktop/src/oauth.rs`, Tauri-free and unit-tested over a real
+socket) answers `GET /callback?code=…&state=…` with a "you can close this tab"
+page, emits `{code, state}` and stops; any other path is a 404 and it keeps
+waiting. It gives up after ten minutes, when the code would have expired, and a
+second `oauth_listen` retires the first. The window checks `state` and exchanges
+the code itself, as in the browser.
+
+The capability (`capabilities/default.json`) allows `opener:allow-open-url` for
+`https://openrouter.ai/*` only. The plugin has Android code (an `ACTION_VIEW`
+intent); `tauri android build` writes the gitignored `tauri.settings.gradle`
+and `app/tauri.build.gradle.kts` that include it, so `gen/android` needs no
+edit. If listening or opening fails, the window falls back to OpenRouter's
+headless flow — a code to paste — whose link also opens through the plugin.
 
 ## Android
 
@@ -864,7 +887,7 @@ checked: the Android tree carries sherpa-onnx and the download crates and no
 
 **The microphone permission is the one Android-shaped piece of dictation**, and
 it turned out to be one line of manifest rather than a `MainActivity` override.
-wry 0.55.1's own `RustWebChromeClient.onPermissionRequest` (in the crate's
+wry 0.57.1's own `RustWebChromeClient.onPermissionRequest` (in the crate's
 `src/android/kotlin/`) already handles
 `android.webkit.resource.AUDIO_CAPTURE`: it launches a runtime request for
 `RECORD_AUDIO` **and** `MODIFY_AUDIO_SETTINGS` and grants the page only if every

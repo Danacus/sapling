@@ -1246,7 +1246,7 @@ The page has a back link to Today and lays out its cards in two balanced columns
    - A *Test voices* link to `/tts-test`.
 4. **Language model**
    - *API key:* a password field. A saved key shows "••• saved", and a blank field keeps the saved key. "The key stays in this browser."
-   - **Connect OpenRouter** (only while the endpoint is blank or OpenRouter): gets a key by OpenRouter's sign-in and saves it at once, shown as "Connected". A browser signs in in a popup; the desktop and Android apps, or a blocked popup, show a link and a field for the code OpenRouter displays. A failed exchange says so in a line ("That code expired or was already used — try again.").
+   - **Connect OpenRouter** (only while the endpoint is blank or OpenRouter): gets a key by OpenRouter's sign-in and saves it at once, shown as "Connected". A browser signs in in a popup; the desktop and Android apps sign in in the system browser, which returns to the app. A blocked popup, or an app that cannot open the browser, shows a link and a field for the code OpenRouter displays. A failed exchange says so in a line ("That code expired or was already used — try again.").
    - *Model:* free text with suggestions. Defaults to a built-in model.
    - *API endpoint:* optional. Blank means OpenRouter.
    - **Apply** saves all three together.

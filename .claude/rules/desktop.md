@@ -21,7 +21,7 @@ someone to run the check by hand.
 
 - **The host is five crates, and only one of them knows about Tauri.**
   `sapling-desktop` is the glue: `main.rs`, `lib.rs` (the commands, the
-  `commands!` arms, `setup`) and `permissions.rs`, and nothing else. What it
+  `commands!` arms, `setup`), `permissions.rs` and `oauth.rs`, and nothing else. What it
   lends lives beside it, free of Tauri so a CLI or another app can reuse it:
   **`sapling-store`** opens the database in a directory (`CoreHandle`,
   `Database`, `rusqlite_sql` — the only rusqlite in the tree — the device-id
@@ -87,6 +87,20 @@ someone to run the check by hand.
   `async` and run on `spawn_blocking`, since each is a network round trip
   (two for a fetch, because a track's `baseUrl` is signed and expires, so the
   player is asked again).
+
+- **OpenRouter's sign-in is one more command and one plugin, on every
+  target.** `oauth_listen` binds a free loopback port and returns it; a thread
+  (`oauth.rs`, Tauri-free and unit-tested over a real socket — std
+  `TcpListener`, no HTTP dependency) answers `GET /callback?code=…&state=…` with
+  a static "return to Sapling" page, emits `{code, state}` on `oauth://callback`
+  and stops; other paths get a 404 and it keeps waiting, for ten minutes at most,
+  and a newer listen retires an older one. It binds `127.0.0.1` and `::1` on the
+  same port when free, since the callback says `localhost`. It knows no key, no
+  verifier and no exchange — the window checks `state` and exchanges the code
+  (`llm.md`). The system browser is `tauri-plugin-opener`, its one capability
+  `opener:allow-open-url` scoped to `https://openrouter.ai/*`; it carries
+  Android code, which `tauri android build` wires in through the gitignored
+  generated Gradle includes, so `gen/android` is unchanged.
 
 - **One feature, `speech`, covers both directions**, on by default. It was `tts`
   until dictation arrived, and it is one feature because synthesis and
@@ -199,13 +213,14 @@ someone to run the check by hand.
 - **The *permission*, though, is not the browser's on WebKitGTK, and assuming it
   was is what made every desktop dictation fail.** There is no permission UI in
   that webview: it emits `permission-request` on the `WebKitWebView` and
-  **denies the request when nothing handles the signal**. wry 0.55.1 connects
-  WebGL, WebAudio and the clipboard settings and not that signal, and Tauri
-  connects nothing — so `getUserMedia` came back `NotAllowedError` and
+  **denies the request when nothing handles the signal**. wry 0.57.1 connects
+  that signal only when given a permission handler, and Tauri gives it none
+  unless the app registers one — so `getUserMedia` came back `NotAllowedError` and
   `src/lib/asr/native.ts` truthfully told the learner to allow the microphone in
   a browser setting that does not exist. `src/permissions.rs` answers the signal
   instead, from `setup` over `with_webview`, `#[cfg(target_os = "linux")]` like
-  the `webkit2gtk = "=2.0.2"` it needs: a `UserMediaPermissionRequest` for audio
+  the `webkit2gtk = "=2.0.2"` it needs (exactly what Tauri 2.12.5's wry 0.57.1
+  locks, so `with_webview` hands back that crate's `WebView`): a `UserMediaPermissionRequest` for audio
   and not video is `allow()`ed, any other one is `deny()`ed, and anything else
   returns `false` so WebKitGTK keeps its own answer. **This is the desktop's
   equivalent of Android's manifest line, not a capability** — no device, no
@@ -284,7 +299,8 @@ someone to run the check by hand.
   worth keeping, what a first download costs, where a clip plays), the dictation
   router (`asr/index.ts`, once, to decide whether there is a host to probe at
   all), the media player host (`media/youtube-host.ts`), the caption fetcher
-  (`media/captions.ts`), and the settings
+  (`media/captions.ts`), OpenRouter's sign-in (`ui/OpenRouterConnect.svelte`,
+  which imports `@tauri-apps/api` and the opener dynamically), and the settings
   screen's native-voice row. Nowhere else, and never a second implementation of
   the test. Everything host-specific stays behind a dynamic import gated on it
   (`db/tauri.ts`, `tts/native.ts`, `asr/native.ts`, `media/captions.ts`), so a
