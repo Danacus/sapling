@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
-	import { getDailyActivity, localDay, streakFrom } from '$lib/db';
-	import type { DailyActivity } from '$lib/db';
+	import { getDailyActivity, localDay, streakFrom, studySessions } from '$lib/db';
+	import type { DailyActivity, StudySession } from '$lib/db';
 	import BackLink from '$lib/ui/BackLink.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 	import {
@@ -10,12 +10,17 @@
 		monthCalendar,
 		monthKey,
 		shadeOf,
-		shiftMonth
+		shiftMonth,
+		STUDY_MODES,
+		studyAmount,
+		studyMinutes,
+		studyOn
 	} from './calendar';
 
 	let loading = $state(true);
 	let loadError = $state('');
 	let activity = $state<DailyActivity[]>([]);
+	let sessions = $state<StudySession[]>([]);
 	const initialToday = localDay(Date.now());
 	let today = $state(initialToday);
 	let visibleMonth = $state(monthKey(initialToday));
@@ -26,10 +31,11 @@
 		let cancelled = false;
 		loading = true;
 		loadError = '';
-		getDailyActivity()
-			.then((days) => {
+		Promise.all([getDailyActivity(), studySessions(0)])
+			.then(([days, study]) => {
 				if (cancelled) return;
 				activity = days;
+				sessions = study;
 				today = localDay(Date.now());
 				visibleMonth = monthKey(today);
 				selected = today;
@@ -50,6 +56,8 @@
 	const monthEntries = $derived(activity.filter((entry) => monthKey(entry.day) === visibleMonth));
 	const monthPeak = $derived(Math.max(0, ...monthEntries.map(activityOf)));
 	const current = $derived(byDay.get(selected));
+	const studyLog = $derived(studyOn(sessions, selected));
+	const hourOf = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
 	const isCurrentMonth = $derived(visibleMonth === monthKey(today));
 	const streak = $derived(streakFrom(activity.map((entry) => entry.day)));
 	const longest = $derived(longestStreak(activity.map((entry) => entry.day)));
@@ -246,6 +254,34 @@
 					{/if}
 				</aside>
 			</div>
+		</section>
+
+		<section class="study-log card ll-rise" style="animation-delay: 150ms" aria-live="polite">
+			<header class="study-head">
+				<div>
+					<p class="eyebrow">Study log</p>
+					<h2>{titleOf(selected)}</h2>
+				</div>
+				{#if studyLog.length}<p class="study-total">
+						{studyMinutes(studyLog)} min studied
+					</p>{/if}
+			</header>
+			{#if studyLog.length === 0}
+				<p class="study-empty">No study time recorded on this day.</p>
+			{:else}
+				<ol class="study-rows">
+					{#each studyLog as session (session.id)}
+						<li class="study-row mode-{session.mode}">
+							<time datetime={new Date(session.at).toISOString()}>{hourOf.format(session.at)}</time>
+							<span class="study-mode">{STUDY_MODES[session.mode]}</span>
+							<strong>{studyAmount(session)}</strong>
+						</li>
+					{/each}
+				</ol>
+			{/if}
+			<p class="study-note">
+				One row per hour and kind of study — what a connected leaderboard receives.
+			</p>
 		</section>
 
 		<section class="month-summary ll-rise" style="animation-delay: 180ms">
@@ -648,6 +684,63 @@
 		font-family: var(--font-display);
 		font-size: 1.25rem;
 		font-weight: 800;
+	}
+	.study-log {
+		display: grid;
+		gap: 0.75rem;
+	}
+	.study-head {
+		display: flex;
+		align-items: flex-end;
+		justify-content: space-between;
+		gap: 1rem;
+	}
+	.study-head h2 {
+		margin: 0;
+	}
+	.study-total {
+		margin: 0;
+		font-weight: 800;
+		color: var(--primary-strong);
+	}
+	.study-empty,
+	.study-note {
+		margin: 0;
+		max-width: var(--measure);
+		color: var(--text-muted);
+	}
+	.study-note {
+		font-size: 0.78rem;
+	}
+	.study-rows {
+		display: grid;
+		gap: 0.35rem;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	.study-row {
+		display: grid;
+		grid-template-columns: 3.5rem 1fr auto;
+		align-items: baseline;
+		gap: 0.75rem;
+		padding: 0.55rem 0.75rem;
+		border-left: 3px solid var(--border-strong);
+		border-radius: var(--radius-sm);
+		background: var(--surface-alt);
+	}
+	.study-row.mode-input {
+		border-left-color: var(--primary);
+	}
+	.study-row.mode-output {
+		border-left-color: var(--amber);
+	}
+	.study-row time {
+		font-variant-numeric: tabular-nums;
+		color: var(--text-muted);
+	}
+	.study-row strong {
+		font-variant-numeric: tabular-nums;
 	}
 	.month-summary {
 		display: grid;

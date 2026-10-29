@@ -24,7 +24,8 @@ export type {
 	ConversationSummary,
 	DailyActivity,
 	ExportEnvelope,
-	LanguageProfile
+	LanguageProfile,
+	StudySession
 } from './generated/index';
 
 export type BackendMethod = (typeof BACKEND_METHODS)[number];

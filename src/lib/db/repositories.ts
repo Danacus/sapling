@@ -22,7 +22,8 @@ export {
 	type ConversationSummary,
 	type DailyActivity,
 	type ExportEnvelope,
-	type LanguageProfile
+	type LanguageProfile,
+	type StudySession
 } from './protocol';
 
 function forward<M extends BackendMethod>(method: M): Backend[M] {

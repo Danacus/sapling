@@ -6,7 +6,7 @@
  * never moves a cell.
  */
 import { localDay } from '$lib/db';
-import type { DailyActivity } from '$lib/db';
+import type { DailyActivity, StudySession } from '$lib/db';
 
 /** The local calendar day after `day` (DST-safe: built from local parts). */
 export function nextDay(day: string): string {
@@ -80,4 +80,30 @@ export function longestStreak(days: string[]): number {
 		previous = day;
 	}
 	return longest;
+}
+
+/** What each study mode is called in the log. */
+export const STUDY_MODES: Record<StudySession['mode'], string> = {
+	input: 'Reading & watching',
+	output: 'Conversation',
+	practice: 'Practice'
+};
+
+/** The study log of one local day: its hourly sessions, oldest first. */
+export function studyOn(sessions: StudySession[], day: string): StudySession[] {
+	return sessions
+		.filter((session) => localDay(session.at) === day)
+		.sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
+}
+
+/** A session's amount: answers for practice, minutes for the rest. */
+export function studyAmount(session: StudySession): string {
+	if (session.mode === 'practice')
+		return `${session.answers} answer${session.answers === 1 ? '' : 's'}`;
+	return `${session.minutes} min`;
+}
+
+/** Minutes of reading, watching and conversation across `sessions`, to 0.1. */
+export function studyMinutes(sessions: StudySession[]): number {
+	return Math.round(sessions.reduce((sum, session) => sum + session.minutes, 0) * 10) / 10;
 }

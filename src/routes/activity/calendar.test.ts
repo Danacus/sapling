@@ -7,8 +7,41 @@ import {
 	monthKey,
 	nextDay,
 	shiftMonth,
-	shadeOf
+	shadeOf,
+	studyAmount,
+	studyMinutes,
+	studyOn
 } from './calendar';
+import type { StudySession } from '$lib/db';
+
+describe('study log', () => {
+	const at = (day: number, hour: number, minute = 0) =>
+		new Date(2024, 2, day, hour, minute).getTime();
+	const session = (
+		mode: StudySession['mode'],
+		when: number,
+		minutes: number,
+		answers = 0
+	): StudySession => ({ id: `${mode}-${when}`, at: when, mode, minutes, answers });
+
+	it("keeps one local day's sessions, oldest first", () => {
+		const late = session('input', at(13, 21, 10), 12.5);
+		const early = session('practice', at(13, 9, 5), 0, 14);
+		const other = session('output', at(14, 0, 30), 3);
+		expect(studyOn([late, other, early], '2024-03-13')).toEqual([early, late]);
+	});
+
+	it('reads practice as answers and the rest as minutes', () => {
+		expect(studyAmount(session('practice', at(13, 9), 0, 1))).toBe('1 answer');
+		expect(studyAmount(session('practice', at(13, 9), 0, 14))).toBe('14 answers');
+		expect(studyAmount(session('input', at(13, 9), 12.5))).toBe('12.5 min');
+	});
+
+	it('totals the minutes to a tenth', () => {
+		const sessions = [session('input', at(13, 9), 0.1), session('output', at(13, 10), 0.2)];
+		expect(studyMinutes(sessions)).toBe(0.3);
+	});
+});
 
 describe('month calendar', () => {
 	it('builds a Monday-first page with empty cells around the month', () => {
