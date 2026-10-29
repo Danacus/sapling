@@ -17,6 +17,7 @@
 //! with nothing lent at all. And [`sync`], with `fetch` again and the
 //! window's `Backend` as the store, beside the pairing phrase's four helpers.
 //! And [`captions`], with the window's relay to YouTube as the transport.
+//! And [`taal`], with `fetch` and the `Backend`'s study-time read.
 
 use std::future::Future;
 
@@ -596,6 +597,91 @@ pub async fn sync(
     sapling_protocol::dispatch_sync_json(&JsRequest(request), store.as_ref(), &method, &args_json)
         .await
         .map_err(|e| JsValue::from_str(&e))
+}
+
+/// The same `request` again, always a POST, for Taal's Firestore.
+impl sapling_taal::Transport for JsRequest {
+    fn send(
+        &self,
+        request: sapling_taal::Request,
+    ) -> impl Future<Output = std::result::Result<sapling_taal::Response, String>> {
+        let headers: Map<String, Value> = request
+            .headers
+            .into_iter()
+            .map(|(name, value)| (name, Value::String(value)))
+            .collect();
+        let json = serde_json::json!({
+            "method": "POST",
+            "url": request.url,
+            "headers": headers,
+            "body": request.body,
+        });
+        let answer = self.call(json);
+        async move {
+            let (status, body) = answer.await?;
+            Ok(sapling_taal::Response { status, body })
+        }
+    }
+}
+
+#[wasm_bindgen(typescript_custom_section)]
+const TAAL_HOST: &str = r#"
+/** The part of the `Backend` a Taal push reads: `studySessions`, as JSON. */
+export interface TaalHost {
+  studySessions(since: number): Promise<string>;
+}
+"#;
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(typescript_type = "TaalHost")]
+    pub type TaalHost;
+
+    #[wasm_bindgen(method, catch, js_name = studySessions)]
+    fn js_study_sessions(
+        this: &TaalHost,
+        since: f64,
+    ) -> std::result::Result<js_sys::Promise, JsValue>;
+}
+
+impl sapling_taal::TaalStore for TaalHost {
+    fn study_sessions(
+        &self,
+        since: f64,
+    ) -> impl Future<Output = std::result::Result<Vec<sapling_domain::types::StudySession>, String>>
+    {
+        let promise = self.js_study_sessions(since);
+        async move {
+            let promise = promise.map_err(|e| from_js(e).0)?;
+            let answer = JsFuture::from(promise).await.map_err(|e| from_js(e).0)?;
+            answer
+                .as_string()
+                .and_then(|text| serde_json::from_str(&text).ok())
+                .ok_or_else(|| "studySessions() did not resolve to sessions".to_owned())
+        }
+    }
+}
+
+/// One Taal call: the method and its argument array as JSON, the host's
+/// `request`, and its `TaalHost`. Resolves to the outcome as JSON — a refused
+/// or unreachable Taal is an outcome too — and rejects with plain text only
+/// for a malformed call.
+#[wasm_bindgen]
+pub async fn taal(
+    method: String,
+    args_json: String,
+    request: Function,
+    store: TaalHost,
+) -> std::result::Result<String, JsValue> {
+    sapling_protocol::dispatch_taal_json(&JsRequest(request), &store, &method, &args_json)
+        .await
+        .map_err(|e| JsValue::from_str(&e))
+}
+
+/// Whether a typed or pasted text is a Taal connect code.
+#[wasm_bindgen(js_name = isTaalCode)]
+pub fn is_taal_code(raw: &str) -> bool {
+    sapling_taal::is_code(raw)
 }
 
 /// One captions call: the method and its argument array as JSON, and the

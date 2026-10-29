@@ -10,7 +10,8 @@
 //! `Challenges` interface and `CHALLENGE_METHODS`, from `challenges.rs`),
 //! `sync.ts` (the `Sync` interface, `SYNC_METHODS` and the phrase's constants,
 //! from `sync.rs`), `captions.ts` (the `Captions` interface and
-//! `CAPTION_METHODS`, from `captions.rs`),
+//! `CAPTION_METHODS`, from `captions.rs`), `taal.ts` (the `Taal` interface,
+//! `TAAL_METHODS` and the client's constants, from `taal.rs`),
 //! `Payloads.ts` (each event type's payload) and `index.ts`, which re-exports
 //! every type file.
 
@@ -34,11 +35,13 @@ use sapling_llm::reading::{MAX_FOCUS_WORDS, MAX_TOPIC_CHARS};
 use sapling_llm::{Endpoint, LlmError, ProgressStep, TokenUsage, MAX_ABOUT_CHARS};
 use sapling_srs::FsrsCardState;
 use sapling_sync::{BAD_PHRASE, PHRASE_LENGTH};
+use sapling_taal::{BAD_CODE, CARDS_PER_ANSWER, REFUSED};
 
 use crate::captions::{caption_methods, visit_caption_types};
 use crate::challenges::{challenge_methods, visit_challenge_types};
 use crate::llm::{llm_methods, visit_llm_types};
 use crate::sync::{sync_methods, visit_sync_types};
+use crate::taal::{taal_methods, visit_taal_types};
 use crate::{methods, visit_method_types, INTERFACE_DOCS};
 
 /// One `Backend` method, as the table declares it.
@@ -211,6 +214,28 @@ fn captions(names: &[String]) -> String {
     out
 }
 
+/// `taal.ts`: the Taal client's table as a TypeScript interface.
+fn taal(names: &[String]) -> String {
+    let cfg = Config::new().with_large_int("number");
+    let methods = taal_methods(&cfg);
+    let mut out = format!(
+        "import type {{ {} }} from './index';\n\n/** The Taal client, run on the window thread over `fetch` and the `Backend`. */\nexport interface Taal {{\n",
+        names.join(", ")
+    );
+    members(&mut out, &methods, true);
+    out.push_str("}\n\nexport const TAAL_METHODS = [\n");
+    for method in &methods {
+        let _ = writeln!(out, "  '{}',", method.name);
+    }
+    let _ = writeln!(
+        out,
+        "] as const;\n\nexport const CARDS_PER_ANSWER = {CARDS_PER_ANSWER:?};\nexport const BAD_CODE = {};\nexport const REFUSED = {};",
+        serde_json::to_string(BAD_CODE).expect("a string"),
+        serde_json::to_string(REFUSED).expect("a string")
+    );
+    out
+}
+
 /// `backend.ts`: the method table as a TypeScript interface.
 fn backend(names: &[String]) -> String {
     let cfg = Config::new().with_large_int("number");
@@ -259,6 +284,7 @@ fn typescript() {
     visit_challenge_types(&mut Export(&cfg));
     visit_sync_types(&mut Export(&cfg));
     visit_caption_types(&mut Export(&cfg));
+    visit_taal_types(&mut Export(&cfg));
     std::fs::write(dir.join("Payloads.ts"), payloads(&cfg)).expect("write");
 
     let mut names: Vec<String> = std::fs::read_dir(&dir)
@@ -277,4 +303,5 @@ fn typescript() {
     std::fs::write(dir.join("challenges.ts"), challenges(&names)).expect("write");
     std::fs::write(dir.join("sync.ts"), sync(&names)).expect("write");
     std::fs::write(dir.join("captions.ts"), captions(&names)).expect("write");
+    std::fs::write(dir.join("taal.ts"), taal(&names)).expect("write");
 }

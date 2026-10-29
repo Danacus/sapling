@@ -40,6 +40,19 @@ function exclusive<T>(job: () => Promise<T>): Promise<T> {
 	return next;
 }
 
+/** Who wants to hear that a cycle brought events down (`onSyncPulled`). */
+const pulledListeners = new Set<() => void>();
+
+/**
+ * Calls `listener` after every cycle that applied pulled events — what
+ * another device did is now in this one's reads. Answers the unsubscribe.
+ * A throwing listener costs itself, never the cycle.
+ */
+export function onSyncPulled(listener: () => void): () => void {
+	pulledListeners.add(listener);
+	return () => pulledListeners.delete(listener);
+}
+
 function messageOf(error: unknown): string {
 	return error instanceof Error && error.message ? error.message : 'Sync failed.';
 }
@@ -69,6 +82,15 @@ async function cycleNow(fetchImpl: typeof fetch): Promise<SyncOutcome> {
 		outcome = { ok: false, pushed: 0, pulled: 0, message, summary: message };
 	}
 	record(outcome);
+	if (outcome.pulled > 0) {
+		for (const listener of pulledListeners) {
+			try {
+				listener();
+			} catch {
+				/* a listener's failure is its own */
+			}
+		}
+	}
 	return outcome;
 }
 

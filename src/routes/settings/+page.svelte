@@ -34,6 +34,15 @@
 	import { startTask } from '$lib/tasks';
 	import { taskStore } from '$lib/tasks/store.svelte';
 	import {
+		BAD_CODE,
+		clearTaalCode,
+		getTaalCode,
+		lastTaalOutcome,
+		pushTaal,
+		setTaalCode,
+		type TaalRecord
+	} from '$lib/taal';
+	import {
 		BAD_PHRASE,
 		clearSyncPhrase,
 		formatPhrase,
@@ -201,6 +210,15 @@
 	/** What the last cycle did, from wherever it ran — boot, a session, or here. */
 	let lastRun = $state<SyncRecord | undefined>(undefined);
 
+	// Taal ------------------------------------------------------------------------
+	// The leaderboard's connect code. Pushing happens on its own triggers
+	// (`$lib/taal`); this card only stores the code and reads the last outcome.
+	let taalConnected = $state(false);
+	let taalInput = $state('');
+	let taalSaving = $state(false);
+	let taalError = $state('');
+	let taalLast = $state<TaalRecord | undefined>(undefined);
+
 	// Export / import -----------------------------------------------------------
 	let exportStatus = $state<Status>('idle');
 	let exportMessage = $state('');
@@ -244,6 +262,8 @@
 				syncEnabled = isSyncEnabled();
 				syncPhrase = getSyncPhrase();
 				lastRun = lastSyncOutcome();
+				taalConnected = getTaalCode() !== undefined;
+				taalLast = lastTaalOutcome();
 				// Goes to the network, so it must not hold up the page.
 				if (syncEnabled) void checkSyncConnection();
 
@@ -459,6 +479,38 @@
 		syncNeedsReload = true;
 		syncStatus = 'saved';
 		syncMessage = 'This device is no longer paired.';
+	}
+
+	/** Stores a pasted code and sends at once, so the status line answers. */
+	async function connectTaal() {
+		if (taalSaving) return;
+		if (setTaalCode(taalInput) === undefined) {
+			taalError = BAD_CODE;
+			return;
+		}
+		taalError = '';
+		taalInput = '';
+		taalConnected = true;
+		taalSaving = true;
+		await pushTaal();
+		taalLast = lastTaalOutcome();
+		taalSaving = false;
+	}
+
+	function disconnectTaal() {
+		clearTaalCode();
+		taalConnected = false;
+		taalLast = undefined;
+		taalError = '';
+	}
+
+	/** One line: when it last landed, or why the last try did not. */
+	function taalStatusLine(record: TaalRecord | undefined): string {
+		if (!record) return 'Not sent yet.';
+		const landed = record.okAt ? `Last sent ${new Date(record.okAt).toLocaleString()}.` : '';
+		if (record.status === 'ok') return `${landed} ${record.message}`.trim();
+		if (record.status === 'refused') return record.message;
+		return `${record.message} Will try again. ${landed}`.trim();
 	}
 
 	function setRomanization(mode: RomanizationMode) {
@@ -1237,6 +1289,70 @@
 						<InlineStatus status={syncStatus} message={syncMessage} />
 					</div>
 				{/if}
+			</section>
+
+			<section class="card ll-rise" style="animation-delay: 200ms">
+				<div class="card-head">
+					<svg class="ico head-ico" viewBox="0 0 24 24" aria-hidden="true">
+						<path d="M8 21h8" />
+						<path d="M12 17v4" />
+						<path d="M7 4h10v5a5 5 0 0 1-10 0z" />
+						<path d="M7 6H4.5a2.5 2.5 0 0 0 2.6 4" />
+						<path d="M17 6h2.5a2.5 2.5 0 0 1-2.6 4" />
+					</svg>
+					<h2>Taal</h2>
+				</div>
+				<hr class="stitch" />
+
+				{#if taalConnected}
+					<div class="field">
+						<span class="label">Study time</span>
+						<p class="hint">
+							Your reading, conversations and practice count in your Taal challenge.
+						</p>
+						<p
+							class="sync-state"
+							class:bad={taalLast?.status === 'refused' || taalLast?.status === 'invalid'}
+							class:good={taalLast?.status === 'ok'}
+						>
+							{taalSaving ? 'Sending to Taal…' : taalStatusLine(taalLast)}
+						</p>
+						<div class="actions-row">
+							<button type="button" class="btn btn-ghost" onclick={disconnectTaal}>
+								Disconnect
+							</button>
+						</div>
+					</div>
+				{/if}
+
+				<div class="field">
+					<label class="label" for="settings-taal-code">
+						{taalConnected ? 'Replace the Taal code' : 'Taal code'}
+					</label>
+					<p class="hint">In Taal: Settings → Connected apps → Connect. Paste the code here.</p>
+					<input
+						id="settings-taal-code"
+						class="input"
+						bind:value={taalInput}
+						oninput={() => (taalError = '')}
+						autocomplete="off"
+						spellcheck="false"
+					/>
+					<div class="actions-row">
+						<button
+							type="button"
+							class="btn btn-primary"
+							onclick={() => void connectTaal()}
+							disabled={taalSaving || taalInput.trim() === ''}
+						>
+							{#if taalSaving}
+								<Spinner />
+							{/if}
+							Connect
+						</button>
+						<InlineStatus status={taalError ? 'error' : 'idle'} message={taalError} />
+					</div>
+				</div>
 			</section>
 
 			<section class="card ll-rise" style="animation-delay: 200ms">

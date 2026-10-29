@@ -27,6 +27,7 @@ export {
 } from './core';
 export {
 	lastSyncOutcome,
+	onSyncPulled,
 	pairDevice,
 	probeSync,
 	runSync,

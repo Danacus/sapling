@@ -26,7 +26,8 @@
 //! async table in [`llm`], run on the window thread rather than in the Worker,
 //! the challenge decisions a third, synchronous one in [`challenges`], and the
 //! sync client a fourth, async one in [`sync`], over a store the host lends,
-//! and a video's captions a fifth, async one in [`captions`].
+//! a video's captions a fifth, async one in [`captions`], and the Taal client
+//! a sixth, async one in [`taal`], over the host's study-time read.
 //!
 //! Where Rust treats a value as opaque JSON because TypeScript owns its shape —
 //! a challenge, a pool row, a raw pulled event — the entry says which
@@ -55,6 +56,7 @@ pub mod captions;
 pub mod challenges;
 pub mod llm;
 pub mod sync;
+pub mod taal;
 #[cfg(test)]
 mod typescript;
 
@@ -62,6 +64,7 @@ pub use captions::{dispatch_captions, dispatch_captions_json};
 pub use challenges::{dispatch_challenges, dispatch_challenges_json};
 pub use llm::{dispatch_llm, dispatch_llm_json, LlmFailure};
 pub use sync::{dispatch_sync, dispatch_sync_json};
+pub use taal::{dispatch_taal, dispatch_taal_json};
 
 /// `getAllItems`' options.
 #[derive(Debug, Default, Deserialize, TS)]

@@ -5,7 +5,8 @@
 
 	import favicon from '$lib/assets/favicon.svg';
 	import { getProfile } from '$lib/db';
-	import { isSyncEnabled, runSync } from '$lib/sync';
+	import { isSyncEnabled, onSyncPulled, runSync } from '$lib/sync';
+	import { pushTaal } from '$lib/taal';
 	import { preloadReloadGuard } from '$lib/ui/preload-reload';
 	import AppNav from '$lib/ui/AppNav.svelte';
 	import { applyTheme, getThemeMode } from '$lib/prefs';
@@ -70,11 +71,20 @@
 		// There is nothing periodic — `runSync` no-ops when sync is off.
 		document.addEventListener('visibilitychange', () => {
 			if (document.visibilityState === 'visible') void runSync();
+			// Taal on both edges: hidden is when a stretch of study just ended,
+			// visible catches up on a push that failed while away. A no-op
+			// without a code, and never awaited.
+			void pushTaal();
 		});
+		// Another device's study time has just arrived; its hours belong on the
+		// leaderboard too.
+		onSyncPulled(() => void pushTaal());
 	}
 
 	/** Boot sync fires once, not on every navigation the effect below re-runs on. */
 	let syncKicked = false;
+	/** The boot push to Taal, likewise once. */
+	let taalKicked = false;
 
 	$effect(() => {
 		if (!browser) return;
@@ -126,6 +136,10 @@
 				if (!syncKicked) {
 					syncKicked = true;
 					void runSync();
+				}
+				if (!taalKicked) {
+					taalKicked = true;
+					void pushTaal();
 				}
 			})
 			.catch((error: unknown) => {

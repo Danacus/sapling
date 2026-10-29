@@ -21,7 +21,7 @@ vi.stubEnv('VITE_SYNC_URL', SERVER);
 const { setBackendForTesting } = await import('$lib/db/backend');
 const { makeTestBackend } = await import('$lib/db/backend.testing');
 const { getProfile } = await import('$lib/db/repositories');
-const { runSync, lastSyncOutcome, pairDevice, probeSync } = await import('./run');
+const { runSync, lastSyncOutcome, onSyncPulled, pairDevice, probeSync } = await import('./run');
 const { getSyncPhrase, isSyncEnabled } = await import('./config');
 const { formatPhrase, isValidPhrase, mintPhrase, normalizePhrase, PHRASE_LENGTH } =
 	await import('./core');
@@ -158,6 +158,27 @@ describe('runSync', () => {
 		const terms = (await store.getAllItems()).map((item) => item.term).sort();
 		expect(terms).toEqual(['term1', 'term2']);
 		expect(lastSyncOutcome()).toMatchObject({ ok: true, message: 'Sent 1, received 2.' });
+	});
+
+	it('tells the pull listeners after a cycle that brought events down, and only then', async () => {
+		enable();
+		const heard = vi.fn();
+		const off = onSyncPulled(heard);
+		const offBroken = onSyncPulled(() => {
+			throw new Error('a broken listener');
+		});
+
+		await runSync(logServer().impl);
+		expect(heard).not.toHaveBeenCalled();
+
+		const outcome = await runSync(
+			logServer([{ id: 'remote-2', type: 'itemAdded', at: T0, device: 'devB', payload: word(2) }])
+				.impl
+		);
+		expect(outcome.ok).toBe(true);
+		expect(heard).toHaveBeenCalledTimes(1);
+		off();
+		offBroken();
 	});
 
 	it('records a failure as an outcome, never a rejection', async () => {

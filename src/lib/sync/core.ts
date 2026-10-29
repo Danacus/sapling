@@ -40,7 +40,12 @@ export function formatPhrase(phrase: string): string {
 	return formatInCore(phrase);
 }
 
-function requester(fetchImpl: typeof fetch) {
+/**
+ * The wasm exports' `request`: `{method, url, headers, body?}` in, `{status,
+ * body}` out, over `fetchImpl`. A rejection is no response at all. The Taal
+ * client (`$lib/taal`) lends the same one.
+ */
+export function requester(fetchImpl: typeof fetch) {
 	return async (json: string): Promise<string> => {
 		const { method, url, headers, body } = JSON.parse(json) as {
 			method: string;

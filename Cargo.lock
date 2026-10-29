@@ -3610,6 +3610,7 @@ dependencies = [
  "sapling-llm",
  "sapling-srs",
  "sapling-sync",
+ "sapling-taal",
  "serde",
  "serde_json",
  "ts-rs",
@@ -3664,6 +3665,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sapling-taal"
+version = "0.1.0"
+dependencies = [
+ "pollster",
+ "sapling-domain",
+ "serde",
+ "serde_json",
+ "ts-rs",
+]
+
+[[package]]
 name = "sapling-wasm"
 version = "0.1.0"
 dependencies = [
@@ -3674,6 +3686,7 @@ dependencies = [
  "sapling-llm",
  "sapling-protocol",
  "sapling-sync",
+ "sapling-taal",
  "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
