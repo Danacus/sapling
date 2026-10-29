@@ -206,10 +206,10 @@
 	"studySessions": [],
 	"getTexts": [],
 	"getText": {},
-	"clipFor": {
-		"山": null,
-		"本": null,
-		"水": null
+	"clipsFor": {
+		"山": [],
+		"本": [],
+		"水": []
 	},
 	"getKnownTerms": [],
 	"getConversations": [],

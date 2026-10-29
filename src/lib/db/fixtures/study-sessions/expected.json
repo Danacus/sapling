@@ -91,7 +91,7 @@
 	"getText": {
 		"text-1": null
 	},
-	"clipFor": {},
+	"clipsFor": {},
 	"getKnownTerms": [],
 	"getConversations": [
 		{

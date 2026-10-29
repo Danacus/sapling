@@ -156,8 +156,8 @@
 	"studySessions": [],
 	"getTexts": [],
 	"getText": {},
-	"clipFor": {
-		"r": null
+	"clipsFor": {
+		"r": []
 	},
 	"getKnownTerms": [],
 	"getConversations": [],

@@ -208,9 +208,9 @@
 	"studySessions": [],
 	"getTexts": [],
 	"getText": {},
-	"clipFor": {
-		"ありがとう": null,
-		"こんにちは": null
+	"clipsFor": {
+		"ありがとう": [],
+		"こんにちは": []
 	},
 	"getKnownTerms": [],
 	"getConversations": [],

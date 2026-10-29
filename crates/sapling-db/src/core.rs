@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use ts_rs::TS;
 
+use crate::clips;
 use crate::materialize::{open_schema, raw_from_row, Materializer, LOG_ORDER};
 use crate::schema::{ACTIVE_PROFILE_KEY, DERIVED_TABLES};
 use crate::sql::{Error, Param, Result, Row, Sql};
@@ -128,7 +129,7 @@ pub struct LanguageProfile {
 }
 
 /// One subtitle cue of an imported YouTube text: a word heard in a real
-/// recording, as `clipFor` finds it. `start`/`end` are the cue's milliseconds.
+/// recording, as `clipsFor` finds it. `start`/`end` are the cue's milliseconds.
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Clip {
@@ -168,8 +169,10 @@ fn minutes_of(ms: f64) -> f64 {
     (ms / 6_000.0).round() / 10.0
 }
 
-/// How many cues, shortest first, `clip_for` checks word boundaries over.
-const CLIP_CANDIDATES: i64 = 100;
+/// How many cues SQL's substring prefilter hands `clips_for` to rank. Bounded
+/// so a common word in a long library stays cheap; a few hundred is plenty to
+/// find several good ones.
+const CLIP_CANDIDATES: i64 = 300;
 
 /// The backend over an open, schema-applied database.
 pub struct Core {
@@ -295,30 +298,6 @@ fn text_from(row: &Row) -> Result<ReadingText> {
         },
         created_at: row.f64("createdAt")?,
     })
-}
-
-/// Whether `term` (lowercase) occurs in `text` as a word: no letter of a
-/// space-separated script directly either side, so "car" is not in "cart".
-/// Scripts written without spaces match as a plain substring.
-fn contains_word(text: &str, term: &str) -> bool {
-    let text = text.to_lowercase();
-    let joins = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() && !unspaced(c));
-    text.match_indices(term).any(|(at, _)| {
-        let before = text[..at].chars().next_back();
-        let after = text[at + term.len()..].chars().next();
-        let first = term.chars().next();
-        let last = term.chars().next_back();
-        !(joins(before) && joins(first)) && !(joins(after) && joins(last))
-    })
-}
-
-/// Han, kana, Hangul, and the Southeast Asian scripts written without spaces
-/// between words (Hangul's particles attach to the word, so it counts too).
-fn unspaced(c: char) -> bool {
-    matches!(c as u32,
-        0x0E00..=0x0EFF | 0x1000..=0x109F | 0x1100..=0x11FF | 0x1780..=0x17FF
-        | 0x3040..=0x30FF | 0x3130..=0x318F | 0x31F0..=0x31FF | 0x3400..=0x4DBF
-        | 0x4E00..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF | 0x20000..=0x2FFFF)
 }
 
 fn conversation_from(row: &Row) -> Result<Conversation> {
@@ -1114,17 +1093,21 @@ impl Core {
         rows.first().map(text_from).transpose()
     }
 
-    /// The shortest timed cue of a YouTube text that contains one of `terms`.
-    /// SQL narrows by substring; the word-boundary check runs here, over the
-    /// few candidates, because SQLite has no notion of a word.
-    pub fn clip_for(&self, terms: &[String]) -> Result<Option<Clip>> {
+    /// The best timed cues of YouTube texts to hear one of `terms` in, best
+    /// first, at most [`clips::TIER_CAP`]; empty when none holds one. SQL
+    /// narrows by substring, newest text first and in cue order — no length
+    /// order, which is the bias the ranking replaced — and `clips.rs` ranks
+    /// the candidates against `sentence` (the challenge's target-language text
+    /// as served) and the learner's own words, because SQLite has no notion of
+    /// a word.
+    pub fn clips_for(&self, terms: &[String], sentence: Option<&str>) -> Result<Vec<Clip>> {
         let terms: Vec<String> = terms
             .iter()
             .map(|term| term.trim().to_lowercase())
             .filter(|term| !term.is_empty())
             .collect();
         if terms.is_empty() {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let matches = vec!["instr(lower(json_extract(s.value, '$.text')), ?) > 0"; terms.len()];
         let sql = format!(
@@ -1138,25 +1121,38 @@ impl Core {
                AND json_extract(s.value, '$.start') IS NOT NULL
                AND json_extract(s.value, '$.end') IS NOT NULL
                AND ({})
-             ORDER BY length(json_extract(s.value, '$.text')), t.createdAt DESC, s.key
+             ORDER BY t.createdAt DESC, t.id, s.key
              LIMIT {CLIP_CANDIDATES}",
             matches.join(" OR ")
         );
         let params: Vec<Param> = terms.iter().map(Param::text).collect();
-        for row in self.sql.query(&sql, &params)?.iter() {
-            let text = row.text("text")?;
-            if terms.iter().any(|term| contains_word(text, term)) {
-                return Ok(Some(Clip {
+        let candidates = self
+            .sql
+            .query(&sql, &params)?
+            .iter()
+            .map(|row| {
+                Ok(Clip {
                     text_id: row.text("textId")?.to_owned(),
                     title: row.text("title")?.to_owned(),
                     video_id: row.text("videoId")?.to_owned(),
                     start: row.f64("start")?,
                     end: row.f64("end")?,
-                    text: text.to_owned(),
-                }));
-            }
+                    text: row.text("text")?.to_owned(),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if candidates.is_empty() {
+            return Ok(Vec::new());
         }
-        Ok(None)
+        // What a whole word is in a script without spaces: a term covered by a
+        // longer word the learner knows is that word, not this one.
+        let known = self
+            .sql
+            .query("SELECT term FROM items WHERE term IS NOT NULL", &[])?
+            .iter()
+            .map(|row| Ok(row.text("term")?.to_owned()))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(clips::best_tier(candidates, &terms, sentence, &known))
     }
 
     pub fn delete_text(&self, id: &str) -> Result<()> {

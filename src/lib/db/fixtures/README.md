@@ -32,8 +32,9 @@ Reads are always taken under `TZ=UTC` (`getDailyActivity` buckets by local day,
 - `getItem`, `getText`, `getConversation` are called once per id the log
   mentions for that kind (added, reviewed, updated, deleted, looked up, turned),
   and recorded as a map from id to result; a missing row is `null`.
-- `clipFor` is called once per term an `itemAdded` names, with that term
-  alone, and recorded as a map from term to result; no clip is `null`.
+- `clipsFor` is called once per term an `itemAdded` names, with that term
+  alone and no sentence, and recorded as a map from term to result; no clip
+  is `[]`.
 - `getChallengesByIds` is called once with every challenge id the log mentions.
 - `recentResults` uses limit 5; `pendingEvents` uses limit 100;
   `studySessions` uses `since` 0.

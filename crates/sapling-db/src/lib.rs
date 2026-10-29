@@ -16,6 +16,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod clips;
 pub mod core;
 pub mod learned;
 pub mod materialize;

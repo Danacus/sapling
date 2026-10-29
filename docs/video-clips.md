@@ -64,18 +64,24 @@ sit consistently off their kind.
 ## 5. Steps
 
 1. **Heard in a video** (built; no stored change). The feedback banner offers
-   the answered word spoken in a video. `clipFor(terms)` (a `Backend` read)
-   answers the shortest timed cue of a YouTube text containing one of the
-   challenge's words — a substring for scripts without spaces, a whole word
-   otherwise — and `ClipStage` (`challenges/blocks/`) mounts the player when
+   the answered word spoken in a video. `clipsFor(terms, sentence?)` (a
+   `Backend` read) answers the best tier of timed YouTube cues holding one of
+   the challenge's words, at most five, best first: a cue that is the served
+   sentence ranks first, then more of the words, then closeness to the
+   sentence and a comfortable length (3–14 words, 1–8 s), so a one-word
+   fragment loses to a sentence. A word is whole by its spaces, or — in a
+   script without them — when no longer word the learner knows covers it (行
+   is not in 银行 once 银行 is theirs). The ranking is deterministic and the
+   page picks among the tier at random, so the same word is heard in
+   different places. `ClipStage` (`challenges/blocks/`) mounts the player when
    the banner shows and, on Play, plays the padded span and pauses at its end
    (`media/span.ts`). A failed player leaves the banner as it was. It settles
    playback — load time, ads, framing, whether it is worth hearing — before
    anything permanent is written.
 2. **Cues as sources** (no stored change). `sources` in `BatchArgs` and the
-   prompt line of §4; the banner's read prefers a cue whose normalised text
-   equals the challenge's sentence, so a lesson written from a cue plays that
-   exact sentence. Measures how often the model takes a cue verbatim.
+   prompt line of §4; the banner's read already prefers a cue whose
+   normalised text equals the challenge's sentence (step 1), so a lesson
+   written from a cue plays that exact sentence. Measures how often the model takes a cue verbatim.
 3. **Stored clips and listening.** `Sound` (§2), `clip` on the row (§3) and
    the resolver attaching it (§4). A clip row's listening level plays the
    recording as the prompt; step 2's text match is retired.

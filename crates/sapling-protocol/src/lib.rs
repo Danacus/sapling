@@ -441,11 +441,13 @@ backend! {
         getText(id: String) -> ReadingText | undefined {
             core.get_text(&id)
         }
-        /// A word heard in a video: the shortest timed cue of a YouTube text
-        /// containing one of `terms` (case-insensitive; whole words where the
-        /// script spaces them), or `undefined`.
-        clipFor(terms: Vec<String>) -> Clip | undefined {
-            core.clip_for(&terms)
+        /// A word heard in a video: the best tier of timed YouTube cues holding
+        /// one of `terms` as a word (case-insensitive), best first, at most five;
+        /// empty when none does. `sentence` is the challenge's target-language
+        /// text as served: a cue that is that sentence ranks first, and closeness
+        /// to it counts. Deterministic — the caller picks among them.
+        clipsFor(terms: Vec<String>; sentence: String) -> Vec<Clip> {
+            core.clips_for(&terms, sentence.as_deref())
         }
         /// Forgets one text. Tombstoned, so a late copy from another device stays
         /// gone.

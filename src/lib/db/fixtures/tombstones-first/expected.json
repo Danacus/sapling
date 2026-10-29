@@ -163,9 +163,9 @@
 		},
 		"text-z": null
 	},
-	"clipFor": {
-		"y": null,
-		"z": null
+	"clipsFor": {
+		"y": [],
+		"z": []
 	},
 	"getKnownTerms": [],
 	"getConversations": [

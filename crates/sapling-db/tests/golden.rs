@@ -235,7 +235,7 @@ fn probe(core: &Core, events: &[Value]) -> Value {
         "studySessions": core.study_sessions(0.0).expect("study_sessions"),
         "getTexts": core.get_texts().expect("get_texts"),
         "getText": by_key(&ids.texts, |id| core.get_text(id).expect("get_text")),
-        "clipFor": by_key(&ids.terms, |term| core.clip_for(&[term.to_owned()]).expect("clip_for")),
+        "clipsFor": by_key(&ids.terms, |term| Some(core.clips_for(&[term.to_owned()], None).expect("clips_for"))),
         "getKnownTerms": known,
         "getConversations": core.get_conversations().expect("get_conversations"),
         "getConversation": by_key(&ids.conversations, |id| core.get_conversation(id).expect("get_conversation")),

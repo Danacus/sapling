@@ -26,7 +26,7 @@
 	import { fade, fly, scale } from 'svelte/transition';
 
 	import { challengeInfo, correctFeedback, gradeAny, serveAny } from '$lib/challenges/plugin';
-	import { clipFor, getDailyActivity, getProfile, streakFrom } from '$lib/db';
+	import { clipsFor, getDailyActivity, getProfile, streakFrom } from '$lib/db';
 	import { isMockMode } from '$lib/llm';
 	import { loadRomanizer, type Romanizer } from '$lib/romanize';
 	import { targetTagOf } from '$lib/text';
@@ -505,7 +505,7 @@
 			reviews: traits.reviews,
 			pooled: traits.pooled
 		};
-		findClip(reviewsSrs ? challenge.itemIds : []);
+		findClip(reviewsSrs ? challenge.itemIds : [], served.audio.at(-1));
 
 		// Fire-and-follow: the banner animates now, the write lands underneath it.
 		// The one promise is held twice — as `pendingReviewed` for its value (the
@@ -527,15 +527,23 @@
 		void pendingWrite.then(() => refill()).catch(() => {});
 	}
 
-	/** Asks for a cue of one of these words in an imported video; a failure is simply no clip. */
-	function findClip(itemIds: readonly string[]): void {
+	/**
+	 * Asks for a cue of one of these words in an imported video; a failure is
+	 * simply no clip. The core answers the best tier of cues, deterministic, and
+	 * the pick among them is ours and random, so the same word is heard in
+	 * different places. `sentence` is the challenge's target-language text as
+	 * served — the last of its audio texts, the completed one where a gapped
+	 * text is spoken too — so a cue that is that very sentence wins.
+	 */
+	function findClip(itemIds: readonly string[], sentence: string | undefined): void {
 		const generation = ++clipGeneration;
 		clip = undefined;
 		const terms = items.filter((item) => itemIds.includes(item.id)).map((item) => item.term);
 		if (terms.length === 0) return;
-		clipFor(terms)
+		clipsFor(terms, sentence)
 			.then((found) => {
-				if (generation === clipGeneration && feedback) clip = found;
+				if (generation !== clipGeneration || !feedback || found.length === 0) return;
+				clip = found[Math.floor(Math.random() * found.length)];
 			})
 			.catch(() => {});
 	}
