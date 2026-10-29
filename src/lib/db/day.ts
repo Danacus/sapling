@@ -16,6 +16,17 @@ export function localDay(at: number): string {
 	return `${date.getFullYear()}-${month}-${day}`;
 }
 
+/**
+ * The epoch milliseconds at which the local hour holding `at` began — the
+ * core's study sessions are bucketed by it. Cleared through the local
+ * minutes, so a zone half an hour off UTC starts its hours at :30 UTC.
+ */
+export function localHour(at: number): number {
+	const date = new Date(at);
+	date.setMinutes(0, 0, 0);
+	return date.getTime();
+}
+
 /** The local calendar day before `day` (DST-safe: built from local parts). */
 export function previousDay(day: string): string {
 	const [year, month, date] = day.split('-').map(Number);

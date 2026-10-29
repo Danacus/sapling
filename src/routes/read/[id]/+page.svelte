@@ -83,6 +83,7 @@
 		localDay,
 		markWord,
 		recordLookup,
+		recordStudy,
 		updateItemAfterReview
 	} from '$lib/db';
 	import {
@@ -108,11 +109,18 @@
 		pieceOffset,
 		piecesOfSegment,
 		sentenceAt,
+		studyTracker,
 		tokenizeByTerms,
 		translateLine,
 		wordKey
 	} from '$lib/reading';
-	import type { AnnotateContext, GlossEntry, ReadingWord, TokenizeFn } from '$lib/reading';
+	import type {
+		AnnotateContext,
+		GlossEntry,
+		ReadingWord,
+		StudyTracker,
+		TokenizeFn
+	} from '$lib/reading';
 	import { hasLocalRomanizer, loadRomanizer } from '$lib/romanize';
 	import type { Maturity } from '$lib/challenges/serve';
 	import { Grade } from '$lib/srs';
@@ -278,6 +286,12 @@
 	 */
 	let mediaError = $state('');
 	let player: Player | undefined;
+	/**
+	 * Study time on this text (`$lib/reading/study`), for as long as it is open.
+	 * A plain `let`: the player's `onTime` feeds it whether or not it exists yet,
+	 * and nothing renders it.
+	 */
+	let study: StudyTracker | undefined;
 	/** Where the recording is, in milliseconds — the only thing the clock feeds in. */
 	let currentMs = $state(0);
 	/** Mirrors the element's own paused flag, so the button can say which it is. */
@@ -713,6 +727,7 @@
 				lastMs = ms;
 				currentMs = ms;
 				mediaPaused = built.paused();
+				study?.signal({ kind: 'playing', playing: !built.paused() });
 				clearPauseTimer();
 
 				// The line running at the previous sample is the one whose boundary a
@@ -750,7 +765,50 @@
 			clearPauseTimer();
 			stop();
 			built.destroy();
+			study?.signal({ kind: 'playing', playing: false });
 			if (player === built) player = undefined;
+		};
+	});
+
+	/**
+	 * Study time: one tracker per open text, fed the learner's input, the
+	 * page's visibility and (above) whether the recording plays; every span it
+	 * closes is one `studied` event. The rules — what is active, where a span
+	 * closes, the cap — are all in `$lib/reading/study`; this is only wiring.
+	 * The tick lets a span close on idle or the cap with nothing else happening.
+	 */
+	const studyTextId = $derived(text?.id);
+	$effect(() => {
+		// The id, not the text: a reload of the same text must not split a span.
+		const textId = studyTextId;
+		if (!browser || !textId) return;
+		const tracker = untrack(() =>
+			studyTracker({
+				now: Date.now,
+				visible: document.visibilityState === 'visible',
+				playing: player !== undefined && !player.paused(),
+				write: (span) => void recordStudy(textId, span.at, span.ms).catch(() => {})
+			})
+		);
+		study = tracker;
+		const input = () => tracker.signal({ kind: 'input' });
+		const visibility = () =>
+			tracker.signal({ kind: 'visible', visible: document.visibilityState === 'visible' });
+		const leave = () => tracker.signal({ kind: 'leave' });
+		const inputs = ['pointerdown', 'keydown', 'wheel', 'scroll', 'touchstart'] as const;
+		for (const kind of inputs) {
+			window.addEventListener(kind, input, { capture: true, passive: true });
+		}
+		document.addEventListener('visibilitychange', visibility);
+		window.addEventListener('pagehide', leave);
+		const tick = setInterval(() => tracker.signal({ kind: 'tick' }), 15_000);
+		return () => {
+			clearInterval(tick);
+			for (const kind of inputs) window.removeEventListener(kind, input, { capture: true });
+			document.removeEventListener('visibilitychange', visibility);
+			window.removeEventListener('pagehide', leave);
+			tracker.signal({ kind: 'leave' });
+			if (study === tracker) study = undefined;
 		};
 	});
 

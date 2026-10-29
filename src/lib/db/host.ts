@@ -16,7 +16,7 @@
 import type { Database } from '@sqlite.org/sqlite-wasm';
 
 import { newUuid } from '$lib/device';
-import { localDay } from './day';
+import { localDay, localHour } from './day';
 import { BACKEND_METHODS, type Backend, type BackendMethod, type Direct } from './protocol';
 import { WasmCore } from './wasm/sapling_core';
 
@@ -54,6 +54,7 @@ export function openCore(db: Database, options: HostOptions): WasmCore {
 		exec,
 		query,
 		localDay,
+		localHour,
 		options.clock ?? Date.now,
 		options.ids ?? newUuid
 	);

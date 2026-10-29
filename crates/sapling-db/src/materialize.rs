@@ -17,8 +17,8 @@ use sapling_domain::day::LocalDay;
 use sapling_domain::events::{
     typed_event, ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted,
     ItemAdded, ItemDeleted, ItemReviewed, ItemUpdated, Payload, RawEvent, ResultOverturned,
-    ReviewAmended, SyncEvent, TextDeleted, WordLookedUp, WordMarked, PATCHABLE_COLUMNS, PROFILE_ID,
-    SCOPED_EVENT_TYPE,
+    ReviewAmended, Studied, SyncEvent, TextDeleted, WordLookedUp, WordMarked, PATCHABLE_COLUMNS,
+    PROFILE_ID, SCOPED_EVENT_TYPE,
 };
 use sapling_domain::types::{
     ChallengeResult, Conversation, ConversationExchange, Profile, ReadingText,
@@ -582,6 +582,23 @@ impl<'a> Materializer<'a> {
         )
     }
 
+    /// One span per event. A span with no positive, finite length says
+    /// nothing and is skipped, so the sessions read never divides by it.
+    fn studied(&self, id: &str, at: f64, p: &Studied) -> Result<()> {
+        if !(p.ms.is_finite() && p.ms > 0.0) {
+            return Ok(());
+        }
+        self.sql.exec(
+            "INSERT OR IGNORE INTO studied (id, textId, at, ms) VALUES (?, ?, ?, ?)",
+            &[
+                Param::text(id),
+                Param::text(&p.text_id),
+                Param::number(at),
+                Param::number(p.ms),
+            ],
+        )
+    }
+
     fn conversation_started(&self, p: &Conversation) -> Result<()> {
         if self.exists(
             "SELECT 1 FROM conversationTombstones WHERE conversationId = ?",
@@ -670,6 +687,7 @@ impl<'a> Materializer<'a> {
             Payload::TurnAdded(p) => self.turn_added(event.at, p),
             Payload::ConversationDeleted(p) => self.conversation_deleted(p),
             Payload::ResultOverturned(p) => self.result_overturned(p),
+            Payload::Studied(p) => self.studied(&event.id, event.at, p),
         }
     }
 

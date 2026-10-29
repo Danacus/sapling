@@ -398,6 +398,47 @@ pub struct DailyActivity {
     pub added: f64,
 }
 
+/// What kind of study a session was: taking the language in (reading a text,
+/// following its recording), putting it out (a conversation), or practice
+/// (answering challenges).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum StudyMode {
+    Input,
+    Output,
+    Practice,
+}
+
+impl StudyMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StudyMode::Input => "input",
+            StudyMode::Output => "output",
+            StudyMode::Practice => "practice",
+        }
+    }
+}
+
+/// One mode's study in one whole local hour, read straight off the base
+/// tables — the neutral shape a study-time leaderboard is fed from.
+///
+/// `id` is `"{mode}-{hour start, epoch ms}"`, so every synced device folds the
+/// same log into the same ids and a receiver that upserts by id never counts
+/// an hour twice. The numbers are totals for the hour, not deltas: a span that
+/// arrives late from another device changes the total in place.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+pub struct StudySession {
+    pub id: String,
+    /// The earliest activity inside the hour.
+    pub at: f64,
+    pub mode: StudyMode,
+    /// Active minutes in the hour, to 0.1 — `0` for practice, which is counted
+    /// in answers instead.
+    pub minutes: f64,
+    /// Challenges answered in the hour — practice only, `0` otherwise.
+    pub answers: f64,
+}
+
 /* -------------------------------------------------------------------------- */
 /* Reading                                                                     */
 /* -------------------------------------------------------------------------- */

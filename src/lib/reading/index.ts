@@ -74,4 +74,7 @@ export type { PageRange, Pagination, Piece } from './pages';
 
 export { tokenizeByTerms, wordKey } from './tokenize';
 
+export { studyTracker } from './study';
+export type { StudySignal, StudySpan, StudyTracker } from './study';
+
 export type { ReadingText, Segment } from '$lib/types';

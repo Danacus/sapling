@@ -98,6 +98,19 @@ impl LocalDay for SystemZone {
             None => Utc.local_day(at),
         }
     }
+
+    fn local_hour(&self, at: f64) -> f64 {
+        let ms = at.trunc();
+        match Local.timestamp_millis_opt(ms as i64).single() {
+            // The zone's offset at this instant, so a half-hour zone's hours
+            // start at :30 UTC as its clocks say they do.
+            Some(local) => {
+                let offset = f64::from(local.offset().local_minus_utc()) * 1000.0;
+                ((ms + offset) / 3_600_000.0).floor() * 3_600_000.0 - offset
+            }
+            None => Utc.local_hour(at),
+        }
+    }
 }
 
 fn now() -> f64 {

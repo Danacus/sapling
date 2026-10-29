@@ -28,12 +28,14 @@ use sapling_domain::day::LocalDay;
 use sapling_domain::events::{
     parse_envelope, ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted,
     EventType, ItemAdded, ItemDeleted, ItemFields, ItemReviewed, ItemUpdated, Payload, RawEvent,
-    ResultOverturned, ReviewAmended, SyncEvent, TextDeleted, WordLookedUp, WordMarked, PROFILE_ID,
+    ResultOverturned, ReviewAmended, Studied, SyncEvent, TextDeleted, WordLookedUp, WordMarked,
+    PROFILE_ID,
 };
 use sapling_domain::types::{
     ChallengeResult, Conversation, ConversationDetail, ConversationExchange,
     ConversationLearnerTurn, ConversationSummary, ConversationTeacherTurn, DailyActivity,
-    GradeEntry, HistoryEntry, KnowledgeItem, Profile, ReadingText, Verdict,
+    GradeEntry, HistoryEntry, KnowledgeItem, Profile, ReadingText, StudyMode, StudySession,
+    Verdict,
 };
 use sapling_srs::{item_srs, FsrsCardState, Grade};
 
@@ -136,6 +138,34 @@ pub struct Clip {
     pub start: f64,
     pub end: f64,
     pub text: String,
+}
+
+/// Conversation turns at most this far apart are one run of speaking.
+const OUTPUT_GAP_MS: f64 = 5.0 * 60_000.0;
+
+/// What a run of turns is credited beyond its first-to-last span: the last
+/// turn took the learner some time to compose too.
+const OUTPUT_TAIL_MS: f64 = 60_000.0;
+
+const HOUR_MS: f64 = 3_600_000.0;
+
+/// One `(mode, local hour)` bucket while `study_sessions` folds it.
+#[derive(Default)]
+struct Bucket {
+    at: Option<f64>,
+    ms: f64,
+    answers: f64,
+}
+
+impl Bucket {
+    fn touch(&mut self, at: f64) {
+        self.at = Some(self.at.map_or(at, |first| first.min(at)));
+    }
+}
+
+/// Minutes to one decimal, as a leaderboard shows them.
+fn minutes_of(ms: f64) -> f64 {
+    (ms / 6_000.0).round() / 10.0
 }
 
 /// How many cues, shortest first, `clip_for` checks word boundaries over.
@@ -395,10 +425,15 @@ impl Core {
 
     /// Appends a run of local facts that belong to one action and materialises them — one transaction.
     pub fn commit_all(&self, facts: Vec<Payload>) -> Result<()> {
+        self.commit_all_at((self.clock)(), facts)
+    }
+
+    /// [`Core::commit_all`] with the envelope `at` named rather than read off
+    /// the clock — for a fact written after the moment it describes began.
+    fn commit_all_at(&self, at: f64, facts: Vec<Payload>) -> Result<()> {
         if facts.is_empty() {
             return Ok(());
         }
-        let at = (self.clock)();
         let profile_id = self.active_profile_id()?;
         self.transaction(|| {
             let m = self.materializer();
@@ -949,6 +984,112 @@ impl Core {
         }
 
         Ok(days.into_values().collect())
+    }
+
+    /// Records one closed span of active study on a text: it began at `at`
+    /// and was active for `ms`. The envelope carries `at` — when the learner
+    /// did the thing — not the moment the span was written, which is its end.
+    pub fn record_study(&self, text_id: &str, at: f64, ms: f64) -> Result<()> {
+        self.commit_all_at(
+            at,
+            vec![Payload::Studied(Studied {
+                text_id: text_id.to_owned(),
+                ms,
+            })],
+        )
+    }
+
+    /// Study time per mode and whole local hour, every hour starting at or
+    /// after `since`, oldest first.
+    ///
+    /// Folded at read time from the base tables, as `get_daily_activity` is,
+    /// and for the same reason: the hour is the host's (`LocalDay`), and the
+    /// tables are small. **Input** is the `studied` spans, each split across
+    /// the hours its wall-clock interval crosses. **Output** is conversation
+    /// turns: a run of turns no more than five minutes apart counts from the
+    /// first to the last plus a minute, split the same way. **Practice** is
+    /// answers counted into the hour they were given, with no minutes. An
+    /// hour whose minutes round to nothing is left out.
+    pub fn study_sessions(&self, since: f64) -> Result<Vec<StudySession>> {
+        let mut buckets: BTreeMap<(StudyMode, i64), Bucket> = BTreeMap::new();
+
+        for row in self.sql.query("SELECT at, ms FROM studied", &[])?.iter() {
+            let at = row.f64("at")?;
+            self.spread(&mut buckets, StudyMode::Input, at, at + row.f64("ms")?);
+        }
+
+        let turns: Vec<f64> = self
+            .sql
+            .query("SELECT at FROM conversationTurns ORDER BY at", &[])?
+            .iter()
+            .map(|row| row.f64("at"))
+            .collect::<Result<_>>()?;
+        let mut runs: Vec<(f64, f64)> = Vec::new();
+        for at in turns {
+            match runs.last_mut() {
+                Some((_, last)) if at - *last <= OUTPUT_GAP_MS => *last = at,
+                _ => runs.push((at, at)),
+            }
+        }
+        for (first, last) in runs {
+            self.spread(
+                &mut buckets,
+                StudyMode::Output,
+                first,
+                last + OUTPUT_TAIL_MS,
+            );
+        }
+
+        for row in self.sql.query("SELECT at FROM results", &[])?.iter() {
+            let at = row.f64("at")?;
+            let hour = self.day.local_hour(at) as i64;
+            let bucket = buckets.entry((StudyMode::Practice, hour)).or_default();
+            bucket.touch(at);
+            bucket.answers += 1.0;
+        }
+
+        let mut sessions: Vec<StudySession> = buckets
+            .into_iter()
+            .filter(|((_, hour), _)| *hour as f64 >= since)
+            .filter_map(|((mode, hour), bucket)| {
+                let minutes = minutes_of(bucket.ms);
+                if mode != StudyMode::Practice && minutes <= 0.0 {
+                    return None;
+                }
+                Some(StudySession {
+                    id: format!("{}-{hour}", mode.as_str()),
+                    at: bucket.at?,
+                    mode,
+                    minutes,
+                    answers: bucket.answers,
+                })
+            })
+            .collect();
+        sessions.sort_by(|a, b| a.at.total_cmp(&b.at).then_with(|| a.id.cmp(&b.id)));
+        Ok(sessions)
+    }
+
+    /// Credits `[start, end]` to `mode`, cut at every local hour it crosses.
+    fn spread(
+        &self,
+        buckets: &mut BTreeMap<(StudyMode, i64), Bucket>,
+        mode: StudyMode,
+        start: f64,
+        end: f64,
+    ) {
+        let mut at = start;
+        while at < end {
+            let hour = self.day.local_hour(at);
+            // The next hour is wherever the calendar says it starts; a zone
+            // change can move that, but never backwards past this one.
+            let next = self.day.local_hour(hour + HOUR_MS);
+            let next = if next > at { next } else { hour + HOUR_MS };
+            let until = end.min(next);
+            let bucket = buckets.entry((mode, hour as i64)).or_default();
+            bucket.touch(at);
+            bucket.ms += until - at;
+            at = until;
+        }
     }
 
     /* ---- Reading texts, word marks and lookups ----------------------- */

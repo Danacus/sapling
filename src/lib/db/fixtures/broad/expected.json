@@ -749,6 +749,43 @@
 			"added": 0
 		}
 	],
+	"studySessions": [
+		{
+			"id": "practice-1710061200000",
+			"at": 1710061800000,
+			"mode": "practice",
+			"minutes": 0,
+			"answers": 3
+		},
+		{
+			"id": "output-1710068400000",
+			"at": 1710068400000,
+			"mode": "output",
+			"minutes": 3,
+			"answers": 0
+		},
+		{
+			"id": "practice-1710198000000",
+			"at": 1710199800000,
+			"mode": "practice",
+			"minutes": 0,
+			"answers": 1
+		},
+		{
+			"id": "practice-1710201600000",
+			"at": 1710202500000,
+			"mode": "practice",
+			"minutes": 0,
+			"answers": 1
+		},
+		{
+			"id": "practice-1710230400000",
+			"at": 1710230400000,
+			"mode": "practice",
+			"minutes": 0,
+			"answers": 1
+		}
+	],
 	"getTexts": [
 		{
 			"id": "text-2",

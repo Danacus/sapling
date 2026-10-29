@@ -400,6 +400,15 @@
 			"added": 2
 		}
 	],
+	"studySessions": [
+		{
+			"id": "practice-1710061200000",
+			"at": 1710061800000,
+			"mode": "practice",
+			"minutes": 0,
+			"answers": 3
+		}
+	],
 	"getTexts": [],
 	"getText": {},
 	"clipFor": {

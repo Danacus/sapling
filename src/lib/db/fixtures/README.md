@@ -22,7 +22,8 @@ replace this one.
 
 ## How the reads are probed
 
-Reads are always taken under `TZ=UTC` (`getDailyActivity` buckets by local day).
+Reads are always taken under `TZ=UTC` (`getDailyActivity` buckets by local day,
+`studySessions` by local hour).
 
 - No-argument reads are recorded as returned.
 - `getAllItems` is recorded twice, as `lean` and `withRecentGrades`. Both — and
@@ -34,7 +35,8 @@ Reads are always taken under `TZ=UTC` (`getDailyActivity` buckets by local day).
 - `clipFor` is called once per term an `itemAdded` names, with that term
   alone, and recorded as a map from term to result; no clip is `null`.
 - `getChallengesByIds` is called once with every challenge id the log mentions.
-- `recentResults` uses limit 5; `pendingEvents` uses limit 100.
+- `recentResults` uses limit 5; `pendingEvents` uses limit 100;
+  `studySessions` uses `since` 0.
 - `getDifficultyParts` is recorded as returned. It, each item's `skill` and
   each pool row's `correction` are learned from memories the FSRS model
   computed, so they compare with the same tolerance as the model's floats.
@@ -47,7 +49,7 @@ Reads are always taken under `TZ=UTC` (`getDailyActivity` buckets by local day).
 ## Fixtures
 
 - `broad` — every event type once but `resultOverturned` (which `overturn`
-  covers), one device. Six pool challenge types plus one of an unknown type
+  covers) and `studied` (which `study-sessions` covers), one device. Six pool challenge types plus one of an unknown type
   that must stay in the log and out of the pool; a re-graded review; a
   reported challenge; results either side of midnight UTC; texts with YouTube
   and file media; a word marked then unmarked; a deleted conversation.
@@ -80,6 +82,10 @@ Reads are always taken under `TZ=UTC` (`getDailyActivity` buckets by local day).
   day on which one word was added and nothing else. A review of an item the
   log never adds makes no day: `reviewed` counts only words in the garden,
   which is also what keeps the read arrival-order free around a tombstone.
+- `study-sessions` — `studySessions` over every source: two devices' `studied`
+  spans, one crossing an hour and one of no length; answers in two hours; a
+  conversation whose turns make a run across noon and a run of one; the text
+  deleted afterwards, its minutes kept.
 - `version-skew` — rows this build cannot read: `wordShelved`, a kind only a
   newer build writes, and two `itemAdded` payloads carrying `notes: null`,
   which the schema rejects. All eight rows are in `exportData`, field for

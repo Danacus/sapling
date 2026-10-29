@@ -1,4 +1,4 @@
-//! The event model: eighteen immutable facts, and the only thing sync moves.
+//! The event model: nineteen immutable facts, and the only thing sync moves.
 //!
 //! The envelope `id` is the set-union key — an id already in `events` is never
 //! materialised twice — so no payload carries an id of its own. `at` is when
@@ -58,10 +58,11 @@ pub enum EventType {
     TurnAdded,
     ConversationDeleted,
     ResultOverturned,
+    Studied,
 }
 
 impl EventType {
-    pub const ALL: [EventType; 18] = [
+    pub const ALL: [EventType; 19] = [
         EventType::ItemAdded,
         EventType::ItemReviewed,
         EventType::ReviewAmended,
@@ -80,6 +81,7 @@ impl EventType {
         EventType::TurnAdded,
         EventType::ConversationDeleted,
         EventType::ResultOverturned,
+        EventType::Studied,
     ];
 
     /// The wire name — the `type` column.
@@ -103,6 +105,7 @@ impl EventType {
             EventType::TurnAdded => "turnAdded",
             EventType::ConversationDeleted => "conversationDeleted",
             EventType::ResultOverturned => "resultOverturned",
+            EventType::Studied => "studied",
         }
     }
 
@@ -350,6 +353,22 @@ pub struct ResultOverturned {
     pub verdict: Verdict,
 }
 
+/// One continuous span of active study on a text — reading it, or following
+/// its recording. The envelope `at` is when the span *started*, and `ms` is
+/// how long it was active, so the span is `[at, at + ms]` on the wall clock.
+/// Written once the span closes (idle, paused, hidden, left, or capped), never
+/// while it runs, so a span is one immutable fact and every device folds the
+/// same minutes out of it. A device whose build predates the type logs and
+/// skips it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(rename = "StudiedPayload")]
+#[serde(rename_all = "camelCase")]
+pub struct Studied {
+    pub text_id: String,
+    /// Active milliseconds.
+    pub ms: f64,
+}
+
 /// One parsed payload; the variant is the event type.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
@@ -372,6 +391,7 @@ pub enum Payload {
     TurnAdded(ConversationExchange),
     ConversationDeleted(ConversationDeleted),
     ResultOverturned(ResultOverturned),
+    Studied(Studied),
 }
 
 impl Payload {
@@ -395,6 +415,7 @@ impl Payload {
             Payload::TurnAdded(_) => EventType::TurnAdded,
             Payload::ConversationDeleted(_) => EventType::ConversationDeleted,
             Payload::ResultOverturned(_) => EventType::ResultOverturned,
+            Payload::Studied(_) => EventType::Studied,
         }
     }
 
@@ -428,6 +449,7 @@ pub fn parse_payload(kind: EventType, raw: &Value) -> Option<Payload> {
         EventType::TurnAdded => typed(raw, Payload::TurnAdded),
         EventType::ConversationDeleted => typed(raw, Payload::ConversationDeleted),
         EventType::ResultOverturned => typed(raw, Payload::ResultOverturned),
+        EventType::Studied => typed(raw, Payload::Studied),
     }
 }
 
@@ -622,6 +644,7 @@ mod tests {
                 EventType::ResultOverturned,
                 json!({ "challengeId": "c", "answeredAt": 7, "verdict": "correct" }),
             ),
+            (EventType::Studied, json!({ "textId": "t", "ms": 90000 })),
         ]
     }
 

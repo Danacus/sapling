@@ -159,7 +159,8 @@ fn ids_in(events: &[Value]) -> Ids {
                 )),
         ),
         texts: unique(
-            of(&["textAdded"], "id").chain(of(&["textDeleted", "wordLookedUp"], "textId")),
+            of(&["textAdded"], "id")
+                .chain(of(&["textDeleted", "wordLookedUp", "studied"], "textId")),
         ),
         conversations: unique(
             of(&["conversationStarted"], "id")
@@ -231,6 +232,7 @@ fn probe(core: &Core, events: &[Value]) -> Value {
         "recentResults": core.recent_results(RECENT_LIMIT).expect("recent_results"),
         "getDifficultyParts": core.get_difficulty_parts().expect("get_difficulty_parts"),
         "getDailyActivity": core.get_daily_activity().expect("get_daily_activity"),
+        "studySessions": core.study_sessions(0.0).expect("study_sessions"),
         "getTexts": core.get_texts().expect("get_texts"),
         "getText": by_key(&ids.texts, |id| core.get_text(id).expect("get_text")),
         "clipFor": by_key(&ids.terms, |term| core.clip_for(&[term.to_owned()]).expect("clip_for")),

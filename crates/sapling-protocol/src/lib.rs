@@ -47,7 +47,7 @@ use sapling_db::{AnswerFiled, AnswerRecord, Clip, Core, Error, Result, ReviewOut
 use sapling_domain::events::{parse_payload, EventType, Payload, RawEvent, ResultOverturned};
 use sapling_domain::types::{
     ChallengeResult, Conversation, ConversationDetail, ConversationExchange, ConversationSummary,
-    DailyActivity, GradeEntry, KnowledgeItem, Profile, ReadingText,
+    DailyActivity, GradeEntry, KnowledgeItem, Profile, ReadingText, StudySession,
 };
 use sapling_import::ImportedSource;
 
@@ -464,6 +464,21 @@ backend! {
         /// this". Write-only for now; pass `itemId` when the word is tracked.
         recordLookup(term: String, textId: String; itemId: String) {
             core.record_lookup(&term, &textId, itemId.as_deref())
+        }
+        /// Records one closed span of active study on a text — reading it or
+        /// following its recording — that began at `at` and was active for
+        /// `ms` milliseconds. A span with no positive length is logged and
+        /// counts for nothing.
+        recordStudy(textId: String, at: f64, ms: f64) {
+            core.record_study(&textId, at, ms)
+        }
+        /// Study time per mode (`input`: texts and recordings, `output`:
+        /// conversations, `practice`: answers) and whole local hour, for every
+        /// hour starting at or after `since`, oldest first. Each `id` is
+        /// `{mode}-{hour start}`, the same on every synced device, and every
+        /// number is the hour's total. Folded from the base tables at read time.
+        studySessions(since: f64) -> Vec<StudySession> {
+            core.study_sessions(since)
         }
 
         /// Recognises an imported text and cuts it into the segments it is

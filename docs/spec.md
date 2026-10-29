@@ -1105,7 +1105,7 @@ What the learner's data is, where it lives, how it survives and moves between de
 
 #### Open questions
 
-- The sync documentation's event table lists 10 event types, but the product has 18 (reading, conversation, lookups and overturns are missing from it). Which list is the contract?
+- The sync documentation's event table lists 10 event types, but the product has 19 (reading, conversation, lookups, overturns and study spans are missing from it). Which list is the contract?
 - The profile stores a `model` field, and the model is also a device-local setting. Onboarding writes both. Settings writes only the local one. Which copy wins, and should the profile carry it at all?
 - The profile still writes deprecated `level` and `interests` values, kept only so older builds can parse it. When can these be dropped?
 

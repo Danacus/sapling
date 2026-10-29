@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { activityByDay, localDay, previousDay, streakFrom } from './day';
+import { activityByDay, localDay, localHour, previousDay, streakFrom } from './day';
 
 const at = (year: number, month: number, day: number, hour = 12): number =>
 	new Date(year, month - 1, day, hour).getTime();
@@ -19,6 +19,15 @@ describe('localDay', () => {
 	it('steps back one calendar day', () => {
 		expect(previousDay('2026-03-01')).toBe('2026-02-28');
 		expect(previousDay('2026-01-01')).toBe('2025-12-31');
+	});
+});
+
+describe('localHour', () => {
+	it('is the start of the local hour holding the instant', () => {
+		const start = new Date(2026, 7, 23, 14).getTime();
+		expect(localHour(start)).toBe(start);
+		expect(localHour(start + 59 * 60_000 + 59_999)).toBe(start);
+		expect(localHour(start + 60 * 60_000)).toBe(start + 60 * 60_000);
 	});
 });
 

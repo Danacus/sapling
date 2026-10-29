@@ -3,8 +3,8 @@
 //! The database stays on the JavaScript side — sqlite-wasm's synchronous `oo1`
 //! API, inside the Worker — and comes across as two callbacks, `exec` and
 //! `query`, that speak JSON strings. The core's three other runtime facts
-//! arrive the same way: `localDay` (the host's calendar, which is the only
-//! place a time zone exists), `now` and `newId`. Nothing here parses an
+//! arrive the same way: `localDay` and `localHour` (the host's calendar, which
+//! is the only place a time zone exists), `now` and `newId`. Nothing here parses an
 //! argument or formats an answer; `sapling-protocol` does both, so the
 //! Worker forwards `(method, argsJson)` verbatim and posts the string back.
 //!
@@ -120,16 +120,28 @@ impl Sql for JsSql {
     }
 }
 
-/// The host's calendar: `localDay(at) -> 'YYYY-MM-DD'`.
-struct JsDay(Function);
+/// The host's calendar: `localDay(at) -> 'YYYY-MM-DD'` and
+/// `localHour(at) -> epoch ms the local hour began`.
+struct JsDay {
+    day: Function,
+    hour: Function,
+}
 
 impl LocalDay for JsDay {
     fn local_day(&self, at: f64) -> String {
-        self.0
+        self.day
             .call1(&JsValue::NULL, &JsValue::from_f64(at))
             .ok()
             .and_then(|day| day.as_string())
             .expect("localDay(at) returns a string")
+    }
+
+    fn local_hour(&self, at: f64) -> f64 {
+        self.hour
+            .call1(&JsValue::NULL, &JsValue::from_f64(at))
+            .ok()
+            .and_then(|hour| hour.as_f64())
+            .expect("localHour(at) returns a number")
     }
 }
 
@@ -149,6 +161,7 @@ impl WasmCore {
         exec: Function,
         query: Function,
         local_day: Function,
+        local_hour: Function,
         now: Function,
         new_id: Function,
     ) -> std::result::Result<WasmCore, JsValue> {
@@ -170,7 +183,10 @@ impl WasmCore {
             device_id,
             clock,
             ids,
-            JsDay(local_day),
+            JsDay {
+                day: local_day,
+                hour: local_hour,
+            },
         )
         .map_err(to_js)?;
         Ok(WasmCore { core })

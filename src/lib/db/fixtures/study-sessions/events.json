@@ -1,0 +1,218 @@
+{
+ "meta": {
+  "deviceId": "fixture-device",
+  "now": 1710086400000,
+  "orderFree": true,
+  "note": "Study time for `studySessions`, bucketed by UTC hour. Input: a 20-minute span from 10:50 split 10/10 across 10:00 and 11:00, a 90-second span from another device in the 10:00 hour (so that hour is 11.5 minutes, from 10:05), and a span with no length that counts for nothing. Practice: two answers in the 10:00 hour and one in the 11:00. Output: turns at 11:56, 11:59 and 12:01 are one run (to 12:02, split 4/2 across 11:00 and 12:00), and one at 12:10, nine minutes on, is a run of its own (one minute). The text is deleted afterwards and its minutes stay."
+ },
+ "events": [
+  {
+   "seq": 1,
+   "id": "ev-text",
+   "type": "textAdded",
+   "at": 1710064740000,
+   "device": "dev-a",
+   "payload": {
+    "id": "text-1",
+    "title": "早餐",
+    "source": "imported",
+    "segments": [
+     {
+      "text": "我们去吃早餐吧。",
+      "start": 0,
+      "end": 2500
+     }
+    ],
+    "media": {
+     "kind": "youtube",
+     "videoId": "dQw4w9WgXcQ"
+    },
+    "createdAt": 1710064740000
+   }
+  },
+  {
+   "seq": 2,
+   "id": "ev-study-1",
+   "type": "studied",
+   "at": 1710067800000,
+   "device": "dev-a",
+   "payload": {
+    "textId": "text-1",
+    "ms": 1200000
+   }
+  },
+  {
+   "seq": 3,
+   "id": "ev-study-2",
+   "type": "studied",
+   "at": 1710065100000,
+   "device": "dev-b",
+   "payload": {
+    "textId": "text-1",
+    "ms": 90000
+   }
+  },
+  {
+   "seq": 4,
+   "id": "ev-study-empty",
+   "type": "studied",
+   "at": 1710072000000,
+   "device": "dev-a",
+   "payload": {
+    "textId": "text-1",
+    "ms": 0
+   }
+  },
+  {
+   "seq": 5,
+   "id": "ev-result-1",
+   "type": "resultLogged",
+   "at": 1710066000000,
+   "device": "dev-a",
+   "payload": {
+    "challengeId": "ch-1",
+    "verdict": "correct",
+    "answerGiven": "a",
+    "at": 1710066000000
+   }
+  },
+  {
+   "seq": 6,
+   "id": "ev-result-2",
+   "type": "resultLogged",
+   "at": 1710066060000,
+   "device": "dev-a",
+   "payload": {
+    "challengeId": "ch-1",
+    "verdict": "wrong",
+    "answerGiven": "b",
+    "at": 1710066060000
+   }
+  },
+  {
+   "seq": 7,
+   "id": "ev-result-3",
+   "type": "resultLogged",
+   "at": 1710068520000,
+   "device": "dev-a",
+   "payload": {
+    "challengeId": "ch-1",
+    "verdict": "almost",
+    "answerGiven": "c",
+    "at": 1710068520000
+   }
+  },
+  {
+   "seq": 8,
+   "id": "ev-conv",
+   "type": "conversationStarted",
+   "at": 1710071700000,
+   "device": "dev-a",
+   "payload": {
+    "id": "conv-1",
+    "scenario": {
+     "setting": "a café",
+     "teacherRole": "barista",
+     "learnerRole": "customer",
+     "firstSpeaker": "teacher",
+     "opener": {
+      "text": "你好！",
+      "reading": "nǐ hǎo!"
+     },
+     "openerTranslation": "Hello!"
+    },
+    "createdAt": 1710071700000
+   }
+  },
+  {
+   "seq": 9,
+   "id": "ev-turn-0",
+   "type": "turnAdded",
+   "at": 1710071760000,
+   "device": "dev-a",
+   "payload": {
+    "conversationId": "conv-1",
+    "index": 0,
+    "teacher": {
+     "role": "teacher",
+     "reply": {
+      "text": "好的。",
+      "reading": "hǎo de."
+     },
+     "translation": "OK.",
+     "actions": []
+    }
+   }
+  },
+  {
+   "seq": 10,
+   "id": "ev-turn-1",
+   "type": "turnAdded",
+   "at": 1710071940000,
+   "device": "dev-a",
+   "payload": {
+    "conversationId": "conv-1",
+    "index": 1,
+    "teacher": {
+     "role": "teacher",
+     "reply": {
+      "text": "好的。",
+      "reading": "hǎo de."
+     },
+     "translation": "OK.",
+     "actions": []
+    }
+   }
+  },
+  {
+   "seq": 11,
+   "id": "ev-turn-2",
+   "type": "turnAdded",
+   "at": 1710072060000,
+   "device": "dev-a",
+   "payload": {
+    "conversationId": "conv-1",
+    "index": 2,
+    "teacher": {
+     "role": "teacher",
+     "reply": {
+      "text": "好的。",
+      "reading": "hǎo de."
+     },
+     "translation": "OK.",
+     "actions": []
+    }
+   }
+  },
+  {
+   "seq": 12,
+   "id": "ev-turn-3",
+   "type": "turnAdded",
+   "at": 1710072600000,
+   "device": "dev-a",
+   "payload": {
+    "conversationId": "conv-1",
+    "index": 3,
+    "teacher": {
+     "role": "teacher",
+     "reply": {
+      "text": "好的。",
+      "reading": "hǎo de."
+     },
+     "translation": "OK.",
+     "actions": []
+    }
+   }
+  },
+  {
+   "seq": 13,
+   "id": "ev-text-deleted",
+   "type": "textDeleted",
+   "at": 1710079200000,
+   "device": "dev-a",
+   "payload": {
+    "textId": "text-1"
+   }
+  }
+ ]
+}

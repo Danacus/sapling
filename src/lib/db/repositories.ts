@@ -67,6 +67,8 @@ export const overturnResult = forward('overturnResult');
 export const recentResults = forward('recentResults');
 export const getDifficultyParts = forward('getDifficultyParts');
 export const getDailyActivity = forward('getDailyActivity');
+/** Study time per mode and local hour; {@link Backend.studySessions}. */
+export const studySessions = forward('studySessions');
 
 export const addText = forward('addText');
 export const getTexts = forward('getTexts');
@@ -76,6 +78,8 @@ export const deleteText = forward('deleteText');
 export const markWord = forward('markWord');
 export const getKnownTerms = forward('getKnownTerms');
 export const recordLookup = forward('recordLookup');
+/** One closed span of active study on a text; {@link Backend.recordStudy}. */
+export const recordStudy = forward('recordStudy');
 /**
  * What an imported text is and the segments it is stored as — one timed
  * segment per subtitle cue, one untimed segment per paragraph of prose. Answered by the Rust core without touching

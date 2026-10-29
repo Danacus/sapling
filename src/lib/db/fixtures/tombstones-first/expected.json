@@ -127,6 +127,15 @@
 			"added": 1
 		}
 	],
+	"studySessions": [
+		{
+			"id": "output-1710068400000",
+			"at": 1710070200000,
+			"mode": "output",
+			"minutes": 3,
+			"answers": 0
+		}
+	],
 	"getTexts": [
 		{
 			"id": "text-k",

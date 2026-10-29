@@ -1,14 +1,25 @@
-//! Calendar days, for the `daily` table.
+//! The learner's local calendar: days, for the activity read, and hours, for
+//! the study sessions read.
 //!
-//! `resultLogged` buckets answers by the learner's *local* calendar day, which
-//! the TypeScript reads off the runtime's time zone. This crate has no time
-//! zone of its own, so the host says what day a timestamp falls on through
+//! Both bucket by the learner's *local* clock, which the TypeScript reads off
+//! the runtime's time zone. This crate has no time zone of its own, so the
+//! host says what day a timestamp falls on and where its hour began through
 //! [`LocalDay`]; [`Utc`] is the answer a fixture run and a server both want.
 
-/// `YYYY-MM-DD` for an epoch-milliseconds timestamp, in the host's zone.
+/// The host's calendar.
 pub trait LocalDay {
+    /// `YYYY-MM-DD` for an epoch-milliseconds timestamp, in the host's zone.
     fn local_day(&self, at: f64) -> String;
+
+    /// The epoch milliseconds at which the local hour holding `at` began.
+    ///
+    /// Not `at` floored to a UTC hour: a zone half an hour off UTC (India,
+    /// Newfoundland, parts of Australia) starts its hours at :30, and a study
+    /// session is "one local hour" to the learner reading the leaderboard.
+    fn local_hour(&self, at: f64) -> f64;
 }
+
+const HOUR_MS: f64 = 3_600_000.0;
 
 /// The UTC calendar — what the golden fixtures are recorded under.
 #[derive(Debug, Clone, Copy, Default)]
@@ -21,6 +32,10 @@ impl LocalDay for Utc {
         let days = (ms / 86_400_000.0).floor() as i64;
         let (year, month, day) = civil_from_days(days);
         format!("{year}-{month:02}-{day:02}")
+    }
+
+    fn local_hour(&self, at: f64) -> f64 {
+        (at.trunc() / HOUR_MS).floor() * HOUR_MS
     }
 }
 
@@ -50,5 +65,13 @@ mod tests {
         assert_eq!(Utc.local_day(1710115199999.0), "2024-03-10");
         assert_eq!(Utc.local_day(1710115200000.0), "2024-03-11");
         assert_eq!(Utc.local_day(951782400000.0), "2000-02-29");
+    }
+
+    #[test]
+    fn hours_start_on_the_utc_hour() {
+        assert_eq!(Utc.local_hour(1710061260000.0), 1710061200000.0);
+        assert_eq!(Utc.local_hour(1710061200000.0), 1710061200000.0);
+        assert_eq!(Utc.local_hour(1710064799999.0), 1710061200000.0);
+        assert_eq!(Utc.local_hour(-1.0), -3_600_000.0);
     }
 }

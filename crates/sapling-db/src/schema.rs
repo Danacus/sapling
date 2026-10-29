@@ -76,6 +76,13 @@ CREATE TABLE IF NOT EXISTS lookups (
   at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS lookups_term ON lookups(term, at);
 
+-- One row per `studied` event: a span of active study on a text, `[at, at +
+-- ms]`. Kept when the text is deleted — the time was spent either way, and a
+-- total already handed to a leaderboard must not shrink.
+CREATE TABLE IF NOT EXISTS studied (
+  id TEXT PRIMARY KEY, textId TEXT NOT NULL, at INTEGER NOT NULL, ms REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS studied_at ON studied(at);
+
 CREATE TABLE IF NOT EXISTS conversations (
   id TEXT PRIMARY KEY, scenario TEXT NOT NULL, topic TEXT, createdAt INTEGER NOT NULL);
 
@@ -140,7 +147,10 @@ pub fn review_key(item_id: &str, at: f64, device: &str) -> String {
 ///
 /// Bumped for 12 when `profile` gained `nativeLanguageTag` and
 /// `targetLanguageTag`, the picker's BCP-47 tags.
-pub const DERIVED_SCHEMA_VERSION: u32 = 12;
+///
+/// Bumped for 13 when `studied` arrived: an older build logged and skipped
+/// every `studied` span it was sent, and the rebuild is what applies them.
+pub const DERIVED_SCHEMA_VERSION: u32 = 13;
 
 /// Every read table the materializer owns; `events` and `meta` survive a rebuild.
 ///
@@ -148,7 +158,7 @@ pub const DERIVED_SCHEMA_VERSION: u32 = 12;
 /// activity read folds the base tables at read time instead, since a day is
 /// made of reviews, lookups and added words as much as of answers. A database
 /// from before still carries the empty table; nothing reads or drops it.
-pub const DERIVED_TABLES: [&str; 16] = [
+pub const DERIVED_TABLES: [&str; 17] = [
     "items",
     "reviews",
     "challenges",
@@ -160,6 +170,7 @@ pub const DERIVED_TABLES: [&str; 16] = [
     "textTombstones",
     "wordMarks",
     "lookups",
+    "studied",
     "conversations",
     "conversationTurns",
     "conversationTombstones",
