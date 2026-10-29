@@ -1,8 +1,9 @@
 <!--
-  The Video tab: the recording first, its text following from it. A YouTube
+  The Video drawer: the recording first, its text following from it. A YouTube
   link lists its caption tracks by itself and a picked track becomes the
   subtitles; your own files — a recording and its subtitle file — are the
-  quieter second way. Stored as a reference only: a video id, or a file's name.
+  quieter second way, and at ≥48rem their own column. Stored as a reference
+  only: a video id, or a file's name.
 -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
@@ -147,7 +148,7 @@
 		try {
 			const text = await file.text();
 			if ((await importSource(text)).format) subtitles = { name: file.name, text };
-			else error = 'That file has no timings. Plain text goes in the Text tab.';
+			else error = 'That file has no timings. Plain text goes under Text.';
 		} catch {
 			error = 'Could not read that file.';
 		}
@@ -221,137 +222,177 @@
 	}
 </script>
 
-<label class="field tight">
-	<span class="label">YouTube link</span>
-	<input
-		class="input"
-		type="url"
-		inputmode="url"
-		placeholder="https://www.youtube.com/watch?v=…"
-		disabled={adding}
-		value={link}
-		oninput={enterLink}
-	/>
-</label>
-{#if link.trim() && !linkId}
-	<p class="hint line">That is not a YouTube link.</p>
-{/if}
+<div class="video-form">
+	<div class="from-link">
+		<label class="field tight">
+			<span class="label">YouTube link</span>
+			<input
+				class="input"
+				type="url"
+				inputmode="url"
+				placeholder="https://www.youtube.com/watch?v=…"
+				disabled={adding}
+				value={link}
+				oninput={enterLink}
+			/>
+		</label>
+		{#if link.trim() && !linkId}
+			<p class="hint line">That is not a YouTube link.</p>
+		{/if}
 
-{#if subtitles}
-	<div class="source-card ll-rise">
-		<svg class="ico source-mark" viewBox="0 0 24 24" aria-hidden="true">
-			<rect x="3.4" y="5.4" width="17.2" height="13.2" rx="2.2" />
-			<path d="M7 12.4h4.2M13.4 12.4H17M7 15.4h7M16.2 15.4H17" />
-		</svg>
-		<div class="source-id">
-			<p class="source-kind">{plan.format ? FORMAT_NAMES[plan.format] : 'Subtitles'}</p>
-			<p class="source-name">{subtitles.name}</p>
-			<p class="source-facts" class:trouble={imported.source === subtitles.text && !timed}>
-				{#if imported.source === subtitles.text && !timed}
-					Nothing to follow in that file
-				{:else}
-					{plan.cues} line{plan.cues === 1 ? '' : 's'}{plan.durationMs > 0
-						? ` · ${clock(plan.durationMs)}`
-						: ''}
+		{#if subtitles}
+			<div class="source-card ll-rise">
+				<svg class="ico source-mark" viewBox="0 0 24 24" aria-hidden="true">
+					<rect x="3.4" y="5.4" width="17.2" height="13.2" rx="2.2" />
+					<path d="M7 12.4h4.2M13.4 12.4H17M7 15.4h7M16.2 15.4H17" />
+				</svg>
+				<div class="source-id">
+					<p class="source-kind">{plan.format ? FORMAT_NAMES[plan.format] : 'Subtitles'}</p>
+					<p class="source-name">{subtitles.name}</p>
+					<p class="source-facts" class:trouble={imported.source === subtitles.text && !timed}>
+						{#if imported.source === subtitles.text && !timed}
+							Nothing to follow in that file
+						{:else}
+							{plan.cues} line{plan.cues === 1 ? '' : 's'}{plan.durationMs > 0
+								? ` · ${clock(plan.durationMs)}`
+								: ''}
+						{/if}
+					</p>
+				</div>
+				<button
+					type="button"
+					class="source-drop"
+					aria-label="Remove {subtitles.name}"
+					disabled={adding}
+					onclick={() => (subtitles = undefined)}
+				>
+					<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+						<path d="m7 7 10 10M17 7 7 17" />
+					</svg>
+				</button>
+			</div>
+		{:else if fetching}
+			<p class="status"><Spinner /> Fetching captions…</p>
+		{:else if linkId && looking}
+			<p class="status"><Spinner /> Looking for captions…</p>
+		{:else if tracks.length > 0}
+			<p class="tracks-head">Pick the captions</p>
+			<ul class="tracks">
+				{#each tracks as track (`${track.auto}:${track.lang}:${track.name}`)}
+					<li>
+						<button type="button" class="track" disabled={adding} onclick={() => pickTrack(track)}>
+							<span class="track-name">{track.name}</span>
+							<span class="track-lang">{track.lang}</span>
+							{#if track.auto}<span class="track-auto">auto</span>{/if}
+						</button>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+
+		{#if captionsError && linkId}
+			<p class="error captions-error" role="alert">
+				{captionsError}
+				{#if !looking && listing?.id !== linkId}
+					<button type="button" class="retry" onclick={() => linkId && void listTracks(linkId)}>
+						Try again
+					</button>
 				{/if}
 			</p>
+		{/if}
+	</div>
+
+	<div class="own">
+		<p class="own-head">Or use your own files</p>
+		<div class="own-row">
+			<FileSlot
+				label={mediaFile ? mediaFile.name : 'Video or audio file'}
+				accept="video/*,audio/*"
+				icon="video"
+				disabled={adding}
+				bind:input={mediaInput}
+				onchange={chooseRecording}
+			/>
+			<FileSlot
+				label="Subtitle file"
+				accept=".srt,.vtt,.json3,.json,.txt"
+				icon="subtitles"
+				disabled={adding}
+				onchange={(event) => void uploadSubtitles(event)}
+			/>
 		</div>
+		{#if mediaFile}
+			<p class="hint line">
+				Only its name is kept, so you'll pick the file again when you open this.
+			</p>
+		{/if}
+	</div>
+
+	<div class="finish">
+		<label class="field title-field">
+			<span class="label">Title <span class="note">optional</span></span>
+			<input
+				class="input"
+				type="text"
+				placeholder={defaultTitle || 'Named after the video'}
+				disabled={adding}
+				bind:value={title}
+			/>
+		</label>
+
 		<button
 			type="button"
-			class="source-drop"
-			aria-label="Remove {subtitles.name}"
-			disabled={adding}
-			onclick={() => (subtitles = undefined)}
+			class="btn btn-primary btn-block go"
+			disabled={adding || busy || fetching || !recording || !timed}
+			onclick={() => void add()}
 		>
-			<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-				<path d="m7 7 10 10M17 7 7 17" />
-			</svg>
+			{adding ? 'Importing…' : error ? 'Try again' : 'Import'}
 		</button>
-	</div>
-{:else if fetching}
-	<p class="status"><Spinner /> Fetching captions…</p>
-{:else if linkId && looking}
-	<p class="status"><Spinner /> Looking for captions…</p>
-{:else if tracks.length > 0}
-	<p class="tracks-head">Pick the captions</p>
-	<ul class="tracks">
-		{#each tracks as track (`${track.auto}:${track.lang}:${track.name}`)}
-			<li>
-				<button type="button" class="track" disabled={adding} onclick={() => pickTrack(track)}>
-					<span class="track-name">{track.name}</span>
-					<span class="track-lang">{track.lang}</span>
-					{#if track.auto}<span class="track-auto">auto</span>{/if}
-				</button>
-			</li>
-		{/each}
-	</ul>
-{/if}
 
-{#if captionsError && linkId}
-	<p class="error captions-error" role="alert">
-		{captionsError}
-		{#if !looking && listing?.id !== linkId}
-			<button type="button" class="retry" onclick={() => linkId && void listTracks(linkId)}>
-				Try again
-			</button>
+		{#if missing}
+			<p class="hint line">{missing}</p>
 		{/if}
-	</p>
-{/if}
-
-<div class="own">
-	<p class="own-head">Or use your own files</p>
-	<div class="own-row">
-		<FileSlot
-			label={mediaFile ? mediaFile.name : 'Video or audio file'}
-			accept="video/*,audio/*"
-			icon="video"
-			disabled={adding}
-			bind:input={mediaInput}
-			onchange={chooseRecording}
-		/>
-		<FileSlot
-			label="Subtitle file"
-			accept=".srt,.vtt,.json3,.json,.txt"
-			icon="subtitles"
-			disabled={adding}
-			onchange={(event) => void uploadSubtitles(event)}
-		/>
+		{#if error}
+			<p class="error" role="alert">{error}</p>
+		{/if}
 	</div>
-	{#if mediaFile}
-		<p class="hint line">
-			Only its name is kept, so you'll pick the file again when you open this.
-		</p>
-	{/if}
 </div>
 
-<label class="field title-field">
-	<span class="label">Title <span class="note">optional</span></span>
-	<input
-		class="input"
-		type="text"
-		placeholder={defaultTitle || 'Named after the video'}
-		disabled={adding}
-		bind:value={title}
-	/>
-</label>
-
-<button
-	type="button"
-	class="btn btn-primary btn-block go"
-	disabled={adding || busy || fetching || !recording || !timed}
-	onclick={() => void add()}
->
-	{adding ? 'Importing…' : error ? 'Try again' : 'Import'}
-</button>
-
-{#if missing}
-	<p class="hint line">{missing}</p>
-{/if}
-{#if error}
-	<p class="error" role="alert">{error}</p>
-{/if}
-
 <style>
+	/* On a phone one stack, in the order a learner works down it. At ≥48rem the
+	   own-files way steps aside into a column of its own beside the link, the
+	   title and Import, behind a hairline — the markup order (and so the tab
+	   order) unchanged; `auto 1fr` rows let a tall right column grow the
+	   second row rather than push Import away from the link. */
+	@media (min-width: 48rem) {
+		.video-form {
+			display: grid;
+			grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+			grid-template-rows: auto 1fr;
+			grid-template-areas:
+				'link own'
+				'finish own';
+			column-gap: 1.75rem;
+		}
+
+		.from-link {
+			grid-area: link;
+		}
+
+		.finish {
+			grid-area: finish;
+			align-self: start;
+		}
+
+		.video-form .own {
+			grid-area: own;
+			margin: 0;
+			padding: 0 0 0 1.75rem;
+			border-top: none;
+			border-left: 1px solid var(--border);
+		}
+	}
+
 	.field.tight {
 		margin-bottom: 0.75rem;
 	}

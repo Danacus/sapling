@@ -149,8 +149,8 @@ menu, no tray, no auto-update, no file dialog and no deep-link handling. The
 window is one `main` window loading `/`.
 
 **No CSP.** `app.security.csp` is `null`, matching the web deploy, which sets
-none either and for a load-bearing reason (`deploy.md`: the YouTube iframe API
-and the `youtube-nocookie` frame). Tauri's default is to inject one; turning it
+none either and for a load-bearing reason (`deploy.md`: the YouTube iframe API,
+the `youtube-nocookie` frame, and the library's thumbnails from `i.ytimg.com`). Tauri's default is to inject one; turning it
 off is a deliberate spike shortcut, and a shipped build should set a policy that
 names those two origins rather than inherit this.
 

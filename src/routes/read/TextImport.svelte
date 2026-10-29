@@ -1,5 +1,5 @@
 <!--
-  The Text tab: a paste or a .txt file, stored as it is. Free and local — the
+  The Text drawer: a paste or a .txt file, stored as it is. Free and local — the
   core's `importSource` cuts it and `addText` keeps it, no model and no task.
 -->
 <script lang="ts">

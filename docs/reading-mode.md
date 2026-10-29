@@ -26,8 +26,9 @@ in the garden with an FSRS strength, marked as known, or not yet met.
 ## 2. Shape of the feature
 
 1. **Library** (`/read`, "Media"). Every text the learner has kept, newest
-   first, and a composer with three tabs (`?tab=`): *Video* (a YouTube link
-   whose captions are fetched, or a recording and its subtitle file → stored at
+   first, as a gallery of cards with a filter (`?show=`), and three header
+   buttons that each open a drawer (`?tab=`, absent is closed): *Video* (a
+   YouTube link whose captions are fetched, or a recording and its subtitle file → stored at
    once, no LLM call), *Text* (a paste or a `.txt` file → the same) and *Write
    one for me* (optional topic → one LLM call).
 2. **Reader** (`/read/[id]`). The text a page at a time (`?p=`), each page one
@@ -377,9 +378,9 @@ under the same condition.
 
 ### As built, where it differs from the above
 
-- **Import is two tabs, and the recording leads the Video one.** Video and text
-  are different starting points, so they are different forms: the **Text** tab
-  is a box and a `.txt` upload and nothing else, and the **Video** tab starts
+- **Import is two drawers, and the recording leads the Video one.** Video and
+  text are different starting points, so they are different forms: the **Text**
+  drawer is a box and a `.txt` upload and nothing else, and the **Video** one starts
   from the recording — a YouTube link whose caption tracks are listed as soon as
   it names a video, a picked track becoming the subtitles — with "Or use your
   own files" (a recording and its subtitle file) below it. Subtitles, fetched or
@@ -630,7 +631,7 @@ the device it synced to (`data.md`).
 
 The recording is usually not a file at all. The learner watched something,
 pulled the subtitles out of it, and still has the video open in a tab — so the
-Video tab leads with a YouTube link and keeps a file as the quieter second
+Video drawer leads with a YouTube link and keeps a file as the quieter second
 way, exclusively, and the reader plays whichever the text names.
 
 **The seam paid for itself.** `youtubePlayer` (`youtube.ts`) is the same five

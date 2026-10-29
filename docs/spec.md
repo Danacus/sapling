@@ -135,7 +135,7 @@ Purpose: one recommended next action, plus a glance at the collection and recent
 Behaviour
 - Header: "Learning {target}", title "Today", and a day-streak badge.
 - **Hero** — exactly one recommendation, first match wins:
-  1. No words and no model → "Add a model key to generate your first words" → Settings key field; secondary "or import a text" → Media's Text tab.
+  1. No words and no model → "Add a model key to generate your first words" → Settings key field; secondary "or import a text" → Media's Text drawer.
   2. No words → "Plant your first {target} words" → word check.
   3. Words due → "N words ready" → Practice (copy mentions reviews already done today, if any).
   4. Otherwise → "Your garden is caught up" → Explore.
@@ -499,7 +499,7 @@ Behaviour:
 - Explore is a primary destination in the app's main navigation. It shows four doors, each with a title and one line of copy:
   1. **Check what you know** (its intro links to the starter mode, "New to the language?").
   2. **Have a conversation** (goes to conversation mode).
-  3. **Read or watch** (goes to Media's Video tab).
+  3. **Read or watch** (goes to Media).
   4. **Ask the assistant** (goes to the chat).
 - Home links into these features from three places:
   - The recommendation card. With an empty garden and no API key, it points to Settings and offers "or import a text". With an empty garden and a key, it offers "Check what you know". When nothing is due, it offers "Explore something new".
@@ -516,23 +516,24 @@ Open questions:
 
 ### Media library
 
-**Purpose:** the shelf of texts the learner keeps, and the composer with three tabs for adding one more. Internally this is called "reading mode". The learner-facing name is **Media**, because a text can be read, listened to or watched.
+**Purpose:** the shelf of texts the learner keeps, as a gallery, and three ways to add one more. Internally this is called "reading mode". The learner-facing name is **Media**, because a text can be read, listened to or watched.
 
 Behaviour:
-- The page is laid out as a spread: the composer on one side and the shelf ("Your media") on the other. On a phone the composer comes first.
-- **Shelf.** Every text, newest first. Each row shows:
-  - the title;
-  - a badge saying *written* (generated) or *imported*;
-  - the date;
-  - its extent: "N lines" for a timed text, "N paragraphs" otherwise.
-  - The shelf does not show whether a text has a recording attached. With no texts, it says "Nothing on the shelf yet — the first thing you write or import lands here."
-- **Three tabs**, a segmented control: *Video* (the default), *Text* and *Write one for me*. The tab is in the URL (`/read?tab=video|text|write`), so Explore can link to one and coming back lands on it. Each tab keeps its own form and error, and switching keeps what was typed.
+- **Header.** The back link, "Media", and three buttons: *Video*, *Text* and *Write one for me* (*Write* on a phone, where the three share a row under the title). Each opens a **drawer** under the header holding its form; the open one is drawn pressed, and pressing it again — or the drawer's × — closes it.
+  - The drawer is in the URL (`/read?tab=video|text|write`); no `tab` is closed, which is how the page opens, even with nothing on the shelf. Home's "or import a text" opens the Text drawer.
+  - Each form keeps its own fields and error, and switching or closing drawers keeps what was typed (and a caption fetch in flight).
+- **Shelf** ("Your media", with the count). A grid of cards — two columns on a phone, three wide, four on a desktop — in the order the library returns them, newest first. Each card is one link to the reader and shows:
+  - a 16:9 tile: a YouTube video's thumbnail; a play glyph on a dark tile for a video file (or a thumbnail that failed to load); for a text with no recording, its opening lines fading out;
+  - a badge on the tile: *YouTube*, *Video file*, *Imported* or *Written*; on a video, its duration (the last subtitle's end);
+  - the title (two lines at most), its extent ("N lines" for a timed text, "N paragraphs" otherwise) and the date.
+  - With no texts, one line points at the buttons above.
+- **Filter.** Above the grid when the shelf is not empty: *All · N*, *Videos · N*, *Texts · N*, a video being a text with a recording (YouTube or a file). It is in the URL (`?show=videos|texts`, absent is all), independently of the drawer. A filter that matches nothing says so.
 
 #### Write one for me (generation)
 - The learner can type an optional topic (capped at 120 characters) or pick an example chip, then press **Generate**. A hint underneath says either "Written from your N words" or "Your garden is empty, so this one is written from scratch".
 - Generation runs as a **background task**. The task both writes the text and saves it, so the text lands on the shelf even if the learner leaves the page.
-  - If the composer page is still open when the task finishes, it opens the new text. If the learner has moved on, the text simply waits on the shelf.
-  - A retry pressed in the task tray counts the same as the original request: if it succeeds and the page is open, it opens the text; if it fails, the composer shows the failure.
+  - If the Media page is still open when the task finishes, it opens the new text. If the learner has moved on, the text simply waits on the shelf.
+  - A retry pressed in the task tray counts the same as the original request: if it succeeds and the page is open, it opens the text; if it fails, the Write drawer shows the failure.
   - While a generation is running, the Generate button reads "Writing…".
 - **What the model is given:**
   - the learner's languages and their free-text "about me";
@@ -550,13 +551,13 @@ Behaviour:
 - Each paragraph is stored as one untimed segment, the same unit an imported paragraph becomes.
 
 #### Video
-- The default tab. Importing is free and local: there is no model call and no task.
+- Importing is free and local: there is no model call and no task.
 - **A YouTube link** is the primary control. It is checked live; text that names no video says "That is not a YouTube link".
   - Once the link names a video, its caption tracks are listed automatically (see *Fetching captions*), with a spinner while YouTube is asked and the failure inline with "Try again". The same video is never listed twice.
   - Each track is a chip: its name, its language, and an *auto* tag for machine captions. Picking one fetches it.
 - **The subtitles** become a **source card**: format (SRT subtitles, WebVTT subtitles, YouTube transcript, YouTube captions), name, line count and duration, with a × to remove it (which brings the chips back). Fetched captions belong to their video and are dropped when the link names a different one.
 - **"Or use your own files"**, below and quieter: a video/audio file and a subtitle file (`.srt`, `.vtt`, `.json3`, `.json`, or a `.txt` transcript).
-  - A subtitle file is recognised by its *content*, never its extension. A file with no timings is refused, pointing at the Text tab.
+  - A subtitle file is recognised by its *content*, never its extension. A file with no timings is refused, pointing at Text.
   - A local recording needs a subtitle file. A YouTube link may take an uploaded subtitle file instead of a fetched track.
   - The link and the recording file are mutually exclusive: using one clears the other.
   - A chosen file shows "Only its name is kept, so you'll pick the file again when you open this".
@@ -844,7 +845,7 @@ Open questions:
 **Purpose:** a YouTube link alone can produce the text: the app fetches one of the video's caption tracks from YouTube.
 
 Behaviour:
-- Available on every host. Once the Video tab's link names a video, its tracks are listed directly. This is an awaited question, not a background task.
+- Available on every host. Once the Video drawer's link names a video, its tracks are listed directly. This is an awaited question, not a background task.
   - Manual tracks come first, then automatic ones, which are marked *auto*.
   - A video with no tracks says so.
   - The list shown is always the current link's: a link naming another video lists that one.
@@ -1385,7 +1386,7 @@ The page has a back link to Today and lays out its cards in two balanced columns
 
 - **A missing hashed build asset returns a real 404 and is never served as the app shell.** Otherwise a stale request could poison an immutably cached URL for every visitor.
 - Every other unknown path serves the app shell, so a deep link or hard refresh works.
-- Hashed assets are cached as immutable. No cross-origin isolation headers and no CSP are set. Any future CSP must allow YouTube's player script and the youtube-nocookie frame.
+- Hashed assets are cached as immutable. No cross-origin isolation headers and no CSP are set. Any future CSP must allow YouTube's player script, the youtube-nocookie frame, and the library's thumbnails from `i.ytimg.com`.
 - A new deploy takes effect without closing tabs. Deploy cleanup only ever deletes the app's own shell caches.
 - The YouTube embed page for desktop is hosted on a separate origin from the app, never alongside it, so a page anyone may frame never shares an origin with the learner's database.
 
@@ -1505,7 +1506,7 @@ A map from this spec to the current code, for orientation during a rewrite. Not 
 - Routes:
   - `src/routes/explore/+page.svelte`
   - `src/routes/explore/check/{+page.svelte,check.ts}`
-  - `src/routes/read/+page.svelte` (library and composer), with `VideoImport.svelte`, `TextImport.svelte`, `FileSlot.svelte` and `compose.ts` beside it
+  - `src/routes/read/+page.svelte` (the library and its drawers), with `MediaCard.svelte`, `VideoImport.svelte`, `TextImport.svelte`, `FileSlot.svelte` and `compose.ts` beside it
   - `src/routes/read/[id]/+page.svelte` (reader and follow view)
   - `src/routes/chat/+page.svelte`
   - `src/routes/converse/+page.svelte`

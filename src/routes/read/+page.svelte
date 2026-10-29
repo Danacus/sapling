@@ -1,12 +1,16 @@
 <!--
-  The library: every text the learner has kept, and three ways to one more —
-  the composer (doing) opposite the shelf (state), composer first on a phone,
-  where an empty shelf is the common case.
+  The library: every text the learner has kept, as a gallery of cards, and
+  three ways to one more behind three buttons in the header. The library is
+  the page; adding is asked for, so each button opens a drawer under the header
+  and nothing opens one by itself — not even on an empty library, whose one
+  line points up at the buttons instead.
 
   Video and Text are free and local (`VideoImport`, `TextImport`: the core's
   `importSource` cuts, `addText` stores). Write one for me is a paid call run as
   the `read-generate` task, which also saves, so a text lands whether or not the
-  learner stayed. The tab is `?tab=` so Explore and the way back can name one.
+  learner stayed. Both the open drawer (`?tab=`, absent is closed) and the
+  filter (`?show=`, absent is all) are the URL, independently, so Home can open
+  the Text drawer and the way back lands where the learner was.
 -->
 <script lang="ts">
 	import { browser } from '$app/environment';
@@ -25,15 +29,17 @@
 	import BackLink from '$lib/ui/BackLink.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
-	import { extent, tabFrom } from './compose';
-	import type { Tab } from './compose';
+	import { isVideo, libraryHref, showFrom, shown, tabFrom } from './compose';
+	import type { Show, Tab } from './compose';
+	import MediaCard from './MediaCard.svelte';
 	import TextImport from './TextImport.svelte';
 	import VideoImport from './VideoImport.svelte';
 
-	const TABS: readonly { id: Tab; label: string }[] = [
-		{ id: 'video', label: 'Video' },
-		{ id: 'text', label: 'Text' },
-		{ id: 'write', label: 'Write one for me' }
+	/** `short` is the phone's label, where three buttons share one row. */
+	const TABS: readonly { id: Tab; label: string; short: string; heading: string }[] = [
+		{ id: 'video', label: 'Video', short: 'Video', heading: 'Add a video' },
+		{ id: 'text', label: 'Text', short: 'Text', heading: 'Add a text' },
+		{ id: 'write', label: 'Write one for me', short: 'Write', heading: 'Write one for me' }
 	];
 
 	/** Nudges, not choices — the same shape `/converse` offers over its topic box. */
@@ -47,6 +53,17 @@
 	let mockMode = $state(false);
 
 	const tab = $derived(tabFrom(page.url.searchParams.get('tab')));
+	const show = $derived(showFrom(page.url.searchParams.get('show')));
+	const heading = $derived(TABS.find(({ id }) => id === tab)?.heading ?? '');
+
+	const videoCount = $derived(texts.filter(isVideo).length);
+	const filters = $derived<readonly { id: Show; label: string; count: number }[]>([
+		{ id: 'all', label: 'All', count: texts.length },
+		{ id: 'videos', label: 'Videos', count: videoCount },
+		{ id: 'texts', label: 'Texts', count: texts.length - videoCount }
+	]);
+	const visible = $derived(shown(texts, show));
+
 	let topic = $state('');
 	/** A text being written, read from the runner so it survives leaving and coming back. */
 	const busy = $derived(taskStore.running.some((task) => task.kind === 'read-generate'));
@@ -69,12 +86,6 @@
 	const handled = new Set<string>();
 	/** One `goto` per page: two texts landing at once must not race. */
 	let navigating = false;
-
-	const dates = new Intl.DateTimeFormat(undefined, {
-		day: 'numeric',
-		month: 'short',
-		year: 'numeric'
-	});
 
 	$effect(() => {
 		if (!browser) return;
@@ -169,7 +180,7 @@
 	<title>Sapling · Media</title>
 </svelte:head>
 
-<main class="shell shell-broad">
+<main class="shell shell-full">
 	{#if loading}
 		<div class="loading">
 			<Spinner />
@@ -182,17 +193,50 @@
 			<p class="error" role="alert">{loadError}</p>
 		</div>
 	{:else}
-		<div class="spread">
-			<header class="topbar spread-full ll-rise">
+		<div class="library">
+			<header class="topbar ll-rise">
 				<BackLink href="/explore" label="Back to explore" />
 				<div class="identity">
 					<p class="eyebrow">Sapling</p>
 					<h1>Media</h1>
 				</div>
+				<!-- Links, not buttons: the open drawer is a URL fact, and the open one
+				     links back to the closed library. -->
+				<nav class="adders" aria-label="Add to your media">
+					{#each TABS as { id, label, short } (id)}
+						<a
+							class="adder"
+							class:is-on={tab === id}
+							href={libraryHref(tab === id ? undefined : id, show)}
+							aria-expanded={tab === id}
+							aria-controls="add-drawer"
+							data-sveltekit-replacestate
+							data-sveltekit-noscroll
+							data-sveltekit-keepfocus
+						>
+							<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+								{#if id === 'video'}
+									<rect x="3.4" y="6.2" width="12.4" height="11.6" rx="2" />
+									<path d="m15.8 12 4.8-3.2v6.4L15.8 12z" />
+								{:else if id === 'text'}
+									<path
+										d="M6.4 3.6h7.6l4.6 4.6v11.4a.8.8 0 0 1-.8.8H6.4a.8.8 0 0 1-.8-.8V4.4a.8.8 0 0 1 .8-.8z"
+									/>
+									<path d="M13.6 3.8v4.8h4.8M8.8 12.6h6.4M8.8 16h4.4" />
+								{:else}
+									<path d="m14.6 5.4 4 4L8.8 19.2l-4.6.6.6-4.6z" />
+									<path d="m12.8 7.2 4 4" />
+								{/if}
+							</svg>
+							<span class="adder-long">{label}</span>
+							<span class="adder-short">{short}</span>
+						</a>
+					{/each}
+				</nav>
 			</header>
 
 			{#if mockMode}
-				<p class="mock-hint spread-full">
+				<p class="mock-hint">
 					<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
 						<circle cx="12" cy="12" r="8.4" />
 						<path d="M12 7.8v4.6" />
@@ -205,105 +249,130 @@
 				</p>
 			{/if}
 
-			<section class="card compose-card ll-rise" style="animation-delay: 120ms">
-				<nav class="tabs" aria-label="Add to your media">
-					{#each TABS as { id, label } (id)}
-						<a
-							class="tab"
-							class:is-on={tab === id}
-							href="?tab={id}"
-							aria-current={tab === id ? 'page' : undefined}
-							data-sveltekit-replacestate
-							data-sveltekit-noscroll
-							data-sveltekit-keepfocus
-						>
-							{label}
-						</a>
-					{/each}
-				</nav>
+			<!-- Always in the tree, only hidden: both import forms stay mounted, so
+			     a half-filled form and a caption fetch in flight survive switching
+			     drawers and closing them. -->
+			<section
+				id="add-drawer"
+				class="card drawer"
+				hidden={!tab}
+				aria-labelledby="add-drawer-heading"
+			>
+				<div class="drawer-head">
+					<h2 id="add-drawer-heading">{heading}</h2>
+					<a
+						class="drawer-close"
+						href={libraryHref(undefined, show)}
+						aria-label="Close"
+						data-sveltekit-replacestate
+						data-sveltekit-noscroll
+						data-sveltekit-keepfocus
+					>
+						<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+							<path d="m7 7 10 10M17 7 7 17" />
+						</svg>
+					</a>
+				</div>
 
-				<!-- Both import forms stay mounted, so a half-filled form and a caption
-				     fetch in flight survive a tab switch. -->
-				<div hidden={tab !== 'video'}>
+				<div class="pane pane-video" hidden={tab !== 'video'}>
 					<VideoImport {busy} />
 				</div>
-				<div hidden={tab !== 'text'}>
+				<div class="pane" hidden={tab !== 'text'}>
 					<TextImport {busy} />
 				</div>
 
 				{#if tab === 'write'}
-					<label class="field tight">
-						<span class="label">What about?</span>
-						<input
-							class="input"
-							type="text"
-							placeholder="Leave it blank and I'll choose"
-							maxlength={MAX_TOPIC_CHARS}
-							disabled={busy}
-							bind:value={topic}
-							onkeydown={(event) => {
-								if (event.key === 'Enter') void generate();
-							}}
-						/>
-					</label>
-
-					<div class="examples">
-						{#each EXAMPLE_TOPICS as example (example)}
-							<button
-								type="button"
-								class="example-chip"
+					<div class="pane">
+						<label class="field tight">
+							<span class="label">What about?</span>
+							<input
+								class="input"
+								type="text"
+								placeholder="Leave it blank and I'll choose"
+								maxlength={MAX_TOPIC_CHARS}
 								disabled={busy}
-								onclick={() => (topic = example)}
-							>
-								{example}
-							</button>
-						{/each}
-					</div>
+								bind:value={topic}
+								onkeydown={(event) => {
+									if (event.key === 'Enter') void generate();
+								}}
+							/>
+						</label>
 
-					<button
-						type="button"
-						class="btn btn-primary btn-block go"
-						disabled={busy}
-						onclick={() => void generate()}
-					>
-						{busy ? 'Writing…' : composeError ? 'Try again' : 'Generate'}
-					</button>
+						<div class="examples">
+							{#each EXAMPLE_TOPICS as example (example)}
+								<button
+									type="button"
+									class="example-chip"
+									disabled={busy}
+									onclick={() => (topic = example)}
+								>
+									{example}
+								</button>
+							{/each}
+						</div>
 
-					<p class="hint">
-						{#if items.length === 0}
-							Your garden is empty, so this one is written from scratch.
-						{:else}
-							Written from your {items.length} word{items.length === 1 ? '' : 's'}.
+						<button
+							type="button"
+							class="btn btn-primary btn-block go"
+							disabled={busy}
+							onclick={() => void generate()}
+						>
+							{busy ? 'Writing…' : composeError ? 'Try again' : 'Generate'}
+						</button>
+
+						<p class="hint">
+							{#if items.length === 0}
+								Your garden is empty, so this one is written from scratch.
+							{:else}
+								Written from your {items.length} word{items.length === 1 ? '' : 's'}.
+							{/if}
+						</p>
+
+						{#if composeError}
+							<p class="error" role="alert">{composeError}</p>
 						{/if}
-					</p>
-
-					{#if composeError}
-						<p class="error" role="alert">{composeError}</p>
-					{/if}
+					</div>
 				{/if}
 			</section>
 
-			<section class="shelf ll-rise" style="animation-delay: 180ms">
-				<h2 class="shelf-head">Your media</h2>
+			<section class="shelf ll-rise" style="animation-delay: 120ms" aria-labelledby="shelf-head">
+				<div class="shelf-bar">
+					<h2 id="shelf-head" class="shelf-head">
+						Your media <span class="shelf-count">{texts.length}</span>
+					</h2>
+					{#if texts.length > 0}
+						<nav class="filters" aria-label="Show">
+							{#each filters as { id, label, count } (id)}
+								<a
+									class="filter"
+									class:is-on={show === id}
+									href={libraryHref(tab, id)}
+									aria-current={show === id ? 'true' : undefined}
+									data-sveltekit-replacestate
+									data-sveltekit-noscroll
+									data-sveltekit-keepfocus
+								>
+									{label} <span class="filter-count">· {count}</span>
+								</a>
+							{/each}
+						</nav>
+					{/if}
+				</div>
+
 				{#if texts.length === 0}
 					<p class="hint empty">
-						Nothing on the shelf yet — the first thing you import or have written lands here.
+						Nothing here yet. Add a video or a text, or have one written, with the buttons above.
+					</p>
+				{:else if visible.length === 0}
+					<p class="hint empty">
+						{show === 'videos'
+							? 'No videos yet — add one with Video above.'
+							: 'No texts yet — add one with Text above, or have one written.'}
 					</p>
 				{:else}
-					<ul class="texts">
-						{#each texts as text (text.id)}
-							<li>
-								<a class="text-row" href="/read/{text.id}">
-									<span class="text-title">{text.title}</span>
-									<span class="text-meta">
-										<span class="badge badge-{text.source}">
-											{text.source === 'generated' ? 'written' : 'imported'}
-										</span>
-										<span>{dates.format(text.createdAt)}</span>
-										<span>{extent(text.segments)}</span>
-									</span>
-								</a>
-							</li>
+					<ul class="grid">
+						{#each visible as text (text.id)}
+							<li><MediaCard {text} /></li>
 						{/each}
 					</ul>
 				{/if}
@@ -337,10 +406,20 @@
 		stroke-linejoin: round;
 	}
 
+	/* Header, drawer, shelf: one stack at every width. The gallery is what
+	   spends the width, not a second column beside it. */
+	.library {
+		display: grid;
+		gap: var(--gap);
+	}
+
+	/* On a phone the three adders are a row of their own under the title; at
+	   ≥48rem they move up beside it, on the right. */
 	.topbar {
-		display: flex;
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
 		align-items: center;
-		gap: 0.75rem;
+		gap: 0.9rem 0.75rem;
 	}
 
 	.identity {
@@ -384,30 +463,32 @@
 		color: var(--accent);
 	}
 
-	/* The composer ------------------------------------------------------- */
+	/* The adders ----------------------------------------------------------- */
 
-	/* Three ways onto one shelf: a segmented control, since the choice is which
-	   form is showing. Links, so the tab is a URL fact a deep link can name. */
-	.tabs {
-		display: flex;
-		gap: 0.25rem;
-		margin-bottom: 1.1rem;
-		padding: 0.25rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		background: var(--surface-alt);
+	/* Three ways onto one shelf. Each is a toggle for its drawer, so the open
+	   one is drawn pressed — inked in — and pressing it again closes it. */
+	.adders {
+		grid-column: 1 / -1;
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 0.5rem;
 	}
 
-	.tab {
-		flex: 1 1 auto;
-		min-width: 0;
-		padding: 0.5rem 0.6rem;
-		border: 1px solid transparent;
-		border-radius: var(--radius-sm);
-		color: var(--text-muted);
+	.adder {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 0.3rem;
+		min-height: 44px;
+		padding: 0.55rem 0.5rem;
+		border: 1px solid var(--border-strong);
+		border-radius: var(--radius);
+		background: var(--surface);
+		color: var(--text);
 		font-size: 0.85rem;
 		font-weight: 700;
-		line-height: 1.25;
+		line-height: 1.2;
 		text-align: center;
 		text-decoration: none;
 		transition:
@@ -416,19 +497,111 @@
 			color 0.15s ease;
 	}
 
-	.tab:hover:not(.is-on) {
-		color: var(--text);
+	.adder:hover:not(.is-on) {
+		border-color: var(--text-muted);
+		background: var(--surface-alt);
 	}
 
-	.tab.is-on {
-		border-color: var(--border);
-		background: var(--surface);
-		color: var(--text);
+	.adder.is-on {
+		border-color: var(--text);
+		background: var(--text);
+		color: var(--text-inverse);
 	}
 
-	.tab:focus-visible {
+	.adder:focus-visible {
 		outline: none;
 		box-shadow: var(--ring);
+	}
+
+	.adder-long {
+		display: none;
+	}
+
+	@media (min-width: 48rem) {
+		.topbar {
+			grid-template-columns: auto minmax(0, 1fr) auto;
+		}
+
+		.adders {
+			grid-column: auto;
+			display: flex;
+		}
+
+		.adder {
+			flex-direction: row;
+			gap: 0.45rem;
+			padding: 0.55rem 0.95rem;
+		}
+
+		.adder-long {
+			display: inline;
+		}
+
+		.adder-short {
+			display: none;
+		}
+	}
+
+	/* The drawer ----------------------------------------------------------- */
+
+	/* The page's whole width, like the grid under it; what is inside keeps its
+	   own measure (`.pane`). */
+	.drawer {
+		max-width: none;
+	}
+
+	.drawer[hidden] {
+		display: none;
+	}
+
+	.drawer-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		margin: -0.4rem -0.4rem 1rem 0;
+	}
+
+	.drawer-head h2 {
+		margin: 0;
+		font-size: 1.15rem;
+	}
+
+	.drawer-close {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		flex: 0 0 auto;
+		width: 44px;
+		height: 44px;
+		border: 1px solid transparent;
+		border-radius: var(--radius-sm);
+		color: var(--text-muted);
+		transition:
+			border-color 0.15s ease,
+			background 0.15s ease,
+			color 0.15s ease;
+	}
+
+	.drawer-close:hover {
+		border-color: var(--border-strong);
+		background: var(--surface-alt);
+		color: var(--text);
+	}
+
+	.drawer-close:focus-visible {
+		outline: none;
+		box-shadow: var(--ring);
+	}
+
+	/* A form is not made better by a 70rem input: each pane keeps the reading
+	   measure, and the Video one — two columns at ≥48rem — the facing pair's. */
+	.pane {
+		max-width: var(--measure);
+	}
+
+	.pane-video {
+		max-width: var(--measure-broad);
 	}
 
 	.field.tight {
@@ -483,87 +656,105 @@
 
 	/* The shelf ----------------------------------------------------------- */
 
+	.shelf-bar {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.6rem 1rem;
+		margin-bottom: 1rem;
+	}
+
 	.shelf-head {
-		margin: 0 0 0.75rem;
+		margin: 0;
 		font-size: 1.05rem;
 	}
 
-	/* Not a card: a run of rows reads as a list of things, and a card around it
-	   would claim the shelf is one object. */
-	.texts {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
+	.shelf-count {
+		margin-left: 0.2rem;
+		font-family: var(--font);
+		font-size: 0.85rem;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+		color: var(--text-muted);
 	}
 
-	.text-row {
-		display: block;
-		padding: 0.85rem 1rem;
+	/* Which of the shelf is showing: a segmented control, since it is one
+	   choice of three. Links, so the filter is a URL fact the way back keeps. */
+	.filters {
+		display: flex;
+		gap: 0.25rem;
+		padding: 0.25rem;
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
-		background: var(--surface);
-		color: var(--text);
-		text-decoration: none;
-		transition:
-			border-color 0.15s ease,
-			background 0.15s ease;
-	}
-
-	.text-row:hover {
-		border-color: var(--border-strong);
 		background: var(--surface-alt);
 	}
 
-	.text-row:focus-visible {
+	.filter {
+		flex: 1 1 auto;
+		min-width: 0;
+		padding: 0.45rem 0.75rem;
+		border: 1px solid transparent;
+		border-radius: var(--radius-sm);
+		color: var(--text-muted);
+		font-size: 0.82rem;
+		font-weight: 700;
+		line-height: 1.25;
+		text-align: center;
+		text-decoration: none;
+		white-space: nowrap;
+		transition:
+			background 0.15s ease,
+			border-color 0.15s ease,
+			color 0.15s ease;
+	}
+
+	.filter:hover:not(.is-on) {
+		color: var(--text);
+	}
+
+	.filter.is-on {
+		border-color: var(--border);
+		background: var(--surface);
+		color: var(--text);
+	}
+
+	.filter:focus-visible {
 		outline: none;
 		box-shadow: var(--ring);
 	}
 
-	.text-title {
-		display: block;
-		font-family: var(--font-display);
-		font-size: 1.02rem;
-		font-weight: 700;
-		letter-spacing: -0.01em;
-		overflow-wrap: anywhere;
-	}
-
-	.text-meta {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 0.3rem 0.6rem;
-		margin-top: 0.3rem;
-		font-size: 0.78rem;
+	.filter-count {
 		font-weight: 400;
-		color: var(--text-muted);
+		font-variant-numeric: tabular-nums;
 	}
 
-	/* Where a text came from, in one word. The two are peers — an imported text is
-	   not a lesser one — so they differ in hue, not in weight. */
-	.badge {
-		padding: 0.1rem 0.45rem;
-		border-radius: 999px;
-		font-size: 0.7rem;
-		font-weight: 700;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
+	/* A grid of many small cards — what `.shell-full` is for. Width buys
+	   columns, never a bigger card: two on a phone, three wide, four broad. */
+	.grid {
+		list-style: none;
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 1rem 0.75rem;
+		margin: 0;
+		padding: 0;
 	}
 
-	.badge-generated {
-		background: var(--primary-soft);
-		color: var(--primary-strong);
+	@media (min-width: 48rem) {
+		.grid {
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+			gap: var(--gap);
+		}
 	}
 
-	.badge-imported {
-		background: var(--accent-soft);
-		color: var(--accent);
+	@media (min-width: 72rem) {
+		.grid {
+			grid-template-columns: repeat(4, minmax(0, 1fr));
+		}
 	}
 
 	.empty {
+		max-width: var(--measure);
 		margin: 0;
 		padding: 1rem 0;
 		text-wrap: balance;
