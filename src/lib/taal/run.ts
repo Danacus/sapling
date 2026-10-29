@@ -3,16 +3,20 @@
  * Settings remembers. The push itself is Rust's (`core.ts`): the window of
  * sessions to read, the request, batching and what a response means.
  *
- * **One push at a time, and none lost.** Triggers overlap by design (a tab
- * hidden right after a session ends, a sync pull landing), so a trigger while
- * a push runs queues exactly one more behind it, and every later trigger joins
- * that one — the second push sees whatever the first could not, a pull that
- * landed meanwhile included. A push is a no-op without a code or a profile,
- * and it never throws: Taal is a leaderboard, so a failure is a line in
- * Settings and nothing anywhere else.
+ * **One push at a time, and none lost.** `pushTaal` is single flight
+ * (`$lib/remotes/flight`): a trigger while a push runs queues exactly one more
+ * behind it, and every later trigger joins that one — the second push sees
+ * whatever the first could not. A push is a no-op without a code or a
+ * profile, and it never throws: Taal is a leaderboard, so a failure is a line
+ * in Settings and nothing anywhere else.
+ *
+ * *When* to push is not this module's: the triggers call `$lib/remotes`'
+ * `syncRemotes`, which runs Taal after sync — so another device's study time,
+ * once pulled, goes out on the same trigger.
  */
 import { ready } from '$lib/db/backend';
 import type { TaalOutcome } from '$lib/db/generated/index';
+import { singleFlight } from '$lib/remotes/flight';
 import {
 	getPushedThrough,
 	getTaalCode,
@@ -25,27 +29,11 @@ import { callTaal } from './core';
 /** What one push did; `undefined` when there was nothing to push as (no code, no profile). */
 export type TaalRun = TaalOutcome | undefined;
 
-let running: Promise<TaalRun> | undefined;
-let queued: Promise<TaalRun> | undefined;
+const push = singleFlight(pushNow);
 
 /** Pushes now, or after the push already running. `fetchImpl` is for tests. */
 export function pushTaal(fetchImpl: typeof fetch = fetch): Promise<TaalRun> {
-	if (queued) return queued;
-	if (running) {
-		const next = running.then(() => start(fetchImpl));
-		queued = next;
-		return next;
-	}
-	return start(fetchImpl);
-}
-
-function start(fetchImpl: typeof fetch): Promise<TaalRun> {
-	queued = undefined;
-	const push = pushNow(fetchImpl).finally(() => {
-		if (running === push) running = undefined;
-	});
-	running = push;
-	return push;
+	return push(fetchImpl);
 }
 
 async function activeProfile(): Promise<string | undefined> {

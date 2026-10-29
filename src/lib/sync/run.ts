@@ -4,15 +4,21 @@
  * device's configuration, keeps one cycle at a time, and records the last
  * outcome in `localStorage`.
  *
- * **One cycle at a time.** Several triggers overlap by design, so a later
- * `runSync` joins the cycle already running, and pairing waits its turn behind
- * it rather than racing it with a different phrase.
+ * **One cycle at a time.** Several triggers overlap by design, so `runSync`
+ * is single flight (`$lib/remotes/flight`): a call while a cycle runs queues
+ * exactly one more behind it, and later calls join that one. Pairing waits its
+ * turn behind any cycle rather than racing it with a different phrase — every
+ * sync job goes through one `exclusive` chain.
+ *
+ * *When* to sync is not this module's: the triggers call `$lib/remotes`'
+ * `syncRemotes`, which runs this cycle first and the send-only remotes after it.
  */
 import type {
 	PairOutcome,
 	SyncOutcome as CoreOutcome,
 	SyncProbeResult
 } from '$lib/db/generated/index';
+import { singleFlight } from '$lib/remotes/flight';
 import { getSyncPhrase, isSyncEnabled, setSyncEnabled, setSyncPhrase } from './config';
 import { BAD_PHRASE, callSync } from './core';
 import { SYNC_URL } from './url';
@@ -31,8 +37,6 @@ const LAST_KEY = 'll.sync.last';
 
 /** Every sync job, chained; a failed one does not wedge the queue. */
 let tail: Promise<unknown> = Promise.resolve();
-/** The queued or running cycle a later `runSync` joins. */
-let joinable: Promise<SyncOutcome> | undefined;
 
 function exclusive<T>(job: () => Promise<T>): Promise<T> {
 	const next = tail.then(job, job);
@@ -40,32 +44,23 @@ function exclusive<T>(job: () => Promise<T>): Promise<T> {
 	return next;
 }
 
-/** Who wants to hear that a cycle brought events down (`onSyncPulled`). */
-const pulledListeners = new Set<() => void>();
-
-/**
- * Calls `listener` after every cycle that applied pulled events — what
- * another device did is now in this one's reads. Answers the unsubscribe.
- * A throwing listener costs itself, never the cycle.
- */
-export function onSyncPulled(listener: () => void): () => void {
-	pulledListeners.add(listener);
-	return () => pulledListeners.delete(listener);
-}
-
 function messageOf(error: unknown): string {
 	return error instanceof Error && error.message ? error.message : 'Sync failed.';
 }
 
-/** Runs a cycle, or joins the one already queued. `fetchImpl` is for tests. */
+const cycle = singleFlight((fetchImpl: typeof fetch) => exclusive(() => cycleNow(fetchImpl)));
+
+/**
+ * Runs a cycle now, or once more after the one already running. Never throws.
+ * `fetchImpl` is for tests.
+ */
 export function runSync(fetchImpl: typeof fetch = fetch): Promise<SyncOutcome> {
-	if (joinable) return joinable;
-	const cycle = exclusive(() => cycleNow(fetchImpl)).finally(() => {
-		// Guarded so a cycle that outlives its own slot cannot clear a newer one.
-		if (joinable === cycle) joinable = undefined;
-	});
-	joinable = cycle;
-	return cycle;
+	return cycle(fetchImpl);
+}
+
+/** Whether a cycle here would do anything: sync is on, built in, and paired. */
+export function isSyncConfigured(): boolean {
+	return isSyncEnabled() && Boolean(SYNC_URL) && Boolean(getSyncPhrase());
 }
 
 async function cycleNow(fetchImpl: typeof fetch): Promise<SyncOutcome> {
@@ -82,15 +77,6 @@ async function cycleNow(fetchImpl: typeof fetch): Promise<SyncOutcome> {
 		outcome = { ok: false, pushed: 0, pulled: 0, message, summary: message };
 	}
 	record(outcome);
-	if (outcome.pulled > 0) {
-		for (const listener of pulledListeners) {
-			try {
-				listener();
-			} catch {
-				/* a listener's failure is its own */
-			}
-		}
-	}
 	return outcome;
 }
 

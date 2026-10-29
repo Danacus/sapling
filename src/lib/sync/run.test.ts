@@ -21,7 +21,7 @@ vi.stubEnv('VITE_SYNC_URL', SERVER);
 const { setBackendForTesting } = await import('$lib/db/backend');
 const { makeTestBackend } = await import('$lib/db/backend.testing');
 const { getProfile } = await import('$lib/db/repositories');
-const { runSync, lastSyncOutcome, onSyncPulled, pairDevice, probeSync } = await import('./run');
+const { runSync, isSyncConfigured, lastSyncOutcome, pairDevice, probeSync } = await import('./run');
 const { getSyncPhrase, isSyncEnabled } = await import('./config');
 const { formatPhrase, isValidPhrase, mintPhrase, normalizePhrase, PHRASE_LENGTH } =
 	await import('./core');
@@ -160,25 +160,10 @@ describe('runSync', () => {
 		expect(lastSyncOutcome()).toMatchObject({ ok: true, message: 'Sent 1, received 2.' });
 	});
 
-	it('tells the pull listeners after a cycle that brought events down, and only then', async () => {
+	it('is configured only when switched on, built in and paired', () => {
+		expect(isSyncConfigured()).toBe(false);
 		enable();
-		const heard = vi.fn();
-		const off = onSyncPulled(heard);
-		const offBroken = onSyncPulled(() => {
-			throw new Error('a broken listener');
-		});
-
-		await runSync(logServer().impl);
-		expect(heard).not.toHaveBeenCalled();
-
-		const outcome = await runSync(
-			logServer([{ id: 'remote-2', type: 'itemAdded', at: T0, device: 'devB', payload: word(2) }])
-				.impl
-		);
-		expect(outcome.ok).toBe(true);
-		expect(heard).toHaveBeenCalledTimes(1);
-		off();
-		offBroken();
+		expect(isSyncConfigured()).toBe(true);
 	});
 
 	it('records a failure as an outcome, never a rejection', async () => {
@@ -192,7 +177,7 @@ describe('runSync', () => {
 		expect(lastSyncOutcome()).toMatchObject({ ok: false, message: outcome.message });
 	});
 
-	it('joins the cycle already running instead of starting a second one', async () => {
+	it('queues one cycle behind the running one, which later calls join', async () => {
 		enable();
 		await store.commit('itemAdded', word(1));
 		let release: (() => void) | undefined;
@@ -205,11 +190,42 @@ describe('runSync', () => {
 
 		const first = runSync(gated);
 		const second = runSync(gated);
-		expect(second).toBe(first);
+		const third = runSync(gated);
+		expect(second).not.toBe(first);
+		expect(third).toBe(second);
 
 		release?.();
-		await Promise.all([first, second]);
+		await Promise.all([first, second, third]);
+		// The first cycle pushed the word; the queued one found nothing left to send.
 		expect(calls.filter((call) => call.method === 'POST')).toHaveLength(1);
+		expect(calls.filter((call) => call.url.includes('/pull'))).toHaveLength(2);
+	});
+
+	it('makes pairing wait for the running cycle', async () => {
+		enable();
+		let release: (() => void) | undefined;
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		const order: string[] = [];
+		const { impl } = logServer();
+		const gated: typeof fetch = async (input, init) => {
+			await gate;
+			order.push('cycle');
+			return impl(input, init);
+		};
+		const pairing: typeof fetch = async (input, init) => {
+			order.push('pair');
+			return impl(input, init);
+		};
+
+		const cycle = runSync(gated);
+		const paired = pairDevice(PHRASE, pairing);
+		await Promise.resolve();
+		expect(order).toEqual([]);
+
+		release?.();
+		await Promise.all([cycle, paired]);
+		expect(order).toContain('pair');
+		expect(order.indexOf('pair')).toBeGreaterThan(order.lastIndexOf('cycle'));
 	});
 });
 

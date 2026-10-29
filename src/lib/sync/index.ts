@@ -26,8 +26,8 @@ export {
 	PHRASE_LENGTH
 } from './core';
 export {
+	isSyncConfigured,
 	lastSyncOutcome,
-	onSyncPulled,
 	pairDevice,
 	probeSync,
 	runSync,

@@ -144,8 +144,10 @@ against, since two normalisations that differ are two rooms.
 - Pair a device: Settings → Sync mints a pairing phrase; enter that phrase on
   another device to join the same room. A new device pairs from the onboarding
   screen, before any profile is written.
-- Sync runs at boot, on tab visibility, after a learn session, and on demand
-  via Settings' Sync now.
+- Sync runs at boot, when the tab is hidden or shown, after a learn session,
+  on leaving a text, and on demand via Settings' Sync now. Every trigger but
+  Sync now is `$lib/remotes`' `syncRemotes()`, which runs sync before the
+  send-only remotes (Taal).
 
 ## Import / export
 

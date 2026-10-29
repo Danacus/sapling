@@ -124,7 +124,7 @@
 	import { hasLocalRomanizer, loadRomanizer } from '$lib/romanize';
 	import type { Maturity } from '$lib/challenges/serve';
 	import { Grade } from '$lib/srs';
-	import { pushTaal } from '$lib/taal';
+	import { syncRemotes } from '$lib/remotes';
 	import { cardKey, targetTagOf, usesInterWordSpaces } from '$lib/text';
 	import { speak, stopSpeaking, ttsAvailable, warmSpeech } from '$lib/tts';
 	import type { KnowledgeItem, Profile, ReadingText } from '$lib/types';
@@ -810,10 +810,10 @@
 			window.removeEventListener('pagehide', leave);
 			tracker.signal({ kind: 'leave' });
 			if (study === tracker) study = undefined;
-			// Leaving a text ends a stretch of study, so Taal hears it now (a
-			// no-op without a code). The span's write was posted first and the
-			// store answers in order, so the push reads it.
-			void pushTaal();
+			// Leaving a text ends a stretch of study, so the remotes hear it now
+			// (each a no-op when not set up). The span's write was posted first
+			// and the store answers in order, so the pass reads it.
+			void syncRemotes();
 		};
 	});
 

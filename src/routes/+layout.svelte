@@ -5,8 +5,7 @@
 
 	import favicon from '$lib/assets/favicon.svg';
 	import { getProfile } from '$lib/db';
-	import { isSyncEnabled, onSyncPulled, runSync } from '$lib/sync';
-	import { pushTaal } from '$lib/taal';
+	import { REMOTES, syncRemotes } from '$lib/remotes';
 	import { preloadReloadGuard } from '$lib/ui/preload-reload';
 	import AppNav from '$lib/ui/AppNav.svelte';
 	import { applyTheme, getThemeMode } from '$lib/prefs';
@@ -66,25 +65,18 @@
 			preloadGuard?.onPreloadError(event.payload);
 		});
 
-		// Coming back to the tab is the one moment worth spending a sync on: the
-		// device has probably been away, and another one has probably written.
-		// There is nothing periodic — `runSync` no-ops when sync is off.
-		document.addEventListener('visibilitychange', () => {
-			if (document.visibilityState === 'visible') void runSync();
-			// Taal on both edges: hidden is when a stretch of study just ended,
-			// visible catches up on a push that failed while away. A no-op
-			// without a code, and never awaited.
-			void pushTaal();
-		});
-		// Another device's study time has just arrived; its hours belong on the
-		// leaderboard too.
-		onSyncPulled(() => void pushTaal());
+		// Both edges of visibility are worth a round trip: hidden is when a
+		// stretch of study just ended and its writes should go out, visible is
+		// when the device has probably been away and another one has written.
+		// There is nothing periodic, an unconfigured remote costs nothing, and
+		// it is never awaited.
+		document.addEventListener('visibilitychange', () => void syncRemotes());
 	}
 
-	/** Boot sync fires once, not on every navigation the effect below re-runs on. */
-	let syncKicked = false;
-	/** The boot push to Taal, likewise once. */
-	let taalKicked = false;
+	/** The boot pass fires once, not on every navigation the effect below re-runs on. */
+	let remotesKicked = false;
+	/** The pull a profile-less device waits on, likewise once. */
+	let profilePulled = false;
 
 	$effect(() => {
 		if (!browser) return;
@@ -102,13 +94,15 @@
 	 * A device that joined an existing library has its profile in the log, not
 	 * yet on disk. Sending it to onboarding would have it write a fresh one, and
 	 * last-write-wins would then overwrite the real profile on every device.
-	 * `runSync` returns its failures, so this costs at most one round trip.
+	 * This needs the pull itself, finished, so it asks the sync remote alone
+	 * rather than the whole pass; the remote returns its failures, so this
+	 * costs at most one round trip.
 	 */
 	async function resolveProfile() {
 		const profile = await getProfile();
-		if (profile || syncKicked || !isSyncEnabled()) return profile;
-		syncKicked = true;
-		await runSync();
+		if (profile || profilePulled || !REMOTES.sync.configured()) return profile;
+		profilePulled = true;
+		await REMOTES.sync.run();
 		return getProfile();
 	}
 
@@ -131,15 +125,11 @@
 					return;
 				}
 				checking = false;
-				// Fire-and-forget, strictly after the render gate: sync must never
-				// be something the app waits on.
-				if (!syncKicked) {
-					syncKicked = true;
-					void runSync();
-				}
-				if (!taalKicked) {
-					taalKicked = true;
-					void pushTaal();
+				// Fire-and-forget, strictly after the render gate: no remote may
+				// ever be something the app waits on.
+				if (!remotesKicked) {
+					remotesKicked = true;
+					void syncRemotes();
 				}
 			})
 			.catch((error: unknown) => {

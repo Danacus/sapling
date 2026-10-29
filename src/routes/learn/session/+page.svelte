@@ -41,8 +41,7 @@
 	} from '$lib/session/engine';
 	import { motionMs } from '$lib/ui/motion';
 	import { PracticeStream, type NextOptions, type StreamStep } from '$lib/session/stream';
-	import { runSync } from '$lib/sync';
-	import { pushTaal } from '$lib/taal';
+	import { syncRemotes } from '$lib/remotes';
 	import { startTask } from '$lib/tasks';
 	import { taskStore } from '$lib/tasks/store.svelte';
 	import { getTtsEngine, preloadVoice, sherpaSupports, warmSpeech } from '$lib/tts';
@@ -643,10 +642,8 @@
 		endStreak = streakFrom((await getDailyActivity()).map((entry) => entry.day));
 		phase = 'summary';
 		// The stream's writes are in the log; the summary is a moment nobody is
-		// waiting on, so it is the natural place to push them — to the relay,
-		// and the session's answers to Taal.
-		void runSync();
-		void pushTaal();
+		// waiting on, so it is the natural place to send them to every remote.
+		void syncRemotes();
 	}
 
 	/**
