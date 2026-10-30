@@ -22,7 +22,7 @@ use sapling_srs::{
 };
 
 use super::{gaussian, synthetic};
-use crate::fits::{fits_fresh, Serving};
+use crate::fits::{fits_fresh, help_levels, written_levels, Serving};
 use crate::help::HelpLevel;
 use crate::kinds::{kind_of, Want, WireType};
 use crate::model::{
@@ -420,6 +420,36 @@ pub struct Metrics {
     pub cloze_error: f64,
     /// The estimate error averaged over every kind and level, at the end.
     pub final_error: f64,
+    /// First-third picks below the near band, by why: see [`Early`].
+    pub early: Early,
+}
+
+/// Why a first-third pick was below the near band. `forgotten`: the word's
+/// memory alone was below it; `unreachable`: no written type at its shortest
+/// length could have reached it; `in_pool`: a row in the pool would have;
+/// `writable`: only a row not yet written would have. Then by the word's
+/// reviews before the pick, and by kind: (below, picks).
+pub type Tally = BTreeMap<&'static str, (usize, usize)>;
+
+#[derive(Debug, Clone, Default)]
+pub struct Early {
+    pub forgotten: usize,
+    pub unreachable: usize,
+    pub in_pool: usize,
+    pub writable: usize,
+    pub by_reviews: Tally,
+    pub by_kind: Tally,
+    /// Σ memory over first-third picks.
+    pub memory: f64,
+}
+
+fn reviews_bucket(reps: i64) -> &'static str {
+    match reps {
+        0 => "0",
+        1..=2 => "1-2",
+        3..=5 => "3-5",
+        _ => "6+",
+    }
 }
 
 pub fn entropy<K>(counts: &BTreeMap<K, usize>) -> f64 {
@@ -661,6 +691,63 @@ pub fn run(scenario: Scenario, policy: &mut dyn Policy, seed: u64) -> Metrics {
             m.whole += whole;
             *m.kinds.entry(kind.as_str()).or_default() += 1;
             *m.levels.entry(part_key(kind, pick.help)).or_default() += 1;
+            if third == 0 {
+                let e = &mut m.early;
+                let is_below = whole < low;
+                e.memory += memory;
+                let reps = at.iter().map(|&i| cards[i].reps).min().unwrap_or(0);
+                let r = e.by_reviews.entry(reviews_bucket(reps)).or_default();
+                r.0 += usize::from(is_below);
+                r.1 += 1;
+                let k = e.by_kind.entry(kind.as_str()).or_default();
+                k.0 += usize::from(is_below);
+                k.1 += 1;
+                if is_below {
+                    let chance_of = |kind: WireType, help: HelpLevel, length: f64, row: &str| {
+                        let d = truth.difficulty(kind, help, length, row, day as f64);
+                        memory
+                            * at.iter()
+                                .map(|&i| sigmoid(truth.skills[i] - d))
+                                .product::<f64>()
+                    };
+                    let best_pool = pool
+                        .iter()
+                        .flatten()
+                        .filter(|r| {
+                            r.times_served < 3.0
+                                && row_id != r.challenge.id()
+                                && o.words
+                                    .iter()
+                                    .all(|w| r.challenge.item_ids().contains(&w.item_id))
+                        })
+                        .filter_map(|r| Some((r, kind_of(&r.challenge)?)))
+                        .flat_map(|(r, k)| {
+                            help_levels(&r.challenge, &serving)
+                                .into_iter()
+                                .map(move |h| (r, k, h))
+                        })
+                        .map(|(r, k, h)| chance_of(k, h, length_of(&r.challenge), r.challenge.id()))
+                        .fold(0.0, f64::max);
+                    let best_written = WireType::ALL
+                        .into_iter()
+                        .filter(|k| k.is_active() && (!k.is_local() || !cued.is_empty()))
+                        .flat_map(|k| written_levels(k, &serving).into_iter().map(move |h| (k, h)))
+                        .map(|(k, h)| {
+                            let short = k.lengths().map_or(1.0, |[s, _]| f64::from(s));
+                            chance_of(k, h, short, "")
+                        })
+                        .fold(0.0, f64::max);
+                    if memory < low {
+                        e.forgotten += 1;
+                    } else if best_pool.max(best_written) < low {
+                        e.unreachable += 1;
+                    } else if best_pool >= low {
+                        e.in_pool += 1;
+                    } else {
+                        e.writable += 1;
+                    }
+                }
+            }
             let t = &mut m.thirds[third];
             t.answers += 1;
             t.below += usize::from(whole < low);
@@ -795,6 +882,7 @@ pub fn compare(scenario: Scenario, policies: &[Named], seeds: u64) -> String {
     );
     let mut shares = String::new();
     let mut events = String::new();
+    let mut early = String::new();
     for policy in policies {
         let runs: Vec<Metrics> = (1..=seeds)
             .map(|seed| run(scenario, &mut *policy.make(), seed))
@@ -854,6 +942,41 @@ pub fn compare(scenario: Scenario, policies: &[Named], seeds: u64) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         );
+        let first = |m: &Metrics| m.thirds[0].answers.max(1) as f64;
+        let share = |f: &dyn Fn(&Early) -> usize| 100.0 * per(&|m| f(&m.early) as f64 / first(m));
+        let grouped = |f: &dyn Fn(&Early) -> &Tally| {
+            let mut sum: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+            for r in &runs {
+                for (k, (b, n)) in f(&r.early) {
+                    let e = sum.entry(k).or_default();
+                    e.0 += b;
+                    e.1 += n;
+                }
+            }
+            sum.iter()
+                .map(|(k, (b, n))| {
+                    format!(
+                        "{k} {:.0}% of {:.0}%",
+                        100.0 * *b as f64 / (*n).max(1) as f64,
+                        100.0 * *n as f64 / runs.iter().map(first).sum::<f64>()
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let _ = writeln!(
+            early,
+            "  {:<12} first third: below {:.0}% = forgotten {:.0} + unreachable {:.0} + better in pool {:.0} + only writable {:.0} · memory {:.2}\n               by reviews (below of picks): {}\n               by kind: {}",
+            policy.name(),
+            100.0 * per(&|m| m.thirds[0].below as f64 / first(m)),
+            share(&|e| e.forgotten),
+            share(&|e| e.unreachable),
+            share(&|e| e.in_pool),
+            share(&|e| e.writable),
+            per(&|m| m.early.memory / first(m)),
+            grouped(&|e| &e.by_reviews),
+            grouped(&|e| &e.by_kind),
+        );
         if let Some((kind, _)) = scenario.event() {
             let _ = writeln!(
                 events,
@@ -868,6 +991,7 @@ pub fn compare(scenario: Scenario, policies: &[Named], seeds: u64) -> String {
         }
     }
     out.push_str(&shares);
+    out.push_str(&early);
     out.push_str(&events);
     out
 }
