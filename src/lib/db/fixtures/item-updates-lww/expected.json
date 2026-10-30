@@ -24,7 +24,8 @@
 				"srs": {
 					"due": 1710061260000,
 					"retrievability": 0,
-					"strength": 0
+					"strength": 0,
+					"stability": 0
 				},
 				"reviewCount": 0,
 				"correctCount": 0,
@@ -53,7 +54,8 @@
 				"srs": {
 					"due": 1710061320000,
 					"retrievability": 0,
-					"strength": 0
+					"strength": 0,
+					"stability": 0
 				},
 				"reviewCount": 0,
 				"correctCount": 0,
@@ -84,7 +86,8 @@
 				"srs": {
 					"due": 1710061260000,
 					"retrievability": 0,
-					"strength": 0
+					"strength": 0,
+					"stability": 0
 				},
 				"reviewCount": 0,
 				"correctCount": 0,
@@ -114,7 +117,8 @@
 				"srs": {
 					"due": 1710061320000,
 					"retrievability": 0,
-					"strength": 0
+					"strength": 0,
+					"stability": 0
 				},
 				"reviewCount": 0,
 				"correctCount": 0,
@@ -147,7 +151,8 @@
 			"srs": {
 				"due": 1710061260000,
 				"retrievability": 0,
-				"strength": 0
+				"strength": 0,
+				"stability": 0
 			},
 			"reviewCount": 0,
 			"correctCount": 0,
@@ -177,7 +182,8 @@
 			"srs": {
 				"due": 1710061320000,
 				"retrievability": 0,
-				"strength": 0
+				"strength": 0,
+				"stability": 0
 			},
 			"reviewCount": 0,
 			"correctCount": 0,
@@ -189,10 +195,7 @@
 	"poolSize": 0,
 	"getChallengesByIds": [],
 	"recentResults": [],
-	"getDifficultyParts": {
-		"bases": {},
-		"slopes": {}
-	},
+	"getRatings": [],
 	"getDailyActivity": [
 		{
 			"day": "2024-03-10",

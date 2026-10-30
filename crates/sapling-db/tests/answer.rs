@@ -133,19 +133,16 @@ fn an_answer_is_the_events_the_three_calls_wrote() {
             "challengeServed"
         ]
     );
-    // And the read tables agree: the cards and skills, the result, the stamp,
-    // the shared difficulty numbers the answer taught.
+    // And the read tables agree: the cards, the result, the stamp, the
+    // ratings the answer taught.
     for id in ["i1", "i2"] {
         let (a, b) = (
             one.get_item(id).unwrap().unwrap(),
             three.get_item(id).unwrap().unwrap(),
         );
-        assert_eq!((a.fsrs_card, a.skill), (b.fsrs_card, b.skill));
+        assert_eq!(a.fsrs_card, b.fsrs_card);
     }
-    assert_eq!(
-        one.get_difficulty_parts().unwrap(),
-        three.get_difficulty_parts().unwrap()
-    );
+    assert_eq!(one.get_ratings().unwrap(), three.get_ratings().unwrap());
     assert_eq!(
         one.recent_results(5).unwrap(),
         three.recent_results(5).unwrap()

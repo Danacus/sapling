@@ -22,11 +22,11 @@
 				"srs": {
 					"due": 1710235800000,
 					"retrievability": 0.9094932079315186,
-					"strength": 0.3167321144806818
+					"strength": 0.3167321144806818,
+					"stability": 2.30649995803833
 				},
 				"reviewCount": 2,
 				"correctCount": 2,
-				"skill": 2.475352930263756,
 				"history": []
 			},
 			{
@@ -50,11 +50,11 @@
 				"srs": {
 					"due": 1710062280000,
 					"retrievability": 0.9094932079315186,
-					"strength": 0.3167321144806818
+					"strength": 0.3167321144806818,
+					"stability": 2.30649995803833
 				},
 				"reviewCount": 2,
 				"correctCount": 1,
-				"skill": 2.553602973295303,
 				"history": []
 			}
 		],
@@ -80,11 +80,11 @@
 				"srs": {
 					"due": 1710235800000,
 					"retrievability": 0.9094932079315186,
-					"strength": 0.3167321144806818
+					"strength": 0.3167321144806818,
+					"stability": 2.30649995803833
 				},
 				"reviewCount": 2,
 				"correctCount": 2,
-				"skill": 2.475352930263756,
 				"recentGrades": [
 					{
 						"at": 1710061920000,
@@ -118,11 +118,11 @@
 				"srs": {
 					"due": 1710062280000,
 					"retrievability": 0.9094932079315186,
-					"strength": 0.3167321144806818
+					"strength": 0.3167321144806818,
+					"stability": 2.30649995803833
 				},
 				"reviewCount": 2,
 				"correctCount": 1,
-				"skill": 2.553602973295303,
 				"recentGrades": [
 					{
 						"at": 1710061800000,
@@ -159,11 +159,11 @@
 			"srs": {
 				"due": 1710235800000,
 				"retrievability": 0.9094932079315186,
-				"strength": 0.3167321144806818
+				"strength": 0.3167321144806818,
+				"stability": 2.30649995803833
 			},
 			"reviewCount": 2,
 			"correctCount": 2,
-			"skill": 2.475352930263756,
 			"recentGrades": [
 				{
 					"at": 1710061920000,
@@ -208,11 +208,11 @@
 			"srs": {
 				"due": 1710062280000,
 				"retrievability": 0.9094932079315186,
-				"strength": 0.3167321144806818
+				"strength": 0.3167321144806818,
+				"stability": 2.30649995803833
 			},
 			"reviewCount": 2,
 			"correctCount": 1,
-			"skill": 2.553602973295303,
 			"recentGrades": [
 				{
 					"at": 1710061800000,
@@ -260,8 +260,7 @@
 			"generatedAt": 1710061320000,
 			"timesServed": 0,
 			"lastServedAt": null,
-			"reported": false,
-			"correction": -0.03912502151577372
+			"reported": false
 		},
 		{
 			"id": "ch-multi",
@@ -296,8 +295,7 @@
 			"generatedAt": 1710061320000,
 			"timesServed": 0,
 			"lastServedAt": null,
-			"reported": false,
-			"correction": -0.07906417646376795
+			"reported": false
 		}
 	],
 	"poolSize": 2,
@@ -377,17 +375,64 @@
 			"shown": "pick-4"
 		}
 	],
-	"getDifficultyParts": {
-		"bases": {
-			"cloze/pick-4": 1.0921749956968454,
-			"multi-cloze/answers": 1.898175888161114,
-			"multi-cloze/extra-2": 2.5860112765461323
+	"getRatings": [
+		{
+			"key": "base",
+			"value": 0.5646706377316207,
+			"margin": 0.4799621797716536,
+			"startMargin": 0.5,
+			"at": 1710063000000,
+			"answers": 3
 		},
-		"slopes": {
-			"cloze": 0.11686999827873809,
-			"multi-cloze": 0.06734973176579712
+		{
+			"key": "challenge:cloze/pick-4",
+			"value": -0.4726580532806043,
+			"margin": 1.2489233186692743,
+			"startMargin": 1.5,
+			"at": 1710061800000,
+			"answers": 1
+		},
+		{
+			"key": "challenge:multi-cloze/answers",
+			"value": 0.43458631825008126,
+			"margin": 1.3008451183854044,
+			"startMargin": 1.5,
+			"at": 1710061920000,
+			"answers": 1
+		},
+		{
+			"key": "challenge:multi-cloze/extra-2",
+			"value": -0.31294746854783106,
+			"margin": 1.3217988008132375,
+			"startMargin": 1.5,
+			"at": 1710063000000,
+			"answers": 1
+		},
+		{
+			"key": "scale",
+			"value": 0.5256309101154587,
+			"margin": 0.4890349657978015,
+			"startMargin": 0.5,
+			"at": 1710063000000,
+			"answers": 3
+		},
+		{
+			"key": "slope:cloze",
+			"value": 0.10790498861338427,
+			"margin": 0.0994206034731111,
+			"startMargin": 0.1,
+			"at": 1710061800000,
+			"answers": 1
+		},
+		{
+			"key": "slope:multi-cloze",
+			"value": 0.09990570445635272,
+			"margin": 0.09749808386013148,
+			"startMargin": 0.1,
+			"at": 1710063000000,
+			"answers": 2
 		}
-	},
+	],
 	"getDailyActivity": [
 		{
 			"day": "2024-03-10",

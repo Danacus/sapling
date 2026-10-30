@@ -19,17 +19,17 @@
 
 use std::process::ExitCode;
 
-use sapling_challenges::calibrate::{calibrate, format_report, search_many};
-use sapling_challenges::calibrate_ratings::{self, comparison};
-use sapling_challenges::calibrate_v2::{ablations, format_v2, search};
-use sapling_challenges::model::Observation;
-use sapling_challenges::model_v2::{Config, Length, Memory, Parts, Prior};
-use sapling_challenges::policy_v2::Steering;
-use sapling_challenges::ratings::{Settings, WordSource};
-use sapling_challenges::ratings_extras::Extras;
 use sapling_challenges::replay::{busiest_profile, input_from_events, observations, parse_export};
-use sapling_challenges::sim::closed_loop::{compare, Named, Scenario};
-use sapling_challenges::sim::{simulate, SimOptions};
+use sapling_challenges::research::calibrate::{calibrate, format_report, search_many};
+use sapling_challenges::research::calibrate_ratings::{self, comparison};
+use sapling_challenges::research::calibrate_v2::{ablations, format_v2, search};
+use sapling_challenges::research::model_v2::{Config, Length, Memory, Parts, Prior};
+use sapling_challenges::research::policy_v2::Steering;
+use sapling_challenges::research::ratings::{Settings, WordSource};
+use sapling_challenges::research::ratings_extras::Extras;
+use sapling_challenges::research::sim::closed_loop::{compare, Named, Scenario};
+use sapling_challenges::research::sim::{simulate, SimOptions};
+use sapling_challenges::research::v1::Observation;
 
 const USAGE: &str = "usage: calibrate <export.json> [--profile ID] [--search]\n       calibrate --simulated [--seed N] [--search]\n       calibrate --simulated --seeds N\n  v2:  calibrate (<export.json> | --simulated) --model v2 [--prior global|empirical|starting]\n         [--parts flat|factored] [--length learned|fixed|off] [--memory product|feature|off]\n         [--noise on|off] [--search]\n       calibrate (<export.json> | --simulated [--seeds N]) --ablate\n       calibrate --simulated --seeds N --model v2 --search\n       calibrate --simulated --policy NAME,…|steps|ratings|all --scenario base|trap|growth|new-kind|all [--seeds N]\n  ratings: calibrate (<export.json> | --simulated) --model ratings [--words own|stability|both]\n         [--extra length,row,memory,ordered] [--search]\n       calibrate (<export.json> | --simulated [--seeds N]) --compare\n       calibrate --simulated --seeds N --model ratings [--words …] --search";
 
@@ -161,7 +161,10 @@ fn policies(names: &str) -> Option<Vec<Named>> {
     let ratings = [
         Named::Current,
         Named::V2("round2", last, narrow),
-        Named::CurrentAt("current-harder", sapling_challenges::model::Aim::Harder),
+        Named::CurrentAt(
+            "current-harder",
+            sapling_challenges::research::v1::Aim::Harder,
+        ),
         Named::Rated("bare", bare),
         Named::Rated(
             "bare-stab",

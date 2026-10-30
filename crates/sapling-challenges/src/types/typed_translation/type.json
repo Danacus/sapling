@@ -1,7 +1,7 @@
 {
   "steps": ["plain"],
   "kinds": [
-    {"id":"translate-to-native","rank":4,"direction":"toNative","lengths":[2,11],"writtenSteps":["plain"],"canListen":false,"bases":{"plain":0.9},"slope":0.12},
-    {"id":"translate-to-target","rank":9,"direction":"toTarget","writtenSteps":["plain"],"canListen":false,"bases":{"plain":2.8},"slope":0.15}
+    {"id":"translate-to-native","rank":4,"direction":"toNative","lengths":[2,11],"writtenSteps":["plain"],"canListen":false},
+    {"id":"translate-to-target","rank":9,"direction":"toTarget","writtenSteps":["plain"],"canListen":false}
   ]
 }

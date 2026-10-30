@@ -6,19 +6,11 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import {
-	addText,
-	addToPool,
-	cuesFor,
-	getAllItems,
-	getPool,
-	saveProfile,
-	upsertItems
-} from '$lib/db';
+import { addText, cuesFor, getPool, saveProfile, upsertItems } from '$lib/db';
 import { setBackendForTesting } from '$lib/db/backend';
 import { makeTestBackend } from '$lib/db/backend.testing';
 import type { Challenge, KnowledgeItem, Profile } from '$lib/types';
-import { applyResult, generateChallenges } from './engine';
+import { generateChallenges } from './engine';
 
 const NOW = 1_700_000_000_000;
 const DAY = 24 * 60 * 60 * 1000;
@@ -43,18 +35,6 @@ function word(term: string, i: number): KnowledgeItem {
 		introducedAt: NOW - 10 * DAY,
 		fsrsCard: null,
 		history: []
-	};
-}
-
-/** A typed cloze about `itemId`: answering it right raises the word's skill. */
-function typed(id: string, itemId: string): Challenge {
-	return {
-		id,
-		type: 'cloze',
-		direction: 'toTarget',
-		sentence: 'Yo ___ ayer por la tarde con mis amigos.',
-		acceptedAnswers: ['x'],
-		itemIds: [itemId]
 	};
 }
 
@@ -91,23 +71,10 @@ describe('generateChallenges', () => {
 	});
 
 	it('builds a cue-cloze locally for a word with a cue, beside the model’s kinds', async () => {
-		// Strong enough for production, so the cue-cloze is in reach.
-		const rows = Array.from({ length: 12 }, (_, i) => typed(`c${i}`, 'w0'));
-		await addToPool(rows, NOW - 2 * DAY);
-		for (const [i, row] of rows.entries()) {
-			await applyResult(row, {
-				verdict: 'correct',
-				answerGiven: 'x',
-				shown: 'typed',
-				now: NOW - DAY + i
-			});
-		}
-		expect((await getAllItems()).find((item) => item.id === 'w0')!.skill).toBeGreaterThan(3);
-
-		// Each run serves what the last wrote, so the word wants again; a kind it
-		// has never had goes first, so the cue-cloze comes up within a few.
+		// Each run serves what the last wrote, so the word wants again, and the
+		// roll puts the cue-cloze among its kinds within a few runs.
 		let built: Challenge | undefined;
-		for (let seed = 0; seed < 10 && !built; seed++) {
+		for (let seed = 0; seed < 30 && !built; seed++) {
 			const served = (await getPool()).map((row) => row.id);
 			const info = await generateChallenges(profile, { now: NOW, seed, served });
 			expect(info.args.wants.every((want) => want.kind.type !== 'cue-cloze')).toBe(true);

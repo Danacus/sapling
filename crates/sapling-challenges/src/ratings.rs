@@ -1,77 +1,71 @@
-//! Difficulty by ratings (`docs/difficulty-ratings.md`), a prototype beside
-//! `model.rs`: the calibration command scores it and the closed-loop
-//! simulation serves with it (`ratings_policy.rs`); the app does not.
+//! The difficulty model (`docs/challenge-difficulty.md`): ratings with margins.
 //!
-//! Every word has a rating (how well the learner can use it) and every
-//! challenge type at a help level has one (how hard it is). A right answer's
-//! chance is `sigmoid(word − challenge)`, the words' average for a challenge
-//! about several. Each rating has a margin, how sure it is: answers shrink it,
-//! days without an answer widen it again, never past where it started.
+//! A right answer's chance is `sigmoid(word − challenge − slope × (length −
+//! centre))`. A word's side is `scale · ln(1 + stability) + base`, FSRS's
+//! stability with two numbers every word shares; a challenge's side is one
+//! rating per kind and help level; each kind has a length slope. Every rating
+//! has a margin, how sure it is: answers shrink it, and a challenge rating's
+//! widens again with days unanswered, never past where it started. An answer
+//! moves every rating in it by Glicko-1's step.
 //!
-//! After an answer every rating in it moves by Glicko-1's step: by how
-//! surprising the answer was, more when its own margin is wide, less when the
-//! other side's is (an answer against an unsure opponent says less).
+//! All of it is a function of the answers in log order, so it is derived data
+//! the core keeps (`sapling-db`'s `learned.rs`).
 
 use std::collections::BTreeMap;
 use std::f64::consts::PI;
 
+use serde::{Deserialize, Serialize};
+use ts_rs::TS;
+
 use crate::kinds::WireType;
-use crate::model::{part_key, sigmoid, Observation};
+use crate::model::{part_key, sigmoid, tuning, Observation};
+use crate::rng::Rng;
 
 const DAY: f64 = 86_400_000.0;
 
-/// Where a word's rating comes from (§5).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WordSource {
-    /// Its own rating, learned from its answers.
-    Own,
-    /// `scale · ln(1 + stability) + base`: FSRS's stability, with two
-    /// numbers shared by every word and none per word.
-    Stability,
-    /// The same, plus an own rating that starts at zero and corrects it.
-    StabilityAndOwn,
-}
-
-/// Everything not learned. A new challenge type starts at 0; `word_start` is
-/// how far above that a new word starts, so `sigmoid(word_start)` is the chance
-/// a new word is given on a new type.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Settings {
-    pub word_start: f64,
-    pub word_margin: f64,
-    pub challenge_margin: f64,
-    /// What a margin² widens by per day without an answer.
-    pub widen: f64,
-    pub words: WordSource,
-    /// Off in the bare model; `calibrate` turns them on one at a time.
-    pub extras: crate::ratings_extras::Extras,
-}
-
-impl Default for Settings {
-    /// Chosen on the simulated learners (`calibrate --simulated --seeds 10
-    /// --model ratings --search`).
-    fn default() -> Self {
-        Settings {
-            word_start: 0.5,
-            word_margin: 0.5,
-            challenge_margin: 1.5,
-            widen: 0.005,
-            words: WordSource::Own,
-            extras: Default::default(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Key {
-    Word(String),
     /// By `part_key`: `cloze/typed`.
     Challenge(String),
     /// The stability scale and base every word shares.
     Scale,
     Base,
-    /// A number an extra adds (`ratings_extras.rs`).
-    Extra(String),
+    /// A kind's length slope, by kind: `cloze`.
+    Slope(String),
+}
+
+impl Key {
+    /// How it is stored: `challenge:cloze/typed`, `scale`, `base`, `slope:cloze`.
+    pub fn stored(&self) -> String {
+        match self {
+            Key::Challenge(k) => format!("challenge:{k}"),
+            Key::Scale => "scale".into(),
+            Key::Base => "base".into(),
+            Key::Slope(k) => format!("slope:{k}"),
+        }
+    }
+
+    pub fn parse(stored: &str) -> Option<Key> {
+        match stored {
+            "scale" => Some(Key::Scale),
+            "base" => Some(Key::Base),
+            _ => {
+                if let Some(k) = stored.strip_prefix("challenge:") {
+                    Some(Key::Challenge(k.to_owned()))
+                } else {
+                    stored
+                        .strip_prefix("slope:")
+                        .map(|k| Key::Slope(k.to_owned()))
+                }
+            }
+        }
+    }
+
+    /// Only a challenge rating widens with time: the numbers every word or
+    /// every row of a kind shares are moved by every answer.
+    fn widens(&self) -> bool {
+        matches!(self, Key::Challenge(_))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -85,6 +79,18 @@ pub struct Rating {
     pub answers: u32,
 }
 
+/// One rating as stored and as it crosses to the planners.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredRating {
+    pub key: String,
+    pub value: f64,
+    pub margin: f64,
+    pub start_margin: f64,
+    pub at: f64,
+    pub answers: u32,
+}
+
 /// One rating's part in a chance: `z = Σ weight · rating`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Term {
@@ -94,33 +100,66 @@ pub struct Term {
     pub start: (f64, f64),
 }
 
+/// A length is read from the middle of its kind's range, so a slope and a
+/// challenge rating are close to independent.
+pub fn centre(kind: WireType) -> f64 {
+    kind.lengths()
+        .map_or(6.0, |[a, b]| (f64::from(a) + f64::from(b)) / 2.0)
+}
+
 /// Glicko's `g`: how much an unsure match is flattened towards 50%.
 fn flatten(margin_squared: f64) -> f64 {
     1.0 / (1.0 + 3.0 * margin_squared / (PI * PI)).sqrt()
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Ratings {
-    pub settings: Settings,
     ratings: BTreeMap<Key, Rating>,
 }
 
 impl Ratings {
-    pub fn new(settings: Settings) -> Self {
-        Ratings {
-            settings,
-            ratings: BTreeMap::new(),
-        }
+    /// The stored rows; a key this build does not know is left out.
+    pub fn from_stored(rows: &[StoredRating]) -> Self {
+        let ratings = rows
+            .iter()
+            .filter_map(|r| {
+                let rating = Rating {
+                    value: r.value,
+                    margin: r.margin,
+                    start_margin: r.start_margin,
+                    at: r.at,
+                    answers: r.answers,
+                };
+                Some((Key::parse(&r.key)?, rating))
+            })
+            .collect();
+        Ratings { ratings }
+    }
+
+    pub fn stored(&self) -> Vec<StoredRating> {
+        self.ratings
+            .iter()
+            .map(|(key, r)| StoredRating {
+                key: key.stored(),
+                value: r.value,
+                margin: r.margin,
+                start_margin: r.start_margin,
+                at: r.at,
+                answers: r.answers,
+            })
+            .collect()
     }
 
     pub fn all(&self) -> &BTreeMap<Key, Rating> {
         &self.ratings
     }
 
-    /// A rating as of `now`: its margin widened by the days since its last
-    /// answer, or its start if it has none. Only words and challenge types
-    /// change while unanswered; the numbers every word shares, and the
-    /// extras, never widen.
+    pub fn insert(&mut self, key: Key, rating: Rating) {
+        self.ratings.insert(key, rating);
+    }
+
+    /// A rating as of `now`: a challenge rating's margin widened by the days
+    /// since its last answer, or its start if it has none.
     pub fn rating(&self, key: &Key, start: (f64, f64), now: f64) -> Rating {
         let Some(r) = self.ratings.get(key) else {
             return Rating {
@@ -131,11 +170,11 @@ impl Ratings {
                 answers: 0,
             };
         };
-        if matches!(key, Key::Scale | Key::Base | Key::Extra(_)) {
+        if !key.widens() {
             return *r;
         }
         let days = ((now - r.at) / DAY).max(0.0);
-        let widened = (r.margin.powi(2) + self.settings.widen * days).sqrt();
+        let widened = (r.margin.powi(2) + tuning().widen * days).sqrt();
         Rating {
             margin: widened.min(r.start_margin).max(r.margin),
             ..*r
@@ -144,7 +183,7 @@ impl Ratings {
 
     /// What the chance of `o` is made of.
     pub fn terms(&self, o: &Observation) -> Vec<Term> {
-        let s = &self.settings;
+        let t = tuning();
         let mut terms: Vec<Term> = Vec::new();
         let mut add = |key: Key, weight: f64, start: (f64, f64)| match terms
             .iter_mut()
@@ -154,25 +193,21 @@ impl Ratings {
             None => terms.push(Term { key, weight, start }),
         };
         let share = 1.0 / o.words.len().max(1) as f64;
+        let scale = (t.scale_start[0], t.scale_start[1]);
         for w in &o.words {
-            let own = Key::Word(w.item_id.clone());
-            match s.words {
-                WordSource::Own => add(own, share, (s.word_start, s.word_margin)),
-                WordSource::Stability | WordSource::StabilityAndOwn => {
-                    add(Key::Scale, share * w.stability.ln_1p(), (0.5, 0.5));
-                    add(Key::Base, share, (s.word_start, s.word_margin));
-                    if s.words == WordSource::StabilityAndOwn {
-                        add(own, share, (0.0, s.word_margin));
-                    }
-                }
-            }
+            add(Key::Scale, share * w.stability.max(0.0).ln_1p(), scale);
+            add(Key::Base, share, (t.word_start, t.word_margin));
         }
         add(
             Key::Challenge(part_key(o.kind, o.help)),
             -1.0,
-            (0.0, s.challenge_margin),
+            (0.0, t.challenge_margin),
         );
-        self.add_extras(o, &mut terms);
+        add(
+            Key::Slope(o.kind.as_str().to_owned()),
+            -(o.length - centre(o.kind)),
+            (t.slope_start[0], t.slope_start[1]),
+        );
         terms
     }
 
@@ -197,19 +232,15 @@ impl Ratings {
 
     /// The chance of a right answer, flattened by how unsure the match is.
     pub fn chance(&self, o: &Observation) -> f64 {
-        self.chance_of(&self.terms(o), o.at)
-    }
-
-    pub fn chance_of(&self, terms: &[Term], now: f64) -> f64 {
-        let (_, z, spread) = self.sum(terms, now);
+        let (_, z, spread) = self.sum(&self.terms(o), o.at);
         sigmoid(flatten(spread) * z)
     }
 
     /// Moves every rating in the answer; answers the chance it was given.
     pub fn learn(&mut self, o: &Observation) -> f64 {
         let terms = self.terms(o);
-        let predicted = self.chance_of(&terms, o.at);
         let (ratings, z, spread) = self.sum(&terms, o.at);
+        let predicted = sigmoid(flatten(spread) * z);
         for (t, r) in terms.iter().zip(ratings) {
             // Glicko-1: the rest of the match is the opponent.
             let g = flatten(spread - (t.weight * r.margin).powi(2));
@@ -227,40 +258,62 @@ impl Ratings {
         }
         predicted
     }
+}
 
-    /// Makes every help level of `kind` rate `by` harder than learned, held
-    /// as sure as a few dozen answers would: the simulation's trap.
-    pub fn mislead(&mut self, kind: WireType, by: f64, at: f64) {
-        let margin = self.settings.challenge_margin;
-        for step in kind.written_steps() {
-            let key = Key::Challenge(part_key(kind, crate::help::HelpLevel::step(step)));
-            let r = self.rating(&key, (0.0, margin), at);
-            let misled = Rating {
-                value: r.value + by,
-                margin: r.margin.min(0.3),
-                at,
-                ..r
-            };
-            self.ratings.insert(key, misled);
+/// One pick's roll: each challenge rating drawn once within its margin, the
+/// rest at their values. Something well known rolls close to itself; something
+/// unsure rolls wide and now and then into reach, which is the only exploration.
+pub struct Roll<'a> {
+    ratings: &'a Ratings,
+    now: f64,
+    rng: &'a mut Rng,
+    rolled: BTreeMap<Key, f64>,
+}
+
+impl<'a> Roll<'a> {
+    pub fn new(ratings: &'a Ratings, now: f64, rng: &'a mut Rng) -> Self {
+        Roll {
+            ratings,
+            now,
+            rng,
+            rolled: BTreeMap::new(),
         }
+    }
+
+    pub fn chance(&mut self, o: &Observation) -> f64 {
+        let mut z = 0.0;
+        for t in self.ratings.terms(o) {
+            let r = self.ratings.rating(&t.key, t.start, self.now);
+            let value = if t.key.widens() {
+                let rng = &mut *self.rng;
+                *self
+                    .rolled
+                    .entry(t.key)
+                    .or_insert_with(|| r.value + r.margin * rng.gaussian())
+            } else {
+                r.value
+            };
+            z += t.weight * value;
+        }
+        sigmoid(z)
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::help::{HelpLevel, Step};
     use crate::model::Evidence;
 
-    fn answer(word: &str, outcome: f64, at: f64) -> Observation {
+    pub(crate) fn answer(kind: WireType, help: HelpLevel, outcome: f64, at: f64) -> Observation {
         Observation {
             at,
             challenge_id: "c".into(),
-            kind: WireType::Cloze,
-            help: HelpLevel::step(Step::Typed),
-            length: 6.0,
+            kind,
+            help,
+            length: centre(kind),
             words: vec![Evidence {
-                item_id: word.into(),
+                item_id: "w".into(),
                 memory: 1.0,
                 stability: 3.0,
             }],
@@ -268,110 +321,110 @@ mod tests {
         }
     }
 
-    fn get(r: &Ratings, key: Key) -> Rating {
-        r.all()[&key]
+    fn typed(outcome: f64, at: f64) -> Observation {
+        answer(WireType::Cloze, HelpLevel::step(Step::Typed), outcome, at)
     }
-    fn word(id: &str) -> Key {
-        Key::Word(id.into())
-    }
-    fn typed() -> Key {
+    fn key() -> Key {
         Key::Challenge("cloze/typed".into())
     }
 
     #[test]
-    fn a_new_word_on_a_new_type_gets_the_start_chance_flattened_by_both_margins() {
-        let r = Ratings::new(Settings::default());
-        let s = r.settings;
-        let spread = s.word_margin.powi(2) + s.challenge_margin.powi(2);
-        let expected = sigmoid(flatten(spread) * s.word_start);
-        assert!((r.chance(&answer("w", 1.0, 0.0)) - expected).abs() < 1e-12);
+    fn a_success_lowers_the_challenge_and_raises_the_shared_word_numbers() {
+        let mut r = Ratings::default();
+        r.learn(&typed(1.0, 0.0));
+        assert!(r.all()[&key()].value < 0.0);
+        assert!(r.all()[&Key::Base].value > tuning().word_start);
+        assert!(r.all()[&Key::Scale].value > tuning().scale_start[0]);
+        assert!(!r
+            .all()
+            .keys()
+            .any(|k| matches!(k, Key::Challenge(c) if c != "cloze/typed")));
     }
 
     #[test]
-    fn a_success_raises_the_word_and_lowers_the_challenge_and_a_surprise_moves_more() {
-        let mut up = Ratings::new(Settings::default());
-        up.learn(&answer("w", 1.0, 0.0));
-        let mut down = Ratings::new(Settings::default());
-        down.learn(&answer("w", 0.0, 0.0));
-        let start = Settings::default().word_start;
-        assert!(get(&up, word("w")).value > start && get(&up, typed()).value < 0.0);
-        assert!(get(&down, word("w")).value < start && get(&down, typed()).value > 0.0);
-        // A new word is expected to succeed, so a miss is the bigger surprise.
-        assert!(get(&down, typed()).value.abs() > get(&up, typed()).value.abs());
-    }
-
-    #[test]
-    fn margins_shrink_with_answers_and_widen_with_days_up_to_the_start() {
-        let mut r = Ratings::new(Settings::default());
+    fn margins_shrink_with_answers_and_a_challenges_widens_with_days_up_to_the_start() {
+        let mut r = Ratings::default();
         let mut last = f64::INFINITY;
         for i in 0..20 {
-            r.learn(&answer(&format!("w{i}"), f64::from(i % 3 != 0), 0.0));
-            assert!(get(&r, typed()).margin < last);
-            last = get(&r, typed()).margin;
+            r.learn(&typed(f64::from(i % 3 != 0), 0.0));
+            assert!(r.all()[&key()].margin < last);
+            last = r.all()[&key()].margin;
         }
-        let start = (0.0, Settings::default().challenge_margin);
-        let week = r.rating(&typed(), start, 7.0 * DAY).margin;
-        let decade = r.rating(&typed(), start, 3650.0 * DAY).margin;
+        let start = (0.0, tuning().challenge_margin);
+        let week = r.rating(&key(), start, 7.0 * DAY).margin;
+        let decade = r.rating(&key(), start, 3650.0 * DAY).margin;
         assert!(last < week && week < decade);
-        assert_eq!(decade, Settings::default().challenge_margin);
+        assert_eq!(decade, tuning().challenge_margin);
+        let base = r.all()[&Key::Base];
+        assert_eq!(r.rating(&Key::Base, (0.0, 1.0), 3650.0 * DAY), base);
     }
 
-    /// The wider side moves more: a new word against a well-known type moves
-    /// the word, hardly the type.
     #[test]
-    fn the_unsure_side_takes_the_move() {
-        let mut r = Ratings::new(Settings::default());
-        for i in 0..300 {
-            r.learn(&answer(&format!("w{i}"), f64::from(i % 5 != 0), 0.0));
+    fn a_longer_row_reads_harder_once_the_slope_has_learned_it() {
+        let mut r = Ratings::default();
+        for i in 0..200 {
+            let mut o = typed(0.0, 0.0);
+            o.length = if i % 2 == 0 { 4.0 } else { 10.0 };
+            o.outcome = f64::from(o.length < 5.0 || i % 7 == 0);
+            r.learn(&o);
         }
-        let before = get(&r, typed()).value;
-        r.learn(&answer("new", 0.0, 0.0));
-        let moved_word = Settings::default().word_start - get(&r, word("new")).value;
-        let moved_type = get(&r, typed()).value - before;
-        assert!(moved_word > 10.0 * moved_type && moved_type > 0.0);
-    }
-
-    #[test]
-    fn several_words_are_judged_by_their_average() {
-        let mut r = Ratings::new(Settings::default());
-        for _ in 0..20 {
-            r.learn(&answer("strong", 1.0, 0.0));
-            r.learn(&answer("weak", 0.0, 0.0));
-        }
-        let mut both = answer("strong", 1.0, 0.0);
-        both.words.push(Evidence {
-            item_id: "weak".into(),
-            memory: 1.0,
-            stability: 3.0,
-        });
-        let (strong, weak) = (
-            r.chance(&answer("strong", 1.0, 0.0)),
-            r.chance(&answer("weak", 1.0, 0.0)),
-        );
-        let pair = r.chance(&both);
-        assert!(weak < pair && pair < strong);
-    }
-
-    /// From stability alone, a word reviewed into a long interval reads
-    /// stronger than a new one once the scale has learned that it should.
-    #[test]
-    fn stability_alone_rates_words_with_no_number_per_word() {
-        let settings = Settings {
-            words: WordSource::Stability,
-            ..Settings::default()
+        let at = |length: f64| {
+            let mut o = typed(0.0, 0.0);
+            o.length = length;
+            r.chance(&o)
         };
-        let mut r = Ratings::new(settings);
+        assert!(at(4.0) > at(10.0) + 0.2);
+    }
+
+    #[test]
+    fn a_word_with_a_long_interval_reads_stronger_once_the_scale_has_learned_it() {
+        let mut r = Ratings::default();
         for i in 0..400 {
-            let mut o = answer(&format!("w{i}"), 0.0, 0.0);
+            let mut o = typed(0.0, 0.0);
             o.words[0].stability = if i % 2 == 0 { 30.0 } else { 0.0 };
             o.outcome = f64::from(i % 2 == 0 || i % 7 == 0);
             r.learn(&o);
         }
-        assert!(!r.all().keys().any(|k| matches!(k, Key::Word(_))));
-        let mut sure = answer("x", 0.0, 0.0);
-        sure.words[0].stability = 30.0;
-        let mut new = answer("y", 0.0, 0.0);
-        new.words[0].stability = 0.0;
-        assert!(r.chance(&sure) > r.chance(&new) + 0.2);
+        let with = |stability: f64| {
+            let mut o = typed(0.0, 0.0);
+            o.words[0].stability = stability;
+            r.chance(&o)
+        };
+        assert!(with(30.0) > with(0.0) + 0.2);
+    }
+
+    #[test]
+    fn stored_ratings_read_back_and_an_unknown_key_is_left_out() {
+        let mut r = Ratings::default();
+        r.learn(&typed(1.0, 5.0));
+        let mut rows = r.stored();
+        assert_eq!(Ratings::from_stored(&rows), r);
+        rows.push(StoredRating {
+            key: "row:x".into(),
+            value: 1.0,
+            margin: 1.0,
+            start_margin: 1.0,
+            at: 0.0,
+            answers: 1,
+        });
+        assert_eq!(Ratings::from_stored(&rows), r);
+        for key in [Key::Scale, Key::Base, key(), Key::Slope("cloze".into())] {
+            assert_eq!(Key::parse(&key.stored()), Some(key));
+        }
+    }
+
+    #[test]
+    fn a_roll_replays_under_its_seed_and_rolls_one_key_once() {
+        let r = Ratings::default();
+        let o = typed(0.0, 0.0);
+        let roll = |seed| {
+            let mut rng = Rng::seeded(seed);
+            let mut roll = Roll::new(&r, 0.0, &mut rng);
+            (roll.chance(&o), roll.chance(&o))
+        };
+        let (a, b) = roll(9);
+        assert_eq!(a, b);
+        assert_eq!(roll(9), (a, b));
+        assert_ne!(roll(10).0, a);
     }
 }

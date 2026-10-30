@@ -9,8 +9,7 @@ import type { Challenge, PoolRow } from './generated/index';
 /**
  * Stored challenge: the domain `Challenge` union plus pool bookkeeping —
  * `generatedAt`, `timesServed`, `lastServedAt` (`null` while never served),
- * `reported`, `topic?` and `correction?` (the difficulty model's learned
- * correction for the row). Generated from `sapling-challenges`' `PoolRow`, an
+ * `reported` and `topic?`. Generated from `sapling-challenges`' `PoolRow`, an
  * intersection, so the `type` discriminant still narrows after a read.
  *
  * Every challenge ever generated stays in the pool — answering one does not
@@ -27,17 +26,15 @@ type Bookkeeping = Exclude<keyof PoolRow, keyof Challenge>;
  *
  * The list has to equal {@link Bookkeeping} exactly, and the compiler holds it
  * to that: `satisfies` refuses a name `PoolRow` does not have, and `exhaustive`
- * below refuses a `PoolRow` field the list forgot. That second half is the one
- * that bit — `correction` arrived on the generated `PoolRow` and leaked into
- * every served `Challenge` because the strip was a hand-kept destructure.
+ * below refuses a `PoolRow` field the list forgot, which would otherwise leak
+ * into every served `Challenge`.
  */
 const BOOKKEEPING = [
 	'generatedAt',
 	'timesServed',
 	'lastServedAt',
 	'reported',
-	'topic',
-	'correction'
+	'topic'
 ] as const satisfies readonly Bookkeeping[];
 
 type Unstripped = Exclude<Bookkeeping, (typeof BOOKKEEPING)[number]>;

@@ -1,1 +1,1 @@
-{"steps":["pick-4","pick-6","typed"],"kinds":[{"id":"cloze","rank":7,"direction":"toTarget","lengths":[3,11],"writtenSteps":["pick-4","pick-6","typed"],"canListen":false,"bases":{"pick-4":1.1,"pick-6":1.9,"typed":3.1},"slope":0.12}]}
+{"steps":["pick-4","pick-6","typed"],"kinds":[{"id":"cloze","rank":7,"direction":"toTarget","lengths":[3,11],"writtenSteps":["pick-4","pick-6","typed"],"canListen":false}]}

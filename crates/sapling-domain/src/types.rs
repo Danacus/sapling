@@ -206,9 +206,9 @@ pub struct Profile {
     pub aim: Option<Aim>,
 }
 
-/// How hard the learner wants their challenges: the success rate the
-/// difficulty model aims at (`sapling-challenges`' `data/model.json`; at
-/// FSRS's 0.9 memory, easier, normal and harder come to about 88%, 80% and 70%).
+/// How hard the learner wants their challenges: the chance of a right answer
+/// serving aims at (`sapling-challenges`' `data/model.json`: easier, normal
+/// and harder are 90%, 80% and 70%).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum Aim {
@@ -325,17 +325,6 @@ pub struct KnowledgeItem {
     )]
     #[ts(optional)]
     pub correct_count: Option<f64>,
-    /// How hard a challenge about this word the learner can handle, on the
-    /// difficulty model's scale — derived from every answer that named it
-    /// (`sapling-db`'s `learned.rs`). Absent for a word with no answers yet,
-    /// which reads as the model's starting skill.
-    #[serde(
-        default,
-        deserialize_with = "absent_or",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[ts(optional)]
-    pub skill: Option<f64>,
     /// The most recent reviews, oldest first — what the ledger's tick strip
     /// shows. Only `getAllItems({ withRecentGrades: true })` and `getItem`
     /// attach it: it is up to `RECENT_GRADES_CAP` entries per item and nothing

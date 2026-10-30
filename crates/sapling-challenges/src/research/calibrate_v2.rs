@@ -10,10 +10,10 @@ use std::fmt::Write;
 
 use crate::help::HelpLevel;
 use crate::kinds::WireType;
-use crate::model::{part_key, tuning, Learner, Observation, MULTI_WORD};
-use crate::model_v2::{
+use crate::research::model_v2::{
     evaluate, score, Config, Key, Length, Memory, ModelV2, Parts, Prior, ScoreV2,
 };
+use crate::research::v1::{part_key, tuning, Learner, Observation, MULTI_WORD};
 
 const DAY: f64 = 86_400_000.0;
 
@@ -353,9 +353,9 @@ pub fn format_v2(observations: &[Observation], config: Config) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::evaluate as evaluate_v1;
     use crate::replay::{input_from_events, observations, parse_export};
-    use crate::sim::{simulate, SimOptions};
+    use crate::research::sim::{simulate, SimOptions};
+    use crate::research::v1::evaluate as evaluate_v1;
     use sapling_domain::events::PROFILE_ID;
 
     #[test]

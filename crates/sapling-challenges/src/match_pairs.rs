@@ -81,7 +81,6 @@ mod tests {
             meaning: meaning.into(),
             romanization: None,
             srs: None,
-            skill: None,
         }
     }
 

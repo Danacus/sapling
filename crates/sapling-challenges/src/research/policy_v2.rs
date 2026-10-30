@@ -22,9 +22,9 @@ use std::collections::{HashMap, HashSet};
 use crate::fits::{help_levels, written_levels, Serving};
 use crate::help::HelpLevel;
 use crate::kinds::{active_kinds, kind_of, ChallengeKind, Want, WantItem, WireType};
-use crate::model::{length_of, target, Evidence, Observation};
-use crate::model_v2::{Draw, ModelV2, Parts};
 use crate::pool::{is_playable, is_rested, is_spent, known_ids, PoolRow};
+use crate::research::model_v2::{Draw, ModelV2, Parts};
+use crate::research::v1::{length_of, target, Evidence, Observation};
 use crate::rng::Rng;
 use crate::text::js_trim;
 use crate::word::{by_id, ById, Word};
@@ -392,7 +392,7 @@ pub fn refill(
 mod tests {
     use super::*;
     use crate::help::Step;
-    use crate::model_v2::Config;
+    use crate::research::model_v2::Config;
     use crate::stream::tests::rows;
     use crate::topup::tests::{pooled, word, DAY, NOW};
 
@@ -410,9 +410,7 @@ mod tests {
     }
 
     fn skilled(id: &str) -> Word {
-        let mut w = word(id, -DAY, 0.5);
-        w.skill = None;
-        w
+        word(id, -DAY, 0.5)
     }
 
     /// Two single-level rows about one word: how often each is picked.

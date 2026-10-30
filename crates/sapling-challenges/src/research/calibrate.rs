@@ -10,7 +10,7 @@
 
 use std::fmt::Write;
 
-use crate::model::{evaluate, tuning, MultiWord, Observation, Rates, Score, MULTI_WORD};
+use crate::research::v1::{evaluate, tuning, MultiWord, Observation, Rates, Score, MULTI_WORD};
 
 /// The rates `--search` tries, each axis around where the current ones sit.
 pub const WORD_RATES: [f64; 7] = [0.1, 0.2, 0.3, 0.45, 0.6, 0.8, 1.0];
@@ -159,7 +159,7 @@ pub fn format_report(report: &Report, observations: &[Observation]) -> String {
 mod tests {
     use super::*;
     use crate::replay::{input_from_events, observations, parse_export};
-    use crate::sim::{simulate, SimOptions};
+    use crate::research::sim::{simulate, SimOptions};
     use sapling_domain::events::PROFILE_ID;
 
     fn fixture() -> Vec<Observation> {

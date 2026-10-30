@@ -27,10 +27,7 @@
 			"at": 1710066000000
 		}
 	],
-	"getDifficultyParts": {
-		"bases": {},
-		"slopes": {}
-	},
+	"getRatings": [],
 	"getDailyActivity": [
 		{
 			"day": "2024-03-10",

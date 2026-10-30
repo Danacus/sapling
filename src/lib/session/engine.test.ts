@@ -58,8 +58,8 @@ function profile(overrides: Partial<Profile> = {}): Profile {
 
 /**
  * An item due `dueOffset` ms from `NOW` (negative = overdue), at strength 0 —
- * a word FSRS has no curve for yet, so it reads the new-word memory and the
- * starting skill.
+ * a word FSRS has no curve for yet, so it reads the new-word memory and no
+ * stability.
  */
 function item(
 	id: string,
@@ -101,7 +101,7 @@ function row(id: string, itemIds: string[], over: Partial<ChallengeRow> = {}): C
 	} as ChallengeRow;
 }
 
-/** A bankless cloze: typed, the hardest thing in the pool. */
+/** A bankless cloze: typed only. */
 function freeProductionRow(
 	id: string,
 	itemIds: string[],
@@ -123,9 +123,7 @@ function freeProductionRow(
 }
 
 /**
- * A pooled one-word recognition row: the easiest thing in the pool, which a
- * brand-new word fits, where {@link freeProductionRow}'s typed cloze fits none
- * of the fresh cards {@link item} builds.
+ * A pooled one-word recognition row.
  */
 function recognition(
 	id: string,
@@ -149,8 +147,8 @@ function recognition(
 }
 
 /**
- * A word with a full strength bar, remembered for certain. Its skill is still
- * the model's starting one: strength is display and decides nothing served.
+ * A word with a full strength bar, remembered for certain: strength is
+ * display and decides nothing served.
  */
 function strongItem(id: string, dueOffset: number): KnowledgeItem {
 	return atStrength(item(id, dueOffset), 0.9);
@@ -194,9 +192,10 @@ describe('nextPick', () => {
 		expect(only.challenge).toEqual(challengeOf(pool[0]));
 		expect(only.challenge).not.toHaveProperty('topic');
 		expect(only.challenge).not.toHaveProperty('lastServedAt');
-		// Each pick carries the help level it is served at and its remembered chance.
+		// Each pick carries the help level it is served at and its rolled chance.
 		expect(only.shown).toBe('plain');
-		expect(only.chance).toBeGreaterThan(0.72);
+		expect(only.chance).toBeGreaterThan(0);
+		expect(only.chance).toBeLessThan(1);
 	});
 
 	it('never skips the most urgent word, even when another has something', () => {
@@ -205,8 +204,21 @@ describe('nextPick', () => {
 		expect(nextPick(pool, items, NOW, { served: ['cb'] })).toBeNull();
 	});
 
-	it('never serves what does not fit the word', () => {
-		expect(nextPick([freeProductionRow('typed', ['due'])], [item('due', -DAY)], NOW)).toBeNull();
+	it('serves a new word a typed cloze rather than nothing: fit only orders', () => {
+		const pick = nextPick([freeProductionRow('typed', ['due'])], [item('due', -DAY)], NOW);
+		expect(pick?.challenge.id).toBe('typed');
+	});
+
+	it('picks the same under the same seed, so a peek is what is served', () => {
+		const pool = [
+			row('mc', ['due']),
+			freeProductionRow('typed', ['due']),
+			row('mc2', ['due'], { direction: 'toTarget' } as Partial<ChallengeRow>)
+		];
+		const items = [item('due', -DAY)];
+		for (let seed = 0; seed < 10; seed++) {
+			expect(nextPick(pool, items, NOW, { seed })).toEqual(nextPick(pool, items, NOW, { seed }));
+		}
 	});
 
 	it('is pure: it does not mutate the pool it is given', () => {
@@ -220,7 +232,8 @@ describe('nextPick', () => {
 describe('refill', () => {
 	it('writes for the words ahead up to the mark, never twice, and a shown row covers nothing', () => {
 		const items = [item('a', -2 * DAY), item('b', -DAY), item('c', DAY)];
-		const pool = [row('ca', ['a'])];
+		// Two rows are a word's stock; one shown leaves it short.
+		const pool = [row('ca', ['a']), row('ca2', ['a'])];
 		const ids = (wants: { item: { id: string } }[]) => [...new Set(wants.map((w) => w.item.id))];
 		expect(ids(planTopUp(pool, items, NOW, { limit: 2 }))).toEqual(['b']);
 		expect(ids(planTopUp(pool, items, NOW, { limit: 2, served: ['ca'] }))).toEqual(['a', 'b']);
@@ -314,30 +327,18 @@ describe('planRefill', () => {
 		]);
 	});
 
-	it('hands the writer each word’s skill and the serving the wants were planned against', () => {
-		// A passage about two words is judged by their average: the writer keeps
-		// one only when it fits them together, against these very numbers.
-		const items = [{ ...item('a', -1 * DAY), skill: 2.5 }, item('b', -1 * DAY)];
-		const parts = { bases: {}, slopes: {} };
+	it('judges a row written now by whether the language writes readings', () => {
 		const device = { romanizationMode: 'off' as const, audio: false };
-		const serving = servingFor(profile({ targetLanguage: 'Mandarin Chinese' }), parts, device);
-		const plan = planRefill([], items, profile(), NOW, { serving });
-
-		expect(plan.knownItems).toEqual([
-			{ id: 'a', term: 'term-a', skill: 2.5 },
-			{ id: 'b', term: 'term-b' }
-		]);
-		expect(plan.serving).toEqual(serving);
+		const serving = servingFor(profile({ targetLanguage: 'Mandarin Chinese' }), device);
 		expect(serving.readings).toBe(true);
-		expect(servingFor(profile(), parts, device).readings).toBe(false);
+		expect(servingFor(profile(), device).readings).toBe(false);
 	});
 
 	it('wants two challenges per upcoming word, due first and then review-ahead', () => {
 		const items = [item('a', -1 * DAY), item('b', -5 * DAY), item('c', +2 * DAY)];
 		const plan = planRefill([], items, profile(), NOW);
 
-		// These cards are freshly created, so every word is at the starting skill
-		// and wants two different kinds it can reach, short ones. `c`
+		// Every word has nothing, so each wants two different kinds. `c`
 		// is not due — it rides along because a top-up has no other source of
 		// vocabulary and must not come back empty for a learner who is caught up.
 		expect(wordsOf(plan)).toEqual(['b', 'a', 'c']);
@@ -345,26 +346,18 @@ describe('planRefill', () => {
 		for (const want of plan.wants) {
 			const id = want.item.id;
 			expect(want.item).toEqual({ id, term: `term-${id}`, meaning: `meaning-${id}` });
-			expect(want.length).toBeLessThanOrEqual(3);
+			expect(want.length).toBeGreaterThan(0);
 		}
 		for (let i = 0; i < plan.wants.length; i += 2) {
 			expect(plan.wants[i].kind).not.toEqual(plan.wants[i + 1].kind);
 		}
 	});
 
-	it('writes production for a word the model has learned is strong', () => {
-		const fresh = item('a', -DAY);
-		const strong = { ...atStrength(item('b', -DAY), 0.5), skill: 5 };
-
-		const kinds = (id: string) =>
-			planRefill([], [fresh, strong], profile(), NOW)
-				.wants.filter((w) => w.item.id === id)
-				.map((w) => w.kind.type);
-		const production = ['cloze', 'word-order', 'multi-cloze', 'translate-to-target'];
-		expect(kinds('a')).toHaveLength(2);
-		expect(kinds('a').some((k) => production.includes(k))).toBe(false);
-		expect(kinds('b')).toHaveLength(2);
-		expect(kinds('b').some((k) => k === 'recognize-mc' || k === 'produce-mc')).toBe(false);
+	it('replays its kinds under a seed', () => {
+		const items = [item('a', -DAY), item('b', -DAY)];
+		const kinds = (seed: number) =>
+			planRefill([], items, profile(), NOW, { seed }).wants.map((w) => w.kind.type);
+		expect(kinds(4)).toEqual(kinds(4));
 	});
 
 	it('wants nothing for a word the pool already covers', () => {
@@ -376,13 +369,10 @@ describe('planRefill', () => {
 		expect(plan.wants).toEqual([]);
 	});
 
-	it('does not count a row the word has outgrown as coverage', () => {
-		const pool = [recognition('r1', ['a'])];
-		const owned = { ...atStrength(item('a', -DAY), 0.5), skill: 6 };
-		const plan = planRefill(pool, [owned], profile(), NOW);
+	it('counts one row as short of stock and wants two more', () => {
+		const plan = planRefill([recognition('r1', ['a'])], [item('a', -DAY)], profile(), NOW);
 
 		expect(plan.wants).toHaveLength(2);
-		expect(plan.wants.map((w) => w.kind.type)).not.toContain('recognize-mc');
 		expect(wordsOf(plan)).toEqual(['a']);
 	});
 
@@ -426,11 +416,9 @@ describe('planRefill', () => {
 /* -------------------------------------------------------------------------- */
 
 describe('local kinds', () => {
-	/** Words the planner writes production for, so a cue-cloze can reach them. */
 	const words = ['perro', 'gato', 'casa', 'pan', 'agua', 'mesa'].map((term, i) => ({
 		...strongItem(`w${i}`, -DAY),
-		term,
-		skill: 4
+		term
 	}));
 	const cue = {
 		itemId: 'w0',
@@ -466,7 +454,7 @@ describe('local kinds', () => {
 				length: 7
 			}
 		];
-		const written = writeLocal(wants, [cue], [], words, undefined, 1);
+		const written = writeLocal(wants, [cue], [], words, NOW, { seed: 1 });
 		expect(written.wants).toEqual([wants[1]]);
 		const [row] = written.challenges;
 		expect(row).toMatchObject({
@@ -525,18 +513,9 @@ describe('planRefill → getBatch (mock mode)', () => {
 
 	it('walks the same progress steps as the real path, instantly', async () => {
 		const steps: ProgressStep[] = [];
-		const plan = planRefill([], [item('a', -DAY)], profile(), NOW);
+		const plan = planRefill([], [item('a', -DAY)], profile(), NOW, { seed: 2 });
 		await getBatch(plan, { onProgress: (s) => steps.push(s) });
 		expect(steps.map((s) => s.id)).toEqual(['build-prompt', 'request', 'validate']);
-	});
-
-	it('writes the kinds each word can manage', async () => {
-		const items = [item('a', -2 * DAY), { ...atStrength(item('b', -DAY), 0.5), skill: 5 }];
-		const batch = await getBatch(planRefill([], items, profile(), NOW));
-		const types = new Set(batch.challenges.map((c) => c.type));
-
-		expect(types.has('multiple-choice') || types.has('typed-translation')).toBe(true);
-		expect(types.has('cloze') || types.has('word-order') || types.has('multi-cloze')).toBe(true);
 	});
 });
 
@@ -583,7 +562,10 @@ describe('session walkthrough (mock batch, no database)', () => {
 		let earlySinceRound = 0;
 
 		for (;;) {
-			const pick = nextPick(pool, items, NOW, { served });
+			// No batch comes in this dry run, so a head with nothing is passed.
+			const pick =
+				nextPick(pool, items, NOW, { served }) ??
+				nextPick(pool, items, NOW, { served, pass: true });
 			if (!pick) break;
 			if (earlySinceRound >= MATCH_PAIRS_EVERY) {
 				earlySinceRound = 0;
@@ -631,10 +613,8 @@ describe('session walkthrough (mock batch, no database)', () => {
 		const known = Array.from({ length: 7 }, (_, i) => item(`k${i}`, -DAY));
 		const run = await playSession(known, () => 'correct');
 
-		// Two challenges per word, the mock filling every want. The mock writes
-		// its fixture at the fixture's own length, not the one asked for, but a
-		// row is judged at the length it was asked for, so every row fits its
-		// word and the stream serves them all.
+		// Two challenges per word, the mock filling every want, and fit never
+		// makes a row unavailable, so the stream serves them all.
 		expect(run.written).toBe(14);
 		expect(run.llmAnswered).toBe(14);
 		expect(run.matchRounds).toBe(Math.floor((run.llmAnswered - 1) / 4)); // after every 4th early-material answer, never last
@@ -654,7 +634,7 @@ describe('session walkthrough (mock batch, no database)', () => {
 		expect(run.summary.answered).toBe(run.llmAnswered + run.matchRounds);
 	});
 
-	it('ends when nothing is left that fits', async () => {
+	it('ends when nothing is left to serve', async () => {
 		const run = await playSession([item('a', -DAY)], () => 'correct');
 		expect(run.llmAnswered).toBeGreaterThan(0);
 		expect(run.llmAnswered).toBeLessThanOrEqual(run.written);

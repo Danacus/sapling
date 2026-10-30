@@ -51,26 +51,22 @@ What gets written is decided by the top-up planner (`plan_top_up` in
 LLM layer plans nothing. **Do not write a prompt rule about which type to use, or add an
 accuracy threshold anywhere** — the first will be ignored at best and fight the
 brief at worst, and the second is a mechanism the design deliberately has none
-of (the difficulty model already learns from every miss: the word's skill
-falls and the row reads harder, which is what the next pick and the next
-top-up are sized by). Everything below belongs in `topup.rs` and `fits.rs`,
-with a `cargo test` beside it:
+of (the difficulty model already learns from every miss: the challenge type
+reads harder, which is what the next pick and the next top-up are chosen by).
+Everything below belongs in `topup.rs` and `ratings.rs`, with a `cargo test`
+beside it:
 
-- which kinds a word may be asked (those that can reach the difficulty that
-  puts it at the aim, at some help level and length — `length_for`)
-- how many fresh challenges an uncovered word gets (`WANT_PER_WORD`)
-- what counts as coverage (a rested, playable row that `fits` the word)
-- which kind wins among the reachable ones (never-had first, then fewest
-  fitting rows, then a draw)
+- which kinds a word is asked (the two one roll of the ratings puts nearest
+  the aim's target)
+- how many fresh challenges a word short of stock gets (`STOCK`)
+- what counts as available (a rested, playable, unspent row — fit never
+  makes a row unavailable)
 - the top-up cap (`MAX_TOPUP_WANTS`)
 
 **Difficulty never reaches the model as a number on a scale.** What travels is
-one count on the item — a sentence length, a tile count — worked back from the
-word's skill and the kind's learned numbers (`length_for`), clamped to the
-kind's range in `sapling-challenges`' `data/kinds.json`. To make a type's rows
-longer or shorter overall, move that range or the kind's starting numbers in
-`data/model.json` (a `DERIVED_SCHEMA_VERSION` bump, and a calibration run to
-compare). Do **not** reintroduce a "difficulty 1-5" line: a number the model
+one count on the item — a sentence length, a tile count — the middle of the
+kind's range in its plugin's `type.json` (`middle_length`). To make a type's
+rows longer or shorter overall, move that range. Do **not** reintroduce a "difficulty 1-5" line: a number the model
 has to interpret is exactly what the counts replaced. What stays prose in a
 `rulesSpec` is the judgement no count expresses — distractor closeness, how
 subtle a planted error should be — stated once, with no level attached.
@@ -81,10 +77,10 @@ subtle a planted error should be — stated once, with no level attached.
   string is prompt-cache friendly — and a top-up's requests of one kind all
   quote it. Never interpolate per-session values into it; per-user signals
   travel in the user payload.
-- Nothing about how the learner has been doing travels as prose: a missed
-  word's skill has already fallen, so the length it is written at fell with it.
-  Do not add a "write this one easier" hint on top of a length that already
-  says how long to write it.
+- Nothing about how the learner has been doing travels as prose: a miss
+  already moved the ratings, so the kinds written next moved with it. Do not
+  add a "write this one easier" hint on top of a length that already says how
+  long to write it.
 - Load-bearing blocks: voice/anti-blandness, the `TargetText` reading rule,
   answerability, the `items` rule, and the size-is-a-target rule. Deleting one to
   save tokens regresses a whole class of output — say which block you are

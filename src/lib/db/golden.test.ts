@@ -167,7 +167,7 @@ async function probe(backend: Backend, events: RawEvent[]): Promise<Record<strin
 		poolSize: await backend.poolSize(),
 		getChallengesByIds: byId(await backend.getChallengesByIds(ids.challenges)),
 		recentResults: await backend.recentResults(RECENT_LIMIT),
-		getDifficultyParts: await backend.getDifficultyParts(),
+		getRatings: await backend.getRatings(),
 		getDailyActivity: await backend.getDailyActivity(),
 		studySessions: await backend.studySessions(0),
 		getTexts: await backend.getTexts(),
@@ -189,19 +189,12 @@ function dataOnly(reads: Record<string, unknown>): Record<string, unknown> {
 }
 
 /**
- * The keys whose numbers come out of the FSRS model — or are learned from
- * memories it computed (a word's `skill`, a row's `correction`) — and how far
- * apart they may be. Every number under `getDifficultyParts` is learned too.
+ * The keys whose numbers come out of the FSRS model, and how far apart they
+ * may be. Every number under `getRatings` is learned from the stabilities it
+ * computed, so it compares loosely too.
  */
-const MODEL_FLOATS = new Set([
-	'stability',
-	'difficulty',
-	'retrievability',
-	'strength',
-	'skill',
-	'correction'
-]);
-const LEARNED_PARTS = 'getDifficultyParts';
+const MODEL_FLOATS = new Set(['stability', 'difficulty', 'retrievability', 'strength']);
+const LEARNED_PARTS = 'getRatings';
 const MODEL_TOLERANCE = 1e-4;
 
 /**

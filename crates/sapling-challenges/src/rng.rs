@@ -34,6 +34,13 @@ impl Rng {
         (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
     }
 
+    /// A standard normal draw (Box–Muller), two uniforms each.
+    pub fn gaussian(&mut self) -> f64 {
+        let u = self.next_f64().max(1e-12);
+        let v = self.next_f64();
+        (-2.0 * u.ln()).sqrt() * (2.0 * std::f64::consts::PI * v).cos()
+    }
+
     /// Fisher-Yates.
     pub fn shuffle<T>(&mut self, values: &mut [T]) {
         for i in (1..values.len()).rev() {

@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS items (
   id TEXT PRIMARY KEY, kind TEXT, term TEXT, meaning TEXT, romanization TEXT, notes TEXT,
   introducedAt INTEGER, fsrsCard TEXT NOT NULL, reviewCount INTEGER NOT NULL DEFAULT 0,
   correctCount INTEGER NOT NULL DEFAULT 0, recentGrades TEXT NOT NULL DEFAULT '[]',
-  lastReviewedAt INTEGER, updatedAt INTEGER NOT NULL DEFAULT 0, skill REAL);
+  lastReviewedAt INTEGER, updatedAt INTEGER NOT NULL DEFAULT 0);
 
 CREATE TABLE IF NOT EXISTS reviews (
   id TEXT PRIMARY KEY, itemId TEXT NOT NULL, at INTEGER NOT NULL, grade INTEGER NOT NULL,
@@ -33,7 +33,7 @@ CREATE INDEX IF NOT EXISTS reviews_at ON reviews(at);
 CREATE TABLE IF NOT EXISTS challenges (
   id TEXT PRIMARY KEY, content TEXT NOT NULL, generatedAt INTEGER NOT NULL, topic TEXT,
   reported INTEGER NOT NULL DEFAULT 0, timesServed INTEGER NOT NULL DEFAULT 0,
-  lastServedAt INTEGER, correction REAL);
+  lastServedAt INTEGER);
 
 CREATE TABLE IF NOT EXISTS results (
   id TEXT PRIMARY KEY, challengeId TEXT NOT NULL, verdict TEXT NOT NULL,
@@ -47,9 +47,13 @@ CREATE TABLE IF NOT EXISTS overturns (
   challengeId TEXT NOT NULL, answeredAt INTEGER NOT NULL, verdict TEXT NOT NULL,
   PRIMARY KEY (challengeId, answeredAt));
 
--- The difficulty model's shared numbers (`learned.rs`): `base:<kind>/<help
--- level>` and `slope:<kind>`. A key not here is at its starting value.
-CREATE TABLE IF NOT EXISTS difficultyParts (key TEXT PRIMARY KEY, value REAL NOT NULL);
+-- The difficulty model's ratings (`learned.rs`): `challenge:<kind>/<help
+-- level>`, `scale`, `base` and `slope:<kind>`, each with its margin, the
+-- margin it started at, its last answer and how many it has had. A key not
+-- here is at its start.
+CREATE TABLE IF NOT EXISTS difficultyParts (
+  key TEXT PRIMARY KEY, value REAL NOT NULL, margin REAL NOT NULL, startMargin REAL NOT NULL,
+  at REAL NOT NULL, answers INTEGER NOT NULL);
 -- One row: the newest answer folded, and whether a full replay is owed.
 CREATE TABLE IF NOT EXISTS difficultyFold (
   id INTEGER PRIMARY KEY, at REAL, resultId TEXT, dirty INTEGER NOT NULL DEFAULT 0);
@@ -150,7 +154,11 @@ pub fn review_key(item_id: &str, at: f64, device: &str) -> String {
 ///
 /// Bumped for 13 when `studied` arrived: an older build logged and skipped
 /// every `studied` span it was sent, and the rebuild is what applies them.
-pub const DERIVED_SCHEMA_VERSION: u32 = 13;
+///
+/// Bumped for 14 when the difficulty model became ratings with margins:
+/// `difficultyParts` holds them, and `items.skill` and
+/// `challenges.correction` are gone.
+pub const DERIVED_SCHEMA_VERSION: u32 = 14;
 
 /// Every read table the materializer owns; `events` and `meta` survive a rebuild.
 ///

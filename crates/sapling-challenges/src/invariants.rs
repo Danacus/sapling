@@ -1,41 +1,38 @@
 //! The invariants that make the stream unable to strand a word: serving and
-//! refill read one list through one predicate, and the writer solves the very
-//! check serving applies, so a refill always unblocks the head.
+//! refill read one list through one predicate, and fit never makes a row
+//! unavailable, so a refill always unblocks the head.
 //!
 //! They hold under every readings setting a learner can pick, for a language
 //! written with readings and one without, and for rows about several words —
 //! a multi-cloze names a second word beside the one it was asked for, as a
-//! passage does, and is kept only when it fits them together (the writer's
-//! filler, `fits_fresh`).
+//! passage does.
 
 use sapling_srs::ItemSrs;
 
-use crate::fits::{best_fit, fits_fresh, Serving};
+use crate::fits::Serving;
 use crate::help::HelpLevel;
 use crate::kinds::{kind_of, Want, WireType};
-use crate::model::{
-    length_of, starting_skill, tuning, Aim, Evidence, Learner, Observation, MULTI_WORD,
-};
+use crate::model::{length_of, sigmoid, Aim, Evidence, Observation};
 use crate::pool::PoolRow;
+use crate::ratings::Ratings;
+use crate::research::sim::{synthetic, with_readings};
 use crate::rng::Rng;
 use crate::serve::RomanizationMode;
-use crate::sim::{synthetic, with_readings};
-use crate::stream::{head, low_water_mark, next_pick, upcoming};
+use crate::stream::{head, low_water_mark, next_pick, upcoming, Judge};
 use crate::topup::{plan_top_up, Scope};
-use crate::word::{by_id, Word};
+use crate::word::Word;
 use crate::Challenge;
 
 const DAY: f64 = 86_400_000.0;
 const START: f64 = 1_700_000_000_000.0;
 
-fn word(id: usize, skill: f64) -> Word {
+fn word(id: usize) -> Word {
     Word {
         id: format!("w{id}"),
         term: format!("t{id}"),
         meaning: format!("m{id}"),
         romanization: None,
         srs: None,
-        skill: Some(skill),
     }
 }
 
@@ -64,30 +61,18 @@ fn settings() -> Vec<(&'static str, Serving)> {
     ]
 }
 
-/// How many rows about several words the writer kept, and how many it dropped.
-#[derive(Debug, Default)]
-struct Several {
-    kept: usize,
-    dropped: usize,
-}
-
 /// Every want written as a model might: `drift` words off the length asked
 /// for, stamped with the length asked (as the resolver stamps it), with a
 /// reading where the language has one, and a multi-cloze naming a second word
-/// (`partner`) beside its own. A row is kept, as the filler keeps it, only
-/// when it fits its words as written.
-#[allow(clippy::too_many_arguments)]
+/// (`partner`) beside its own.
 fn fulfil(
     pool: &mut Vec<Option<PoolRow>>,
     wants: &[Want],
-    words: &[Word],
     serving: &Serving,
     at: f64,
     drift: i32,
     partner: &mut dyn FnMut(&str) -> String,
-    several: &mut Several,
 ) {
-    let index = by_id(words);
     for want in wants {
         let id = format!("c{}", pool.len());
         let written = (i32::from(want.length) + drift).max(3);
@@ -102,13 +87,6 @@ fn fulfil(
         }
         let mut challenge = Challenge::from_value(value).expect("a synthetic row parses");
         challenge.set_asked_length(f64::from(want.length));
-        if items.len() > 1 {
-            if !fits_fresh(&challenge, &index, serving) {
-                several.dropped += 1;
-                continue;
-            }
-            several.kept += 1;
-        }
         pool.push(Some(PoolRow {
             challenge,
             generated_at: at,
@@ -116,34 +94,36 @@ fn fulfil(
             last_served_at: None,
             reported: false,
             topic: None,
-            correction: None,
         }));
     }
 }
 
-/// Rows written as the planner asked fit the words they were asked for, and
-/// the planner then wants nothing more for them — at every skill and aim,
-/// under every readings setting, however far the writing drifted from the
-/// length asked for, and whatever word a passage paired its own with.
+/// Rows written as the planner asked are available to the words they were
+/// asked for, and the planner then wants nothing more for them — at every
+/// aim, under every readings setting, however far the writing drifted from
+/// the length asked for, and whatever word a passage paired its own with.
 #[test]
 fn rows_written_as_requested_are_served_and_want_nothing_more() {
-    let mut several = Several::default();
+    let ratings = Ratings::default();
     for (name, base) in settings() {
         for (aim, drift) in [(Aim::Easier, 0), (Aim::Normal, 4), (Aim::Harder, -3)] {
             let serving = Serving {
                 aim,
                 ..base.clone()
             };
-            let words: Vec<Word> = (0..25).map(|i| word(i, -12.0 + i as f64)).collect();
+            let judge = Judge {
+                serving: &serving,
+                ratings: &ratings,
+            };
+            let words: Vec<Word> = (0..25).map(word).collect();
             let mut pool = Vec::new();
-            let mut draws = Rng::seeded(3);
             let wants = plan_top_up(
                 &pool,
                 &words,
                 START,
-                &serving,
+                judge,
                 Scope::default(),
-                &mut || draws.next_f64(),
+                &mut Rng::seeded(3),
             );
             assert!(!wants.is_empty());
             let mut pairs = Rng::seeded(5);
@@ -153,32 +133,20 @@ fn rows_written_as_requested_are_served_and_want_nothing_more() {
                     break other;
                 }
             };
-            fulfil(
-                &mut pool,
-                &wants,
-                &words,
-                &serving,
-                START,
-                drift,
-                &mut partner,
-                &mut several,
-            );
-            let index = by_id(&words);
-            for row in pool.iter().flatten() {
-                assert!(
-                    best_fit(row, &index, &serving).is_some(),
-                    "{name} {aim:?} {}",
-                    row.challenge.id()
-                );
-            }
+            fulfil(&mut pool, &wants, &serving, START, drift, &mut partner);
             let wanted: Vec<&str> = wants.iter().map(|w| w.item.id.as_str()).collect();
+            for ahead in upcoming(&pool, &words, START, &[], usize::MAX) {
+                if wanted.contains(&ahead.word.id.as_str()) {
+                    assert!(ahead.available >= 2, "{name} {aim:?} {}", ahead.word.id);
+                }
+            }
             let again = plan_top_up(
                 &pool,
                 &words,
                 START,
-                &serving,
+                judge,
                 Scope::default(),
-                &mut || 0.0,
+                &mut Rng::seeded(4),
             );
             assert!(
                 again.iter().all(|w| !wanted.contains(&w.item.id.as_str())),
@@ -186,38 +154,25 @@ fn rows_written_as_requested_are_served_and_want_nothing_more() {
             );
         }
     }
-    // The pairing really was exercised, both ways.
-    assert!(several.kept > 0 && several.dropped > 0, "{several:?}");
 }
 
-/// A learner practising daily, every answer folded into the model as the
+/// A learner practising daily, every answer folded into the ratings as the
 /// app folds it, refill fulfilled as asked (the writing drifting in length,
 /// passages pairing words) but only now and then, and never twice for a word
 /// with nothing served since: whenever the head has nothing it has not been
 /// asked for yet, and one refill gives it something; the pick is always the
 /// head of the list.
-fn no_word_waits_for_more_than_one_refill_under(name: &str, base: &Serving, days: usize) {
+fn no_word_waits_for_more_than_one_refill_under(name: &str, serving: &Serving, days: usize) {
     let mut rng = Rng::seeded(11);
-    // Skills from far under the easiest row to far over the hardest, with the
-    // truth a little off what the model starts from.
-    let mut words: Vec<Word> = (0..40)
-        .map(|i| word(i, starting_skill() + 16.0 * (rng.next_f64() - 0.5)))
+    let mut words: Vec<Word> = (0..40).map(word).collect();
+    let truth: Vec<f64> = (0..words.len())
+        .map(|_| 1.0 + 6.0 * (rng.next_f64() - 0.5))
         .collect();
-    let truth: Vec<f64> = words
-        .iter()
-        .map(|w| w.skill.unwrap() + rng.next_f64() - 0.5)
-        .collect();
-    // A plain exponential schedule stands in for FSRS: memory orders the words
-    // and draws the outcomes, and decides nothing a row is picked by.
-    let mut stability: Vec<Option<(f64, f64)>> = vec![None; words.len()];
+    // A plain exponential schedule stands in for FSRS.
+    let mut schedule: Vec<Option<(f64, f64)>> = vec![None; words.len()];
     let mut pool: Vec<Option<PoolRow>> = Vec::new();
-    let mut learner = Learner::default();
-    for w in &words {
-        learner.skills.insert(w.id.clone(), w.skill.unwrap());
-    }
-    let rates = tuning().rates;
+    let mut ratings = Ratings::default();
     let mut blocked = 0;
-    let mut several = Several::default();
 
     for day in 0..days {
         let mut now = START + day as f64 * DAY + 9.0 * 3_600_000.0;
@@ -225,54 +180,58 @@ fn no_word_waits_for_more_than_one_refill_under(name: &str, base: &Serving, days
         let mut asked: Vec<String> = Vec::new();
         for answer in 0..40 {
             now += 20_000.0;
-            for (w, at) in stability.iter().enumerate() {
+            for (w, at) in schedule.iter().enumerate() {
                 if let Some((days, last)) = *at {
                     words[w].srs = Some(ItemSrs {
                         due: last + days * DAY,
                         retrievability: 0.9f64.powf((now - last) / (days * DAY)),
                         strength: 0.0,
+                        stability: Some(days),
                     });
                 }
             }
-            let serving = Serving {
-                parts: learner.shared.clone(),
-                ..base.clone()
-            };
             let mark = low_water_mark(None, None);
             let drift = [0, 3, -2][answer % 3];
             let count = words.len();
-            let mut refill = |pool: &mut Vec<Option<PoolRow>>,
-                              asked: &mut Vec<String>,
-                              several: &mut Several| {
+            let seed = rng.next_u64();
+            let judge = Judge {
+                serving,
+                ratings: &ratings,
+            };
+            let refill = |pool: &mut Vec<Option<PoolRow>>, asked: &mut Vec<String>| {
                 let scope = Scope {
                     served: &served,
                     asked,
                     limit: Some(mark),
                     ..Scope::default()
                 };
-                let wants = plan_top_up(pool, &words, now, &serving, scope, &mut || rng.next_f64());
+                let mut draws = Rng::seeded(seed ^ 1);
+                let wants = plan_top_up(pool, &words, now, judge, scope, &mut draws);
                 let mut partner = |own: &str| loop {
-                    let other = format!("w{}", (rng.next_f64() * count as f64) as usize);
+                    let other = format!("w{}", (draws.next_f64() * count as f64) as usize);
                     if other != own {
                         break other;
                     }
                 };
-                fulfil(
-                    pool,
-                    &wants,
-                    &words,
-                    &serving,
-                    now,
-                    drift,
-                    &mut partner,
-                    several,
-                );
+                fulfil(pool, &wants, serving, now, drift, &mut partner);
                 asked.extend(wants.into_iter().map(|w| w.item.id));
             };
             if answer % 7 == 0 {
-                refill(&mut pool, &mut asked, &mut several);
+                refill(&mut pool, &mut asked);
             }
-            let first = head(&pool, &words, now, &serving, &served, false).unwrap();
+            let pick = |pool: &[Option<PoolRow>], pass: bool| {
+                head(
+                    pool,
+                    &words,
+                    now,
+                    judge,
+                    &served,
+                    pass,
+                    &mut Rng::seeded(seed),
+                )
+                .unwrap()
+            };
+            let first = pick(&pool, false);
             let next = match first.next {
                 Some(next) => next,
                 None => {
@@ -281,16 +240,17 @@ fn no_word_waits_for_more_than_one_refill_under(name: &str, base: &Serving, days
                         !asked.contains(&first.word),
                         "{name}, day {day}: blocked and already asked"
                     );
-                    refill(&mut pool, &mut asked, &mut several);
-                    next_pick(&pool, &words, now, &serving, &served).unwrap_or_else(|| {
-                        panic!("{name}, day {day}: still blocked after a refill")
-                    })
+                    refill(&mut pool, &mut asked);
+                    next_pick(&pool, &words, now, judge, &served, &mut Rng::seeded(seed))
+                        .unwrap_or_else(|| {
+                            panic!("{name}, day {day}: still blocked after a refill")
+                        })
                 }
             };
-            let list = upcoming(&pool, &words, now, &serving, &served, mark);
-            assert_eq!(list[0].next.as_ref(), Some(&next));
-            // A head with something is never passed.
-            let passing = head(&pool, &words, now, &serving, &served, true).unwrap();
+            let list = upcoming(&pool, &words, now, &served, mark);
+            assert!(list[0].available > 0);
+            // A head with something is never passed, and the same seed picks the same.
+            let passing = pick(&pool, true);
             assert_eq!(
                 (passing.next.as_ref(), passing.instead),
                 (Some(&next), None)
@@ -304,7 +264,10 @@ fn no_word_waits_for_more_than_one_refill_under(name: &str, base: &Serving, days
                 .iter()
                 .map(|item| words.iter().position(|w| w.id == *item).unwrap())
                 .collect();
-            let o = Observation {
+            let skill = at.iter().map(|&w| truth[w]).sum::<f64>() / at.len() as f64;
+            let memory: f64 = at.iter().map(|&w| words[w].memory()).product();
+            let correct = rng.next_f64() < memory * sigmoid(skill);
+            ratings.learn(&Observation {
                 at: now,
                 challenge_id: id.clone(),
                 kind: kind_of(&row.challenge).unwrap(),
@@ -315,36 +278,23 @@ fn no_word_waits_for_more_than_one_refill_under(name: &str, base: &Serving, days
                     .map(|&w| Evidence {
                         item_id: words[w].id.clone(),
                         memory: words[w].memory(),
-                        stability: 0.0,
+                        stability: words[w].stability(),
                     })
                     .collect(),
-                outcome: 0.0,
-            };
-            let skill = at.iter().map(|&w| truth[w]).sum::<f64>() / at.len() as f64;
-            let memory: f64 = at.iter().map(|&w| words[w].memory()).product();
-            let truly = crate::model::sigmoid(skill - learner.difficulty_of(&o));
-            let correct = rng.next_f64() < memory * truly;
-            let o = Observation {
                 outcome: if correct { 1.0 } else { 0.0 },
-                ..o
-            };
-            learner.learn(&o, &rates, MULTI_WORD);
+            });
             row.last_served_at = Some(now);
             row.times_served += 1.0;
             served.push(id);
             asked.retain(|a| !items.contains(a));
             for &w in &at {
-                let days = stability[w].map_or(1.0, |(s, _)| s);
+                let days = schedule[w].map_or(1.0, |(s, _)| s);
                 let days = if correct {
                     days * 2.5
                 } else {
                     (days * 0.3).max(0.01)
                 };
-                stability[w] = Some((days, now));
-                words[w].skill = Some(learner.skill(&words[w].id));
-            }
-            for row in pool.iter_mut().flatten() {
-                row.correction = learner.corrections.get(row.challenge.id()).copied();
+                schedule[w] = Some((days, now));
             }
         }
     }
@@ -352,7 +302,6 @@ fn no_word_waits_for_more_than_one_refill_under(name: &str, base: &Serving, days
         blocked > 0,
         "{name}: the run never exercised a blocked head"
     );
-    assert!(several.kept > 0, "{name}: no passage was ever written");
 }
 
 #[test]
@@ -367,38 +316,35 @@ fn no_word_waits_for_more_than_one_refill() {
 /// further down the same list that has something — and only then.
 #[test]
 fn a_head_no_batch_can_help_is_passed_for_the_next_word_with_something() {
-    let words: Vec<Word> = (0..3).map(|i| word(i, starting_skill())).collect();
+    let words: Vec<Word> = (0..3).map(word).collect();
     let serving = Serving::default();
+    let ratings = Ratings::default();
+    let judge = Judge {
+        serving: &serving,
+        ratings: &ratings,
+    };
     let mut pool = Vec::new();
     let wants = plan_top_up(
         &pool,
         &words[2..],
         START,
-        &serving,
+        judge,
         Scope::default(),
-        &mut || 0.0,
+        &mut Rng::seeded(0),
     );
-    fulfil(
-        &mut pool,
-        &wants,
-        &words,
-        &serving,
-        START,
-        0,
-        &mut |_| unreachable!("no passage for a new word"),
-        &mut Several::default(),
-    );
-    let waiting = head(&pool, &words, START, &serving, &[], false).unwrap();
+    fulfil(&mut pool, &wants, &serving, START, 0, &mut |_| "w1".into());
+    let at = |pass| head(&pool, &words, START, judge, &[], pass, &mut Rng::seeded(2)).unwrap();
+    let waiting = at(false);
     assert_eq!(
         (waiting.word.as_str(), waiting.next.is_none()),
         ("w0", true)
     );
-    let passed = head(&pool, &words, START, &serving, &[], true).unwrap();
+    let passed = at(true);
     assert_eq!(passed.word, "w0");
-    assert_eq!(passed.instead.as_deref(), Some("w2"));
+    let instead = passed.instead.clone().unwrap();
     let row = pool[passed.next.unwrap().at].as_ref().unwrap();
-    assert_eq!(row.challenge.item_ids(), ["w2"]);
+    assert!(row.challenge.item_ids().contains(&instead));
     // Nothing anywhere: nothing to pass to.
-    let empty = head(&[], &words, START, &serving, &[], true).unwrap();
+    let empty = head(&[], &words, START, judge, &[], true, &mut Rng::seeded(2)).unwrap();
     assert_eq!((empty.next, empty.instead), (None, None));
 }

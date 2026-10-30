@@ -16,7 +16,7 @@ First decide which boundary changes:
 ## Add a kind to an existing plugin
 
 1. In `crates/sapling-challenges/src/types/<type>/mod.rs`, add its `Deserialize + JsonSchema` wire shape and resolver behavior. Keep cosmetic cleanup lenient, but reject answers/references that would make the stored row invalid.
-2. Add the kind to that plugin's `type.json`. Preserve existing ranks; append a new explicit rank unless a migration explicitly requires otherwise. Include direction, stored discriminator facts, lengths, written steps, listening capability, bases and slope. Omit lengths only for a retired kind that must remain readable but never be planned.
+2. Add the kind to that plugin's `type.json`. Preserve existing ranks; append a new explicit rank unless a migration explicitly requires otherwise. Include direction, stored discriminator facts, lengths, written steps, and listening capability; no difficulty numbers (every kind's ratings start alike). Omit lengths only for a retired kind that must remain readable but never be planned.
 3. Add `lessons/<kind>.json` in the same plugin folder and register it in the plugin's `LESSONS`. It owns prompt/rules/params/corrective/escalation specs and fixtures. The generic lesson registry discovers it through the plugin registry.
 4. Add resolver/schema/fixture cases and run the gates below. Never add a central source arm or global kinds-data entry; those no longer exist.
 

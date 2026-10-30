@@ -34,7 +34,8 @@
 				"srs": {
 					"due": 1710061262000,
 					"retrievability": 0,
-					"strength": 0
+					"strength": 0,
+					"stability": 0
 				},
 				"reviewCount": 0,
 				"correctCount": 0,
@@ -62,11 +63,11 @@
 				"srs": {
 					"due": 1710062250000,
 					"retrievability": 0.9094932079315186,
-					"strength": 0.3167321144806818
+					"strength": 0.3167321144806818,
+					"stability": 2.30649995803833
 				},
 				"reviewCount": 2,
 				"correctCount": 1,
-				"skill": 2.1773197620124822,
 				"history": []
 			},
 			{
@@ -92,11 +93,11 @@
 				"srs": {
 					"due": 1710062520000,
 					"retrievability": 0.9094932079315186,
-					"strength": 0.3167321144806818
+					"strength": 0.3167321144806818,
+					"stability": 2.30649995803833
 				},
 				"reviewCount": 1,
 				"correctCount": 1,
-				"skill": 2.591356172824785,
 				"history": []
 			}
 		],
@@ -122,7 +123,8 @@
 				"srs": {
 					"due": 1710061262000,
 					"retrievability": 0,
-					"strength": 0
+					"strength": 0,
+					"stability": 0
 				},
 				"reviewCount": 0,
 				"correctCount": 0,
@@ -151,11 +153,11 @@
 				"srs": {
 					"due": 1710062250000,
 					"retrievability": 0.9094932079315186,
-					"strength": 0.3167321144806818
+					"strength": 0.3167321144806818,
+					"stability": 2.30649995803833
 				},
 				"reviewCount": 2,
 				"correctCount": 1,
-				"skill": 2.1773197620124822,
 				"recentGrades": [
 					{
 						"at": 1710061800000,
@@ -191,11 +193,11 @@
 				"srs": {
 					"due": 1710062520000,
 					"retrievability": 0.9094932079315186,
-					"strength": 0.3167321144806818
+					"strength": 0.3167321144806818,
+					"stability": 2.30649995803833
 				},
 				"reviewCount": 1,
 				"correctCount": 1,
-				"skill": 2.591356172824785,
 				"recentGrades": [
 					{
 						"at": 1710061920000,
@@ -229,7 +231,8 @@
 			"srs": {
 				"due": 1710061262000,
 				"retrievability": 0,
-				"strength": 0
+				"strength": 0,
+				"stability": 0
 			},
 			"reviewCount": 0,
 			"correctCount": 0,
@@ -258,11 +261,11 @@
 			"srs": {
 				"due": 1710062250000,
 				"retrievability": 0.9094932079315186,
-				"strength": 0.3167321144806818
+				"strength": 0.3167321144806818,
+				"stability": 2.30649995803833
 			},
 			"reviewCount": 2,
 			"correctCount": 1,
-			"skill": 2.1773197620124822,
 			"recentGrades": [
 				{
 					"at": 1710061800000,
@@ -309,11 +312,11 @@
 			"srs": {
 				"due": 1710062520000,
 				"retrievability": 0.9094932079315186,
-				"strength": 0.3167321144806818
+				"strength": 0.3167321144806818,
+				"stability": 2.30649995803833
 			},
 			"reviewCount": 1,
 			"correctCount": 1,
-			"skill": 2.591356172824785,
 			"recentGrades": [
 				{
 					"at": 1710061920000,
@@ -358,8 +361,7 @@
 			"timesServed": 1,
 			"lastServedAt": 1710061860000,
 			"reported": false,
-			"topic": "greetings",
-			"correction": 0.07099671640853752
+			"topic": "greetings"
 		},
 		{
 			"id": "ch-mc",
@@ -383,8 +385,7 @@
 			"timesServed": 2,
 			"lastServedAt": 1710199800000,
 			"reported": false,
-			"topic": "greetings",
-			"correction": -0.0010443087466687102
+			"topic": "greetings"
 		},
 		{
 			"id": "ch-mp",
@@ -473,8 +474,7 @@
 			"timesServed": 1,
 			"lastServedAt": 1710061920000,
 			"reported": false,
-			"topic": "greetings",
-			"correction": -0.13706579774428265
+			"topic": "greetings"
 		},
 		{
 			"id": "ch-wo",
@@ -705,18 +705,72 @@
 			"at": 1710061860000
 		}
 	],
-	"getDifficultyParts": {
-		"bases": {
-			"cloze/pick-4": 1.1141993432817077,
-			"recognize-mc/plain": -0.00020886174933374205,
-			"translate-to-target/plain": 2.7725868404511433
+	"getRatings": [
+		{
+			"key": "base",
+			"value": 0.5131489231595477,
+			"margin": 0.4627931741797611,
+			"startMargin": 0.5,
+			"at": 1710230400000,
+			"answers": 6
 		},
-		"slopes": {
-			"cloze": 0.12425980298451225,
-			"recognize-mc": 0.11997911382506661,
-			"translate-to-target": 0.1445173680902287
+		{
+			"key": "challenge:cloze/pick-4",
+			"value": 1.2622003200327423,
+			"margin": 1.320910352426016,
+			"startMargin": 1.5,
+			"at": 1710061860000,
+			"answers": 1
+		},
+		{
+			"key": "challenge:recognize-mc/plain",
+			"value": -0.23933415314258574,
+			"margin": 1.074742042126401,
+			"startMargin": 1.5,
+			"at": 1710230400000,
+			"answers": 3
+		},
+		{
+			"key": "challenge:translate-to-target/plain",
+			"value": -0.6840326503349359,
+			"margin": 1.1504731971975022,
+			"startMargin": 1.5,
+			"at": 1710202500000,
+			"answers": 2
+		},
+		{
+			"key": "scale",
+			"value": 0.36644127038658103,
+			"margin": 0.46622322378318987,
+			"startMargin": 0.5,
+			"at": 1710230400000,
+			"answers": 6
+		},
+		{
+			"key": "slope:cloze",
+			"value": 0.07816286060869497,
+			"margin": 0.09922188276292998,
+			"startMargin": 0.1,
+			"at": 1710061860000,
+			"answers": 1
+		},
+		{
+			"key": "slope:recognize-mc",
+			"value": 0.10966479098659056,
+			"margin": 0.09604845555534129,
+			"startMargin": 0.1,
+			"at": 1710230400000,
+			"answers": 3
+		},
+		{
+			"key": "slope:translate-to-target",
+			"value": 0.11678602836300137,
+			"margin": 0.09819573074088435,
+			"startMargin": 0.1,
+			"at": 1710202500000,
+			"answers": 2
 		}
-	},
+	],
 	"getDailyActivity": [
 		{
 			"day": "2024-03-10",

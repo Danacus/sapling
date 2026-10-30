@@ -1,6 +1,6 @@
 //! A simulated learner with known skills and difficulties, writing the log a
 //! real one would: the calibration command's fixture, and what chose the
-//! starting rates (`docs/challenge-difficulty.md` §12.5).
+//! starting rates.
 //!
 //! The truth has the model's own shape — memory from FSRS, a sigmoid of skill
 //! against difficulty — but its numbers are not the starting values: every
@@ -18,16 +18,60 @@ use serde_json::{json, Value};
 
 use sapling_srs::{current_retrievability, new_card_state, review_card, FsrsCardState, Grade};
 
-use crate::help::HelpLevel;
+use crate::help::{HelpLevel, Step};
 use crate::kinds::{kind_of, WireType};
-use crate::model::{
-    length_of, sigmoid, starting_base, starting_skill, starting_slope, tuning, Evidence, Learner,
-    Observation, Rates, MULTI_WORD,
+use crate::research::v1::{
+    length_of, sigmoid, starting_skill, tuning, Evidence, Learner, Observation, Rates, MULTI_WORD,
 };
 use crate::rng::Rng;
 use crate::Challenge;
 
 pub mod closed_loop;
+
+/// The simulated learner's starting truth per kind: a base per step and a
+/// length slope. A kind's unlisted step reads its first listed one.
+fn truth_table(kind: WireType) -> (&'static [(Step, f64)], f64) {
+    match kind {
+        WireType::RecognizeMc => (&[(Step::Plain, 0.0)], 0.12),
+        WireType::ProduceMc => (&[(Step::Plain, 0.3)], 0.12),
+        WireType::ContextMc => (&[(Step::Plain, 0.7)], 0.12),
+        WireType::TranslateToNative => (&[(Step::Plain, 0.9)], 0.12),
+        WireType::TranslateToTarget => (&[(Step::Plain, 2.8)], 0.15),
+        WireType::SpotError => (&[(Step::Plain, 0.3)], 0.12),
+        WireType::WordOrder => (&[(Step::Tiles, 1.3), (Step::Extra2, 2.1)], 0.15),
+        WireType::Cloze => (
+            &[(Step::Pick4, 1.1), (Step::Pick6, 1.9), (Step::Typed, 3.1)],
+            0.12,
+        ),
+        WireType::MultiCloze => (&[(Step::Answers, 1.9), (Step::Extra2, 2.6)], 0.08),
+        WireType::CueCloze => (
+            &[(Step::Pick4, 1.3), (Step::Pick6, 2.1), (Step::Typed, 3.4)],
+            0.14,
+        ),
+    }
+}
+
+/// Where a kind and help level start in the simulated truth: the step's
+/// number, plus what hiding the reading or listening adds.
+pub fn starting_base(kind: WireType, help: HelpLevel) -> f64 {
+    let (steps, _) = truth_table(kind);
+    let of = |step: Step| {
+        steps
+            .iter()
+            .find(|(s, _)| *s == step)
+            .or(steps.first())
+            .map_or(0.0, |(_, b)| *b)
+    };
+    let t = tuning();
+    if help.listening {
+        return of(Step::Plain) + t.listening;
+    }
+    of(help.step) + if help.reading_hidden { t.hidden } else { 0.0 }
+}
+
+pub fn starting_slope(kind: WireType) -> f64 {
+    truth_table(kind).1
+}
 
 const DAY: f64 = 86_400_000.0;
 const REST: f64 = 3.0 * DAY;
@@ -94,9 +138,7 @@ impl Simulation {
 }
 
 pub(crate) fn gaussian(rng: &mut Rng) -> f64 {
-    let u = rng.next_f64().max(1e-12);
-    let v = rng.next_f64();
-    (-2.0 * u.ln()).sqrt() * (2.0 * std::f64::consts::PI * v).cos()
+    rng.gaussian()
 }
 
 fn words(prefix: &str, n: usize) -> Vec<String> {
@@ -202,7 +244,7 @@ pub fn simulate(options: SimOptions) -> Simulation {
             .insert(kind, starting_slope(kind) * (0.6 + 0.8 * rng.next_f64()));
     }
     let true_base = |truth: &mut Truth, rng: &mut Rng, kind: WireType, help: HelpLevel| {
-        let key = crate::model::part_key(kind, help);
+        let key = crate::research::v1::part_key(kind, help);
         *truth
             .bases
             .entry(key)

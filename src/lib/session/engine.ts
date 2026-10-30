@@ -30,8 +30,8 @@ import {
 	addToPool,
 	cuesFor,
 	getAllItems,
-	getDifficultyParts,
 	getPool,
+	getRatings,
 	getProfile,
 	overturnResult,
 	recordAnswer,
@@ -40,7 +40,12 @@ import {
 } from '$lib/db';
 import type { ChallengeRow, ReasoningEffort } from '$lib/db';
 import { challengeOf } from '$lib/db';
-import type { CueCandidate, LocalWrite, TopUpCoverage } from '$lib/db/generated/index';
+import type {
+	CueCandidate,
+	LocalWrite,
+	StoredRating,
+	TopUpCoverage
+} from '$lib/db/generated/index';
 import { getBatch, isMockMode } from '$lib/llm';
 import type { BatchArgs, OnProgress, TokenUsage, Want } from '$lib/llm';
 import { Grade, isDue } from '$lib/srs';
@@ -58,9 +63,8 @@ import { servingFor, type DeviceServing, type Serving } from './serving';
  *
  * It is a `wrong` answer in every respect, FSRS `Again` included —
  * "I could not produce it" is exactly what `Again` encodes — and the
- * difficulty model learns from it like any other miss: the word's skill falls
- * and the row reads harder, so the next pick and the next top-up both ask
- * less of the word.
+ * difficulty model learns from it like any other miss: its challenge type
+ * and help level read harder, so the next pick and the next top-up ask less.
  */
 export const SKIP_ANSWER = '(skipped)';
 
@@ -121,9 +125,27 @@ export function sessionSummary(answers: SessionAnswer[]): SessionSummary {
 /* The stream's decisions (pure)                                               */
 /* -------------------------------------------------------------------------- */
 
-export interface StreamOptions {
-	/** What the pick is made against; starting values, the normal aim and no listening when absent. */
+/** What a pick or a plan is judged against besides the pool and the words. */
+export interface Judged {
+	/** The aim and the help-level bounds; the normal aim and no listening when absent. */
 	serving?: Serving;
+	/** `getRatings`; every rating at its start when absent. */
+	ratings?: readonly StoredRating[];
+}
+
+function judgedArgs(opts: Judged) {
+	return {
+		...(opts.serving === undefined ? {} : { serving: opts.serving }),
+		...(opts.ratings === undefined ? {} : { ratings: [...opts.ratings] })
+	};
+}
+
+export interface StreamOptions extends Judged {
+	/**
+	 * Rolls the ratings. The same seed for the same stream position picks the
+	 * same, so a peek and the pick agree; drawn fresh when absent.
+	 */
+	seed?: number;
 	/** The challenge ids this stream has already shown: never picked again. */
 	served?: readonly string[];
 	/**
@@ -138,7 +160,7 @@ export interface SessionPick {
 	challenge: Challenge;
 	/** The help level (`crates/sapling-challenges`' `help.rs`): what `presentationFor` shows and the answer records. */
 	shown: string;
-	/** The chance of a correct answer at that help level, given the word is remembered. */
+	/** The chance of a correct answer at that help level, as the ratings rolled it. */
 	chance: number;
 	/** Whether its word is due, rather than reviewed ahead. */
 	due: boolean;
@@ -154,7 +176,8 @@ function streamArgs(
 		pool: [...pool],
 		words: asWords(items),
 		now,
-		...(opts.serving === undefined ? {} : { serving: opts.serving }),
+		...judgedArgs(opts),
+		...(opts.seed === undefined ? {} : { seed: opts.seed }),
 		...(opts.served === undefined ? {} : { served: [...opts.served] }),
 		...(opts.pass ? { pass: true } : {})
 	};
@@ -170,8 +193,9 @@ export interface StreamHead {
 
 /**
  * Rust's (`crates/sapling-challenges`' `stream.rs`): the most urgent word (due
- * words first, most overdue first, then the words not yet due) and its
- * available row whose best help level sits closest to the aim — `pick: null`
+ * words first, most overdue first, then the words not yet due) and, among its
+ * available rows at every help level, the one whose rolled chance is nearest
+ * the aim's target — `pick: null`
  * while that word has nothing, which a refill is what fixes, unless `pass`
  * lets it be the first word further down with something (`instead`); `null`
  * only with no words at all. What plays is the row as stored, minus its
@@ -238,9 +262,7 @@ export function matchRound(items: KnowledgeItem[], seed?: number): MatchPairsCha
 /* Top-up planning                                                             */
 /* -------------------------------------------------------------------------- */
 
-export interface PlanTopUpOptions {
-	/** What a row is judged against; see {@link StreamOptions.serving}. */
-	serving?: Serving;
+export interface PlanTopUpOptions extends Judged {
 	/** The ids a stream has already shown: they cover nothing, as they serve nothing. */
 	served?: readonly string[];
 	/** Words a stream has already asked a refill for: they want nothing. */
@@ -249,15 +271,16 @@ export interface PlanTopUpOptions {
 	limit?: number;
 	/** Words with a usable cue ({@link cuesFor}): a local kind is a candidate only for them. */
 	cued?: readonly string[];
-	/** Replays the tie-breaks between equally good kinds. */
+	/** Replays the roll the kinds are chosen by. */
 	seed?: number;
 }
 
 /**
  * The wants the words ahead are missing, most urgent word first — Rust's
  * (`crates/sapling-challenges`' `topup.rs`): of the same list the stream
- * serves from, a word with no available row wants two written, each a kind
- * that can reach it, at the length worked back from the aim.
+ * serves from, a word with fewer than two available rows wants two written:
+ * the kinds one roll of the ratings puts nearest the aim's target, each at
+ * the middle of its lengths.
  */
 export function planTopUp(
 	pool: readonly ChallengeRow[],
@@ -269,7 +292,7 @@ export function planTopUp(
 		pool: [...pool],
 		words: asWords(items),
 		now,
-		...(opts.serving === undefined ? {} : { serving: opts.serving }),
+		...judgedArgs(opts),
 		...(opts.served === undefined ? {} : { served: [...opts.served] }),
 		...(opts.asked === undefined ? {} : { asked: [...opts.asked] }),
 		...(opts.limit === undefined ? {} : { limit: opts.limit }),
@@ -288,16 +311,17 @@ export function writeLocal(
 	cues: CueCandidate[],
 	pool: readonly ChallengeRow[],
 	items: KnowledgeItem[],
-	serving?: Serving,
-	seed?: number
+	now: number,
+	opts: Judged & { seed?: number } = {}
 ): LocalWrite {
 	return callChallenges('writeLocal', {
 		wants,
 		cues,
 		pool: [...pool],
 		words: asWords(items),
-		...(serving === undefined ? {} : { serving }),
-		...(seed === undefined ? {} : { seed })
+		now,
+		...judgedArgs(opts),
+		...(opts.seed === undefined ? {} : { seed: opts.seed })
 	});
 }
 
@@ -306,13 +330,13 @@ export function topUpCoverage(
 	pool: readonly ChallengeRow[],
 	items: KnowledgeItem[],
 	now: number,
-	serving?: Serving
+	opts: Judged = {}
 ): TopUpCoverage {
 	return callChallenges('topUpCoverage', {
 		pool: [...pool],
 		words: asWords(items),
 		now,
-		...(serving === undefined ? {} : { serving })
+		...judgedArgs(opts)
 	});
 }
 
@@ -328,10 +352,10 @@ export interface PlanRefillOptions extends PlanTopUpOptions {
 /**
  * Turns the pool and the learner's collection into one batch request.
  *
- * The brief is {@link planTopUp}'s: two wants for every word with no row
- * available, walked most urgent first — over the stream's next `limit` words
- * for a refill, the whole collection for a press — and nothing at all for a
- * word already covered. A batch is written *about* vocabulary the learner
+ * The brief is {@link planTopUp}'s: two wants for every word with fewer than
+ * two rows available, walked most urgent first — over the stream's next
+ * `limit` words for a refill, the whole collection for a press — and nothing
+ * at all for a word already stocked. A batch is written *about* vocabulary the learner
  * already has and introduces none of its own — new words arrive through the
  * assistant and conversation mode — so a learner with no words has no wants,
  * and one whose every word is covered has none either. Both come back as an
@@ -370,21 +394,15 @@ export function planRefill(
 		// The romanization rides along for one reason: the prompt needs it to
 		// tell two same-spelled cards apart. It is dropped again
 		// for every word whose spelling is unambiguous, which is nearly all of them.
-		// The skill rides along for the writer alone, never the prompt: a passage
-		// about two words is judged by their average, so a row is counted as a
-		// want filled only once it fits them together (`lesson.rs`' `fill_request`,
-		// against the same `serving` the wants were planned with).
 		...(items.length
 			? {
 					knownItems: items.map((item) => ({
 						id: item.id,
 						term: item.term,
-						...(item.romanization ? { romanization: item.romanization } : {}),
-						...(item.skill === undefined ? {} : { skill: item.skill })
+						...(item.romanization ? { romanization: item.romanization } : {})
 					}))
 				}
 			: {}),
-		...(opts.serving === undefined ? {} : { serving: opts.serving }),
 		...(topic ? { topic } : {})
 	};
 }
@@ -481,10 +499,11 @@ export async function generateChallenges(
 
 	progress?.({ id: 'select-items', label: 'Checking what the pool is missing' });
 
-	const [pool, items, parts] = await Promise.all([getPool(), getAllItems(), getDifficultyParts()]);
-	const serving = servingFor(profile, parts, opts.device);
+	const [pool, items, ratings] = await Promise.all([getPool(), getAllItems(), getRatings()]);
+	const serving = servingFor(profile, opts.device);
 	const plan: PlanRefillOptions = {
 		serving,
+		ratings,
 		...(opts.served === undefined ? {} : { served: opts.served }),
 		...(opts.asked === undefined ? {} : { asked: opts.asked }),
 		...(opts.limit === undefined ? {} : { limit: opts.limit }),
@@ -512,7 +531,11 @@ export async function generateChallenges(
 	}
 
 	const local = cues.length
-		? writeLocal(args.wants, cues, pool, items, serving, opts.seed)
+		? writeLocal(args.wants, cues, pool, items, now, {
+				serving,
+				ratings,
+				...(opts.seed === undefined ? {} : { seed: opts.seed })
+			})
 		: { challenges: [], wants: args.wants };
 	const sent: BatchArgs = { ...args, wants: local.wants };
 	const batch = sent.wants.length
@@ -576,6 +599,8 @@ export interface OverviewOptions {
 	now?: number;
 	/** This device's help-level bounds; read from the preferences when absent. */
 	device?: DeviceServing;
+	/** Rolls the first pick; pass the stream's first seed for the overview to show what it serves. */
+	seed?: number;
 }
 
 /**
@@ -586,20 +611,21 @@ export interface OverviewOptions {
  */
 export async function practiceOverview(opts: OverviewOptions = {}): Promise<PracticeOverview> {
 	const now = opts.now ?? Date.now();
-	const [pool, items, parts, profile] = await Promise.all([
+	const [pool, items, ratings, profile] = await Promise.all([
 		getPool(),
 		getAllItems(),
-		getDifficultyParts(),
+		getRatings(),
 		getProfile()
 	]);
-	const serving = servingFor(profile, parts, opts.device);
-	const first = nextPick(pool, items, now, { serving });
+	const judged: Judged = { serving: servingFor(profile, opts.device), ratings };
+	const seed = opts.seed === undefined ? {} : { seed: opts.seed };
+	const first = nextPick(pool, items, now, { ...judged, ...seed });
 	return {
 		items,
 		dueCount: items.filter((item) => isDue(item, now)).length,
 		first,
-		anything: first !== null || nextPick(pool, items, now, { serving, pass: true }) !== null,
-		topUp: topUpCoverage(pool, items, now, serving)
+		anything: first !== null || nextPick(pool, items, now, { ...judged, pass: true }) !== null,
+		topUp: topUpCoverage(pool, items, now, judged)
 	};
 }
 
@@ -739,8 +765,8 @@ export function overturnedVerdict(
  *   would. A gap that was right keeps its review.
  * - **The difficulty model.** The answer is logged as overturned
  *   (`overturnResult`, a `resultOverturned` event naming it by challenge and
- *   `at`), and the replay reads it at {@link overturnedVerdict} — so the word's
- *   skill and the row's correction move as for a success, not a miss. The
+ *   `at`), and the replay reads it at {@link overturnedVerdict} — so the
+ *   ratings move as for a success, not a miss. The
  *   result row itself keeps what was answered: it is history, and the review
  *   screens show it.
  *

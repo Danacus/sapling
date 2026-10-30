@@ -4,11 +4,11 @@
 
 use std::fmt::Write;
 
-use crate::calibrate_v2::{first_model, table, Model, Predict};
-use crate::model::Observation;
-use crate::model_v2::{evaluate, score, Config, Length, Memory, ModelV2, Parts};
-use crate::ratings::{Key, Ratings, Settings, WordSource};
-use crate::ratings_extras::Extras;
+use crate::research::calibrate_v2::{first_model, table, Model, Predict};
+use crate::research::model_v2::{evaluate, score, Config, Length, Memory, ModelV2, Parts};
+use crate::research::ratings::{Key, Ratings, Settings, WordSource};
+use crate::research::ratings_extras::Extras;
+use crate::research::v1::Observation;
 
 const DAY: f64 = 86_400_000.0;
 
@@ -210,7 +210,7 @@ pub fn report(log: &[Observation], settings: Settings) -> String {
 mod tests {
     use super::*;
     use crate::replay::{input_from_events, observations, parse_export};
-    use crate::sim::{simulate, SimOptions};
+    use crate::research::sim::{simulate, SimOptions};
     use sapling_domain::events::PROFILE_ID;
 
     #[test]

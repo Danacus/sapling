@@ -1,1 +1,1 @@
-{"steps":["plain"],"kinds":[{"id":"spot-error","rank":5,"direction":"toNative","lengths":[3,11],"writtenSteps":["plain"],"canListen":false,"bases":{"plain":0.3},"slope":0.12}]}
+{"steps":["plain"],"kinds":[{"id":"spot-error","rank":5,"direction":"toNative","lengths":[3,11],"writtenSteps":["plain"],"canListen":false}]}

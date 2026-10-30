@@ -1,12 +1,11 @@
 //! What the bare ratings model (`ratings.rs`) leaves out, each switchable on
-//! its own so `calibrate` can show what it buys (`docs/difficulty-ratings.md`
-//! §6). All off is the bare model. None names a kind: every extra starts the
+//! its own so `calibrate` can show what it buys. All off is the bare model. None names a kind: every extra starts the
 //! same for every kind.
 
 use crate::help::HelpLevel;
-use crate::model::{logit, tuning, Observation};
-use crate::model_v2::{centre, STEP};
-use crate::ratings::{Key, Ratings, Term};
+use crate::research::model_v2::{centre, STEP};
+use crate::research::ratings::{Key, Ratings, Term};
+use crate::research::v1::{logit, tuning, Observation};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Extras {
@@ -79,8 +78,8 @@ mod tests {
     use super::*;
     use crate::help::Step;
     use crate::kinds::WireType;
-    use crate::model::Evidence;
-    use crate::ratings::Settings;
+    use crate::research::ratings::Settings;
+    use crate::research::v1::Evidence;
 
     fn answer(help: HelpLevel) -> Observation {
         Observation {

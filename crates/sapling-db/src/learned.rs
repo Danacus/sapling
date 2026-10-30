@@ -1,8 +1,8 @@
-//! The difficulty model's numbers as derived data (`docs/challenge-difficulty.md`
-//! §7): each word's skill beside its card (`items.skill`), each pooled row's
-//! correction beside its bookkeeping (`challenges.correction`), and the shared
-//! parts in `difficultyParts` — `base:<kind>/<help level>` and `slope:<kind>`.
-//! A number that is not stored is still at its starting value.
+//! The difficulty model's ratings as derived data
+//! (`docs/challenge-difficulty.md`), one row each in `difficultyParts`: the
+//! challenge ratings, the stability scale and base every word shares, and
+//! each kind's length slope, with their margins. A rating not stored is still
+//! at its start.
 //!
 //! They are a function of the answers replayed in `(at, id)` order
 //! (`sapling-challenges`' `replay.rs`), whatever order the events arrived in.
@@ -18,9 +18,7 @@
 //! land on the same numbers — which the golden fixtures' reverse-arrival and
 //! export/import checks hold them to.
 
-use std::collections::HashMap;
-
-use sapling_challenges::model::{fold, tuning, Learner, Shared, MULTI_WORD};
+use sapling_challenges::ratings::{Ratings, StoredRating};
 use sapling_challenges::replay::{
     observations, ReplayInput, ReplayItem, ReplayResult, ReplayReview,
 };
@@ -28,9 +26,6 @@ use sapling_challenges::Challenge;
 use sapling_domain::types::{ChallengeResult, Verdict};
 
 use crate::sql::{Param, Result, Row, Sql};
-
-const BASE: &str = "base:";
-const SLOPE: &str = "slope:";
 
 fn placeholders(count: usize) -> String {
     vec!["?"; count].join(", ")
@@ -161,20 +156,30 @@ fn overturned(sql: &dyn Sql, result: &ChallengeResult) -> Result<Option<Verdict>
     })
 }
 
-fn parts_of(sql: &dyn Sql, keys: &[String]) -> Result<HashMap<String, f64>> {
-    if keys.is_empty() {
-        return Ok(HashMap::new());
-    }
+fn rating_of(row: &Row) -> Result<StoredRating> {
+    Ok(StoredRating {
+        key: row.text("key")?.to_owned(),
+        value: row.f64("value")?,
+        margin: row.f64("margin")?,
+        start_margin: row.f64("startMargin")?,
+        at: row.f64("at")?,
+        answers: row.f64("answers")? as u32,
+    })
+}
+
+/// The stored ratings under these keys.
+fn ratings_of(sql: &dyn Sql, keys: &[String]) -> Result<Vec<StoredRating>> {
     let params: Vec<Param> = keys.iter().map(Param::text).collect();
     sql.query(
         &format!(
-            "SELECT key, value FROM difficultyParts WHERE key IN ({})",
+            "SELECT key, value, margin, startMargin, at, answers FROM difficultyParts
+             WHERE key IN ({})",
             placeholders(keys.len())
         ),
         &params,
     )?
     .iter()
-    .map(|row| Ok((row.text("key")?.to_owned(), row.f64("value")?)))
+    .map(rating_of)
     .collect()
 }
 
@@ -217,7 +222,7 @@ pub fn on_result(sql: &dyn Sql, id: &str, result: &ChallengeResult) -> Result<()
 
     let Some(row) = sql
         .query(
-            "SELECT content, correction FROM challenges WHERE id = ?",
+            "SELECT content FROM challenges WHERE id = ?",
             &[Param::text(&result.challenge_id)],
         )?
         .into_iter()
@@ -235,7 +240,7 @@ pub fn on_result(sql: &dyn Sql, id: &str, result: &ChallengeResult) -> Result<()
     let params: Vec<Param> = ids.iter().map(Param::text).collect();
     let items = sql.query(
         &format!(
-            "SELECT id, introducedAt, skill FROM items WHERE id IN ({})",
+            "SELECT id, introducedAt FROM items WHERE id IN ({})",
             placeholders(ids.len())
         ),
         &params,
@@ -271,69 +276,32 @@ pub fn on_result(sql: &dyn Sql, id: &str, result: &ChallengeResult) -> Result<()
         return Ok(());
     };
 
-    let base_key = format!(
-        "{BASE}{}",
-        sapling_challenges::model::part_key(observation.kind, observation.help)
-    );
-    let slope_key = format!("{SLOPE}{}", observation.kind.as_str());
-    let parts = parts_of(sql, &[base_key.clone(), slope_key.clone()])?;
-    let mut learner = Learner::default();
-    for row in &items {
-        if let Some(skill) = row.opt_f64("skill")? {
-            learner.skills.insert(row.text("id")?.to_owned(), skill);
-        }
-    }
-    if let Some(correction) = row.opt_f64("correction")? {
-        learner
-            .corrections
-            .insert(result.challenge_id.clone(), correction);
-    }
-    if let Some(base) = parts.get(&base_key) {
-        learner
-            .shared
-            .bases
-            .insert(base_key[BASE.len()..].to_owned(), *base);
-    }
-    if let Some(slope) = parts.get(&slope_key) {
-        learner
-            .shared
-            .slopes
-            .insert(slope_key[SLOPE.len()..].to_owned(), *slope);
-    }
-    learner.learn(&observation, &tuning().rates, MULTI_WORD);
-    write_learner(sql, &learner)
+    // Only the ratings this answer is made of move.
+    let empty = Ratings::default();
+    let keys: Vec<String> = empty
+        .terms(&observation)
+        .iter()
+        .map(|t| t.key.stored())
+        .collect();
+    let mut ratings = Ratings::from_stored(&ratings_of(sql, &keys)?);
+    ratings.learn(&observation);
+    write_ratings(sql, &ratings)
 }
 
-/// Writes every number a learner holds over what is stored.
-fn write_learner(sql: &dyn Sql, learner: &Learner) -> Result<()> {
-    for (item, skill) in &learner.skills {
+/// Writes every rating held over what is stored.
+fn write_ratings(sql: &dyn Sql, ratings: &Ratings) -> Result<()> {
+    for r in ratings.stored() {
         sql.exec(
-            "UPDATE items SET skill = ? WHERE id = ?",
-            &[Param::number(*skill), Param::text(item)],
-        )?;
-    }
-    for (challenge, correction) in &learner.corrections {
-        sql.exec(
-            "UPDATE challenges SET correction = ? WHERE id = ?",
-            &[Param::number(*correction), Param::text(challenge)],
-        )?;
-    }
-    let parts = learner
-        .shared
-        .bases
-        .iter()
-        .map(|(key, value)| (format!("{BASE}{key}"), *value))
-        .chain(
-            learner
-                .shared
-                .slopes
-                .iter()
-                .map(|(key, value)| (format!("{SLOPE}{key}"), *value)),
-        );
-    for (key, value) in parts {
-        sql.exec(
-            "INSERT OR REPLACE INTO difficultyParts (key, value) VALUES (?, ?)",
-            &[Param::text(key), Param::number(value)],
+            "INSERT OR REPLACE INTO difficultyParts (key, value, margin, startMargin, at, answers)
+             VALUES (?, ?, ?, ?, ?, ?)",
+            &[
+                Param::text(r.key),
+                Param::number(r.value),
+                Param::number(r.margin),
+                Param::number(r.start_margin),
+                Param::number(r.at),
+                Param::number(f64::from(r.answers)),
+            ],
         )?;
     }
     Ok(())
@@ -342,8 +310,6 @@ fn write_learner(sql: &dyn Sql, learner: &Learner) -> Result<()> {
 /// Replays every answer from the read tables and writes the result over
 /// whatever was learned before.
 pub fn refold(sql: &dyn Sql) -> Result<()> {
-    sql.exec("UPDATE items SET skill = NULL", &[])?;
-    sql.exec("UPDATE challenges SET correction = NULL", &[])?;
     sql.exec("DELETE FROM difficultyParts", &[])?;
 
     let items = sql
@@ -395,13 +361,16 @@ pub fn refold(sql: &dyn Sql) -> Result<()> {
         .max_by(|a, b| a.at.total_cmp(&b.at).then_with(|| a.id.cmp(&b.id)))
         .map(|r| (r.at, r.id.clone()));
 
-    let learner = fold(&observations(&ReplayInput {
+    let mut ratings = Ratings::default();
+    for o in observations(&ReplayInput {
         items,
         reviews,
         challenges,
         results,
-    }));
-    write_learner(sql, &learner)?;
+    }) {
+        ratings.learn(&o);
+    }
+    write_ratings(sql, &ratings)?;
     write_state(
         sql,
         &State {
@@ -420,17 +389,13 @@ pub fn settle(sql: &dyn Sql) -> Result<()> {
     }
 }
 
-/// The shared numbers as learned; a key not listed is at its starting value.
-pub fn read_parts(sql: &dyn Sql) -> Result<Shared> {
-    let mut shared = Shared::default();
-    for row in sql.query("SELECT key, value FROM difficultyParts", &[])? {
-        let key = row.text("key")?;
-        let value = row.f64("value")?;
-        if let Some(base) = key.strip_prefix(BASE) {
-            shared.bases.insert(base.to_owned(), value);
-        } else if let Some(slope) = key.strip_prefix(SLOPE) {
-            shared.slopes.insert(slope.to_owned(), value);
-        }
-    }
-    Ok(shared)
+/// Every rating as learned; a key not listed is at its start.
+pub fn read_ratings(sql: &dyn Sql) -> Result<Vec<StoredRating>> {
+    sql.query(
+        "SELECT key, value, margin, startMargin, at, answers FROM difficultyParts ORDER BY key",
+        &[],
+    )?
+    .iter()
+    .map(rating_of)
+    .collect()
 }

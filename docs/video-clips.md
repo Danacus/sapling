@@ -41,8 +41,8 @@ translation to-native, possibly cloze) gains an optional stored `clip:
 {media, start, end}` — additive, lenient, as every stored field. It is a
 **copy**, never a `textId`: serving needs no join, deleting the text breaks
 nothing, and it syncs as a few bytes. The plugin's `audio_texts` answers
-`Sound::Clip` when it is set. `Common`, `fits`, the stream and the planner
-never see it.
+`Sound::Clip` when it is set. `Common`, the ratings, the stream and the
+planner never see it.
 
 ## 4. Generation from real sentences
 
@@ -56,8 +56,7 @@ model — the model emits content, and the span is not content.
 Generation still introduces no word: the target word is the subject, and the
 cue's other words are the same comprehension load any sentence carries.
 
-Difficulty needs nothing new: a clip row is served at `listening`, and its own
-learned correction absorbs that real speech is harder than TTS. A separate
+Difficulty needs nothing new: a clip row is served at `listening`. A separate
 `clip` modifier on `HelpLevel` is added only if `calibrate` shows clip rows
 sit consistently off their kind.
 
@@ -91,9 +90,8 @@ sit consistently off their kind.
 A `cue-cloze` (`crates/sapling-challenges/src/types/cue_cloze/`) is one of the
 learner's own timed cues with one of their words blanked — the first **local**
 kind: built on the device from the learner's material, never by the model.
-Its kind is `local` in `type.json`, so it has no lesson file, is never sent to
-`getBatch`, and is left out of what `fits.rs` counts as writable (the window
-widens only to rows a writer can always produce; a cue may not exist).
+Its kind is `local` in `type.json`, so it has no lesson file and is never sent
+to `getBatch`.
 
 - **What it is cut from.** `cuesFor(itemIds)` (a `Backend` read) answers, per
   word, the timed cues of any imported text — YouTube, a file, or none —
@@ -102,21 +100,20 @@ widens only to rows a writer can always produce; a cue may not exist).
   `cue: {textId, videoId?, start, end}`, `videoId` for YouTube media only.
 - **When.** `generateChallenges` asks for the cues of the words the plan wants
   for and passes the words with one to `planTopUp` as `cued`; only those words
-  can be planned a local kind, and the planner's usual rotation (a kind the
-  word never had first, a draw among the rest) mixes it with the model's kinds
-  with no preference either way.
+  can be planned a local kind, and the planner ranks it by the same roll of
+  the ratings as the model's kinds, with no preference either way.
 - **How.** `writeLocal` (the wasm `challenges` export, `local.rs`) builds each
   local want: for every candidate cue not already in the pool for that word,
   it blanks the first whole-word occurrence (the answer is the term as the cue
   spells it), keeps rows whose measured length is in the kind's band (3–14
-  words) and that pass `fits_fresh`, and takes the one nearest the asked
+  words), and takes the one nearest the asked
   length, a draw breaking a tie. The row's `length` is its measured length.
   The bank is the answer plus five random other words of the learner's — none
   the answer itself, none already in the cue — with no similarity criterion. A
   helper model call that picks distractors is a possible later step. A local
-  want with nothing that fits becomes a model-written want for the same word
-  (the same rotation over the kinds the model writes, less those already
-  wanted); the rest of the wants go to `getBatch` unchanged.
+  want with nothing to build from becomes a model-written want for the same
+  word (the kind the same roll puts nearest, among those the model writes
+  less those already wanted); the rest of the wants go to `getBatch` unchanged.
 - **Serving.** Steps pick-4, pick-6, typed, as a cloze. A cue has no
   translation, so the easiest step shows the word's meaning (`meaningHint`).
   Readings are romanized at render time, so `has_readings` is whether the cue

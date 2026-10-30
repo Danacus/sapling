@@ -1,7 +1,7 @@
 /**
- * The practice stream (`docs/challenge-difficulty.md` §11): one challenge at a
+ * The practice stream (`docs/challenge-difficulty.md` §10): one challenge at a
  * time until the learner stops, each picked against the store as it is *now*
- * — after the last answer's review, skill and serve stamp have landed — by
+ * — after the last answer's review, ratings and serve stamp have landed — by
  * Rust (`crates/sapling-challenges`' `stream.rs`, through the engine's
  * {@link nextPick}). Nothing is planned ahead, so there is nothing to throw
  * away when the learner stops: answers are written as they happen
@@ -15,7 +15,7 @@
  * starts it, because `$lib/session` never imports `$lib/tasks`.
  */
 
-import { getAllItems, getDifficultyParts, getPool, getProfile } from '$lib/db';
+import { getAllItems, getPool, getProfile, getRatings } from '$lib/db';
 import { MATCH_PAIRS_EVERY } from '$lib/db/generated/challenges';
 import { challengeInfo } from '$lib/challenges/plugin';
 import type { Challenge, KnowledgeItem, MatchPairsChallenge } from '$lib/types';
@@ -72,7 +72,7 @@ export interface PracticeStreamOptions {
 	clock?: () => number;
 	/** This device's help-level bounds; read from the preferences when absent. */
 	device?: DeviceServing;
-	/** Replays the match rounds' draws. */
+	/** Replays the match rounds' draws and the ratings' rolls; drawn fresh when absent. */
 	seed?: number;
 }
 
@@ -89,6 +89,12 @@ export class PracticeStream {
 	readonly #clock: () => number;
 	readonly #device: DeviceServing | undefined;
 	#seed: number | undefined;
+	/**
+	 * Where this stream's roll seeds start: a pick is rolled at `#rolls +
+	 * served`, so it is fixed for a stream position — a peek, a pick after a
+	 * wait and the pick after a refill all roll alike until one is served.
+	 */
+	readonly #rolls: number;
 	readonly #served = new Set<string>();
 	/**
 	 * Words a refill was asked for and nothing has been served of since: never
@@ -106,6 +112,12 @@ export class PracticeStream {
 		this.#clock = opts.clock ?? Date.now;
 		this.#device = opts.device;
 		this.#seed = opts.seed;
+		this.#rolls = opts.seed ?? Math.floor(Math.random() * 2 ** 32);
+	}
+
+	/** The roll seed for the next pick: {@link PracticeStream.next} serves at it. */
+	get rollSeed(): number {
+		return this.#rolls + this.#served.size;
 	}
 
 	/** Every word as of the last read: what the page tokenizes and speaks around. */
@@ -114,15 +126,15 @@ export class PracticeStream {
 	}
 
 	async #read() {
-		const [pool, items, parts, profile] = await Promise.all([
+		const [pool, items, ratings, profile] = await Promise.all([
 			getPool(),
 			getAllItems(),
-			getDifficultyParts(),
+			getRatings(),
 			getProfile()
 		]);
 		this.#items = items;
-		const serving = servingFor(profile, parts, this.#device);
-		return { pool, items, serving, now: this.#clock(), served: [...this.#served] };
+		const serving = servingFor(profile, this.#device);
+		return { pool, items, serving, ratings, now: this.#clock(), served: [...this.#served] };
 	}
 
 	/**
@@ -133,8 +145,9 @@ export class PracticeStream {
 	 * nothing gives way to the first word further down that has something.
 	 */
 	async next(opts: NextOptions = {}): Promise<StreamStep> {
-		const { pool, items, serving, now, served } = await this.#read();
-		const head = streamHead(pool, items, now, { serving, served, pass: opts.pass });
+		const { pool, items, serving, ratings, now, served } = await this.#read();
+		const seed = this.rollSeed;
+		const head = streamHead(pool, items, now, { serving, ratings, seed, served, pass: opts.pass });
 		const pick = head?.pick;
 		if (!pick) return { kind: 'blocked', asked: head ? this.#asked.has(head.word) : false };
 		if (this.#earlySinceRound >= MATCH_PAIRS_EVERY) {
@@ -155,10 +168,11 @@ export class PracticeStream {
 	 * {@link release} if it fails or is cancelled.
 	 */
 	async refill(): Promise<RefillClaim | null> {
-		const { pool, items, serving, now, served } = await this.#read();
+		const { pool, items, serving, ratings, now, served } = await this.#read();
 		const limit = lowWaterMark(median(this.#paces), this.#batchMs);
 		const asked = [...this.#asked];
-		const wants = planTopUp(pool, items, now, { serving, served, asked, limit });
+		const seed = this.rollSeed;
+		const wants = planTopUp(pool, items, now, { serving, ratings, seed, served, asked, limit });
 		if (wants.length === 0) return null;
 		const words = [...new Set(wants.map((want) => want.item.id))];
 		for (const word of words) this.#asked.add(word);

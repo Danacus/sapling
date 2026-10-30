@@ -1,6 +1,5 @@
 //! Rank-ordered generic view over every plugin's `type.json` kinds.
 
-use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
@@ -82,16 +81,9 @@ impl WireType {
     pub fn can_listen(self) -> bool {
         self.kind_spec().can_listen
     }
-    pub fn base(self, step: Step) -> Option<f64> {
-        self.kind_spec().bases.get(step.as_str()).copied()
-    }
-    pub fn slope(self) -> f64 {
-        self.kind_spec().slope
-    }
-    /// The kind whose learned numbers this one starts from until its own
-    /// answers move them.
-    pub fn starts_from(self) -> Option<WireType> {
-        self.kind_spec().starts_from
+    /// How many of the learner's words one row is about at least.
+    pub fn words(self) -> usize {
+        self.kind_spec().words
     }
 }
 
@@ -110,10 +102,8 @@ pub struct KindSpec {
     pub lengths: Option<[u8; 2]>,
     pub written_steps: Vec<String>,
     pub can_listen: bool,
-    pub bases: BTreeMap<String, f64>,
-    pub slope: f64,
     pub local: bool,
-    pub starts_from: Option<WireType>,
+    pub words: usize,
 }
 
 #[derive(Deserialize)]
@@ -135,12 +125,14 @@ struct KindData {
     lengths: Option<[u8; 2]>,
     written_steps: Vec<String>,
     can_listen: bool,
-    bases: BTreeMap<String, f64>,
-    slope: f64,
     #[serde(default)]
     local: bool,
-    #[serde(default)]
-    starts_from: Option<WireType>,
+    #[serde(default = "one")]
+    words: usize,
+}
+
+fn one() -> usize {
+    1
 }
 
 fn specs() -> &'static [KindSpec] {
@@ -167,10 +159,8 @@ fn specs() -> &'static [KindSpec] {
                     lengths: kind.lengths,
                     written_steps: kind.written_steps,
                     can_listen: kind.can_listen,
-                    bases: kind.bases,
-                    slope: kind.slope,
                     local: kind.local,
-                    starts_from: kind.starts_from,
+                    words: kind.words,
                 });
             }
         }

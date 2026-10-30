@@ -39,7 +39,7 @@ This is a reorganisation of code. Every one of these stays byte-identical, and t
 - **Events.** Every payload, including `answerGiven`, whose format today differs per type (the chosen option's text, the tapped token, the assembled sentence, `"1: a · 2: b"` for a multi-cloze, `"5 pairs, 1 mistake"` for a match round). The plugin owns producing that string, and its tests pin it.
 - **Help-level ids** (`pick-6`, `typed-hidden`, `listening`, …). Answers record them as `shown`, and the learned difficulty numbers are keyed by them.
 - **Kind ids** (`recognize-mc`, `cloze`, …) and **kind order**. The order is the planner's tie-break and the seeded draws depend on it, so the simulated-learner fixture and `invariants.rs` only stay put if it does.
-- **Model data values**: every base, slope and length range keeps its number; only the file it lives in changes.
+- **Length ranges** keep their numbers; only the file they live in changes.
 - **Verdicts.** For every answer the app can produce today, the new grader returns the same verdict, closest accepted form and per-item verdicts.
 
 ## Vocabulary
@@ -61,7 +61,7 @@ crates/sapling-challenges/src/types/
   mod.rs                 the registry: one challenge_types! line per plugin
   cloze/
     mod.rs               impl ChallengePlugin for Cloze
-    type.json            kinds, steps, starting difficulty numbers
+    type.json            kinds, steps, lengths
     lessons/cloze.json   what the model is told, and the mock fixtures
     tests.rs             type-specific cases (the conformance suite runs on its own)
   multi_cloze/ …
@@ -157,9 +157,7 @@ Each type's `type.json` holds its kinds and its numbers:
       "direction": "toTarget",
       "lengths": [3, 11],
       "writtenSteps": ["pick-4", "pick-6", "typed"],
-      "canListen": false,
-      "bases": { "pick-4": 1.1, "pick-6": 1.9, "typed": 3.1 },
-      "slope": 0.12
+      "canListen": false
     }
   ]
 }
@@ -167,7 +165,7 @@ Each type's `type.json` holds its kinds and its numbers:
 
 - `rank` keeps today's kind order (`recognize-mc` 1 … `translate-to-target` 9) explicit, because it interleaves types and the seeded draws depend on it. A test asserts ranks are unique and contiguous.
 - A kind without `lengths` is retired: still parsed and resolved, never planned (today's `translate-to-target`).
-- The global numbers (aims, window, rates, new-word memory and chance, the hidden and listening offsets) stay in `data/model.json`.
+- The difficulty model's numbers are global, in `data/model.json`; nothing about difficulty is written per kind.
 - `kinds.rs` becomes a generic view over every type's kinds, in rank order. `kind_of(row)` asks the row's own type which of its kinds wrote it.
 
 ### What generic code keeps

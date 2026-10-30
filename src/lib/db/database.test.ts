@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { challengeOf, type ChallengeRow } from './database';
 
 describe('challengeOf', () => {
-	it('sheds every bookkeeping field, the learned correction included', () => {
+	it('sheds every bookkeeping field', () => {
 		const row: ChallengeRow = {
 			id: 'c1',
 			type: 'cloze',
@@ -20,8 +20,7 @@ describe('challengeOf', () => {
 			timesServed: 2,
 			lastServedAt: 3,
 			reported: false,
-			topic: 'breakfast',
-			correction: 0.4
+			topic: 'breakfast'
 		};
 
 		expect(challengeOf(row)).toEqual({
@@ -33,6 +32,6 @@ describe('challengeOf', () => {
 			itemIds: ['i1']
 		});
 		// The row itself is left as it was.
-		expect(row.correction).toBe(0.4);
+		expect(row.topic).toBe('breakfast');
 	});
 });

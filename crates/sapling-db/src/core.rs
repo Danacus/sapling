@@ -25,7 +25,7 @@ use crate::schema::{ACTIVE_PROFILE_KEY, DERIVED_TABLES};
 use crate::sql::{Error, Param, Result, Row, Sql};
 use sapling_challenges::grade::GapVerdict;
 use sapling_challenges::local::CueCandidate;
-use sapling_challenges::model::Shared;
+use sapling_challenges::ratings::StoredRating;
 use sapling_challenges::text::find_word;
 use sapling_domain::day::LocalDay;
 use sapling_domain::events::{
@@ -56,7 +56,7 @@ const SYNC_ROOM_KEY: &str = "syncRoom";
 
 /// Columns `get_all_items` reads by default — everything but `recentGrades`.
 const ITEM_COLUMNS_LEAN: &str =
-    "id, kind, term, meaning, romanization, notes, introducedAt, fsrsCard, reviewCount, correctCount, skill";
+    "id, kind, term, meaning, romanization, notes, introducedAt, fsrsCard, reviewCount, correctCount";
 
 /// `reviewItem`'s answer: whether the item was there, the card as it stood, and
 /// the card this review folded to.
@@ -240,7 +240,6 @@ fn item_from(row: &Row, history: Vec<HistoryEntry>, now: f64) -> Result<Knowledg
         srs,
         review_count: Some(row.f64("reviewCount")?),
         correct_count: Some(row.f64("correctCount")?),
-        skill: row.opt_f64("skill")?,
         recent_grades: if row.has("recentGrades") {
             Some(parse_json::<Vec<GradeEntry>>(row.text("recentGrades")?)?)
         } else {
@@ -276,9 +275,6 @@ fn challenge_row_from(row: &Row) -> Result<Value> {
     content.insert("reported".into(), Value::Bool(row.f64("reported")? == 1.0));
     if let Some(topic) = row.opt_text("topic")? {
         content.insert("topic".into(), Value::String(topic.to_owned()));
-    }
-    if let Some(correction) = row.opt_f64("correction")? {
-        content.insert("correction".into(), number(correction));
     }
     Ok(Value::Object(content))
 }
@@ -803,10 +799,10 @@ impl Core {
             .collect()
     }
 
-    /// The difficulty model's shared numbers as learned from every answer so
-    /// far; a part not listed is still at its starting value.
-    pub fn get_difficulty_parts(&self) -> Result<Shared> {
-        crate::learned::read_parts(&*self.sql)
+    /// The difficulty model's ratings as learned from every answer so far; a
+    /// rating not listed is still at its start.
+    pub fn get_ratings(&self) -> Result<Vec<StoredRating>> {
+        crate::learned::read_ratings(&*self.sql)
     }
 
     /* ---- Results ----------------------------------------------------- */

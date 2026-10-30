@@ -9,10 +9,10 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::fits::{fits_fresh, Serving};
 use crate::kinds::{Want, WireType};
 use crate::pool::PoolRow;
 use crate::rng::{shuffled, Rng};
+use crate::stream::Judge;
 use crate::text::{find_word, js_trim, label_key};
 use crate::topup::instead_of_local;
 use crate::types::cue_cloze::measured;
@@ -49,7 +49,8 @@ pub fn write_local(
     cues: &[CueCandidate],
     pool: &[Option<PoolRow>],
     words: &[Word],
-    serving: &Serving,
+    judge: Judge,
+    now: f64,
     rng: &mut Rng,
 ) -> LocalWrite {
     let index = by_id(words);
@@ -61,7 +62,7 @@ pub fn write_local(
             continue;
         }
         let built = match kind {
-            WireType::CueCloze => cue_cloze(want, cues, pool, words, &index, serving, rng),
+            WireType::CueCloze => cue_cloze(want, cues, pool, words, &index, rng),
             _ => unreachable!("{kind:?} is not a local kind"),
         };
         if let Some(challenge) = built {
@@ -76,27 +77,20 @@ pub fn write_local(
             .filter(|w| w.item.id == want.item.id)
             .map(|w| w.kind.kind)
             .collect();
-        out.wants.extend(instead_of_local(
-            pool,
-            words,
-            word,
-            serving,
-            &taken,
-            &mut || rng.next_f64(),
-        ));
+        out.wants
+            .extend(instead_of_local(word, words.len(), judge, now, &taken, rng));
     }
     out
 }
 
 /// The word's cues not yet in the pool, blanked where it occurs as a word;
-/// among the rows that fit it, the one nearest the asked length.
+/// among those within the kind's lengths, the one nearest the asked length.
 fn cue_cloze(
     want: &Want,
     cues: &[CueCandidate],
     pool: &[Option<PoolRow>],
     words: &[Word],
     index: &ById,
-    serving: &Serving,
     rng: &mut Rng,
 ) -> Option<Challenge> {
     let word = *index.get(want.item.id.as_str())?;
@@ -151,9 +145,7 @@ fn cue_cloze(
             length: Some(length),
             item_ids: vec![word.id.clone()],
         });
-        if fits_fresh(&row, index, serving) {
-            fitting.push(((length - f64::from(want.length)).abs(), row));
-        }
+        fitting.push(((length - f64::from(want.length)).abs(), row));
     }
     let nearest = fitting
         .iter()
@@ -210,7 +202,6 @@ mod tests {
                 let mut w = word(&format!("w{i}"), -DAY, 0.5);
                 w.term = (*term).into();
                 w.meaning = format!("meaning of {term}");
-                w.skill = Some(4.0);
                 w
             })
             .collect();
@@ -242,12 +233,19 @@ mod tests {
     }
 
     fn write(wants: &[Want], cues: &[CueCandidate], pool: &[Option<PoolRow>]) -> LocalWrite {
+        let serving = crate::fits::Serving::default();
+        let ratings = crate::ratings::Ratings::default();
+        let judge = Judge {
+            serving: &serving,
+            ratings: &ratings,
+        };
         write_local(
             wants,
             cues,
             pool,
             &learner(),
-            &Serving::default(),
+            judge,
+            crate::topup::tests::NOW,
             &mut Rng::seeded(3),
         )
     }
@@ -274,7 +272,7 @@ mod tests {
     }
 
     #[test]
-    fn the_nearest_fitting_length_wins_and_a_cue_already_pooled_is_skipped() {
+    fn the_nearest_length_wins_and_a_cue_already_pooled_is_skipped() {
         let cues = [
             cue("w0", "el perro duerme", 0.0),
             cue(
@@ -296,7 +294,6 @@ mod tests {
             last_served_at: None,
             reported: false,
             topic: None,
-            correction: None,
         };
         let again = write(&[want("w0", WireType::CueCloze, 9)], &cues, &[Some(pooled)]);
         let Challenge::CueCloze(row) = &again.challenges[0] else {

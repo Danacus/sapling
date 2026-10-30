@@ -66,7 +66,7 @@ export const recordAnswer = forward('recordAnswer');
 export const addResult = forward('addResult');
 export const overturnResult = forward('overturnResult');
 export const recentResults = forward('recentResults');
-export const getDifficultyParts = forward('getDifficultyParts');
+export const getRatings = forward('getRatings');
 export const getDailyActivity = forward('getDailyActivity');
 /** Study time per mode and local hour; {@link Backend.studySessions}. */
 export const studySessions = forward('studySessions');

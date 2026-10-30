@@ -230,7 +230,7 @@ fn probe(core: &Core, events: &[Value]) -> Value {
         "poolSize": core.pool_size().expect("pool_size"),
         "getChallengesByIds": by_id(core.get_challenges_by_ids(&ids.challenges).expect("get_challenges_by_ids")),
         "recentResults": core.recent_results(RECENT_LIMIT).expect("recent_results"),
-        "getDifficultyParts": core.get_difficulty_parts().expect("get_difficulty_parts"),
+        "getRatings": core.get_ratings().expect("get_ratings"),
         "getDailyActivity": core.get_daily_activity().expect("get_daily_activity"),
         "studySessions": core.study_sessions(0.0).expect("study_sessions"),
         "getTexts": core.get_texts().expect("get_texts"),
@@ -263,29 +263,24 @@ fn data_only(mut reads: Value) -> Value {
 /// How far apart the model's floats may be, relative to their magnitude.
 const MODEL_TOLERANCE: f64 = 1e-4;
 
-/// The four numbers that come out of the `f32` model: the two the card stores,
-/// and the two `srs` derives from them at read time. `srs.due` is not one — it
-/// is the card's own `due`, a whole minute, and it still has to match exactly.
-const MODEL_FLOATS: [&str; 4] = [
+/// The numbers that come out of the `f32` model: the two the card stores,
+/// and the three `srs` derives from them at read time. `srs.due` is not one —
+/// it is the card's own `due`, a whole minute, and it still has to match exactly.
+const MODEL_FLOATS: [&str; 5] = [
     ".fsrsCard.stability",
     ".fsrsCard.difficulty",
     ".srs.retrievability",
     ".srs.strength",
+    ".srs.stability",
 ];
 
-/// The difficulty model's derived numbers, which are learned from memories
-/// the `f32` model computed: a word's skill, a row's correction, and every
-/// shared part.
-const LEARNED_FLOATS: [&str; 2] = [".skill", ".correction"];
-const LEARNED_PARTS: &str = "$.getDifficultyParts.";
+/// The difficulty model's ratings, learned from the stabilities the `f32`
+/// model computed.
+const LEARNED_RATINGS: &str = "$.getRatings[";
 
 /// Whether `path` names a model float, and these two are close enough.
 fn model_floats_agree(path: &str, a: &Value, b: &Value) -> bool {
-    if !MODEL_FLOATS
-        .iter()
-        .chain(&LEARNED_FLOATS)
-        .any(|field| path.ends_with(field))
-        && !path.starts_with(LEARNED_PARTS)
+    if !MODEL_FLOATS.iter().any(|field| path.ends_with(field)) && !path.starts_with(LEARNED_RATINGS)
     {
         return false;
     }

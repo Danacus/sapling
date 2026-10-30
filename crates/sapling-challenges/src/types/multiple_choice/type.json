@@ -1,8 +1,8 @@
 {
   "steps": ["plain"],
   "kinds": [
-    {"id":"recognize-mc","rank":1,"direction":"toNative","lengths":[1,11],"writtenSteps":["plain"],"canListen":true,"bases":{"plain":0.0},"slope":0.12},
-    {"id":"produce-mc","rank":2,"direction":"toTarget","lengths":[1,11],"writtenSteps":["plain"],"canListen":false,"bases":{"plain":0.3},"slope":0.12},
-    {"id":"context-mc","rank":3,"direction":"toTarget","promptIsTarget":true,"lengths":[3,11],"writtenSteps":["plain"],"canListen":false,"bases":{"plain":0.7},"slope":0.12}
+    {"id":"recognize-mc","rank":1,"direction":"toNative","lengths":[1,11],"writtenSteps":["plain"],"canListen":true},
+    {"id":"produce-mc","rank":2,"direction":"toTarget","lengths":[1,11],"writtenSteps":["plain"],"canListen":false},
+    {"id":"context-mc","rank":3,"direction":"toTarget","promptIsTarget":true,"lengths":[3,11],"writtenSteps":["plain"],"canListen":false}
   ]
 }

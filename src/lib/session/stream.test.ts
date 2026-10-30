@@ -8,7 +8,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { addToPool, getDifficultyParts, recentResults, saveProfile, upsertItems } from '$lib/db';
+import { addToPool, getRatings, recentResults, saveProfile, upsertItems } from '$lib/db';
 import { setBackendForTesting } from '$lib/db/backend';
 import { makeTestBackend } from '$lib/db/backend.testing';
 import type { Challenge, KnowledgeItem, Profile } from '$lib/types';
@@ -90,8 +90,8 @@ describe('PracticeStream', () => {
 		// Every answer recorded the help level it was shown at, and the model learned from it.
 		const results = await recentResults(5);
 		expect(results.every((result) => result.shown === 'plain')).toBe(true);
-		expect(Object.keys((await getDifficultyParts()).bases)).toContain('recognize-mc/plain');
-		expect(stream.items.every((item) => item.skill !== undefined)).toBe(true);
+		const rated = (await getRatings()).find((r) => r.key === 'challenge:recognize-mc/plain');
+		expect(rated?.answers).toBe(3);
 	});
 
 	it('puts a match round after every fourth early-word challenge, only with one to follow', async () => {
@@ -146,11 +146,24 @@ describe('PracticeStream', () => {
 		expect(next.kind === 'challenge' && next.challenge.id).toBe('cb');
 	});
 
-	it('ends on a head already asked for whose rows came back not fitting, until a retry', async () => {
+	it('rolls each stream position once: the same seed until a pick is served', async () => {
+		await upsertItems([word('a')]);
+		await addToPool([recognition('c1', 'a'), recognition('c2', 'a')], NOW);
+		const twin = () => new PracticeStream({ clock: ticking(), device, seed: 7 });
+		const [one, other] = [twin(), twin()];
+		const seed = one.rollSeed;
+		await one.refill();
+		expect(one.rollSeed).toBe(seed);
+		const [a, b] = [await one.next(), await other.next()];
+		expect(a).toEqual(b);
+		expect(one.rollSeed).toBe(seed + 1);
+	});
+
+	it('asks for a word once while it is short of stock, until a retry', async () => {
 		await upsertItems([word('b')]);
 		const stream = new PracticeStream({ clock: ticking(), device });
 		expect(await stream.refill()).not.toBeNull();
-		// What came back is a typed cloze, far too hard for a new word.
+		// One row came back: short of stock, but asked for already.
 		await addToPool(
 			[
 				{
@@ -164,11 +177,12 @@ describe('PracticeStream', () => {
 			],
 			NOW
 		);
-		expect(await stream.next()).toEqual({ kind: 'blocked', asked: true });
 		expect(await stream.refill()).toBeNull();
 		stream.resetAsked();
-		expect(await stream.next()).toEqual({ kind: 'blocked', asked: false });
 		expect(await stream.refill()).not.toBeNull();
+		// Fit never makes a row unavailable: even a typed cloze is served to a new word.
+		const step = await stream.next();
+		expect(step.kind === 'challenge' && step.challenge.id).toBe('typed');
 	});
 
 	it('gives a failed refill’s words back, so they can be asked for again', async () => {

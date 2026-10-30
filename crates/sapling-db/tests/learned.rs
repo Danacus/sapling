@@ -1,8 +1,8 @@
-//! The difficulty model's numbers are derived data: however the answers
+//! The difficulty model's ratings are derived data: however the answers
 //! arrive — one by one in order, pulled in reverse, imported whole — a core
 //! ends up holding exactly what a pure replay of the log computes.
 //!
-//! The log is the simulated learner's (`sapling-challenges`' `sim.rs`), which
+//! The log is the simulated learner's (`sapling-challenges`' `research/sim.rs`), which
 //! is the calibration fixture too: thousands of answers over dozens of words,
 //! with reviews, two-word rows and every help level.
 
@@ -10,9 +10,9 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use sapling_challenges::model::fold;
+use sapling_challenges::ratings::{Ratings, StoredRating};
 use sapling_challenges::replay::{input_from_events, observations, parse_export};
-use sapling_challenges::sim::{simulate, SimOptions};
+use sapling_challenges::research::sim::{simulate, SimOptions};
 use sapling_db::Core;
 use sapling_domain::events::PROFILE_ID;
 use sapling_domain::Utc;
@@ -49,30 +49,13 @@ fn log() -> (String, Vec<Value>) {
     (sim.export_json(), events)
 }
 
-/// Every learned number a core holds, keyed so two cores compare.
-fn learned(core: &Core) -> BTreeMap<String, f64> {
-    let mut out = BTreeMap::new();
-    for item in core.get_all_items(false).unwrap() {
-        if let Some(skill) = item.skill {
-            out.insert(format!("skill:{}", item.id), skill);
-        }
-    }
-    for row in core.get_pool().unwrap() {
-        if let Some(correction) = row["correction"].as_f64() {
-            out.insert(
-                format!("correction:{}", row["id"].as_str().unwrap()),
-                correction,
-            );
-        }
-    }
-    let parts = core.get_difficulty_parts().unwrap();
-    for (key, value) in parts.bases {
-        out.insert(format!("base:{key}"), value);
-    }
-    for (key, value) in parts.slopes {
-        out.insert(format!("slope:{key}"), value);
-    }
-    out
+/// Every rating a core holds, keyed so two cores compare.
+fn learned(core: &Core) -> BTreeMap<String, StoredRating> {
+    keyed(core.get_ratings().unwrap())
+}
+
+fn keyed(ratings: Vec<StoredRating>) -> BTreeMap<String, StoredRating> {
+    ratings.into_iter().map(|r| (r.key.clone(), r)).collect()
 }
 
 #[test]
@@ -81,23 +64,14 @@ fn every_arrival_order_lands_on_the_pure_replay() {
 
     let expected = {
         let parsed = parse_export(&export).unwrap();
-        let learner = fold(&observations(&input_from_events(&parsed, PROFILE_ID)));
-        let mut out = BTreeMap::new();
-        for (id, skill) in learner.skills {
-            out.insert(format!("skill:{id}"), skill);
+        let mut ratings = Ratings::default();
+        for o in observations(&input_from_events(&parsed, PROFILE_ID)) {
+            ratings.learn(&o);
         }
-        for (id, correction) in learner.corrections {
-            out.insert(format!("correction:{id}"), correction);
-        }
-        for (key, value) in learner.shared.bases {
-            out.insert(format!("base:{key}"), value);
-        }
-        for (key, value) in learner.shared.slopes {
-            out.insert(format!("slope:{key}"), value);
-        }
-        out
+        keyed(ratings.stored())
     };
-    assert!(expected.len() > 100, "{}", expected.len());
+    assert!(expected.len() > 15, "{}", expected.len());
+    assert!(expected.values().any(|r| r.answers > 100));
 
     // One page at a time, in order: every answer is the newest, learned on the spot.
     let in_order = core();
@@ -148,8 +122,7 @@ fn deleting_a_word_forgets_its_answers() {
     let before = learned(&full);
     full.delete_item("w0").unwrap();
     let after = learned(&full);
-    assert!(!after.contains_key("skill:w0"));
-    assert_ne!(before, after);
+    assert!(after["base"].answers < before["base"].answers);
     // Exactly what a log that never had the word's answers would learn.
     let rebuilt = core();
     rebuilt.import_data(&full.export_data().unwrap()).unwrap();

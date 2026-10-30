@@ -17,22 +17,21 @@ These hold across every part and outrank any section below.
 3. **The model writes content, never presentation.** A challenge or text is stored once with everything any screen might need; how much help is shown is decided at play time.
 4. **Grading is local and free.** Answering never costs a model call. Paid calls happen only on an explicit press, or in the background to keep practice supplied.
 5. **One way in for words.** Words enter the garden only through *add words*, whether from the word check, the reader, the assistant or a conversation. Practice never introduces a word.
-6. **Difficulty is learned, in one place.** One skill per word and one difficulty per challenge as shown, learned from the learner's answers, decide what is asked. Grading never looks at difficulty.
+6. **Difficulty is learned, in one place.** Ratings for each kind and help level, read against each word's memory stability and learned from the learner's answers, decide what is asked. Grading never looks at difficulty.
 7. **Sound and speech never block.** Any audio failure degrades to text. Dictation is an input method that fills the composer and never sends anything unread.
 8. **Hosts add capabilities, not behaviour.** Web, desktop and Android run the same app. A host may add native storage, speech, captions or an embedded player, but each is discovered by asking the host, never by branching on platform.
 9. **Phone first.** Exactly two wider breakpoints. Width buys columns, never longer lines of prose.
 
 ## Glossary
 
-- **Word** (card, item): a term in the target language, its meaning in the native language, an optional reading and optional notes. A card is identified by its spelling *plus* its reading, so homographs (长 *cháng* "long", 长 *zhǎng* "to grow") are two cards. Each word has one spaced-repetition card and one learned skill.
+- **Word** (card, item): a term in the target language, its meaning in the native language, an optional reading and optional notes. A card is identified by its spelling *plus* its reading, so homographs (长 *cháng* "long", 长 *zhǎng* "to grow") are two cards. Each word has one spaced-repetition card.
 - **Garden / library**: all words for one language pair. A learner can have several, one per target language; everything is per library unless said otherwise.
 - **Level**: derived from library size, never asked: under 150 words beginner, under 600 elementary, under 2,000 intermediate, otherwise advanced.
 - **Reading**: the Latin-script transcription of a target-language string (pinyin, romaji). Latin-script languages have none.
 - **Challenge**: one exercise about one or more words, written once by the model and kept in the **pool** for reuse.
 - **Help level**: one way of showing a stored challenge with more or less support (bigger word bank, native hint, reading visible, audio first).
 - **Memory**: the spaced-repetition model's chance that the learner still recalls a word now (retrievability).
-- **Skill**: one learned number per word — how demanding a challenge about it the learner can handle, given they remember it.
-- **Difficulty**: one learned number per challenge as shown at a help level, on the same scale as skill.
+- **Rating**: a learned number with a margin (how sure it is): one per kind and help level, the two every word's side shares, and a length slope per kind.
 - **Strength**: a display-only number per word (stability × memory) behind the garden's *sprouting / growing / rooted* beds. It never decides what is served.
 - **Aim**: the success rate practice targets (Easier / Normal / Harder).
 - **Verdict**: `correct`, `almost` (accepted near miss) or `wrong`.
@@ -123,7 +122,7 @@ Rules
 - No frequency rank, no vocabulary-size estimate, no stored state of its own. Tapped words go through the same add-words path as everywhere else and become fresh cards, due immediately.
 
 Open questions
-- Words tapped as "already known" and words from a starter topic (genuinely new) start with identical cards and identical starting skill; nothing records that the learner claimed to know them.
+- Words tapped as "already known" and words from a starter topic (genuinely new) start with identical cards; nothing records that the learner claimed to know them.
 - A large check run makes dozens of words due at once (see SRS open questions on new-word limits).
 
 ---
@@ -188,21 +187,21 @@ Purpose: one continuous run of challenges, always about the word the schedule mo
 
 Behaviour
 - Top bar: a stop ✕ and an "N answered" counter (no progress bar; there is no planned length).
-- Each challenge is picked only after the previous answer's writes have landed, against the store as it is then (so the last review, skill change and serve stamp are visible to the next pick).
+- Each challenge is picked only after the previous answer's writes have landed, against the store as it is then (so the last review, rating change and serve stamp are visible to the next pick).
 - **Which word**: the list of words in urgency order — due words first, most overdue first; then not-yet-due words, soonest due first (review-ahead); ties by id. Words without a term or meaning are skipped.
 - **Which challenge for that word**: among the word's *available* challenges (below), prefer rested over resting, then the help level whose predicted success sits closest to the aim, then never-served (newest first) over served (longest ago first).
 - **Waiting**: when the head word has nothing available and a batch can be written for it (key + connection, not already asked for), the screen shows "Writing more challenges for you…" with a Stop button, and continues the moment the batch lands. A batch started from the Practice start screen also wakes a waiting stream.
 - **Passing**: when no batch can help the head (already asked for, a batch failed or was cancelled, no key, offline), the head is passed for the first word further down the same list that has something. The head stays first and is served the moment it has something.
-- **Ending by itself**: only when no word in the list has anything and nothing can be written. The summary then says why — the failed batch's error, no key ("add your key… practice writes more as you go"), offline, or "nothing that fits could be written just now" — with **Try again** beside **Back to Practice**. Try again forgets which words were already asked for.
+- **Ending by itself**: only when no word in the list has anything and nothing can be written. The summary then says why — the failed batch's error, no key ("add your key… practice writes more as you go"), offline, or "nothing new could be written just now" — with **Try again** beside **Back to Practice**. Try again forgets which words were already asked for.
 - **Stopping**: the ✕ goes straight to the summary with no confirmation (straight back to Practice if nothing was answered). Every answer is already saved.
-- **Background refill**: after the first pick and after every answer, if the learner can write and no generation is running, the stream asks for challenges for the words among the next *low-water-mark* words that have nothing. The mark is (batch time ÷ answering pace) + 2, clamped to 4–20 words; pace is the median of the last 10 answer times (default 15 s), batch time is the last measured batch (default 45 s).
+- **Background refill**: after the first pick and after every answer, if the learner can write and no generation is running, the stream asks for challenges for the words among the next *low-water-mark* words with fewer than two available. The mark is (batch time ÷ answering pace) + 2, clamped to 4–20 words; pace is the median of the last 10 answer times (default 15 s), batch time is the last measured batch (default 45 s).
 - **Free match rounds**: after every 4 answered challenges about *early* words (strength below 0.3), the next step is a locally built match-pairs round from early words — 5 pairs, at least 3, unique labels on both sides — but only if a real challenge exists to follow it.
 - Audio for each challenge is pre-rendered while it is shown, one clip at a time; the task tray is hidden while a challenge is on screen.
 - In mock mode a banner reads "Practice mode — add your OpenRouter key in Settings for personalized content."
 
 Rules (invariants)
-- **One list, one predicate.** Serving and refill read the same urgency-ordered list through the same availability rule, so a word refill considers covered is exactly one serving would serve, and a word serving waits on is exactly one refill writes for.
-- **Available** = not reported; every word it cites still exists; of a kind still in use; not already shown in this stream; *rested* (never served, or last answered ≥ 3 days ago) — or merely resting when the word is due; and it **fits** (see Difficulty).
+- **One list, one predicate.** Serving and refill read the same urgency-ordered list through the same availability rule, so a word refill considers stocked has rows serving would serve, and a word serving waits on is exactly one refill writes for.
+- **Available** = not reported; every word it cites still exists; of a kind still in use; not already shown in this stream; *rested* (never served, or last answered ≥ 3 days ago) — or merely resting when the word is due. Fit never makes a challenge unavailable (see Difficulty).
 - No challenge is shown twice in one stream (this also keeps a word re-queued minutes after a miss from getting the same sentence back).
 - A word a refill asked for is never asked for again until something of it is served; a batch that fails or is cancelled gives its words back.
 - At most one generation runs at a time; there is at most one refill claim in flight.
@@ -228,7 +227,7 @@ Open questions
 Purpose: grade instantly and locally, show the right answer, and let the learner dispute a grade.
 
 Behaviour
-- Every reviewing challenge has a **Skip** button until answered. Skip is a `wrong` answer in every respect (FSRS Again, skill falls); the banner says "Skipped — the answer was:".
+- Every reviewing challenge has a **Skip** button until answered. Skip is a `wrong` answer in every respect (FSRS Again, the challenge type reads harder); the banner says "Skipped — the answer was:".
 - On commit a **feedback banner** slides up:
   - Headline: "Correct!", "Almost — we counted it.", "Not quite.", "N of M blanks correct." (a multi-blank answer with some right), or "Accepted — your answer counts." after an overturn.
   - Detail: "Correct form: …" (almost, showing the closest accepted form), "Answer: …" (wrong), "Also fine: …" (overturned); the answer's reading underneath unless readings are Off.
@@ -245,7 +244,7 @@ Rules
 - An overturn *replaces* the answer's review (the card is refolded as if that grade had been given at the answer's instant); it never stacks a second review.
 - An overturn replaces each wrong word's Again with Good, and the difficulty model learns the answer as a success. The stored result keeps what was answered.
 - The dispute is judged against what the learner's screen actually showed (visible bank/tiles, whether the native line was shown); without the native line, any correct answer to what was visible counts.
-- Match rounds never touch any card or skill; they are logged only.
+- Match rounds never touch any card or rating; they are logged only.
 - Response time is recorded but never graded on (it only sets the refill pace).
 
 Open questions
@@ -312,41 +311,34 @@ Open questions
 
 ### Difficulty model
 
-Purpose: put difficulty in one place, on one scale, learned from the learner's own answers, so each challenge lands near the aim.
+Purpose: estimate the chance the learner answers a challenge right, learned from their own answers, so each challenge served and each kind written lands near the aim.
 
 Concept
-- **Prediction**: chance of a correct answer = *memory* × sigmoid(*skill* − *difficulty*).
-  - Memory comes from the spaced-repetition card (a never-reviewed word reads 0.9).
-  - A challenge about several words multiplies their memories and averages their skills.
-- **Difficulty** of a row at a help level = shared base for (kind, help level) + shared slope for the kind × the row's length + the row's own correction.
-  - The shared parts get many answers and settle quickly; the per-row correction catches the odd row that is harder or easier than its shape suggests.
-  - A row's length is the length it was **asked** to be written at (measured from its shape only for rows without that record), so drift in what the model wrote is absorbed by the correction.
-- **Learning**: outcome is 1 / 0.5 / 0 for correct / almost / wrong; surprise = outcome − predicted chance. Each word's skill moves up by its rate × surprise; every difficulty part moves down by its rate × surprise. A miss the model expected (low memory, hard row) moves little; a miss on something "easy" moves a lot; a miss explained by forgetting mostly leaves skill alone.
-- **Starting values**: a new word's skill is set so the easiest one-word recognition challenge lands at 90%; bases and slopes have written starting values; corrections start at 0.
-- **Aim** (profile): Easier / Normal / Harder = 0.97 / 0.89 / 0.78 chance *given the word is remembered* — about 88 / 80 / 70% actually right at typical 0.9 memory (shown to the learner as "about 9 / 8 / 7 in 10 right"). Changing it takes effect on the next pick; nothing is rebuilt.
+- **Prediction**: chance of a right answer = sigmoid(*word* − *challenge* − *slope* × (length − middle of the kind's lengths)).
+  - The **word side** is read off the spaced-repetition card's stability: scale · ln(1 + stability) + base, two numbers every word shares; no number per word. A challenge about several words uses their average.
+  - The **challenge side** is one rating per kind and help level; nothing is written per kind.
+  - Each kind has a **length slope**. A row's length is the length it was **asked** to be written at (measured from its shape only for rows without that record).
+- **Margins**: every rating has a margin, how sure it is. Answers shrink it; a challenge rating's widens again with days unanswered, never past where it started.
+- **Learning**: outcome is 1 / 0.5 / 0 for correct / almost / wrong; after each answer every rating in it moves by Glicko-1's step — more when the answer was surprising and its own margin wide.
+- **Aim** (profile): Easier / Normal / Harder = a target chance of 0.90 / 0.80 / 0.70 (shown to the learner as "about 9 / 8 / 7 in 10 right"). Changing it takes effect on the next pick; nothing is rebuilt.
 
-The one check (`fits`)
-- **Memory picks which word; skill vs difficulty picks which challenge.** An overdue word is judged exactly as it would be on time.
-- A row **fits** a word when sigmoid(skill − difficulty) at one of its help levels lies in the **window** around the aim: aim −17 to +4 points.
-- The window is **widened per word just far enough to include the nearest challenge that could be written** (any kind in use, any help level a fresh row would be served at under current settings, any length in range). So "too hard" never excludes the easiest possible challenge and "too easy" never excludes the hardest — every word always has something writable that serving will accept, which is why serving can safely wait for a batch.
-- A multi-word row fits or not regardless of which of its words it is served for (judged by their average skill).
+Serving
+- **Memory picks which word; the ratings pick which challenge.**
+- Among the word's available challenges at every help level, each challenge rating is rolled once within its margin, and the option whose rolled chance is nearest the target is served. A well-known rating is taken only where it fits; an unsure one now and then rolls into reach and is corrected by its answer.
+- Fit never makes a challenge unavailable; it only orders them. The roll is seeded per stream position, so the same position picks the same.
 
-Writing to the check
-- A request to write is {word, kind, length}. The kinds offered are those with some length whose fresh row would fit the word; a kind the word has never had wins, ties are random; a word never gets the same kind twice in one request batch.
-- The length is the check solved backwards: the length that puts the word at the aim at the kind's **middle** help level, among lengths that fit — so the row still fits if the word weakens (easier level) or strengthens (harder level).
-- A written passage about several words is kept only if it fits them together; otherwise it is dropped and its request stays unfilled.
+Writing
+- A word with fewer than two available challenges gets two written: the two kinds the same roll puts nearest the target, each judged by its written help level nearest the target and written at the middle of its length range.
 
 Rules
-- Skills, corrections and shared parts are derived data, recomputed from the answer history in answer-time order (so every device derives identical numbers whatever order events arrive in). Changing the model or a starting value means a full recompute, never a reinterpretation of stored rows.
+- The ratings are derived data, recomputed from the answer history in answer-time order (so every device derives identical numbers whatever order events arrive in). Changing the model or a starting value means a full recompute, never a reinterpretation of stored rows.
 - Grading never consults difficulty; difficulty shapes which question is asked, never what an answer is worth.
-- There is no accuracy dial and no recent-mistakes list: every answer moves skill and correction, which is what the next pick and the next length read.
+- There is no accuracy dial and no recent-mistakes list: every answer moves the ratings, which is what the next pick and the next kinds read.
 - Strength (the bar) never steers difficulty; its only effect on practice is pacing the match rounds.
-- Tuning is measured by a calibration command replaying a profile export (log loss vs. a baseline, a predicted-vs-actual band table, a rate grid search, simulated learners).
+- Tuning is measured by a calibration command replaying a profile export, or simulated learners.
 
 Open questions
-- Words tapped as known in the word check and words that are genuinely new get the same starting skill.
-- The window is asymmetric and widened; the realised success rate can sit well away from the aim (e.g. review-ahead words with memory near 1, or words outside every writable row). Is the stated "about 8 in 10" a promise or a target?
-- A row that fits no word at any level is never served and never deleted; the pool grows without bound.
+- A row no word is ever served is never deleted; the pool grows without bound.
 
 ---
 
@@ -439,7 +431,6 @@ Rules
 Open questions
 - Empty state says "Your first session writes the first entry" and links to Practice, but practice never adds words. It should point to the word check / assistant.
 - No way to edit a word (term, meaning, reading, notes) here; only the assistant can.
-- The difficulty model's per-word skill is not shown anywhere, although it decides what the learner is asked.
 - Strength colour thresholds (0.5 / 0.85) differ from Home's garden beds (0.15 / 0.45).
 
 ---
@@ -1081,7 +1072,7 @@ What the learner's data is, where it lives, how it survives and moves between de
   - Profile: the whole language profile replaced.
   - Reading: a text added or deleted; a word marked; a word looked up.
   - Conversation: a role-play started, a turn added, a conversation deleted.
-- **Derived state**, always rebuilt from the log and never synced or exported as such: each word's spaced-repetition card and schedule (due date, retrievability, a display-only strength), each word's learned skill and each challenge's learned difficulty correction, the shared difficulty parameters, per-day activity, the text library, conversation transcripts.
+- **Derived state**, always rebuilt from the log and never synced or exported as such: each word's spaced-repetition card and schedule (due date, retrievability, a display-only strength), the difficulty model's ratings, per-day activity, the text library, conversation transcripts.
 - **Device-local state**, which is not learner data and never enters the log, sync or export: the LLM API key, endpoint, model and generation settings, display and speech preferences, the sync phrase and switch, the last sync outcome, token-usage counters, the device id, and the cached voice and recognizer models and audio clips.
 
 #### Behaviour
@@ -1498,7 +1489,7 @@ A map from this spec to the current code, for orientation during a rewrite. Not 
 
 - Routes: `src/routes/+page.svelte` (Home), `src/routes/onboarding/` (+ `steps.ts`), `src/routes/explore/check/` (word check, `check.ts`), `src/routes/learn/+page.svelte` (start screen), `src/routes/learn/session/+page.svelte` (stream), `src/routes/learn/*.svelte` (challenge components, `FeedbackBanner`, `ChallengeHost`, `blocks/`), `src/routes/words/`, `src/routes/profile/`, `src/routes/activity/` (+ `calendar.ts`).
 - Frontend logic: `src/lib/session/` (`engine.ts`, `stream.ts`, `serving.ts`), `src/lib/challenges/` (seam, presentation registry, serve/check wrappers), `src/lib/srs/scheduler.ts`, `src/lib/words/view.ts`, `src/lib/llm/` (`mock.ts`, `getBatch`, `getEscalation`, `wordBatch`), `src/lib/tasks/kinds/top-up.ts`, `src/lib/ui/prefs.ts` (readings, listening, recent topics), `src/lib/db/day.ts` (local days, streak).
-- Rust core: `crates/sapling-challenges` (`challenge.rs` union, `grade.rs`/`matcher.rs`, `help.rs`, `serve.rs`, `fits.rs`, `model.rs`, `stream.rs`, `topup.rs`, `pool.rs`, `match_pairs.rs`, `kinds.rs`, `replay.rs`, `calibrate.rs`; data in `data/kinds.json`, `data/model.json`), `crates/sapling-srs` (FSRS card machine, strength), `crates/sapling-llm` (`lesson.rs`, `wire.rs`, `escalation.rs`, `word_batch.rs`, `lessons/*.json`, `prompts/`), `crates/sapling-db` (`learned.rs` derived skills, `get_daily_activity`).
+- Rust core: `crates/sapling-challenges` (`challenge.rs` union, `grade.rs`/`matcher.rs`, `help.rs`, `serve.rs`, `fits.rs`, `model.rs`, `ratings.rs`, `stream.rs`, `topup.rs`, `pool.rs`, `match_pairs.rs`, `kinds.rs`, `replay.rs`, `research/`; data in `data/kinds.json`, `data/model.json`), `crates/sapling-srs` (FSRS card machine, strength), `crates/sapling-llm` (`lesson.rs`, `wire.rs`, `escalation.rs`, `word_batch.rs`, `lessons/*.json`, `prompts/`), `crates/sapling-db` (`learned.rs` derived ratings, `get_daily_activity`).
 - Contracts: `.claude/rules/{session,challenges,llm,data}.md`, `docs/challenge-difficulty.md`, `docs/word-check.md`.
 
 ### Reading, media and conversation

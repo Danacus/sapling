@@ -1,1 +1,1 @@
-{"steps":["tiles","extra-2"],"kinds":[{"id":"word-order","rank":6,"direction":"toTarget","lengths":[3,8],"writtenSteps":["tiles","extra-2"],"canListen":false,"bases":{"tiles":1.3,"extra-2":2.1},"slope":0.15}]}
+{"steps":["tiles","extra-2"],"kinds":[{"id":"word-order","rank":6,"direction":"toTarget","lengths":[3,8],"writtenSteps":["tiles","extra-2"],"canListen":false}]}

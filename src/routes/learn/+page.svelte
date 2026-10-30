@@ -50,7 +50,7 @@
 	/** A key and a connection: the stream writes what it runs short of by itself. */
 	const streamWrites = $derived(!mock && online);
 	/**
-	 * Something fits now, or the stream can write something that will: with a
+	 * Something to serve now, or the stream can write something: with a
 	 * key and a connection, practice starts on a batch it writes itself.
 	 * Without one, a first word with nothing is passed for the next word that
 	 * has something, so any word with something is enough.

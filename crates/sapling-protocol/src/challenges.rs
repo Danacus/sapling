@@ -14,7 +14,8 @@ use sapling_challenges::fits::Serving;
 use sapling_challenges::help::HelpLevel;
 use sapling_challenges::local::{self, CueCandidate, LocalWrite};
 use sapling_challenges::pool::lenient_rows;
-use sapling_challenges::stream::{self, Head};
+use sapling_challenges::ratings::{Ratings, StoredRating};
+use sapling_challenges::stream::{self, Head, Judge};
 use sapling_challenges::topup::{self, Scope, TopUpCoverage};
 use sapling_challenges::types::MatchPairsChallenge;
 use sapling_challenges::word::{hide_reading_probability, maturity_for_strength, Maturity};
@@ -57,10 +58,19 @@ pub struct StreamArgs {
     pub pool: Vec<Option<PoolRow>>,
     pub words: Vec<Word>,
     pub now: f64,
-    /// The learned numbers, the aim and the help-level bounds a pick is made against.
+    /// The aim and the help-level bounds a pick is made against.
     #[serde(default)]
     #[ts(optional)]
     pub serving: Option<Serving>,
+    /// `getRatings`; absent is every rating at its start.
+    #[serde(default)]
+    #[ts(optional)]
+    pub ratings: Option<Vec<StoredRating>>,
+    /// Rolls the ratings: the same seed for the same stream position picks the
+    /// same, so a peek and the pick agree.
+    #[serde(default)]
+    #[ts(optional)]
+    pub seed: Option<u64>,
     /// The challenge ids this stream has already shown: never picked again.
     #[serde(default)]
     #[ts(optional)]
@@ -110,6 +120,9 @@ pub struct TopUpArgs {
     #[serde(default)]
     #[ts(optional)]
     pub serving: Option<Serving>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub ratings: Option<Vec<StoredRating>>,
     /// The challenge ids the stream has already shown: they cover nothing.
     #[serde(default)]
     #[ts(optional)]
@@ -139,12 +152,24 @@ pub struct WriteLocalArgs {
     #[ts(as = "Vec<PoolRow>")]
     pub pool: Vec<Option<PoolRow>>,
     pub words: Vec<Word>,
+    pub now: f64,
     #[serde(default)]
     #[ts(optional)]
     pub serving: Option<Serving>,
     #[serde(default)]
     #[ts(optional)]
+    pub ratings: Option<Vec<StoredRating>>,
+    #[serde(default)]
+    #[ts(optional)]
     pub seed: Option<u64>,
+}
+
+/// The serving and the ratings a planner judges by, each at its default when absent.
+fn judged(serving: Option<Serving>, ratings: Option<Vec<StoredRating>>) -> (Serving, Ratings) {
+    (
+        serving.unwrap_or_default(),
+        Ratings::from_stored(&ratings.unwrap_or_default()),
+    )
 }
 
 macro_rules! challenges {
@@ -228,7 +253,9 @@ challenges! {
         }
         /// The most urgent word and its challenge — a position into `pool` at its help level — absent while it has nothing, unless `pass` lets it be the first word further down with something.
         streamHead(args: StreamArgs) -> Option<Head> {
-            stream::head(&args.pool, &args.words, args.now, &args.serving.unwrap_or_default(), &args.served.unwrap_or_default(), args.pass.unwrap_or(false))
+            let (serving, ratings) = judged(args.serving, args.ratings);
+            let judge = Judge { serving: &serving, ratings: &ratings };
+            stream::head(&args.pool, &args.words, args.now, judge, &args.served.unwrap_or_default(), args.pass.unwrap_or(false), &mut Rng::from_seed(args.seed))
         }
         /// How many words ahead the stream keeps written for, at this pace.
         lowWaterMark(args: LowWaterArgs) -> usize {
@@ -248,15 +275,20 @@ challenges! {
             let (served, asked) = (args.served.unwrap_or_default(), args.asked.unwrap_or_default());
             let cued = args.cued.unwrap_or_default();
             let scope = Scope { served: &served, asked: &asked, limit: args.limit, cued: &cued };
-            topup::plan_top_up(&args.pool, &args.words, args.now, &args.serving.unwrap_or_default(), scope, &mut || rng.next_f64())
+            let (serving, ratings) = judged(args.serving, args.ratings);
+            let judge = Judge { serving: &serving, ratings: &ratings };
+            topup::plan_top_up(&args.pool, &args.words, args.now, judge, scope, &mut rng)
         }
         /// Builds the local wants from the learner's own material; answers those rows and the wants left for the model, a local want nothing could be built for replaced by a model-written kind.
         writeLocal(args: WriteLocalArgs) -> LocalWrite {
-            local::write_local(&args.wants, &args.cues, &args.pool, &args.words, &args.serving.unwrap_or_default(), &mut Rng::from_seed(args.seed))
+            let (serving, ratings) = judged(args.serving, args.ratings);
+            let judge = Judge { serving: &serving, ratings: &ratings };
+            local::write_local(&args.wants, &args.cues, &args.pool, &args.words, judge, args.now, &mut Rng::from_seed(args.seed))
         }
         /// The start screen's figure and what a press would write.
         topUpCoverage(args: TopUpArgs) -> TopUpCoverage {
-            topup::coverage(&args.pool, &args.words, args.now, &args.serving.unwrap_or_default())
+            let (serving, ratings) = judged(args.serving, args.ratings);
+            topup::coverage(&args.pool, &args.words, args.now, Judge { serving: &serving, ratings: &ratings })
         }
     }
 }

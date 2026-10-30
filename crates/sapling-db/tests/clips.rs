@@ -303,6 +303,8 @@ fn a_cue_clozes_served_sentence_ranks_its_own_cue_first() {
     use sapling_challenges::help::HelpLevel;
     use sapling_challenges::kinds::{ChallengeKind, Want, WantItem, WireType};
     use sapling_challenges::local::write_local;
+    use sapling_challenges::ratings::Ratings;
+    use sapling_challenges::stream::Judge;
     use sapling_challenges::{Rng, Word};
 
     let core = core();
@@ -320,10 +322,8 @@ fn a_cue_clozes_served_sentence_ranks_its_own_cue_first() {
     let words: Vec<Word> = ["dog", "cat", "house", "bread", "water", "table"]
         .iter()
         .map(|term| {
-            serde_json::from_value(
-                json!({ "id": term, "term": term, "meaning": "-", "skill": 4.0 }),
-            )
-            .expect("a word")
+            serde_json::from_value(json!({ "id": term, "term": term, "meaning": "-" }))
+                .expect("a word")
         })
         .collect();
     let want = Want {
@@ -337,13 +337,19 @@ fn a_cue_clozes_served_sentence_ranks_its_own_cue_first() {
         },
         length: 7,
     };
+    let (serving, ratings) = (Serving::default(), Ratings::default());
+    let judge = Judge {
+        serving: &serving,
+        ratings: &ratings,
+    };
     for seed in 0..4 {
         let written = write_local(
             std::slice::from_ref(&want),
             &cues,
             &[],
             &words,
-            &Serving::default(),
+            judge,
+            0.0,
             &mut Rng::seeded(seed),
         );
         let challenge = &written.challenges[0];

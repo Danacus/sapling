@@ -2,7 +2,7 @@
 //! about a word that are *display*, never difficulty: how far along it looks
 //! (the home page's garden and the reader's colours) and how likely the reader
 //! is to hide its reading. Neither decides what a challenge asks — that is the
-//! difficulty model's (`model.rs`, `fits.rs`) — so their cut points live here,
+//! difficulty model's (`ratings.rs`) — so their cut points live here,
 //! read off the strength bar alone.
 
 use std::collections::HashMap;
@@ -12,7 +12,7 @@ use ts_rs::TS;
 
 use sapling_srs::ItemSrs;
 
-use crate::model::{starting_skill, tuning};
+use crate::model::tuning;
 
 /// The part of a `KnowledgeItem` the challenge layer reads.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -28,11 +28,6 @@ pub struct Word {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub srs: Option<ItemSrs>,
-    /// The difficulty model's skill for the word, learned from its answers;
-    /// absent until it has any, which reads as the starting skill.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub skill: Option<f64>,
 }
 
 impl Word {
@@ -59,8 +54,13 @@ impl Word {
         }
     }
 
-    pub fn skill(&self) -> f64 {
-        self.skill.unwrap_or_else(starting_skill)
+    /// FSRS's stability in days, what the ratings read a word by; 0 for a
+    /// word never reviewed.
+    pub fn stability(&self) -> f64 {
+        self.srs
+            .as_ref()
+            .and_then(|srs| srs.stability)
+            .unwrap_or(0.0)
     }
 
     /// A word with nothing to write or grade a challenge about.
@@ -126,8 +126,8 @@ pub(crate) mod tests {
                 due: 0.0,
                 retrievability: 1.0,
                 strength,
+                stability: None,
             }),
-            skill: None,
         }
     }
 
@@ -151,14 +151,15 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_word_never_reviewed_reads_the_new_word_memory_and_the_starting_skill() {
+    fn a_word_never_reviewed_reads_the_new_word_memory_and_no_stability() {
         let fresh = word("w", None);
         assert_eq!(fresh.memory(), tuning().new_word_memory);
-        assert_eq!(fresh.skill(), starting_skill());
+        assert_eq!(fresh.stability(), 0.0);
         let mut known = word("w", Some(0.5));
-        known.srs.as_mut().unwrap().retrievability = 0.7;
-        known.skill = Some(3.0);
+        let srs = known.srs.as_mut().unwrap();
+        srs.retrievability = 0.7;
+        srs.stability = Some(12.0);
         assert_eq!(known.memory(), 0.7);
-        assert_eq!(known.skill(), 3.0);
+        assert_eq!(known.stability(), 12.0);
     }
 }

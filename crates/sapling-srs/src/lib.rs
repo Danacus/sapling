@@ -315,7 +315,7 @@ pub fn review_card(state: &FsrsCardState, grade: Grade, now: f64) -> Result<Fsrs
 
 /// What a screen reads off a card, attached to every item a read returns.
 ///
-/// The frontend has no FSRS, so it cannot derive any of this: it gets the three
+/// The frontend has no FSRS, so it cannot derive any of this: it gets the
 /// numbers and does arithmetic on them. `due` is the card's own due timestamp,
 /// passed straight through and *not* turned into a boolean here — whether it has
 /// arrived is a comparison against the caller's own `now`, and the session's
@@ -330,6 +330,11 @@ pub struct ItemSrs {
     pub due: f64,
     pub retrievability: f64,
     pub strength: f64,
+    /// The card's stability in days, 0 for one never reviewed: what the
+    /// difficulty model reads a word by. Absent on an item built by hand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub stability: Option<f64>,
 }
 
 /// Stability (in days) treated as "this word is mature" by [`word_strength`].
@@ -385,6 +390,7 @@ pub fn item_srs(card: &FsrsCardState, now: f64) -> ItemSrs {
         due: card.due,
         retrievability: current_retrievability(card, now),
         strength: word_strength(card, now),
+        stability: Some(f64::from(card.stability.max(0.0))),
     }
 }
 

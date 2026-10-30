@@ -1,14 +1,13 @@
 /**
- * What a pick is made against, besides the pool and the words — the generated
- * `Serving` (`crates/sapling-challenges`' `fits.rs`): the learned shared
- * numbers, the learner's aim, the two device facts that bound which help
- * levels exist at all, and whether a row written now carries readings. The
+ * What a pick is made against, besides the pool, the words and the ratings —
+ * the generated `Serving` (`crates/sapling-challenges`' `fits.rs`): the
+ * learner's aim, the two device facts that bound which help levels exist at
+ * all, and whether a row written now carries readings. The
  * device facts are read here, once per plan, so every caller that plans or
  * refills asks with the same bounds a session would serve with.
  */
 
 import type { Serving } from '$lib/db/generated/index';
-import type { Shared } from '$lib/db/generated/index';
 import { writtenWithReadings } from '$lib/romanize';
 import { ttsAvailable } from '$lib/tts';
 import { targetTagOf } from '$lib/text';
@@ -38,16 +37,14 @@ export function deviceServing(tag: string | undefined): DeviceServing {
 /**
  * The whole `Serving` for one plan. `readings` is the language's, not the
  * device's: a row written for a language with a non-Latin script carries a
- * reading, so the readings setting decides which levels the writer may solve
- * a length against — with readings off, only the hidden ones.
+ * reading, so the readings setting decides which levels the writer judges a
+ * kind at — with readings off, only the hidden ones.
  */
 export function servingFor(
 	profile: Pick<Profile, 'aim' | 'targetLanguage' | 'targetLanguageTag'> | undefined,
-	parts: Shared,
 	device: DeviceServing = deviceServing(targetTagOf(profile))
 ): Serving {
 	return {
-		parts,
 		aim: profile?.aim ?? 'normal',
 		...device,
 		readings: writtenWithReadings(targetTagOf(profile))

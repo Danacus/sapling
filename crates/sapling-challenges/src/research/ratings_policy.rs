@@ -1,4 +1,4 @@
-//! Choosing with ratings (`docs/difficulty-ratings.md` §4), the policy beside
+//! Choosing with ratings (`docs/challenge-difficulty.md` §6), the policy beside
 //! `ratings.rs`; only the closed-loop simulation runs it.
 //!
 //! **Serving**: the head word's available challenges, at every help level,
@@ -14,12 +14,12 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use crate::fits::{help_levels, written_levels};
 use crate::help::HelpLevel;
 use crate::kinds::{active_kinds, kind_of, ChallengeKind, Want, WantItem, WireType};
-use crate::model::{length_of, sigmoid, Evidence, Observation};
-use crate::policy_v2::{Ask, Pick};
 use crate::pool::{is_playable, is_rested, is_spent, known_ids};
-use crate::ratings::{Key, Ratings};
+use crate::research::policy_v2::{Ask, Pick};
+use crate::research::ratings::{Key, Ratings};
+use crate::research::sim::gaussian;
+use crate::research::v1::{length_of, sigmoid, Evidence, Observation};
 use crate::rng::Rng;
-use crate::sim::gaussian;
 use crate::text::js_trim;
 use crate::word::Word;
 
@@ -214,7 +214,7 @@ mod tests {
     use super::*;
     use crate::fits::Serving;
     use crate::pool::PoolRow;
-    use crate::ratings::Settings;
+    use crate::research::ratings::Settings;
     use crate::stream::tests::rows;
     use crate::topup::tests::{pooled, word, DAY, NOW};
 

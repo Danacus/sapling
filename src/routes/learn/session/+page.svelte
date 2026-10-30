@@ -2,10 +2,10 @@
   The practice screen — the part of the app people actually spend time in.
 
   One continuous stream that runs until the learner stops
-  (`docs/challenge-difficulty.md` §11): each challenge is picked when the last
+  (`docs/challenge-difficulty.md`): each challenge is picked when the last
   one is done, against the store as it is then, by `$lib/session/stream` — the
-  most urgent word with a challenge that fits it, at the help level closest to
-  the learner's aim — with a free match round after every few challenges about
+  most urgent word, at the challenge and help level whose rolled chance is
+  nearest the learner's aim — with a free match round after every few challenges about
   early words. There is no plan to walk and no end but the learner's: when the
   most urgent word has nothing, the stream waits for a batch written for it;
   when no batch can help it, it passes it for the next word that has something;
@@ -407,11 +407,11 @@
 	/** Why a stream with nothing left for any word cannot go on, in the learner's words. */
 	function endReasonFor(asked: boolean): string {
 		if (mock) {
-			return 'Nothing left that fits. Add your OpenRouter key in Settings and practice writes more as you go.';
+			return 'Nothing left to practise. Add your OpenRouter key in Settings and practice writes more as you go.';
 		}
-		if (!canWrite()) return "You're offline, and nothing written so far fits your words.";
+		if (!canWrite()) return "You're offline, and everything written so far has been practised.";
 		if (asked) {
-			return 'Nothing that fits your words could be written just now. Try again, or come back later.';
+			return 'Nothing new could be written just now. Try again, or come back later.';
 		}
 		return 'Nothing to practise right now. Come back later, or add words.';
 	}
@@ -593,7 +593,7 @@
 	 * honestly deserves. `wrong` counts as a miss in the summary, and
 	 * `applyResult` grades the item FSRS-`Again` — which is exactly "I could not
 	 * produce this" — and the difficulty model reads it as the miss it is, so
-	 * the word's skill falls and the next pick asks less of it.
+	 * that challenge type reads harder and the next pick asks less.
 	 */
 	function skipCurrent(): void {
 		const challenge = current;
@@ -767,7 +767,7 @@
 		<div class="centered"><Spinner /></div>
 	{:else if phase === 'waiting'}
 		<!--
-		  Nothing fits right now and a batch is on its way. The tray says what it
+		  Nothing to serve right now and a batch is on its way. The tray says what it
 		  is doing; this says what the learner is waiting for, and lets them stop.
 		-->
 		<div class="centered" in:fade={{ duration: motionMs(200) }}>

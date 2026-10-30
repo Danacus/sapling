@@ -1,15 +1,17 @@
 //! Practice is one continuous stream that runs until the learner stops
-//! (`docs/challenge-difficulty.md` §11), each challenge picked against the
-//! store as it is now.
+//! (`docs/challenge-difficulty.md`), each challenge picked against the store
+//! as it is now.
 //!
 //! **One list, one predicate.** [`upcoming`] is the next words in urgency
 //! order — due first, most overdue first, then the rest soonest first — each
-//! with the row it would be served, if any is [`available`]. Serving takes the
-//! head: a head with nothing waits for a refill while one is running or can be
-//! started for it, and only when none can help is it passed for the first word
-//! further down the same list that has something ([`head`]'s `pass`). Refill
-//! writes for exactly the words in the first [`low_water_mark`] of the same
-//! list that have nothing (`topup.rs`), so the two can never disagree.
+//! with how many rows are [`available`] to it. Serving takes the head: among
+//! its available rows at every help level, the one whose rolled chance is
+//! nearest the aim's target (`ratings.rs`' `Roll`). A head with nothing waits
+//! for a refill while one is running or can be started for it, and only when
+//! none can help is it passed for the first word further down the same list
+//! that has something ([`head`]'s `pass`). Refill writes for the words in the
+//! first [`low_water_mark`] of the same list that are short of stock
+//! (`topup.rs`), so the two can never disagree.
 //!
 //! **Pacing** is a rule on the stream, not a plan: a free match round after
 //! every [`MATCH_PAIRS_EVERY`] challenges about early words, never when there
@@ -20,10 +22,13 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::fits::{best_fit, Fit, Serving};
-use crate::kinds::kind_of;
+use crate::fits::{help_levels, Serving};
+use crate::help::HelpLevel;
+use crate::kinds::{kind_of, WireType};
 use crate::match_pairs::make_match_pairs;
+use crate::model::{length_of, target, Evidence, Observation};
 use crate::pool::{is_playable, is_rested, is_spent, known_ids, PoolRow};
+use crate::ratings::{Ratings, Roll};
 use crate::rng::Rng;
 use crate::types::MatchPairsChallenge;
 use crate::word::{by_id, ById, Word};
@@ -45,7 +50,7 @@ pub const DEFAULT_BATCH_MS: f64 = 45_000.0;
 pub const DEFAULT_PACE_MS: f64 = 15_000.0;
 
 /// The next challenge: its position in the pool, the help level it is served
-/// at, the chance there given the word is remembered, and whether its word is due.
+/// at, its rolled chance there, and whether its word is due.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct Next {
     pub at: usize,
@@ -54,14 +59,14 @@ pub struct Next {
     pub due: bool,
 }
 
-/// One word of the list and the row it would be served now, if any.
+/// One word of the list and how many rows are available to it now.
 pub struct Ahead<'w> {
     pub word: &'w Word,
-    pub next: Option<Next>,
+    pub available: usize,
 }
 
 /// Soonest due first, id breaking the tie so the order ignores store order.
-fn by_urgency(words: &[Word], now: f64) -> Vec<&Word> {
+pub(crate) fn by_urgency(words: &[Word], now: f64) -> Vec<&Word> {
     let mut sorted: Vec<&Word> = words.iter().filter(|w| w.is_writable()).collect();
     sorted.sort_by(|a, b| {
         a.due_at(now)
@@ -71,54 +76,68 @@ fn by_urgency(words: &[Word], now: f64) -> Vec<&Word> {
     sorted
 }
 
+/// A challenge of `kind` about these words at this help level and length, as
+/// the ratings read it now.
+pub(crate) fn seen(
+    id: &str,
+    kind: WireType,
+    help: HelpLevel,
+    length: f64,
+    words: &[&Word],
+    now: f64,
+) -> Observation {
+    Observation {
+        at: now,
+        challenge_id: id.to_owned(),
+        kind,
+        help,
+        length,
+        words: words
+            .iter()
+            .map(|w| Evidence {
+                item_id: w.id.clone(),
+                memory: w.memory(),
+                stability: w.stability(),
+            })
+            .collect(),
+        outcome: 0.0,
+    }
+}
+
 /// What [`available`] reads besides the row.
 struct Context<'a> {
     now: f64,
     known: HashSet<&'a str>,
     served: HashSet<&'a str>,
     words: ById<'a>,
-    serving: &'a Serving,
 }
 
 /// The one predicate: a row may be served to a word now when it is playable,
-/// of an active kind, not spent, not yet served this stream, rested — or merely
-/// resting, when the word is due — and fits. Answers the fit.
-fn available(row: &PoolRow, due: bool, cx: &Context) -> Option<Fit> {
-    let ok = is_playable(row, &cx.known)
+/// of an active kind, not spent, not yet served this stream, and rested — or
+/// merely resting, when the word is due. Fit never makes a row unavailable.
+fn available(row: &PoolRow, due: bool, cx: &Context) -> bool {
+    is_playable(row, &cx.known)
         && kind_of(&row.challenge).is_some_and(|k| k.is_active())
         && !is_spent(row)
         && !cx.served.contains(row.challenge.id())
-        && (due || is_rested(row, cx.now));
-    ok.then(|| best_fit(row, &cx.words, cx.serving)).flatten()
+        && (due || is_rested(row, cx.now))
 }
 
-/// Rested before resting, then closest to the aim, then never served (newest
-/// first) before served (longest ago first), id last.
-fn better(a: (&PoolRow, Fit), b: (&PoolRow, Fit), cx: &Context) -> bool {
-    let key = |(row, fit): (&PoolRow, Fit)| {
-        let (served, when) = match row.last_served_at {
-            None => (false, -row.generated_at),
-            Some(at) => (true, at),
-        };
-        (
-            !is_rested(row, cx.now),
-            fit.distance(cx.serving.aim),
-            served,
-            when,
-        )
+/// Never served (newest first) before served (longest ago first), id last:
+/// what breaks a tie between rows the roll puts equally near.
+fn fresher(a: &PoolRow, b: &PoolRow) -> std::cmp::Ordering {
+    let key = |row: &PoolRow| match row.last_served_at {
+        None => (false, -row.generated_at),
+        Some(at) => (true, at),
     };
     let (ka, kb) = (key(a), key(b));
     ka.0.cmp(&kb.0)
         .then(ka.1.total_cmp(&kb.1))
-        .then(ka.2.cmp(&kb.2))
-        .then(ka.3.total_cmp(&kb.3))
-        .then_with(|| a.0.challenge.id().cmp(b.0.challenge.id()))
-        .is_lt()
+        .then_with(|| a.challenge.id().cmp(b.challenge.id()))
 }
 
 /// The list, walked lazily: every word in urgency order, and for any of them
-/// the row it would be served now. [`upcoming`] takes the first `n`; [`head`]
-/// stops at the first word with something when it may pass the head.
+/// its available rows or the one it would be served now.
 struct Walk<'w, 'a> {
     cx: Context<'a>,
     about: HashMap<&'a str, Vec<usize>>,
@@ -130,13 +149,7 @@ impl<'w, 'a> Walk<'w, 'a>
 where
     'w: 'a,
 {
-    fn new(
-        pool: &'a [Option<PoolRow>],
-        words: &'w [Word],
-        now: f64,
-        serving: &'a Serving,
-        served: &'a [String],
-    ) -> Self {
+    fn new(pool: &'a [Option<PoolRow>], words: &'w [Word], now: f64, served: &'a [String]) -> Self {
         let mut about: HashMap<&str, Vec<usize>> = HashMap::new();
         for (at, row) in pool.iter().enumerate() {
             for item in row.iter().flat_map(|r| r.challenge.item_ids()) {
@@ -149,7 +162,6 @@ where
                 known: known_ids(words),
                 served: served.iter().map(String::as_str).collect(),
                 words: by_id(words),
-                serving,
             },
             about,
             pool,
@@ -157,48 +169,79 @@ where
         }
     }
 
-    /// The row `word` would be served now, if any is available.
-    fn ahead(&self, word: &'w Word) -> Ahead<'w> {
+    /// The positions of the rows available to `word` now.
+    fn rows(&self, word: &Word) -> Vec<usize> {
+        let due = word.is_due(self.cx.now);
+        let mut rows: Vec<usize> = self
+            .about
+            .get(word.id.as_str())
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|&at| {
+                self.pool[at]
+                    .as_ref()
+                    .is_some_and(|row| available(row, due, &self.cx))
+            })
+            .collect();
+        rows.dedup();
+        rows
+    }
+
+    /// The row and help level `word` would be served now: each challenge
+    /// rating rolled once, the option nearest the target taken.
+    fn pick(&self, word: &Word, judge: Judge, rng: &mut Rng) -> Option<Next> {
         let cx = &self.cx;
-        let due = word.is_due(cx.now);
-        let mut best: Option<(usize, &PoolRow, Fit)> = None;
-        for &at in self.about.get(word.id.as_str()).into_iter().flatten() {
-            let Some(row) = self.pool[at].as_ref() else {
-                continue;
-            };
-            let Some(fit) = available(row, due, cx) else {
-                continue;
-            };
-            if best.is_none_or(|(_, r, f)| better((row, fit), (r, f), cx)) {
-                best = Some((at, row, fit));
+        let aim = target(judge.serving.aim);
+        let mut roll = Roll::new(judge.ratings, cx.now, rng);
+        let mut best: Option<(usize, &PoolRow, HelpLevel, f64)> = None;
+        for at in self.rows(word) {
+            let row = self.pool[at].as_ref()?;
+            let kind = kind_of(&row.challenge)?;
+            let words: Vec<&Word> = row
+                .challenge
+                .item_ids()
+                .iter()
+                .filter_map(|id| cx.words.get(id.as_str()).copied())
+                .collect();
+            let length = length_of(&row.challenge);
+            for help in help_levels(&row.challenge, judge.serving) {
+                let o = seen(row.challenge.id(), kind, help, length, &words, cx.now);
+                let chance = roll.chance(&o);
+                let better = best.is_none_or(|(_, r, _, c)| {
+                    let (d, e) = ((chance - aim).abs(), (c - aim).abs());
+                    d < e || (d == e && fresher(row, r).is_lt())
+                });
+                if better {
+                    best = Some((at, row, help, chance));
+                }
             }
         }
-        Ahead {
-            word,
-            next: best.map(|(at, _, fit)| Next {
-                at,
-                shown: fit.help.id(),
-                chance: fit.chance,
-                due,
-            }),
-        }
+        best.map(|(at, _, help, chance)| Next {
+            at,
+            shown: help.id(),
+            chance,
+            due: word.is_due(cx.now),
+        })
     }
 }
 
-/// The next `n` words in urgency order, each with the row it would be served.
+/// The next `n` words in urgency order, each with how many rows are available to it.
 pub fn upcoming<'w>(
     pool: &[Option<PoolRow>],
     words: &'w [Word],
     now: f64,
-    serving: &Serving,
     served: &[String],
     n: usize,
 ) -> Vec<Ahead<'w>> {
-    let walk = Walk::new(pool, words, now, serving, served);
+    let walk = Walk::new(pool, words, now, served);
     walk.order
         .iter()
         .take(n)
-        .map(|word| walk.ahead(word))
+        .map(|word| Ahead {
+            word,
+            available: walk.rows(word).len(),
+        })
         .collect()
 }
 
@@ -219,36 +262,45 @@ pub struct Head {
     pub instead: Option<String>,
 }
 
+/// What a pick is made against besides the pool and the words.
+#[derive(Debug, Clone, Copy)]
+pub struct Judge<'a> {
+    pub serving: &'a Serving,
+    pub ratings: &'a Ratings,
+}
+
 /// `served` being the ids this stream has already shown. With `pass`, a head
 /// with nothing is passed for the first word further down the same list that
 /// has an available row — what the stream does only when no batch can help
-/// the head (`session.md`); without it, the head waits.
+/// the head (`session.md`); without it, the head waits. `rng` rolls the
+/// ratings: the same seed for the same stream position picks the same.
 pub fn head(
     pool: &[Option<PoolRow>],
     words: &[Word],
     now: f64,
-    serving: &Serving,
+    judge: Judge,
     served: &[String],
     pass: bool,
+    rng: &mut Rng,
 ) -> Option<Head> {
-    let walk = Walk::new(pool, words, now, serving, served);
-    let first = walk.ahead(walk.order.first()?);
-    let word = first.word.id.clone();
-    if first.next.is_some() || !pass {
+    let walk = Walk::new(pool, words, now, served);
+    let first = *walk.order.first()?;
+    let next = walk.pick(first, judge, rng);
+    let word = first.id.clone();
+    if next.is_some() || !pass {
         return Some(Head {
             word,
-            next: first.next,
+            next,
             instead: None,
         });
     }
     let further = walk.order[1..]
         .iter()
-        .map(|w| walk.ahead(w))
-        .find(|a| a.next.is_some());
+        .find_map(|w| walk.pick(w, judge, rng).map(|next| (w.id.clone(), next)));
     Some(Head {
         word,
-        next: further.as_ref().and_then(|a| a.next.clone()),
-        instead: further.map(|a| a.word.id.clone()),
+        instead: further.as_ref().map(|(id, _)| id.clone()),
+        next: further.map(|(_, next)| next),
     })
 }
 
@@ -257,10 +309,11 @@ pub fn next_pick(
     pool: &[Option<PoolRow>],
     words: &[Word],
     now: f64,
-    serving: &Serving,
+    judge: Judge,
     served: &[String],
+    rng: &mut Rng,
 ) -> Option<Next> {
-    head(pool, words, now, serving, served, false)?.next
+    head(pool, words, now, judge, served, false, rng)?.next
 }
 
 /// How many words ahead refill keeps written for: enough to keep answering
@@ -301,20 +354,16 @@ pub fn match_round(words: &[Word], rng: &mut Rng) -> Option<MatchPairsChallenge>
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::help::Step;
     use crate::kinds::WireType;
     use crate::pool::RESERVE_GAP;
     use crate::topup::tests::{pooled, word, DAY, NOW};
-    use crate::topup::Scope;
+    use crate::topup::{Scope, STOCK};
     use crate::Challenge;
     use serde_json::json;
 
     fn fresh(id: &str, offset: f64) -> Word {
         word(id, offset, 0.0)
-    }
-    fn skilled(id: &str, offset: f64, skill: f64) -> Word {
-        let mut w = word(id, offset, 0.5);
-        w.skill = Some(skill);
-        w
     }
     fn row(id: &str, item_ids: &[&str]) -> PoolRow {
         pooled(id, WireType::RecognizeMc, item_ids, None)
@@ -328,13 +377,6 @@ pub(crate) mod tests {
         row.last_served_at = Some(at);
         row
     }
-    fn with_prompt(mut row: PoolRow, prompt: &str) -> PoolRow {
-        match &mut row.challenge {
-            Challenge::MultipleChoice(c) => c.prompt = prompt.into(),
-            _ => unreachable!(),
-        }
-        row
-    }
     fn typed_row(id: &str, item_ids: &[&str]) -> PoolRow {
         let row = json!({ "id": id, "type": "cloze", "direction": "toTarget", "sentence": "Yo ___ ayer.",
             "acceptedAnswers": ["corrí"], "itemIds": item_ids });
@@ -345,12 +387,30 @@ pub(crate) mod tests {
             last_served_at: None,
             reported: false,
             topic: None,
-            correction: None,
         }
     }
 
     pub(crate) fn rows(pool: &[PoolRow]) -> Vec<Option<PoolRow>> {
         pool.iter().cloned().map(Some).collect()
+    }
+
+    /// The pick for the default serving and these ratings under `seed`.
+    pub(crate) fn pick_with(
+        pool: &[Option<PoolRow>],
+        words: &[Word],
+        ratings: &Ratings,
+        served: &[String],
+        seed: u64,
+    ) -> Option<Next> {
+        let serving = Serving::default();
+        let judge = Judge {
+            serving: &serving,
+            ratings,
+        };
+        next_pick(pool, words, NOW, judge, served, &mut Rng::seeded(seed))
+    }
+    fn pick(pool: &[Option<PoolRow>], words: &[Word], served: &[String]) -> Option<Next> {
+        pick_with(pool, words, &Ratings::default(), served, 1)
     }
 
     /// The ids the stream serves, one pick at a time, as if each were
@@ -360,7 +420,7 @@ pub(crate) mod tests {
         let mut words = words.to_vec();
         let mut shown: Vec<String> = Vec::new();
         while shown.len() < limit {
-            let Some(next) = next_pick(&rows, &words, NOW, &Serving::default(), &shown) else {
+            let Some(next) = pick(&rows, &words, &shown) else {
                 break;
             };
             let row = &pool[next.at].challenge;
@@ -370,6 +430,25 @@ pub(crate) mod tests {
             shown.push(row.id().to_owned());
         }
         shown
+    }
+
+    /// Many answers by other words to `kind` at its plain level, `right` in ten right.
+    pub(crate) fn settle(r: &mut Ratings, kind: WireType, right: usize, answers: usize) {
+        for i in 0..answers {
+            r.learn(&Observation {
+                at: NOW,
+                challenge_id: String::new(),
+                kind,
+                help: HelpLevel::step(Step::Plain),
+                length: crate::ratings::centre(kind),
+                words: vec![Evidence {
+                    item_id: format!("other-{i}"),
+                    memory: 1.0,
+                    stability: 0.0,
+                }],
+                outcome: f64::from(u8::from(i % 10 < right)),
+            });
+        }
     }
 
     #[test]
@@ -390,16 +469,8 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_word_is_picked_the_row_closest_to_the_aim_and_freshness_breaks_a_tie() {
-        let words = [skilled("due", -DAY, 2.4)];
-        let pool = [
-            generated(row("short", &["due"]), NOW),
-            generated(
-                with_prompt(row("closer", &["due"]), "dónde está la"),
-                NOW - 5.0 * DAY,
-            ),
-        ];
-        assert_eq!(stream(&pool, &words, 2), ["closer", "short"]);
+    fn rows_the_roll_puts_level_are_served_freshest_first() {
+        let words = [fresh("due", -DAY)];
         let pool = [
             generated(row("older", &["due"]), NOW - 5.0 * DAY),
             generated(row("newer", &["due"]), NOW),
@@ -407,15 +478,17 @@ pub(crate) mod tests {
         assert_eq!(stream(&pool, &words, 2), ["newer", "older"]);
     }
 
+    /// Fit only orders: a brand-new word with nothing but a typed cloze is
+    /// served it rather than kept waiting.
     #[test]
-    fn nothing_that_does_not_fit_is_served() {
+    fn fit_never_makes_a_row_unavailable() {
         let words = [fresh("due", -DAY)];
-        assert!(stream(&[typed_row("typed", &["due"])], &words, 5).is_empty());
-        let owned = [skilled("due", -DAY, 5.0)];
-        let pool = [row("choice", &["due"]), typed_row("typed", &["due"])];
-        assert_eq!(stream(&pool, &owned, 5), ["typed"]);
-        let next = next_pick(&rows(&pool), &owned, NOW, &Serving::default(), &[]).unwrap();
-        assert_eq!((next.shown.as_str(), next.due), ("typed", true));
+        assert_eq!(
+            stream(&[typed_row("typed", &["due"])], &words, 5),
+            ["typed"]
+        );
+        let next = pick(&rows(&[typed_row("t", &["due"])]), &words, &[]).unwrap();
+        assert!(next.due && ["pick-4", "pick-6", "typed"].contains(&next.shown.as_str()));
     }
 
     #[test]
@@ -425,13 +498,10 @@ pub(crate) mod tests {
             served(row("yesterday", &["due"]), NOW - DAY),
             served(row("two-days", &["due"]), NOW - 2.0 * DAY),
         ]);
-        let serving = Serving::default();
-        let first = next_pick(&pool, &words, NOW, &serving, &[]).unwrap();
-        assert_eq!(first.at, 1);
-        let second = next_pick(&pool, &words, NOW, &serving, &["two-days".into()]).unwrap();
-        assert_eq!(second.at, 0);
+        assert_eq!(pick(&pool, &words, &[]).unwrap().at, 1);
+        assert_eq!(pick(&pool, &words, &["two-days".into()]).unwrap().at, 0);
         let all = ["two-days".into(), "yesterday".into()];
-        assert!(next_pick(&pool, &words, NOW, &serving, &all).is_none());
+        assert!(pick(&pool, &words, &all).is_none());
         // A word not yet due waits out the gap.
         let ahead = [fresh("ahead", DAY)];
         let pool = [served(row("hot", &["ahead"]), NOW - DAY)];
@@ -456,13 +526,78 @@ pub(crate) mod tests {
         ];
         assert_eq!(stream(&pool, &words, 5), ["fine"]);
         let unreadable = vec![None, Some(row("fine", &["kept"]))];
-        let next = next_pick(&unreadable, &words, NOW, &Serving::default(), &[]).unwrap();
-        assert_eq!(next.at, 1);
+        assert_eq!(pick(&unreadable, &words, &[]).unwrap().at, 1);
+    }
+
+    /// The roll is seeded per stream position: the same seed picks the same,
+    /// so peeking the head and then serving it agree.
+    #[test]
+    fn a_seed_replays_the_pick_and_a_peek_is_what_is_served() {
+        let words = [fresh("w", -DAY)];
+        let pool = rows(&[
+            pooled("mc", WireType::RecognizeMc, &["w"], None),
+            pooled("cloze", WireType::Cloze, &["w"], None),
+            pooled("order", WireType::WordOrder, &["w"], None),
+        ]);
+        let r = Ratings::default();
+        let serving = Serving::default();
+        let judge = Judge {
+            serving: &serving,
+            ratings: &r,
+        };
+        for seed in 0..20 {
+            let peek = head(
+                &pool,
+                &words,
+                NOW,
+                judge,
+                &[],
+                false,
+                &mut Rng::seeded(seed),
+            );
+            let served = pick_with(&pool, &words, &r, &[], seed);
+            assert_eq!(peek.unwrap().next, served);
+        }
+        let picks: HashSet<(usize, String)> = (0..40)
+            .filter_map(|seed| pick_with(&pool, &words, &r, &[], seed))
+            .map(|n| (n.at, n.shown))
+            .collect();
+        assert!(picks.len() > 2, "{picks:?}");
+    }
+
+    /// How often the second of two rows about one word is served.
+    fn second(r: &Ratings, seeds: u64) -> usize {
+        let words = [word("w", -DAY, 0.5)];
+        let pool = rows(&[
+            pooled("easy", WireType::RecognizeMc, &["w"], None),
+            pooled("other", WireType::TranslateToNative, &["w"], None),
+        ]);
+        (0..seeds)
+            .filter(|&seed| pick_with(&pool, &words, r, &[], seed).unwrap().at == 1)
+            .count()
+    }
+
+    /// A type rated hard on many answers is almost never rolled into reach;
+    /// on two it now and then is; never answered, it often is.
+    #[test]
+    fn a_type_rated_hard_on_many_answers_is_rarely_served_an_unsure_one_sometimes() {
+        let with = |answers: usize| {
+            let mut r = Ratings::default();
+            settle(&mut r, WireType::RecognizeMc, 8, 100);
+            settle(&mut r, WireType::TranslateToNative, 0, answers);
+            second(&r, 400)
+        };
+        let (sure, thin, unknown) = (with(200), with(2), with(0));
+        assert!(sure < 4, "{sure}");
+        assert!(
+            thin > sure && unknown > thin + 20,
+            "{sure} {thin} {unknown}"
+        );
     }
 
     /// The head is the most urgent word whatever is ready behind it: serving
     /// waits for it unless told no batch can help, and refill reads the same
-    /// list and writes for it.
+    /// list and writes for it first.
     #[test]
     fn the_head_waits_unless_passed_and_refill_reads_the_same_list() {
         let words = [
@@ -471,45 +606,41 @@ pub(crate) mod tests {
             fresh("third", DAY),
         ];
         let pool = rows(&[row("c2", &["second"]), row("c3", &["third"])]);
+        assert!(pick(&pool, &words, &[]).is_none());
         let serving = Serving::default();
-        assert!(next_pick(&pool, &words, NOW, &serving, &[]).is_none());
-        let passed = head(&pool, &words, NOW, &serving, &[], true).unwrap();
+        let r = Ratings::default();
+        let judge = Judge {
+            serving: &serving,
+            ratings: &r,
+        };
+        let passed = head(&pool, &words, NOW, judge, &[], true, &mut Rng::seeded(1)).unwrap();
         assert_eq!(passed.word, "first");
         assert_eq!(passed.instead.as_deref(), Some("second"));
         assert_eq!(passed.next.map(|n| n.at), Some(0));
-        let list = upcoming(&pool, &words, NOW, &serving, &[], 3);
-        let order: Vec<(&str, bool)> = list
+        let list = upcoming(&pool, &words, NOW, &[], 3);
+        let order: Vec<(&str, usize)> = list
             .iter()
-            .map(|a| (a.word.id.as_str(), a.next.is_some()))
+            .map(|a| (a.word.id.as_str(), a.available))
             .collect();
-        assert_eq!(order, [("first", false), ("second", true), ("third", true)]);
-        let wants = crate::topup::plan_top_up(
-            &pool,
-            &words,
-            NOW,
-            &serving,
-            Scope {
-                limit: Some(3),
-                ..Scope::default()
-            },
-            &mut || 0.0,
-        );
-        assert!(wants.len() == 2 && wants.iter().all(|w| w.item.id == "first"));
-        // Served this stream, a row covers nothing for refill either.
-        let served = ["c2".to_owned()];
-        let wants = crate::topup::plan_top_up(
-            &pool,
-            &words,
-            NOW,
-            &serving,
-            Scope {
-                served: &served,
-                limit: Some(2),
-                ..Scope::default()
-            },
-            &mut || 0.0,
-        );
-        assert_eq!(wants.len(), 4);
+        assert_eq!(order, [("first", 0), ("second", 1), ("third", 1)]);
+        let plan = |served: &[String], limit| {
+            crate::topup::plan_top_up(
+                &pool,
+                &words,
+                NOW,
+                judge,
+                Scope {
+                    served,
+                    limit: Some(limit),
+                    ..Scope::default()
+                },
+                &mut Rng::seeded(1),
+            )
+        };
+        let wants = plan(&[], 1);
+        assert!(wants.len() == STOCK && wants.iter().all(|w| w.item.id == "first"));
+        assert_eq!(plan(&[], 3).len(), 3 * STOCK);
+        assert_eq!(plan(&["c2".to_owned()], 2).len(), 2 * STOCK);
     }
 
     #[test]

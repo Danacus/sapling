@@ -22,7 +22,8 @@
 				"srs": {
 					"due": 1710061920000,
 					"retrievability": 0.9094932079315186,
-					"strength": 0.3167321144806818
+					"strength": 0.3167321144806818,
+					"stability": 2.30649995803833
 				},
 				"reviewCount": 1,
 				"correctCount": 1,
@@ -51,7 +52,8 @@
 				"srs": {
 					"due": 1710061920000,
 					"retrievability": 0.9094932079315186,
-					"strength": 0.3167321144806818
+					"strength": 0.3167321144806818,
+					"stability": 2.30649995803833
 				},
 				"reviewCount": 1,
 				"correctCount": 1,
@@ -87,7 +89,8 @@
 			"srs": {
 				"due": 1710061920000,
 				"retrievability": 0.9094932079315186,
-				"strength": 0.3167321144806818
+				"strength": 0.3167321144806818,
+				"stability": 2.30649995803833
 			},
 			"reviewCount": 1,
 			"correctCount": 1,
@@ -111,10 +114,7 @@
 	"poolSize": 0,
 	"getChallengesByIds": [],
 	"recentResults": [],
-	"getDifficultyParts": {
-		"bases": {},
-		"slopes": {}
-	},
+	"getRatings": [],
 	"getDailyActivity": [
 		{
 			"day": "2024-03-10",

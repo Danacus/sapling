@@ -18,7 +18,14 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { addToPool, getItem, getPool, recentResults, updateItemAfterReview } from '$lib/db';
+import {
+	addToPool,
+	getItem,
+	getPool,
+	getRatings,
+	recentResults,
+	updateItemAfterReview
+} from '$lib/db';
 import { setBackendForTesting } from '$lib/db/backend';
 import { makeTestBackend, type TestBackend } from '$lib/db/backend.testing';
 import { CardState, Grade } from '$lib/srs';
@@ -316,12 +323,14 @@ describe('applyOverturn', () => {
 		// Not pooled, the answer teaches nothing either way: pool the row first.
 		await store.commit('challengeAdded', { challenge: single, generatedAt: NOW - 5000 });
 		const reviewed = await wrong(NOW - 1000);
-		const missed = (await getItem('i1'))?.skill ?? 0;
+		const typedRating = async () =>
+			(await getRatings()).find((r) => r.key === 'challenge:cloze/typed')!.value;
+		const missed = await typedRating();
 
 		await applyOverturn(single, { answeredAt: NOW - 1000, reviewed });
 
-		const overturned = (await getItem('i1'))?.skill ?? 0;
-		expect(overturned).toBeGreaterThan(missed);
+		// A success reads the type easier than the miss did.
+		expect(await typedRating()).toBeLessThan(missed);
 		// The result log keeps what was answered.
 		expect((await recentResults(1))[0]).toMatchObject({ verdict: 'wrong', at: NOW - 1000 });
 	});

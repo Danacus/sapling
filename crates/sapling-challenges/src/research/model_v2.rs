@@ -29,12 +29,12 @@ use std::f64::consts::PI;
 
 use crate::help::HelpLevel;
 use crate::kinds::WireType;
-use crate::model::{
+use crate::research::sim::gaussian;
+use crate::research::v1::{
     logit, part_key, sigmoid, starting_base, starting_skill, starting_slope, tuning, Band,
     Observation,
 };
 use crate::rng::Rng;
-use crate::sim::gaussian;
 
 const DAY: f64 = 86_400_000.0;
 
@@ -615,7 +615,7 @@ impl ModelV2 {
                     kind,
                     help,
                     length: centre(kind),
-                    words: vec![crate::model::Evidence {
+                    words: vec![crate::research::v1::Evidence {
                         item_id: id.clone(),
                         memory: 1.0,
                         stability: 0.0,
@@ -1059,7 +1059,7 @@ pub fn evaluate(observations: &[Observation], config: Config) -> (ModelV2, Score
 mod tests {
     use super::*;
     use crate::help::Step;
-    use crate::model::Evidence;
+    use crate::research::v1::Evidence;
 
     fn observation(outcome: f64, at: f64) -> Observation {
         Observation {

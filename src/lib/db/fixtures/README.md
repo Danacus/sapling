@@ -38,9 +38,9 @@ Reads are always taken under `TZ=UTC` (`getDailyActivity` buckets by local day,
 - `getChallengesByIds` is called once with every challenge id the log mentions.
 - `recentResults` uses limit 5; `pendingEvents` uses limit 100;
   `studySessions` uses `since` 0.
-- `getDifficultyParts` is recorded as returned. It, each item's `skill` and
-  each pool row's `correction` are learned from memories the FSRS model
-  computed, so they compare with the same tolerance as the model's floats.
+- `getRatings` is recorded as returned. It is learned from the stabilities
+  the FSRS model computed, so it compares with the same tolerance as the
+  model's floats.
 - `exportData` is recorded parsed, not as the string.
 - Reads the protocol leaves unordered — `getAllItems`, `getPool`,
   `getChallengesByIds`, `getKnownTerms` — are sorted by id or term in code-unit
@@ -113,9 +113,10 @@ deliberate change to the merge rules or a read; the diff is the review.
 
 The file is written by the **wasm** build, the one the browser loads. Every
 value in it is then matched character for character by both runners, with one
-exception: `tests/golden.rs` compares the four numbers that come out of the
+exception: `tests/golden.rs` compares the numbers that come out of the
 `f32` model — a card's `stability` and `difficulty`, and the
-`srs.retrievability` and `srs.strength` read off them — with a relative
+`srs.retrievability`, `srs.strength` and `srs.stability` read off them, and
+the ratings learned from them — with a relative
 tolerance of `1e-5`, because the FSRS model computes in `f32` and `exp`/`powf`
 differ by an ulp or two between the host's libm and the one wasm links. That is
 a difference around the seventh significant digit; anything larger, and

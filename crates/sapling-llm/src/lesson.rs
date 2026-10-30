@@ -13,8 +13,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use ts_rs::TS;
 
-use sapling_challenges::fits::{fits_fresh, Serving};
-use sapling_challenges::word::{by_id, Word};
 use sapling_challenges::Challenge;
 
 use crate::client::{
@@ -45,12 +43,6 @@ pub struct KnownItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub romanization: Option<String>,
-    /// The difficulty model's skill for the word, as the planner read it;
-    /// absent is the starting skill. Never reaches the prompt: with
-    /// `BatchArgs::serving` it is what a row about several words is judged by.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub skill: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -66,12 +58,6 @@ pub struct BatchArgs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub topic: Option<String>,
-    /// What the planner judged the wants against. With it, a row is counted
-    /// as a want filled only when it fits its words as written (`fill_request`);
-    /// without it, every row of the right kind citing a wanted word does.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub serving: Option<Serving>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub items_per_request: Option<u32>,
@@ -260,88 +246,26 @@ fn parse_entries(raw: &str, kind: WireType) -> Result<Vec<Generated>> {
         .collect())
 }
 
-/// What a row is judged by before it counts as a want filled: the words, at
-/// the skills the planner read, and what it judged them against. Built only
-/// when the brief carries a `serving`.
-struct Judge {
-    words: Vec<Word>,
-    serving: Serving,
-}
-
-impl Judge {
-    fn of(args: &BatchArgs) -> Option<Judge> {
-        let serving = args.serving.clone()?;
-        let mut words: Vec<Word> = args
-            .known_items
-            .iter()
-            .flatten()
-            .map(|item| Word {
-                id: item.id.clone(),
-                term: item.term.clone(),
-                meaning: String::new(),
-                romanization: None,
-                srs: None,
-                skill: item.skill,
-            })
-            .collect();
-        // A wanted word the vocabulary did not list reads as brand new.
-        for want in &args.wants {
-            if !words.iter().any(|w| w.id == want.item.id) {
-                words.push(Word {
-                    id: want.item.id.clone(),
-                    term: want.item.term.clone(),
-                    meaning: want.item.meaning.clone(),
-                    romanization: None,
-                    srs: None,
-                    skill: None,
-                });
-            }
-        }
-        Some(Judge { words, serving })
-    }
-
-    fn fits(&self, challenge: &Challenge) -> bool {
-        fits_fresh(challenge, &by_id(&self.words), &self.serving)
-    }
-}
-
 /// The challenges that fill this request's brief, in brief order: the right
-/// kind, about an entry's own word, each entry at most once — and, judged at
-/// the length its want asked for, fitting its words: a row citing two wanted
-/// words fills the first of their wants it fits. A row about one word
-/// fits by construction (the length was solved for it); a passage about
-/// several is judged by their average skill, which a partner far stronger or
-/// weaker than the asked word moves out of reach, and such a row filling the
-/// want would leave its word asked for and still with nothing. It is dropped,
-/// and the want stays unfilled like any other.
-fn fill_request(
-    challenges: Vec<Challenge>,
-    request: &TypeRequest,
-    judge: Option<&Judge>,
-) -> Vec<Challenge> {
+/// kind, about an entry's own word, each entry at most once — a row citing two
+/// wanted words fills the first of their open wants, stamped with that want's
+/// length, which is what the row is judged at from here on.
+fn fill_request(challenges: Vec<Challenge>, request: &TypeRequest) -> Vec<Challenge> {
     let mut filled: Vec<Option<Challenge>> = vec![None; request.wants.len()];
     for mut challenge in challenges {
         if kind_of(&challenge) != Some(request.kind) {
             continue;
         }
-        let cited: Vec<usize> = (0..filled.len())
-            .filter(|&i| {
-                filled[i].is_none()
-                    && challenge
-                        .item_ids()
-                        .iter()
-                        .any(|id| *id == request.wants[i].item.id)
-            })
-            .collect();
-        // The first open want it fits, judged at that want's length: the
-        // length is what the row is judged at from here on, and the row's
-        // correction learns how far the writing drifted from it.
-        for at in cited {
+        let first = (0..filled.len()).find(|&i| {
+            filled[i].is_none()
+                && challenge
+                    .item_ids()
+                    .iter()
+                    .any(|id| *id == request.wants[i].item.id)
+        });
+        if let Some(at) = first {
             challenge.set_asked_length(f64::from(request.wants[at].length));
-            if judge.is_none_or(|judge| judge.fits(&challenge)) {
-                filled[at] = Some(challenge);
-                break;
-            }
+            filled[at] = Some(challenge);
         }
     }
     filled.into_iter().flatten().collect()
@@ -397,7 +321,6 @@ struct Run<'a, T> {
     llm: &'a Llm<T>,
     args: &'a BatchArgs,
     item_ref: &'a dyn Fn(&str) -> Option<String>,
-    judge: Option<Judge>,
     fatal: RefCell<Option<LlmError>>,
     retry_announced: Cell<bool>,
 }
@@ -452,7 +375,7 @@ impl<T: Transport> Run<'_, T> {
                 .into_iter()
                 .filter_map(|generated| resolve(generated, &mut resolver))
                 .collect();
-            let filled = fill_request(resolved, request, self.judge.as_ref());
+            let filled = fill_request(resolved, request);
             if filled.len() >= minimum {
                 return Outcome {
                     filled,
@@ -512,7 +435,6 @@ pub async fn generate_batch_with<T: Transport>(
         llm,
         args,
         item_ref: &item_ref,
-        judge: Judge::of(args),
         fatal: RefCell::new(None),
         retry_announced: Cell::new(false),
     };
@@ -653,7 +575,6 @@ mod tests {
             wants,
             known_items: None,
             topic: None,
-            serving: None,
             items_per_request: None,
             reasoning_effort: None,
         }
@@ -693,53 +614,31 @@ mod tests {
         assert!(group_into_requests(&[], 6).is_empty());
     }
 
-    /// A passage is judged by its words' average skill: one pairing the asked
-    /// word with a far weaker one does not fill its want, one pairing it with a
-    /// like word does, and a row citing two wanted words fills the first want
-    /// it fits at that want's length.
+    /// A row fills the first open want of a word it cites, at that want's
+    /// length; a row citing two wanted words fills only the first.
     #[test]
-    fn a_passage_fills_a_want_only_when_it_fits_its_words_together() {
-        use sapling_challenges::sim::synthetic;
+    fn a_row_fills_the_first_open_want_it_cites() {
+        use sapling_challenges::research::sim::synthetic;
         let passage = |id: &str, items: &[&str]| {
             Challenge::from_value(synthetic(WireType::MultiCloze, id, items, 10)).unwrap()
         };
-        let mut batch = args(vec![
-            want("a", "x", WireType::MultiCloze, 10),
-            want("b", "y", WireType::MultiCloze, 10),
-        ]);
-        let known = |id: &str, skill: f64| KnownItem {
-            id: id.into(),
-            term: format!("term {id}"),
-            romanization: None,
-            skill: Some(skill),
-        };
-        batch.known_items = Some(vec![
-            known("a", 4.5),
-            known("b", 4.5),
-            known("weak", -6.0),
-            known("like", 4.4),
+        let batch = args(vec![
+            want("a", "x", WireType::MultiCloze, 9),
+            want("b", "y", WireType::MultiCloze, 12),
         ]);
         let requests = group_into_requests(&batch.wants, 6);
-        let rows = || {
-            vec![
-                passage("p1", &["a", "weak"]),
-                passage("p2", &["a", "like"]),
-                passage("p3", &["b", "weak"]),
-            ]
-        };
-        // Unjudged, the first row citing a wanted word fills it.
-        let ids = |filled: Vec<Challenge>| -> Vec<String> {
+        let ids = |filled: &[Challenge]| -> Vec<String> {
             filled.iter().map(|c| c.id().to_owned()).collect()
         };
-        assert_eq!(ids(fill_request(rows(), &requests[0], None)), ["p1", "p3"]);
-        batch.serving = Some(Serving::default());
-        let judge = Judge::of(&batch).unwrap();
-        let filled = fill_request(rows(), &requests[0], Some(&judge));
-        assert_eq!(ids(filled.clone()), ["p2"]);
-        assert_eq!(length_of(&filled[0]), 10.0);
-        // Two wanted words in one passage: the first want it fits takes it.
-        let both = vec![passage("p4", &["a", "b"])];
-        assert_eq!(ids(fill_request(both, &requests[0], Some(&judge))), ["p4"]);
+        let rows = vec![
+            passage("p1", &["a", "other"]),
+            passage("p2", &["a", "b"]),
+            passage("p3", &["b", "other"]),
+        ];
+        let filled = fill_request(rows, &requests[0]);
+        assert_eq!(ids(&filled), ["p1", "p2"]);
+        assert_eq!(length_of(&filled[0]), 9.0);
+        assert_eq!(length_of(&filled[1]), 12.0);
     }
 
     #[test]
@@ -777,19 +676,16 @@ mod tests {
                 id: "k1".into(),
                 term: "长".into(),
                 romanization: Some("cháng".into()),
-                skill: None,
             },
             KnownItem {
                 id: "k2".into(),
                 term: "长".into(),
                 romanization: Some("zhǎng".into()),
-                skill: None,
             },
             KnownItem {
                 id: "k3".into(),
                 term: "agua".into(),
                 romanization: Some("agua".into()),
-                skill: None,
             },
         ]);
         let requests = group_into_requests(&batch.wants, 6);
@@ -838,7 +734,6 @@ mod tests {
                     id: format!("k{i}"),
                     term: format!("t{i}"),
                     romanization: None,
-                    skill: None,
                 })
                 .collect::<Vec<_>>()
         };
@@ -1019,7 +914,6 @@ mod tests {
                 id: "k".into(),
                 term: "dos".into(),
                 romanization: None,
-                skill: None,
             }]);
             let result = run(&mock, &batch).unwrap();
             let kinds: Vec<WireType> = result
@@ -1061,13 +955,11 @@ mod tests {
                 id: "k1".into(),
                 term: "长".into(),
                 romanization: Some("cháng".into()),
-                skill: None,
             },
             KnownItem {
                 id: "k2".into(),
                 term: "长".into(),
                 romanization: Some("zhǎng".into()),
-                skill: None,
             },
         ]);
         // Cites only a known word, not the wanted one: it fills nothing.

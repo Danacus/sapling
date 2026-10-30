@@ -22,22 +22,23 @@ use sapling_srs::{
 };
 
 use super::{gaussian, synthetic};
-use crate::fits::{fits_fresh, help_levels, written_levels, Serving};
+use crate::fits::{help_levels, written_levels, Serving};
 use crate::help::HelpLevel;
 use crate::kinds::{kind_of, Want, WireType};
-use crate::model::{
-    chance, length_of, part_key, sigmoid, starting_base, starting_skill, starting_slope, tuning,
-    Aim, Evidence, Learner, Observation, MULTI_WORD,
-};
-use crate::model_v2::{centre, Config, ModelV2};
-use crate::policy_v2::{self, Steering};
 use crate::pool::PoolRow;
-use crate::ratings::{Ratings, Settings};
-use crate::ratings_policy;
+use crate::ratings::{Key as AppKey, Rating as AppRating, Ratings as AppRatings};
+use crate::research::model_v2::{centre, Config, ModelV2};
+use crate::research::policy_v2::{self, Steering};
+use crate::research::ratings::{Ratings, Settings};
+use crate::research::ratings_policy;
+use crate::research::v1::{
+    length_of, part_key, sigmoid, starting_base, starting_skill, starting_slope, tuning, Aim,
+    Evidence, Observation,
+};
 use crate::rng::Rng;
-use crate::stream::head;
+use crate::stream::{head, Judge};
 use crate::topup::{plan_top_up, Scope};
-use crate::word::{by_id, Word};
+use crate::word::Word;
 use crate::Challenge;
 
 const DAY: f64 = 86_400_000.0;
@@ -113,7 +114,7 @@ impl Scenario {
     }
 }
 
-pub use crate::policy_v2::Ask as Cx;
+pub use crate::research::policy_v2::Ask as Cx;
 
 pub struct Pick {
     pub at: usize,
@@ -134,21 +135,14 @@ pub trait Policy {
     /// The chance given the words are remembered.
     fn remembered(&self, o: &Observation) -> f64;
     fn learn(&mut self, o: &Observation);
-    /// What the host's `Word` and `PoolRow` carry for this policy.
-    fn skill(&self, _id: &str) -> Option<f64> {
-        None
-    }
-    fn correction(&self, _id: &str) -> Option<f64> {
-        None
-    }
     /// Every help level of `kind` reads `by` harder than believed.
     fn mislead(&mut self, kind: WireType, by: f64, at: f64);
 }
 
-/// The app as it is: `stream.rs`' head, `topup.rs`' planner, `model.rs`' learner.
+/// The app as it is: `stream.rs`' head and `topup.rs`' planner over `ratings.rs`.
 #[derive(Default)]
 pub struct Current {
-    learner: Learner,
+    ratings: AppRatings,
     /// The profile aim it serves at; Normal unless a comparison asks.
     aim: Aim,
 }
@@ -156,7 +150,6 @@ pub struct Current {
 impl Current {
     fn serving(&self, cx: &Cx) -> Serving {
         Serving {
-            parts: self.learner.shared.clone(),
             aim: self.aim,
             ..cx.serving.clone()
         }
@@ -172,19 +165,20 @@ impl Policy for Current {
             cued: cx.cued,
         };
         let serving = self.serving(cx);
-        plan_top_up(cx.pool, cx.words, cx.now, &serving, scope, &mut || {
-            rng.next_f64()
-        })
+        let judge = Judge {
+            serving: &serving,
+            ratings: &self.ratings,
+        };
+        plan_top_up(cx.pool, cx.words, cx.now, judge, scope, rng)
     }
 
-    /// The writer keeps a row about several words only when it fits them.
-    fn keeps(&self, challenge: &Challenge, cx: &Cx) -> bool {
-        challenge.item_ids().len() < 2 || fits_fresh(challenge, &by_id(cx.words), &self.serving(cx))
-    }
-
-    fn pick(&mut self, cx: &Cx, _rng: &mut Rng) -> Option<Pick> {
+    fn pick(&mut self, cx: &Cx, rng: &mut Rng) -> Option<Pick> {
         let serving = self.serving(cx);
-        let h = head(cx.pool, cx.words, cx.now, &serving, cx.served, true)?;
+        let judge = Judge {
+            serving: &serving,
+            ratings: &self.ratings,
+        };
+        let h = head(cx.pool, cx.words, cx.now, judge, cx.served, true, rng)?;
         let next = h.next?;
         Some(Pick {
             at: next.at,
@@ -194,40 +188,29 @@ impl Policy for Current {
     }
 
     fn predict(&self, o: &Observation) -> f64 {
-        self.learner.predict(o, MULTI_WORD)
+        self.ratings.chance(o)
     }
 
     fn remembered(&self, o: &Observation) -> f64 {
-        let skills: Vec<f64> = o
-            .words
-            .iter()
-            .map(|w| self.learner.skill(&w.item_id))
-            .collect();
-        chance(
-            &vec![1.0; skills.len()],
-            &skills,
-            self.learner.difficulty_of(o),
-            MULTI_WORD,
-        )
+        self.ratings.chance(o)
     }
 
     fn learn(&mut self, o: &Observation) {
-        self.learner.learn(o, &tuning().rates, MULTI_WORD);
+        self.ratings.learn(o);
     }
 
-    fn skill(&self, id: &str) -> Option<f64> {
-        self.learner.skills.get(id).copied()
-    }
-
-    fn correction(&self, id: &str) -> Option<f64> {
-        self.learner.corrections.get(id).copied()
-    }
-
-    fn mislead(&mut self, kind: WireType, by: f64, _at: f64) {
+    fn mislead(&mut self, kind: WireType, by: f64, at: f64) {
+        let margin = crate::model::tuning().challenge_margin;
         for step in kind.written_steps() {
-            let help = HelpLevel::step(step);
-            let base = self.learner.shared.base(kind, help) + by;
-            self.learner.shared.bases.insert(part_key(kind, help), base);
+            let key = AppKey::Challenge(part_key(kind, HelpLevel::step(step)));
+            let r = self.ratings.rating(&key, (0.0, margin), at);
+            let misled = AppRating {
+                value: r.value + by,
+                margin: r.margin.min(0.3),
+                at,
+                ..r
+            };
+            self.ratings.insert(key, misled);
         }
     }
 }
@@ -576,7 +559,6 @@ pub fn run(scenario: Scenario, policy: &mut dyn Policy, seed: u64) -> Metrics {
                     meaning: format!("m-{id}"),
                     romanization: None,
                     srs: Some(item_srs(card, now)),
-                    skill: policy.skill(id),
                 })
                 .collect();
             let stability: HashMap<String, f64> = ids
@@ -625,7 +607,6 @@ pub fn run(scenario: Scenario, policy: &mut dyn Policy, seed: u64) -> Metrics {
                     last_served_at: None,
                     reported: false,
                     topic: None,
-                    correction: None,
                 });
             }
             m.written += written.len();
@@ -766,7 +747,6 @@ pub fn run(scenario: Scenario, policy: &mut dyn Policy, seed: u64) -> Metrics {
             let row = pool[pick.at].as_mut().expect("a picked row");
             row.times_served += 1.0;
             row.last_served_at = Some(now);
-            row.correction = policy.correction(&row_id);
             let grade = if correct { Grade::Good } else { Grade::Again };
             for &i in &at {
                 cards[i] = review_card(&cards[i], grade, now).expect("a review folds");
