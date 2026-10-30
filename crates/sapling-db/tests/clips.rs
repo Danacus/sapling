@@ -254,3 +254,106 @@ fn the_tier_holds_near_equal_cues_capped_and_in_a_fixed_order() {
     );
     assert_eq!(found, clips(&core, &["car"], None), "deterministic");
 }
+
+#[test]
+fn cues_for_finds_each_words_timed_cues_in_any_media_as_whole_words() {
+    let core = core();
+    know(&core, "car", "car");
+    know(&core, "hang", "行");
+    know(&core, "bank", "银行");
+    add(
+        &core,
+        "file",
+        json!({ "kind": "file", "name": "ep1.mp4" }),
+        json!([
+            { "text": "The car is red", "start": 0, "end": 900 },
+            { "text": "Push the cart", "start": 900, "end": 1800 },
+            { "text": "a car" },
+        ]),
+    );
+    add(
+        &core,
+        "yt",
+        youtube("vid1"),
+        json!([
+            { "text": "我去银行", "start": 0, "end": 900 },
+            { "text": "行不行", "start": 900, "end": 1800 },
+        ]),
+    );
+    let cues = core
+        .cues_for(&["car".into(), "hang".into(), "missing".into()])
+        .expect("cues_for");
+    let found: Vec<(&str, &str, Option<&str>)> = cues
+        .iter()
+        .map(|c| (c.item_id.as_str(), c.text.as_str(), c.video_id.as_deref()))
+        .collect();
+    assert_eq!(
+        found,
+        vec![
+            ("car", "The car is red", None),
+            ("hang", "行不行", Some("vid1")),
+        ]
+    );
+}
+
+/// A cue-cloze completes to its cue's text, so "Heard in" plays that cue.
+#[test]
+fn a_cue_clozes_served_sentence_ranks_its_own_cue_first() {
+    use sapling_challenges::fits::Serving;
+    use sapling_challenges::help::HelpLevel;
+    use sapling_challenges::kinds::{ChallengeKind, Want, WantItem, WireType};
+    use sapling_challenges::local::write_local;
+    use sapling_challenges::{Rng, Word};
+
+    let core = core();
+    know(&core, "dog", "dog");
+    add(
+        &core,
+        "yt",
+        youtube("vid1"),
+        json!([
+            { "text": "my dog likes the park in spring", "start": 0, "end": 3000 },
+            { "text": "the dog sleeps on the old sofa", "start": 3000, "end": 6000 },
+        ]),
+    );
+    let cues = core.cues_for(&["dog".into()]).expect("cues_for");
+    let words: Vec<Word> = ["dog", "cat", "house", "bread", "water", "table"]
+        .iter()
+        .map(|term| {
+            serde_json::from_value(
+                json!({ "id": term, "term": term, "meaning": "-", "skill": 4.0 }),
+            )
+            .expect("a word")
+        })
+        .collect();
+    let want = Want {
+        item: WantItem {
+            id: "dog".into(),
+            term: "dog".into(),
+            meaning: "perro".into(),
+        },
+        kind: ChallengeKind {
+            kind: WireType::CueCloze,
+        },
+        length: 7,
+    };
+    for seed in 0..4 {
+        let written = write_local(
+            std::slice::from_ref(&want),
+            &cues,
+            &[],
+            &words,
+            &Serving::default(),
+            &mut Rng::seeded(seed),
+        );
+        let challenge = &written.challenges[0];
+        let served = challenge.serve(HelpLevel::step(challenge.steps()[0]));
+        let sentence = served.audio.last().expect("a completed sentence");
+        let heard = clips(&core, &["dog"], Some(sentence));
+        let sapling_challenges::Challenge::CueCloze(row) = challenge else {
+            unreachable!()
+        };
+        assert_eq!(heard[0].start, row.cue.start);
+        assert_eq!(heard.len(), 1, "the exact cue is a tier of its own");
+    }
+}

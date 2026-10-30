@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::help::{HelpLevel, Step};
-use crate::kinds::{active_kinds, kind_of, WireType};
+use crate::kinds::{kind_of, llm_kinds, WireType};
 use crate::model::{combined, length_of, sigmoid, target, window, Aim, Shared, MULTI_WORD};
 use crate::pool::PoolRow;
 use crate::serve::RomanizationMode;
@@ -104,12 +104,13 @@ pub fn written_levels(kind: WireType, serving: &Serving) -> Vec<HelpLevel> {
     levels(&steps, serving.readings, kind.can_listen(), serving)
 }
 
-/// Every difficulty a freshly written row can have: each active kind at each
-/// level it will be served at, at every length in its range, before any
-/// correction.
+/// Every difficulty a freshly written row can have: each active kind the
+/// model writes at each level it will be served at, at every length in its
+/// range, before any correction. A local kind is left out: it needs material
+/// a word may not have, and the widening must always be writable.
 fn writable(serving: &Serving) -> impl Iterator<Item = f64> + '_ {
     let parts = &serving.parts;
-    active_kinds().flat_map(move |kind| {
+    llm_kinds().filter(|k| k.is_active()).flat_map(move |kind| {
         let [shortest, longest] = kind.lengths().unwrap_or([1, 1]);
         let slope = parts.slope(kind);
         written_levels(kind, serving)
@@ -335,7 +336,7 @@ mod tests {
                         audio,
                         ..Serving::default()
                     };
-                    for kind in active_kinds() {
+                    for kind in crate::kinds::active_kinds() {
                         let mut value = synthetic(kind, "c", &["w", "v"], 6);
                         if readings {
                             value = with_readings(value);
@@ -429,7 +430,8 @@ mod tests {
     #[test]
     fn a_word_beyond_every_option_still_fits_the_nearest_one() {
         let serving = Serving::default();
-        let rows: Vec<PoolRow> = active_kinds()
+        let rows: Vec<PoolRow> = llm_kinds()
+            .filter(|k| k.is_active())
             .flat_map(|kind| {
                 let [shortest, longest] = kind.lengths().unwrap();
                 (shortest..=longest).map(move |length| {

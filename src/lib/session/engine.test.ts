@@ -16,7 +16,7 @@ import type { ChallengeRow } from '$lib/db';
 import { challengeOf } from '$lib/db';
 import { loadWasmCore } from '$lib/db/backend.testing';
 import { getBatch, isMockMode } from '$lib/llm';
-import type { ProgressStep } from '$lib/llm';
+import type { ProgressStep, Want } from '$lib/llm';
 import type {
 	Challenge,
 	ClozeChallenge,
@@ -36,6 +36,7 @@ import {
 	planRefill,
 	planTopUp,
 	sessionSummary,
+	writeLocal,
 	type SessionAnswer
 } from './engine';
 import { servingFor } from './serving';
@@ -419,6 +420,64 @@ describe('planRefill', () => {
 		const plan = planRefill([], [strongItem('a', +5 * DAY)], profile(), NOW);
 		expect(wordsOf(plan)).toEqual(['a']);
 		expect(plan.wants.length).toBeGreaterThan(0);
+	});
+});
+
+/* -------------------------------------------------------------------------- */
+
+describe('local kinds', () => {
+	/** Words the planner writes production for, so a cue-cloze can reach them. */
+	const words = ['perro', 'gato', 'casa', 'pan', 'agua', 'mesa'].map((term, i) => ({
+		...strongItem(`w${i}`, -DAY),
+		term,
+		skill: 4
+	}));
+	const cue = {
+		itemId: 'w0',
+		textId: 't',
+		videoId: 'v',
+		start: 1000,
+		end: 3000,
+		text: 'Mi perro come mucho por la tarde.'
+	};
+
+	it('are planned only for a word with a cue', () => {
+		const kinds = (cued?: string[]) =>
+			Array.from({ length: 30 }, (_, seed) =>
+				planTopUp([], words, NOW, { seed, ...(cued ? { cued } : {}) })
+			)
+				.flat()
+				.filter((want) => want.kind.type === 'cue-cloze')
+				.map((want) => want.item.id);
+		expect(kinds()).toEqual([]);
+		expect(new Set(kinds(['w0']))).toEqual(new Set(['w0']));
+	});
+
+	it('build a cue-cloze from the cue and hand every other want on', () => {
+		const wants: Want[] = [
+			{
+				item: { id: 'w0', term: 'perro', meaning: 'meaning-w0' },
+				kind: { type: 'cue-cloze' },
+				length: 7
+			},
+			{
+				item: { id: 'w0', term: 'perro', meaning: 'meaning-w0' },
+				kind: { type: 'cloze' },
+				length: 7
+			}
+		];
+		const written = writeLocal(wants, [cue], [], words, undefined, 1);
+		expect(written.wants).toEqual([wants[1]]);
+		const [row] = written.challenges;
+		expect(row).toMatchObject({
+			type: 'cue-cloze',
+			sentence: 'Mi ___ come mucho por la tarde.',
+			acceptedAnswers: ['perro'],
+			meaningHint: 'meaning-w0',
+			cue: { textId: 't', videoId: 'v', start: 1000, end: 3000 },
+			itemIds: ['w0']
+		});
+		expect(row!.type === 'cue-cloze' && row!.wordBank).toHaveLength(6);
 	});
 });
 

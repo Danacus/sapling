@@ -62,6 +62,67 @@ pub fn uses_inter_word_spaces(text: &str) -> bool {
     !text.chars().any(is_no_space_script)
 }
 
+/// Whether every letter of `text` is Latin: a text that is not carries readings.
+pub fn written_in_latin(text: &str) -> bool {
+    text.chars().all(|c| {
+        !c.is_alphabetic()
+            || matches!(c as u32, 0x41..=0x5A | 0x61..=0x7A | 0xAA | 0xBA | 0xC0..=0x24F | 0x1E00..=0x1EFF)
+    })
+}
+
+/// Han, kana, Hangul, and the Southeast Asian scripts written without spaces
+/// between words (Hangul's particles attach to the word, so it counts too).
+fn unspaced(c: char) -> bool {
+    matches!(c as u32,
+        0x0E00..=0x0EFF | 0x1000..=0x109F | 0x1100..=0x11FF | 0x1780..=0x17FF
+        | 0x3040..=0x30FF | 0x3130..=0x318F | 0x31F0..=0x31FF | 0x3400..=0x4DBF
+        | 0x4E00..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF | 0x20000..=0x2FFFF)
+}
+
+/// Every case-insensitive occurrence of `needle` (lowercase) in `text`, as
+/// byte spans of `text` itself.
+fn spans(text: &str, needle: &str) -> Vec<(usize, usize)> {
+    let n = needle.chars().count();
+    let mut out = Vec::new();
+    for (at, _) in text.char_indices() {
+        let mut lowered = String::new();
+        let mut end = at;
+        for c in text[at..].chars().take(n) {
+            lowered.extend(c.to_lowercase());
+            end += c.len_utf8();
+        }
+        if lowered == needle {
+            out.push((at, end));
+        }
+    }
+    out
+}
+
+/// Where `term` first occurs in `text` as a word, case-insensitively, as a
+/// byte span of `text`. In a spaced script no letter may directly join it on
+/// either side, so "car" is not in "cart". A term written without spaces has
+/// no such boundary to check, so an occurrence counts unless a longer word the
+/// learner knows (`longer`, lowercase) covers it: 行 is not in 银行 when 银行
+/// is one of their words.
+pub fn find_word(text: &str, term: &str, longer: &[&str]) -> Option<(usize, usize)> {
+    let term = term.to_lowercase();
+    let joins = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() && !unspaced(c));
+    let first = term.chars().next()?;
+    let last = term.chars().next_back()?;
+    let covers: Vec<(usize, usize)> = if term.chars().any(unspaced) {
+        longer.iter().flat_map(|k| spans(text, k)).collect()
+    } else {
+        Vec::new()
+    };
+    spans(text, &term).into_iter().find(|&(at, end)| {
+        let before = text[..at].chars().next_back();
+        let after = text[end..].chars().next();
+        !(joins(before) && joins(Some(first)))
+            && !(joins(after) && joins(Some(last)))
+            && !covers.iter().any(|&(s, e)| s <= at && end <= e)
+    })
+}
+
 /// Letters, marks and digits: what a word is made of.
 pub fn is_word_char(c: char) -> bool {
     use unicode_general_category::{get_general_category, GeneralCategory as G};
@@ -176,5 +237,18 @@ mod tests {
     fn trims_what_javascript_trims() {
         assert_eq!(js_trim("\u{3000} hola\u{feff}\n"), "hola");
         assert_eq!(label_key("  La   Cuenta "), "la cuenta");
+    }
+
+    #[test]
+    fn finds_a_term_as_a_word_in_the_text_as_written() {
+        let text = "El Perro come. ¿Perros?";
+        assert_eq!(find_word(text, "perro", &[]), Some((3, 8)));
+        assert_eq!(find_word("cart car", "car", &[]), Some((5, 8)));
+        assert_eq!(find_word("cart", "car", &[]), None);
+        assert_eq!(find_word("我去银行", "行", &["银行"]), None);
+        assert_eq!(find_word("我去银行", "行", &[]), Some((9, 12)));
+        assert!(written_in_latin("¿Qué tal, señor? 123"));
+        assert!(!written_in_latin("我们走吧"));
+        assert!(!written_in_latin("привет"));
     }
 }

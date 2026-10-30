@@ -17,7 +17,7 @@ Stateless: data in, data out, never touches the DB. Every model call runs in Rus
 
 ## The seam
 
-**The planner decides, this layer writes.** Wants come from `sapling-challenges`' top-up planner; `getBatch` hands them to Rust and returns challenges, failures and usage. Kinds, wire schemas, resolvers, length ranges and lesson specs are owned by each registered challenge plugin under `sapling-challenges/src/types/<type>/`; explicit ranks preserve seeded order. `getEscalation` receives the exact served `ChallengeScreen`. Local romanization stays TypeScript; a `TargetText` reading is content the resolver carries into stored reading fields.
+**The planner decides, this layer writes.** Wants come from `sapling-challenges`' top-up planner; `getBatch` hands them to Rust and returns challenges, failures and usage. Kinds, wire schemas, resolvers, length ranges and lesson specs are owned by each registered challenge plugin under `sapling-challenges/src/types/<type>/`; explicit ranks preserve seeded order. A `local` kind (`cue-cloze`) never reaches `getBatch`: the session builds it (`local.rs`), and this crate iterates `llm_kinds()` alone. `getEscalation` receives the exact served `ChallengeScreen`. Local romanization stays TypeScript; a `TargetText` reading is content the resolver carries into stored reading fields.
 
 `getBatch` returns **challenges and nothing else**: a lesson is written *about* the vocabulary it is given and introduces none. New words enter through `add_words`.
 

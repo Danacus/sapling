@@ -9,6 +9,7 @@ import MatchPairs from './match-pairs/MatchPairs.svelte';
 import MultiCloze from './multi-cloze/MultiCloze.svelte';
 import WordOrder from './word-order/WordOrder.svelte';
 import SpotError from './spot-error/SpotError.svelte';
+import CueCloze from './cue-cloze/CueCloze.svelte';
 
 type ChallengeComponents = {
 	[T in ChallengeType]: Component<ChallengeProps<T>>;
@@ -22,7 +23,8 @@ export const CHALLENGE_COMPONENTS = {
 	'match-pairs': MatchPairs,
 	'multi-cloze': MultiCloze,
 	'word-order': WordOrder,
-	'spot-error': SpotError
+	'spot-error': SpotError,
+	'cue-cloze': CueCloze
 } satisfies ChallengeComponents;
 
 /** The registry lookup is correlated by tag; this is the dispatch boundary's one cast. */

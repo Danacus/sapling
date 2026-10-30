@@ -198,7 +198,7 @@ pub fn starting_skill() -> f64 {
 /* ---- The learned numbers ------------------------------------------------ */
 
 /// The numbers every challenge shares, as learned. A key not here is still at
-/// its starting value.
+/// its starting value, or at its `startsFrom` kind's learned one.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
 pub struct Shared {
     /// By [`part_key`]: `cloze/pick-6`.
@@ -211,6 +211,7 @@ impl Shared {
     pub fn base(&self, kind: WireType, help: HelpLevel) -> f64 {
         self.bases
             .get(&part_key(kind, help))
+            .or_else(|| self.bases.get(&part_key(kind.starts_from()?, help)))
             .copied()
             .unwrap_or_else(|| starting_base(kind, help))
     }
@@ -218,6 +219,7 @@ impl Shared {
     pub fn slope(&self, kind: WireType) -> f64 {
         self.slopes
             .get(kind.as_str())
+            .or_else(|| self.slopes.get(kind.starts_from()?.as_str()))
             .copied()
             .unwrap_or_else(|| starting_slope(kind))
     }
@@ -507,6 +509,24 @@ mod tests {
         learner.learn(&o, &tuning().rates, MULTI_WORD);
         assert!(learner.skill("w") > before.skill("w"));
         assert!(learner.difficulty_of(&o) < before.difficulty_of(&o));
+    }
+
+    #[test]
+    fn a_kind_starts_from_its_parents_learned_numbers_until_it_has_its_own() {
+        let typed = HelpLevel::step(Step::Typed);
+        let mut shared = Shared::default();
+        assert_eq!(
+            shared.base(WireType::CueCloze, typed),
+            starting_base(WireType::CueCloze, typed)
+        );
+        shared.bases.insert(part_key(WireType::Cloze, typed), 0.5);
+        shared.slopes.insert("cloze".to_owned(), -0.1);
+        assert_eq!(shared.base(WireType::CueCloze, typed), 0.5);
+        assert_eq!(shared.slope(WireType::CueCloze), -0.1);
+        shared
+            .bases
+            .insert(part_key(WireType::CueCloze, typed), 0.9);
+        assert_eq!(shared.base(WireType::CueCloze, typed), 0.9);
     }
 
     #[test]

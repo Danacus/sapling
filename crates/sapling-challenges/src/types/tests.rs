@@ -42,6 +42,11 @@ fn examples() -> Vec<(Value, Value, &'static str)> {
             json!({"type":"spot-error","answer":{"index":0}}),
             "mesa",
         ),
+        (
+            json!({"type":"cue-cloze","id":"q","direction":"toTarget","sentence":"Mira el ___ ahí.","acceptedAnswers":["menú"],"wordBank":["menú","mesa","casa","pan","agua","café"],"meaningHint":"menu","cue":{"textId":"t","videoId":"v","start":1000.0,"end":2500.0},"length":5.0,"itemIds":["i"]}),
+            json!({"type":"cue-cloze","answer":{"text":"completamente incorrecto","picked":false}}),
+            "menú",
+        ),
     ]
 }
 

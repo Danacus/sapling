@@ -1,0 +1,1 @@
+{"steps":["pick-4","pick-6","typed"],"kinds":[{"id":"cue-cloze","rank":10,"direction":"toTarget","lengths":[3,14],"writtenSteps":["pick-4","pick-6","typed"],"canListen":false,"local":true,"startsFrom":"cloze","bases":{"pick-4":1.3,"pick-6":2.1,"typed":3.4},"slope":0.14}]}

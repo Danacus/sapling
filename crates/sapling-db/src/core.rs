@@ -24,7 +24,9 @@ use crate::materialize::{open_schema, raw_from_row, Materializer, LOG_ORDER};
 use crate::schema::{ACTIVE_PROFILE_KEY, DERIVED_TABLES};
 use crate::sql::{Error, Param, Result, Row, Sql};
 use sapling_challenges::grade::GapVerdict;
+use sapling_challenges::local::CueCandidate;
 use sapling_challenges::model::Shared;
+use sapling_challenges::text::find_word;
 use sapling_domain::day::LocalDay;
 use sapling_domain::events::{
     parse_envelope, ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted,
@@ -173,6 +175,18 @@ fn minutes_of(ms: f64) -> f64 {
 /// so a common word in a long library stays cheap; a few hundred is plenty to
 /// find several good ones.
 const CLIP_CANDIDATES: i64 = 300;
+
+/// How many cues `cues_for` hands the local builder per word.
+const CUES_PER_WORD: usize = 30;
+
+/// Trimmed, lowercased, blanks dropped.
+fn lowered(terms: &[String]) -> Vec<String> {
+    terms
+        .iter()
+        .map(|term| term.trim().to_lowercase())
+        .filter(|term| !term.is_empty())
+        .collect()
+}
 
 /// The backend over an open, schema-applied database.
 pub struct Core {
@@ -1101,34 +1115,12 @@ impl Core {
     /// as served) and the learner's own words, because SQLite has no notion of
     /// a word.
     pub fn clips_for(&self, terms: &[String], sentence: Option<&str>) -> Result<Vec<Clip>> {
-        let terms: Vec<String> = terms
-            .iter()
-            .map(|term| term.trim().to_lowercase())
-            .filter(|term| !term.is_empty())
-            .collect();
+        let terms = lowered(terms);
         if terms.is_empty() {
             return Ok(Vec::new());
         }
-        let matches = vec!["instr(lower(json_extract(s.value, '$.text')), ?) > 0"; terms.len()];
-        let sql = format!(
-            "SELECT t.id AS textId, t.title AS title,
-                    json_extract(t.media, '$.videoId') AS videoId,
-                    json_extract(s.value, '$.start') AS start,
-                    json_extract(s.value, '$.end') AS end,
-                    json_extract(s.value, '$.text') AS text
-             FROM texts t, json_each(t.segments) s
-             WHERE json_extract(t.media, '$.kind') = 'youtube'
-               AND json_extract(s.value, '$.start') IS NOT NULL
-               AND json_extract(s.value, '$.end') IS NOT NULL
-               AND ({})
-             ORDER BY t.createdAt DESC, t.id, s.key
-             LIMIT {CLIP_CANDIDATES}",
-            matches.join(" OR ")
-        );
-        let params: Vec<Param> = terms.iter().map(Param::text).collect();
         let candidates = self
-            .sql
-            .query(&sql, &params)?
+            .cues_containing(&terms, true, Some(CLIP_CANDIDATES))?
             .iter()
             .map(|row| {
                 Ok(Clip {
@@ -1144,15 +1136,105 @@ impl Core {
         if candidates.is_empty() {
             return Ok(Vec::new());
         }
-        // What a whole word is in a script without spaces: a term covered by a
-        // longer word the learner knows is that word, not this one.
-        let known = self
+        let known = self.known_terms()?;
+        Ok(clips::best_tier(candidates, &terms, sentence, &known))
+    }
+
+    /// For each of these words, the timed cues of any imported text (YouTube
+    /// or a file, or none) that hold its term as a word, newest text first
+    /// and in cue order, at most [`CUES_PER_WORD`] each: what a local
+    /// cue-based challenge is built from. The whole-word rule is `clips_for`'s.
+    pub fn cues_for(&self, item_ids: &[String]) -> Result<Vec<CueCandidate>> {
+        let known = self.known_terms()?;
+        let mut words: Vec<(String, String)> = Vec::new();
+        for row in self
             .sql
+            .query("SELECT id, term FROM items WHERE term IS NOT NULL", &[])?
+        {
+            let id = row.text("id")?;
+            let term = row.text("term")?.trim().to_lowercase();
+            if !term.is_empty() && item_ids.iter().any(|wanted| wanted == id) {
+                words.push((id.to_owned(), term));
+            }
+        }
+        if words.is_empty() {
+            return Ok(Vec::new());
+        }
+        let terms: Vec<String> = words.iter().map(|(_, term)| term.clone()).collect();
+        let rows = self.cues_containing(&lowered(&terms), false, None)?;
+        let mut out = Vec::new();
+        for (id, term) in &words {
+            let longer: Vec<&str> = known
+                .iter()
+                .map(String::as_str)
+                .filter(|k| k.len() > term.len() && k.contains(term.as_str()))
+                .collect();
+            let mut found = 0;
+            for row in &rows {
+                if found == CUES_PER_WORD {
+                    break;
+                }
+                let text = row.text("text")?;
+                if !text.to_lowercase().contains(term.as_str())
+                    || find_word(text, term, &longer).is_none()
+                {
+                    continue;
+                }
+                found += 1;
+                out.push(CueCandidate {
+                    item_id: id.clone(),
+                    text_id: row.text("textId")?.to_owned(),
+                    video_id: row.opt_text("videoId")?.map(str::to_owned),
+                    start: row.f64("start")?,
+                    end: row.f64("end")?,
+                    text: text.to_owned(),
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    /// Timed cues holding one of `terms` (lowercase) as a substring, newest
+    /// text first and in cue order. `videoId` is set for YouTube media only.
+    fn cues_containing(
+        &self,
+        terms: &[String],
+        youtube_only: bool,
+        limit: Option<i64>,
+    ) -> Result<Vec<Row>> {
+        let matches = vec!["instr(lower(json_extract(s.value, '$.text')), ?) > 0"; terms.len()];
+        let sql = format!(
+            "SELECT t.id AS textId, t.title AS title,
+                    CASE WHEN json_extract(t.media, '$.kind') = 'youtube'
+                         THEN json_extract(t.media, '$.videoId') END AS videoId,
+                    json_extract(s.value, '$.start') AS start,
+                    json_extract(s.value, '$.end') AS end,
+                    json_extract(s.value, '$.text') AS text
+             FROM texts t, json_each(t.segments) s
+             WHERE {}json_extract(s.value, '$.start') IS NOT NULL
+               AND json_extract(s.value, '$.end') IS NOT NULL
+               AND ({})
+             ORDER BY t.createdAt DESC, t.id, s.key{}",
+            if youtube_only {
+                "json_extract(t.media, '$.kind') = 'youtube' AND "
+            } else {
+                ""
+            },
+            matches.join(" OR "),
+            limit.map_or(String::new(), |n| format!(" LIMIT {n}"))
+        );
+        let params: Vec<Param> = terms.iter().map(Param::text).collect();
+        self.sql.query(&sql, &params)
+    }
+
+    /// Every term the learner has: what a whole word is in a script without
+    /// spaces, since a term covered by a longer known word is that word.
+    fn known_terms(&self) -> Result<Vec<String>> {
+        self.sql
             .query("SELECT term FROM items WHERE term IS NOT NULL", &[])?
             .iter()
-            .map(|row| Ok(row.text("term")?.to_owned()))
-            .collect::<Result<Vec<_>>>()?;
-        Ok(clips::best_tier(candidates, &terms, sentence, &known))
+            .map(|row| Ok(row.text("term")?.trim().to_lowercase()))
+            .collect()
     }
 
     pub fn delete_text(&self, id: &str) -> Result<()> {

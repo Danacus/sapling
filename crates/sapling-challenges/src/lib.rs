@@ -5,7 +5,8 @@
 //! difficulty model (`model.rs`, replayed from the log by `replay.rs`,
 //! measured by `calibrate.rs`) — and the one check both planners ask
 //! (`fits.rs`), what a served one shows (`serve.rs`), the free match round
-//! (`match_pairs.rs`), and the two planners over the pool: which challenge
+//! (`match_pairs.rs`), the rows built from the learner's own material
+//! (`local.rs`), and the two planners over the pool: which challenge
 //! the practice stream serves next (`stream.rs`) and what a top-up writes
 //! (`topup.rs`). The
 //! kinds a challenge is written as are `kinds.rs`; the numbers are data
@@ -26,6 +27,7 @@ pub mod help;
 mod invariants;
 pub mod kinds;
 pub mod legacy;
+pub mod local;
 pub mod match_pairs;
 pub mod matcher;
 pub mod model;

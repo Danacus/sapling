@@ -21,7 +21,7 @@ use crate::client::{
     ChatRequest, ErrorKind, Llm, LlmError, Message, ProgressStepId, Result, TokenUsage, Transport,
 };
 use crate::json::{fenced, fill, strip_fences};
-use crate::kinds::{kind_of, Lesson, WireType};
+use crate::kinds::{kind_of, llm_kinds, Lesson, WireType};
 use crate::text::{term_key, Rng};
 use crate::wire::{batch_schema, has_instruction, resolve, Generated, Resolver};
 use crate::{is_mandarin, level_for, non_blank, truncated, LearnerProfile, MAX_ABOUT_CHARS};
@@ -147,11 +147,10 @@ fn compose(kind: WireType) -> String {
 /// This type's system prompt: static, so a prefix cache pays across requests.
 pub fn system_prompt(kind: WireType) -> &'static str {
     static PROMPTS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-    let prompts = PROMPTS.get_or_init(|| WireType::ALL.into_iter().map(compose).collect());
-    &prompts[WireType::ALL
-        .iter()
-        .position(|k| *k == kind)
-        .expect("listed")]
+    let prompts = PROMPTS.get_or_init(|| llm_kinds().map(compose).collect());
+    &prompts[llm_kinds()
+        .position(|k| k == kind)
+        .expect("a kind the model writes")]
 }
 
 pub fn corrective(kind: WireType) -> String {
@@ -745,7 +744,7 @@ mod tests {
 
     #[test]
     fn a_system_prompt_is_about_its_own_type_only() {
-        for kind in WireType::ALL {
+        for kind in llm_kinds() {
             let prompt = system_prompt(kind);
             let spec = kind.spec();
             assert!(prompt.contains(&spec.prompt_spec) && prompt.contains(&spec.params_spec));
@@ -1014,12 +1013,7 @@ mod tests {
         let transport = scripted(|_: &str, _| unreachable!());
         let mock = Llm::new(&transport, None);
         for target in ["Spanish", "Chinese"] {
-            let mut batch = args(
-                WireType::ALL
-                    .into_iter()
-                    .map(|kind| want("a", "uno", kind, 3))
-                    .collect(),
-            );
+            let mut batch = args(llm_kinds().map(|kind| want("a", "uno", kind, 3)).collect());
             batch.profile = profile(target);
             batch.known_items = Some(vec![KnownItem {
                 id: "k".into(),
@@ -1033,7 +1027,7 @@ mod tests {
                 .iter()
                 .map(|c| kind_of(c).unwrap())
                 .collect();
-            assert_eq!(kinds, WireType::ALL, "{target}");
+            assert_eq!(kinds, llm_kinds().collect::<Vec<_>>(), "{target}");
             for (challenge, kind) in result.challenges.iter().zip(kinds) {
                 assert!(challenge.item_ids().contains(&"a".to_owned()));
                 assert_eq!(challenge.check_shape(), Ok(()), "{kind:?}");

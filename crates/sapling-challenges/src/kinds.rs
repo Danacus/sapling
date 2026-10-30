@@ -22,10 +22,11 @@ pub enum WireType {
     Cloze,
     MultiCloze,
     TranslateToTarget,
+    CueCloze,
 }
 
 impl WireType {
-    pub const ALL: [WireType; 9] = [
+    pub const ALL: [WireType; 10] = [
         Self::RecognizeMc,
         Self::ProduceMc,
         Self::ContextMc,
@@ -35,6 +36,7 @@ impl WireType {
         Self::Cloze,
         Self::MultiCloze,
         Self::TranslateToTarget,
+        Self::CueCloze,
     ];
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -47,6 +49,7 @@ impl WireType {
             Self::Cloze => "cloze",
             Self::MultiCloze => "multi-cloze",
             Self::TranslateToTarget => "translate-to-target",
+            Self::CueCloze => "cue-cloze",
         }
     }
     pub fn kind_spec(self) -> &'static KindSpec {
@@ -64,6 +67,11 @@ impl WireType {
     pub fn is_active(self) -> bool {
         self.lengths().is_some()
     }
+    /// Built on this device from the learner's own material (`local.rs`): no
+    /// lesson file, never sent to the model, and never assumed writable.
+    pub fn is_local(self) -> bool {
+        self.kind_spec().local
+    }
     pub fn written_steps(self) -> Vec<Step> {
         self.kind_spec()
             .written_steps
@@ -79,6 +87,11 @@ impl WireType {
     }
     pub fn slope(self) -> f64 {
         self.kind_spec().slope
+    }
+    /// The kind whose learned numbers this one starts from until its own
+    /// answers move them.
+    pub fn starts_from(self) -> Option<WireType> {
+        self.kind_spec().starts_from
     }
 }
 
@@ -99,6 +112,8 @@ pub struct KindSpec {
     pub can_listen: bool,
     pub bases: BTreeMap<String, f64>,
     pub slope: f64,
+    pub local: bool,
+    pub starts_from: Option<WireType>,
 }
 
 #[derive(Deserialize)]
@@ -122,6 +137,10 @@ struct KindData {
     can_listen: bool,
     bases: BTreeMap<String, f64>,
     slope: f64,
+    #[serde(default)]
+    local: bool,
+    #[serde(default)]
+    starts_from: Option<WireType>,
 }
 
 fn specs() -> &'static [KindSpec] {
@@ -150,6 +169,8 @@ fn specs() -> &'static [KindSpec] {
                     can_listen: kind.can_listen,
                     bases: kind.bases,
                     slope: kind.slope,
+                    local: kind.local,
+                    starts_from: kind.starts_from,
                 });
             }
         }
@@ -171,6 +192,11 @@ fn specs() -> &'static [KindSpec] {
 
 pub fn active_kinds() -> impl Iterator<Item = WireType> {
     WireType::ALL.into_iter().filter(|kind| kind.is_active())
+}
+
+/// The kinds the model writes: every kind with a lesson file.
+pub fn llm_kinds() -> impl Iterator<Item = WireType> {
+    WireType::ALL.into_iter().filter(|kind| !kind.is_local())
 }
 
 pub fn kind_of(challenge: &Challenge) -> Option<WireType> {
@@ -218,6 +244,13 @@ mod tests {
                 .filter(|kind| !kind.is_active())
                 .collect::<Vec<_>>(),
             [WireType::TranslateToTarget]
+        );
+        assert_eq!(
+            WireType::ALL
+                .into_iter()
+                .filter(|kind| kind.is_local())
+                .collect::<Vec<_>>(),
+            [WireType::CueCloze]
         );
         for kind in active_kinds() {
             let [shortest, longest] = kind.lengths().unwrap();

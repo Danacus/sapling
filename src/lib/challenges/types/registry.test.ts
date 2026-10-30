@@ -10,7 +10,8 @@ const TYPES: ChallengeType[] = [
 	'match-pairs',
 	'multi-cloze',
 	'word-order',
-	'spot-error'
+	'spot-error',
+	'cue-cloze'
 ];
 
 describe('CHALLENGE_COMPONENTS', () => {

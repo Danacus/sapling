@@ -98,6 +98,7 @@ fn member_schema(kind: WireType) -> Value {
         WireType::Cloze => inline_schema::<ClozeWire>(),
         WireType::MultiCloze => inline_schema::<MultiClozeWire>(),
         WireType::TranslateToTarget => inline_schema::<TranslateToTargetWire>(),
+        WireType::CueCloze => unreachable!("a local kind is never asked of the model"),
     };
     let mut properties = Map::new();
     properties.insert(
@@ -681,7 +682,7 @@ mod tests {
 
     #[test]
     fn every_schema_is_strict_and_admits_one_type() {
-        for kind in WireType::ALL {
+        for kind in crate::kinds::llm_kinds() {
             let schema = batch_schema(kind);
             let text = schema.to_string();
             assert!(!text.contains("$ref") && !text.contains("$defs") && !text.contains("oneOf"));

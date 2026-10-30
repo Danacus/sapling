@@ -42,6 +42,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use ts_rs::TS;
 
+use sapling_challenges::local::CueCandidate;
 use sapling_challenges::model::Shared;
 use sapling_db::core::LanguageProfile;
 use sapling_db::{AnswerFiled, AnswerRecord, Clip, Core, Error, Result, ReviewOutcome};
@@ -448,6 +449,12 @@ backend! {
         /// to it counts. Deterministic — the caller picks among them.
         clipsFor(terms: Vec<String>; sentence: String) -> Vec<Clip> {
             core.clips_for(&terms, sentence.as_deref())
+        }
+        /// For each of these words, the timed cues of any imported text that
+        /// hold its term as a word, newest text first, at most thirty each:
+        /// what a locally built cue challenge (`writeLocal`) is cut from.
+        cuesFor(itemIds: Vec<String>) -> Vec<CueCandidate> {
+            core.cues_for(&itemIds)
         }
         /// Forgets one text. Tombstoned, so a late copy from another device stays
         /// gone.

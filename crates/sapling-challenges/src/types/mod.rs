@@ -12,6 +12,7 @@ use crate::help::{HelpLevel, Step};
 use crate::rng::Rng;
 
 pub mod cloze;
+pub mod cue_cloze;
 pub mod match_pairs;
 pub mod multi_cloze;
 pub mod multiple_choice;
@@ -22,6 +23,7 @@ pub mod typed_translation;
 pub mod word_order;
 
 pub use cloze::{ClozeAnswer, ClozeChallenge, ClozeScreen, ClozeTag};
+pub use cue_cloze::{CueClozeAnswer, CueClozeChallenge, CueClozeScreen, CueClozeTag, CueRef};
 pub use match_pairs::{
     MatchPair, MatchPairsAnswer, MatchPairsChallenge, MatchPairsScreen, MatchPairsTag,
 };
@@ -213,6 +215,7 @@ challenge_types! {
     (multi_cloze, MultiCloze, MultiCloze, MultiClozeChallenge, MultiClozeScreen, MultiClozeAnswer, "multi-cloze"),
     (word_order, WordOrder, WordOrder, WordOrderChallenge, WordOrderScreen, WordOrderAnswer, "word-order"),
     (spot_error, SpotError, SpotError, SpotErrorChallenge, SpotErrorScreen, SpotErrorAnswer, "spot-error"),
+    (cue_cloze, CueCloze, CueCloze, CueClozeChallenge, CueClozeScreen, CueClozeAnswer, "cue-cloze"),
 }
 
 pub(crate) fn filled_common(common: Common<'_>, tag: &str) -> Result<(), String> {
@@ -262,6 +265,7 @@ pub(crate) const TYPE_SOURCES: &[&str] = &[
     multi_cloze::TYPE_JSON,
     word_order::TYPE_JSON,
     spot_error::TYPE_JSON,
+    cue_cloze::TYPE_JSON,
 ];
 
 pub fn lesson_source(id: &str) -> Option<&'static str> {
@@ -273,5 +277,6 @@ pub fn lesson_source(id: &str) -> Option<&'static str> {
         .chain(multi_cloze::LESSONS)
         .chain(word_order::LESSONS)
         .chain(spot_error::LESSONS)
+        .chain(cue_cloze::LESSONS)
         .find_map(|(kind, source)| (*kind == id).then_some(*source))
 }

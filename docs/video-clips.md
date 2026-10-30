@@ -1,6 +1,6 @@
 # Video clips in practice — design
 
-Status: step 1 (§5) is built; steps 2–3 are the plan.
+Status: step 1 (§5) and the cue-cloze (§6) are built; steps 2–3 are the plan.
 
 Practice speaks every sentence with TTS. A learner who has imported YouTube
 videos already holds real speech for many of their words: every subtitle cue
@@ -86,23 +86,65 @@ sit consistently off their kind.
    the resolver attaching it (§4). A clip row's listening level plays the
    recording as the prompt; step 2's text match is retired.
 
-## 6. Limits
+## 6. A cue-cloze
 
-- **YouTube only.** A file's `File` handle comes only from a picker the
-  learner clicked, once per tab, which practice cannot ask for. A desktop
-  file path could lift this later.
+A `cue-cloze` (`crates/sapling-challenges/src/types/cue_cloze/`) is one of the
+learner's own timed cues with one of their words blanked — the first **local**
+kind: built on the device from the learner's material, never by the model.
+Its kind is `local` in `type.json`, so it has no lesson file, is never sent to
+`getBatch`, and is left out of what `fits.rs` counts as writable (the window
+widens only to rows a writer can always produce; a cue may not exist).
+
+- **What it is cut from.** `cuesFor(itemIds)` (a `Backend` read) answers, per
+  word, the timed cues of any imported text — YouTube, a file, or none —
+  holding the term as a whole word under `clipsFor`'s rule (§5), at most
+  thirty, newest text first. A cue's text is copied onto the row with
+  `cue: {textId, videoId?, start, end}`, `videoId` for YouTube media only.
+- **When.** `generateChallenges` asks for the cues of the words the plan wants
+  for and passes the words with one to `planTopUp` as `cued`; only those words
+  can be planned a local kind, and the planner's usual rotation (a kind the
+  word never had first, a draw among the rest) mixes it with the model's kinds
+  with no preference either way.
+- **How.** `writeLocal` (the wasm `challenges` export, `local.rs`) builds each
+  local want: for every candidate cue not already in the pool for that word,
+  it blanks the first whole-word occurrence (the answer is the term as the cue
+  spells it), keeps rows whose measured length is in the kind's band (3–14
+  words) and that pass `fits_fresh`, and takes the one nearest the asked
+  length, a draw breaking a tie. The row's `length` is its measured length.
+  The bank is the answer plus five random other words of the learner's — none
+  the answer itself, none already in the cue — with no similarity criterion. A
+  helper model call that picks distractors is a possible later step. A local
+  want with nothing that fits becomes a model-written want for the same word
+  (the same rotation over the kinds the model writes, less those already
+  wanted); the rest of the wants go to `getBatch` unchanged.
+- **Serving.** Steps pick-4, pick-6, typed, as a cloze. A cue has no
+  translation, so the easiest step shows the word's meaning (`meaningHint`).
+  Readings are romanized at render time, so `has_readings` is whether the cue
+  is written in a script other than Latin. Audio is TTS for now.
+- **Grading.** Only the learner's own term is graded, matched as a whole word
+  when the row was built. A caption's mis-hearings and missing punctuation
+  elsewhere in the line are context noise, not grading errors.
+- **Heard in.** The served sentence completes to the cue's text, so
+  `clipsFor` ranks that very cue first.
+
+## 7. Limits
+
+- **YouTube only for playing.** A file's `File` handle comes only from a
+  picker the learner clicked, once per tab, which practice cannot ask for. A
+  desktop file path could lift this later. A cue-cloze is cut from file media
+  too; only "Heard in" needs the recording.
 - **Load time and pre-roll ads** can swallow a three-second span. The player
   is mounted when the banner shows, the span is padded by 250 ms each side,
   and a span that does not start in time falls back to TTS.
 - **Cues are fragments, and automatic captions mis-hear and carry no
-  punctuation.** Fine as a sound; risky as a sentence that is graded. That is
-  why the model picks and cites a cue (§4) rather than a challenge being built
-  from one locally.
+  punctuation.** A cue-cloze accepts that as context: it never grades the
+  caption, only the blanked term, which is one of the learner's words found in
+  it as a whole word.
 - **Offline**, a clip falls back to its text spoken, so the listening level
   stays available and `Serving.audio` keeps its meaning.
 
-## 7. Left out
+## 8. Left out
 
-A locally built "type what you hear" challenge graded against a cue: the
-grading would trust automatic captions, and §3–4 give the same listening
-practice through the existing plugins.
+"Type what you hear" graded against a whole cue: the grading would trust
+automatic captions, and §3–4 give the same listening practice through the
+existing plugins.

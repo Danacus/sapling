@@ -29,7 +29,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeSet;
 
 use sapling_challenges::model::words_in;
-use sapling_challenges::text::{is_word_char, uses_inter_word_spaces};
+use sapling_challenges::text::{find_word, is_word_char, uses_inter_word_spaces};
 
 use crate::core::Clip;
 
@@ -162,40 +162,9 @@ fn normalised(text: &str) -> String {
         .collect()
 }
 
-/// Whether `term` occurs in `text` (both lowercase) as a word. In a spaced
-/// script no letter may directly join it on either side, so "car" is not in
-/// "cart". A term written without spaces has no such boundary to check, so an
-/// occurrence counts unless a longer word the learner knows covers it: 行 is
-/// not heard in 银行 when 银行 is one of their words.
+/// Whether `term` occurs in `text` as a word (`text::find_word`).
 pub fn occurs(text: &str, term: &str, longer: &[&str]) -> bool {
-    let joins = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() && !unspaced(c));
-    let first = term.chars().next();
-    let last = term.chars().next_back();
-    let covers: Vec<(usize, usize)> = if term.chars().any(unspaced) {
-        longer
-            .iter()
-            .flat_map(|k| text.match_indices(k).map(|(at, k)| (at, at + k.len())))
-            .collect()
-    } else {
-        Vec::new()
-    };
-    text.match_indices(term).any(|(at, _)| {
-        let end = at + term.len();
-        let before = text[..at].chars().next_back();
-        let after = text[end..].chars().next();
-        !(joins(before) && joins(first))
-            && !(joins(after) && joins(last))
-            && !covers.iter().any(|&(s, e)| s <= at && end <= e)
-    })
-}
-
-/// Han, kana, Hangul, and the Southeast Asian scripts written without spaces
-/// between words (Hangul's particles attach to the word, so it counts too).
-fn unspaced(c: char) -> bool {
-    matches!(c as u32,
-        0x0E00..=0x0EFF | 0x1000..=0x109F | 0x1100..=0x11FF | 0x1780..=0x17FF
-        | 0x3040..=0x30FF | 0x3130..=0x318F | 0x31F0..=0x31FF | 0x3400..=0x4DBF
-        | 0x4E00..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF | 0x20000..=0x2FFFF)
+    find_word(text, term, longer).is_some()
 }
 
 /// Jaccard similarity of a cue and the served sentence, in [0, 1]: over word

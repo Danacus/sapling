@@ -248,6 +248,7 @@ fn no_word_waits_for_more_than_one_refill_under(name: &str, base: &Serving, days
                     served: &served,
                     asked,
                     limit: Some(mark),
+                    ..Scope::default()
                 };
                 let wants = plan_top_up(pool, &words, now, &serving, scope, &mut || rng.next_f64());
                 let mut partner = |own: &str| loop {

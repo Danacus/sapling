@@ -12,6 +12,7 @@ use ts_rs::TS;
 
 use sapling_challenges::fits::Serving;
 use sapling_challenges::help::HelpLevel;
+use sapling_challenges::local::{self, CueCandidate, LocalWrite};
 use sapling_challenges::pool::lenient_rows;
 use sapling_challenges::stream::{self, Head};
 use sapling_challenges::topup::{self, Scope, TopUpCoverage};
@@ -121,6 +122,26 @@ pub struct TopUpArgs {
     #[serde(default)]
     #[ts(optional)]
     pub limit: Option<usize>,
+    /// Words with a usable cue (`cuesFor`): a local kind is a candidate only for them.
+    #[serde(default)]
+    #[ts(optional)]
+    pub cued: Option<Vec<String>>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub seed: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, TS)]
+pub struct WriteLocalArgs {
+    pub wants: Vec<Want>,
+    pub cues: Vec<CueCandidate>,
+    #[serde(deserialize_with = "lenient_rows")]
+    #[ts(as = "Vec<PoolRow>")]
+    pub pool: Vec<Option<PoolRow>>,
+    pub words: Vec<Word>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub serving: Option<Serving>,
     #[serde(default)]
     #[ts(optional)]
     pub seed: Option<u64>,
@@ -225,8 +246,13 @@ challenges! {
         planTopUp(args: TopUpArgs) -> Vec<Want> {
             let mut rng = Rng::from_seed(args.seed);
             let (served, asked) = (args.served.unwrap_or_default(), args.asked.unwrap_or_default());
-            let scope = Scope { served: &served, asked: &asked, limit: args.limit };
+            let cued = args.cued.unwrap_or_default();
+            let scope = Scope { served: &served, asked: &asked, limit: args.limit, cued: &cued };
             topup::plan_top_up(&args.pool, &args.words, args.now, &args.serving.unwrap_or_default(), scope, &mut || rng.next_f64())
+        }
+        /// Builds the local wants from the learner's own material; answers those rows and the wants left for the model, a local want nothing could be built for replaced by a model-written kind.
+        writeLocal(args: WriteLocalArgs) -> LocalWrite {
+            local::write_local(&args.wants, &args.cues, &args.pool, &args.words, &args.serving.unwrap_or_default(), &mut Rng::from_seed(args.seed))
         }
         /// The start screen's figure and what a press would write.
         topUpCoverage(args: TopUpArgs) -> TopUpCoverage {

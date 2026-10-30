@@ -28,6 +28,7 @@
 
 import {
 	addToPool,
+	cuesFor,
 	getAllItems,
 	getDifficultyParts,
 	getPool,
@@ -39,7 +40,7 @@ import {
 } from '$lib/db';
 import type { ChallengeRow, ReasoningEffort } from '$lib/db';
 import { challengeOf } from '$lib/db';
-import type { TopUpCoverage } from '$lib/db/generated/index';
+import type { CueCandidate, LocalWrite, TopUpCoverage } from '$lib/db/generated/index';
 import { getBatch, isMockMode } from '$lib/llm';
 import type { BatchArgs, OnProgress, TokenUsage, Want } from '$lib/llm';
 import { Grade, isDue } from '$lib/srs';
@@ -246,6 +247,8 @@ export interface PlanTopUpOptions {
 	asked?: readonly string[];
 	/** How many of the words ahead to write for — the stream's mark; every word when absent. */
 	limit?: number;
+	/** Words with a usable cue ({@link cuesFor}): a local kind is a candidate only for them. */
+	cued?: readonly string[];
 	/** Replays the tie-breaks between equally good kinds. */
 	seed?: number;
 }
@@ -270,7 +273,31 @@ export function planTopUp(
 		...(opts.served === undefined ? {} : { served: [...opts.served] }),
 		...(opts.asked === undefined ? {} : { asked: [...opts.asked] }),
 		...(opts.limit === undefined ? {} : { limit: opts.limit }),
+		...(opts.cued === undefined ? {} : { cued: [...opts.cued] }),
 		...(opts.seed === undefined ? {} : { seed: opts.seed })
+	});
+}
+
+/**
+ * Builds the local wants (`crates/sapling-challenges`' `local.rs`) from the
+ * learner's own cues, with no model call: the rows built, and the wants left
+ * for `getBatch` — a local want nothing fitted swapped for a model-written kind.
+ */
+export function writeLocal(
+	wants: Want[],
+	cues: CueCandidate[],
+	pool: readonly ChallengeRow[],
+	items: KnowledgeItem[],
+	serving?: Serving,
+	seed?: number
+): LocalWrite {
+	return callChallenges('writeLocal', {
+		wants,
+		cues,
+		pool: [...pool],
+		words: asWords(items),
+		...(serving === undefined ? {} : { serving }),
+		...(seed === undefined ? {} : { seed })
 	});
 }
 
@@ -413,6 +440,8 @@ export interface GenerateOptions {
 	served?: readonly string[];
 	asked?: readonly string[];
 	limit?: number;
+	/** Replays the planner's draws and the local rows'. */
+	seed?: number;
 }
 
 /**
@@ -453,13 +482,23 @@ export async function generateChallenges(
 	progress?.({ id: 'select-items', label: 'Checking what the pool is missing' });
 
 	const [pool, items, parts] = await Promise.all([getPool(), getAllItems(), getDifficultyParts()]);
-
-	const args = planRefill(pool, items, profile, now, {
-		serving: servingFor(profile, parts, opts.device),
+	const serving = servingFor(profile, parts, opts.device);
+	const plan: PlanRefillOptions = {
+		serving,
 		...(opts.served === undefined ? {} : { served: opts.served }),
 		...(opts.asked === undefined ? {} : { asked: opts.asked }),
 		...(opts.limit === undefined ? {} : { limit: opts.limit }),
-		...(opts.topic === undefined ? {} : { topic: opts.topic })
+		...(opts.topic === undefined ? {} : { topic: opts.topic }),
+		...(opts.seed === undefined ? {} : { seed: opts.seed })
+	};
+
+	// The words that want anything, then their cues: a local kind is planned
+	// only for a word with one, and built from it below without the model.
+	const wanting = [...new Set(planTopUp(pool, items, now, plan).map((want) => want.item.id))];
+	const cues = wanting.length ? await cuesFor(wanting) : [];
+	const args = planRefill(pool, items, profile, now, {
+		...plan,
+		cued: [...new Set(cues.map((cue) => cue.itemId))]
 	});
 
 	// Said here, before any request step is announced, so an empty brief is
@@ -472,23 +511,34 @@ export async function generateChallenges(
 		);
 	}
 
-	const batch = await getBatch(args, {
-		...(opts.signal ? { signal: opts.signal } : {}),
-		...(progress ? { onProgress: progress } : {}),
-		...(opts.itemsPerRequest === undefined ? {} : { itemsPerRequest: opts.itemsPerRequest }),
-		...(opts.reasoningEffort === undefined ? {} : { reasoningEffort: opts.reasoningEffort })
-	});
+	const local = cues.length
+		? writeLocal(args.wants, cues, pool, items, serving, opts.seed)
+		: { challenges: [], wants: args.wants };
+	const sent: BatchArgs = { ...args, wants: local.wants };
+	const batch = sent.wants.length
+		? await getBatch(sent, {
+				...(opts.signal ? { signal: opts.signal } : {}),
+				...(progress ? { onProgress: progress } : {}),
+				...(opts.itemsPerRequest === undefined ? {} : { itemsPerRequest: opts.itemsPerRequest }),
+				...(opts.reasoningEffort === undefined ? {} : { reasoningEffort: opts.reasoningEffort })
+			})
+		: {
+				challenges: [],
+				failedRequests: 0,
+				usage: { promptTokens: 0, completionTokens: 0, requests: 0 }
+			};
+	const challenges = [...local.challenges, ...batch.challenges];
 
 	progress?.({ id: 'save', label: 'Saving new challenges' });
-	await addToPool(batch.challenges, now, opts.topic);
+	await addToPool(challenges, now, opts.topic);
 
 	return {
-		addedChallenges: batch.challenges.length,
+		addedChallenges: challenges.length,
 		usage: batch.usage,
 		failedRequests: batch.failedRequests,
 		mock,
 		items,
-		args
+		args: sent
 	};
 }
 

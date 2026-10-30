@@ -122,6 +122,10 @@ pub fn synthetic(kind: WireType, id: &str, items: &[&str], length: usize) -> Val
         WireType::Cloze => json!({
             "type": "cloze", "sentence": format!("{} ___", words("s", length.saturating_sub(1)).join(" ")),
             "acceptedAnswers": ["x"], "wordBank": ["x", "b1", "b2", "b3", "b4", "b5"], "translationHint": "h" }),
+        WireType::CueCloze => json!({
+            "type": "cue-cloze", "sentence": format!("{} ___", words("s", length.saturating_sub(1)).join(" ")),
+            "acceptedAnswers": ["x"], "wordBank": ["x", "b1", "b2", "b3", "b4", "b5"], "meaningHint": "h",
+            "cue": { "textId": "t", "start": 0.0, "end": 1000.0 } }),
         WireType::MultiCloze => {
             let plain = words("s", length.saturating_sub(items.len()));
             json!({ "type": "multi-cloze",
@@ -150,6 +154,8 @@ pub fn with_readings(mut row: Value) -> Value {
     match row["type"].as_str() {
         Some("multiple-choice" | "typed-translation") => row["promptRomanization"] = json!("r"),
         Some("cloze") => row["sentenceRomanization"] = json!("r ___"),
+        // A cue-cloze's reading is the frontend's, so its script is what carries one.
+        Some("cue-cloze") => row["sentence"] = json!("字字___"),
         Some("multi-cloze") => row["passageRomanization"] = json!("___1___ r ___2___"),
         Some("word-order") => row["tilesRomanization"] = along(&row, "tiles"),
         Some("spot-error") => row["tokensRomanization"] = along(&row, "tokens"),
@@ -184,7 +190,11 @@ struct Row {
 pub fn simulate(options: SimOptions) -> Simulation {
     let mut rng = Rng::seeded(options.seed);
     let mut truth = Truth::default();
-    for kind in WireType::ALL.into_iter().filter(|k| k.is_active()) {
+    // Local kinds depend on imported cues, which a simulated learner has none of.
+    for kind in WireType::ALL
+        .into_iter()
+        .filter(|k| k.is_active() && !k.is_local())
+    {
         truth
             .slopes
             .insert(kind, starting_slope(kind) * (0.6 + 0.8 * rng.next_f64()));
@@ -209,7 +219,7 @@ pub fn simulate(options: SimOptions) -> Simulation {
     let mut learner = Learner::default();
     let kinds: Vec<WireType> = WireType::ALL
         .into_iter()
-        .filter(|k| k.is_active())
+        .filter(|k| k.is_active() && !k.is_local())
         .collect();
 
     for day in 0..options.days {

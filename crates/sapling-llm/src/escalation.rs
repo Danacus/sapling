@@ -9,7 +9,7 @@ use ts_rs::TS;
 
 use crate::client::{ChatRequest, Llm, Message, Result, Transport};
 use crate::json::parse_reply;
-use crate::kinds::{Lesson, WireType};
+use crate::kinds::{llm_kinds, Lesson};
 use crate::non_blank;
 
 const PROMPT: &str = include_str!("../prompts/escalation.txt");
@@ -45,8 +45,7 @@ pub struct EscalationReply {
 }
 
 pub fn escalation_messages(args: &EscalationArgs) -> Vec<Message> {
-    let glosses: Vec<&str> = WireType::ALL
-        .into_iter()
+    let glosses: Vec<&str> = llm_kinds()
         .filter_map(|kind| kind.spec().escalation_spec.as_deref())
         .collect();
     let system: Vec<String> = PROMPT
@@ -117,6 +116,7 @@ pub async fn escalate<T: Transport>(
 mod tests {
     use super::*;
     use crate::client::fake::{live, Fake};
+    use crate::kinds::WireType;
     use pollster::block_on;
     use sapling_challenges::types::WordOrderScreen;
 

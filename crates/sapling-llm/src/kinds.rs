@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-pub use sapling_challenges::kinds::{kind_of, WireType};
+pub use sapling_challenges::kinds::{kind_of, llm_kinds, WireType};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -45,8 +45,7 @@ impl Lesson for WireType {
     fn spec(self) -> &'static Spec {
         static SPECS: OnceLock<Vec<Spec>> = OnceLock::new();
         let specs = SPECS.get_or_init(|| {
-            WireType::ALL
-                .iter()
+            llm_kinds()
                 .map(|kind| {
                     serde_json::from_str(
                         sapling_challenges::types::lesson_source(kind.as_str())
@@ -56,10 +55,9 @@ impl Lesson for WireType {
                 })
                 .collect()
         });
-        &specs[WireType::ALL
-            .iter()
-            .position(|k| *k == self)
-            .expect("listed")]
+        &specs[llm_kinds()
+            .position(|k| k == self)
+            .expect("a kind the model writes")]
     }
 
     fn params(self, length: u8) -> Map<String, Value> {
@@ -90,7 +88,7 @@ mod tests {
 
     #[test]
     fn every_spec_parses_and_names_its_length_key() {
-        for kind in WireType::ALL {
+        for kind in llm_kinds() {
             let spec = kind.spec();
             assert!(
                 spec.params_spec.contains(&format!("{}:", spec.length)),

@@ -27,6 +27,7 @@ export type {
 	ConversationLine,
 	ConversationScenario,
 	ConversationTeacherTurn,
+	CueClozeChallenge,
 	Direction,
 	FsrsCardState,
 	Feedback,

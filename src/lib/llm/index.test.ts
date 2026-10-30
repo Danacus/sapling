@@ -14,7 +14,7 @@ import type { BatchArgs, ProgressStep, Want, WireType } from './index';
 
 beforeAll(loadWasmCore);
 
-/** Every kind in registry order, and the stored `type` each resolves to. */
+/** Every kind the model writes, in registry order, and the stored `type` each resolves to. */
 const ALL_KINDS: [WireType, string][] = [
 	['recognize-mc', 'multiple-choice'],
 	['produce-mc', 'multiple-choice'],

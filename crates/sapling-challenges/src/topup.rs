@@ -101,11 +101,41 @@ fn kinds_had<'a>(
 /// What a stream's refill is about: the rows it has shown cover nothing, the
 /// words it has already asked for want nothing, and only the first `limit`
 /// words of the list count. The default is a press: the whole collection.
+/// `cued` are the words with a usable cue: a local kind is a candidate only
+/// for them.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Scope<'a> {
     pub served: &'a [String],
     pub asked: &'a [String],
     pub limit: Option<usize>,
+    pub cued: &'a [String],
+}
+
+fn want_item(word: &Word) -> WantItem {
+    WantItem {
+        id: word.id.clone(),
+        term: js_trim(&word.term).to_owned(),
+        meaning: js_trim(&word.meaning).to_owned(),
+    }
+}
+
+/// One of `candidates`, taken out: a kind the word has never had goes first,
+/// the draw picks among them.
+fn take_kind(
+    candidates: &mut Vec<(WireType, u8)>,
+    have: &HashSet<WireType>,
+    draw: &mut dyn FnMut() -> f64,
+) -> (WireType, u8) {
+    let never: Vec<usize> = (0..candidates.len())
+        .filter(|&i| !have.contains(&candidates[i].0))
+        .collect();
+    let from: Vec<usize> = if never.is_empty() {
+        (0..candidates.len()).collect()
+    } else {
+        never
+    };
+    let at = ((draw() * from.len() as f64).floor() as usize).min(from.len() - 1);
+    candidates.remove(from[at])
 }
 
 /// The wants for the words of `list` with nothing available, capped.
@@ -114,7 +144,7 @@ fn wants_of(
     pool: &[Option<PoolRow>],
     words: &[Word],
     serving: &Serving,
-    asked: &[String],
+    scope: Scope,
     draw: &mut dyn FnMut() -> f64,
 ) -> Vec<Want> {
     let had = kinds_had(pool, words);
@@ -122,32 +152,20 @@ fn wants_of(
     let mut wants = Vec::new();
     let wanting = list
         .iter()
-        .filter(|a| a.next.is_none() && !asked.contains(&a.word.id));
+        .filter(|a| a.next.is_none() && !scope.asked.contains(&a.word.id));
     for word in wanting.map(|a| a.word) {
         let have = had.get(word.id.as_str()).unwrap_or(&none);
+        let cued = scope.cued.contains(&word.id);
         let mut candidates: Vec<(WireType, u8)> = active_kinds()
+            .filter(|kind| cued || !kind.is_local())
             .filter_map(|kind| length_for(word, kind, serving).map(|length| (kind, length)))
             .collect();
-        let item = WantItem {
-            id: word.id.clone(),
-            term: js_trim(&word.term).to_owned(),
-            meaning: js_trim(&word.meaning).to_owned(),
-        };
+        let item = want_item(word);
         for _ in 0..WANT_PER_WORD {
             if candidates.is_empty() {
                 break;
             }
-            // A kind the word has never had goes first.
-            let never: Vec<usize> = (0..candidates.len())
-                .filter(|&i| !have.contains(&candidates[i].0))
-                .collect();
-            let from: Vec<usize> = if never.is_empty() {
-                (0..candidates.len()).collect()
-            } else {
-                never
-            };
-            let at = ((draw() * from.len() as f64).floor() as usize).min(from.len() - 1);
-            let (kind, length) = candidates.remove(from[at]);
+            let (kind, length) = take_kind(&mut candidates, have, draw);
             wants.push(Want {
                 item: item.clone(),
                 kind: ChallengeKind { kind },
@@ -157,6 +175,34 @@ fn wants_of(
     }
     wants.truncate(MAX_TOPUP_WANTS);
     wants
+}
+
+/// A want the model writes for `word`, in place of a local one that found
+/// nothing to build from: the same rotation, over the kinds the model writes
+/// less those in `taken`. `None` when no other kind can reach the word.
+pub fn instead_of_local(
+    pool: &[Option<PoolRow>],
+    words: &[Word],
+    word: &Word,
+    serving: &Serving,
+    taken: &[WireType],
+    draw: &mut dyn FnMut() -> f64,
+) -> Option<Want> {
+    let mut candidates: Vec<(WireType, u8)> = active_kinds()
+        .filter(|kind| !kind.is_local() && !taken.contains(kind))
+        .filter_map(|kind| length_for(word, kind, serving).map(|length| (kind, length)))
+        .collect();
+    if candidates.is_empty() {
+        return None;
+    }
+    let had = kinds_had(pool, words);
+    let have = had.get(word.id.as_str()).cloned().unwrap_or_default();
+    let (kind, length) = take_kind(&mut candidates, &have, draw);
+    Some(Want {
+        item: want_item(word),
+        kind: ChallengeKind { kind },
+        length,
+    })
 }
 
 /// The wants for the words in `scope`, most urgent first, capped at [`MAX_TOPUP_WANTS`].
@@ -170,7 +216,7 @@ pub fn plan_top_up(
 ) -> Vec<Want> {
     let n = scope.limit.unwrap_or(usize::MAX);
     let list = upcoming(pool, words, now, serving, scope.served, n);
-    wants_of(&list, pool, words, serving, scope.asked, draw)
+    wants_of(&list, pool, words, serving, scope, draw)
 }
 
 /// The start screen's figure and the press's count, off one list.
@@ -190,7 +236,7 @@ pub fn coverage(
     TopUpCoverage {
         upcoming: figure.len(),
         covered: figure.iter().filter(|a| a.next.is_some()).count(),
-        wants: wants_of(&list, pool, words, serving, &[], &mut || 0.0).len(),
+        wants: wants_of(&list, pool, words, serving, Scope::default(), &mut || 0.0).len(),
         due: due > 0,
     }
 }
@@ -257,6 +303,10 @@ pub(crate) mod tests {
             WireType::SpotError => {
                 json!({ "type": "spot-error", "tokens": ["a", "b"], "correctIndex": 0,
                 "intendedWord": "c", "correctedSentence": "c b", "meaning": "m" })
+            }
+            WireType::CueCloze => {
+                json!({ "type": "cue-cloze", "sentence": "a ___ b", "acceptedAnswers": ["x"],
+                "wordBank": ["x", "y", "z"], "cue": { "textId": "t", "start": 0.0, "end": 1.0 } })
             }
         };
         let mut row = body;
@@ -591,6 +641,28 @@ pub(crate) mod tests {
             &mut cycling(),
         );
         assert_eq!(words_of(&wants), ["w0", "w2"]);
+    }
+
+    #[test]
+    fn a_local_kind_is_a_candidate_only_for_a_word_with_a_cue() {
+        let words = [skilled("a", 4.0), skilled("b", 4.0)];
+        let rows = crate::stream::tests::rows(&[]);
+        let cued = ["a".to_owned()];
+        let mut local = HashSet::new();
+        for seed in 0..40 {
+            let seed = f64::from(seed) / 40.0;
+            let scope = Scope {
+                cued: &cued,
+                ..Scope::default()
+            };
+            let wants = plan_top_up(&rows, &words, NOW, &Serving::default(), scope, &mut || seed);
+            for want in wants.iter().filter(|w| w.kind.kind.is_local()) {
+                local.insert(want.item.id.clone());
+            }
+            let uncued = plan(&[], &words, NOW, &mut || seed);
+            assert!(uncued.iter().all(|w| !w.kind.kind.is_local()));
+        }
+        assert_eq!(local, HashSet::from(["a".to_owned()]));
     }
 
     #[test]
