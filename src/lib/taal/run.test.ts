@@ -25,6 +25,14 @@ const OTHER = `${'c'.repeat(20)}.${'D'.repeat(32)}`;
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 
+/** Twenty minutes into the local hour `ago` before now's: a ten-minute stretch
+ * from there never crosses an hour, which would split it into two sessions. */
+function inHourAgo(ago: number): number {
+	const hour = new Date();
+	hour.setMinutes(0, 0, 0);
+	return hour.getTime() - ago + 20 * 60_000;
+}
+
 class MemoryStorage {
 	private readonly entries = new Map<string, string>();
 	getItem(key: string): string | null {
@@ -99,7 +107,7 @@ describe('the code', () => {
 describe('pushTaal', () => {
 	it('is a no-op without a code', async () => {
 		const { sent, fetchImpl } = fakeTaal();
-		await recordStudy('t1', Date.now() - HOUR, 10 * 60_000);
+		await recordStudy('t1', inHourAgo(HOUR), 10 * 60_000);
 		expect(await pushTaal(fetchImpl)).toBeUndefined();
 		expect(sent).toHaveLength(0);
 		expect(lastTaalOutcome()).toBeUndefined();
@@ -107,7 +115,7 @@ describe('pushTaal', () => {
 
 	it('sends the active profile’s sessions under its id and keeps the watermark', async () => {
 		setTaalCode(CODE);
-		await recordStudy('t1', Date.now() - 2 * HOUR, 10 * 60_000);
+		await recordStudy('t1', inHourAgo(2 * HOUR), 10 * 60_000);
 		const { sent, fetchImpl } = fakeTaal(200);
 		const before = Date.now();
 
@@ -126,8 +134,8 @@ describe('pushTaal', () => {
 
 	it('reads from the re-send margin after a whole push', async () => {
 		setTaalCode(CODE);
-		await recordStudy('t1', Date.now() - 5 * DAY, 10 * 60_000);
-		await recordStudy('t1', Date.now() - 3 * HOUR, 10 * 60_000);
+		await recordStudy('t1', inHourAgo(5 * DAY), 10 * 60_000);
+		await recordStudy('t1', inHourAgo(3 * HOUR), 10 * 60_000);
 		const { sent, fetchImpl } = fakeTaal(200);
 
 		await pushTaal(fetchImpl);
@@ -155,7 +163,7 @@ describe('pushTaal', () => {
 
 	it('records a refusal without moving the watermark, and tries again next time', async () => {
 		setTaalCode(CODE);
-		await recordStudy('t1', Date.now() - HOUR, 10 * 60_000);
+		await recordStudy('t1', inHourAgo(HOUR), 10 * 60_000);
 		const { sent, fetchImpl } = fakeTaal(403, 200);
 
 		expect(await pushTaal(fetchImpl)).toMatchObject({ status: 'refused', message: REFUSED });
@@ -168,7 +176,7 @@ describe('pushTaal', () => {
 
 	it('records a failure and keeps when it last landed', async () => {
 		setTaalCode(CODE);
-		await recordStudy('t1', Date.now() - HOUR, 10 * 60_000);
+		await recordStudy('t1', inHourAgo(HOUR), 10 * 60_000);
 		await pushTaal(fakeTaal(200).fetchImpl);
 		const okAt = lastTaalOutcome()?.okAt;
 
@@ -181,7 +189,7 @@ describe('pushTaal', () => {
 
 	it('runs one push at a time and queues exactly one behind it', async () => {
 		setTaalCode(CODE);
-		await recordStudy('t1', Date.now() - HOUR, 10 * 60_000);
+		await recordStudy('t1', inHourAgo(HOUR), 10 * 60_000);
 		const { sent, fetchImpl } = fakeTaal(200);
 
 		const first = pushTaal(fetchImpl);
@@ -195,7 +203,7 @@ describe('pushTaal', () => {
 
 	it('starts over when the code changes, and forgets everything on disconnect', async () => {
 		setTaalCode(CODE);
-		await recordStudy('t1', Date.now() - HOUR, 10 * 60_000);
+		await recordStudy('t1', inHourAgo(HOUR), 10 * 60_000);
 		await pushTaal(fakeTaal(200).fetchImpl);
 		const profile = await activeId();
 		expect(getPushedThrough(CODE, profile)).toBeDefined();
