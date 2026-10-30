@@ -24,7 +24,7 @@ use sapling_challenges::replay::{busiest_profile, input_from_events, observation
 use sapling_challenges::sim::closed_loop::{compare, Named, Scenario};
 use sapling_challenges::sim::{simulate, SimOptions};
 
-const USAGE: &str = "usage: calibrate <export.json> [--profile ID] [--search]\n       calibrate --simulated [--seed N] [--search]\n       calibrate --simulated --seeds N\n  v2:  calibrate (<export.json> | --simulated) --model v2 [--prior global|empirical|starting]\n         [--parts flat|factored] [--length learned|fixed|off] [--memory product|feature|off]\n         [--noise on|off] [--search]\n       calibrate (<export.json> | --simulated [--seeds N]) --ablate\n       calibrate --simulated --seeds N --model v2 --search\n       calibrate --simulated --policy current,v2,v2-eb,v2-start,v2-fact,v2-skill,v2-half,v2-window,v2-static,v2-f30,v2-f180,v2-greedy|all --scenario base|trap|growth|new-kind|all [--seeds N]";
+const USAGE: &str = "usage: calibrate <export.json> [--profile ID] [--search]\n       calibrate --simulated [--seed N] [--search]\n       calibrate --simulated --seeds N\n  v2:  calibrate (<export.json> | --simulated) --model v2 [--prior global|empirical|starting]\n         [--parts flat|factored] [--length learned|fixed|off] [--memory product|feature|off]\n         [--noise on|off] [--search]\n       calibrate (<export.json> | --simulated [--seeds N]) --ablate\n       calibrate --simulated --seeds N --model v2 --search\n       calibrate --simulated --policy NAME,…|steps|all --scenario base|trap|growth|new-kind|all [--seeds N]";
 
 fn log_of(json: &str, profile: Option<String>) -> Result<(String, Vec<Observation>), String> {
     let events = parse_export(json)?;
@@ -40,92 +40,109 @@ fn log_of(json: &str, profile: Option<String>) -> Result<(String, Vec<Observatio
     Ok((profile, seen))
 }
 
-/// The policies `--policy` names, comma-separated, or `all`.
+/// The policies `--policy` names, comma-separated, `steps` (round two's
+/// steps in order, each on top of the one before) or `all`.
 fn policies(names: &str) -> Option<Vec<Named>> {
-    let base = Config::default();
-    let eb = Config {
-        prior: Prior::Empirical,
-        ..base
+    let first = Config::FIRST;
+    let feature = Config {
+        memory: Memory::Feature,
+        ..first
     };
-    let thompson = Steering::default();
-    let all = [
+    let joint = Config {
+        joint: true,
+        part_forget: 180.0,
+        ..feature
+    };
+    let last = Config::default();
+    let thompson = Steering::FIRST;
+    let narrow = Steering::default();
+    let decay = |scale| Steering {
+        scale,
+        decay: 500.0,
+        ..thompson
+    };
+    let steps = [
         Named::Current,
-        Named::V2("v2", base, thompson),
-        Named::V2("v2-eb", eb, thompson),
+        Named::V2("r1", first, thompson),
+        Named::V2("+memory", feature, thompson),
+        Named::V2("+joint", joint, thompson),
+        Named::V2("+narrow", joint, narrow),
+        Named::V2("+ordered", last, narrow),
+    ];
+    let more = [
+        Named::V2("decay1", joint, decay(1.0)),
+        Named::V2("decay.5", joint, decay(0.5)),
         Named::V2(
             "v2-start",
             Config {
                 prior: Prior::Starting,
-                ..base
+                ..last
             },
-            thompson,
+            narrow,
         ),
         Named::V2(
             "v2-fact",
             Config {
                 parts: Parts::Factored,
-                ..base
+                ..last
             },
-            thompson,
+            narrow,
+        ),
+        Named::V2(
+            "v2-eb",
+            Config {
+                prior: Prior::Empirical,
+                ..last
+            },
+            narrow,
+        ),
+        Named::V2(
+            "v2-diag",
+            Config {
+                joint: false,
+                ..last
+            },
+            narrow,
         ),
         Named::V2(
             "v2-skill",
-            base,
+            last,
             Steering {
                 skill: true,
-                ..thompson
+                ..narrow
             },
         ),
+        Named::V2("v2-thompson", last, thompson),
         Named::V2(
-            "v2-half",
-            base,
-            Steering {
-                scale: 0.5,
-                ..thompson
-            },
-        ),
-        Named::V2(
-            "v2-window",
-            base,
-            Steering {
-                band: [0.72, 0.93],
-                ..thompson
-            },
-        ),
-        Named::V2(
-            "v2-static",
+            "forget60",
             Config {
-                skill_forget: f64::INFINITY,
+                part_forget: 60.0,
+                ..last
+            },
+            narrow,
+        ),
+        Named::V2(
+            "forget365",
+            Config {
+                part_forget: 365.0,
+                ..last
+            },
+            narrow,
+        ),
+        Named::V2(
+            "static",
+            Config {
                 part_forget: f64::INFINITY,
-                ..base
+                skill_forget: f64::INFINITY,
+                ..last
             },
-            thompson,
-        ),
-        Named::V2(
-            "v2-f30",
-            Config {
-                part_forget: 30.0,
-                ..base
-            },
-            thompson,
-        ),
-        Named::V2(
-            "v2-f180",
-            Config {
-                part_forget: 180.0,
-                ..base
-            },
-            thompson,
-        ),
-        Named::V2(
-            "v2-greedy",
-            base,
-            Steering {
-                scale: 0.0,
-                ..thompson
-            },
+            narrow,
         ),
     ];
+    if names == "steps" {
+        return Some(steps.to_vec());
+    }
+    let all: Vec<Named> = steps.into_iter().chain(more).collect();
     if names == "all" {
         return Some(all.to_vec());
     }

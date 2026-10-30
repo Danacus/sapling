@@ -4,27 +4,28 @@
 //! **Fit is a ranking, not a filter.** A row is available when it is playable,
 //! of an active kind, not spent, not shown this stream, and rested or its word
 //! due — the first model's predicate without `fits`. Among the head word's
-//! available rows and help levels, a pick draws every number it reads from its
-//! belief (Thompson sampling) and takes the one whose *sampled* remembered
-//! chance is closest to the aim. A row believed too hard with confidence is
-//! rarely taken; one believed too hard on thin or stale evidence sometimes is,
-//! and its answer settles it.
+//! available rows and help levels, a pick takes one posterior draw — the
+//! shared numbers jointly, a row's correction on its own, the word's skill
+//! left as its distribution given that draw — and takes the one whose
+//! *sampled* remembered chance is closest to the aim. Draws are half as wide
+//! as the posterior by default ([`Steering`]): full-width Thompson sampling
+//! explored too much in the simulation. With ordered parts a draw may not make
+//! a harder help level of a row look easier than an easier one.
 //!
 //! **Refill keeps stock**: each of the next few words keeps [`STOCK`] available
 //! rows, spread across kinds, and gets one more (up to [`MOST`]) while even its
-//! best row's mean chance sits outside a band ([`Steering::band`]). The kind and length to write
-//! are chosen by the same sampled rule.
+//! best row's mean chance sits outside a band ([`Steering::band`]). The kind
+//! and length to write are chosen by the same sampled rule.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use crate::fits::{help_levels, written_levels, Serving};
 use crate::help::HelpLevel;
 use crate::kinds::{active_kinds, kind_of, ChallengeKind, Want, WantItem, WireType};
 use crate::model::{length_of, target, Evidence, Observation};
-use crate::model_v2::{probit, Key, ModelV2, Term};
+use crate::model_v2::{Draw, ModelV2, Parts};
 use crate::pool::{is_playable, is_rested, is_spent, known_ids, PoolRow};
 use crate::rng::Rng;
-use crate::sim::gaussian;
 use crate::text::js_trim;
 use crate::word::{by_id, ById, Word};
 
@@ -38,77 +39,42 @@ pub const BAND: [f64; 2] = [0.5, 0.98];
 /// How a pick explores and when a refill writes more.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Steering {
-    /// Whether the word's skill is drawn too. Off, it enters at its predictive
-    /// mean: every row of the word teaches its skill alike, so exploring it
-    /// buys nothing and only adds noise to the pick.
+    /// Whether the word's skill is drawn too. Off, it enters as its
+    /// distribution given the shared draw: every row of the word teaches its
+    /// skill alike, so exploring it buys nothing and only adds noise.
     pub skill: bool,
     /// Draws are this many standard deviations wide: 1 is Thompson sampling.
     pub scale: f64,
+    /// The width shrinks as `1/√(1 + answers/decay)`; infinite keeps it.
+    pub decay: f64,
     /// Remembered chances a word's best row may sit at before a write is asked.
     pub band: [f64; 2],
+}
+
+impl Steering {
+    /// The prototype's first round: plain Thompson sampling.
+    pub const FIRST: Steering = Steering {
+        skill: false,
+        scale: 1.0,
+        decay: f64::INFINITY,
+        band: BAND,
+    };
+
+    fn width(&self, model: &ModelV2) -> f64 {
+        self.scale / (1.0 + model.answers() as f64 / self.decay).sqrt()
+    }
+
+    fn draw<'a>(&self, model: &'a ModelV2, now: f64, rng: &'a mut Rng) -> Draw<'a> {
+        Draw::new(model, now, self.width(model), self.skill, rng)
+    }
 }
 
 impl Default for Steering {
     fn default() -> Self {
         Steering {
-            skill: false,
-            scale: 1.0,
-            band: BAND,
+            scale: 0.5,
+            ..Steering::FIRST
         }
-    }
-}
-
-/// One posterior draw, taken lazily: every number a pick reads is drawn once.
-pub struct Draws<'a> {
-    model: &'a ModelV2,
-    now: f64,
-    rng: &'a mut Rng,
-    steering: Steering,
-    drawn: BTreeMap<Key, f64>,
-}
-
-impl<'a> Draws<'a> {
-    pub fn new(model: &'a ModelV2, now: f64, steering: Steering, rng: &'a mut Rng) -> Self {
-        Draws {
-            model,
-            now,
-            rng,
-            steering,
-            drawn: BTreeMap::new(),
-        }
-    }
-
-    fn draw(&mut self, term: &Term) -> f64 {
-        if let Some(value) = self.drawn.get(&term.key) {
-            return *value;
-        }
-        let b = self.model.belief(&term.key, term.prior, self.now);
-        let value = b.mean + self.steering.scale * b.var.sqrt() * gaussian(self.rng);
-        self.drawn.insert(term.key.clone(), value);
-        value
-    }
-
-    /// The sampled linear predictor, memory left out, and the variance of
-    /// what was not drawn.
-    fn z(&mut self, o: &Observation) -> (f64, f64) {
-        let linear = self.model.linear(o, false);
-        let (mut z, mut var) = (linear.offset, 0.0);
-        for t in &linear.terms {
-            if matches!(t.key, Key::Skill(_)) && !self.steering.skill {
-                let b = self.model.belief(&t.key, t.prior, self.now);
-                z += t.coef * b.mean;
-                var += t.coef * t.coef * b.var;
-            } else {
-                z += t.coef * self.draw(t);
-            }
-        }
-        (z, var)
-    }
-
-    /// The sampled remembered chance.
-    pub fn chance(&mut self, o: &Observation) -> f64 {
-        let (z, var) = self.z(o);
-        probit(z, var)
     }
 }
 
@@ -272,10 +238,21 @@ pub fn pick(ask: &Ask, model: &ModelV2, steering: Steering, rng: &mut Rng) -> Op
         if options.is_empty() {
             continue;
         }
-        let mut draws = Draws::new(model, now, steering, rng);
+        let mut draws = steering.draw(model, now, rng);
+        let ordered = model.config.parts == Parts::Ordered;
         let mut best: Option<(bool, f64, &Candidate, f64)> = None;
+        // A row's levels come easiest first; ordered, a draw may not make a
+        // harder one look easier.
+        let mut ceiling = (usize::MAX, 1.0f64);
         for option in &options {
-            let sampled = draws.chance(&option.seen);
+            let mut sampled = draws.chance(&option.seen);
+            if ordered {
+                if ceiling.0 != option.at {
+                    ceiling = (option.at, 1.0);
+                }
+                sampled = sampled.min(ceiling.1);
+                ceiling.1 = sampled;
+            }
             let key = (!option.rested, (sampled - aim).abs());
             if best.is_none_or(|(r, d, _, _)| key.0.cmp(&r).then(key.1.total_cmp(&d)).is_lt()) {
                 best = Some((key.0, key.1, option, sampled));
@@ -299,7 +276,7 @@ fn best_length(
     word: &Word,
     kind: WireType,
     serving: &Serving,
-    draws: &mut Draws,
+    draws: &mut Draw,
     index: &ById,
     now: f64,
     aim: f64,
@@ -310,11 +287,12 @@ fn best_length(
     let ids = [word.id.clone()];
     let mut best: Option<(u8, f64)> = None;
     for length in shortest..=longest {
-        let z = |help, draws: &mut Draws| {
-            observation("", kind, help, f64::from(length), &ids, index, now).map(|o| draws.z(&o))
+        let chance = |help, draws: &mut Draw| {
+            observation("", kind, help, f64::from(length), &ids, index, now)
+                .map(|o| draws.chance(&o))
         };
-        let ((a, var), (b, _)) = (z(first, draws)?, z(last, draws)?);
-        let distance = (probit((a + b) / 2.0, var) - aim).abs();
+        let middle = (chance(first, draws)? + chance(last, draws)?) / 2.0;
+        let distance = (middle - aim).abs();
         if best.is_none_or(|(_, d)| distance < d) {
             best = Some((length, distance));
         }
@@ -361,7 +339,7 @@ pub fn refill(
             .collect();
         let cued = ask.cued.contains(&word.id);
         let kinds: Vec<WireType> = active_kinds().filter(|k| cued || !k.is_local()).collect();
-        let mut draws = Draws::new(model, now, steering, rng);
+        let mut draws = steering.draw(model, now, rng);
         let mut chosen: Vec<WireType> = Vec::new();
         for _ in 0..count {
             let fresh: Vec<WireType> = kinds
@@ -411,7 +389,6 @@ pub fn refill(
 mod tests {
     use super::*;
     use crate::help::Step;
-    use crate::model::part_key;
     use crate::model_v2::Config;
     use crate::stream::tests::rows;
     use crate::topup::tests::{pooled, word, DAY, NOW};
@@ -434,7 +411,7 @@ mod tests {
     }
 
     /// Two single-level rows about one word: how often each is picked.
-    fn shares(model: &ModelV2, seeds: u64) -> (usize, usize) {
+    fn shares(model: &ModelV2, steering: Steering, seeds: u64) -> (usize, usize) {
         let words = [skilled("w")];
         let pool = rows(&[
             pooled("easy", WireType::RecognizeMc, &["w"], None),
@@ -444,13 +421,7 @@ mod tests {
         let mut counts = (0, 0);
         for seed in 0..seeds {
             let mut rng = Rng::seeded(seed);
-            let p = pick(
-                &ask(&pool, &words, &serving),
-                model,
-                Steering::default(),
-                &mut rng,
-            )
-            .unwrap();
+            let p = pick(&ask(&pool, &words, &serving), model, steering, &mut rng).unwrap();
             if p.at == 0 {
                 counts.0 += 1;
             } else {
@@ -492,16 +463,19 @@ mod tests {
             settle(&mut model, WireType::TranslateToNative, 2, 100, when);
             model
         };
-        let (_, bad) = shares(&at(NOW), 400);
+        let (_, bad) = shares(&at(NOW), Steering::FIRST, 400);
         assert!(bad < 4, "{bad}");
         // The same verdict on two answers is thin: it gets retested.
         let mut thin = ModelV2::new(config);
         settle(&mut thin, WireType::RecognizeMc, 9, 100, NOW);
         settle(&mut thin, WireType::TranslateToNative, 0, 2, NOW);
-        let (_, uncertain) = shares(&thin, 400);
+        let (_, uncertain) = shares(&thin, Steering::FIRST, 400);
         assert!(uncertain > 10, "{uncertain}");
+        // Narrower draws explore it less.
+        let (_, narrow) = shares(&thin, Steering::default(), 400);
+        assert!(narrow < uncertain, "{narrow} vs {uncertain}");
         // And so is the confident verdict once it has gone untested for months.
-        let (_, retested) = shares(&at(NOW - 120.0 * DAY), 400);
+        let (_, retested) = shares(&at(NOW - 120.0 * DAY), Steering::FIRST, 400);
         assert!(retested > 15, "{retested}");
     }
 
@@ -539,14 +513,7 @@ mod tests {
             pooled("c2", WireType::Cloze, &["a"], None),
         ]);
         let mut model = ModelV2::new(Config::default());
-        for help in [Step::Pick4, Step::Pick6, Step::Typed] {
-            model.mislead(WireType::Cloze, HelpLevel::step(help), 6.0, NOW);
-        }
-        assert!(
-            model.beliefs()[&Key::Part(part_key(WireType::Cloze, HelpLevel::step(Step::Pick4)))]
-                .mean
-                > 5.0
-        );
+        model.mislead(WireType::Cloze, 6.0, NOW);
         let serving = Serving::default();
         let wants = refill(
             &ask(&pool, &words, &serving),

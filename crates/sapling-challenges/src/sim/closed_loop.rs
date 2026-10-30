@@ -129,7 +129,8 @@ pub trait Policy {
     fn correction(&self, _id: &str) -> Option<f64> {
         None
     }
-    fn mislead(&mut self, kind: WireType, help: HelpLevel, by: f64, at: f64);
+    /// Every help level of `kind` reads `by` harder than believed.
+    fn mislead(&mut self, kind: WireType, by: f64, at: f64);
 }
 
 /// The app as it is: `stream.rs`' head, `topup.rs`' planner, `model.rs`' learner.
@@ -207,9 +208,12 @@ impl Policy for Current {
         self.learner.corrections.get(id).copied()
     }
 
-    fn mislead(&mut self, kind: WireType, help: HelpLevel, by: f64, _at: f64) {
-        let base = self.learner.shared.base(kind, help) + by;
-        self.learner.shared.bases.insert(part_key(kind, help), base);
+    fn mislead(&mut self, kind: WireType, by: f64, _at: f64) {
+        for step in kind.written_steps() {
+            let help = HelpLevel::step(step);
+            let base = self.learner.shared.base(kind, help) + by;
+            self.learner.shared.bases.insert(part_key(kind, help), base);
+        }
     }
 }
 
@@ -254,8 +258,8 @@ impl Policy for V2 {
         self.model.learn(o);
     }
 
-    fn mislead(&mut self, kind: WireType, help: HelpLevel, by: f64, at: f64) {
-        self.model.mislead(kind, help, by, at);
+    fn mislead(&mut self, kind: WireType, by: f64, at: f64) {
+        self.model.mislead(kind, by, at);
     }
 }
 
@@ -322,6 +326,7 @@ impl Truth {
 pub struct Third {
     pub answers: usize,
     pub in_window: usize,
+    pub below: usize,
     pub distance: f64,
     pub hard: usize,
     pub kinds: BTreeMap<&'static str, usize>,
@@ -362,6 +367,8 @@ pub struct Metrics {
     pub event_answers: usize,
     /// The estimate error of the event's kind at the end.
     pub event_error: f64,
+    /// The same for cloze, whatever the scenario: what the trap's is compared to.
+    pub cloze_error: f64,
     /// The estimate error averaged over every kind and level, at the end.
     pub final_error: f64,
 }
@@ -463,9 +470,7 @@ pub fn run(scenario: Scenario, policy: &mut dyn Policy, seed: u64) -> Metrics {
             }
         }
         if scenario == Scenario::Trap && day == TRAP_DAY {
-            for step in WireType::Cloze.written_steps() {
-                policy.mislead(WireType::Cloze, HelpLevel::step(step), TRAP_BY, morning);
-            }
+            policy.mislead(WireType::Cloze, TRAP_BY, morning);
         }
         let cued: Vec<String> = if scenario == Scenario::NewKind && day >= NEW_DAY {
             ids.clone()
@@ -599,6 +604,7 @@ pub fn run(scenario: Scenario, policy: &mut dyn Policy, seed: u64) -> Metrics {
             let t = &mut m.thirds[third];
             t.answers += 1;
             t.in_window += usize::from(inside);
+            t.below += usize::from(remembered < low);
             t.distance += (remembered - aim).abs();
             t.hard += usize::from(hard);
             *t.kinds.entry(kind.as_str()).or_default() += 1;
@@ -636,6 +642,7 @@ pub fn run(scenario: Scenario, policy: &mut dyn Policy, seed: u64) -> Metrics {
         .into_iter()
         .filter(|k| k.is_active() && (!k.is_local() || scenario == Scenario::NewKind))
         .collect();
+    m.cloze_error = estimate_error(&*policy, &truth, &ids, WireType::Cloze, end, DAYS as f64);
     if let Some((kind, _)) = event {
         m.event_error = estimate_error(&*policy, &truth, &ids, kind, end, DAYS as f64);
     }
@@ -698,7 +705,7 @@ pub fn compare(scenario: Scenario, policies: &[Named], seeds: u64) -> String {
     );
     let _ = writeln!(
         out,
-        "{:<8} {:>6} {:>6} {:>6} {:>9} {:>6} {:>7} {:>7} {:>7} {:>7} {:>6} {:>6} {:>8} {:>6} {:>6} {:>14} {:>7}",
+        "{:<10} {:>6} {:>6} {:>6} {:>9} {:>6} {:>7} {:>7} {:>7} {:>7} {:>6} {:>6} {:>8} {:>6} {:>6} {:>14} {:>7} {:>9}",
         "policy",
         "below",
         "window",
@@ -715,7 +722,8 @@ pub fn compare(scenario: Scenario, policies: &[Named], seeds: u64) -> String {
         "kindH",
         "partH",
         "hard% by third",
-        "est.err"
+        "est.err",
+        "cloze.err"
     );
     let mut shares = String::new();
     let mut events = String::new();
@@ -735,7 +743,7 @@ pub fn compare(scenario: Scenario, policies: &[Named], seeds: u64) -> String {
             .collect();
         let _ = writeln!(
             out,
-            "{:<8} {:>6.3} {:>6.3} {:>6.3} {:>9.3} {:>6.3} {:>7.3} {:>7.4} {:>7.4} {:>7.4} {:>6.1} {:>6.1} {:>8.2} {:>6.2} {:>6.2} {:>14} {:>7.3}",
+            "{:<10} {:>6.3} {:>6.3} {:>6.3} {:>9.3} {:>6.3} {:>7.3} {:>7.4} {:>7.4} {:>7.4} {:>6.1} {:>6.1} {:>8.2} {:>6.2} {:>6.2} {:>14} {:>7.3} {:>9.3}",
             policy.name(),
             per(&|m| m.below as f64 / n(m)),
             per(&|m| m.in_window as f64 / n(m)),
@@ -753,6 +761,7 @@ pub fn compare(scenario: Scenario, policies: &[Named], seeds: u64) -> String {
             per(&|m| entropy(&m.levels)),
             hard.join("/"),
             per(&|m| m.final_error),
+            per(&|m| m.cloze_error),
         );
         let mut kinds: BTreeMap<&str, f64> = BTreeMap::new();
         for r in &runs {
@@ -764,13 +773,14 @@ pub fn compare(scenario: Scenario, policies: &[Named], seeds: u64) -> String {
             .map(|t| {
                 let third = |m: &Metrics| m.thirds[t].answers.max(1) as f64;
                 let window = per(&|m| m.thirds[t].in_window as f64 / third(m));
+                let below = per(&|m| m.thirds[t].below as f64 / third(m));
                 let distance = per(&|m| m.thirds[t].distance / third(m));
-                format!("{window:.2}/{distance:.3}")
+                format!("{below:.2}/{window:.2}/{distance:.3}")
             })
             .collect();
         let _ = writeln!(
             shares,
-            "  {:<10} window/|rem−aim| by third {} · {}",
+            "  {:<10} below/window/|rem−aim| by third {} · {}",
             policy.name(),
             by_third.join("/"),
             kinds
@@ -806,6 +816,7 @@ mod tests {
         for named in [
             Named::Current,
             Named::V2("v2", Config::default(), Steering::default()),
+            Named::V2("r1", Config::FIRST, Steering::FIRST),
         ] {
             let a = run(Scenario::Trap, &mut *named.make(), 3);
             let b = run(Scenario::Trap, &mut *named.make(), 3);

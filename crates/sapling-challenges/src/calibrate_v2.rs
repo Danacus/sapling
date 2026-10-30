@@ -5,9 +5,12 @@
 //! did, which is what shows a number frozen by what serving let through.
 //! `ablations` scores each design choice against the first model's.
 
+use std::collections::BTreeMap;
 use std::fmt::Write;
 
-use crate::model::{tuning, Learner, Observation, MULTI_WORD};
+use crate::help::HelpLevel;
+use crate::kinds::WireType;
+use crate::model::{part_key, tuning, Learner, Observation, MULTI_WORD};
 use crate::model_v2::{
     evaluate, score, Config, Key, Length, Memory, ModelV2, Parts, Prior, ScoreV2,
 };
@@ -25,90 +28,102 @@ pub fn current(observations: &[Observation]) -> ScoreV2 {
     score(&pairs)
 }
 
-/// Each design choice on its own, against the default.
+/// The round-two steps, each on top of the one before, then single changes
+/// against the last.
 pub fn variants() -> Vec<(&'static str, Config)> {
-    let base = Config::default();
+    let first = Config::FIRST;
+    let feature = Config {
+        memory: Memory::Feature,
+        ..first
+    };
+    let joint = Config {
+        joint: true,
+        part_forget: 180.0,
+        ..feature
+    };
+    let last = Config::default();
+    let with = |name, config| (name, config);
     vec![
-        ("v2", base),
-        (
-            "prior=empirical",
+        with("r1", first),
+        with("+memory", feature),
+        with("+joint", joint),
+        with("+ordered", last),
+        with(
+            "memory=product",
             Config {
-                prior: Prior::Empirical,
-                ..base
+                memory: Memory::Product,
+                ..last
             },
         ),
-        (
-            "prior=starting",
-            Config {
-                prior: Prior::Starting,
-                ..base
-            },
-        ),
-        (
-            "parts=factored",
-            Config {
-                parts: Parts::Factored,
-                ..base
-            },
-        ),
-        (
-            "factored+emp.",
-            Config {
-                parts: Parts::Factored,
-                prior: Prior::Empirical,
-                ..base
-            },
-        ),
-        (
-            "length=fixed",
-            Config {
-                length: Length::Fixed,
-                ..base
-            },
-        ),
-        (
-            "length=off",
-            Config {
-                length: Length::Off,
-                ..base
-            },
-        ),
-        (
-            "memory=feature",
-            Config {
-                memory: Memory::Feature,
-                ..base
-            },
-        ),
-        (
+        with(
             "memory=off",
             Config {
                 memory: Memory::Off,
-                ..base
+                ..last
             },
         ),
-        (
-            "feature+factored",
+        with(
+            "joint=off",
             Config {
-                memory: Memory::Feature,
-                parts: Parts::Factored,
-                ..base
+                joint: false,
+                ..last
             },
         ),
-        (
-            "off+factored",
+        with(
+            "parts=flat",
             Config {
-                memory: Memory::Off,
-                parts: Parts::Factored,
-                ..base
+                parts: Parts::Flat,
+                ..last
             },
         ),
-        (
+        with(
+            "parts=factored",
+            Config {
+                parts: Parts::Factored,
+                ..last
+            },
+        ),
+        with(
+            "prior=empirical",
+            Config {
+                prior: Prior::Empirical,
+                ..last
+            },
+        ),
+        with(
+            "prior=starting",
+            Config {
+                prior: Prior::Starting,
+                ..last
+            },
+        ),
+        with(
+            "length=fixed",
+            Config {
+                length: Length::Fixed,
+                ..last
+            },
+        ),
+        with(
+            "length=off",
+            Config {
+                length: Length::Off,
+                ..last
+            },
+        ),
+        with(
+            "forget=60",
+            Config {
+                part_forget: 60.0,
+                ..last
+            },
+        ),
+        with(
             "noise=off",
             Config {
                 skill_forget: f64::INFINITY,
                 part_forget: f64::INFINITY,
-                ..base
+                ..last
             },
         ),
     ]
@@ -265,14 +280,13 @@ pub fn format_v2(observations: &[Observation], config: Config) -> String {
     let _ = writeln!(out);
     let _ = writeln!(
         out,
-        "{:<32} {:>8} {:>7} {:>7} {:>8} {:>9} {:>11}",
-        "belief", "mean", "sd", "sd now", "answers", "last (d)", "first model"
+        "{:<32} {:>8} {:>7} {:>8} {:>9} {:>11}",
+        "belief", "mean", "sd now", "answers", "last (d)", "first model"
     );
-    for (key, b) in model.beliefs() {
+    for (key, b) in &model.beliefs(end) {
         let Some(name) = describe(key) else {
             continue;
         };
-        let now = model.belief(key, (b.mean, b.cap), end);
         let first = match key {
             Key::Part(k) => first_model.shared.bases.get(k).map(|v| format!("{v:.2}")),
             Key::Slope(k) => first_model.shared.slopes.get(*k).map(|v| format!("{v:.3}")),
@@ -280,17 +294,31 @@ pub fn format_v2(observations: &[Observation], config: Config) -> String {
         };
         let _ = writeln!(
             out,
-            "{name:<32} {:>8.3} {:>7.3} {:>7.3} {:>8} {:>9.1} {:>11}",
+            "{name:<32} {:>8.3} {:>7.3} {:>8} {:>9.1} {:>11}",
             b.mean,
             b.var.sqrt(),
-            now.var.sqrt(),
             b.answers,
             (end - b.at) / DAY,
             first.unwrap_or_else(|| "—".to_owned())
         );
     }
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        "{:<32} {:>8} {:>7} {:>9}   (at the middle length; sd: the difficulty alone, jointly; pick sd: skill − difficulty for a word with 5+ answers)",
+        "kind and help level", "mean", "sd", "pick sd"
+    );
+    let mut parts: BTreeMap<String, (WireType, HelpLevel)> = BTreeMap::new();
+    for o in observations {
+        parts.insert(part_key(o.kind, o.help), (o.kind, o.help));
+    }
+    for (key, (kind, help)) in parts {
+        let (mean, sd) = model.difficulty(kind, help, end);
+        let pick = model.decision_sd(kind, help, 5, end);
+        let _ = writeln!(out, "{key:<32} {mean:>8.3} {sd:>7.3} {pick:>9.3}");
+    }
     let skills: Vec<f64> = model
-        .beliefs()
+        .beliefs(end)
         .iter()
         .filter(|(k, _)| matches!(k, Key::Skill(_)))
         .map(|(_, b)| b.mean)
@@ -331,7 +359,7 @@ mod tests {
         let report = format_v2(&seen, Config::default());
         assert!(report.contains("cloze/pick-4") && report.contains("slope cloze"));
         let (v2, _) = evaluate(&seen, Config::default());
-        assert!(v2.beliefs().len() > seen.len() / 10);
+        assert!(v2.beliefs(0.0).len() > seen.len() / 10);
         // The first model is scored exactly as `calibrate.rs` scores it.
         let first = current(&seen);
         let (_, v1) = evaluate_v1(&seen, &tuning().rates, MULTI_WORD);
