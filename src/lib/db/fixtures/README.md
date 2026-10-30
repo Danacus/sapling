@@ -8,9 +8,10 @@ log is applied. `golden.test.ts` discovers every directory here.
 `objects.json`, when present, is the content objects the device holds — a map
 from `sha256:<hex>` to the bytes, as a string. Both runners store them with
 `putObjects` *after* applying the log (as a sync fetch would, so a text that
-names one must become readable without a rebuild), and again into the fresh
-backend of the export/import check, since a v3 export carries no objects. An
-object that does not verify is a fixture bug. A fixture without the file holds
+names one must become readable without a rebuild). The export/import check
+stores nothing by hand: a v4 export carries every object its events reference,
+so the fresh backend reads what the original does. An object that does not
+verify is a fixture bug. A fixture without the file holds
 none.
 
 The files are language-neutral on purpose. Another implementation of `core.ts`

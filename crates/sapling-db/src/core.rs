@@ -34,7 +34,7 @@ use sapling_domain::events::{
     ResultOverturned, ReviewAmended, Studied, SyncEvent, TextAdded, TextDeleted, WordLookedUp,
     WordMarked, PROFILE_ID,
 };
-use sapling_domain::objects::{ContentObject, TextContent, MAX_OBJECT_BYTES};
+use sapling_domain::objects::{object_refs, ContentObject, TextContent, MAX_OBJECT_BYTES};
 use sapling_domain::types::{
     ChallengeResult, Conversation, ConversationDetail, ConversationExchange,
     ConversationLearnerTurn, ConversationSummary, ConversationTeacherTurn, DailyActivity,
@@ -43,10 +43,15 @@ use sapling_domain::types::{
 };
 use sapling_srs::{item_srs, FsrsCardState, Grade};
 
-/// Envelope version `export_data` writes and a v3 `import_data` reads.
-pub const EXPORT_VERSION: f64 = 3.0;
+/// Envelope version `export_data` writes: v4 is v3's log plus the content
+/// objects its events reference (`docs/content-objects.md` §6).
+pub const EXPORT_VERSION: f64 = 4.0;
 
-/// Envelope versions `import_data` still restores from.
+/// Envelope versions that carry the log, and so are unioned in: v3 (the log
+/// alone) and v4 (the log and its objects).
+const LOG_IMPORT_VERSIONS: [f64; 2] = [3.0, 4.0];
+
+/// Envelope versions that predate the log and replace the item list wholesale.
 const LEGACY_IMPORT_VERSIONS: [f64; 2] = [1.0, 2.0];
 
 const PULL_CURSOR_KEY: &str = "pullCursor";
@@ -110,13 +115,18 @@ pub fn grade_of(verdict: Verdict) -> f64 {
     } as u8)
 }
 
-/// Shape of the JSON `exportData` produces: the whole log, in log order.
+/// Shape of the JSON `exportData` produces: the whole log, in log order, and
+/// every content object some exported event references, hash → bytes. An
+/// object referenced but not held here is simply absent — sync fetches it
+/// later, exactly as it would for a device that imported none.
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportEnvelope {
     pub version: f64,
     pub exported_at: f64,
     pub events: Vec<RawEvent>,
+    #[ts(type = "Record<string, string>")]
+    pub objects: BTreeMap<String, String>,
 }
 
 /// One language library available to this device, as the language switcher
@@ -310,6 +320,40 @@ fn text_from(row: &Row) -> Result<ReadingText> {
         },
         created_at: row.f64("createdAt")?,
     })
+}
+
+/// Whether an object that arrived from outside may be kept: its name verifies
+/// against its bytes, and the bytes are JSON. The one test every ingress the
+/// core owns applies — `put_objects` per object, a v4 import for the file.
+fn acceptable(object: &ContentObject) -> bool {
+    object.verifies() && serde_json::from_str::<Value>(&object.bytes).is_ok()
+}
+
+/// A v4 file's `objects` map, every entry [`acceptable`], or the error that
+/// refuses the whole file. An absent map is an empty one: a file whose events
+/// reference nothing has nothing to carry.
+fn exported_objects(objects: Option<&Value>) -> Result<Vec<ContentObject>> {
+    let map = match objects {
+        None => return Ok(Vec::new()),
+        Some(Value::Object(map)) => map,
+        Some(_) => return Err(Error("Import failed: malformed content objects.".into())),
+    };
+    map.iter()
+        .map(|(hash, bytes)| {
+            let object = ContentObject {
+                hash: hash.clone(),
+                bytes: bytes.as_str().map(str::to_owned).unwrap_or_default(),
+            };
+            if bytes.is_string() && acceptable(&object) {
+                Ok(object)
+            } else {
+                Err(Error(format!(
+                    "Import failed: the content object {hash} does not match its name, so the file \
+                     is damaged and nothing was imported."
+                )))
+            }
+        })
+        .collect()
 }
 
 fn conversation_from(row: &Row) -> Result<Conversation> {
@@ -1150,7 +1194,7 @@ impl Core {
     /// whether it was accepted (already held counts). Not a fact: no event,
     /// nothing materialised — a text that names it is simply readable now.
     fn store_object(&self, object: &ContentObject) -> Result<bool> {
-        if !object.verifies() || serde_json::from_str::<Value>(&object.bytes).is_err() {
+        if !acceptable(object) {
             return Ok(false);
         }
         self.sql.exec(
@@ -1478,21 +1522,47 @@ impl Core {
             .collect()
     }
 
-    /// The whole log as JSON, in log order — `JSON.stringify(envelope, null, 2)`.
+    /// The whole log as JSON, in log order — `JSON.stringify(envelope, null, 2)`
+    /// — with every object its events reference, across every profile.
+    ///
+    /// The references are [`object_refs`]' — the same function push derives
+    /// the relay's edges with — so a `profileEvent`-wrapped text in another
+    /// library carries its body too, and an inline text references nothing.
+    /// One this device lacks is left out rather than failing the export: it is
+    /// a state, not an error, and sync fetches it later.
     pub fn export_data(&self) -> Result<String> {
+        let events = self.log_events(
+            &format!("SELECT id, type, at, device, payload FROM events ORDER BY {LOG_ORDER}"),
+            &[],
+        )?;
+        let hashes: Vec<String> = events
+            .iter()
+            .flat_map(|event| object_refs(event).objects)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let objects = self
+            .get_objects(&hashes)?
+            .into_iter()
+            .map(|object| (object.hash, object.bytes))
+            .collect();
         let envelope = ExportEnvelope {
             version: EXPORT_VERSION,
             exported_at: (self.clock)(),
-            events: self.log_events(
-                &format!("SELECT id, type, at, device, payload FROM events ORDER BY {LOG_ORDER}"),
-                &[],
-            )?,
+            events,
+            objects,
         };
         Ok(serde_json::to_string_pretty(&envelope)?)
     }
 
-    /// Restores a dump: a v3 file is unioned into the log and the read model
-    /// rebuilt; a v1/v2 file replaces the item list wholesale.
+    /// Restores a dump: a v3 or v4 file is unioned into the log and the read
+    /// model rebuilt; a v1/v2 file replaces the item list wholesale.
+    ///
+    /// A v4 file's objects are checked before anything is written — each by
+    /// the same test `put_objects` applies — and one that fails refuses the
+    /// whole file: a backup that lies about a body is not one to half-trust.
+    /// Otherwise they are stored in the same transaction as the events, so
+    /// every text the file names is readable the moment the import returns.
     pub fn import_data(&self, json: &str) -> Result<()> {
         let parsed: Value = serde_json::from_str(json)
             .map_err(|_| Error("Import failed: the file is not valid JSON.".into()))?;
@@ -1501,12 +1571,20 @@ impl Core {
         };
         let version = object.get("version").and_then(Value::as_f64);
 
-        if version == Some(EXPORT_VERSION) {
+        if let Some(version) = version.filter(|v| LOG_IMPORT_VERSIONS.contains(v)) {
             let Some(raw_events) = object.get("events").and_then(Value::as_array) else {
                 return Err(Error("Import failed: missing event list.".into()));
             };
+            let objects = if version >= 4.0 {
+                exported_objects(object.get("objects"))?
+            } else {
+                Vec::new()
+            };
             let events: Vec<RawEvent> = raw_events.iter().filter_map(parse_envelope).collect();
             return self.transaction(|| {
+                for object in &objects {
+                    self.store_object(object)?;
+                }
                 let m = self.materializer();
                 for event in &events {
                     m.insert_only(event)?;

@@ -1,9 +1,7 @@
 # Content objects — design
 
-Status: steps 1 (the Worker) and 2 (the core and the sync cycle) of §9 are
-built; step 3 (export v4) is next, and until it lands a v3 export carries a
-`textAdded { content }` without its object. GC (§8) and compaction (§10) are
-deliberately not built.
+Status: steps 1 (the Worker), 2 (the core and the sync cycle) and 3 (export
+v4) of §9 are built. GC (§8) and compaction (§10) are deliberately not built.
 
 The events log is the record of what the learner *did*: words, reviews,
 answers, marks. A text's body — every segment of a subtitle track — is
@@ -152,8 +150,11 @@ the core for wasm and by `sapling-store` natively):
    objects to a relay that cannot hold them.
 
 **Export v4.** `{ version: 4, …, objects: { H: bytes } }` with every object
-some exported event references. Import verifies each hash and refuses the file
-on a mismatch; v3 files import as before.
+some exported event references (`object_refs` over the whole log, every
+profile), held locally — one this device lacks is left out, for sync to fetch
+later. Import verifies each hash and refuses the whole file on a mismatch,
+writing nothing; otherwise the objects land in the events' transaction, so the
+texts read at once. v3 files import as before.
 
 ## 7. Migration: none
 

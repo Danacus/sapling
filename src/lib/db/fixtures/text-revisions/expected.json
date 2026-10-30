@@ -67,7 +67,7 @@
 	"getConversations": [],
 	"getConversation": {},
 	"exportData": {
-		"version": 3,
+		"version": 4,
 		"exportedAt": 1710244800000,
 		"events": [
 			{
@@ -182,7 +182,13 @@
 					"content": "sha256:58b1259a8704d9fa7b430bb1d3d93ecd65fd97c0a154fa1edf9b43680cd54036"
 				}
 			}
-		]
+		],
+		"objects": {
+			"sha256:5330d32a2ccdbf931cf0bdfea40e97a299a647e97971a8bf0353027cdd8aef4d": "{\"segments\":[{\"text\":\"第一版。\"}]}",
+			"sha256:58b1259a8704d9fa7b430bb1d3d93ecd65fd97c0a154fa1edf9b43680cd54036": "{\"segments\":[{\"text\":\"第二版，甲。\"}]}",
+			"sha256:d1c9ea9efdc874f1a8b572a4073af4ae52b07e942a80ec2128b87ac751581f02": "{\"segments\":[{\"text\":\"迟到的旧版。\"}]}",
+			"sha256:d607603b9e364946702983234f803c7953b39b4fdc23520c66b09bf979b570cc": "{\"segments\":[{\"text\":\"第二版，乙。\"}]}"
+		}
 	},
 	"pendingEvents": [],
 	"getPullCursor": 0

@@ -185,10 +185,14 @@ against, since two normalisations that differ are two rooms.
 
 ## Import / export
 
-The v3 export envelope is `{ version: 3, exportedAt, events }` — the events
-log verbatim, so export/import is complete (pool, serves, results included).
-Import unions by event id, skipping ones already present, then rebuilds every
-read table from the merged log. A v3 file carries a `textAdded { content }`
-but not its object, so such a text imported into a fresh device is hidden
-until sync fetches the body; export v4 (`docs/content-objects.md` §6) closes
-that.
+The v4 export envelope is `{ version: 4, exportedAt, events, objects }` — the
+events log verbatim, so export/import is complete (pool, serves, results
+included), and `objects`, hash → bytes, every content object an exported event
+references (`docs/content-objects.md` §6) that this device holds. Import
+verifies every object against its hash first and refuses the whole file on a
+mismatch, writing nothing; otherwise it stores the objects and unions the
+events by id, skipping ones already present, then rebuilds every read table
+from the merged log — in one transaction, so the texts read at once. A v3 file
+(`{ version: 3, exportedAt, events }`) still imports the same way without
+objects; a `textAdded { content }` in one, or an object the exporting device
+lacked, stays hidden until sync fetches the body.
