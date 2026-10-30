@@ -1,5 +1,5 @@
 //! What the difficulty model reads off an answer and a challenge, shared by
-//! the ratings (`ratings.rs`), replay and the research prototypes: the
+//! the ratings (`ratings.rs`), replay and the calibration command: the
 //! numbers in `data/model.json`, a challenge's length, the key a challenge
 //! type's rating is stored under, and one answer as the model sees it.
 

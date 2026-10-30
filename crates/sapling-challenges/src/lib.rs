@@ -10,8 +10,8 @@
 //! what a top-up writes (`topup.rs`). The kinds a challenge is written as are
 //! `kinds.rs`; the numbers are data (`data/*.json`).
 //!
-//! `research/` holds the calibration command's models and simulations, which
-//! nothing in the app calls.
+//! `research/` is the calibration command's scoring and simulated learner,
+//! which nothing in the app calls and the wasm build leaves out.
 //!
 //! No database and no model call: a host hands in the pool and the words and
 //! gets decisions back. Presentation — what to print, speak or render — stays
@@ -34,6 +34,7 @@ pub mod model;
 pub mod pool;
 pub mod ratings;
 pub mod replay;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod research;
 pub mod rng;
 pub mod schema;

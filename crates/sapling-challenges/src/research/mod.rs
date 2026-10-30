@@ -1,17 +1,9 @@
-//! The calibration command's models, policies and simulations: the model the
-//! app served with before ratings (`v1.rs`), a Bayesian one (`model_v2.rs`,
-//! `policy_v2.rs`), the ratings prototype with its optional extras
-//! (`ratings.rs`, `ratings_extras.rs`, `ratings_policy.rs`), their reports
-//! and the simulated learners they are scored on. Nothing in the app calls
-//! any of it.
+//! The `calibrate` command's half of the crate, which the app never calls:
+//! scoring the difficulty model on an exported log (`calibrate.rs`), the
+//! simulated learner's truth and the synthetic rows tests build pools from
+//! (`sim.rs`), and the closed loop that practises that learner with the
+//! app's own planners (`closed_loop.rs`). Left out of the wasm build.
 
 pub mod calibrate;
-pub mod calibrate_ratings;
-pub mod calibrate_v2;
-pub mod model_v2;
-pub mod policy_v2;
-pub mod ratings;
-pub mod ratings_extras;
-pub mod ratings_policy;
+pub mod closed_loop;
 pub mod sim;
-pub mod v1;

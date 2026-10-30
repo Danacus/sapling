@@ -112,12 +112,42 @@ fn flatten(margin_squared: f64) -> f64 {
     1.0 / (1.0 + 3.0 * margin_squared / (PI * PI)).sqrt()
 }
 
+/// The free numbers: `data/model.json`'s, which only the calibration's
+/// search varies.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Starts {
+    pub word_start: f64,
+    pub word_margin: f64,
+    pub challenge_margin: f64,
+    pub widen: f64,
+}
+
+impl Default for Starts {
+    fn default() -> Self {
+        let t = tuning();
+        Starts {
+            word_start: t.word_start,
+            word_margin: t.word_margin,
+            challenge_margin: t.challenge_margin,
+            widen: t.widen,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Ratings {
     ratings: BTreeMap<Key, Rating>,
+    starts: Starts,
 }
 
 impl Ratings {
+    pub fn with_starts(starts: Starts) -> Self {
+        Ratings {
+            starts,
+            ..Ratings::default()
+        }
+    }
+
     /// The stored rows; a key this build does not know is left out.
     pub fn from_stored(rows: &[StoredRating]) -> Self {
         let ratings = rows
@@ -133,7 +163,10 @@ impl Ratings {
                 Some((Key::parse(&r.key)?, rating))
             })
             .collect();
-        Ratings { ratings }
+        Ratings {
+            ratings,
+            starts: Starts::default(),
+        }
     }
 
     pub fn stored(&self) -> Vec<StoredRating> {
@@ -174,7 +207,7 @@ impl Ratings {
             return *r;
         }
         let days = ((now - r.at) / DAY).max(0.0);
-        let widened = (r.margin.powi(2) + tuning().widen * days).sqrt();
+        let widened = (r.margin.powi(2) + self.starts.widen * days).sqrt();
         Rating {
             margin: widened.min(r.start_margin).max(r.margin),
             ..*r
@@ -183,7 +216,7 @@ impl Ratings {
 
     /// What the chance of `o` is made of.
     pub fn terms(&self, o: &Observation) -> Vec<Term> {
-        let t = tuning();
+        let (t, s) = (tuning(), self.starts);
         let mut terms: Vec<Term> = Vec::new();
         let mut add = |key: Key, weight: f64, start: (f64, f64)| match terms
             .iter_mut()
@@ -196,12 +229,12 @@ impl Ratings {
         let scale = (t.scale_start[0], t.scale_start[1]);
         for w in &o.words {
             add(Key::Scale, share * w.stability.max(0.0).ln_1p(), scale);
-            add(Key::Base, share, (t.word_start, t.word_margin));
+            add(Key::Base, share, (s.word_start, s.word_margin));
         }
         add(
             Key::Challenge(part_key(o.kind, o.help)),
             -1.0,
-            (0.0, t.challenge_margin),
+            (0.0, s.challenge_margin),
         );
         add(
             Key::Slope(o.kind.as_str().to_owned()),

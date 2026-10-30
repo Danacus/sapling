@@ -128,7 +128,7 @@ length, `short + (long − short) / 2`.
 | `challengeMargin` | A kind and help level's margin at the start (its value starts at 0) | 1.5 |
 | `slopeStart` | Each kind's length slope's start and margin | 0.1, 0.1 |
 | `widen` | What a challenge rating's margin² widens by per day | 0.005 |
-| `newWordMemory` | FSRS memory read for a word never reviewed (replay's, for calibration) | 0.9 |
+| `newWordMemory` | The memory read for a word never reviewed, which FSRS has no curve for | 0.9 |
 
 ## 9. Storage and replay
 
@@ -181,11 +181,34 @@ Practice is one continuous stream that runs until the learner stops:
 
 ## 11. Calibrating
 
-The calibration command reads the file the profile page's export writes
-(`ExportEnvelope`) and scores the models in `research/` on it — prediction by
-log loss and calibration by band — or, with `--simulated`, on simulated
-learners whose true numbers are known:
+The calibration command (`research/`, outside the wasm build) reads the file
+the profile page's export writes (`ExportEnvelope`) and replays its answers in
+`(at, id)` order through the app's own ratings, predicting each before
+learning from it — the same fold `learned.rs` keeps. It prints the number of
+answers, log loss and Brier against always guessing the log's own rate, the
+calibration bands (predicted against actually right), and every rating at the
+end of the log with its margin, answers and days since its last.
 
 ```sh
-cargo run -p sapling-challenges --bin calibrate -- path/to/export.json
+cargo run -p sapling-challenges --bin calibrate -- path/to/export.json [--profile ID] [--search]
 ```
+
+`--search` scores a small grid of the free numbers (`wordStart`,
+`wordMargin`, `challengeMargin`, `widen`) on the same log and prints the best
+beside the current; it never writes `data/model.json`.
+
+`--simulated` practises a simulated learner, whose true numbers are known, with
+the app's own head pick and refill over its ratings, 60 days of 30 answers, and
+reports where the true chance of what was served fell against 0.80 (below,
+near, above the 0.70–0.90 band), the mean distance, believed against true
+chance, the variety of kinds and levels, why early picks fell short, and per
+scenario how fast the ratings followed a change:
+
+```sh
+cargo run --release -p sapling-challenges --bin calibrate -- --simulated [--scenario base|trap|growth|new-kind|all] [--seeds N]
+```
+
+- **base**: the truth as drawn.
+- **trap**: on day 10 every cloze level is believed 2.5 harder than it is.
+- **growth**: every hard level eases by 1.5 over the run.
+- **new-kind**: cue-cloze becomes writable on day 30, 0.8 easier than cloze.

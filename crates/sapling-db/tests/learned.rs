@@ -2,9 +2,9 @@
 //! arrive — one by one in order, pulled in reverse, imported whole — a core
 //! ends up holding exactly what a pure replay of the log computes.
 //!
-//! The log is the simulated learner's (`sapling-challenges`' `research/sim.rs`), which
-//! is the calibration fixture too: thousands of answers over dozens of words,
-//! with reviews, two-word rows and every help level.
+//! The log is the simulated learner's, practised by the app's own planners
+//! (`sapling-challenges`' `research/closed_loop.rs`): hundreds of answers over
+//! dozens of words, with reviews, two-word rows and every help level.
 
 use std::collections::BTreeMap;
 
@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use sapling_challenges::ratings::{Ratings, StoredRating};
 use sapling_challenges::replay::{input_from_events, observations, parse_export};
-use sapling_challenges::research::sim::{simulate, SimOptions};
+use sapling_challenges::research::closed_loop::{simulate, Scenario};
 use sapling_db::Core;
 use sapling_domain::events::PROFILE_ID;
 use sapling_domain::Utc;
@@ -32,10 +32,7 @@ fn core() -> Core {
 }
 
 fn log() -> (String, Vec<Value>) {
-    let sim = simulate(SimOptions {
-        days: 20,
-        ..SimOptions::default()
-    });
+    let sim = simulate(Scenario::Base, 7, 20);
     let events: Vec<Value> = sim
         .events
         .iter()

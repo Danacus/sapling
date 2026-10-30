@@ -1,82 +1,103 @@
-//! Tuning is measured, not judged by feel: replay a log, predict every answer
-//! before learning from it, and report how well the predictions matched —
-//! one number (mean log loss, lower is better) and a table of predicted bands
-//! against what actually happened. The `calibrate` binary prints it for an
-//! export or for the simulated learner.
-//!
-//! Changing a rate or a starting value means running this again and comparing
-//! the score. Both ways of combining several words' skills are scored every
-//! time (§12.1), and `--search` tries a grid of rates around the current ones.
+//! Scoring the difficulty model on a log: every answer predicted by the app's
+//! `Ratings` before it learns from it — the very fold `sapling-db`'s
+//! `learned.rs` keeps — scored by log loss, Brier and calibration bands, with
+//! the ratings as they stand at the end. `search` tries a small grid of the
+//! free numbers in `data/model.json` on the same log.
 
 use std::fmt::Write;
 
-use crate::research::v1::{evaluate, tuning, MultiWord, Observation, Rates, Score, MULTI_WORD};
+use crate::model::Observation;
+use crate::ratings::{Key, Ratings, Starts};
 
-/// The rates `--search` tries, each axis around where the current ones sit.
-pub const WORD_RATES: [f64; 7] = [0.1, 0.2, 0.3, 0.45, 0.6, 0.8, 1.0];
-pub const SHARED_RATES: [f64; 5] = [0.005, 0.01, 0.02, 0.05, 0.1];
-pub const CHALLENGE_RATES: [f64; 5] = [0.05, 0.1, 0.2, 0.4, 0.6];
+const DAY: f64 = 86_400_000.0;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Candidate {
-    pub rates: Rates,
-    pub multi: MultiWord,
-    pub log_loss: f64,
+/// Folds the answers in order; each pair is the chance given before learning
+/// from it, and the outcome.
+pub fn replay(log: &[Observation], starts: Starts) -> (Ratings, Vec<(f64, f64)>) {
+    let mut ratings = Ratings::with_starts(starts);
+    let pairs = log.iter().map(|o| (ratings.learn(o), o.outcome)).collect();
+    (ratings, pairs)
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Report {
-    /// The current rates and the current way of combining words.
-    pub current: Score,
-    pub lowest: f64,
-    pub average: f64,
-    /// The best of the grid, when one was searched.
-    pub best: Option<Candidate>,
+pub struct Band {
+    pub from: f64,
+    pub to: f64,
+    pub answers: usize,
+    pub predicted: f64,
+    pub actual: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Score {
+    pub answers: usize,
+    pub log_loss: f64,
+    pub brier: f64,
+    pub bands: Vec<Band>,
+}
+
+/// Each prediction clamped to 1–99%.
+pub fn score(pairs: &[(f64, f64)]) -> Score {
+    let mut loss = 0.0;
+    let mut brier = 0.0;
+    let mut sums = [(0usize, 0.0f64, 0.0f64); 10];
+    for &(p, y) in pairs {
+        let p = p.clamp(0.01, 0.99);
+        loss -= y * p.ln() + (1.0 - y) * (1.0 - p).ln();
+        brier += (p - y).powi(2);
+        let band = ((p * 10.0) as usize).min(9);
+        sums[band].0 += 1;
+        sums[band].1 += p;
+        sums[band].2 += y;
+    }
+    let n = pairs.len().max(1) as f64;
+    Score {
+        answers: pairs.len(),
+        log_loss: loss / n,
+        brier: brier / n,
+        bands: sums
+            .iter()
+            .enumerate()
+            .filter(|(_, (n, _, _))| *n > 0)
+            .map(|(i, (n, p, y))| Band {
+                from: i as f64 / 10.0,
+                to: (i + 1) as f64 / 10.0,
+                answers: *n,
+                predicted: p / *n as f64,
+                actual: y / *n as f64,
+            })
+            .collect(),
+    }
 }
 
 /// Always guessing the log's own success rate: the score to beat.
-pub fn baseline(observations: &[Observation]) -> f64 {
-    if observations.is_empty() {
-        return 0.0;
-    }
-    let rate = (observations.iter().map(|o| o.outcome).sum::<f64>() / observations.len() as f64)
-        .clamp(0.01, 0.99);
-    -observations
-        .iter()
-        .map(|o| o.outcome * rate.ln() + (1.0 - o.outcome) * (1.0 - rate).ln())
-        .sum::<f64>()
-        / observations.len() as f64
+pub fn baseline(log: &[Observation]) -> f64 {
+    let rate = log.iter().map(|o| o.outcome).sum::<f64>() / log.len().max(1) as f64;
+    let pairs: Vec<(f64, f64)> = log.iter().map(|o| (rate, o.outcome)).collect();
+    score(&pairs).log_loss
 }
 
-pub fn search(observations: &[Observation]) -> Candidate {
-    search_many(std::slice::from_ref(&observations.to_vec()))
-}
+pub const WORD_STARTS: [f64; 6] = [-0.5, 0.0, 0.5, 1.0, 1.5, 2.0];
+pub const WORD_MARGINS: [f64; 4] = [0.25, 0.5, 1.0, 1.5];
+pub const CHALLENGE_MARGINS: [f64; 4] = [0.5, 1.0, 1.5, 2.0];
+pub const WIDENS: [f64; 4] = [0.0, 0.005, 0.02, 0.05];
 
-/// The grid point with the lowest log loss averaged over several logs — how
-/// the starting rates were chosen, over several simulated learners, so one
-/// learner's luck does not pick them.
-pub fn search_many(logs: &[Vec<Observation>]) -> Candidate {
-    let mut best: Option<Candidate> = None;
-    for word in WORD_RATES {
-        for shared in SHARED_RATES {
-            for challenge in CHALLENGE_RATES {
-                for multi in [MultiWord::Lowest, MultiWord::Average] {
-                    let rates = Rates {
-                        word,
-                        shared,
-                        challenge,
+/// The grid point with the lowest log loss on `log`.
+pub fn search(log: &[Observation]) -> (Starts, f64) {
+    let mut best: Option<(Starts, f64)> = None;
+    for word_start in WORD_STARTS {
+        for word_margin in WORD_MARGINS {
+            for challenge_margin in CHALLENGE_MARGINS {
+                for widen in WIDENS {
+                    let starts = Starts {
+                        word_start,
+                        word_margin,
+                        challenge_margin,
+                        widen,
                     };
-                    let log_loss = logs
-                        .iter()
-                        .map(|log| evaluate(log, &rates, multi).1.log_loss)
-                        .sum::<f64>()
-                        / logs.len().max(1) as f64;
-                    if best.as_ref().is_none_or(|b| log_loss < b.log_loss) {
-                        best = Some(Candidate {
-                            rates,
-                            multi,
-                            log_loss,
-                        });
+                    let loss = score(&replay(log, starts).1).log_loss;
+                    if best.is_none_or(|(_, l)| loss < l) {
+                        best = Some((starts, loss));
                     }
                 }
             }
@@ -85,71 +106,67 @@ pub fn search_many(logs: &[Vec<Observation>]) -> Candidate {
     best.expect("a non-empty grid")
 }
 
-pub fn calibrate(observations: &[Observation], with_search: bool) -> Report {
-    let rates = tuning().rates;
-    let (_, current) = evaluate(observations, &rates, MULTI_WORD);
-    let (_, lowest) = evaluate(observations, &rates, MultiWord::Lowest);
-    let (_, average) = evaluate(observations, &rates, MultiWord::Average);
-    Report {
-        current,
-        lowest: lowest.log_loss,
-        average: average.log_loss,
-        best: with_search.then(|| search(observations)),
-    }
+fn describe(s: Starts) -> String {
+    format!(
+        "word start {} · word margin {} · challenge margin {} · widen {}",
+        s.word_start, s.word_margin, s.challenge_margin, s.widen
+    )
 }
 
-pub fn format_report(report: &Report, observations: &[Observation]) -> String {
+/// The scores, the bands and every rating at the end of the log.
+pub fn report(log: &[Observation], with_search: bool) -> String {
+    let current = Starts::default();
+    let (ratings, pairs) = replay(log, current);
+    let s = score(&pairs);
     let mut out = String::new();
-    let rates = tuning().rates;
-    let _ = writeln!(out, "answers replayed: {}", report.current.answers);
     let _ = writeln!(
         out,
-        "log loss: {:.4}  (always guessing the log's own rate: {:.4})",
-        report.current.log_loss,
-        baseline(observations)
+        "answers {} · log loss {:.4} · Brier {:.4}  (always guessing the log's own rate: {:.4})",
+        s.answers,
+        s.log_loss,
+        s.brier,
+        baseline(log)
     );
-    let memories: Vec<f64> = observations
-        .iter()
-        .flat_map(|o| o.words.iter().map(|w| w.memory))
-        .collect();
-    if !memories.is_empty() {
-        let _ = writeln!(
-            out,
-            "mean memory at answer time: {:.3} · answered right: {:.1}%",
-            memories.iter().sum::<f64>() / memories.len() as f64,
-            100.0 * observations.iter().map(|o| o.outcome).sum::<f64>()
-                / observations.len().max(1) as f64
-        );
+    if with_search {
+        let (best, loss) = search(log);
+        let _ = writeln!(out, "current: {} → {:.4}", describe(current), s.log_loss);
+        let _ = writeln!(out, "best:    {} → {loss:.4}", describe(best));
     }
-    let _ = writeln!(
-        out,
-        "rates: word {} · shared {} · challenge {} · several words: {:?}",
-        rates.word, rates.shared, rates.challenge, MULTI_WORD
-    );
-    let _ = writeln!(
-        out,
-        "several words — lowest skill: {:.4} · average skill: {:.4}",
-        report.lowest, report.average
-    );
     let _ = writeln!(out);
     let _ = writeln!(out, "predicted     answers  mean predicted  actually right");
-    for band in &report.current.bands {
+    for b in &s.bands {
         let _ = writeln!(
             out,
             "{:>3.0}–{:<3.0}%  {:>9}  {:>13.1}%  {:>13.1}%",
-            band.from * 100.0,
-            band.to * 100.0,
-            band.answers,
-            band.predicted * 100.0,
-            band.actual * 100.0
+            b.from * 100.0,
+            b.to * 100.0,
+            b.answers,
+            b.predicted * 100.0,
+            b.actual * 100.0
         );
     }
-    if let Some(best) = &report.best {
-        let _ = writeln!(out);
+    let end = log.iter().map(|o| o.at).fold(f64::MIN, f64::max);
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        "{:<34} {:>7} {:>7} {:>8} {:>9}",
+        "rating", "value", "margin", "answers", "last (d)"
+    );
+    for (key, r) in ratings.all() {
+        let name = match key {
+            Key::Challenge(k) => k.clone(),
+            Key::Scale => "stability scale".to_owned(),
+            Key::Base => "stability base".to_owned(),
+            Key::Slope(k) => format!("slope/{k}"),
+        };
+        let now = ratings.rating(key, (r.value, r.start_margin), end);
         let _ = writeln!(
             out,
-            "best of the grid: word {} · shared {} · challenge {} · {:?} → {:.4}",
-            best.rates.word, best.rates.shared, best.rates.challenge, best.multi, best.log_loss
+            "{name:<34} {:>7.2} {:>7.2} {:>8} {:>9.1}",
+            r.value,
+            now.margin,
+            r.answers,
+            (end - r.at) / DAY
         );
     }
     out
@@ -158,63 +175,54 @@ pub fn format_report(report: &Report, observations: &[Observation]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::replay::{input_from_events, observations, parse_export};
-    use crate::research::sim::{simulate, SimOptions};
-    use sapling_domain::events::PROFILE_ID;
+    use crate::help::{HelpLevel, Step};
+    use crate::kinds::WireType;
+    use crate::ratings::tests::answer;
 
-    fn fixture() -> Vec<Observation> {
-        let sim = simulate(SimOptions::default());
-        let events = parse_export(&sim.export_json()).unwrap();
-        observations(&input_from_events(&events, PROFILE_ID))
+    fn log() -> Vec<Observation> {
+        (0..200)
+            .map(|i| {
+                let typed = i % 2 == 0;
+                let help = HelpLevel::step(if typed { Step::Typed } else { Step::Pick4 });
+                let right = if typed { i % 3 == 0 } else { i % 10 != 0 };
+                answer(WireType::Cloze, help, f64::from(right), f64::from(i) * DAY)
+            })
+            .collect()
     }
 
-    /// The fixture log is the simulated learner: learning from it has to beat
-    /// guessing its average, and the bands have to mean what they say.
     #[test]
-    fn the_model_beats_the_baseline_and_its_bands_are_honest() {
-        let seen = fixture();
-        let report = calibrate(&seen, false);
-        assert!(report.current.answers > 1000, "{}", report.current.answers);
-        assert!(
-            report.current.log_loss < baseline(&seen) - 0.01,
-            "{} vs {}",
-            report.current.log_loss,
-            baseline(&seen)
-        );
-        for band in &report.current.bands {
-            if band.answers >= 150 {
-                assert!(
-                    (band.predicted - band.actual).abs() < 0.12,
-                    "{:.2}: predicted {:.3}, actual {:.3}",
-                    band.from,
-                    band.predicted,
-                    band.actual
-                );
-            }
+    fn each_answer_is_predicted_before_it_is_learned_by_the_apps_fold() {
+        let log = log();
+        let (ratings, pairs) = replay(&log, Starts::default());
+        let mut app = Ratings::default();
+        for (o, (p, y)) in log.iter().zip(&pairs) {
+            assert_eq!(app.chance(o), *p);
+            assert_eq!(o.outcome, *y);
+            app.learn(o);
         }
-        let text = format_report(&report, &seen);
-        assert!(text.contains("log loss") && text.contains("lowest skill"));
+        assert_eq!(app, ratings);
+        assert!(score(&pairs).log_loss < baseline(&log));
     }
 
-    /// §12.1: the combination that scored better on the fixture log is the
-    /// default, and the current rates are the grid's best within a hair.
     #[test]
-    fn the_defaults_are_what_the_fixture_log_chose() {
-        let seen = fixture();
-        let report = calibrate(&seen, true);
-        let expected = if report.lowest <= report.average {
-            MultiWord::Lowest
-        } else {
-            MultiWord::Average
-        };
-        assert_eq!(MULTI_WORD, expected);
-        let best = report.best.unwrap();
+    fn the_score_bands_and_the_report_say_what_they_measured() {
+        let s = score(&[(0.95, 1.0), (0.95, 0.0), (0.15, 0.0)]);
+        assert_eq!(s.answers, 3);
+        assert_eq!(s.bands.len(), 2);
+        assert_eq!(s.bands[1].actual, 0.5);
         assert!(
-            report.current.log_loss - best.log_loss < 0.005,
-            "current {:.4}, best {:.4} at {:?}",
-            report.current.log_loss,
-            best.log_loss,
-            best
+            (s.brier - (0.05f64.powi(2) + 0.95f64.powi(2) + 0.15f64.powi(2)) / 3.0).abs() < 1e-12
         );
+        let text = report(&log(), true);
+        for needle in [
+            "log loss",
+            "cloze/typed",
+            "cloze/pick-4",
+            "stability scale",
+            "slope/cloze",
+            "best:",
+        ] {
+            assert!(text.contains(needle), "{needle}");
+        }
     }
 }
