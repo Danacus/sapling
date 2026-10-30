@@ -257,6 +257,9 @@ pub struct Evidence {
     pub item_id: String,
     /// FSRS retrievability just before the answer.
     pub memory: f64,
+    /// FSRS stability in days just before the answer; 0 for a word never
+    /// reviewed. Only the ratings prototype (`ratings.rs`) reads it.
+    pub stability: f64,
 }
 
 /// One answer, ready for the model: everything replay could work out, and
@@ -423,6 +426,7 @@ mod tests {
             words: vec![Evidence {
                 item_id: "w".into(),
                 memory,
+                stability: 0.0,
             }],
             outcome,
         }

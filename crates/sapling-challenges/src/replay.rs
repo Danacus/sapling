@@ -72,8 +72,9 @@ struct Card<'a> {
 }
 
 impl Card<'_> {
-    /// Folds every review strictly before `at`; answers memory and strength then.
-    fn at(&mut self, at: f64) -> (f64, f64) {
+    /// Folds every review strictly before `at`; answers memory, strength and
+    /// stability then.
+    fn at(&mut self, at: f64) -> (f64, f64, f64) {
         while let Some(review) = self.reviews.get(self.next) {
             if review.at >= at {
                 break;
@@ -86,11 +87,12 @@ impl Card<'_> {
             self.next += 1;
         }
         if self.next == 0 {
-            return (tuning().new_word_memory, 0.0);
+            return (tuning().new_word_memory, 0.0, 0.0);
         }
         (
             current_retrievability(&self.card, at),
             word_strength(&self.card, at),
+            f64::from(self.card.stability),
         )
     }
 }
@@ -139,11 +141,12 @@ pub fn observations(input: &ReplayInput) -> Vec<Observation> {
         let mut weakest = f64::INFINITY;
         for id in ids {
             let card = cards.get_mut(id.as_str()).expect("checked above");
-            let (memory, strength) = card.at(result.at);
+            let (memory, strength, stability) = card.at(result.at);
             weakest = weakest.min(strength);
             words.push(Evidence {
                 item_id: id.clone(),
                 memory,
+                stability,
             });
         }
         let help = match &result.shown {

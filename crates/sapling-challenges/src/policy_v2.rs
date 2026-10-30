@@ -103,6 +103,7 @@ pub fn observation(
         evidence.push(Evidence {
             item_id: id.clone(),
             memory: words.get(id.as_str())?.memory(),
+            stability: 0.0,
         });
     }
     Some(Observation {
@@ -215,6 +216,8 @@ pub struct Ask<'a> {
     /// The words a local kind may be written for.
     pub cued: &'a [String],
     pub serving: &'a Serving,
+    /// FSRS stability per word, for a policy that reads it (`ratings_policy.rs`).
+    pub stability: &'a HashMap<String, f64>,
 }
 
 /// What a pick serves: a row, its help level, and whether the head was passed.
@@ -394,6 +397,7 @@ mod tests {
     use crate::topup::tests::{pooled, word, DAY, NOW};
 
     fn ask<'a>(pool: &'a [Option<PoolRow>], words: &'a [Word], serving: &'a Serving) -> Ask<'a> {
+        static NONE: std::sync::OnceLock<HashMap<String, f64>> = std::sync::OnceLock::new();
         Ask {
             pool,
             words,
@@ -401,6 +405,7 @@ mod tests {
             served: &[],
             cued: &[],
             serving,
+            stability: NONE.get_or_init(HashMap::new),
         }
     }
 
@@ -443,6 +448,7 @@ mod tests {
                 words: vec![Evidence {
                     item_id: format!("other-{i}"),
                     memory: 1.0,
+                    stability: 0.0,
                 }],
                 outcome: f64::from(u8::from(i % 10 < right)),
             };

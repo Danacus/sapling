@@ -618,6 +618,7 @@ impl ModelV2 {
                     words: vec![crate::model::Evidence {
                         item_id: id.clone(),
                         memory: 1.0,
+                        stability: 0.0,
                     }],
                     outcome: 0.0,
                 };
@@ -1070,6 +1071,7 @@ mod tests {
             words: vec![Evidence {
                 item_id: "w".into(),
                 memory: 1.0,
+                stability: 0.0,
             }],
             outcome,
         }

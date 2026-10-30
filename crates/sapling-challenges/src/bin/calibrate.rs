@@ -12,19 +12,26 @@
 //! variant; `--search` its spreads and drift), `--ablate` scores every variant
 //! against the first model, and `--simulated --policy P --scenario S --seeds N`
 //! runs the closed loop (`sim::closed_loop`) for each policy and scenario.
+//!
+//! The ratings prototype (`ratings.rs`): `--model ratings` reports it
+//! (`--words own|stability|both`, `--extra length,row,memory,ordered`;
+//! `--search` its free numbers), `--compare` scores it against the others.
 
 use std::process::ExitCode;
 
 use sapling_challenges::calibrate::{calibrate, format_report, search_many};
+use sapling_challenges::calibrate_ratings::{self, comparison};
 use sapling_challenges::calibrate_v2::{ablations, format_v2, search};
 use sapling_challenges::model::Observation;
 use sapling_challenges::model_v2::{Config, Length, Memory, Parts, Prior};
 use sapling_challenges::policy_v2::Steering;
+use sapling_challenges::ratings::{Settings, WordSource};
+use sapling_challenges::ratings_extras::Extras;
 use sapling_challenges::replay::{busiest_profile, input_from_events, observations, parse_export};
 use sapling_challenges::sim::closed_loop::{compare, Named, Scenario};
 use sapling_challenges::sim::{simulate, SimOptions};
 
-const USAGE: &str = "usage: calibrate <export.json> [--profile ID] [--search]\n       calibrate --simulated [--seed N] [--search]\n       calibrate --simulated --seeds N\n  v2:  calibrate (<export.json> | --simulated) --model v2 [--prior global|empirical|starting]\n         [--parts flat|factored] [--length learned|fixed|off] [--memory product|feature|off]\n         [--noise on|off] [--search]\n       calibrate (<export.json> | --simulated [--seeds N]) --ablate\n       calibrate --simulated --seeds N --model v2 --search\n       calibrate --simulated --policy NAME,…|steps|all --scenario base|trap|growth|new-kind|all [--seeds N]";
+const USAGE: &str = "usage: calibrate <export.json> [--profile ID] [--search]\n       calibrate --simulated [--seed N] [--search]\n       calibrate --simulated --seeds N\n  v2:  calibrate (<export.json> | --simulated) --model v2 [--prior global|empirical|starting]\n         [--parts flat|factored] [--length learned|fixed|off] [--memory product|feature|off]\n         [--noise on|off] [--search]\n       calibrate (<export.json> | --simulated [--seeds N]) --ablate\n       calibrate --simulated --seeds N --model v2 --search\n       calibrate --simulated --policy NAME,…|steps|ratings|all --scenario base|trap|growth|new-kind|all [--seeds N]\n  ratings: calibrate (<export.json> | --simulated) --model ratings [--words own|stability|both]\n         [--extra length,row,memory,ordered] [--search]\n       calibrate (<export.json> | --simulated [--seeds N]) --compare\n       calibrate --simulated --seeds N --model ratings [--words …] --search";
 
 fn log_of(json: &str, profile: Option<String>) -> Result<(String, Vec<Observation>), String> {
     let events = parse_export(json)?;
@@ -139,10 +146,103 @@ fn policies(names: &str) -> Option<Vec<Named>> {
             narrow,
         ),
     ];
+    let bare = Settings::default();
+    let none = Extras::default();
+    let with = |extras| Settings { extras, ..bare };
+    let chosen = |word_start| Settings {
+        word_start,
+        words: WordSource::Stability,
+        extras: Extras {
+            length: true,
+            ..none
+        },
+        ..bare
+    };
+    let ratings = [
+        Named::Current,
+        Named::V2("round2", last, narrow),
+        Named::CurrentAt("current-harder", sapling_challenges::model::Aim::Harder),
+        Named::Rated("bare", bare),
+        Named::Rated(
+            "bare-stab",
+            Settings {
+                words: WordSource::Stability,
+                ..bare
+            },
+        ),
+        Named::Rated(
+            "bare-both",
+            Settings {
+                words: WordSource::StabilityAndOwn,
+                ..bare
+            },
+        ),
+        Named::Rated(
+            "margin1",
+            Settings {
+                challenge_margin: 1.0,
+                ..bare
+            },
+        ),
+        Named::Rated(
+            "margin.75",
+            Settings {
+                challenge_margin: 0.75,
+                ..bare
+            },
+        ),
+        Named::Rated(
+            "widen.02",
+            Settings {
+                widen: 0.02,
+                ..bare
+            },
+        ),
+        Named::Rated(
+            "widen.05",
+            Settings {
+                widen: 0.05,
+                ..bare
+            },
+        ),
+        Named::Rated(
+            "margin.5",
+            Settings {
+                challenge_margin: 0.5,
+                ..bare
+            },
+        ),
+        Named::Rated(
+            "+length",
+            with(Extras {
+                length: true,
+                ..none
+            }),
+        ),
+        Named::Rated("chosen", chosen(0.5)),
+        Named::Rated("+row", with(Extras { row: true, ..none })),
+        Named::Rated(
+            "+mem",
+            with(Extras {
+                memory: true,
+                ..none
+            }),
+        ),
+        Named::Rated(
+            "+ord",
+            with(Extras {
+                ordered: true,
+                ..none
+            }),
+        ),
+    ];
     if names == "steps" {
         return Some(steps.to_vec());
     }
-    let all: Vec<Named> = steps.into_iter().chain(more).collect();
+    if names == "ratings" {
+        return Some(ratings.to_vec());
+    }
+    let all: Vec<Named> = steps.into_iter().chain(more).chain(ratings).collect();
     if names == "all" {
         return Some(all.to_vec());
     }
@@ -163,6 +263,8 @@ fn main() -> ExitCode {
     let mut config = Config::default();
     let mut v2_asked = false;
     let mut ablate = false;
+    let mut rated: Option<Settings> = None;
+    let mut compare_all = false;
     let mut policy: Option<String> = None;
     let mut scenario: Option<String> = None;
     let mut rest = args.iter();
@@ -178,6 +280,7 @@ fn main() -> ExitCode {
             "--simulated" => simulated = true,
             "--search" => with_search = true,
             "--ablate" => ablate = true,
+            "--compare" => compare_all = true,
             "--profile" => profile = rest.next().cloned(),
             "--policy" => policy = rest.next().cloned(),
             "--scenario" => scenario = rest.next().cloned(),
@@ -191,6 +294,9 @@ fn main() -> ExitCode {
             },
             "--model" => match rest.next().map(String::as_str) {
                 Some("v2") => v2_asked = true,
+                Some("ratings") => {
+                    rated.get_or_insert_with(Settings::default);
+                }
                 Some("current") => {}
                 _ => return fail(),
             },
@@ -233,6 +339,28 @@ fn main() -> ExitCode {
                 }
                 _ => return fail(),
             },
+            "--words" => {
+                let words = match rest.next().map(String::as_str) {
+                    Some("own") => WordSource::Own,
+                    Some("stability") => WordSource::Stability,
+                    Some("both") => WordSource::StabilityAndOwn,
+                    _ => return fail(),
+                };
+                rated.get_or_insert_with(Settings::default).words = words;
+            }
+            "--extra" => {
+                let settings = rated.get_or_insert_with(Settings::default);
+                for name in rest.next().map(String::as_str).unwrap_or("").split(',') {
+                    let x = &mut settings.extras;
+                    match name {
+                        "length" => x.length = true,
+                        "row" => x.row = true,
+                        "memory" => x.memory = true,
+                        "ordered" => x.ordered = true,
+                        _ => return fail(),
+                    }
+                }
+            }
             "-h" | "--help" => {
                 println!("{USAGE}");
                 return ExitCode::SUCCESS;
@@ -270,9 +398,19 @@ fn main() -> ExitCode {
                 log_of(&json, None).expect("a simulated learner answers").1
             })
             .collect();
-        if ablate {
+        if ablate || compare_all {
             println!("{n} simulated learners");
-            print!("{}", ablations(&logs));
+            let table = if ablate {
+                ablations(&logs)
+            } else {
+                comparison(&logs)
+            };
+            print!("{table}");
+            return ExitCode::SUCCESS;
+        }
+        if let Some(settings) = rated {
+            let (best, loss) = calibrate_ratings::search(&logs, settings);
+            println!("best ratings over {n} simulated learners: {best:?} → {loss:.4}");
             return ExitCode::SUCCESS;
         }
         if let Some(config) = v2 {
@@ -312,6 +450,20 @@ fn main() -> ExitCode {
     println!("profile: {profile}");
     if ablate {
         print!("{}", ablations(std::slice::from_ref(&seen)));
+        return ExitCode::SUCCESS;
+    }
+    if compare_all {
+        print!("{}", comparison(std::slice::from_ref(&seen)));
+        return ExitCode::SUCCESS;
+    }
+    if let Some(settings) = rated {
+        if with_search {
+            let (best, loss) = calibrate_ratings::search(std::slice::from_ref(&seen), settings);
+            println!(
+                "best ratings on this log (not used to choose anything): {best:?} → {loss:.4}"
+            );
+        }
+        print!("{}", calibrate_ratings::report(&seen, settings));
         return ExitCode::SUCCESS;
     }
     if let Some(config) = v2 {

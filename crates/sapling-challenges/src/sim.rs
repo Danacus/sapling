@@ -328,6 +328,7 @@ pub fn simulate(options: SimOptions) -> Simulation {
                         Evidence {
                             item_id: id.clone(),
                             memory,
+                            stability: f64::from(word.card.stability),
                         }
                     })
                     .collect();

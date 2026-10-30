@@ -131,7 +131,7 @@ pub fn variants() -> Vec<(&'static str, Config)> {
 
 /// How far the bands sit from the diagonal, weighted by their answers, and
 /// which way: above zero is overconfident.
-fn calibration(s: &ScoreV2) -> (f64, f64) {
+pub fn calibration(s: &ScoreV2) -> (f64, f64) {
     let n = s.answers.max(1) as f64;
     let ece = s
         .bands
@@ -153,19 +153,17 @@ fn last_third(pairs: &[(f64, f64)]) -> f64 {
 }
 
 /// A replay's `(predicted, outcome)` pairs.
-type Predict<'a> = &'a dyn Fn(&[Observation]) -> Vec<(f64, f64)>;
+pub type Predict<'a> = &'a dyn Fn(&[Observation]) -> Vec<(f64, f64)>;
 
-/// Every variant's scores, one line each, the first model first; over
-/// several logs, each number is the mean of the logs'.
-pub fn ablations(logs: &[Vec<Observation>]) -> String {
+/// One line per model; over several logs, each number is the mean of the logs'.
+pub fn table(logs: &[Vec<Observation>], rows: &[(&str, Predict)]) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "{:<16} {:>8} {:>8} {:>8} {:>8} {:>10}",
+        "{:<18} {:>8} {:>8} {:>8} {:>8} {:>10}",
         "model", "logloss", "brier", "ECE", "bias", "LL last⅓"
     );
-    let rates = tuning().rates;
-    let mut row = |name: &str, predict: Predict| {
+    for (name, predict) in rows {
         let mut sums = [0.0; 5];
         for log in logs {
             let pairs = predict(log);
@@ -181,22 +179,38 @@ pub fn ablations(logs: &[Vec<Observation>]) -> String {
         let [loss, brier, ece, bias, last] = sums;
         let _ = writeln!(
             out,
-            "{name:<16} {loss:>8.4} {brier:>8.4} {ece:>8.4} {bias:>+8.4} {last:>10.4}"
+            "{name:<18} {loss:>8.4} {brier:>8.4} {ece:>8.4} {bias:>+8.4} {last:>10.4}"
         );
-    };
-    row("current", &|log| {
-        let mut learner = Learner::default();
-        log.iter()
-            .map(|o| (learner.learn(o, &rates, MULTI_WORD), o.outcome))
-            .collect()
-    });
-    for (name, config) in variants() {
-        row(name, &|log| {
-            let mut model = ModelV2::new(config);
-            log.iter().map(|o| (model.learn(o), o.outcome)).collect()
-        });
     }
     out
+}
+
+/// The first model's pairs at its tuned rates.
+pub fn first_model(log: &[Observation]) -> Vec<(f64, f64)> {
+    let mut learner = Learner::default();
+    let rates = tuning().rates;
+    log.iter()
+        .map(|o| (learner.learn(o, &rates, MULTI_WORD), o.outcome))
+        .collect()
+}
+
+/// A model, replayed over a log.
+pub type Model = Box<dyn Fn(&[Observation]) -> Vec<(f64, f64)>>;
+
+/// Every variant's scores, one line each, the first model first.
+pub fn ablations(logs: &[Vec<Observation>]) -> String {
+    let mut models: Vec<(&str, Model)> = vec![("current", Box::new(first_model))];
+    for (name, config) in variants() {
+        models.push((
+            name,
+            Box::new(move |log| {
+                let mut model = ModelV2::new(config);
+                log.iter().map(|o| (model.learn(o), o.outcome)).collect()
+            }),
+        ));
+    }
+    let rows: Vec<(&str, Predict)> = models.iter().map(|(n, f)| (*n, f.as_ref())).collect();
+    table(logs, &rows)
 }
 
 /// The grid `--search` tries for the prior spreads and the drift.

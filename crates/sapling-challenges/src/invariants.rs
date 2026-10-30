@@ -315,6 +315,7 @@ fn no_word_waits_for_more_than_one_refill_under(name: &str, base: &Serving, days
                     .map(|&w| Evidence {
                         item_id: words[w].id.clone(),
                         memory: words[w].memory(),
+                        stability: 0.0,
                     })
                     .collect(),
                 outcome: 0.0,

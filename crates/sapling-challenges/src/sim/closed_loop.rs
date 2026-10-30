@@ -7,6 +7,12 @@
 //! quirks and every answer's luck come from their own seeded sources, so every
 //! policy meets the same learner and the same luck; only its own draws differ.
 //! Writing is instant: a refill's rows are in the pool before the next pick.
+//!
+//! Everything is scored on the **whole** chance a pick truly had — memory
+//! times managing it — against [`TARGET`], so a policy that aims at the chance
+//! given the word is remembered (the first model and round two, at the
+//! Normal aim's 0.89, which is 0.80 at FSRS's 0.9) and one that aims at the
+//! whole chance (the ratings) are judged alike.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write;
@@ -20,12 +26,14 @@ use crate::fits::{fits_fresh, Serving};
 use crate::help::HelpLevel;
 use crate::kinds::{kind_of, Want, WireType};
 use crate::model::{
-    chance, length_of, part_key, sigmoid, starting_base, starting_skill, starting_slope, target,
-    tuning, window, Evidence, Learner, Observation, MULTI_WORD,
+    chance, length_of, part_key, sigmoid, starting_base, starting_skill, starting_slope, tuning,
+    Aim, Evidence, Learner, Observation, MULTI_WORD,
 };
 use crate::model_v2::{centre, Config, ModelV2};
 use crate::policy_v2::{self, Steering};
 use crate::pool::PoolRow;
+use crate::ratings::{Ratings, Settings};
+use crate::ratings_policy;
 use crate::rng::Rng;
 use crate::stream::head;
 use crate::topup::{plan_top_up, Scope};
@@ -57,6 +65,10 @@ pub const NEW_EASIER: f64 = 0.8;
 /// An estimate has reached the truth when the mean remembered chance it
 /// predicts for the learner's words is this close to the true one.
 pub const SETTLED: f64 = 0.1;
+/// The whole chance every policy is scored against, and the band around it
+/// a pick counts as near.
+pub const TARGET: f64 = 0.80;
+pub const NEAR: f64 = 0.10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scenario {
@@ -137,12 +149,15 @@ pub trait Policy {
 #[derive(Default)]
 pub struct Current {
     learner: Learner,
+    /// The profile aim it serves at; Normal unless a comparison asks.
+    aim: Aim,
 }
 
 impl Current {
     fn serving(&self, cx: &Cx) -> Serving {
         Serving {
             parts: self.learner.shared.clone(),
+            aim: self.aim,
             ..cx.serving.clone()
         }
     }
@@ -263,6 +278,44 @@ impl Policy for V2 {
     }
 }
 
+/// The ratings (`ratings.rs`) choosing by `ratings_policy.rs`, aiming at
+/// [`TARGET`].
+pub struct Rated {
+    pub ratings: Ratings,
+}
+
+impl Policy for Rated {
+    fn refill(&mut self, cx: &Cx, rng: &mut Rng) -> Vec<Want> {
+        ratings_policy::refill(cx, LOW_WATER, &self.ratings, TARGET, rng)
+    }
+
+    fn pick(&mut self, cx: &Cx, rng: &mut Rng) -> Option<Pick> {
+        let p = ratings_policy::pick(cx, &self.ratings, TARGET, rng)?;
+        Some(Pick {
+            at: p.at,
+            help: p.help,
+            passed: p.passed,
+        })
+    }
+
+    fn predict(&self, o: &Observation) -> f64 {
+        self.ratings.chance(o)
+    }
+
+    /// The ratings have no memory term: their chance is the whole one.
+    fn remembered(&self, o: &Observation) -> f64 {
+        self.ratings.chance(o)
+    }
+
+    fn learn(&mut self, o: &Observation) {
+        self.ratings.learn(o);
+    }
+
+    fn mislead(&mut self, kind: WireType, by: f64, at: f64) {
+        self.ratings.mislead(kind, by, at);
+    }
+}
+
 /* ---- The truth ---------------------------------------------------------- */
 
 struct Truth {
@@ -325,7 +378,6 @@ impl Truth {
 #[derive(Debug, Clone, Default)]
 pub struct Third {
     pub answers: usize,
-    pub in_window: usize,
     pub below: usize,
     pub distance: f64,
     pub hard: usize,
@@ -340,22 +392,19 @@ pub struct Metrics {
     /// Picks with nothing to serve at all.
     pub empty: usize,
     pub written: usize,
-    /// Served picks whose true remembered chance sat in the aim's window,
-    /// below it and above it.
-    pub in_window: usize,
+    /// Served picks whose true whole chance was below the near band, in it,
+    /// and above it.
     pub below: usize,
+    pub near: usize,
     pub above: usize,
-    /// Σ the policy's own mean remembered chance at the pick, before the answer.
+    /// Σ the policy's own predicted chance at the pick, before the answer.
     pub believed: f64,
-    /// Σ |true remembered chance − aim|.
+    /// Σ |true whole chance − target|.
     pub distance: f64,
-    /// Σ true remembered chance.
-    pub remembered: f64,
-    /// Σ KL(truth ‖ predicted), memory included, before learning.
+    /// Σ true whole chance.
+    pub whole: f64,
+    /// Σ KL(truth ‖ predicted), before learning.
     pub kl: f64,
-    /// The same, for each model folding this policy's answers beside it.
-    pub kl_v1: f64,
-    pub kl_v2: f64,
     pub kinds: BTreeMap<&'static str, usize>,
     pub levels: BTreeMap<String, usize>,
     pub thirds: [Third; 3],
@@ -405,12 +454,12 @@ fn memory_of(card: &FsrsCardState, reviewed: bool, now: f64) -> f64 {
 }
 
 /// How far a policy's estimate of `kind` is from the truth: per level, the
-/// mean remembered chance over the learner's words at the kind's middle
-/// length, predicted against true, averaged over levels.
+/// mean whole chance it predicts over the learner's words, as each stands
+/// now, at the kind's middle length, against the true one; averaged over levels.
 fn estimate_error(
     policy: &dyn Policy,
     truth: &Truth,
-    ids: &[String],
+    words: &[Evidence],
     kind: WireType,
     now: f64,
     day: f64,
@@ -420,25 +469,35 @@ fn estimate_error(
     for step in &steps {
         let help = HelpLevel::step(*step);
         let (mut est, mut real) = (0.0, 0.0);
-        for (i, id) in ids.iter().enumerate() {
+        for (i, w) in words.iter().enumerate() {
             let o = Observation {
                 at: now,
                 challenge_id: String::new(),
                 kind,
                 help,
                 length: centre(kind),
-                words: vec![Evidence {
-                    item_id: id.clone(),
-                    memory: 1.0,
-                }],
+                words: vec![w.clone()],
                 outcome: 0.0,
             };
-            est += policy.remembered(&o);
-            real += sigmoid(truth.skills[i] - truth.difficulty(kind, help, centre(kind), "", day));
+            est += policy.predict(&o);
+            real += w.memory
+                * sigmoid(truth.skills[i] - truth.difficulty(kind, help, centre(kind), "", day));
         }
-        error += ((est - real) / ids.len().max(1) as f64).abs();
+        error += ((est - real) / words.len().max(1) as f64).abs();
     }
     error / steps.len().max(1) as f64
+}
+
+/// Every word as it stands at `now`.
+fn standing(ids: &[String], cards: &[FsrsCardState], reviewed: &[bool], now: f64) -> Vec<Evidence> {
+    ids.iter()
+        .enumerate()
+        .map(|(i, id)| Evidence {
+            item_id: id.clone(),
+            memory: memory_of(&cards[i], reviewed[i], now),
+            stability: f64::from(cards[i].stability),
+        })
+        .collect()
 }
 
 /// One learner, one policy, one seed.
@@ -448,15 +507,12 @@ pub fn run(scenario: Scenario, policy: &mut dyn Policy, seed: u64) -> Metrics {
     let mut luck = Rng::seeded(seed.wrapping_mul(31).wrapping_add(2));
     let mut own = Rng::seeded(seed.wrapping_mul(31).wrapping_add(3));
     let serving = Serving::default();
-    let aim = target(serving.aim);
-    let (low, high) = window(serving.aim);
+    let (low, high) = (TARGET - NEAR, TARGET + NEAR);
     let mut ids: Vec<String> = Vec::new();
     let mut cards: Vec<FsrsCardState> = Vec::new();
     let mut reviewed: Vec<bool> = Vec::new();
     let mut pool: Vec<Option<PoolRow>> = Vec::new();
     let mut m = Metrics::default();
-    let mut shadow_v1 = Learner::default();
-    let mut shadow_v2 = ModelV2::new(Config::default());
     let event = scenario.event();
     let total = (DAYS * PER_DAY) as f64;
 
@@ -493,6 +549,11 @@ pub fn run(scenario: Scenario, policy: &mut dyn Policy, seed: u64) -> Metrics {
                     skill: policy.skill(id),
                 })
                 .collect();
+            let stability: HashMap<String, f64> = ids
+                .iter()
+                .zip(&cards)
+                .map(|(id, card)| (id.clone(), f64::from(card.stability)))
+                .collect();
             let cx = Cx {
                 pool: &pool,
                 words: &words,
@@ -500,6 +561,7 @@ pub fn run(scenario: Scenario, policy: &mut dyn Policy, seed: u64) -> Metrics {
                 served: &served,
                 cued: &cued,
                 serving: &serving,
+                stability: &stability,
             };
             let mut written: Vec<PoolRow> = Vec::new();
             for want in policy.refill(&cx, &mut own) {
@@ -545,6 +607,7 @@ pub fn run(scenario: Scenario, policy: &mut dyn Policy, seed: u64) -> Metrics {
                 served: &served,
                 cued: &cued,
                 serving: &serving,
+                stability: &stability,
             };
             let Some(pick) = policy.pick(&cx, &mut own) else {
                 m.empty += 1;
@@ -572,6 +635,7 @@ pub fn run(scenario: Scenario, policy: &mut dyn Policy, seed: u64) -> Metrics {
                     .map(|&i| Evidence {
                         item_id: ids[i].clone(),
                         memory: memory_of(&cards[i], reviewed[i], now),
+                        stability: f64::from(cards[i].stability),
                     })
                     .collect(),
                 outcome: 0.0,
@@ -580,32 +644,27 @@ pub fn run(scenario: Scenario, policy: &mut dyn Policy, seed: u64) -> Metrics {
             let memory: f64 = o.words.iter().map(|e| e.memory).product();
             let remembered: f64 = at.iter().map(|&i| sigmoid(truth.skills[i] - d)).product();
             let whole = memory * remembered;
-            m.kl += kl(whole, policy.predict(&o));
-            m.kl_v1 += kl(whole, shadow_v1.predict(&o, MULTI_WORD));
-            m.kl_v2 += kl(whole, shadow_v2.predict(&o));
-            m.believed += policy.remembered(&o);
+            let predicted = policy.predict(&o);
+            m.kl += kl(whole, predicted);
+            m.believed += predicted;
             let correct = luck.next_f64() < whole;
             o.outcome = f64::from(u8::from(correct));
             policy.learn(&o);
-            shadow_v1.learn(&o, &tuning().rates, MULTI_WORD);
-            shadow_v2.learn(&o);
 
             let third = ((m.answers as f64 / total * 3.0) as usize).min(2);
-            let inside = remembered >= low && remembered <= high;
             let hard = starting_base(kind, pick.help) >= HARD;
             m.answers += 1;
-            m.in_window += usize::from(inside);
-            m.below += usize::from(remembered < low);
-            m.above += usize::from(remembered > high);
-            m.distance += (remembered - aim).abs();
-            m.remembered += remembered;
+            m.below += usize::from(whole < low);
+            m.near += usize::from(whole >= low && whole <= high);
+            m.above += usize::from(whole > high);
+            m.distance += (whole - TARGET).abs();
+            m.whole += whole;
             *m.kinds.entry(kind.as_str()).or_default() += 1;
             *m.levels.entry(part_key(kind, pick.help)).or_default() += 1;
             let t = &mut m.thirds[third];
             t.answers += 1;
-            t.in_window += usize::from(inside);
-            t.below += usize::from(remembered < low);
-            t.distance += (remembered - aim).abs();
+            t.below += usize::from(whole < low);
+            t.distance += (whole - TARGET).abs();
             t.hard += usize::from(hard);
             *t.kinds.entry(kind.as_str()).or_default() += 1;
             if let Some((event_kind, event_day)) = event.filter(|(_, d)| day >= *d) {
@@ -630,8 +689,9 @@ pub fn run(scenario: Scenario, policy: &mut dyn Policy, seed: u64) -> Metrics {
             served.push(row_id);
         }
         if let Some((kind, event_day)) = event.filter(|(_, d)| day >= *d) {
+            let words = standing(&ids, &cards, &reviewed, now);
             if m.event_settled.is_none()
-                && estimate_error(&*policy, &truth, &ids, kind, now, day as f64) < SETTLED
+                && estimate_error(&*policy, &truth, &words, kind, now, day as f64) < SETTLED
             {
                 m.event_settled = Some((day + 1 - event_day) as f64);
             }
@@ -642,13 +702,14 @@ pub fn run(scenario: Scenario, policy: &mut dyn Policy, seed: u64) -> Metrics {
         .into_iter()
         .filter(|k| k.is_active() && (!k.is_local() || scenario == Scenario::NewKind))
         .collect();
-    m.cloze_error = estimate_error(&*policy, &truth, &ids, WireType::Cloze, end, DAYS as f64);
+    let words = standing(&ids, &cards, &reviewed, end);
+    m.cloze_error = estimate_error(&*policy, &truth, &words, WireType::Cloze, end, DAYS as f64);
     if let Some((kind, _)) = event {
-        m.event_error = estimate_error(&*policy, &truth, &ids, kind, end, DAYS as f64);
+        m.event_error = estimate_error(&*policy, &truth, &words, kind, end, DAYS as f64);
     }
     m.final_error = kinds
         .iter()
-        .map(|&k| estimate_error(&*policy, &truth, &ids, k, end, DAYS as f64))
+        .map(|&k| estimate_error(&*policy, &truth, &words, k, end, DAYS as f64))
         .sum::<f64>()
         / kinds.len() as f64;
     m
@@ -660,21 +721,31 @@ pub fn run(scenario: Scenario, policy: &mut dyn Policy, seed: u64) -> Metrics {
 #[derive(Debug, Clone, Copy)]
 pub enum Named {
     Current,
+    CurrentAt(&'static str, Aim),
     V2(&'static str, Config, Steering),
+    Rated(&'static str, Settings),
 }
 
 impl Named {
     pub fn name(&self) -> &'static str {
         match self {
             Named::Current => "current",
-            Named::V2(name, _, _) => name,
+            Named::CurrentAt(name, _) => name,
+            Named::V2(name, _, _) | Named::Rated(name, _) => name,
         }
     }
 
     pub fn make(&self) -> Box<dyn Policy> {
         match self {
             Named::Current => Box::<Current>::default(),
+            Named::CurrentAt(_, aim) => Box::new(Current {
+                aim: *aim,
+                ..Current::default()
+            }),
             Named::V2(_, config, steering) => Box::new(V2::new(*config, *steering)),
+            Named::Rated(_, settings) => Box::new(Rated {
+                ratings: Ratings::new(*settings),
+            }),
         }
     }
 }
@@ -696,26 +767,23 @@ pub fn compare(scenario: Scenario, policies: &[Named], seeds: u64) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "scenario {} — {} · {seeds} seeds · {DAYS} days × {PER_DAY} answers · aim {:.2}, window {:.2}–{:.2}",
+        "scenario {} — {} · {seeds} seeds · {DAYS} days × {PER_DAY} answers · whole chance against {TARGET:.2}, near {:.2}–{:.2}",
         scenario.name(),
         scenario.describe(),
-        target(Serving::default().aim),
-        window(Serving::default().aim).0,
-        window(Serving::default().aim).1,
+        TARGET - NEAR,
+        TARGET + NEAR,
     );
     let _ = writeln!(
         out,
-        "{:<10} {:>6} {:>6} {:>6} {:>9} {:>6} {:>7} {:>7} {:>7} {:>7} {:>6} {:>6} {:>8} {:>6} {:>6} {:>14} {:>7} {:>9}",
+        "{:<12} {:>6} {:>6} {:>6} {:>8} {:>6} {:>8} {:>7} {:>6} {:>6} {:>8} {:>6} {:>6} {:>14} {:>7} {:>9}",
         "policy",
         "below",
-        "window",
+        "near",
         "above",
-        "|rem−aim|",
-        "rem",
+        "|c−.80|",
+        "chance",
         "believed",
         "KL",
-        "KL v1",
-        "KL v2",
         "passed",
         "empty",
         "rows/ans",
@@ -743,17 +811,15 @@ pub fn compare(scenario: Scenario, policies: &[Named], seeds: u64) -> String {
             .collect();
         let _ = writeln!(
             out,
-            "{:<10} {:>6.3} {:>6.3} {:>6.3} {:>9.3} {:>6.3} {:>7.3} {:>7.4} {:>7.4} {:>7.4} {:>6.1} {:>6.1} {:>8.2} {:>6.2} {:>6.2} {:>14} {:>7.3} {:>9.3}",
+            "{:<12} {:>6.3} {:>6.3} {:>6.3} {:>8.3} {:>6.3} {:>8.3} {:>7.4} {:>6.1} {:>6.1} {:>8.2} {:>6.2} {:>6.2} {:>14} {:>7.3} {:>9.3}",
             policy.name(),
             per(&|m| m.below as f64 / n(m)),
-            per(&|m| m.in_window as f64 / n(m)),
+            per(&|m| m.near as f64 / n(m)),
             per(&|m| m.above as f64 / n(m)),
             per(&|m| m.distance / n(m)),
-            per(&|m| m.remembered / n(m)),
+            per(&|m| m.whole / n(m)),
             per(&|m| m.believed / n(m)),
             per(&|m| m.kl / n(m)),
-            per(&|m| m.kl_v1 / n(m)),
-            per(&|m| m.kl_v2 / n(m)),
             per(&|m| m.passed as f64),
             per(&|m| m.empty as f64),
             per(&|m| m.written as f64 / n(m)),
@@ -772,15 +838,14 @@ pub fn compare(scenario: Scenario, policies: &[Named], seeds: u64) -> String {
         let by_third: Vec<String> = (0..3)
             .map(|t| {
                 let third = |m: &Metrics| m.thirds[t].answers.max(1) as f64;
-                let window = per(&|m| m.thirds[t].in_window as f64 / third(m));
                 let below = per(&|m| m.thirds[t].below as f64 / third(m));
                 let distance = per(&|m| m.thirds[t].distance / third(m));
-                format!("{below:.2}/{window:.2}/{distance:.3}")
+                format!("{below:.2}/{distance:.3}")
             })
             .collect();
         let _ = writeln!(
             shares,
-            "  {:<10} below/window/|rem−aim| by third {} · {}",
+            "  {:<12} below/|c−.80| by third {} · {}",
             policy.name(),
             by_third.join("/"),
             kinds
@@ -792,7 +857,7 @@ pub fn compare(scenario: Scenario, policies: &[Named], seeds: u64) -> String {
         if let Some((kind, _)) = scenario.event() {
             let _ = writeln!(
                 events,
-                "  {:<10} {} first served after {} · estimate within {SETTLED} after {} · error at the end {:.3} · share after the event {:.1}%",
+                "  {:<12} {} first served after {} · estimate within {SETTLED} after {} · error at the end {:.3} · share after the event {:.1}%",
                 policy.name(),
                 kind.as_str(),
                 timing(&runs.iter().map(|m| m.event_served).collect::<Vec<_>>()),
@@ -817,6 +882,7 @@ mod tests {
             Named::Current,
             Named::V2("v2", Config::default(), Steering::default()),
             Named::V2("r1", Config::FIRST, Steering::FIRST),
+            Named::Rated("bare", Settings::default()),
         ] {
             let a = run(Scenario::Trap, &mut *named.make(), 3);
             let b = run(Scenario::Trap, &mut *named.make(), 3);

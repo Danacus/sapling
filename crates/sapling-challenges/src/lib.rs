@@ -16,7 +16,8 @@
 //! Bayesian difficulty model (`model_v2.rs`), a Thompson-sampling policy over
 //! it (`policy_v2.rs`), its calibration report (`calibrate_v2.rs`) and a
 //! closed-loop simulation to compare policies in (`sim/closed_loop.rs`), all
-//! run from the `calibrate` binary.
+//! run from the `calibrate` binary; and a barer one to compare it with,
+//! ratings with margins (`ratings.rs`, `ratings_policy.rs`, `ratings_extras.rs`).
 //!
 //! No database and no model call: a host hands in the pool and the words and
 //! gets decisions back. Presentation — what to print, speak or render — stays
@@ -25,6 +26,7 @@
 #![forbid(unsafe_code)]
 
 pub mod calibrate;
+pub mod calibrate_ratings;
 pub mod calibrate_v2;
 pub mod fits;
 pub mod generation;
@@ -41,6 +43,9 @@ pub mod model;
 pub mod model_v2;
 pub mod policy_v2;
 pub mod pool;
+pub mod ratings;
+pub mod ratings_extras;
+pub mod ratings_policy;
 pub mod replay;
 pub mod rng;
 pub mod schema;
