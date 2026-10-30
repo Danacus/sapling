@@ -241,3 +241,101 @@ fn a_row_this_build_cannot_read_travels_both_ways() {
     });
     assert_eq!(kept[0].text("type").unwrap(), "wordShelved");
 }
+
+fn reading_text(id: &str, line: &str) -> sapling_domain::types::ReadingText {
+    serde_json::from_value(json!({
+        "id": id, "title": "T", "source": "imported",
+        "segments": [{ "text": line, "start": 0, "end": 1000 }], "createdAt": 1
+    }))
+    .expect("a text")
+}
+
+fn bodies(core: &CoreHandle) -> Vec<String> {
+    on(core, |core| core.get_texts())
+        .into_iter()
+        .flat_map(|text| text.segments.into_iter().map(|segment| segment.text))
+        .collect()
+}
+
+#[test]
+fn a_text_travels_as_an_event_and_an_object_and_its_revision_follows() {
+    let relay = MemoryRelay::default();
+    let phrase = phrase::mint(&[11; PHRASE_LENGTH]);
+    let laptop = device("text-laptop");
+    let phone = device("text-phone");
+    on(&laptop, |core| core.add_text(&reading_text("t1", "你好。")));
+
+    sync(&relay, &laptop, &phrase);
+    // The relay holds the body once, and an edge from the text to it; the
+    // row it stores carries neither, so the log here and there is unchanged.
+    assert_eq!(relay.objects(&phrase).len(), 1);
+    let (hash, bytes) = relay.objects(&phrase).into_iter().next().unwrap();
+    assert_eq!(
+        relay.edges(&phrase),
+        [("text:singleton:t1".to_owned(), hash.clone())]
+    );
+    assert_eq!(relay.log(&phrase)[0]["payload"]["content"], json!(hash));
+    assert!(relay.log(&phrase)[0].get("owner").is_none());
+
+    sync(&relay, &phone, &phrase);
+    assert_eq!(bodies(&phone), ["你好。"]);
+
+    // A revision by reference: the phone stores the new body as an object
+    // (as an editor would) and logs the edge to it.
+    let revised = sapling_domain::objects::TextContent {
+        segments: reading_text("t1", "你好吗？").segments,
+    }
+    .to_object();
+    let content = revised.hash.clone();
+    on(&phone, move |core| core.put_objects(&[revised]));
+    let fact = fact(
+        EventType::TextRevised,
+        json!({ "textId": "t1", "content": content }),
+    );
+    on(&phone, move |core| core.commit(fact));
+    assert_eq!(bodies(&phone), ["你好吗？"]);
+    sync(&relay, &phone, &phrase);
+    sync(&relay, &laptop, &phrase);
+    assert_eq!(bodies(&laptop), ["你好吗？"]);
+    assert!(on(&laptop, Core::missing_objects).is_empty());
+    assert_eq!(relay.objects(&phrase).len(), 2);
+    assert!(relay.objects(&phrase).get(&hash) == Some(&bytes));
+
+    // Deleted: retired at the relay, gone everywhere; nothing is collected.
+    on(&laptop, |core| core.delete_text("t1"));
+    sync(&relay, &laptop, &phrase);
+    sync(&relay, &phone, &phrase);
+    assert_eq!(relay.retired(&phrase), ["text:singleton:t1"]);
+    assert!(bodies(&phone).is_empty());
+    assert_eq!(count(&phone, "objects"), 2.0);
+}
+
+#[test]
+fn a_text_waits_for_its_object_and_a_rebuild_keeps_what_arrived() {
+    let relay = MemoryRelay::default();
+    let phrase = phrase::mint(&[13; PHRASE_LENGTH]);
+    let laptop = device("wait-laptop");
+    on(&laptop, |core| core.add_text(&reading_text("t1", "再见。")));
+    sync(&relay, &laptop, &phrase);
+
+    // The phone pulls the event from a relay that has lost the object (as if
+    // another device had pushed the event without it): the text is not shown.
+    let event = relay.log(&phrase)[0].clone();
+    let lonely = MemoryRelay::default();
+    let body = relay.objects(&phrase).into_values().next().unwrap();
+    let phone = device("wait-phone");
+    on(&phone, move |core| core.apply_remote(&[event]));
+    sync(&lonely, &phone, &phrase);
+    assert!(bodies(&phone).is_empty());
+    assert_eq!(on(&phone, Core::missing_objects).len(), 1);
+
+    // Once it is on the relay, the next cycle fetches it, and a rebuild (a
+    // profile switch, an import) does not throw it away.
+    lonely.hold(&phrase, &body);
+    sync(&lonely, &phone, &phrase);
+    assert_eq!(bodies(&phone), ["再见。"]);
+    on(&phone, |core| {
+        core.import_data(r#"{ "version": 3, "exportedAt": 1, "events": [] }"#)
+    });
+    assert_eq!(bodies(&phone), ["再见。"]);
+}

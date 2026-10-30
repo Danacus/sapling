@@ -159,6 +159,7 @@ describe('export', () => {
 			results: await recentResults(5)
 		};
 
+		const original = store;
 		store = await makeTestBackend();
 		setBackendForTesting(store);
 		await importData(dump);
@@ -167,6 +168,14 @@ describe('export', () => {
 		expect(await getPool()).toEqual(before.pool);
 		expect(await getProfile()).toEqual(before.profile);
 		expect(await getDailyActivity()).toEqual(before.activity);
+		// A v3 file carries the `textAdded`, which names its body by hash, and
+		// not the object itself — that is export v4's (docs/content-objects.md
+		// §9, step 3). Until the object arrives the text is read by nothing;
+		// storing it is all it takes, with no rebuild.
+		expect(await getTexts()).toEqual([]);
+		const missing = await store.missingObjects();
+		expect(missing).toHaveLength(1);
+		await store.putObjects(await original.getObjects(missing));
 		expect(await getTexts()).toEqual(before.texts);
 		expect(await getKnownTerms()).toEqual(before.known);
 		expect(await lookupRows(store)).toEqual(before.lookups);

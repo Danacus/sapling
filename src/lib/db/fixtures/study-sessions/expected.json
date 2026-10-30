@@ -88,6 +88,7 @@
 	"getText": {
 		"text-1": null
 	},
+	"missingObjects": [],
 	"clipsFor": {},
 	"getKnownTerms": [],
 	"getConversations": [

@@ -1,6 +1,8 @@
 # Content objects — design
 
-Status: steps 1–3 (§9) are the first slice; GC (§8) and compaction (§10) are
+Status: steps 1 (the Worker) and 2 (the core and the sync cycle) of §9 are
+built; step 3 (export v4) is next, and until it lands a v3 export carries a
+`textAdded { content }` without its object. GC (§8) and compaction (§10) are
 deliberately not built.
 
 The events log is the record of what the learner *did*: words, reviews,

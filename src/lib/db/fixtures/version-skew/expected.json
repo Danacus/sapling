@@ -209,6 +209,7 @@
 	"studySessions": [],
 	"getTexts": [],
 	"getText": {},
+	"missingObjects": [],
 	"clipsFor": {
 		"山": [],
 		"本": [],

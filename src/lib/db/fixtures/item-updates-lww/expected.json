@@ -211,6 +211,7 @@
 	"studySessions": [],
 	"getTexts": [],
 	"getText": {},
+	"missingObjects": [],
 	"clipsFor": {
 		"ありがとう": [],
 		"こんにちは": []

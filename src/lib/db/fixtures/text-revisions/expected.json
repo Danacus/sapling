@@ -1,0 +1,189 @@
+{
+	"getAllItems": {
+		"lean": [],
+		"withRecentGrades": []
+	},
+	"getItem": {},
+	"getPool": [],
+	"poolSize": 0,
+	"getChallengesByIds": [],
+	"recentResults": [],
+	"getRatings": [],
+	"getDailyActivity": [],
+	"studySessions": [],
+	"getTexts": [
+		{
+			"id": "text-inline",
+			"title": "乙",
+			"source": "generated",
+			"segments": [
+				{
+					"text": "第二版，甲。"
+				}
+			],
+			"createdAt": 1710061201000
+		},
+		{
+			"id": "text-a",
+			"title": "甲",
+			"source": "imported",
+			"segments": [
+				{
+					"text": "第二版，乙。"
+				}
+			],
+			"createdAt": 1710061200000
+		}
+	],
+	"getText": {
+		"text-a": {
+			"id": "text-a",
+			"title": "甲",
+			"source": "imported",
+			"segments": [
+				{
+					"text": "第二版，乙。"
+				}
+			],
+			"createdAt": 1710061200000
+		},
+		"text-gone": null,
+		"text-inline": {
+			"id": "text-inline",
+			"title": "乙",
+			"source": "generated",
+			"segments": [
+				{
+					"text": "第二版，甲。"
+				}
+			],
+			"createdAt": 1710061201000
+		},
+		"text-never": null
+	},
+	"missingObjects": [],
+	"clipsFor": {},
+	"getKnownTerms": [],
+	"getConversations": [],
+	"getConversation": {},
+	"exportData": {
+		"version": 3,
+		"exportedAt": 1710244800000,
+		"events": [
+			{
+				"id": "ev-add-a",
+				"type": "textAdded",
+				"at": 1710061200000,
+				"device": "dev-a",
+				"payload": {
+					"id": "text-a",
+					"title": "甲",
+					"source": "imported",
+					"content": "sha256:5330d32a2ccdbf931cf0bdfea40e97a299a647e97971a8bf0353027cdd8aef4d",
+					"createdAt": 1710061200000
+				}
+			},
+			{
+				"id": "ev-rev-a-dev-b",
+				"type": "textRevised",
+				"at": 1710061260000,
+				"device": "dev-b",
+				"payload": {
+					"textId": "text-a",
+					"content": "sha256:d607603b9e364946702983234f803c7953b39b4fdc23520c66b09bf979b570cc"
+				}
+			},
+			{
+				"id": "ev-rev-a-dev-a",
+				"type": "textRevised",
+				"at": 1710061260000,
+				"device": "dev-a",
+				"payload": {
+					"textId": "text-a",
+					"content": "sha256:58b1259a8704d9fa7b430bb1d3d93ecd65fd97c0a154fa1edf9b43680cd54036"
+				}
+			},
+			{
+				"id": "ev-rev-a-old",
+				"type": "textRevised",
+				"at": 1710061230000,
+				"device": "dev-a",
+				"payload": {
+					"textId": "text-a",
+					"content": "sha256:d1c9ea9efdc874f1a8b572a4073af4ae52b07e942a80ec2128b87ac751581f02"
+				}
+			},
+			{
+				"id": "ev-add-inline",
+				"type": "textAdded",
+				"at": 1710061201000,
+				"device": "dev-a",
+				"payload": {
+					"id": "text-inline",
+					"title": "乙",
+					"source": "generated",
+					"segments": [
+						{
+							"text": "原文。"
+						}
+					],
+					"createdAt": 1710061201000
+				}
+			},
+			{
+				"id": "ev-rev-inline",
+				"type": "textRevised",
+				"at": 1710061290000,
+				"device": "dev-a",
+				"payload": {
+					"textId": "text-inline",
+					"content": "sha256:58b1259a8704d9fa7b430bb1d3d93ecd65fd97c0a154fa1edf9b43680cd54036"
+				}
+			},
+			{
+				"id": "ev-add-gone",
+				"type": "textAdded",
+				"at": 1710061202000,
+				"device": "dev-a",
+				"payload": {
+					"id": "text-gone",
+					"title": "丙",
+					"source": "imported",
+					"content": "sha256:5330d32a2ccdbf931cf0bdfea40e97a299a647e97971a8bf0353027cdd8aef4d",
+					"createdAt": 1710061202000
+				}
+			},
+			{
+				"id": "ev-rev-gone",
+				"type": "textRevised",
+				"at": 1710061320000,
+				"device": "dev-b",
+				"payload": {
+					"textId": "text-gone",
+					"content": "sha256:d607603b9e364946702983234f803c7953b39b4fdc23520c66b09bf979b570cc"
+				}
+			},
+			{
+				"id": "ev-del-gone",
+				"type": "textDeleted",
+				"at": 1710061310000,
+				"device": "dev-a",
+				"payload": {
+					"textId": "text-gone"
+				}
+			},
+			{
+				"id": "ev-rev-never",
+				"type": "textRevised",
+				"at": 1710061350000,
+				"device": "dev-a",
+				"payload": {
+					"textId": "text-never",
+					"content": "sha256:58b1259a8704d9fa7b430bb1d3d93ecd65fd97c0a154fa1edf9b43680cd54036"
+				}
+			}
+		]
+	},
+	"pendingEvents": [],
+	"getPullCursor": 0
+}

@@ -111,6 +111,7 @@ pub async fn dispatch_sync_json<T: Transport, S: SyncStore>(
 mod tests {
     use super::*;
     use sapling_domain::events::RawEvent;
+    use sapling_domain::objects::ContentObject;
     use sapling_sync::relay::MemoryRelay;
     use sapling_sync::{Request, Response, StoreResult};
     use std::future::{ready, Future};
@@ -139,6 +140,18 @@ mod tests {
         }
         fn follow_room(&self, _: String) -> impl Future<Output = StoreResult<bool>> {
             ready(Ok(false))
+        }
+        fn objects(&self, _: Vec<String>) -> impl Future<Output = StoreResult<Vec<ContentObject>>> {
+            ready(Ok(Vec::new()))
+        }
+        fn put_objects(
+            &self,
+            objects: Vec<ContentObject>,
+        ) -> impl Future<Output = StoreResult<usize>> {
+            ready(Ok(objects.len()))
+        }
+        fn missing_objects(&self) -> impl Future<Output = StoreResult<Vec<String>>> {
+            ready(Ok(Vec::new()))
         }
     }
 

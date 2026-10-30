@@ -17,12 +17,10 @@ use sapling_domain::day::LocalDay;
 use sapling_domain::events::{
     typed_event, ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted,
     ItemAdded, ItemDeleted, ItemReviewed, ItemUpdated, Payload, RawEvent, ResultOverturned,
-    ReviewAmended, Studied, SyncEvent, TextDeleted, WordLookedUp, WordMarked, PATCHABLE_COLUMNS,
-    PROFILE_ID, SCOPED_EVENT_TYPE,
+    ReviewAmended, Studied, SyncEvent, TextAdded, TextDeleted, TextRevised, WordLookedUp,
+    WordMarked, PATCHABLE_COLUMNS, PROFILE_ID, SCOPED_EVENT_TYPE,
 };
-use sapling_domain::types::{
-    ChallengeResult, Conversation, ConversationExchange, Profile, ReadingText,
-};
+use sapling_domain::types::{ChallengeResult, Conversation, ConversationExchange, Profile};
 use sapling_srs::{new_card_state, review_card, FsrsCardState, Grade, GOOD};
 
 // The challenge types this build knows how to play are the stored union's own
@@ -509,7 +507,10 @@ impl<'a> Materializer<'a> {
         )
     }
 
-    fn text_added(&self, p: &ReadingText) -> Result<()> {
+    /// The row records the body as it came — inline segments or a hash — and
+    /// resolves nothing: whether the object is here is a read's question
+    /// (`READABLE_TEXTS`), so its arrival needs no rule at all.
+    fn text_added(&self, p: &TextAdded) -> Result<()> {
         if self.exists(
             "SELECT 1 FROM textTombstones WHERE textId = ?",
             &[Param::text(&p.id)],
@@ -520,17 +521,60 @@ impl<'a> Materializer<'a> {
             Some(media) => Param::text(serde_json::to_string(media)?),
             None => Param::Null,
         };
+        let segments = match &p.segments {
+            Some(segments) => Param::text(serde_json::to_string(segments)?),
+            None => Param::Null,
+        };
         self.sql.exec(
-            "INSERT OR IGNORE INTO texts (id, title, source, topic, segments, media, createdAt)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO texts (id, title, source, topic, segments, content, media, createdAt)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             &[
                 Param::text(&p.id),
                 Param::text(&p.title),
                 Param::text(p.source.as_str()),
                 Param::opt_text(p.topic.as_deref()),
-                Param::text(serde_json::to_string(&p.segments)?),
+                segments,
+                Param::opt_text(p.content.as_deref()),
                 media,
                 Param::number(p.created_at),
+            ],
+        )
+    }
+
+    /// Last write wins by `(at, device, event id)`, whichever order the
+    /// revisions arrive in; a revision of a tombstoned text is inert. One that
+    /// lands before its text waits in `textRevisions` and counts once it does.
+    fn text_revised(&self, event: &SyncEvent, p: &TextRevised) -> Result<()> {
+        if self.exists(
+            "SELECT 1 FROM textTombstones WHERE textId = ?",
+            &[Param::text(&p.text_id)],
+        )? {
+            return Ok(());
+        }
+        let held = self.sql.query(
+            "SELECT at, device, eventId FROM textRevisions WHERE textId = ?",
+            &[Param::text(&p.text_id)],
+        )?;
+        if let Some(held) = held.first() {
+            let newer = event
+                .at
+                .total_cmp(&held.f64("at")?)
+                .then_with(|| event.device.as_str().cmp(held.text("device").unwrap_or("")))
+                .then_with(|| event.id.as_str().cmp(held.text("eventId").unwrap_or("")))
+                .is_gt();
+            if !newer {
+                return Ok(());
+            }
+        }
+        self.sql.exec(
+            "INSERT OR REPLACE INTO textRevisions (textId, content, at, device, eventId)
+             VALUES (?, ?, ?, ?, ?)",
+            &[
+                Param::text(&p.text_id),
+                Param::text(&p.content),
+                Param::number(event.at),
+                Param::text(&event.device),
+                Param::text(&event.id),
             ],
         )
     }
@@ -539,6 +583,10 @@ impl<'a> Materializer<'a> {
         let id = Param::text(&p.text_id);
         self.sql.exec(
             "INSERT OR IGNORE INTO textTombstones (textId) VALUES (?)",
+            std::slice::from_ref(&id),
+        )?;
+        self.sql.exec(
+            "DELETE FROM textRevisions WHERE textId = ?",
             std::slice::from_ref(&id),
         )?;
         self.sql
@@ -688,6 +736,7 @@ impl<'a> Materializer<'a> {
             Payload::ConversationDeleted(p) => self.conversation_deleted(p),
             Payload::ResultOverturned(p) => self.result_overturned(p),
             Payload::Studied(p) => self.studied(&event.id, event.at, p),
+            Payload::TextRevised(p) => self.text_revised(event, p),
         }
     }
 

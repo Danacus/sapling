@@ -1,0 +1,255 @@
+{
+	"getAllItems": {
+		"lean": [
+			{
+				"id": "item-cat",
+				"kind": "vocab",
+				"term": "猫",
+				"meaning": "cat",
+				"introducedAt": 1710061200000,
+				"fsrsCard": {
+					"due": 1710061200000,
+					"stability": 0,
+					"difficulty": 0,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 0,
+					"reps": 0,
+					"lapses": 0,
+					"state": 0,
+					"last_review": null
+				},
+				"srs": {
+					"due": 1710061200000,
+					"retrievability": 0,
+					"strength": 0,
+					"stability": 0
+				},
+				"reviewCount": 0,
+				"correctCount": 0,
+				"history": []
+			}
+		],
+		"withRecentGrades": [
+			{
+				"id": "item-cat",
+				"kind": "vocab",
+				"term": "猫",
+				"meaning": "cat",
+				"introducedAt": 1710061200000,
+				"fsrsCard": {
+					"due": 1710061200000,
+					"stability": 0,
+					"difficulty": 0,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 0,
+					"reps": 0,
+					"lapses": 0,
+					"state": 0,
+					"last_review": null
+				},
+				"srs": {
+					"due": 1710061200000,
+					"retrievability": 0,
+					"strength": 0,
+					"stability": 0
+				},
+				"reviewCount": 0,
+				"correctCount": 0,
+				"recentGrades": [],
+				"history": []
+			}
+		]
+	},
+	"getItem": {
+		"item-cat": {
+			"id": "item-cat",
+			"kind": "vocab",
+			"term": "猫",
+			"meaning": "cat",
+			"introducedAt": 1710061200000,
+			"fsrsCard": {
+				"due": 1710061200000,
+				"stability": 0,
+				"difficulty": 0,
+				"elapsed_days": 0,
+				"scheduled_days": 0,
+				"learning_steps": 0,
+				"reps": 0,
+				"lapses": 0,
+				"state": 0,
+				"last_review": null
+			},
+			"srs": {
+				"due": 1710061200000,
+				"retrievability": 0,
+				"strength": 0,
+				"stability": 0
+			},
+			"reviewCount": 0,
+			"correctCount": 0,
+			"recentGrades": [],
+			"history": []
+		}
+	},
+	"getPool": [],
+	"poolSize": 0,
+	"getChallengesByIds": [],
+	"recentResults": [],
+	"getRatings": [],
+	"getDailyActivity": [
+		{
+			"day": "2024-03-10",
+			"count": 0,
+			"correct": 0,
+			"almost": 0,
+			"wrong": 0,
+			"reviewed": 0,
+			"lookups": 0,
+			"added": 1
+		}
+	],
+	"studySessions": [],
+	"getTexts": [
+		{
+			"id": "text-held",
+			"title": "来",
+			"source": "imported",
+			"segments": [
+				{
+					"text": "猫来了。",
+					"start": 0,
+					"end": 1000
+				}
+			],
+			"media": {
+				"kind": "youtube",
+				"videoId": "vid-held"
+			},
+			"createdAt": 1710061260000
+		}
+	],
+	"getText": {
+		"text-held": {
+			"id": "text-held",
+			"title": "来",
+			"source": "imported",
+			"segments": [
+				{
+					"text": "猫来了。",
+					"start": 0,
+					"end": 1000
+				}
+			],
+			"media": {
+				"kind": "youtube",
+				"videoId": "vid-held"
+			},
+			"createdAt": 1710061260000
+		},
+		"text-revised": null,
+		"text-waiting": null
+	},
+	"missingObjects": [
+		"sha256:040477e6c6225b7dca13d8aafde32b20b90f7b075d6a385efec96184a7b755ee",
+		"sha256:f15f1f90b4d8c316315e6a8c679b158326ff2090473811e7233c4101822f1318"
+	],
+	"clipsFor": {
+		"猫": [
+			{
+				"textId": "text-held",
+				"title": "来",
+				"videoId": "vid-held",
+				"start": 0,
+				"end": 1000,
+				"text": "猫来了。"
+			}
+		]
+	},
+	"getKnownTerms": [],
+	"getConversations": [],
+	"getConversation": {},
+	"exportData": {
+		"version": 3,
+		"exportedAt": 1710244800000,
+		"events": [
+			{
+				"id": "ev-add-item-cat",
+				"type": "itemAdded",
+				"at": 1710061200000,
+				"device": "dev-a",
+				"payload": {
+					"id": "item-cat",
+					"kind": "vocab",
+					"term": "猫",
+					"meaning": "cat",
+					"introducedAt": 1710061200000
+				}
+			},
+			{
+				"id": "ev-text-held",
+				"type": "textAdded",
+				"at": 1710061260000,
+				"device": "dev-a",
+				"payload": {
+					"id": "text-held",
+					"title": "来",
+					"source": "imported",
+					"content": "sha256:56842b648ecd39128b37174f531683d5d5d80b0280fd7cccfb3db67acf8ab738",
+					"media": {
+						"kind": "youtube",
+						"videoId": "vid-held"
+					},
+					"createdAt": 1710061260000
+				}
+			},
+			{
+				"id": "ev-text-waiting",
+				"type": "textAdded",
+				"at": 1710061320000,
+				"device": "dev-a",
+				"payload": {
+					"id": "text-waiting",
+					"title": "走",
+					"source": "imported",
+					"content": "sha256:040477e6c6225b7dca13d8aafde32b20b90f7b075d6a385efec96184a7b755ee",
+					"media": {
+						"kind": "youtube",
+						"videoId": "vid-waiting"
+					},
+					"createdAt": 1710061320000
+				}
+			},
+			{
+				"id": "ev-text-revised",
+				"type": "textAdded",
+				"at": 1710061380000,
+				"device": "dev-a",
+				"payload": {
+					"id": "text-revised",
+					"title": "改",
+					"source": "generated",
+					"segments": [
+						{
+							"text": "原来的猫。"
+						}
+					],
+					"createdAt": 1710061380000
+				}
+			},
+			{
+				"id": "ev-rev-revised",
+				"type": "textRevised",
+				"at": 1710061440000,
+				"device": "dev-a",
+				"payload": {
+					"textId": "text-revised",
+					"content": "sha256:f15f1f90b4d8c316315e6a8c679b158326ff2090473811e7233c4101822f1318"
+				}
+			}
+		]
+	},
+	"pendingEvents": [],
+	"getPullCursor": 0
+}

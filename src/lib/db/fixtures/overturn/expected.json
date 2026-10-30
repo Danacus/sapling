@@ -456,6 +456,7 @@
 	],
 	"getTexts": [],
 	"getText": {},
+	"missingObjects": [],
 	"clipsFor": {
 		"beber": [],
 		"leer": []

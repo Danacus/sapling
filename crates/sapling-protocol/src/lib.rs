@@ -47,6 +47,7 @@ use sapling_challenges::ratings::StoredRating;
 use sapling_db::core::LanguageProfile;
 use sapling_db::{AnswerFiled, AnswerRecord, Clip, Core, Error, Result, ReviewOutcome};
 use sapling_domain::events::{parse_payload, EventType, Payload, RawEvent, ResultOverturned};
+use sapling_domain::objects::ContentObject;
 use sapling_domain::types::{
     ChallengeResult, Conversation, ConversationDetail, ConversationExchange, ConversationSummary,
     DailyActivity, GradeEntry, KnowledgeItem, Profile, ReadingText, StudySession,
@@ -427,17 +428,20 @@ backend! {
 
         /* ---- Reading texts, word marks and lookups ---------------------- */
 
-        /// Stores one reading text, whole. Immutable once written; a deleted id
-        /// never comes back.
+        /// Stores one reading text, whole: its body as a content object and a
+        /// `textAdded` naming it, in one transaction. Title, source and media
+        /// are fixed once written; a deleted id never comes back. Refuses a
+        /// body over 1 MiB.
         addText(text: ReadingText) {
             core.add_text(&text)
         }
-        /// Every stored text, newest first.
+        /// Every stored text whose body this device holds, newest first; a
+        /// text whose content object has not arrived yet is left out.
         getTexts() -> Vec<ReadingText> {
             core.get_texts()
         }
         /// One text by id, or `undefined` when it was deleted (here or on another
-        /// device).
+        /// device) or its body has not arrived yet.
         getText(id: String) -> ReadingText | undefined {
             core.get_text(&id)
         }
@@ -549,6 +553,25 @@ backend! {
         /// v1/v2 file predates the log and replaces the item list wholesale.
         importData(json: String) {
             core.import_data(&json)
+        }
+
+        /* ---- Content objects -------------------------------------------- */
+
+        /// Stores objects that arrived from outside (a sync fetch), each
+        /// verified against its hash and refused on a mismatch. Not events:
+        /// a text naming one is simply readable from now on. Answers how many
+        /// were accepted.
+        putObjects(objects: Vec<ContentObject>) -> usize {
+            core.put_objects(&objects)
+        }
+        /// The objects among `hashes` this device holds — what a push uploads.
+        getObjects(hashes: Vec<String>) -> Vec<ContentObject> {
+            core.get_objects(&hashes)
+        }
+        /// Every object hash a text's current body names that this device
+        /// lacks — what a sync cycle fetches after pulling.
+        missingObjects() -> Vec<String> {
+            core.missing_objects()
         }
 
         /* ---- Sync ------------------------------------------------------- */

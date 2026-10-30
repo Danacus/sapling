@@ -5,6 +5,14 @@ would arrive off sync (`seq` included), plus a `meta` block. `expected.json` is
 the blessed output: what every read method on the `Backend` returns after the
 log is applied. `golden.test.ts` discovers every directory here.
 
+`objects.json`, when present, is the content objects the device holds — a map
+from `sha256:<hex>` to the bytes, as a string. Both runners store them with
+`putObjects` *after* applying the log (as a sync fetch would, so a text that
+names one must become readable without a rebuild), and again into the fresh
+backend of the export/import check, since a v3 export carries no objects. An
+object that does not verify is a fixture bug. A fixture without the file holds
+none.
+
 The files are language-neutral on purpose. Another implementation of `core.ts`
 must reproduce every `expected.json` from its `events.json` before it may
 replace this one.
@@ -30,8 +38,10 @@ Reads are always taken under `TZ=UTC` (`getDailyActivity` buckets by local day,
   `getItem` — carry `srs`, the schedule the core derives from the card at read
   time, taken against `meta.now`.
 - `getItem`, `getText`, `getConversation` are called once per id the log
-  mentions for that kind (added, reviewed, updated, deleted, looked up, turned),
-  and recorded as a map from id to result; a missing row is `null`.
+  mentions for that kind (added, reviewed, updated, deleted, revised, looked
+  up, turned), and recorded as a map from id to result; a missing row is
+  `null`.
+- `missingObjects` is recorded as returned (hash order).
 - `clipsFor` is called once per term an `itemAdded` names, with that term
   alone and no sentence, and recorded as a map from term to result; no clip
   is `[]`.
@@ -53,7 +63,19 @@ Reads are always taken under `TZ=UTC` (`getDailyActivity` buckets by local day,
   covers) and `studied` (which `study-sessions` covers), one device. Six pool challenge types plus one of an unknown type
   that must stay in the log and out of the pool; a re-graded review; a
   reported challenge; results either side of midnight UTC; texts with YouTube
-  and file media; a word marked then unmarked; a deleted conversation.
+  and file media; a word marked then unmarked; a deleted conversation. Its
+  texts are all inline; the content-object shapes are the next three.
+- `content-objects-mixed` — one log, three bodies: inline `segments`, the
+  legacy `sentences` shape, and `content` naming an object in `objects.json`.
+  All three read alike, and `clipsFor` finds a word only inside the object.
+- `text-revisions` — `textRevised` last-write-wins by `(at, device, event
+  id)` in both arrival orders: two devices revising in one millisecond (the
+  later device wins), an older revision arriving last and losing, an inline
+  text revised to an object, a revision and a delete racing (deleted stays
+  deleted), and a revision of a text never added (inert).
+- `object-absent` — only one of three objects is held: a text naming an
+  absent object, and an inline text whose current revision is absent, are
+  returned by no read (`clipsFor` included), and `missingObjects` lists both.
 - `overturn` — two answers an escalation overturned, as the practice screen
   writes it: the wrong word's `Again` superseded by a `Good` at the answer's
   own instant (a `reviewAmended` with the replaced review's identity, so either

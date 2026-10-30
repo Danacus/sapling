@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use sapling_db::Core;
 use sapling_domain::events::RawEvent;
+use sapling_domain::objects::ContentObject;
 use sapling_sync::{StoreError, StoreResult, SyncStore};
 
 use crate::CoreHandle;
@@ -53,5 +54,20 @@ impl SyncStore for CoreHandle {
 
     fn follow_room(&self, room: String) -> impl Future<Output = StoreResult<bool>> {
         self.sync_call(move |core| core.follow_sync_room(&room))
+    }
+
+    fn objects(
+        &self,
+        hashes: Vec<String>,
+    ) -> impl Future<Output = StoreResult<Vec<ContentObject>>> {
+        self.sync_call(move |core| core.get_objects(&hashes))
+    }
+
+    fn put_objects(&self, objects: Vec<ContentObject>) -> impl Future<Output = StoreResult<usize>> {
+        self.sync_call(move |core| core.put_objects(&objects))
+    }
+
+    fn missing_objects(&self) -> impl Future<Output = StoreResult<Vec<String>>> {
+        self.sync_call(Core::missing_objects)
     }
 }
