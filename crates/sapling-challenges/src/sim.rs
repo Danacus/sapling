@@ -27,6 +27,8 @@ use crate::model::{
 use crate::rng::Rng;
 use crate::Challenge;
 
+pub mod closed_loop;
+
 const DAY: f64 = 86_400_000.0;
 const REST: f64 = 3.0 * DAY;
 const START: f64 = 1_700_000_000_000.0;
@@ -91,7 +93,7 @@ impl Simulation {
     }
 }
 
-fn gaussian(rng: &mut Rng) -> f64 {
+pub(crate) fn gaussian(rng: &mut Rng) -> f64 {
     let u = rng.next_f64().max(1e-12);
     let v = rng.next_f64();
     (-2.0 * u.ln()).sqrt() * (2.0 * std::f64::consts::PI * v).cos()

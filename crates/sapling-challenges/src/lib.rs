@@ -12,6 +12,12 @@
 //! kinds a challenge is written as are `kinds.rs`; the numbers are data
 //! (`data/*.json`).
 //!
+//! Beside them, a research prototype that nothing in the app calls: a
+//! Bayesian difficulty model (`model_v2.rs`), a Thompson-sampling policy over
+//! it (`policy_v2.rs`), its calibration report (`calibrate_v2.rs`) and a
+//! closed-loop simulation to compare policies in (`sim/closed_loop.rs`), all
+//! run from the `calibrate` binary.
+//!
 //! No database and no model call: a host hands in the pool and the words and
 //! gets decisions back. Presentation — what to print, speak or render — stays
 //! with the host.
@@ -19,6 +25,7 @@
 #![forbid(unsafe_code)]
 
 pub mod calibrate;
+pub mod calibrate_v2;
 pub mod fits;
 pub mod generation;
 pub mod grade;
@@ -31,6 +38,8 @@ pub mod local;
 pub mod match_pairs;
 pub mod matcher;
 pub mod model;
+pub mod model_v2;
+pub mod policy_v2;
 pub mod pool;
 pub mod replay;
 pub mod rng;
