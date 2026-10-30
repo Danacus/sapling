@@ -23,7 +23,7 @@ use ts_rs::TS;
 use crate::fits::{best_fit, Fit, Serving};
 use crate::kinds::kind_of;
 use crate::match_pairs::make_match_pairs;
-use crate::pool::{is_playable, is_rested, known_ids, PoolRow};
+use crate::pool::{is_playable, is_rested, is_spent, known_ids, PoolRow};
 use crate::rng::Rng;
 use crate::types::MatchPairsChallenge;
 use crate::word::{by_id, ById, Word};
@@ -81,11 +81,12 @@ struct Context<'a> {
 }
 
 /// The one predicate: a row may be served to a word now when it is playable,
-/// of an active kind, not yet served this stream, rested — or merely resting,
-/// when the word is due — and fits. Answers the fit.
+/// of an active kind, not spent, not yet served this stream, rested — or merely
+/// resting, when the word is due — and fits. Answers the fit.
 fn available(row: &PoolRow, due: bool, cx: &Context) -> Option<Fit> {
     let ok = is_playable(row, &cx.known)
         && kind_of(&row.challenge).is_some_and(|k| k.is_active())
+        && !is_spent(row)
         && !cx.served.contains(row.challenge.id())
         && (due || is_rested(row, cx.now));
     ok.then(|| best_fit(row, &cx.words, cx.serving)).flatten()
@@ -444,8 +445,11 @@ pub(crate) mod tests {
         let words = [fresh("kept", -DAY)];
         let mut flagged = row("flagged", &["kept"]);
         flagged.reported = true;
+        let mut spent = served(row("spent", &["kept"]), NOW - 10.0 * DAY);
+        spent.times_served = crate::pool::MAX_SERVES;
         let pool = [
             flagged,
+            spent,
             row("orphan", &["kept", "deleted"]),
             pooled("legacy", WireType::TranslateToTarget, &["kept"], None),
             row("fine", &["kept"]),

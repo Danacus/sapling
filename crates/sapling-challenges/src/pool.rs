@@ -15,6 +15,9 @@ use crate::Challenge;
 /// that the sentence is re-read rather than recognized.
 pub const RESERVE_GAP: f64 = 3.0 * 24.0 * 60.0 * 60.0 * 1000.0;
 
+/// How many answers a row is served for: after that its words want a new one.
+pub const MAX_SERVES: f64 = 3.0;
+
 /// A stored challenge with the pool's bookkeeping.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -66,6 +69,11 @@ pub fn is_playable(row: &PoolRow, known: &HashSet<&str>) -> bool {
 pub fn is_rested(row: &PoolRow, now: f64) -> bool {
     row.last_served_at
         .is_none_or(|served| now - served >= RESERVE_GAP)
+}
+
+/// Answered [`MAX_SERVES`] times: kept, never served again.
+pub fn is_spent(row: &PoolRow) -> bool {
+    row.times_served >= MAX_SERVES
 }
 
 #[cfg(test)]

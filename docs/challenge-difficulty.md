@@ -165,7 +165,8 @@ serving wait for a word while a batch can still be written for it.
 Both read **one list** — the next words in urgency order, each with the
 challenge it would be served — through **one predicate**: a challenge is
 available to a word when it is playable (not reported, every word still
-exists), of a type still written, not yet shown in this stream, rested
+exists), of a type still written, answered fewer than `MAX_SERVES` (3) times,
+not yet shown in this stream, rested
 (`RESERVE_GAP`) or merely resting when the word is due, and it fits. Serving
 takes the head of the list; refill writes for the words in it with nothing.
 So a challenge refill counts as covering a word is exactly one serving would
@@ -277,7 +278,7 @@ under `cargo`, and is tested on a fixture log.
 | `lessons/*.json` `params` per rung | One allowed length range per type; the length is chosen per request (§6) |
 | `fit`, `first_free` | `fits` (§5) |
 | `smooth_demand` | Gone. If jumps still feel bad, a pacing rule on predicted chance |
-| `WANT_PER_WORD`, `MAX_TOPUP_WANTS`, `RESERVE_GAP` | Stay (not difficulty) |
+| `WANT_PER_WORD`, `MAX_TOPUP_WANTS`, `RESERVE_GAP`, `MAX_SERVES` | Stay (not difficulty) |
 | `BATCH_TARGET`, `SESSION_LENGTH` | Stay until streaming, then gone |
 
 ## 10. Moving the existing pool
