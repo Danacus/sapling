@@ -127,6 +127,13 @@ against, since two normalisations that differ are two rooms.
 - `POST /push` `{ events }` → `{ seqs: { id: seq } }` — `INSERT OR IGNORE`;
   an id already stored returns its existing `seq`.
 - `GET /pull?after=<seq>&limit=<n≤1000>` → `{ events: [...with seq], latest }`.
+  Each event may also carry the content-object fields `owner`, `objects`,
+  `retire` (`docs/content-objects.md` §4); a malformed one fails the page with
+  `400`. They are recorded as sets (`edges`, `retired`), never on the event
+  row, and pull never returns them.
+- `POST /objects/missing` `{ hashes }` (≤ 500) → `{ missing }`;
+  `PUT /objects/<sha256:hex>` the bytes (≤ 1 MiB, hash verified) → `204`;
+  `GET /objects/<sha256:hex>` → the bytes or `404`. Nothing deletes.
 - `GET /` → health text.
 - Auth: `Authorization: Bearer <phrase>`. The Worker normalises the phrase and
   hashes it (SHA-256) to name the Durable Object room — it never stores a

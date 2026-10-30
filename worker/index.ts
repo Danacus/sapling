@@ -11,13 +11,28 @@
  * produce the phrase cannot address the room; `SYNC_ALLOWED_PHRASES` narrows a
  * personal deployment to a fixed set so a leaked URL is not free storage.
  *
+ * Beside the log a room holds **content objects** (`docs/content-objects.md`
+ * §5): immutable bytes named by their SHA-256, which events reference instead
+ * of carrying a text's body. The Worker verifies a hash on the way in and
+ * stores the bytes unread; the `owner`/`objects`/`retire` an event declares are
+ * recorded as two sets (edges, retirements) for a later GC, and nothing
+ * deletes yet.
+ *
  * Only handlers and Durable Object classes may be exported from here — workerd
  * rejects anything else — so the pure request parsing lives in `protocol.ts`.
  *
  * Deploy with `pnpm sync:deploy`, run it locally with `pnpm sync:dev`.
  */
 import { normalizePhrase } from './phrase';
-import { bearerPhrase, pullRange, pushedEvents } from './protocol';
+import {
+	bearerPhrase,
+	MAX_OBJECT_BYTES,
+	missingQuery,
+	objectHash,
+	objectPath,
+	pullRange,
+	pushedEvents
+} from './protocol';
 import { roomIdForPhrase } from './room';
 
 /**
@@ -28,7 +43,7 @@ import { roomIdForPhrase } from './room';
  */
 const CORS = {
 	'Access-Control-Allow-Origin': '*',
-	'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+	'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
 	'Access-Control-Allow-Headers': 'authorization, content-type',
 	'Access-Control-Max-Age': '86400'
 };
@@ -86,13 +101,90 @@ export class SyncRoom implements DurableObject {
 			   seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE, type TEXT,
 			   at INTEGER, device TEXT, payload TEXT)`
 		);
+		// Content objects and their ownership, as sets: an edge or a retirement
+		// pushed twice, or in any order, leaves the same rows. An edge does not
+		// require its object to be here — blobs and events arrive separately.
+		this.sql.exec(
+			`CREATE TABLE IF NOT EXISTS objects (
+			   hash TEXT PRIMARY KEY, bytes TEXT NOT NULL, size INTEGER NOT NULL)`
+		);
+		this.sql.exec(
+			`CREATE TABLE IF NOT EXISTS edges (
+			   owner TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY (owner, hash))`
+		);
+		this.sql.exec('CREATE TABLE IF NOT EXISTS retired (owner TEXT PRIMARY KEY)');
 	}
 
 	async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
 		if (request.method === 'POST' && url.pathname === '/push') return this.push(request);
 		if (request.method === 'GET' && url.pathname === '/pull') return this.pull(url);
+		if (request.method === 'POST' && url.pathname === '/objects/missing') {
+			return this.missing(request);
+		}
+		const object = objectPath(url.pathname);
+		if (object !== undefined && (request.method === 'PUT' || request.method === 'GET')) {
+			if (object.hash === undefined) return text('Bad request\n', 400);
+			return request.method === 'PUT'
+				? this.putObject(request, object.hash)
+				: this.getObject(object.hash);
+		}
 		return text('Not found\n', 404);
+	}
+
+	private async missing(request: Request): Promise<Response> {
+		let body: unknown;
+		try {
+			body = await request.json();
+		} catch {
+			return text('Bad request\n', 400);
+		}
+		const hashes = missingQuery(body);
+		if (hashes === undefined) return text('Bad request\n', 400);
+		// One by one for the same reason as push's read-back: 100 bound variables.
+		const missing: string[] = [];
+		for (const hash of new Set(hashes)) {
+			const row = this.sql.exec('SELECT 1 FROM objects WHERE hash = ?', hash).toArray()[0];
+			if (!row) missing.push(hash);
+		}
+		return json({ missing });
+	}
+
+	private async putObject(request: Request, hash: string): Promise<Response> {
+		// The declared length refuses an oversized body before reading it; the
+		// read length is what is actually trusted.
+		const declared = Number(request.headers.get('Content-Length') ?? 0);
+		if (declared > MAX_OBJECT_BYTES) return text('Payload too large\n', 413);
+		const bytes = new Uint8Array(await request.arrayBuffer());
+		if (bytes.byteLength > MAX_OBJECT_BYTES) return text('Payload too large\n', 413);
+		if ((await objectHash(bytes)) !== hash) return text('Bad request\n', 400);
+
+		// Stored as TEXT, so the bytes must be UTF-8. `ignoreBOM` keeps a leading
+		// BOM in the string, so the stored text re-encodes to exactly the bytes
+		// that were hashed.
+		let body: string;
+		try {
+			body = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+		} catch {
+			return text('Bad request\n', 400);
+		}
+		this.sql.exec(
+			'INSERT OR IGNORE INTO objects (hash, bytes, size) VALUES (?, ?, ?)',
+			hash,
+			body,
+			bytes.byteLength
+		);
+		return new Response(null, { status: 204, headers: CORS });
+	}
+
+	private getObject(hash: string): Response {
+		const row = this.sql
+			.exec<{ bytes: string }>('SELECT bytes FROM objects WHERE hash = ?', hash)
+			.toArray()[0];
+		if (!row) return text('Not found\n', 404);
+		return new Response(row.bytes, {
+			headers: { 'Content-Type': 'application/json', ...CORS }
+		});
 	}
 
 	private async push(request: Request): Promise<Response> {
@@ -115,6 +207,15 @@ export class SyncRoom implements DurableObject {
 				event.device,
 				JSON.stringify(event.payload ?? null)
 			);
+			// Recorded beside the row, never on it: pull returns the event as
+			// stored, and every client can derive these fields itself.
+			const { owner } = event;
+			for (const hash of owner === undefined ? [] : (event.objects ?? [])) {
+				this.sql.exec('INSERT OR IGNORE INTO edges (owner, hash) VALUES (?, ?)', owner, hash);
+			}
+			if (event.retire !== undefined) {
+				this.sql.exec('INSERT OR IGNORE INTO retired (owner) VALUES (?)', event.retire);
+			}
 		}
 
 		// Read back one by one: an id that was already here has a seq the pusher
@@ -167,7 +268,13 @@ export default {
 		if (request.method === 'GET' && url.pathname === '/') {
 			return text('Sapling sync backend.\n');
 		}
-		if (url.pathname !== '/push' && url.pathname !== '/pull') return text('Not found\n', 404);
+		if (
+			url.pathname !== '/push' &&
+			url.pathname !== '/pull' &&
+			!url.pathname.startsWith('/objects/')
+		) {
+			return text('Not found\n', 404);
+		}
 
 		// One answer for "no phrase", "malformed phrase" and "not allowed" alike:
 		// telling a caller which it got would let them use the endpoint to test
