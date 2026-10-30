@@ -5,11 +5,13 @@
 //! merge rules behind a real one are `sapling-store`'s `tests/sync.rs`.
 
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
 use std::future::{ready, Future};
 
 use serde_json::{json, Value};
 
 use sapling_domain::events::{parse_envelope, RawEvent};
+use sapling_domain::objects::{object_refs, ContentObject};
 
 use super::*;
 use crate::relay::MemoryRelay;
@@ -26,6 +28,8 @@ struct MemoryStore {
     room: RefCell<Option<String>>,
     /// A store call that fails, by name.
     broken: Option<&'static str>,
+    /// Content objects, by hash.
+    objects: RefCell<BTreeMap<String, String>>,
 }
 
 impl MemoryStore {
@@ -117,6 +121,46 @@ impl SyncStore for MemoryStore {
         ready(Ok(log
             .iter()
             .any(|(event, _)| event.kind == "profileUpdated")))
+    }
+
+    fn objects(
+        &self,
+        hashes: Vec<String>,
+    ) -> impl Future<Output = StoreResult<Vec<ContentObject>>> {
+        let held = self.objects.borrow();
+        ready(Ok(hashes
+            .into_iter()
+            .filter_map(|hash| {
+                let bytes = held.get(&hash)?.clone();
+                Some(ContentObject { hash, bytes })
+            })
+            .collect()))
+    }
+
+    fn put_objects(&self, objects: Vec<ContentObject>) -> impl Future<Output = StoreResult<usize>> {
+        let mut held = self.objects.borrow_mut();
+        let mut accepted = 0;
+        for object in objects.into_iter().filter(ContentObject::verifies) {
+            held.insert(object.hash, object.bytes);
+            accepted += 1;
+        }
+        ready(self.check("put_objects").map(|()| accepted))
+    }
+
+    /// Every object an event in the log names, minus the ones held — the
+    /// fake's stand-in for "a text's current body".
+    fn missing_objects(&self) -> impl Future<Output = StoreResult<Vec<String>>> {
+        let held = self.objects.borrow();
+        let mut missing: Vec<String> = self
+            .log
+            .borrow()
+            .iter()
+            .flat_map(|(event, _)| object_refs(event).objects)
+            .filter(|hash| !held.contains_key(hash))
+            .collect();
+        missing.sort();
+        missing.dedup();
+        ready(self.check("missing_objects").map(|()| missing))
     }
 
     fn follow_room(&self, room: String) -> impl Future<Output = StoreResult<bool>> {
@@ -267,6 +311,7 @@ fn a_push_sends_pending_events_with_the_bearer_phrase_and_stamps_the_answer() {
         Ok(match call.method {
             Method::Post => (200, json!({ "seqs": { "e1": 1, "e2": 2 } })),
             Method::Get => (200, json!({ "events": [], "latest": 2 })),
+            Method::Put => (404, json!({})),
         })
     });
 
@@ -371,6 +416,7 @@ fn a_page_that_cannot_advance_the_cursor_ends_the_cycle() {
         Ok(match call.method {
             Method::Post => (200, json!({ "seqs": {} })),
             Method::Get => (200, json!({ "events": [{ "garbage": true }], "latest": 9 })),
+            Method::Put => (404, json!({})),
         })
     });
 
@@ -628,4 +674,256 @@ fn pairing_with_a_phrase_that_is_not_one_asks_no_one() {
     let outcome = pair_with(&server, &MemoryStore::default(), "nope");
     assert_eq!(outcome.message.as_deref(), Some(BAD_PHRASE));
     assert!(server.calls.borrow().is_empty());
+}
+
+/* ---- content objects ----------------------------------------------------- */
+
+const BODY: &str = r#"{"segments":[{"text":"你好。"}]}"#;
+
+fn body_hash() -> String {
+    sapling_domain::objects::object_hash(BODY.as_bytes())
+}
+
+fn text_by_reference(id: &str, hash: &str) -> RawEvent {
+    RawEvent {
+        id: id.to_owned(),
+        kind: "textAdded".to_owned(),
+        at: 1.0,
+        device: "devA".to_owned(),
+        payload: json!({ "id": "t1", "title": "T", "source": "imported", "content": hash, "createdAt": 1 }),
+    }
+}
+
+/// A store that wrote one text by reference, its object beside it.
+fn store_with_text() -> MemoryStore {
+    let store = MemoryStore::default();
+    store
+        .log
+        .borrow_mut()
+        .push((text_by_reference("e1", &body_hash()), None));
+    store
+        .objects
+        .borrow_mut()
+        .insert(body_hash(), BODY.to_owned());
+    store
+}
+
+fn routes(recording: &Recording<'_>) -> Vec<String> {
+    recording
+        .calls
+        .borrow()
+        .iter()
+        .map(|(method, url)| {
+            let path = url.trim_start_matches(SERVER);
+            format!("{} {}", method.as_str(), path.split('?').next().unwrap())
+        })
+        .collect()
+}
+
+#[test]
+fn a_text_s_object_lands_before_the_page_that_names_it() {
+    let relay = MemoryRelay::default();
+    let recording = Recording::new(&relay);
+    let store = store_with_text();
+
+    let outcome = sync(&recording, &store);
+
+    assert!(outcome.ok, "{outcome:?}");
+    let hash = body_hash();
+    assert_eq!(
+        routes(&recording)[..3],
+        [
+            "POST /objects/missing".to_owned(),
+            format!("PUT /objects/{hash}"),
+            "POST /push".to_owned()
+        ]
+    );
+    assert_eq!(
+        relay.objects(PHRASE).get(&hash).map(String::as_str),
+        Some(BODY)
+    );
+    assert_eq!(
+        relay.edges(PHRASE),
+        [("text:singleton:t1".to_owned(), hash)]
+    );
+    // The fields ride the wire, not the row: a pull never returns them.
+    let row = &relay.log(PHRASE)[0];
+    assert!(row.get("owner").is_none() && row.get("objects").is_none());
+}
+
+#[test]
+fn the_envelope_fields_ride_the_push_body() {
+    let store = store_with_text();
+    let server = scripted(|call| {
+        Ok(match (call.method, call.url.as_str()) {
+            (Method::Post, url) if url.ends_with("/objects/missing") => {
+                (200, json!({ "missing": [] }))
+            }
+            (Method::Post, _) => (200, json!({ "seqs": { "e1": 1 } })),
+            _ => (200, json!({ "events": [], "latest": 1 })),
+        })
+    });
+
+    assert!(sync(&server, &store).ok);
+
+    let push = server
+        .calls(Method::Post)
+        .into_iter()
+        .find(|call| call.url.ends_with("/push"))
+        .expect("a push");
+    let event = &push.body.unwrap()["events"][0];
+    assert_eq!(event["owner"], "text:singleton:t1");
+    assert_eq!(event["objects"], json!([body_hash()]));
+    assert!(event.get("retire").is_none());
+    assert!(server.calls(Method::Put).is_empty(), "nothing was missing");
+}
+
+#[test]
+fn an_object_the_relay_already_holds_is_not_sent_again() {
+    let relay = MemoryRelay::default();
+    relay.hold(PHRASE, BODY);
+    let recording = Recording::new(&relay);
+
+    assert!(sync(&recording, &store_with_text()).ok);
+
+    assert!(!routes(&recording)
+        .iter()
+        .any(|route| route.starts_with("PUT")));
+}
+
+#[test]
+fn a_relay_without_object_endpoints_fails_the_cycle_and_the_page_stays_put() {
+    let relay = MemoryRelay::without_objects();
+    let store = store_with_text();
+
+    let outcome = sync(&relay, &store);
+
+    assert!(!outcome.ok);
+    assert_eq!(outcome.message.as_deref(), Some(NO_OBJECT_STORE));
+    assert_eq!(store.seqs(), [None]);
+    assert!(relay.log(PHRASE).is_empty());
+}
+
+#[test]
+fn a_page_that_names_no_object_pushes_to_an_old_relay_as_before() {
+    let relay = MemoryRelay::without_objects();
+    let store = MemoryStore::with_local(2);
+
+    let outcome = sync(&relay, &store);
+
+    assert!(outcome.ok, "{outcome:?}");
+    assert_eq!(outcome.pushed, 2);
+}
+
+#[test]
+fn a_deleted_text_retires_its_owner() {
+    let relay = MemoryRelay::default();
+    let store = MemoryStore::default();
+    let mut deleted = event("e1", "textDeleted");
+    deleted.payload = json!({ "textId": "t1" });
+    store.log.borrow_mut().push((deleted, None));
+
+    assert!(sync(&relay, &store).ok);
+
+    assert_eq!(relay.retired(PHRASE), ["text:singleton:t1"]);
+}
+
+#[test]
+fn an_object_the_store_never_had_does_not_hold_the_page_back() {
+    // An event this device pulled whose body never arrived, re-pushed after
+    // following another room: nobody here can supply the object.
+    let relay = MemoryRelay::default();
+    let store = MemoryStore::default();
+    store
+        .log
+        .borrow_mut()
+        .push((text_by_reference("e1", &body_hash()), None));
+
+    let outcome = sync(&relay, &store);
+
+    assert!(outcome.ok, "{outcome:?}");
+    assert_eq!(outcome.pushed, 1);
+    assert!(relay.objects(PHRASE).is_empty());
+}
+
+fn remote_text(seq: usize, hash: &str) -> Value {
+    let mut row = serde_json::to_value(text_by_reference(&format!("remote-{seq}"), hash)).unwrap();
+    row["seq"] = json!(seq);
+    row["device"] = json!("devB");
+    row
+}
+
+#[test]
+fn a_pulled_text_brings_its_object() {
+    let relay = MemoryRelay::default();
+    let hash = relay.hold(PHRASE, BODY);
+    seed(&relay, vec![remote_text(1, &hash)]);
+    let store = MemoryStore::default();
+
+    let outcome = sync(&relay, &store);
+
+    assert!(outcome.ok, "{outcome:?}");
+    assert_eq!(
+        store.objects.borrow().get(&hash).map(String::as_str),
+        Some(BODY)
+    );
+}
+
+#[test]
+fn an_object_not_on_the_relay_yet_is_asked_for_again_next_cycle() {
+    let relay = MemoryRelay::default();
+    let hash = body_hash();
+    seed(&relay, vec![remote_text(1, &hash)]);
+    let store = MemoryStore::default();
+
+    let first = sync(&relay, &store);
+    assert!(first.ok, "a 404 is a state, not a failure: {first:?}");
+    assert!(store.objects.borrow().is_empty());
+
+    relay.hold(PHRASE, BODY);
+    assert!(sync(&relay, &store).ok);
+    assert!(store.objects.borrow().contains_key(&hash));
+}
+
+#[test]
+fn a_fetched_object_that_is_not_its_name_is_refused() {
+    let store = MemoryStore::default();
+    let hash = body_hash();
+    let row = remote_text(1, &hash);
+    let server = scripted(move |call| {
+        Ok(if call.url.contains("/objects/") {
+            (200, json!({ "segments": [] }))
+        } else {
+            (200, json!({ "events": [row.clone()], "latest": 1 }))
+        })
+    });
+
+    let outcome = sync(&server, &store);
+
+    assert!(!outcome.ok);
+    assert!(outcome.message.unwrap().contains("does not match"));
+    assert!(store.objects.borrow().is_empty());
+    assert_eq!(store.cursor.get(), 1.0, "the events still landed");
+}
+
+#[test]
+fn an_unreachable_object_fails_the_cycle_after_the_events_landed() {
+    let store = MemoryStore::default();
+    let row = remote_text(1, &body_hash());
+    let server = scripted(move |call| {
+        if call.url.contains("/objects/") {
+            Err("offline".to_owned())
+        } else {
+            Ok((200, json!({ "events": [row.clone()], "latest": 1 })))
+        }
+    });
+
+    let outcome = sync(&server, &store);
+
+    assert!(!outcome.ok);
+    assert_eq!(outcome.pulled, 1);
+    assert_eq!(
+        outcome.message.as_deref(),
+        Some("Could not reach the sync server.")
+    );
 }

@@ -7,6 +7,7 @@
  */
 
 import { ready } from '$lib/db/backend';
+import type { ContentObject } from '$lib/db/generated/index';
 import { PHRASE_LENGTH, type Sync } from '$lib/db/generated/sync';
 import {
 	formatPhrase as formatInCore,
@@ -67,7 +68,11 @@ async function syncHost(): Promise<SyncHost> {
 		getPullCursor: () => backend.getPullCursor(),
 		setPullCursor: (cursor) => backend.setPullCursor(cursor),
 		hasProfile: async () => (await backend.getProfile()) !== undefined,
-		followSyncRoom: (room) => backend.followSyncRoom(room)
+		followSyncRoom: (room) => backend.followSyncRoom(room),
+		getObjects: async (json) =>
+			JSON.stringify(await backend.getObjects(JSON.parse(json) as string[])),
+		putObjects: (json) => backend.putObjects(JSON.parse(json) as ContentObject[]),
+		missingObjects: async () => JSON.stringify(await backend.missingObjects())
 	};
 }
 

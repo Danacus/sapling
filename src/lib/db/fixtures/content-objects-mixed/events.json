@@ -1,0 +1,88 @@
+{
+	"meta": {
+		"deviceId": "fixture-device",
+		"now": 1710244800000,
+		"orderFree": true,
+		"note": "One log, three bodies: inline segments, the legacy sentences shape, and a content object held in objects.json. All three read the same way, and clipsFor finds 猫 only inside the object, since the inline cue does not hold it."
+	},
+	"events": [
+		{
+			"seq": 1,
+			"id": "ev-add-item-cat",
+			"type": "itemAdded",
+			"at": 1710061200000,
+			"device": "dev-a",
+			"payload": {
+				"id": "item-cat",
+				"kind": "vocab",
+				"term": "猫",
+				"meaning": "cat",
+				"introducedAt": 1710061200000
+			}
+		},
+		{
+			"seq": 2,
+			"id": "ev-text-inline",
+			"type": "textAdded",
+			"at": 1710061260000,
+			"device": "dev-a",
+			"payload": {
+				"id": "text-inline",
+				"title": "狗",
+				"source": "imported",
+				"segments": [
+					{
+						"text": "狗在公园里跑。",
+						"start": 0,
+						"end": 2000
+					}
+				],
+				"media": {
+					"kind": "youtube",
+					"videoId": "vid-inline"
+				},
+				"createdAt": 1710061260000
+			}
+		},
+		{
+			"seq": 3,
+			"id": "ev-text-legacy",
+			"type": "textAdded",
+			"at": 1710061320000,
+			"device": "dev-a",
+			"payload": {
+				"id": "text-legacy",
+				"title": "旧",
+				"source": "generated",
+				"topic": "pets",
+				"sentences": [
+					{
+						"text": "这是一只猫。",
+						"reading": "zhè shì yī zhī māo",
+						"translation": "This is a cat."
+					}
+				],
+				"glossary": [],
+				"createdAt": 1710061320000
+			}
+		},
+		{
+			"seq": 4,
+			"id": "ev-text-ref",
+			"type": "textAdded",
+			"at": 1710061380000,
+			"device": "dev-a",
+			"payload": {
+				"id": "text-ref",
+				"title": "猫",
+				"source": "imported",
+				"content": "sha256:dd8372f602289f183c90e7476f73bd09d99c7e785511529ac0bdc4c8c47c5dae",
+				"media": {
+					"kind": "youtube",
+					"videoId": "vid-ref"
+				},
+				"createdAt": 1710061380000
+			}
+		}
+	]
+}

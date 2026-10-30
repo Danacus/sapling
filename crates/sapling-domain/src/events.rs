@@ -1,10 +1,16 @@
-//! The event model: nineteen immutable facts, and the only thing sync moves.
+//! The event model: twenty immutable facts, and the only thing sync moves.
 //!
 //! The envelope `id` is the set-union key — an id already in `events` is never
 //! materialised twice — so no payload carries an id of its own. `at` is when
 //! the learner did the thing, and doubles as the last-write-wins input for the
-//! two overwrites (`profileUpdated`, `wordMarked`) and the per-field fold of
-//! `itemUpdated`; every other rule is order-independent by construction.
+//! three overwrites (`profileUpdated`, `wordMarked`, `textRevised`) and the
+//! per-field fold of `itemUpdated`; every other rule is order-independent by
+//! construction.
+//!
+//! A text's body is content, not a fact: a new `textAdded` names it by hash
+//! (`content`, an object — `objects.rs`) rather than carrying it, and
+//! `textRevised` points the text at another one. The inline `segments` every
+//! older `textAdded` carries still read exactly as they always did.
 //! Payload shapes are what v3 export files on disk contain.
 //!
 //! These structs are the schemas, with serde standing in for zod, and the
@@ -31,9 +37,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
+use crate::objects::is_object_hash;
 use crate::types::{
-    absent_or, ChallengeResult, Conversation, ConversationExchange, ItemKind, Profile, ReadingText,
-    Verdict,
+    absent_or, ChallengeResult, Conversation, ConversationExchange, ItemKind, Profile,
+    ReadingMedia, ReadingText, Segment, TextSource, Verdict,
 };
 
 /// Every kind of fact the log holds.
@@ -59,10 +66,11 @@ pub enum EventType {
     ConversationDeleted,
     ResultOverturned,
     Studied,
+    TextRevised,
 }
 
 impl EventType {
-    pub const ALL: [EventType; 19] = [
+    pub const ALL: [EventType; 20] = [
         EventType::ItemAdded,
         EventType::ItemReviewed,
         EventType::ReviewAmended,
@@ -82,6 +90,7 @@ impl EventType {
         EventType::ConversationDeleted,
         EventType::ResultOverturned,
         EventType::Studied,
+        EventType::TextRevised,
     ];
 
     /// The wire name — the `type` column.
@@ -106,6 +115,7 @@ impl EventType {
             EventType::ConversationDeleted => "conversationDeleted",
             EventType::ResultOverturned => "resultOverturned",
             EventType::Studied => "studied",
+            EventType::TextRevised => "textRevised",
         }
     }
 
@@ -290,6 +300,98 @@ pub struct ChallengeReported {
     pub challenge_id: String,
 }
 
+/// A text arrives: its title, source and media, and its body — **exactly one**
+/// of `segments` (the body inline, as every `textAdded` written before
+/// content objects carries it) or `content` (the hash of a [`TextContent`]
+/// object, which every new text is written with).
+///
+/// Both are optional to serde so either shape parses; [`TextAdded::is_valid`]
+/// is what refuses both and neither, and [`parse_payload`] applies it, so a
+/// payload with both costs its rule like any other that will not parse. The
+/// legacy `sentences` alias reads as `segments`, exactly as it did on
+/// [`ReadingText`].
+///
+/// [`TextContent`]: crate::objects::TextContent
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(rename = "TextAddedPayload")]
+#[serde(rename_all = "camelCase")]
+pub struct TextAdded {
+    pub id: String,
+    pub title: String,
+    pub source: TextSource,
+    #[serde(
+        default,
+        deserialize_with = "absent_or",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional)]
+    pub topic: Option<String>,
+    /// The body inline: one segment per cue or per paragraph.
+    #[serde(
+        default,
+        alias = "sentences",
+        deserialize_with = "absent_or",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional)]
+    pub segments: Option<Vec<Segment>>,
+    /// The body as an object: `sha256:<64 lowercase hex>`.
+    #[serde(
+        default,
+        deserialize_with = "absent_or",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional)]
+    pub content: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "absent_or",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional)]
+    pub media: Option<ReadingMedia>,
+    pub created_at: f64,
+}
+
+impl TextAdded {
+    /// One body, inline or by a well-formed hash — never both, never neither.
+    pub fn is_valid(&self) -> bool {
+        match (&self.segments, &self.content) {
+            (Some(_), None) => true,
+            (None, Some(hash)) => is_object_hash(hash),
+            _ => false,
+        }
+    }
+
+    /// The payload of a text whose body is the object `content`.
+    pub fn by_reference(text: &ReadingText, content: String) -> TextAdded {
+        TextAdded {
+            id: text.id.clone(),
+            title: text.title.clone(),
+            source: text.source,
+            topic: text.topic.clone(),
+            segments: None,
+            content: Some(content),
+            media: text.media.clone(),
+            created_at: text.created_at,
+        }
+    }
+}
+
+/// A text's body replaced by another object. Last write by `(at, device,
+/// event id)` wins — the envelope `at`, then the device as `itemUpdated`
+/// breaks a tie, then the event id so two revisions in one millisecond on one
+/// device still agree everywhere. A revision of a text that was deleted, or
+/// that this device never saw added, is inert and stays in the log.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(rename = "TextRevisedPayload")]
+#[serde(rename_all = "camelCase")]
+pub struct TextRevised {
+    pub text_id: String,
+    /// The new body: `sha256:<64 lowercase hex>`.
+    pub content: String,
+}
+
 /// Tombstone. The text goes, and the id can never come back.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(rename = "TextDeletedPayload")]
@@ -383,7 +485,7 @@ pub enum Payload {
     ChallengeReported(ChallengeReported),
     ResultLogged(ChallengeResult),
     ProfileUpdated(Profile),
-    TextAdded(ReadingText),
+    TextAdded(TextAdded),
     TextDeleted(TextDeleted),
     WordMarked(WordMarked),
     WordLookedUp(WordLookedUp),
@@ -392,6 +494,7 @@ pub enum Payload {
     ConversationDeleted(ConversationDeleted),
     ResultOverturned(ResultOverturned),
     Studied(Studied),
+    TextRevised(TextRevised),
 }
 
 impl Payload {
@@ -416,6 +519,7 @@ impl Payload {
             Payload::ConversationDeleted(_) => EventType::ConversationDeleted,
             Payload::ResultOverturned(_) => EventType::ResultOverturned,
             Payload::Studied(_) => EventType::Studied,
+            Payload::TextRevised(_) => EventType::TextRevised,
         }
     }
 
@@ -441,7 +545,11 @@ pub fn parse_payload(kind: EventType, raw: &Value) -> Option<Payload> {
         EventType::ChallengeReported => typed(raw, Payload::ChallengeReported),
         EventType::ResultLogged => typed(raw, Payload::ResultLogged),
         EventType::ProfileUpdated => typed(raw, Payload::ProfileUpdated),
-        EventType::TextAdded => typed(raw, Payload::TextAdded),
+        // Both bodies, or neither, is a payload that will not parse.
+        EventType::TextAdded => serde_json::from_value::<TextAdded>(raw.clone())
+            .ok()
+            .filter(TextAdded::is_valid)
+            .map(Payload::TextAdded),
         EventType::TextDeleted => typed(raw, Payload::TextDeleted),
         EventType::WordMarked => typed(raw, Payload::WordMarked),
         EventType::WordLookedUp => typed(raw, Payload::WordLookedUp),
@@ -450,6 +558,10 @@ pub fn parse_payload(kind: EventType, raw: &Value) -> Option<Payload> {
         EventType::ConversationDeleted => typed(raw, Payload::ConversationDeleted),
         EventType::ResultOverturned => typed(raw, Payload::ResultOverturned),
         EventType::Studied => typed(raw, Payload::Studied),
+        EventType::TextRevised => serde_json::from_value::<TextRevised>(raw.clone())
+            .ok()
+            .filter(|p| is_object_hash(&p.content))
+            .map(Payload::TextRevised),
     }
 }
 
@@ -563,6 +675,76 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    const HASH: &str = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    fn text_added(payload: Value) -> Value {
+        json!({ "id": "e", "type": "textAdded", "at": 1, "device": "d", "payload": payload })
+    }
+
+    #[test]
+    fn a_text_carries_exactly_one_body() {
+        let base = json!({ "id": "t", "title": "T", "source": "imported", "createdAt": 1 });
+        let with = |fields: Value| {
+            let mut payload = base.clone();
+            for (key, value) in fields.as_object().unwrap() {
+                payload[key] = value.clone();
+            }
+            parse_event(&text_added(payload))
+        };
+        assert!(with(json!({ "segments": [{ "text": "s" }] })).is_some());
+        assert!(with(json!({ "content": HASH })).is_some());
+        assert!(
+            with(json!({ "segments": [], "content": HASH })).is_none(),
+            "both"
+        );
+        assert!(with(json!({})).is_none(), "neither");
+        assert!(
+            with(json!({ "content": "sha256:ABC" })).is_none(),
+            "a malformed hash"
+        );
+        assert!(
+            with(json!({ "content": HASH.to_uppercase() })).is_none(),
+            "one spelling per hash"
+        );
+    }
+
+    #[test]
+    fn a_legacy_text_still_reads_its_sentences_as_segments() {
+        let event = parse_event(&text_added(json!({
+            "id": "t", "title": "T", "source": "generated", "createdAt": 1,
+            "sentences": [{ "text": "你好。", "reading": "nǐ hǎo", "translation": "hi" }],
+            "glossary": []
+        })))
+        .expect("the old shape parses");
+        let Payload::TextAdded(text) = event.payload else {
+            panic!("a textAdded");
+        };
+        assert_eq!(text.segments.unwrap()[0].text, "你好。");
+        assert_eq!(text.content, None);
+    }
+
+    #[test]
+    fn a_revision_names_a_well_formed_object() {
+        let revised = |content: &str| {
+            parse_event(&json!({
+                "id": "e", "type": "textRevised", "at": 1, "device": "d",
+                "payload": { "textId": "t", "content": content }
+            }))
+        };
+        assert!(revised(HASH).is_some());
+        assert!(revised("sha256:nope").is_none());
+        // Scoped like every other type.
+        let scoped = json!({
+            "id": "e", "type": "profileEvent", "at": 1, "device": "d",
+            "payload": { "profileId": "p", "type": "textRevised", "payload": { "textId": "t", "content": HASH } }
+        });
+        let event = parse_event(&scoped).expect("a scoped revision parses");
+        assert_eq!(
+            (event.kind, event.profile_id.as_str()),
+            (EventType::TextRevised, "p")
+        );
+    }
+
     /// One raw payload per type with **every** optional field present: the
     /// `parseEvent(raw) == raw` test, which is what catches a struct that forgot
     /// a field. Add a field to a type, add it here, or this is the test that fails.
@@ -611,6 +793,21 @@ mod tests {
                     "media": { "kind": "file", "name": "a.mp4", "type": "video/mp4" },
                     "createdAt": 9
                 }),
+            ),
+            // The other body: by reference. `segments` and `content` are each
+            // optional but never together, so the two shapes are two rows.
+            (
+                EventType::TextAdded,
+                json!({
+                    "id": "t", "title": "T", "source": "generated", "topic": "x",
+                    "content": HASH,
+                    "media": { "kind": "youtube", "videoId": "v" },
+                    "createdAt": 9
+                }),
+            ),
+            (
+                EventType::TextRevised,
+                json!({ "textId": "t", "content": HASH }),
             ),
             (EventType::TextDeleted, json!({ "textId": "t" })),
             (EventType::WordMarked, json!({ "term": "w", "known": true })),

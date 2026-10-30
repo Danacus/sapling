@@ -24,12 +24,10 @@ use sapling_challenges::stream::MATCH_PAIRS_EVERY;
 use sapling_db::core::{ExportEnvelope, EXPORT_VERSION};
 use sapling_domain::events::{
     ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted, EventType, ItemAdded,
-    ItemDeleted, ItemReviewed, ItemUpdated, ResultOverturned, ReviewAmended, Studied, TextDeleted,
-    WordLookedUp, WordMarked,
+    ItemDeleted, ItemReviewed, ItemUpdated, ResultOverturned, ReviewAmended, Studied, TextAdded,
+    TextDeleted, TextRevised, WordLookedUp, WordMarked,
 };
-use sapling_domain::types::{
-    ChallengeResult, Conversation, ConversationExchange, Profile, ReadingText,
-};
+use sapling_domain::types::{ChallengeResult, Conversation, ConversationExchange, Profile};
 use sapling_llm::lesson::REQUEST_ITEMS;
 use sapling_llm::reading::{MAX_FOCUS_WORDS, MAX_TOPIC_CHARS};
 use sapling_llm::{Endpoint, LlmError, ProgressStep, TokenUsage, MAX_ABOUT_CHARS};
@@ -89,7 +87,7 @@ fn payloads(cfg: &Config) -> String {
             EventType::ChallengeReported => payload::<ChallengeReported>(cfg),
             EventType::ResultLogged => payload::<ChallengeResult>(cfg),
             EventType::ProfileUpdated => payload::<Profile>(cfg),
-            EventType::TextAdded => payload::<ReadingText>(cfg),
+            EventType::TextAdded => payload::<TextAdded>(cfg),
             EventType::TextDeleted => payload::<TextDeleted>(cfg),
             EventType::WordMarked => payload::<WordMarked>(cfg),
             EventType::WordLookedUp => payload::<WordLookedUp>(cfg),
@@ -98,6 +96,7 @@ fn payloads(cfg: &Config) -> String {
             EventType::ConversationDeleted => payload::<ConversationDeleted>(cfg),
             EventType::ResultOverturned => payload::<ResultOverturned>(cfg),
             EventType::Studied => payload::<Studied>(cfg),
+            EventType::TextRevised => payload::<TextRevised>(cfg),
         };
         let module = path.with_extension("");
         let _ = writeln!(

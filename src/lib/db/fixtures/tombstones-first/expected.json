@@ -163,6 +163,7 @@
 		},
 		"text-z": null
 	},
+	"missingObjects": [],
 	"clipsFor": {
 		"y": [],
 		"z": []

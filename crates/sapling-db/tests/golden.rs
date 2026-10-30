@@ -1,6 +1,8 @@
 //! The golden fixtures, run against the Rust core.
 //!
-//! `src/lib/db/fixtures/<name>/events.json` in, `expected.json` out — the same
+//! `src/lib/db/fixtures/<name>/events.json` in (and `objects.json`, the
+//! content objects the device holds, when the fixture has one), `expected.json`
+//! out — the same
 //! files `golden.test.ts` runs, probed the same way (see the README beside
 //! them), and the same four extra checks: idempotence, an export imported into
 //! a fresh core, the exported log equalling the input log, and reverse arrival
@@ -24,6 +26,7 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 use sapling_db::Core;
+use sapling_domain::objects::ContentObject;
 use sapling_domain::Utc;
 use sapling_store::rusqlite_sql::RusqliteSql;
 
@@ -49,6 +52,8 @@ struct Fixture {
     dir: PathBuf,
     meta: Meta,
     events: Vec<Value>,
+    /// `objects.json`: hash → bytes, stored after the log is applied.
+    objects: Vec<ContentObject>,
 }
 
 fn fixtures_dir() -> PathBuf {
@@ -67,11 +72,23 @@ fn load_fixtures() -> Vec<Fixture> {
             let file: FixtureFile =
                 serde_json::from_str(&fs::read_to_string(dir.join("events.json")).ok()?)
                     .expect("events.json parses");
+            let objects = match fs::read_to_string(dir.join("objects.json")) {
+                Ok(text) => serde_json::from_str::<Map<String, Value>>(&text)
+                    .expect("objects.json parses")
+                    .into_iter()
+                    .map(|(hash, bytes)| ContentObject {
+                        hash,
+                        bytes: bytes.as_str().expect("an object is a string").to_owned(),
+                    })
+                    .collect(),
+                Err(_) => Vec::new(),
+            };
             Some(Fixture {
                 name: entry.file_name().to_string_lossy().into_owned(),
                 dir,
                 meta: file.meta,
                 events: file.events,
+                objects,
             })
         })
         .collect();
@@ -96,9 +113,22 @@ fn fresh(fixture: &Fixture) -> Core {
     .expect("schema applies")
 }
 
+/// The fixture's objects, stored the way a sync fetch stores them — after the
+/// log, so a text that names one becomes readable with no rebuild.
+fn hold_objects(core: &Core, fixture: &Fixture) {
+    let accepted = core.put_objects(&fixture.objects).expect("put_objects");
+    assert_eq!(
+        accepted,
+        fixture.objects.len(),
+        "{}: an object in objects.json does not verify",
+        fixture.name
+    );
+}
+
 fn applied(fixture: &Fixture, events: &[Value]) -> (Core, usize) {
     let core = fresh(fixture);
     let count = core.apply_remote(events).expect("apply_remote");
+    hold_objects(&core, fixture);
     (core, count)
 }
 
@@ -158,10 +188,10 @@ fn ids_in(events: &[Value]) -> Ids {
                     "challengeId",
                 )),
         ),
-        texts: unique(
-            of(&["textAdded"], "id")
-                .chain(of(&["textDeleted", "wordLookedUp", "studied"], "textId")),
-        ),
+        texts: unique(of(&["textAdded"], "id").chain(of(
+            &["textDeleted", "textRevised", "wordLookedUp", "studied"],
+            "textId",
+        ))),
         conversations: unique(
             of(&["conversationStarted"], "id")
                 .chain(of(&["turnAdded", "conversationDeleted"], "conversationId")),
@@ -235,6 +265,7 @@ fn probe(core: &Core, events: &[Value]) -> Value {
         "studySessions": core.study_sessions(0.0).expect("study_sessions"),
         "getTexts": core.get_texts().expect("get_texts"),
         "getText": by_key(&ids.texts, |id| core.get_text(id).expect("get_text")),
+        "missingObjects": core.missing_objects().expect("missing_objects"),
         "clipsFor": by_key(&ids.terms, |term| Some(core.clips_for(&[term.to_owned()], None).expect("clips_for"))),
         "getKnownTerms": known,
         "getConversations": core.get_conversations().expect("get_conversations"),
@@ -393,6 +424,8 @@ fn reads_the_same_from_a_fresh_core_that_imported_the_export() {
         restored
             .import_data(&core.export_data().expect("export"))
             .expect("import");
+        // A v3 export carries no objects; the device holds them either way.
+        hold_objects(&restored, &fixture);
         assert_same(
             &data_only(probe(&restored, &fixture.events)),
             &data_only(probe(&core, &fixture.events)),

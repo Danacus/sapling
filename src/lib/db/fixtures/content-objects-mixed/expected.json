@@ -1,0 +1,326 @@
+{
+	"getAllItems": {
+		"lean": [
+			{
+				"id": "item-cat",
+				"kind": "vocab",
+				"term": "猫",
+				"meaning": "cat",
+				"introducedAt": 1710061200000,
+				"fsrsCard": {
+					"due": 1710061200000,
+					"stability": 0,
+					"difficulty": 0,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 0,
+					"reps": 0,
+					"lapses": 0,
+					"state": 0,
+					"last_review": null
+				},
+				"srs": {
+					"due": 1710061200000,
+					"retrievability": 0,
+					"strength": 0,
+					"stability": 0
+				},
+				"reviewCount": 0,
+				"correctCount": 0,
+				"history": []
+			}
+		],
+		"withRecentGrades": [
+			{
+				"id": "item-cat",
+				"kind": "vocab",
+				"term": "猫",
+				"meaning": "cat",
+				"introducedAt": 1710061200000,
+				"fsrsCard": {
+					"due": 1710061200000,
+					"stability": 0,
+					"difficulty": 0,
+					"elapsed_days": 0,
+					"scheduled_days": 0,
+					"learning_steps": 0,
+					"reps": 0,
+					"lapses": 0,
+					"state": 0,
+					"last_review": null
+				},
+				"srs": {
+					"due": 1710061200000,
+					"retrievability": 0,
+					"strength": 0,
+					"stability": 0
+				},
+				"reviewCount": 0,
+				"correctCount": 0,
+				"recentGrades": [],
+				"history": []
+			}
+		]
+	},
+	"getItem": {
+		"item-cat": {
+			"id": "item-cat",
+			"kind": "vocab",
+			"term": "猫",
+			"meaning": "cat",
+			"introducedAt": 1710061200000,
+			"fsrsCard": {
+				"due": 1710061200000,
+				"stability": 0,
+				"difficulty": 0,
+				"elapsed_days": 0,
+				"scheduled_days": 0,
+				"learning_steps": 0,
+				"reps": 0,
+				"lapses": 0,
+				"state": 0,
+				"last_review": null
+			},
+			"srs": {
+				"due": 1710061200000,
+				"retrievability": 0,
+				"strength": 0,
+				"stability": 0
+			},
+			"reviewCount": 0,
+			"correctCount": 0,
+			"recentGrades": [],
+			"history": []
+		}
+	},
+	"getPool": [],
+	"poolSize": 0,
+	"getChallengesByIds": [],
+	"recentResults": [],
+	"getRatings": [],
+	"getDailyActivity": [
+		{
+			"day": "2024-03-10",
+			"count": 0,
+			"correct": 0,
+			"almost": 0,
+			"wrong": 0,
+			"reviewed": 0,
+			"lookups": 0,
+			"added": 1
+		}
+	],
+	"studySessions": [],
+	"getTexts": [
+		{
+			"id": "text-ref",
+			"title": "猫",
+			"source": "imported",
+			"segments": [
+				{
+					"text": "猫在睡觉。",
+					"start": 0,
+					"end": 1500
+				},
+				{
+					"text": "我喜欢猫。",
+					"start": 1500,
+					"end": 3000
+				}
+			],
+			"media": {
+				"kind": "youtube",
+				"videoId": "vid-ref"
+			},
+			"createdAt": 1710061380000
+		},
+		{
+			"id": "text-legacy",
+			"title": "旧",
+			"source": "generated",
+			"topic": "pets",
+			"segments": [
+				{
+					"text": "这是一只猫。"
+				}
+			],
+			"createdAt": 1710061320000
+		},
+		{
+			"id": "text-inline",
+			"title": "狗",
+			"source": "imported",
+			"segments": [
+				{
+					"text": "狗在公园里跑。",
+					"start": 0,
+					"end": 2000
+				}
+			],
+			"media": {
+				"kind": "youtube",
+				"videoId": "vid-inline"
+			},
+			"createdAt": 1710061260000
+		}
+	],
+	"getText": {
+		"text-inline": {
+			"id": "text-inline",
+			"title": "狗",
+			"source": "imported",
+			"segments": [
+				{
+					"text": "狗在公园里跑。",
+					"start": 0,
+					"end": 2000
+				}
+			],
+			"media": {
+				"kind": "youtube",
+				"videoId": "vid-inline"
+			},
+			"createdAt": 1710061260000
+		},
+		"text-legacy": {
+			"id": "text-legacy",
+			"title": "旧",
+			"source": "generated",
+			"topic": "pets",
+			"segments": [
+				{
+					"text": "这是一只猫。"
+				}
+			],
+			"createdAt": 1710061320000
+		},
+		"text-ref": {
+			"id": "text-ref",
+			"title": "猫",
+			"source": "imported",
+			"segments": [
+				{
+					"text": "猫在睡觉。",
+					"start": 0,
+					"end": 1500
+				},
+				{
+					"text": "我喜欢猫。",
+					"start": 1500,
+					"end": 3000
+				}
+			],
+			"media": {
+				"kind": "youtube",
+				"videoId": "vid-ref"
+			},
+			"createdAt": 1710061380000
+		}
+	},
+	"missingObjects": [],
+	"clipsFor": {
+		"猫": [
+			{
+				"textId": "text-ref",
+				"title": "猫",
+				"videoId": "vid-ref",
+				"start": 0,
+				"end": 1500,
+				"text": "猫在睡觉。"
+			},
+			{
+				"textId": "text-ref",
+				"title": "猫",
+				"videoId": "vid-ref",
+				"start": 1500,
+				"end": 3000,
+				"text": "我喜欢猫。"
+			}
+		]
+	},
+	"getKnownTerms": [],
+	"getConversations": [],
+	"getConversation": {},
+	"exportData": {
+		"version": 3,
+		"exportedAt": 1710244800000,
+		"events": [
+			{
+				"id": "ev-add-item-cat",
+				"type": "itemAdded",
+				"at": 1710061200000,
+				"device": "dev-a",
+				"payload": {
+					"id": "item-cat",
+					"kind": "vocab",
+					"term": "猫",
+					"meaning": "cat",
+					"introducedAt": 1710061200000
+				}
+			},
+			{
+				"id": "ev-text-inline",
+				"type": "textAdded",
+				"at": 1710061260000,
+				"device": "dev-a",
+				"payload": {
+					"id": "text-inline",
+					"title": "狗",
+					"source": "imported",
+					"segments": [
+						{
+							"text": "狗在公园里跑。",
+							"start": 0,
+							"end": 2000
+						}
+					],
+					"media": {
+						"kind": "youtube",
+						"videoId": "vid-inline"
+					},
+					"createdAt": 1710061260000
+				}
+			},
+			{
+				"id": "ev-text-legacy",
+				"type": "textAdded",
+				"at": 1710061320000,
+				"device": "dev-a",
+				"payload": {
+					"id": "text-legacy",
+					"title": "旧",
+					"source": "generated",
+					"topic": "pets",
+					"sentences": [
+						{
+							"text": "这是一只猫。",
+							"reading": "zhè shì yī zhī māo",
+							"translation": "This is a cat."
+						}
+					],
+					"glossary": [],
+					"createdAt": 1710061320000
+				}
+			},
+			{
+				"id": "ev-text-ref",
+				"type": "textAdded",
+				"at": 1710061380000,
+				"device": "dev-a",
+				"payload": {
+					"id": "text-ref",
+					"title": "猫",
+					"source": "imported",
+					"content": "sha256:dd8372f602289f183c90e7476f73bd09d99c7e785511529ac0bdc4c8c47c5dae",
+					"media": {
+						"kind": "youtube",
+						"videoId": "vid-ref"
+					},
+					"createdAt": 1710061380000
+				}
+			}
+		]
+	},
+	"pendingEvents": [],
+	"getPullCursor": 0
+}

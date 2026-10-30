@@ -3,8 +3,9 @@
  * method out.
  *
  * Each directory under `fixtures/` is one scenario — `events.json` as the rows
- * would arrive off sync, `expected.json` what {@link probe} reads back after
- * applying them. The test replays the log through `applyRemote`, the same gate
+ * would arrive off sync, `objects.json` (when present) the content objects the
+ * device holds, stored after the log as a sync fetch would, and
+ * `expected.json` what {@link probe} reads back after applying them. The test replays the log through `applyRemote`, the same gate
  * a pulled page passes, and diffs the reads against the file — exactly, but
  * for the FSRS model's floats, which match within a tolerance. `expected.json`
  * is data, not code: the Rust core reproduces it natively in `tests/golden.rs`,
@@ -29,6 +30,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { makeTestBackend, type TestBackend } from './backend.testing';
+import type { ContentObject } from './generated/index';
 import type { Backend } from './protocol';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
@@ -72,6 +74,8 @@ interface Fixture {
 		note?: string;
 	};
 	events: RawEvent[];
+	/** `objects.json`, hash → bytes. */
+	objects: ContentObject[];
 }
 
 function loadFixtures(): Fixture[] {
@@ -81,9 +85,15 @@ function loadFixtures(): Fixture[] {
 			const dir = join(FIXTURES, entry.name);
 			const file = JSON.parse(readFileSync(join(dir, 'events.json'), 'utf8')) as Omit<
 				Fixture,
-				'name' | 'dir'
+				'name' | 'dir' | 'objects'
 			>;
-			return { name: entry.name, dir, ...file };
+			const objectsPath = join(dir, 'objects.json');
+			const objects = existsSync(objectsPath)
+				? Object.entries(
+						JSON.parse(readFileSync(objectsPath, 'utf8')) as Record<string, string>
+					).map(([hash, bytes]) => ({ hash, bytes }))
+				: [];
+			return { name: entry.name, dir, ...file, objects };
 		})
 		.sort((a, b) => compare(a.name, b.name));
 }
@@ -127,7 +137,7 @@ function idsIn(events: RawEvent[]) {
 		]),
 		texts: unique([
 			...of(['textAdded'], 'id'),
-			...of(['textDeleted', 'wordLookedUp', 'studied'], 'textId')
+			...of(['textDeleted', 'textRevised', 'wordLookedUp', 'studied'], 'textId')
 		]),
 		conversations: unique([
 			...of(['conversationStarted'], 'id'),
@@ -172,6 +182,7 @@ async function probe(backend: Backend, events: RawEvent[]): Promise<Record<strin
 		studySessions: await backend.studySessions(0),
 		getTexts: await backend.getTexts(),
 		getText: await byKey(ids.texts, (id) => backend.getText(id)),
+		missingObjects: await backend.missingObjects(),
 		clipsFor: await byKey(ids.terms, (term) => backend.clipsFor([term])),
 		getKnownTerms: [...(await backend.getKnownTerms())].sort(compare),
 		getConversations: await backend.getConversations(),
@@ -229,9 +240,21 @@ async function fresh(fixture: Fixture): Promise<TestBackend> {
 	return makeTestBackend(fixture.meta.deviceId, () => fixture.meta.now);
 }
 
+/**
+ * The fixture's objects, stored the way a sync fetch stores them — after the
+ * log, so a text that names one becomes readable with no rebuild.
+ */
+async function holdObjects(backend: Backend, fixture: Fixture): Promise<void> {
+	const accepted = await backend.putObjects(fixture.objects);
+	expect(accepted, `${fixture.name}: an object in objects.json does not verify`).toBe(
+		fixture.objects.length
+	);
+}
+
 async function applied(fixture: Fixture, events: RawEvent[] = fixture.events) {
 	const backend = await fresh(fixture);
 	const count = await backend.applyRemote(events);
+	await holdObjects(backend, fixture);
 	return { backend, count };
 }
 
@@ -288,6 +311,8 @@ describe('golden fixtures', () => {
 				const { backend } = await applied(fixture);
 				const restored = await fresh(fixture);
 				await restored.importData(await backend.exportData());
+				// A v3 export carries no objects; the device holds them either way.
+				await holdObjects(restored, fixture);
 				expect(dataOnly(await probe(restored, fixture.events))).toEqual(
 					dataOnly(await probe(backend, fixture.events))
 				);

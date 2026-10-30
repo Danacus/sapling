@@ -7,7 +7,7 @@ Contracts and runbook. Code: `crates/sapling-sync/`, `src/lib/sync/`,
 
 Envelope: `{ id, type, at, device, payload }`. `id` is the set-union key — an
 id already in the log is never re-applied. `at` is when the learner did the
-thing, and doubles as the last-write-wins input for the two overwrite types.
+thing, and doubles as the last-write-wins input for the overwrite types.
 
 The original language library keeps these event shapes unchanged. Facts for an
 additional language use the opaque `profileEvent` type, whose payload is
@@ -32,6 +32,14 @@ since widened — survives a round trip through an older device untouched.
 | `challengeServed` | one serve (`timesServed` counts these) |
 | `resultLogged` | one answered challenge |
 | `profileUpdated` | the whole profile, replaced |
+| `textAdded` | a reading text: title, source, media and **exactly one** body — `segments` inline (every event written before content objects, `sentences` in the oldest) or `content`, the hash of an immutable object (`docs/content-objects.md`); both or neither does not parse |
+| `textRevised` | `{ textId, content }`: the text's body replaced by another object |
+| `textDeleted` | a tombstone — the text goes for good |
+
+A text's body travels beside the log as a **content object** — bytes named
+`sha256:<hex>` — and never inside it. The envelope fields `owner`/`objects`/
+`retire` that tell the relay which objects an event uses are derived at push
+time by `sapling_domain::objects::object_refs` and never stored locally.
 
 ## Merge rules
 
@@ -49,6 +57,13 @@ Applied once per event id, in arrival order (`seq`, else insertion order).
 | `challengeReported` | `reported = true`; missing: no-op |
 | `resultLogged` | insert the result row; bump that day's count |
 | `profileUpdated` | replace the singleton if `at >= profile.updatedAt` |
+| `textAdded` | skip if tombstoned or present; record the body as it came, inline segments or a hash — whether the object is here is a read's question |
+| `textRevised` | skip if tombstoned; keep the revision if it beats the held one by `(at, device, event id)`; a text not added yet: kept, waits; the newest revision is the text's body |
+| `textDeleted` | tombstone the id; delete the text and its revision |
+
+A text whose current body is an object this device does not hold is returned
+by no read — library, reader, `clipsFor`, `cuesFor` — until it arrives;
+storing the object is enough, nothing is rebuilt.
 
 ## Local store
 
@@ -56,13 +71,17 @@ SQLite-WASM (OPFS, SAH-pool VFS) in one dedicated module Worker
 (`sqlite.worker.ts`). The window talks to it in domain terms, never SQL: the
 `Backend` interface in `protocol.ts` — the repository functions, the sync
 operations (`pendingEvents`, `markPushed`, `applyRemote`, the pull cursor,
-`followSyncRoom`) and
+`followSyncRoom`, and the content-object calls `getObjects`, `putObjects`,
+`missingObjects`) and
 export/import — is implemented by the Rust core (`crates/sapling-db`,
 compiled to wasm and lent the Worker's database through `host.ts`) and
 forwarded by `client.ts`, one `postMessage` per call. `events` is the facts
 log; `items`, `reviews`, `challenges`, `results`, `tombstones`,
-`profile` are aggregates the materializer maintains — UI reads never touch
-`events`. The log holds every language; the aggregate tables hold only the
+`profile`, `texts`, `textRevisions` and the rest are aggregates the
+materializer maintains — UI reads never touch `events`. `objects` sits beside
+the log, not under it: hash-verified bytes derived from nothing, so a rebuild
+keeps them (a reset clears them). A new text writes its object and its
+`textAdded { content }` in one transaction. The log holds every language; the aggregate tables hold only the
 language selected on this device. Profiles form the small global index, and a
 switch rebuilds the other aggregates from that profile's events. The active
 profile id lives in local `meta`, so selecting a language does not switch other
@@ -81,7 +100,15 @@ acknowledged, then pulls pages of 1000 from the stored cursor until the cursor
 reaches `latest`, applying each page before moving the cursor past it. A local
 event keeps a missing `seq` until the relay has answered for it, and the cursor
 never passes an unapplied page, so an interruption costs a repeated request and
-never an event. Every failure — offline, a refused phrase, a store error — is a
+never an event. Before each push page it derives the page's object fields,
+asks `POST /objects/missing` and `PUT`s each missing object the store holds, so
+blobs land before the events naming them (one the store never had does not hold
+the page back); a `404` there — a relay that predates objects — fails the cycle
+with its own message and the page is not pushed, while a page that names no
+object pushes as always. After pulling it `GET`s every object a text's current
+body names that the store lacks, verifies each against its name and stores it;
+a `404` is "not uploaded yet" and simply asked again next cycle, a mismatch or
+no answer fails the cycle after the events landed. Every failure — offline, a refused phrase, a store error — is a
 returned outcome with a learner-facing message, never an error. `probe` is an
 empty pull (`limit=0`) that tells a refused phrase from an unreachable server.
 `pair` runs one cycle and reports whether a profile came down the log; it never
@@ -161,4 +188,7 @@ against, since two normalisations that differ are two rooms.
 The v3 export envelope is `{ version: 3, exportedAt, events }` — the events
 log verbatim, so export/import is complete (pool, serves, results included).
 Import unions by event id, skipping ones already present, then rebuilds every
-read table from the merged log.
+read table from the merged log. A v3 file carries a `textAdded { content }`
+but not its object, so such a text imported into a fresh device is hidden
+until sync fetches the body; export v4 (`docs/content-objects.md` §6) closes
+that.

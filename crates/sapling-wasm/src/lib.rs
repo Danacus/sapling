@@ -24,6 +24,7 @@ use std::future::Future;
 use js_sys::Function;
 use sapling_db::{Core, Error, Param, Result, Row, Sql, SqlValue};
 use sapling_domain::events::{parse_envelope, RawEvent};
+use sapling_domain::objects::ContentObject;
 use sapling_domain::types::KnowledgeItem;
 use sapling_domain::LocalDay;
 use sapling_llm::tools::{StoreError, StoreResult, ToolContext};
@@ -378,10 +379,7 @@ impl sapling_sync::Transport for JsRequest {
             .into_iter()
             .map(|(name, value)| (name, Value::String(value)))
             .collect();
-        let method = match request.method {
-            sapling_sync::Method::Get => "GET",
-            sapling_sync::Method::Post => "POST",
-        };
+        let method = request.method.as_str();
         let mut json =
             serde_json::json!({ "method": method, "url": request.url, "headers": headers });
         if let Some(body) = request.body {
@@ -453,6 +451,12 @@ export interface SyncHost {
   setPullCursor(cursor: number): Promise<void>;
   hasProfile(): Promise<boolean>;
   followSyncRoom(room: string): Promise<boolean>;
+  /** The held objects among `hashesJson`, as a JSON array of `{hash, bytes}`. */
+  getObjects(hashesJson: string): Promise<string>;
+  /** Stores a JSON array of `{hash, bytes}`; answers how many were accepted. */
+  putObjects(objectsJson: string): Promise<number>;
+  /** The hashes texts name that the store lacks, as a JSON array. */
+  missingObjects(): Promise<string>;
 }
 "#;
 
@@ -496,6 +500,32 @@ extern "C" {
         this: &SyncHost,
         room: &str,
     ) -> std::result::Result<js_sys::Promise, JsValue>;
+
+    #[wasm_bindgen(method, catch, js_name = getObjects)]
+    fn js_get_objects(
+        this: &SyncHost,
+        hashes_json: &str,
+    ) -> std::result::Result<js_sys::Promise, JsValue>;
+
+    #[wasm_bindgen(method, catch, js_name = putObjects)]
+    fn js_put_objects(
+        this: &SyncHost,
+        objects_json: &str,
+    ) -> std::result::Result<js_sys::Promise, JsValue>;
+
+    #[wasm_bindgen(method, catch, js_name = missingObjects)]
+    fn js_missing_objects(this: &SyncHost) -> std::result::Result<js_sys::Promise, JsValue>;
+}
+
+/// A promise that resolves to JSON text, parsed by `parse`.
+async fn stored_json<T>(
+    what: &'static str,
+    promise: std::result::Result<js_sys::Promise, JsValue>,
+    parse: fn(&str) -> serde_json::Result<T>,
+) -> sapling_sync::StoreResult<T> {
+    let bad = || sapling_sync::StoreError(format!("{what}() did not resolve to the JSON it owes"));
+    let json = stored(promise).await?.as_string().ok_or_else(bad)?;
+    parse(&json).map_err(|_| bad())
 }
 
 async fn stored(
@@ -580,6 +610,28 @@ impl sapling_sync::SyncStore for SyncHost {
                 sapling_sync::StoreError("followSyncRoom() did not resolve to a boolean".into())
             })
         }
+    }
+
+    fn objects(
+        &self,
+        hashes: Vec<String>,
+    ) -> impl Future<Output = sapling_sync::StoreResult<Vec<ContentObject>>> {
+        let promise = self.js_get_objects(&serde_json::json!(hashes).to_string());
+        async move { stored_json("getObjects", promise, |json| serde_json::from_str(json)).await }
+    }
+
+    fn put_objects(
+        &self,
+        objects: Vec<ContentObject>,
+    ) -> impl Future<Output = sapling_sync::StoreResult<usize>> {
+        let json = serde_json::to_string(&objects).unwrap_or_else(|_| "[]".into());
+        let promise = self.js_put_objects(&json);
+        async move { Ok(stored_number("putObjects", promise).await? as usize) }
+    }
+
+    fn missing_objects(&self) -> impl Future<Output = sapling_sync::StoreResult<Vec<String>>> {
+        let promise = self.js_missing_objects();
+        async move { stored_json("missingObjects", promise, |json| serde_json::from_str(json)).await }
     }
 }
 

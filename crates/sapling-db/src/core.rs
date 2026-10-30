@@ -21,7 +21,7 @@ use ts_rs::TS;
 
 use crate::clips;
 use crate::materialize::{open_schema, raw_from_row, Materializer, LOG_ORDER};
-use crate::schema::{ACTIVE_PROFILE_KEY, DERIVED_TABLES};
+use crate::schema::{ACTIVE_PROFILE_KEY, DERIVED_TABLES, MISSING_OBJECTS, READABLE_TEXTS};
 use crate::sql::{Error, Param, Result, Row, Sql};
 use sapling_challenges::grade::GapVerdict;
 use sapling_challenges::local::CueCandidate;
@@ -31,9 +31,10 @@ use sapling_domain::day::LocalDay;
 use sapling_domain::events::{
     parse_envelope, ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted,
     EventType, ItemAdded, ItemDeleted, ItemFields, ItemReviewed, ItemUpdated, Payload, RawEvent,
-    ResultOverturned, ReviewAmended, Studied, SyncEvent, TextDeleted, WordLookedUp, WordMarked,
-    PROFILE_ID,
+    ResultOverturned, ReviewAmended, Studied, SyncEvent, TextAdded, TextDeleted, WordLookedUp,
+    WordMarked, PROFILE_ID,
 };
+use sapling_domain::objects::{ContentObject, TextContent, MAX_OBJECT_BYTES};
 use sapling_domain::types::{
     ChallengeResult, Conversation, ConversationDetail, ConversationExchange,
     ConversationLearnerTurn, ConversationSummary, ConversationTeacherTurn, DailyActivity,
@@ -295,6 +296,7 @@ fn result_from(row: &Row) -> Result<ChallengeResult> {
     })
 }
 
+/// One row of [`READABLE_TEXTS`], body resolved.
 fn text_from(row: &Row) -> Result<ReadingText> {
     Ok(ReadingText {
         id: row.text("id")?.to_owned(),
@@ -423,8 +425,21 @@ impl Core {
         if facts.is_empty() {
             return Ok(());
         }
+        self.commit_with(at, facts, || Ok(()))
+    }
+
+    /// [`Core::commit_all_at`] with `before` run first inside the same
+    /// transaction — for a write that is not an event but must land with one
+    /// (a new text's object).
+    fn commit_with(
+        &self,
+        at: f64,
+        facts: Vec<Payload>,
+        before: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
         let profile_id = self.active_profile_id()?;
         self.transaction(|| {
+            before()?;
             let m = self.materializer();
             for payload in facts {
                 let event = SyncEvent {
@@ -1083,24 +1098,111 @@ impl Core {
 
     /* ---- Reading texts, word marks and lookups ----------------------- */
 
+    /// Stores one new text: its body as an object and a `textAdded` that names
+    /// it, in one transaction, so the event never exists without the bytes it
+    /// points at. A body over [`MAX_OBJECT_BYTES`] is refused — no relay could
+    /// hold it, and a text that could never sync is worse than one not kept.
     pub fn add_text(&self, text: &ReadingText) -> Result<()> {
-        self.commit(Payload::TextAdded(text.clone()))
+        let object = TextContent {
+            segments: text.segments.clone(),
+        }
+        .to_object();
+        if object.bytes.len() > MAX_OBJECT_BYTES {
+            return Err(Error(
+                "This text is too long to keep: its body is over 1 MiB.".into(),
+            ));
+        }
+        let fact = Payload::TextAdded(TextAdded::by_reference(text, object.hash.clone()));
+        self.commit_with((self.clock)(), vec![fact], || {
+            self.store_object(&object).map(|_| ())
+        })
     }
 
-    /// Every stored text, newest first.
+    /// Every text whose body this device can show, newest first. A text whose
+    /// current object has not arrived is left out until it does.
     pub fn get_texts(&self) -> Result<Vec<ReadingText>> {
-        self.sql
-            .query("SELECT * FROM texts ORDER BY createdAt DESC", &[])?
-            .iter()
-            .map(text_from)
-            .collect()
+        self.readable_texts("ORDER BY createdAt DESC", &[])
     }
 
+    /// One text, or `None` when it is deleted, unknown, or its body absent.
     pub fn get_text(&self, id: &str) -> Result<Option<ReadingText>> {
-        let rows = self
+        Ok(self
+            .readable_texts("WHERE id = ?", &[Param::text(id)])?
+            .into_iter()
+            .next())
+    }
+
+    /// [`READABLE_TEXTS`] under `tail`. A body that will not parse as segments
+    /// — an object that is JSON but not a text — is skipped like an absent one,
+    /// so one bad object cannot fail the whole library.
+    fn readable_texts(&self, tail: &str, params: &[Param]) -> Result<Vec<ReadingText>> {
+        Ok(self
             .sql
-            .query("SELECT * FROM texts WHERE id = ?", &[Param::text(id)])?;
-        rows.first().map(text_from).transpose()
+            .query(&format!("SELECT * FROM {READABLE_TEXTS} {tail}"), params)?
+            .iter()
+            .filter_map(|row| text_from(row).ok())
+            .collect())
+    }
+
+    /* ---- Content objects ---------------------------------------------- */
+
+    /// Keeps one object if its name verifies and its bytes are JSON. Answers
+    /// whether it was accepted (already held counts). Not a fact: no event,
+    /// nothing materialised — a text that names it is simply readable now.
+    fn store_object(&self, object: &ContentObject) -> Result<bool> {
+        if !object.verifies() || serde_json::from_str::<Value>(&object.bytes).is_err() {
+            return Ok(false);
+        }
+        self.sql.exec(
+            "INSERT OR IGNORE INTO objects (hash, bytes) VALUES (?, ?)",
+            &[Param::text(&object.hash), Param::text(&object.bytes)],
+        )?;
+        Ok(true)
+    }
+
+    /// Stores objects that arrived from outside — a sync fetch, a fixture —
+    /// each verified against its name; a mismatch is refused, never kept. One
+    /// transaction; answers how many were accepted.
+    pub fn put_objects(&self, objects: &[ContentObject]) -> Result<usize> {
+        self.transaction(|| {
+            let mut accepted = 0;
+            for object in objects {
+                if self.store_object(object)? {
+                    accepted += 1;
+                }
+            }
+            Ok(accepted)
+        })
+    }
+
+    /// The objects among `hashes` this device holds, in `hashes` order.
+    pub fn get_objects(&self, hashes: &[String]) -> Result<Vec<ContentObject>> {
+        let mut found = Vec::new();
+        for hash in hashes {
+            if let Some(row) = self
+                .sql
+                .query(
+                    "SELECT hash, bytes FROM objects WHERE hash = ?",
+                    &[Param::text(hash)],
+                )?
+                .first()
+            {
+                found.push(ContentObject {
+                    hash: row.text("hash")?.to_owned(),
+                    bytes: row.text("bytes")?.to_owned(),
+                });
+            }
+        }
+        Ok(found)
+    }
+
+    /// Every object a text's current body names that this device lacks.
+    pub fn missing_objects(&self) -> Result<Vec<String>> {
+        self.sql
+            .query(MISSING_OBJECTS, &[])?
+            .iter()
+            .map(|row| Ok(row.text("hash")?.to_owned()))
+            .collect()
     }
 
     /// The best timed cues of YouTube texts to hear one of `terms` in, best
@@ -1206,7 +1308,7 @@ impl Core {
                     json_extract(s.value, '$.start') AS start,
                     json_extract(s.value, '$.end') AS end,
                     json_extract(s.value, '$.text') AS text
-             FROM texts t, json_each(t.segments) s
+             FROM {READABLE_TEXTS} t, json_each(t.segments) s
              WHERE {}json_extract(s.value, '$.start') IS NOT NULL
                AND json_extract(s.value, '$.end') IS NOT NULL
                AND ({})
@@ -1351,7 +1453,10 @@ impl Core {
     /// Empties the whole database, log included.
     pub fn reset_data(&self) -> Result<()> {
         self.transaction(|| {
-            for table in DERIVED_TABLES.iter().chain(["events", "meta"].iter()) {
+            for table in DERIVED_TABLES
+                .iter()
+                .chain(["events", "meta", "objects"].iter())
+            {
                 self.sql.exec(&format!("DELETE FROM {table}"), &[])?;
             }
             Ok(())

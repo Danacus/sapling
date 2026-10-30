@@ -1,6 +1,18 @@
 //! Sapling's sync client: one cycle against the relay (`worker/`) — push what
-//! this device wrote, pull what the others did, apply it, advance the cursor —
-//! plus the liveness probe, pairing and the phrase.
+//! this device wrote, pull what the others did, apply it, advance the cursor,
+//! fetch the content objects the texts now name — plus the liveness probe,
+//! pairing and the phrase.
+//!
+//! Content objects (`docs/content-objects.md` §6) ride beside the log, never
+//! in it. Before each push page the cycle derives the page's envelope fields
+//! with `sapling_domain::objects::object_refs`, asks the relay which of the
+//! named objects it lacks and uploads those, so blobs land before the events
+//! that reference them; the fields go on the wire envelope and are never
+//! stored locally. After pulling it fetches every object a text names that the
+//! store lacks, verifying each against its name. A relay without the object
+//! endpoints fails the cycle with its own message rather than receive a page
+//! that references objects it cannot hold; a page that references none pushes
+//! exactly as before.
 //!
 //! Host-agnostic by construction. The HTTP request is a [`Transport`] and the
 //! database a [`SyncStore`], both injected; the relay's URL and the phrase are
@@ -32,6 +44,7 @@ use serde_json::{json, Value};
 use ts_rs::TS;
 
 use sapling_domain::events::RawEvent;
+use sapling_domain::objects::{is_object_hash, object_refs, ContentObject, ObjectRefs};
 
 pub mod phrase;
 pub mod relay;
@@ -42,13 +55,29 @@ pub use phrase::{BAD_PHRASE, PHRASE_LENGTH};
 pub const PUSH_PAGE: usize = 500;
 /// Events asked for per pull request; the relay caps it at the same.
 pub const PULL_PAGE: usize = 1000;
+/// Hashes per `POST /objects/missing`; the relay refuses more.
+pub const MISSING_PAGE: usize = 500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
     Get,
     Post,
+    Put,
 }
 
+impl Method {
+    /// The HTTP verb as a host's request API spells it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Method::Get => "GET",
+            Method::Post => "POST",
+            Method::Put => "PUT",
+        }
+    }
+}
+
+/// One HTTP request. `body` is sent as these exact bytes — a pushed page, or
+/// an object's bytes on `PUT /objects/<H>`, which the relay hashes as sent.
 pub struct Request {
     pub method: Method,
     pub url: String,
@@ -91,6 +120,15 @@ pub trait SyncStore {
     /// transaction, so the next push sends the whole log and the next pull
     /// starts at zero. Answers whether it cleared anything.
     fn follow_room(&self, room: String) -> impl Future<Output = StoreResult<bool>>;
+    /// The content objects among `hashes` the store holds — what a push
+    /// uploads. One it does not hold is simply not answered.
+    fn objects(&self, hashes: Vec<String>)
+        -> impl Future<Output = StoreResult<Vec<ContentObject>>>;
+    /// Stores fetched objects; the store verifies each against its name too.
+    /// Answers how many it accepted.
+    fn put_objects(&self, objects: Vec<ContentObject>) -> impl Future<Output = StoreResult<usize>>;
+    /// Every object a text's current body names that the store lacks.
+    fn missing_objects(&self) -> impl Future<Output = StoreResult<Vec<String>>>;
 }
 
 /// Which room on which relay a phrase names, as this device records it beside
@@ -274,7 +312,8 @@ pub async fn run<T: Transport, S: SyncStore>(
         // position in this one (`room_key`).
         store.follow_room(room_key(url, phrase)).await?;
         push(&relay, store, &mut pushed).await?;
-        pull(&relay, store, &mut pulled).await
+        pull(&relay, store, &mut pulled).await?;
+        fetch_objects(&relay, store).await
     }
     .await;
     match result {
@@ -297,7 +336,16 @@ async fn push<T: Transport, S: SyncStore>(
         if events.is_empty() {
             return Ok(());
         }
-        let body = json!({ "events": events }).to_string();
+        // Derived here, every time, and never stored: the local log is
+        // unchanged, and a pull never returns them either.
+        let refs: Vec<ObjectRefs> = events.iter().map(object_refs).collect();
+        upload_objects(relay, store, &refs).await?;
+        let wire: Vec<Value> = events
+            .iter()
+            .zip(&refs)
+            .map(|(event, refs)| on_the_wire(event, refs))
+            .collect();
+        let body = json!({ "events": wire }).to_string();
         let answer = relay.json(Method::Post, "/push", Some(body)).await?;
         let Some(seqs) = answer.get("seqs").and_then(Value::as_object) else {
             return fail(UNEXPECTED);
@@ -315,6 +363,127 @@ async fn push<T: Transport, S: SyncStore>(
             return Ok(());
         }
     }
+}
+
+/// The relay answered `404` to `/objects/missing`: it predates content objects.
+pub const NO_OBJECT_STORE: &str =
+    "The sync server is out of date: it cannot hold texts yet. Redeploy it, then sync again.";
+
+/// A fetched object's bytes did not hash to its name.
+const OBJECT_MISMATCH: &str = "The sync server sent a text that does not match its name.";
+
+/// One row as `/push` takes it: the envelope as stored, plus whatever
+/// `owner`/`objects`/`retire` it declares — each only when present, so a row
+/// that declares nothing is byte for byte what an older client sent.
+fn on_the_wire(event: &RawEvent, refs: &ObjectRefs) -> Value {
+    let mut row = serde_json::to_value(event).expect("a log row serialises");
+    if let (Value::Object(row), Ok(Value::Object(fields))) = (&mut row, serde_json::to_value(refs))
+    {
+        row.extend(fields);
+    }
+    row
+}
+
+/// Makes sure the relay holds every object this page names before the page
+/// goes: asks which it lacks, then `PUT`s each of those this store holds. One
+/// the store does not hold either — an event pulled from elsewhere whose body
+/// never arrived — is not this device's to supply, and the page still goes:
+/// the relay records an edge without requiring its object.
+async fn upload_objects<T: Transport, S: SyncStore>(
+    relay: &Relay<'_, T>,
+    store: &S,
+    refs: &[ObjectRefs],
+) -> Result<(), Failure> {
+    let mut hashes: Vec<String> = refs
+        .iter()
+        .flat_map(|refs| refs.objects.iter().cloned())
+        .collect();
+    hashes.sort();
+    hashes.dedup();
+    // A page that names no object asks nothing, so it pushes as it always
+    // did — to a relay with the object endpoints or without.
+    for page in hashes.chunks(MISSING_PAGE) {
+        let body = json!({ "hashes": page }).to_string();
+        let response = relay
+            .send(Method::Post, "/objects/missing", Some(body))
+            .await?;
+        if response.status == 404 {
+            return fail(NO_OBJECT_STORE);
+        }
+        if !(200..300).contains(&response.status) {
+            return Err(Failure(status_message(response.status)));
+        }
+        let missing: Vec<String> = serde_json::from_str::<Value>(&response.body)
+            .ok()
+            .and_then(|answer| serde_json::from_value(answer.get("missing")?.clone()).ok())
+            .ok_or_else(|| Failure(UNEXPECTED.to_owned()))?;
+        let missing: Vec<String> = missing
+            .into_iter()
+            .filter(|hash| page.contains(hash))
+            .collect();
+        if missing.is_empty() {
+            continue;
+        }
+        for object in store.objects(missing).await? {
+            if !object.verifies() {
+                continue;
+            }
+            let path = format!("/objects/{}", object.hash);
+            let response = relay.send(Method::Put, &path, Some(object.bytes)).await?;
+            match response.status {
+                200..=299 => {}
+                413 => return fail("A text is too large for the sync server to hold."),
+                status => return Err(Failure(status_message(status))),
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Fetches every object a text names that the store lacks, verifying each
+/// against its name before it is stored. The set is re-derived from the texts
+/// every cycle, never queued, so whatever does not arrive now is asked for
+/// next time. A `404` is an object no device has uploaded yet — a state, not a
+/// failure; a mismatch, a refusal or no answer fails the cycle with its
+/// message, after keeping everything that did arrive.
+async fn fetch_objects<T: Transport, S: SyncStore>(
+    relay: &Relay<'_, T>,
+    store: &S,
+) -> Result<(), Failure> {
+    let mut fetched = Vec::new();
+    let mut failure = None;
+    for hash in store.missing_objects().await? {
+        if !is_object_hash(&hash) {
+            continue;
+        }
+        match relay
+            .send(Method::Get, &format!("/objects/{hash}"), None)
+            .await
+        {
+            Ok(response) if (200..300).contains(&response.status) => {
+                let object = ContentObject {
+                    hash,
+                    bytes: response.body,
+                };
+                if object.verifies() {
+                    fetched.push(object);
+                } else {
+                    failure = Some(Failure(OBJECT_MISMATCH.to_owned()));
+                }
+            }
+            Ok(response) if response.status == 404 => {}
+            Ok(response) => failure = Some(Failure(status_message(response.status))),
+            // No answer at all: the rest would go the same way.
+            Err(unreachable) => {
+                failure = Some(unreachable);
+                break;
+            }
+        }
+    }
+    if !fetched.is_empty() {
+        store.put_objects(fetched).await?;
+    }
+    failure.map_or(Ok(()), Err)
 }
 
 /// Pulls from the stored cursor until caught up, applying each page as it

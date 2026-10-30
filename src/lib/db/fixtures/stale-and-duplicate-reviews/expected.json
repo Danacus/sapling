@@ -156,6 +156,7 @@
 	"studySessions": [],
 	"getTexts": [],
 	"getText": {},
+	"missingObjects": [],
 	"clipsFor": {
 		"r": []
 	},

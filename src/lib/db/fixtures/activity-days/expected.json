@@ -402,6 +402,7 @@
 	"getText": {
 		"text-1": null
 	},
+	"missingObjects": [],
 	"clipsFor": {
 		"你好": [],
 		"再见": [],

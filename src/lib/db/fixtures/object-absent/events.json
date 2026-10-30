@@ -1,0 +1,89 @@
+{
+	"meta": {
+		"deviceId": "fixture-device",
+		"now": 1710244800000,
+		"orderFree": true,
+		"note": "Only one of three objects is held. text-held reads; text-waiting names an object that has not arrived and is returned by no read, clipsFor included; text-revised began inline but its current body is an absent object, so it is hidden too. missingObjects lists both absent hashes."
+	},
+	"events": [
+		{
+			"seq": 1,
+			"id": "ev-add-item-cat",
+			"type": "itemAdded",
+			"at": 1710061200000,
+			"device": "dev-a",
+			"payload": {
+				"id": "item-cat",
+				"kind": "vocab",
+				"term": "猫",
+				"meaning": "cat",
+				"introducedAt": 1710061200000
+			}
+		},
+		{
+			"seq": 2,
+			"id": "ev-text-held",
+			"type": "textAdded",
+			"at": 1710061260000,
+			"device": "dev-a",
+			"payload": {
+				"id": "text-held",
+				"title": "来",
+				"source": "imported",
+				"content": "sha256:56842b648ecd39128b37174f531683d5d5d80b0280fd7cccfb3db67acf8ab738",
+				"media": {
+					"kind": "youtube",
+					"videoId": "vid-held"
+				},
+				"createdAt": 1710061260000
+			}
+		},
+		{
+			"seq": 3,
+			"id": "ev-text-waiting",
+			"type": "textAdded",
+			"at": 1710061320000,
+			"device": "dev-a",
+			"payload": {
+				"id": "text-waiting",
+				"title": "走",
+				"source": "imported",
+				"content": "sha256:040477e6c6225b7dca13d8aafde32b20b90f7b075d6a385efec96184a7b755ee",
+				"media": {
+					"kind": "youtube",
+					"videoId": "vid-waiting"
+				},
+				"createdAt": 1710061320000
+			}
+		},
+		{
+			"seq": 4,
+			"id": "ev-text-revised",
+			"type": "textAdded",
+			"at": 1710061380000,
+			"device": "dev-a",
+			"payload": {
+				"id": "text-revised",
+				"title": "改",
+				"source": "generated",
+				"segments": [
+					{
+						"text": "原来的猫。"
+					}
+				],
+				"createdAt": 1710061380000
+			}
+		},
+		{
+			"seq": 5,
+			"id": "ev-rev-revised",
+			"type": "textRevised",
+			"at": 1710061440000,
+			"device": "dev-a",
+			"payload": {
+				"textId": "text-revised",
+				"content": "sha256:f15f1f90b4d8c316315e6a8c679b158326ff2090473811e7233c4101822f1318"
+			}
+		}
+	]
+}

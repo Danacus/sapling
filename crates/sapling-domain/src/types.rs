@@ -3,8 +3,8 @@
 //!
 //! Every struct derives both directions: the same shape is a `Backend`
 //! argument on the way in and a read result on the way out, and several are
-//! event payloads verbatim (`Profile` is `profileUpdated`, `ReadingText` is
-//! `textAdded`, `Conversation` is `conversationStarted`,
+//! event payloads verbatim (`Profile` is `profileUpdated`, `Conversation` is
+//! `conversationStarted`,
 //! `ConversationExchange` is `turnAdded`, `ChallengeResult` is `resultLogged`).
 //! Each also derives `TS`: `pnpm core:types` writes its TypeScript declaration,
 //! doc comments included, into `src/lib/db/generated/` at build time.
@@ -497,10 +497,15 @@ pub enum ReadingMedia {
 /// model from their vocabulary, or imported from a paste, a file or a video's
 /// subtitles.
 ///
-/// Immutable once stored, and only the text: no readings, no translations, no
-/// glossary. Everything the reader shows about a word (its status, its reading,
-/// whether it is highlighted) is derived at render time from the vocabulary and
-/// the learner's marks.
+/// Only the text: no readings, no translations, no glossary. Everything the
+/// reader shows about a word (its status, its reading, whether it is
+/// highlighted) is derived at render time from the vocabulary and the
+/// learner's marks.
+///
+/// This is what `addText` takes and every read returns, `segments` always
+/// resolved — not the `textAdded` payload, which carries the body inline or
+/// names an immutable object (`events.rs`' `TextAdded`), and whose body a
+/// `textRevised` may since have replaced. A read returns the current one.
 ///
 /// A `textAdded` written before segments were the stored unit carries
 /// `sentences` with a `reading`, a `translation` and a `glossary` beside them;

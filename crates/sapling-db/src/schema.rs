@@ -1,7 +1,9 @@
 //! The whole local database, as one DDL string.
 //!
 //! Two layers: `events` is the facts log, everything under it an aggregate the
-//! materializer maintains.
+//! materializer maintains — except `objects`, which sits beside the log rather
+//! than under it: content addressed by hash, stored as it arrived and derived
+//! from nothing, so a rebuild keeps it.
 
 pub const DDL: &str = "
 CREATE TABLE IF NOT EXISTS events (
@@ -65,10 +67,25 @@ CREATE TABLE IF NOT EXISTS profile (
   nativeLanguageTag TEXT, targetLanguageTag TEXT, level TEXT, interests TEXT,
   about TEXT, model TEXT, createdAt INTEGER, updatedAt INTEGER NOT NULL DEFAULT 0, aim TEXT);
 
+-- Content objects (`sapling-domain`'s `objects.rs`): immutable bytes under the
+-- hash they were verified against. Not an aggregate — nothing in the log can
+-- rebuild one — so it is not in `DERIVED_TABLES` and a rebuild keeps it.
+CREATE TABLE IF NOT EXISTS objects (hash TEXT PRIMARY KEY, bytes TEXT NOT NULL);
+
+-- A text's body is exactly one of `segments` (inline, as every `textAdded`
+-- written before objects carries it) or `content` (an object's hash). The body
+-- a read shows is the newest revision's, else this one, and a text whose
+-- current object is not in `objects` is shown by no read (`READABLE_TEXTS`).
 CREATE TABLE IF NOT EXISTS texts (
   id TEXT PRIMARY KEY, title TEXT NOT NULL, source TEXT NOT NULL, topic TEXT,
-  segments TEXT NOT NULL, media TEXT,
+  segments TEXT, content TEXT, media TEXT,
   createdAt INTEGER NOT NULL);
+
+-- The winning `textRevised` per text, by `(at, device, eventId)`. Apart from
+-- `texts`, so a revision that lands before its text waits here.
+CREATE TABLE IF NOT EXISTS textRevisions (
+  textId TEXT PRIMARY KEY, content TEXT NOT NULL, at REAL NOT NULL, device TEXT NOT NULL,
+  eventId TEXT NOT NULL);
 
 CREATE TABLE IF NOT EXISTS textTombstones (textId TEXT PRIMARY KEY);
 
@@ -98,6 +115,34 @@ CREATE TABLE IF NOT EXISTS conversationTombstones (conversationId TEXT PRIMARY K
 
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 ";
+
+/// Every text a read may show, its body resolved: a subquery with the
+/// `texts` columns and `segments` as JSON text. A text's current body is its
+/// winning revision's object, else its own — inline segments or an object —
+/// and a text whose current object this device does not hold (or holds as
+/// something other than a body) is not here at all, so the library, the
+/// reader, `clipsFor` and `cuesFor` agree on what exists. Storing the object
+/// is what makes it appear; nothing is rebuilt.
+pub const READABLE_TEXTS: &str = "(
+  SELECT t.id AS id, t.title AS title, t.source AS source, t.topic AS topic,
+         t.media AS media, t.createdAt AS createdAt,
+         CASE WHEN coalesce(r.content, t.content) IS NULL THEN t.segments
+              ELSE json_extract(o.bytes, '$.segments') END AS segments
+  FROM texts t
+  LEFT JOIN textRevisions r ON r.textId = t.id
+  LEFT JOIN objects o ON o.hash = coalesce(r.content, t.content)
+  WHERE (coalesce(r.content, t.content) IS NULL AND t.segments IS NOT NULL)
+     OR json_type(o.bytes, '$.segments') = 'array')";
+
+/// The object hashes some text's current body names and `objects` lacks — what
+/// a sync cycle fetches after pulling. Re-derived every time, never queued.
+pub const MISSING_OBJECTS: &str = "
+  SELECT DISTINCT coalesce(r.content, t.content) AS hash
+  FROM texts t
+  LEFT JOIN textRevisions r ON r.textId = t.id
+  WHERE coalesce(r.content, t.content) IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM objects o WHERE o.hash = coalesce(r.content, t.content))
+  ORDER BY hash";
 
 /// Device-local selection. It deliberately does not travel in the event log:
 /// choosing Japanese on a phone must not switch a laptop away from Spanish.
@@ -158,15 +203,21 @@ pub fn review_key(item_id: &str, at: f64, device: &str) -> String {
 /// Bumped for 14 when the difficulty model became ratings with margins:
 /// `difficultyParts` holds them, and `items.skill` and
 /// `challenges.correction` are gone.
-pub const DERIVED_SCHEMA_VERSION: u32 = 14;
+///
+/// Bumped for 15 when a text's body could be an object: `texts` gained
+/// `content` (its `segments` nullable now) and `textRevisions` arrived, and an
+/// older build logged and skipped every `textAdded { content }` and
+/// `textRevised` it was sent.
+pub const DERIVED_SCHEMA_VERSION: u32 = 15;
 
-/// Every read table the materializer owns; `events` and `meta` survive a rebuild.
+/// Every read table the materializer owns; `events`, `meta` and `objects`
+/// survive a rebuild.
 ///
 /// `daily` (answers per local day) used to be one of these and is gone: the
 /// activity read folds the base tables at read time instead, since a day is
 /// made of reviews, lookups and added words as much as of answers. A database
 /// from before still carries the empty table; nothing reads or drops it.
-pub const DERIVED_TABLES: [&str; 17] = [
+pub const DERIVED_TABLES: [&str; 18] = [
     "items",
     "reviews",
     "challenges",
@@ -175,6 +226,7 @@ pub const DERIVED_TABLES: [&str; 17] = [
     "tombstones",
     "profile",
     "texts",
+    "textRevisions",
     "textTombstones",
     "wordMarks",
     "lookups",

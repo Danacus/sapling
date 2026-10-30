@@ -1,0 +1,132 @@
+{
+	"meta": {
+		"deviceId": "fixture-device",
+		"now": 1710244800000,
+		"orderFree": true,
+		"note": "textRevised is last-write-wins by (at, device, event id) in either arrival order: two devices revise text-a in the same millisecond (dev-b wins the tie) and an older revision arrives last and loses; an inline text is revised to an object; text-gone is revised and deleted concurrently and stays deleted; a revision of a text never added is inert."
+	},
+	"events": [
+		{
+			"seq": 1,
+			"id": "ev-add-a",
+			"type": "textAdded",
+			"at": 1710061200000,
+			"device": "dev-a",
+			"payload": {
+				"id": "text-a",
+				"title": "甲",
+				"source": "imported",
+				"content": "sha256:5330d32a2ccdbf931cf0bdfea40e97a299a647e97971a8bf0353027cdd8aef4d",
+				"createdAt": 1710061200000
+			}
+		},
+		{
+			"seq": 2,
+			"id": "ev-rev-a-dev-b",
+			"type": "textRevised",
+			"at": 1710061260000,
+			"device": "dev-b",
+			"payload": {
+				"textId": "text-a",
+				"content": "sha256:d607603b9e364946702983234f803c7953b39b4fdc23520c66b09bf979b570cc"
+			}
+		},
+		{
+			"seq": 3,
+			"id": "ev-rev-a-dev-a",
+			"type": "textRevised",
+			"at": 1710061260000,
+			"device": "dev-a",
+			"payload": {
+				"textId": "text-a",
+				"content": "sha256:58b1259a8704d9fa7b430bb1d3d93ecd65fd97c0a154fa1edf9b43680cd54036"
+			}
+		},
+		{
+			"seq": 4,
+			"id": "ev-rev-a-old",
+			"type": "textRevised",
+			"at": 1710061230000,
+			"device": "dev-a",
+			"payload": {
+				"textId": "text-a",
+				"content": "sha256:d1c9ea9efdc874f1a8b572a4073af4ae52b07e942a80ec2128b87ac751581f02"
+			}
+		},
+		{
+			"seq": 5,
+			"id": "ev-add-inline",
+			"type": "textAdded",
+			"at": 1710061201000,
+			"device": "dev-a",
+			"payload": {
+				"id": "text-inline",
+				"title": "乙",
+				"source": "generated",
+				"segments": [
+					{
+						"text": "原文。"
+					}
+				],
+				"createdAt": 1710061201000
+			}
+		},
+		{
+			"seq": 6,
+			"id": "ev-rev-inline",
+			"type": "textRevised",
+			"at": 1710061290000,
+			"device": "dev-a",
+			"payload": {
+				"textId": "text-inline",
+				"content": "sha256:58b1259a8704d9fa7b430bb1d3d93ecd65fd97c0a154fa1edf9b43680cd54036"
+			}
+		},
+		{
+			"seq": 7,
+			"id": "ev-add-gone",
+			"type": "textAdded",
+			"at": 1710061202000,
+			"device": "dev-a",
+			"payload": {
+				"id": "text-gone",
+				"title": "丙",
+				"source": "imported",
+				"content": "sha256:5330d32a2ccdbf931cf0bdfea40e97a299a647e97971a8bf0353027cdd8aef4d",
+				"createdAt": 1710061202000
+			}
+		},
+		{
+			"seq": 8,
+			"id": "ev-rev-gone",
+			"type": "textRevised",
+			"at": 1710061320000,
+			"device": "dev-b",
+			"payload": {
+				"textId": "text-gone",
+				"content": "sha256:d607603b9e364946702983234f803c7953b39b4fdc23520c66b09bf979b570cc"
+			}
+		},
+		{
+			"seq": 9,
+			"id": "ev-del-gone",
+			"type": "textDeleted",
+			"at": 1710061310000,
+			"device": "dev-a",
+			"payload": {
+				"textId": "text-gone"
+			}
+		},
+		{
+			"seq": 10,
+			"id": "ev-rev-never",
+			"type": "textRevised",
+			"at": 1710061350000,
+			"device": "dev-a",
+			"payload": {
+				"textId": "text-never",
+				"content": "sha256:58b1259a8704d9fa7b430bb1d3d93ecd65fd97c0a154fa1edf9b43680cd54036"
+			}
+		}
+	]
+}
