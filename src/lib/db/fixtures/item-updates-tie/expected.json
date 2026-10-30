@@ -127,7 +127,7 @@
 	"getConversations": [],
 	"getConversation": {},
 	"exportData": {
-		"version": 3,
+		"version": 4,
 		"exportedAt": 1710244800000,
 		"events": [
 			{
@@ -169,7 +169,8 @@
 					}
 				}
 			}
-		]
+		],
+		"objects": {}
 	},
 	"pendingEvents": [],
 	"getPullCursor": 0

@@ -311,8 +311,8 @@ describe('golden fixtures', () => {
 				const { backend } = await applied(fixture);
 				const restored = await fresh(fixture);
 				await restored.importData(await backend.exportData());
-				// A v3 export carries no objects; the device holds them either way.
-				await holdObjects(restored, fixture);
+				// A v4 export carries the objects its events reference, so the
+				// restored backend reads every text with nothing re-stored by hand.
 				expect(dataOnly(await probe(restored, fixture.events))).toEqual(
 					dataOnly(await probe(backend, fixture.events))
 				);

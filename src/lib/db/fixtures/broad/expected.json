@@ -1027,7 +1027,7 @@
 		"conv-2": null
 	},
 	"exportData": {
-		"version": 3,
+		"version": 4,
 		"exportedAt": 1710244800000,
 		"events": [
 			{
@@ -1823,7 +1823,8 @@
 					"conversationId": "conv-2"
 				}
 			}
-		]
+		],
+		"objects": {}
 	},
 	"pendingEvents": [],
 	"getPullCursor": 0

@@ -171,7 +171,7 @@
 	"getConversations": [],
 	"getConversation": {},
 	"exportData": {
-		"version": 3,
+		"version": 4,
 		"exportedAt": 1710244800000,
 		"events": [
 			{
@@ -248,7 +248,10 @@
 					"content": "sha256:f15f1f90b4d8c316315e6a8c679b158326ff2090473811e7233c4101822f1318"
 				}
 			}
-		]
+		],
+		"objects": {
+			"sha256:56842b648ecd39128b37174f531683d5d5d80b0280fd7cccfb3db67acf8ab738": "{\"segments\":[{\"text\":\"猫来了。\",\"start\":0.0,\"end\":1000.0}]}"
+		}
 	},
 	"pendingEvents": [],
 	"getPullCursor": 0

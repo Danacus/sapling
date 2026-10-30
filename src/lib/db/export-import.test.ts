@@ -1,12 +1,15 @@
 /**
  * The JSON escape hatch.
  *
- * `exportData` writes the log itself (`{version: 3, exportedAt, events}`), so a
- * dump is complete — pool, serves and results included — and importing one is a
- * union rather than a replacement. v1/v2 envelopes predate the log and still
- * restore, because they are the only route by which a file written by the old
- * Dexie build can arrive.
+ * `exportData` writes the log itself and the content objects it references
+ * (`{version: 4, exportedAt, events, objects}`), so a dump is complete — pool,
+ * serves, results and every text body included — and importing one is a union
+ * rather than a replacement. A file whose objects do not match their names is
+ * refused whole. v3 files (the log alone) still union in; v1/v2 envelopes
+ * predate the log and still restore, because they are the only route by which
+ * a file written by the old Dexie build can arrive.
  */
+import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -14,7 +17,9 @@ import {
 	recentResults,
 	addText,
 	addToPool,
+	createProfile,
 	deleteItem,
+	EXPORT_VERSION,
 	exportData,
 	getAllItems,
 	getDailyActivity,
@@ -28,6 +33,7 @@ import {
 	recordLookup,
 	recordServe,
 	saveProfile,
+	setActiveProfile,
 	updateItemAfterReview,
 	upsertItems,
 	type ExportEnvelope
@@ -117,7 +123,8 @@ describe('export', () => {
 		await seedOneOfEach();
 
 		const envelope = JSON.parse(await exportData()) as ExportEnvelope;
-		expect(envelope.version).toBe(3);
+		expect(envelope.version).toBe(4);
+		expect(EXPORT_VERSION).toBe(4);
 		expect(envelope.events.map((event) => event.type).sort()).toEqual([
 			'challengeAdded',
 			'challengeServed',
@@ -159,7 +166,6 @@ describe('export', () => {
 			results: await recentResults(5)
 		};
 
-		const original = store;
 		store = await makeTestBackend();
 		setBackendForTesting(store);
 		await importData(dump);
@@ -168,15 +174,11 @@ describe('export', () => {
 		expect(await getPool()).toEqual(before.pool);
 		expect(await getProfile()).toEqual(before.profile);
 		expect(await getDailyActivity()).toEqual(before.activity);
-		// A v3 file carries the `textAdded`, which names its body by hash, and
-		// not the object itself — that is export v4's (docs/content-objects.md
-		// §9, step 3). Until the object arrives the text is read by nothing;
-		// storing it is all it takes, with no rebuild.
-		expect(await getTexts()).toEqual([]);
-		const missing = await store.missingObjects();
-		expect(missing).toHaveLength(1);
-		await store.putObjects(await original.getObjects(missing));
+		// The `textAdded` names its body by hash, and the v4 file carries the
+		// object beside it, so the text reads the moment the import returns.
+		expect(before.texts).toHaveLength(1);
 		expect(await getTexts()).toEqual(before.texts);
+		expect(await store.missingObjects()).toEqual([]);
 		expect(await getKnownTerms()).toEqual(before.known);
 		expect(await lookupRows(store)).toEqual(before.lookups);
 		// The help level an answer was shown at is what the difficulty model
@@ -201,6 +203,163 @@ describe('export', () => {
 		const again = JSON.parse(await exportData()) as ExportEnvelope;
 		expect(again.events).toContainEqual(junk);
 		expect(again.events).toHaveLength(envelope.events.length);
+	});
+});
+
+/** A text body as the core names it: compact JSON, hashed over those bytes. */
+function bodyObject(text: string) {
+	const bytes = JSON.stringify({ segments: [{ text }] });
+	return { hash: `sha256:${createHash('sha256').update(bytes).digest('hex')}`, bytes };
+}
+
+const spanish: Profile = { ...profile, targetLanguage: 'Spanish', createdAt: 1 };
+const french: Profile = { ...profile, targetLanguage: 'French', createdAt: 2 };
+
+function textNamed(id: string, title: string, body: string): ReadingText {
+	return { id, title, source: 'imported', segments: [{ text: body }], createdAt: 7000 };
+}
+
+/** Every table an import could write, for "nothing changed". */
+async function storeShape(from: TestBackend) {
+	return {
+		events: await from.query<{ id: string }>('SELECT id FROM events ORDER BY id'),
+		objects: await from.query<{ hash: string }>('SELECT hash FROM objects ORDER BY hash'),
+		items: await from.query<{ id: string }>('SELECT id FROM items ORDER BY id'),
+		texts: await from.query<{ id: string }>('SELECT id FROM texts ORDER BY id')
+	};
+}
+
+describe('export v4: content objects', () => {
+	it('round-trips a revised text and a text in a library that is not active', async () => {
+		await saveProfile(spanish);
+		await addText(textNamed('t-es', 'Libro', 'Primera versión.'));
+		// No repository revises a text yet; the fact is what an editor will write.
+		const revised = bodyObject('Segunda versión.');
+		await store.putObjects([revised]);
+		await store.commit('textRevised', { textId: 't-es', content: revised.hash });
+		const spanishId = (await store.listProfiles())[0].id;
+		const frenchId = await createProfile(french);
+		await addText(textNamed('t-fr', 'Livre', 'Un livre.'));
+		await setActiveProfile(spanishId);
+
+		const dump = await exportData();
+		const envelope = JSON.parse(dump) as ExportEnvelope;
+		// The French text is scoped, and its body still rides along: references
+		// are derived across every library, not only the active one.
+		expect(
+			envelope.events.some(
+				(event) =>
+					event.type === 'profileEvent' && (event.payload as { type?: string }).type === 'textAdded'
+			)
+		).toBe(true);
+		// Both bodies of the revised text, and the French one.
+		expect(Object.keys(envelope.objects)).toHaveLength(3);
+		expect(envelope.objects[revised.hash]).toBe(revised.bytes);
+
+		const before = {
+			spanish: await getTexts(),
+			french: await (async () => {
+				await setActiveProfile(frenchId);
+				const texts = await getTexts();
+				await setActiveProfile(spanishId);
+				return texts;
+			})()
+		};
+		expect(before.spanish.map((text) => text.segments)).toEqual([[{ text: 'Segunda versión.' }]]);
+		expect(before.french.map((text) => text.id)).toEqual(['t-fr']);
+
+		store = await makeTestBackend();
+		setBackendForTesting(store);
+		await importData(dump);
+
+		expect(await store.missingObjects()).toEqual([]);
+		await setActiveProfile(spanishId);
+		expect(await getTexts()).toEqual(before.spanish);
+		await setActiveProfile(frenchId);
+		expect(await getTexts()).toEqual(before.french);
+	});
+
+	it('refuses a file whose object does not match its name, and writes nothing', async () => {
+		await addText(text);
+		const envelope = JSON.parse(await exportData()) as ExportEnvelope;
+		const [hash] = Object.keys(envelope.objects);
+		envelope.objects[hash] = JSON.stringify({ segments: [{ text: '我想买水。' }] });
+
+		store = await makeTestBackend();
+		setBackendForTesting(store);
+		await upsertItems([item('mine', '我', 1)]);
+		const untouched = await storeShape(store);
+
+		await expect(importData(JSON.stringify(envelope))).rejects.toThrow(/does not match its name/);
+		expect(await storeShape(store)).toEqual(untouched);
+		expect(await getTexts()).toEqual([]);
+	});
+
+	it('refuses an object whose bytes are not a string', async () => {
+		await addText(text);
+		const envelope = JSON.parse(await exportData()) as ExportEnvelope;
+		const [hash] = Object.keys(envelope.objects);
+		const tampered = { ...envelope, objects: { [hash]: { segments: [] } } };
+
+		setBackendForTesting(await makeTestBackend());
+		await expect(importData(JSON.stringify(tampered))).rejects.toThrow(/does not match its name/);
+		expect(await getAllItems()).toEqual([]);
+	});
+
+	it('still imports a v3 file, its content texts waiting for their objects', async () => {
+		await seedOneOfEach();
+		const { objects: _objects, ...v4 } = JSON.parse(await exportData()) as ExportEnvelope;
+		const v3 = { ...v4, version: 3 };
+
+		store = await makeTestBackend();
+		setBackendForTesting(store);
+		await importData(JSON.stringify(v3));
+
+		expect((await getAllItems()).map((row) => row.id)).toEqual(['i1']);
+		expect(await getTexts()).toEqual([]);
+		expect(await store.missingObjects()).toHaveLength(1);
+	});
+
+	it('exports a text whose object it lacks without it, and the import hides that text', async () => {
+		const absent = bodyObject('还没到。');
+		const inline = {
+			seq: 1,
+			id: 'e-inline',
+			type: 'textAdded',
+			at: 1,
+			device: 'devB',
+			payload: {
+				id: 't-inline',
+				title: '内',
+				source: 'imported',
+				segments: [{ text: '在这里。' }],
+				createdAt: 1
+			}
+		};
+		const byReference = {
+			seq: 2,
+			id: 'e-ref',
+			type: 'textAdded',
+			at: 2,
+			device: 'devB',
+			payload: { id: 't-ref', title: '外', source: 'imported', content: absent.hash, createdAt: 2 }
+		};
+		await store.applyRemote([inline, byReference]);
+
+		const dump = await exportData();
+		// An inline text references nothing, and an object never fetched is not
+		// the export's to fail over.
+		expect((JSON.parse(dump) as ExportEnvelope).objects).toEqual({});
+
+		store = await makeTestBackend();
+		setBackendForTesting(store);
+		await importData(dump);
+		expect((await getTexts()).map((row) => row.id)).toEqual(['t-inline']);
+		expect(await store.missingObjects()).toEqual([absent.hash]);
+
+		// The object arriving later — off sync — is all it takes.
+		await store.putObjects([absent]);
+		expect((await getTexts()).map((row) => row.id).sort()).toEqual(['t-inline', 't-ref']);
 	});
 });
 

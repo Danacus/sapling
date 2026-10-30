@@ -540,17 +540,21 @@ backend! {
         resetData() {
             core.reset_data()
         }
-        /// Serializes the whole log as JSON (an `ExportEnvelope`), in log order.
-        /// The log *is* the data, so the file is complete. Excludes only the API
-        /// key, which lives in `localStorage`.
+        /// Serializes the whole log as JSON (an `ExportEnvelope`, v4), in log
+        /// order, with every content object its events reference. The log
+        /// *is* the data, so the file is complete. Excludes only the API key,
+        /// which lives in `localStorage`.
         exportData() -> String {
             core.export_data()
         }
         /// Restores a dump.
         ///
-        /// A v3 file is the log itself: its events are unioned in by id and the
-        /// read model is rebuilt, so an import is idempotent and order-free. A
-        /// v1/v2 file predates the log and replaces the item list wholesale.
+        /// A v3 or v4 file is the log itself: its events are unioned in by id
+        /// and the read model is rebuilt, so an import is idempotent and
+        /// order-free. A v4 file's objects are verified first — one that does
+        /// not match its hash refuses the whole file, writing nothing — and
+        /// stored with the events. A v1/v2 file predates the log and replaces
+        /// the item list wholesale.
         importData(json: String) {
             core.import_data(&json)
         }

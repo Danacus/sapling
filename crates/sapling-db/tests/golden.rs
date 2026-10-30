@@ -424,8 +424,9 @@ fn reads_the_same_from_a_fresh_core_that_imported_the_export() {
         restored
             .import_data(&core.export_data().expect("export"))
             .expect("import");
-        // A v3 export carries no objects; the device holds them either way.
-        hold_objects(&restored, &fixture);
+        // A v4 export carries the objects its events reference, so the
+        // restored core reads every text the original does with nothing
+        // re-stored by hand.
         assert_same(
             &data_only(probe(&restored, &fixture.events)),
             &data_only(probe(&core, &fixture.events)),

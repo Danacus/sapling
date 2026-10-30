@@ -1158,7 +1158,7 @@ What the learner's data is, where it lives, how it survives and moves between de
 
 #### Behaviour
 
-- **Export progress** downloads `language-learning-backup-YYYY-MM-DD.json`. It contains the whole event log, every language, exactly as stored (including events this build does not understand), plus a version and a timestamp. No device-local settings are included: no API key, no preferences, no sync phrase.
+- **Export progress** downloads `language-learning-backup-YYYY-MM-DD.json`. It contains the whole event log, every language, exactly as stored (including events this build does not understand), the bodies of the texts it names, plus a version and a timestamp. A backup whose text bodies do not match their names is refused whole. No device-local settings are included: no API key, no preferences, no sync phrase.
 - **Import progress** takes a JSON file and asks for confirmation ("Importing a backup replaces all current progress on this device. Continue?"). Then:
   - A current-format backup is **merged** into the log (union by event id; events already present are skipped) and all derived state is rebuilt.
   - Older-format backups (a word list plus a profile) replace the word list wholesale (each existing word is tombstoned) and replace the profile.
