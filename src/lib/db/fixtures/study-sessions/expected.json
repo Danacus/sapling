@@ -88,6 +88,8 @@
 	"getText": {
 		"text-1": null
 	},
+	"getTextbooks": [],
+	"getTextbook": {},
 	"missingObjects": [],
 	"clipsFor": {},
 	"getKnownTerms": [],

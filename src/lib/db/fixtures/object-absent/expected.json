@@ -151,6 +151,8 @@
 		"text-revised": null,
 		"text-waiting": null
 	},
+	"getTextbooks": [],
+	"getTextbook": {},
 	"missingObjects": [
 		"sha256:040477e6c6225b7dca13d8aafde32b20b90f7b075d6a385efec96184a7b755ee",
 		"sha256:f15f1f90b4d8c316315e6a8c679b158326ff2090473811e7233c4101822f1318"

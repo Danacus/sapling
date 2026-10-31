@@ -163,6 +163,8 @@
 		},
 		"text-z": null
 	},
+	"getTextbooks": [],
+	"getTextbook": {},
 	"missingObjects": [],
 	"clipsFor": {
 		"y": [],

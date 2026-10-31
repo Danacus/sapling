@@ -1,0 +1,183 @@
+{
+	"getAllItems": {
+		"lean": [],
+		"withRecentGrades": []
+	},
+	"getItem": {},
+	"getPool": [],
+	"poolSize": 0,
+	"getChallengesByIds": [],
+	"recentResults": [],
+	"getRatings": [],
+	"getDailyActivity": [],
+	"studySessions": [],
+	"getTexts": [],
+	"getText": {},
+	"getTextbooks": [
+		{
+			"id": "book-held",
+			"title": "HSK Standard Course 1",
+			"fileName": "hsk1.pdf",
+			"chapters": 2,
+			"createdAt": 1710061200000
+		}
+	],
+	"getTextbook": {
+		"book-gone": null,
+		"book-held": {
+			"id": "book-held",
+			"title": "HSK Standard Course 1",
+			"fileName": "hsk1.pdf",
+			"chapters": [
+				{
+					"label": "3",
+					"title": "你叫什么名字",
+					"firstPage": "14",
+					"lastPage": "21",
+					"sections": [
+						{
+							"kind": "dialogue",
+							"heading": "在学校",
+							"number": "1",
+							"lines": [
+								{
+									"speaker": "A",
+									"text": "你叫什么名字？"
+								},
+								{
+									"speaker": "B",
+									"text": "我叫李月。"
+								}
+							],
+							"words": []
+						},
+						{
+							"kind": "words",
+							"heading": "New Words",
+							"lines": [],
+							"words": [
+								{
+									"term": "叫",
+									"notes": "v.",
+									"meaning": "to be called",
+									"proper": false
+								},
+								{
+									"term": "李月",
+									"proper": true
+								}
+							]
+						}
+					]
+				},
+				{
+					"label": "4",
+					"title": "她是我的汉语老师",
+					"sections": [
+						{
+							"kind": "sentences",
+							"heading": "例句",
+							"lines": [
+								{
+									"text": "她是我的老师。"
+								}
+							],
+							"words": []
+						}
+					]
+				}
+			],
+			"createdAt": 1710061200000
+		},
+		"book-late": null,
+		"book-waiting": null
+	},
+	"missingObjects": [
+		"sha256:ff7846f07aad3ca3c7e164ea740aaae677e7bfa6d2058685acffcd0c7e508c2c"
+	],
+	"clipsFor": {},
+	"getKnownTerms": [],
+	"getConversations": [],
+	"getConversation": {},
+	"exportData": {
+		"version": 4,
+		"exportedAt": 1710244800000,
+		"events": [
+			{
+				"id": "ev-book-held",
+				"type": "textbookAdded",
+				"at": 1710061200000,
+				"device": "dev-a",
+				"payload": {
+					"id": "book-held",
+					"title": "HSK Standard Course 1",
+					"fileName": "hsk1.pdf",
+					"content": "sha256:29c5c06735484522973a681a29125bc16b1670fab059ed21918501978e054233",
+					"createdAt": 1710061200000
+				}
+			},
+			{
+				"id": "ev-book-waiting",
+				"type": "textbookAdded",
+				"at": 1710061260000,
+				"device": "dev-a",
+				"payload": {
+					"id": "book-waiting",
+					"title": "Waiting",
+					"content": "sha256:ff7846f07aad3ca3c7e164ea740aaae677e7bfa6d2058685acffcd0c7e508c2c",
+					"createdAt": 1710061260000
+				}
+			},
+			{
+				"id": "ev-book-gone",
+				"type": "textbookAdded",
+				"at": 1710061320000,
+				"device": "dev-a",
+				"payload": {
+					"id": "book-gone",
+					"title": "Nederlands in gang",
+					"fileName": "nl.pdf",
+					"content": "sha256:9ab147e59705dc497463f76e03c0bbd326b9a5ff46d8588a1884a3cd904011ca",
+					"createdAt": 1710061320000
+				}
+			},
+			{
+				"id": "ev-book-gone-deleted",
+				"type": "textbookDeleted",
+				"at": 1710061380000,
+				"device": "dev-a",
+				"payload": {
+					"textbookId": "book-gone"
+				}
+			},
+			{
+				"id": "ev-book-late-deleted",
+				"type": "textbookDeleted",
+				"at": 1710061440000,
+				"device": "dev-a",
+				"payload": {
+					"textbookId": "book-late"
+				}
+			},
+			{
+				"id": "ev-book-late",
+				"type": "textbookAdded",
+				"at": 1710061500000,
+				"device": "dev-a",
+				"payload": {
+					"id": "book-late",
+					"title": "Late",
+					"content": "sha256:d42356d7ed43fadf4060b99994b576b90aada86fe5723d5531916a45a7378df3",
+					"createdAt": 1710061500000
+				}
+			}
+		],
+		"objects": {
+			"sha256:29c5c06735484522973a681a29125bc16b1670fab059ed21918501978e054233": "{\"chapters\":[{\"label\":\"3\",\"title\":\"你叫什么名字\",\"firstPage\":\"14\",\"lastPage\":\"21\",\"sections\":[{\"kind\":\"dialogue\",\"heading\":\"在学校\",\"number\":\"1\",\"lines\":[{\"speaker\":\"A\",\"text\":\"你叫什么名字？\"},{\"speaker\":\"B\",\"text\":\"我叫李月。\"}],\"words\":[]},{\"kind\":\"words\",\"heading\":\"New Words\",\"lines\":[],\"words\":[{\"term\":\"叫\",\"notes\":\"v.\",\"meaning\":\"to be called\",\"proper\":false},{\"term\":\"李月\",\"proper\":true}]}]},{\"label\":\"4\",\"title\":\"她是我的汉语老师\",\"sections\":[{\"kind\":\"sentences\",\"heading\":\"例句\",\"lines\":[{\"text\":\"她是我的老师。\"}],\"words\":[]}]}]}",
+			"sha256:9ab147e59705dc497463f76e03c0bbd326b9a5ff46d8588a1884a3cd904011ca": "{\"chapters\":[{\"label\":\"LES 2\",\"sections\":[{\"kind\":\"dialogue\",\"lines\":[{\"speaker\":\"Els\",\"text\":\"Hallo ! Goedemorgen.\"}],\"words\":[]}]}]}",
+			"sha256:d42356d7ed43fadf4060b99994b576b90aada86fe5723d5531916a45a7378df3": "{\"chapters\":[{\"title\":\"Introduction\",\"sections\":[{\"kind\":\"sentences\",\"lines\":[{\"text\":\"汉语很有意思。\"}],\"words\":[]}]}]}"
+		}
+	},
+	"pendingEvents": [],
+	"getPullCursor": 0
+}

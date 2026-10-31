@@ -1,4 +1,5 @@
-//! A scanned textbook page, transcribed into its target-language lines.
+//! A scanned textbook page, transcribed into its sections: dialogues with their
+//! speakers, standalone sentences, vocabulary lists — in the target language.
 //!
 //! **A transcriber, not an author.** The prompt (`prompts/textbook-page.txt`)
 //! asks for what is printed and nothing else; it and the schema were measured
@@ -17,9 +18,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
-use sapling_import::textbook::{
-    tidy_page, BlockKind, LessonStart, PrintedPage, TextbookBlock, TextbookPage,
-};
+use sapling_domain::types::{Section, SectionKind, TextbookLine, TextbookWord};
+use sapling_import::textbook::{tidy_page, LessonStart, PageBlock, PrintedPage, TextbookPage};
 
 use crate::client::{ChatRequest, ErrorKind, Llm, LlmError, Message, Result, Transport};
 use crate::json::{fenced, parse_reply, strict_schema};
@@ -83,7 +83,6 @@ enum KindReply {
 }
 
 #[derive(Deserialize, JsonSchema)]
-#[allow(dead_code)]
 struct BlockReply {
     /// dialogue: speakers taking turns, or one speaker's numbered passage. sentences: standalone
     /// target-language sentences or phrases (grammar examples, captions, phrase boxes, exercise
@@ -135,8 +134,10 @@ struct WordReply {
     proper: bool,
 }
 
-/// What leaves the module: the lines' text, the lesson openings and the page
-/// labels. Speakers, readings, translations and word lists stay behind.
+/// What leaves the module: the sections as the book prints them — headings,
+/// numbers, speakers, lines, vocabulary with its notes and meanings — the
+/// lesson openings and the page labels. A line's reading and translation, and
+/// a word's reading, stay behind.
 impl From<PageReply> for TextbookPage {
     fn from(reply: PageReply) -> Self {
         TextbookPage {
@@ -159,16 +160,37 @@ impl From<PageReply> for TextbookPage {
             blocks: reply
                 .blocks
                 .into_iter()
-                .filter_map(|b| {
-                    let kind = match b.kind {
-                        KindReply::Dialogue => BlockKind::Dialogue,
-                        KindReply::Sentences => BlockKind::Sentences,
-                        KindReply::Words => return None,
-                    };
-                    Some(TextbookBlock {
-                        kind,
-                        lines: b.lines.into_iter().map(|l| l.text).collect(),
-                    })
+                .map(|b| PageBlock {
+                    lesson: b.lesson,
+                    continues: b.continues,
+                    section: Section {
+                        kind: match b.kind {
+                            KindReply::Dialogue => SectionKind::Dialogue,
+                            KindReply::Sentences => SectionKind::Sentences,
+                            KindReply::Words => SectionKind::Words,
+                        },
+                        heading: b.heading,
+                        number: b.number,
+                        // The reading and the translation stay behind.
+                        lines: b
+                            .lines
+                            .into_iter()
+                            .map(|l| TextbookLine {
+                                speaker: l.speaker,
+                                text: l.text,
+                            })
+                            .collect(),
+                        words: b
+                            .words
+                            .into_iter()
+                            .map(|w| TextbookWord {
+                                term: w.term,
+                                notes: w.notes,
+                                meaning: w.meaning,
+                                proper: w.proper,
+                            })
+                            .collect(),
+                    },
                 })
                 .collect(),
         }
@@ -267,8 +289,8 @@ mod tests {
     fn lines(page: &TextbookPage) -> Vec<&str> {
         page.blocks
             .iter()
-            .flat_map(|b| &b.lines)
-            .map(String::as_str)
+            .flat_map(|b| &b.section.lines)
+            .map(|l| l.text.as_str())
             .collect()
     }
 
@@ -308,7 +330,20 @@ mod tests {
             ["你好！", "你好！我叫王明。", "我叫安娜。你是学生吗？"]
         );
         assert_eq!(first.lesson_starts[0].title.as_deref(), Some("你好"));
+        // The structure survives: speakers, headings, the vocabulary list
+        // with the book's own meaning and notes, and no pinyin anywhere.
+        let dialogue = &first.blocks[0].section;
+        assert_eq!(dialogue.heading.as_deref(), Some("在学校"));
+        assert_eq!(dialogue.lines[0].speaker.as_deref(), Some("A"));
+        assert_eq!(dialogue.lines[1].speaker.as_deref(), Some("B"));
+        let words = &first.blocks[1].section;
+        assert_eq!(words.kind, SectionKind::Words);
+        assert_eq!(words.words[0].term, "你好");
+        assert_eq!(words.words[0].meaning.as_deref(), Some("hello"));
+        assert_eq!(words.words[0].notes.as_deref(), Some("int."));
+        assert!(first.blocks[2].section.words[0].proper);
         let second = block_on(transcribe_page(&llm, &page_args("Chinese", 2))).unwrap();
+        assert_eq!(second.blocks[0].section.number.as_deref(), Some("2"));
         assert_eq!(
             lines(&second),
             ["是，我是学生。", "他是老师吗？", "你是中国人吗？"]

@@ -543,6 +543,134 @@ pub struct ReadingText {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Textbooks                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/// A textbook the learner imported: its chapters, each the sections its pages
+/// hold, in the structure the book prints them in — not a text cut into
+/// pages. **Only what the book says in the target language**, with its own
+/// headings, speakers and vocabulary lists: no pronunciation guide (a reading
+/// is the frontend's, derived where it is shown), no line translations, no
+/// grammar explanations. The chapters travel as one content object
+/// (`TextbookContent`), named by `textbookAdded.content`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Textbook {
+    pub id: String,
+    /// The book's title, as the learner named it on import.
+    pub title: String,
+    /// The file it was read from, by name only: the file is never kept.
+    #[serde(
+        default,
+        deserialize_with = "absent_or",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional)]
+    pub file_name: Option<String>,
+    pub chapters: Vec<Chapter>,
+    /// Epoch milliseconds.
+    pub created_at: f64,
+}
+
+/// A textbook as the library lists it: everything but its chapters' content.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct TextbookSummary {
+    pub id: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub file_name: Option<String>,
+    /// How many chapters it holds.
+    pub chapters: usize,
+    pub created_at: f64,
+}
+
+/// One lesson of a book, as its opening page labels it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Chapter {
+    /// The lesson's label as printed ("3", "LES 4"); absent for pages before
+    /// the first lesson (an introduction, a pronunciation primer).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub label: Option<String>,
+    /// Its title in the target language (你叫什么名字).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub title: Option<String>,
+    /// The printed numbers of its first and last pages, where the pages show them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub first_page: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub last_page: Option<String>,
+    pub sections: Vec<Section>,
+}
+
+/// What a block of a page is.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum SectionKind {
+    /// Speakers taking turns, or one speaker's numbered passage.
+    #[default]
+    Dialogue,
+    /// Standalone sentences: grammar examples, captions, phrase boxes, exercise questions.
+    Sentences,
+    /// A vocabulary list.
+    Words,
+}
+
+/// One block of a chapter, in reading order, with the heading and number the
+/// book gives it. A dialogue or sentences section has `lines`; a vocabulary
+/// list has `words`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+pub struct Section {
+    pub kind: SectionKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub heading: Option<String>,
+    /// As printed: "1", "3A".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub number: Option<String>,
+    #[serde(default)]
+    pub lines: Vec<TextbookLine>,
+    #[serde(default)]
+    pub words: Vec<TextbookWord>,
+}
+
+/// One printed line, in the target language's own script.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+pub struct TextbookLine {
+    /// As printed ("A", "Els", "prof. Deman"); absent where the line continues
+    /// the previous speaker, or in a section with none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub speaker: Option<String>,
+    pub text: String,
+}
+
+/// One entry of a book's vocabulary list: what the book prints, never a reading.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+pub struct TextbookWord {
+    /// The bare headword: no article, no conjugations.
+    pub term: String,
+    /// What the book prints beside it: an article, a part of speech, its forms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub notes: Option<String>,
+    /// The meaning the book prints, in the learner's language; absent where it prints none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub meaning: Option<String>,
+    /// A name or a place.
+    #[serde(default)]
+    pub proper: bool,
+}
+
+/* -------------------------------------------------------------------------- */
 /* Conversations                                                               */
 /* -------------------------------------------------------------------------- */
 

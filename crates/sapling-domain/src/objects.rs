@@ -24,7 +24,7 @@ use sha2::{Digest, Sha256};
 use ts_rs::TS;
 
 use crate::events::{typed_event, Payload, RawEvent};
-use crate::types::Segment;
+use crate::types::{Chapter, Segment};
 
 /// The algorithm, as the name spells it. Another one is another prefix.
 pub const OBJECT_PREFIX: &str = "sha256:";
@@ -86,6 +86,28 @@ impl TextContent {
     }
 }
 
+/// A textbook's chapters as an object: `textbookAdded.content` names one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TextbookContent {
+    pub chapters: Vec<Chapter>,
+}
+
+impl TextbookContent {
+    /// The object: the canonical bytes and their name.
+    pub fn to_object(&self) -> ContentObject {
+        let bytes = serde_json::to_string(self).expect("a textbook serialises");
+        ContentObject {
+            hash: object_hash(bytes.as_bytes()),
+            bytes,
+        }
+    }
+}
+
+/// The entity a textbook's object belongs to, scoped by profile like a text.
+pub fn textbook_owner(profile_id: &str, textbook_id: &str) -> String {
+    format!("textbook:{profile_id}:{textbook_id}")
+}
+
 /// The entity a text's objects belong to. Scoped by profile, because a text id
 /// is unique within its library and nothing promises more.
 pub fn text_owner(profile_id: &str, text_id: &str) -> String {
@@ -120,6 +142,8 @@ impl ObjectRefs {
 /// | `textAdded` with `content`| the text | `[content]` | —        |
 /// | `textRevised`             | the text | `[content]` | —        |
 /// | `textDeleted`             | —        | —           | the text |
+/// | `textbookAdded`           | the book | `[content]` | —        |
+/// | `textbookDeleted`         | —        | —           | the book |
 /// | anything else, inline too | —        | —           | —        |
 ///
 /// A row this build cannot type declares nothing: an older build's gap is a
@@ -145,6 +169,15 @@ pub fn object_refs(raw: &RawEvent) -> ObjectRefs {
         },
         Payload::TextDeleted(deleted) => ObjectRefs {
             retire: Some(owner(&deleted.text_id)),
+            ..ObjectRefs::default()
+        },
+        Payload::TextbookAdded(book) => ObjectRefs {
+            owner: Some(textbook_owner(&event.profile_id, &book.id)),
+            objects: vec![book.content.clone()],
+            retire: None,
+        },
+        Payload::TextbookDeleted(deleted) => ObjectRefs {
+            retire: Some(textbook_owner(&event.profile_id, &deleted.textbook_id)),
             ..ObjectRefs::default()
         },
         _ => ObjectRefs::default(),
@@ -184,6 +217,25 @@ mod tests {
         );
         assert_eq!(object.hash, HASH);
         assert!(object.verifies());
+    }
+
+    #[test]
+    fn a_textbook_owns_its_object_and_its_tombstone_retires_it() {
+        let row = |kind: &str, payload: Value| {
+            parse_envelope(
+                &json!({ "id": "e", "type": kind, "at": 1, "device": "d", "payload": payload }),
+            )
+            .unwrap()
+        };
+        let added = object_refs(&row(
+            "textbookAdded",
+            json!({ "id": "b1", "title": "T", "content": HASH, "createdAt": 1 }),
+        ));
+        assert_eq!(added.owner.as_deref(), Some("textbook:singleton:b1"));
+        assert_eq!(added.objects, [HASH]);
+        let deleted = object_refs(&row("textbookDeleted", json!({ "textbookId": "b1" })));
+        assert_eq!(deleted.retire.as_deref(), Some("textbook:singleton:b1"));
+        assert!(deleted.objects.is_empty());
     }
 
     #[test]

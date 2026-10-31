@@ -17,8 +17,8 @@ use sapling_domain::day::LocalDay;
 use sapling_domain::events::{
     typed_event, ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted,
     ItemAdded, ItemDeleted, ItemReviewed, ItemUpdated, Payload, RawEvent, ResultOverturned,
-    ReviewAmended, Studied, SyncEvent, TextAdded, TextDeleted, TextRevised, WordLookedUp,
-    WordMarked, PATCHABLE_COLUMNS, PROFILE_ID, SCOPED_EVENT_TYPE,
+    ReviewAmended, Studied, SyncEvent, TextAdded, TextDeleted, TextRevised, TextbookAdded,
+    TextbookDeleted, WordLookedUp, WordMarked, PATCHABLE_COLUMNS, PROFILE_ID, SCOPED_EVENT_TYPE,
 };
 use sapling_domain::types::{ChallengeResult, Conversation, ConversationExchange, Profile};
 use sapling_srs::{new_card_state, review_card, FsrsCardState, Grade, GOOD};
@@ -593,6 +593,40 @@ impl<'a> Materializer<'a> {
             .exec("DELETE FROM texts WHERE id = ?", std::slice::from_ref(&id))
     }
 
+    /// Like a text by reference: the row records the hash, and whether the
+    /// object is here is the read's question (`READABLE_TEXTBOOKS`).
+    fn textbook_added(&self, p: &TextbookAdded) -> Result<()> {
+        if self.exists(
+            "SELECT 1 FROM textbookTombstones WHERE textbookId = ?",
+            &[Param::text(&p.id)],
+        )? {
+            return Ok(());
+        }
+        self.sql.exec(
+            "INSERT OR IGNORE INTO textbooks (id, title, fileName, content, createdAt)
+             VALUES (?, ?, ?, ?, ?)",
+            &[
+                Param::text(&p.id),
+                Param::text(&p.title),
+                Param::opt_text(p.file_name.as_deref()),
+                Param::text(&p.content),
+                Param::number(p.created_at),
+            ],
+        )
+    }
+
+    fn textbook_deleted(&self, p: &TextbookDeleted) -> Result<()> {
+        let id = Param::text(&p.textbook_id);
+        self.sql.exec(
+            "INSERT OR IGNORE INTO textbookTombstones (textbookId) VALUES (?)",
+            std::slice::from_ref(&id),
+        )?;
+        self.sql.exec(
+            "DELETE FROM textbooks WHERE id = ?",
+            std::slice::from_ref(&id),
+        )
+    }
+
     fn word_marked(&self, at: f64, p: &WordMarked) -> Result<()> {
         let term = p.term.trim();
         if term.is_empty() {
@@ -737,6 +771,8 @@ impl<'a> Materializer<'a> {
             Payload::ResultOverturned(p) => self.result_overturned(p),
             Payload::Studied(p) => self.studied(&event.id, event.at, p),
             Payload::TextRevised(p) => self.text_revised(event, p),
+            Payload::TextbookAdded(p) => self.textbook_added(p),
+            Payload::TextbookDeleted(p) => self.textbook_deleted(p),
         }
     }
 

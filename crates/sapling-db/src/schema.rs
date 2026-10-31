@@ -89,6 +89,14 @@ CREATE TABLE IF NOT EXISTS textRevisions (
 
 CREATE TABLE IF NOT EXISTS textTombstones (textId TEXT PRIMARY KEY);
 
+-- A textbook: always by reference, its chapters an object (`content`). A book
+-- whose object is not in `objects` is shown by no read (`READABLE_TEXTBOOKS`).
+CREATE TABLE IF NOT EXISTS textbooks (
+  id TEXT PRIMARY KEY, title TEXT NOT NULL, fileName TEXT, content TEXT NOT NULL,
+  createdAt INTEGER NOT NULL);
+
+CREATE TABLE IF NOT EXISTS textbookTombstones (textbookId TEXT PRIMARY KEY);
+
 CREATE TABLE IF NOT EXISTS wordMarks (
   term TEXT PRIMARY KEY, known INTEGER NOT NULL, updatedAt INTEGER NOT NULL DEFAULT 0);
 
@@ -134,15 +142,30 @@ pub const READABLE_TEXTS: &str = "(
   WHERE (coalesce(r.content, t.content) IS NULL AND t.segments IS NOT NULL)
      OR json_type(o.bytes, '$.segments') = 'array')";
 
-/// The object hashes some text's current body names and `objects` lacks — what
-/// a sync cycle fetches after pulling. Re-derived every time, never queued.
+/// Every textbook a read may show, its chapters resolved: the `textbooks`
+/// columns and `chapters` as JSON text, only where this device holds the
+/// object and it holds a chapter list. Storing the object is what makes a book
+/// appear, as with a text.
+pub const READABLE_TEXTBOOKS: &str = "(
+  SELECT b.id AS id, b.title AS title, b.fileName AS fileName, b.createdAt AS createdAt,
+         json_extract(o.bytes, '$.chapters') AS chapters
+  FROM textbooks b
+  JOIN objects o ON o.hash = b.content
+  WHERE json_type(o.bytes, '$.chapters') = 'array')";
+
+/// The object hashes some text's current body or some textbook names and
+/// `objects` lacks — what a sync cycle fetches after pulling. Re-derived every
+/// time, never queued.
 pub const MISSING_OBJECTS: &str = "
-  SELECT DISTINCT coalesce(r.content, t.content) AS hash
-  FROM texts t
-  LEFT JOIN textRevisions r ON r.textId = t.id
-  WHERE coalesce(r.content, t.content) IS NOT NULL
-    AND NOT EXISTS (SELECT 1 FROM objects o WHERE o.hash = coalesce(r.content, t.content))
-  ORDER BY hash";
+  SELECT m.hash AS hash FROM (
+    SELECT coalesce(r.content, t.content) AS hash
+    FROM texts t
+    LEFT JOIN textRevisions r ON r.textId = t.id
+    WHERE coalesce(r.content, t.content) IS NOT NULL
+    UNION
+    SELECT content AS hash FROM textbooks) m
+  WHERE NOT EXISTS (SELECT 1 FROM objects o WHERE o.hash = m.hash)
+  ORDER BY m.hash";
 
 /// Device-local selection. It deliberately does not travel in the event log:
 /// choosing Japanese on a phone must not switch a laptop away from Spanish.
@@ -208,7 +231,10 @@ pub fn review_key(item_id: &str, at: f64, device: &str) -> String {
 /// `content` (its `segments` nullable now) and `textRevisions` arrived, and an
 /// older build logged and skipped every `textAdded { content }` and
 /// `textRevised` it was sent.
-pub const DERIVED_SCHEMA_VERSION: u32 = 15;
+///
+/// Bumped for 16 when textbooks arrived (`textbooks`, `textbookTombstones`):
+/// an older build logged and skipped every `textbookAdded` it was sent.
+pub const DERIVED_SCHEMA_VERSION: u32 = 16;
 
 /// Every read table the materializer owns; `events`, `meta` and `objects`
 /// survive a rebuild.
@@ -217,7 +243,7 @@ pub const DERIVED_SCHEMA_VERSION: u32 = 15;
 /// activity read folds the base tables at read time instead, since a day is
 /// made of reviews, lookups and added words as much as of answers. A database
 /// from before still carries the empty table; nothing reads or drops it.
-pub const DERIVED_TABLES: [&str; 18] = [
+pub const DERIVED_TABLES: [&str; 20] = [
     "items",
     "reviews",
     "challenges",
@@ -228,6 +254,8 @@ pub const DERIVED_TABLES: [&str; 18] = [
     "texts",
     "textRevisions",
     "textTombstones",
+    "textbooks",
+    "textbookTombstones",
     "wordMarks",
     "lookups",
     "studied",

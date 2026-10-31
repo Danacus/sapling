@@ -67,10 +67,12 @@ pub enum EventType {
     ResultOverturned,
     Studied,
     TextRevised,
+    TextbookAdded,
+    TextbookDeleted,
 }
 
 impl EventType {
-    pub const ALL: [EventType; 20] = [
+    pub const ALL: [EventType; 22] = [
         EventType::ItemAdded,
         EventType::ItemReviewed,
         EventType::ReviewAmended,
@@ -91,6 +93,8 @@ impl EventType {
         EventType::ResultOverturned,
         EventType::Studied,
         EventType::TextRevised,
+        EventType::TextbookAdded,
+        EventType::TextbookDeleted,
     ];
 
     /// The wire name — the `type` column.
@@ -116,6 +120,8 @@ impl EventType {
             EventType::ResultOverturned => "resultOverturned",
             EventType::Studied => "studied",
             EventType::TextRevised => "textRevised",
+            EventType::TextbookAdded => "textbookAdded",
+            EventType::TextbookDeleted => "textbookDeleted",
         }
     }
 
@@ -400,6 +406,35 @@ pub struct TextDeleted {
     pub text_id: String,
 }
 
+/// A textbook arrives: its title, the file it was read from by name, and its
+/// chapters as the object `content` names (a `TextbookContent`). Always by
+/// reference — there is no inline shape to stay compatible with.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(rename = "TextbookAddedPayload")]
+#[serde(rename_all = "camelCase")]
+pub struct TextbookAdded {
+    pub id: String,
+    pub title: String,
+    #[serde(
+        default,
+        deserialize_with = "absent_or",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional)]
+    pub file_name: Option<String>,
+    /// The chapters as an object: `sha256:<64 lowercase hex>`.
+    pub content: String,
+    pub created_at: f64,
+}
+
+/// Tombstone. The book goes, and the id can never come back.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(rename = "TextbookDeletedPayload")]
+#[serde(rename_all = "camelCase")]
+pub struct TextbookDeleted {
+    pub textbook_id: String,
+}
+
 /// "I know this word" / "I don't". Last write by the envelope `at` wins, per term.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(rename = "WordMarkedPayload")]
@@ -495,6 +530,8 @@ pub enum Payload {
     ResultOverturned(ResultOverturned),
     Studied(Studied),
     TextRevised(TextRevised),
+    TextbookAdded(TextbookAdded),
+    TextbookDeleted(TextbookDeleted),
 }
 
 impl Payload {
@@ -520,6 +557,8 @@ impl Payload {
             Payload::ResultOverturned(_) => EventType::ResultOverturned,
             Payload::Studied(_) => EventType::Studied,
             Payload::TextRevised(_) => EventType::TextRevised,
+            Payload::TextbookAdded(_) => EventType::TextbookAdded,
+            Payload::TextbookDeleted(_) => EventType::TextbookDeleted,
         }
     }
 
@@ -562,6 +601,12 @@ pub fn parse_payload(kind: EventType, raw: &Value) -> Option<Payload> {
             .ok()
             .filter(|p| is_object_hash(&p.content))
             .map(Payload::TextRevised),
+        // A book is always by reference, and the reference must be a name.
+        EventType::TextbookAdded => serde_json::from_value::<TextbookAdded>(raw.clone())
+            .ok()
+            .filter(|p| is_object_hash(&p.content))
+            .map(Payload::TextbookAdded),
+        EventType::TextbookDeleted => typed(raw, Payload::TextbookDeleted),
     }
 }
 
@@ -842,7 +887,23 @@ mod tests {
                 json!({ "challengeId": "c", "answeredAt": 7, "verdict": "correct" }),
             ),
             (EventType::Studied, json!({ "textId": "t", "ms": 90000 })),
+            (
+                EventType::TextbookAdded,
+                json!({ "id": "b", "title": "HSK 1", "fileName": "hsk1.pdf", "content": HASH, "createdAt": 11 }),
+            ),
+            (EventType::TextbookDeleted, json!({ "textbookId": "b" })),
         ]
+    }
+
+    #[test]
+    fn a_textbook_names_a_well_formed_object() {
+        let added = |content: Value| {
+            json!({ "id": "e", "type": "textbookAdded", "at": 1, "device": "d",
+                    "payload": { "id": "b", "title": "T", "content": content, "createdAt": 1 } })
+        };
+        assert!(parse_event(&added(json!(HASH))).is_some());
+        assert!(parse_event(&added(json!("sha256:short"))).is_none());
+        assert!(parse_event(&added(json!(HASH.to_uppercase()))).is_none());
     }
 
     #[test]

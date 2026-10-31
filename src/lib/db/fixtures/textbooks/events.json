@@ -1,0 +1,84 @@
+{
+	"meta": {
+		"deviceId": "fixture-device",
+		"now": 1710244800000,
+		"orderFree": true,
+		"note": "Four textbooks. book-held reads whole (getTextbooks lists it with its chapter count, getTextbook returns its chapters); book-waiting names an object that has not arrived and is returned by no read, and missingObjects lists it; book-gone is added then deleted; book-late's tombstone sits ahead of its textbookAdded in the log and still wins. The deleted books' objects are held and read by nothing."
+	},
+	"events": [
+		{
+			"seq": 1,
+			"id": "ev-book-held",
+			"type": "textbookAdded",
+			"at": 1710061200000,
+			"device": "dev-a",
+			"payload": {
+				"id": "book-held",
+				"title": "HSK Standard Course 1",
+				"fileName": "hsk1.pdf",
+				"content": "sha256:29c5c06735484522973a681a29125bc16b1670fab059ed21918501978e054233",
+				"createdAt": 1710061200000
+			}
+		},
+		{
+			"seq": 2,
+			"id": "ev-book-waiting",
+			"type": "textbookAdded",
+			"at": 1710061260000,
+			"device": "dev-a",
+			"payload": {
+				"id": "book-waiting",
+				"title": "Waiting",
+				"content": "sha256:ff7846f07aad3ca3c7e164ea740aaae677e7bfa6d2058685acffcd0c7e508c2c",
+				"createdAt": 1710061260000
+			}
+		},
+		{
+			"seq": 3,
+			"id": "ev-book-gone",
+			"type": "textbookAdded",
+			"at": 1710061320000,
+			"device": "dev-a",
+			"payload": {
+				"id": "book-gone",
+				"title": "Nederlands in gang",
+				"fileName": "nl.pdf",
+				"content": "sha256:9ab147e59705dc497463f76e03c0bbd326b9a5ff46d8588a1884a3cd904011ca",
+				"createdAt": 1710061320000
+			}
+		},
+		{
+			"seq": 4,
+			"id": "ev-book-gone-deleted",
+			"type": "textbookDeleted",
+			"at": 1710061380000,
+			"device": "dev-a",
+			"payload": {
+				"textbookId": "book-gone"
+			}
+		},
+		{
+			"seq": 5,
+			"id": "ev-book-late-deleted",
+			"type": "textbookDeleted",
+			"at": 1710061440000,
+			"device": "dev-a",
+			"payload": {
+				"textbookId": "book-late"
+			}
+		},
+		{
+			"seq": 6,
+			"id": "ev-book-late",
+			"type": "textbookAdded",
+			"at": 1710061500000,
+			"device": "dev-a",
+			"payload": {
+				"id": "book-late",
+				"title": "Late",
+				"content": "sha256:d42356d7ed43fadf4060b99994b576b90aada86fe5723d5531916a45a7378df3",
+				"createdAt": 1710061500000
+			}
+		}
+	]
+}

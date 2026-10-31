@@ -21,7 +21,9 @@ use ts_rs::TS;
 
 use crate::clips;
 use crate::materialize::{open_schema, raw_from_row, Materializer, LOG_ORDER};
-use crate::schema::{ACTIVE_PROFILE_KEY, DERIVED_TABLES, MISSING_OBJECTS, READABLE_TEXTS};
+use crate::schema::{
+    ACTIVE_PROFILE_KEY, DERIVED_TABLES, MISSING_OBJECTS, READABLE_TEXTBOOKS, READABLE_TEXTS,
+};
 use crate::sql::{Error, Param, Result, Row, Sql};
 use sapling_challenges::grade::GapVerdict;
 use sapling_challenges::local::CueCandidate;
@@ -31,15 +33,17 @@ use sapling_domain::day::LocalDay;
 use sapling_domain::events::{
     parse_envelope, ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted,
     EventType, ItemAdded, ItemDeleted, ItemFields, ItemReviewed, ItemUpdated, Payload, RawEvent,
-    ResultOverturned, ReviewAmended, Studied, SyncEvent, TextAdded, TextDeleted, WordLookedUp,
-    WordMarked, PROFILE_ID,
+    ResultOverturned, ReviewAmended, Studied, SyncEvent, TextAdded, TextDeleted, TextbookAdded,
+    TextbookDeleted, WordLookedUp, WordMarked, PROFILE_ID,
 };
-use sapling_domain::objects::{object_refs, ContentObject, TextContent, MAX_OBJECT_BYTES};
+use sapling_domain::objects::{
+    object_refs, ContentObject, TextContent, TextbookContent, MAX_OBJECT_BYTES,
+};
 use sapling_domain::types::{
     ChallengeResult, Conversation, ConversationDetail, ConversationExchange,
     ConversationLearnerTurn, ConversationSummary, ConversationTeacherTurn, DailyActivity,
     GradeEntry, HistoryEntry, KnowledgeItem, Profile, ReadingText, StudyMode, StudySession,
-    Verdict,
+    Textbook, TextbookSummary, Verdict,
 };
 use sapling_srs::{item_srs, FsrsCardState, Grade};
 
@@ -318,6 +322,17 @@ fn text_from(row: &Row) -> Result<ReadingText> {
             Some(media) => Some(parse_json(media)?),
             None => None,
         },
+        created_at: row.f64("createdAt")?,
+    })
+}
+
+/// One row of [`READABLE_TEXTBOOKS`], chapters resolved.
+fn textbook_from(row: &Row) -> Result<Textbook> {
+    Ok(Textbook {
+        id: row.text("id")?.to_owned(),
+        title: row.text("title")?.to_owned(),
+        file_name: row.opt_text("fileName")?.map(str::to_owned),
+        chapters: parse_json(row.text("chapters")?)?,
         created_at: row.f64("createdAt")?,
     })
 }
@@ -1377,6 +1392,83 @@ impl Core {
             .iter()
             .map(|row| Ok(row.text("term")?.trim().to_lowercase()))
             .collect()
+    }
+
+    /* ---- Textbooks ------------------------------------------------------ */
+
+    /// Stores one textbook: its chapters as an object and a `textbookAdded`
+    /// that names it, in one transaction, as `add_text` does. A book with no
+    /// title or no chapter is refused, and so is one over [`MAX_OBJECT_BYTES`]
+    /// — no relay could hold it, so it could never sync.
+    pub fn add_textbook(&self, book: &Textbook) -> Result<()> {
+        if book.title.trim().is_empty() || book.chapters.is_empty() {
+            return Err(Error("A textbook needs a title and a chapter.".into()));
+        }
+        let object = TextbookContent {
+            chapters: book.chapters.clone(),
+        }
+        .to_object();
+        if object.bytes.len() > MAX_OBJECT_BYTES {
+            return Err(Error(
+                "This book is too long to keep in one piece: it is over 1 MiB. Import it in parts."
+                    .into(),
+            ));
+        }
+        let fact = Payload::TextbookAdded(TextbookAdded {
+            id: book.id.clone(),
+            title: book.title.trim().to_owned(),
+            file_name: book.file_name.clone(),
+            content: object.hash.clone(),
+            created_at: book.created_at,
+        });
+        self.commit_with((self.clock)(), vec![fact], || {
+            self.store_object(&object).map(|_| ())
+        })
+    }
+
+    /// Every textbook whose chapters this device holds, newest first, without
+    /// the chapters themselves.
+    pub fn get_textbooks(&self) -> Result<Vec<TextbookSummary>> {
+        Ok(self
+            .sql
+            .query(
+                &format!(
+                    "SELECT id, title, fileName, createdAt, json_array_length(chapters) AS count
+                     FROM {READABLE_TEXTBOOKS} ORDER BY createdAt DESC"
+                ),
+                &[],
+            )?
+            .iter()
+            .filter_map(|row| {
+                Some(TextbookSummary {
+                    id: row.text("id").ok()?.to_owned(),
+                    title: row.text("title").ok()?.to_owned(),
+                    file_name: row.opt_text("fileName").ok()?.map(str::to_owned),
+                    chapters: row.f64("count").ok()? as usize,
+                    created_at: row.f64("createdAt").ok()?,
+                })
+            })
+            .collect())
+    }
+
+    /// One textbook with its chapters, or `None` when it is deleted, unknown,
+    /// or its object absent. Chapters that will not parse are a book that is
+    /// not here, like a text's body.
+    pub fn get_textbook(&self, id: &str) -> Result<Option<Textbook>> {
+        Ok(self
+            .sql
+            .query(
+                &format!("SELECT * FROM {READABLE_TEXTBOOKS} WHERE id = ?"),
+                &[Param::text(id)],
+            )?
+            .iter()
+            .find_map(|row| textbook_from(row).ok()))
+    }
+
+    pub fn delete_textbook(&self, id: &str) -> Result<()> {
+        self.commit(Payload::TextbookDeleted(TextbookDeleted {
+            textbook_id: id.to_owned(),
+        }))
     }
 
     pub fn delete_text(&self, id: &str) -> Result<()> {

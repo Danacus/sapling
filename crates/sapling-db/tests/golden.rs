@@ -152,6 +152,7 @@ struct Ids {
     terms: Vec<String>,
     challenges: Vec<String>,
     texts: Vec<String>,
+    textbooks: Vec<String>,
     conversations: Vec<String>,
 }
 
@@ -192,6 +193,9 @@ fn ids_in(events: &[Value]) -> Ids {
             &["textDeleted", "textRevised", "wordLookedUp", "studied"],
             "textId",
         ))),
+        textbooks: unique(
+            of(&["textbookAdded"], "id").chain(of(&["textbookDeleted"], "textbookId")),
+        ),
         conversations: unique(
             of(&["conversationStarted"], "id")
                 .chain(of(&["turnAdded", "conversationDeleted"], "conversationId")),
@@ -265,6 +269,8 @@ fn probe(core: &Core, events: &[Value]) -> Value {
         "studySessions": core.study_sessions(0.0).expect("study_sessions"),
         "getTexts": core.get_texts().expect("get_texts"),
         "getText": by_key(&ids.texts, |id| core.get_text(id).expect("get_text")),
+        "getTextbooks": core.get_textbooks().expect("get_textbooks"),
+        "getTextbook": by_key(&ids.textbooks, |id| core.get_textbook(id).expect("get_textbook")),
         "missingObjects": core.missing_objects().expect("missing_objects"),
         "clipsFor": by_key(&ids.terms, |term| Some(core.clips_for(&[term.to_owned()], None).expect("clips_for"))),
         "getKnownTerms": known,

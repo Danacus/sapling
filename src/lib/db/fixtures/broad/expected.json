@@ -919,6 +919,8 @@
 		},
 		"text-3": null
 	},
+	"getTextbooks": [],
+	"getTextbook": {},
 	"missingObjects": [],
 	"clipsFor": {
 		"你好": [

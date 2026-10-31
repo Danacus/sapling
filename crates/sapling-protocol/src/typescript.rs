@@ -25,7 +25,7 @@ use sapling_db::core::{ExportEnvelope, EXPORT_VERSION};
 use sapling_domain::events::{
     ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted, EventType, ItemAdded,
     ItemDeleted, ItemReviewed, ItemUpdated, ResultOverturned, ReviewAmended, Studied, TextAdded,
-    TextDeleted, TextRevised, WordLookedUp, WordMarked,
+    TextDeleted, TextRevised, TextbookAdded, TextbookDeleted, WordLookedUp, WordMarked,
 };
 use sapling_domain::types::{ChallengeResult, Conversation, ConversationExchange, Profile};
 use sapling_llm::gloss::MAX_GLOSS_WORDS;
@@ -98,6 +98,8 @@ fn payloads(cfg: &Config) -> String {
             EventType::ResultOverturned => payload::<ResultOverturned>(cfg),
             EventType::Studied => payload::<Studied>(cfg),
             EventType::TextRevised => payload::<TextRevised>(cfg),
+            EventType::TextbookAdded => payload::<TextbookAdded>(cfg),
+            EventType::TextbookDeleted => payload::<TextbookDeleted>(cfg),
         };
         let module = path.with_extension("");
         let _ = writeln!(

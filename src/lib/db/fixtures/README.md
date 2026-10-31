@@ -38,10 +38,10 @@ Reads are always taken under `TZ=UTC` (`getDailyActivity` buckets by local day,
 - `getAllItems` is recorded twice, as `lean` and `withRecentGrades`. Both — and
   `getItem` — carry `srs`, the schedule the core derives from the card at read
   time, taken against `meta.now`.
-- `getItem`, `getText`, `getConversation` are called once per id the log
-  mentions for that kind (added, reviewed, updated, deleted, revised, looked
-  up, turned), and recorded as a map from id to result; a missing row is
-  `null`.
+- `getItem`, `getText`, `getTextbook`, `getConversation` are called once per
+  id the log mentions for that kind (added, reviewed, updated, deleted,
+  revised, looked up, turned), and recorded as a map from id to result; a
+  missing row is `null`.
 - `missingObjects` is recorded as returned (hash order).
 - `clipsFor` is called once per term an `itemAdded` names, with that term
   alone and no sentence, and recorded as a map from term to result; no clip
@@ -74,6 +74,12 @@ Reads are always taken under `TZ=UTC` (`getDailyActivity` buckets by local day,
   later device wins), an older revision arriving last and losing, an inline
   text revised to an object, a revision and a delete racing (deleted stays
   deleted), and a revision of a text never added (inert).
+- `textbooks` — four books by reference: one whose object is held reads
+  whole (`getTextbooks` lists it with its chapter count, `getTextbook` returns
+  its chapters); one whose object has not arrived is returned by no read and
+  `missingObjects` lists it; one added then deleted; one whose tombstone sits
+  ahead of its `textbookAdded` and still wins. The deleted books' objects are
+  held and read by nothing.
 - `object-absent` — only one of three objects is held: a text naming an
   absent object, and an inline text whose current revision is absent, are
   returned by no read (`clipsFor` included), and `missingObjects` lists both.
