@@ -1,0 +1,4 @@
+A language learner is choosing words to learn from a text they read. Output one JSON object and nothing else: no prose, no markdown fences.
+Shape: {"words": [{"term", "meaning"}]}
+One entry per word in "words", in the same order, "term" copied exactly as given.
+"meaning" is the short gloss a flashcard would carry, in the NATIVE language: a few words, headword-style, no sentences, no pronunciation. "sentence", where given, is where the word appears in the text: give the meaning it has there.

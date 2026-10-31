@@ -44,7 +44,7 @@ beforeEach(async () => {
 });
 
 describe('textbook-import', () => {
-	it('reads the chosen pages and assembles one lesson', async () => {
+	it('reads the chosen pages and assembles one lesson of Chinese lines only', async () => {
 		const { ctx, steps, progress } = context();
 		const result = await textbookImportTask.run(
 			{
@@ -60,7 +60,9 @@ describe('textbook-import', () => {
 		expect(steps).toEqual(['open', 'read', 'assemble']);
 		expect(progress.at(-1)).toEqual([2, 2]);
 		expect(result.pages).toBe(2);
-		// Fixture page 1, then 2: tidied (no "A:", no spaces between hanzi, no "（1）").
+		// The fixture pages carry pinyin as lines, inside lines and word by
+		// word, an "A:", a translation as a line and a word list: only the
+		// Chinese arrives.
 		expect(result.draft.title).toBe('1 · 你好');
 		expect(result.draft.segments.map((s) => s.text)).toEqual([
 			'你好！',
@@ -70,21 +72,11 @@ describe('textbook-import', () => {
 			'他是老师吗？',
 			'你是中国人吗？'
 		]);
-		// 学生 is listed twice; the second listing adds nothing it lacked.
-		expect(result.draft.words.map((w) => w.term)).toEqual([
-			'你好',
-			'叫',
-			'学生',
-			'吗',
-			'王明',
-			'是',
-			'老师'
-		]);
-		expect(result.unglossed).toBe(0);
-		expect(textbookImportTask.summary(result)).toBe('6 lines and 7 words ready to review');
+		expect(result.draft).not.toHaveProperty('words');
+		expect(textbookImportTask.summary(result)).toBe('6 lines ready to review');
 	});
 
-	it('asks for meanings a list printed without them', async () => {
+	it('keeps a Latin-script lesson as printed', async () => {
 		const { ctx, steps } = context();
 		const result = await textbookImportTask.run(
 			{
@@ -96,16 +88,16 @@ describe('textbook-import', () => {
 			},
 			ctx
 		);
-		expect(steps).toEqual(['open', 'read', 'assemble', 'gloss']);
-		expect(result.draft.words.map((w) => [w.term, w.notes, w.meaning])).toEqual([
-			['café', 'el', '(meaning of "café")'],
-			['leche', 'la', '(meaning of "leche")'],
-			['desear', 'deseo, deseas, desea', '(meaning of "desear")'],
-			['gracias', undefined, '(meaning of "gracias")'],
-			['té', 'el', '(meaning of "té")'],
-			['cuenta', 'la', '(meaning of "cuenta")']
+		expect(steps).toEqual(['open', 'read', 'assemble']);
+		expect(result.draft.title).toBe('Lección 1 · En la cafetería');
+		expect(result.draft.segments.map((s) => s.text)).toEqual([
+			'Buenos días. ¿Qué desea?',
+			'Un café con leche, por favor.',
+			'¿Algo más?',
+			'No, gracias.',
+			'Quiero un té, por favor.',
+			'¿Me trae la cuenta?'
 		]);
-		expect(result.unglossed).toBe(0);
 	});
 
 	it('refuses a range outside the file', async () => {

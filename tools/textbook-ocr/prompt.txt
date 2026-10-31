@@ -11,6 +11,7 @@ Leave out: page headers and footers (but report their page number and lesson lab
 
 Rules:
 - A pronunciation guide printed above or beside target text (pinyin, furigana) goes in `reading`, never in `text`.
+- `text` is written in the target language's own script and nothing else. On a Chinese page it holds Chinese characters and punctuation only — never pinyin, whether the pinyin is printed above the line, after it, word by word between the characters, or as a line of its own. A line of pinyin is never an entry: it is the `reading` of the line it belongs to.
 - A translation printed with a line or in a parallel "English version" goes in that line's `translation`, matched line by line.
 - Spaces the book prints between the words of a script written without spaces (Chinese, Japanese) are removed from `text`.
 - A speaker label may be a description ("een collega", "prof. Deman", "Anja, Barbara"); copy it as printed, without the dialogue's number or a trailing colon: "1. Paolo" is speaker "Paolo", "A:" is "A".

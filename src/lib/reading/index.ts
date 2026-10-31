@@ -9,7 +9,9 @@
  * {@link lookUpWord} and {@link translateLine} are the two paid calls that run
  * *while* reading: one word, explained in the sentence it stands in, and one
  * segment in the learner's own language — both kept by the page for the rest of
- * that open and never stored. The three calls — prompts, parsing and mock
+ * that open and never stored. {@link glossWords} is the fourth, for the words
+ * page: meanings for the words a learner ticked from a text (`harvestWords`
+ * lists them), each sent with its sentence. The four calls — prompts, parsing and mock
  * included — are `crates/sapling-llm`'s. Everything else is local: `paginate`
  * decides where the pages break (and `sentenceAt` which sentence a word travels
  * with), and `tokenizeByTerms` and `annotateSentence` decide what the reader
@@ -21,7 +23,8 @@
  * learner's collection going through the repositories that capture sync events.
  */
 
-import { callLlm } from '$lib/llm';
+import type { GlossWordsArgs, GlossedWord } from '$lib/db/generated/index';
+import { callLlm, MAX_GLOSS_WORDS } from '$lib/llm';
 import type {
 	CallOptions,
 	GenerateTextArgs,
@@ -49,7 +52,27 @@ export function translateLine(args: TranslateLineArgs, opts: CallOptions = {}): 
 	return callLlm('translateLine', args, opts);
 }
 
+/**
+ * Meanings for the words given, each in its sentence — no readings, which are
+ * the frontend's. Several calls of at most `MAX_GLOSS_WORDS`, one after the
+ * other; a word the model left out simply comes back without one.
+ */
+export async function glossWords(
+	args: GlossWordsArgs,
+	opts: CallOptions = {}
+): Promise<GlossedWord[]> {
+	const glossed: GlossedWord[] = [];
+	for (let at = 0; at < args.words.length; at += MAX_GLOSS_WORDS) {
+		const words = args.words.slice(at, at + MAX_GLOSS_WORDS);
+		glossed.push(...(await callLlm('glossWords', { ...args, words }, opts)));
+	}
+	return glossed;
+}
+
 export { MAX_FOCUS_WORDS, MAX_TOPIC_CHARS } from '$lib/llm';
+export { harvestWords } from './harvest';
+export type { AnnotatedSegment, WordCandidate } from './harvest';
+export type { GlossedWord } from '$lib/db/generated/index';
 export type {
 	FocusWord,
 	GenerateTextArgs,

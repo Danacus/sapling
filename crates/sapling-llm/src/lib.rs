@@ -13,6 +13,7 @@ pub mod chat;
 pub mod client;
 pub mod conversation;
 pub mod escalation;
+pub mod gloss;
 pub mod json;
 pub mod kinds;
 pub mod lesson;

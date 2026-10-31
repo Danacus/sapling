@@ -1526,6 +1526,9 @@
 							{pageTranslated ? 'Hide translation' : 'Translate'}
 						</button>
 					{/if}
+					<!-- Several words at once, from the whole text: its own page, in both
+					     views, since a video's transcript is as good a source as a page. -->
+					<a class="btn btn-ghost tool" href={`/read/${text.id}/words`}>Words</a>
 					<!-- Confirmation lives in the panel, never here: the header's shape
 					     stays the same whatever the learner is deciding. -->
 					<button

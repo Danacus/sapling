@@ -290,7 +290,7 @@
 					<TextImport {busy} />
 				</div>
 				<div class="pane" hidden={tab !== 'textbook'}>
-					<TextbookImport {profile} {items} />
+					<TextbookImport {profile} />
 				</div>
 
 				{#if tab === 'write'}

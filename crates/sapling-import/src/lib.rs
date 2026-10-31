@@ -17,6 +17,7 @@ use serde::Serialize;
 use ts_rs::TS;
 
 pub mod paragraphs;
+pub mod pinyin;
 pub mod subtitles;
 pub mod textbook;
 

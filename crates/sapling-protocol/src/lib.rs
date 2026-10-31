@@ -505,9 +505,8 @@ backend! {
         importSource(text: String) -> ImportedSource {
             Ok::<_, Error>(sapling_import::import_source(&text))
         }
-        /// One lesson's transcribed textbook pages, in order, into its title,
-        /// one untimed segment per dialogue line or sentence, and its
-        /// vocabulary, one entry per term. Each page is tidied first. Pure,
+        /// One lesson's transcribed textbook pages, in order, into its title
+        /// and one untimed segment per line. Each page is tidied first. Pure,
         /// like `importSource`.
         assembleTextbook(pages: Vec<TextbookPage>) -> TextbookDraft {
             let pages: Vec<TextbookPage> =
@@ -729,18 +728,15 @@ mod tests {
 
     #[test]
     fn assemble_textbook_answers_without_the_database() {
-        let pages = r#"[[{"blocks":[{"kind":"dialogue","lines":[{"speaker":"A:","text":"你叫 什么？"}]},
-            {"kind":"words","words":[{"term":"叫","meaning":"to call"}]}]}]]"#;
+        let pages =
+            r#"[[{"blocks":[{"kind":"dialogue","lines":["Nǐ jiào shénme?","A: 你叫 什么？"]}]}]]"#;
         let answer = dispatch_json(&silent_core(), "assembleTextbook", pages)
             .unwrap()
             .unwrap();
         let value: Value = serde_json::from_str(&answer).unwrap();
         assert_eq!(
             value,
-            serde_json::json!({
-                "segments": [{ "text": "你叫什么？" }],
-                "words": [{ "term": "叫", "meaning": "to call", "proper": false }]
-            })
+            serde_json::json!({ "segments": [{ "text": "你叫什么？" }] })
         );
     }
 

@@ -1,16 +1,15 @@
 <!--
   The Textbook drawer: a lesson's pages — one PDF, or a photo or scan per page —
-  read by a vision model into a text and a word list, reviewed here, and only
+  read by a vision model into the lines of a text, reviewed here, and only
   then kept. Reading is the `textbook-import` task, so the form is free while
   the pages are read and the tray carries the detail; it saves nothing. Import
-  is this form's: `addText` for the lines, `addWords` for the ticked words —
-  the one route by which vocabulary enters the collection.
+  is this form's: `addText` of the lines the learner kept, then the reader.
+  Words are added from the stored text afterwards, as from any text.
 -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { onDestroy } from 'svelte';
 
-	import { addWords } from '$lib/assistant';
 	import {
 		addText,
 		DEFAULT_TEXTBOOK_MODEL,
@@ -24,16 +23,8 @@
 	import { isOpenRouterEndpoint } from '$lib/llm/openrouter-auth';
 	import { SETTLED, rootOf, startTask, taskOutcome } from '$lib/tasks';
 	import { taskStore } from '$lib/tasks/store.svelte';
-	import { termKey } from '$lib/text';
-	import {
-		MAX_PAGES,
-		openPages,
-		pageRange,
-		startsPicked,
-		toNewWord,
-		type TextbookDraft
-	} from '$lib/textbook';
-	import type { KnowledgeItem, Profile, ReadingText } from '$lib/types';
+	import { MAX_PAGES, openPages, pageRange, type TextbookDraft } from '$lib/textbook';
+	import type { Profile, ReadingText } from '$lib/types';
 	import ModelPicker from '$lib/ui/ModelPicker.svelte';
 
 	import { baseName } from './compose';
@@ -41,11 +32,9 @@
 
 	interface Props {
 		profile: Profile | undefined;
-		/** The learner's words: a listed word they already have starts unticked. */
-		items: KnowledgeItem[];
 	}
 
-	let { profile, items }: Props = $props();
+	let { profile }: Props = $props();
 
 	/** Short names for the two measured models; anything else shows its id. */
 	const MODEL_NAMES: Record<string, string> = {
@@ -68,11 +57,9 @@
 
 	let review = $state<{ draft: TextbookDraft; name: string } | undefined>(undefined);
 	let title = $state('');
-	let picked = $state<boolean[]>([]);
 	/** The lines as the learner corrects them, and which they keep. */
 	let lineTexts = $state<string[]>([]);
 	let kept = $state<boolean[]>([]);
-	let meanings = $state<string[]>([]);
 	let adding = $state(false);
 
 	let left = false;
@@ -83,7 +70,6 @@
 	const name = $derived(files.length === 1 ? baseName(files[0].name) : files.length ? 'Pages' : '');
 	const range = $derived(pageRange(from, to, pageCount));
 	const tooMany = $derived(range !== undefined && range.to - range.from + 1 > MAX_PAGES);
-	const known = $derived(new Set(items.map((item) => termKey(item.term))));
 
 	// Reads this form started. Records, not promises: a Retry in the tray is a
 	// new record descending from ours (`tasks.md`).
@@ -118,8 +104,6 @@
 		title = '';
 		lineTexts = draft.segments.map((segment) => segment.text);
 		kept = draft.segments.map(() => true);
-		picked = draft.words.map((word) => startsPicked(word, known) && Boolean(word.meaning));
-		meanings = draft.words.map((word) => word.meaning ?? '');
 	}
 
 	async function choose(event: Event) {
@@ -167,15 +151,6 @@
 		setTextbookModel(id === DEFAULT_TEXTBOOK_MODEL ? '' : id);
 	}
 
-	const wordsToAdd = $derived(
-		review
-			? review.draft.words.flatMap((word, i) => {
-					const filed = picked[i] ? toNewWord(word, meanings[i] ?? '') : undefined;
-					return filed ? [filed] : [];
-				})
-			: []
-	);
-
 	const linesToKeep = $derived(
 		review
 			? lineTexts.flatMap((text, i) => (kept[i] && text.trim() ? [{ text: text.trim() }] : []))
@@ -183,28 +158,23 @@
 	);
 
 	async function keep() {
-		if (!review || adding) return;
+		if (!review || adding || linesToKeep.length === 0) return;
 		const { draft } = review;
 		adding = true;
 		error = '';
 		try {
-			let opened: string | undefined;
-			if (linesToKeep.length > 0) {
-				const text: ReadingText = {
-					id: newUuid(),
-					title: title.trim() || draft.title || review.name || 'Untitled',
-					source: 'imported',
-					segments: linesToKeep,
-					createdAt: Date.now()
-				};
-				await addText(text);
-				opened = text.id;
-			}
-			if (wordsToAdd.length > 0) await addWords(wordsToAdd);
+			const text: ReadingText = {
+				id: newUuid(),
+				title: title.trim() || draft.title || review.name || 'Untitled',
+				source: 'imported',
+				segments: linesToKeep,
+				createdAt: Date.now()
+			};
+			await addText(text);
 			review = undefined;
 			files = [];
 			pageCount = 0;
-			if (opened && !left) await goto(`/read/${opened}`);
+			if (!left) await goto(`/read/${text.id}`);
 		} catch (cause) {
 			error = cause instanceof Error ? cause.message : 'Could not import that lesson.';
 		} finally {
@@ -263,48 +233,11 @@
 		</ul>
 	{/if}
 
-	{#if draft.words.length > 0}
-		<h3 class="sub">
-			Words <span class="note">{wordsToAdd.length} of {draft.words.length} to add</span>
-		</h3>
-		<ul class="words">
-			{#each draft.words as word, i (i)}
-				{@const held = known.has(termKey(word.term))}
-				<li class="word" class:is-off={!picked[i]}>
-					<input
-						type="checkbox"
-						aria-label={`Add ${word.term}`}
-						disabled={adding || !(meanings[i] ?? '').trim()}
-						bind:checked={picked[i]}
-					/>
-					<span class="term">
-						<span class="term-text">{word.term}</span>
-						{#if word.reading}<span class="reading">{word.reading}</span>{/if}
-						{#if word.notes}<span class="notes">{word.notes}</span>{/if}
-						{#if held}<span class="notes">in your words</span>{/if}
-						{#if word.proper}<span class="notes">name</span>{/if}
-					</span>
-					<input
-						class="input meaning"
-						type="text"
-						aria-label={`Meaning of ${word.term}`}
-						placeholder="Meaning"
-						disabled={adding}
-						bind:value={meanings[i]}
-						oninput={() => {
-							if (!(meanings[i] ?? '').trim()) picked[i] = false;
-						}}
-					/>
-				</li>
-			{/each}
-		</ul>
-	{/if}
-
 	<div class="actions">
 		<button
 			type="button"
 			class="btn btn-primary go"
-			disabled={adding || (linesToKeep.length === 0 && wordsToAdd.length === 0)}
+			disabled={adding || linesToKeep.length === 0}
 			onclick={() => void keep()}
 		>
 			{adding ? 'Importing…' : 'Import'}
@@ -576,54 +509,6 @@
 		stroke-linejoin: round;
 	}
 
-	.words {
-		margin: 0 0 1.25rem;
-		padding: 0;
-		list-style: none;
-		display: grid;
-		gap: 0.5rem;
-	}
-
-	.word {
-		display: grid;
-		grid-template-columns: auto minmax(0, 1fr);
-		align-items: center;
-		gap: 0.35rem 0.65rem;
-	}
-
-	.word input[type='checkbox'] {
-		width: 1.25rem;
-		height: 1.25rem;
-		accent-color: var(--primary);
-	}
-
-	.word.is-off .term {
-		opacity: 0.6;
-	}
-
-	.term {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: baseline;
-		gap: 0.15rem 0.5rem;
-		min-width: 0;
-	}
-
-	.term-text {
-		font-weight: 700;
-		font-size: 1.05rem;
-	}
-
-	.reading,
-	.notes {
-		font-size: 0.85rem;
-		color: var(--text-muted);
-	}
-
-	.meaning {
-		grid-column: 2;
-	}
-
 	.actions {
 		display: flex;
 		gap: 0.75rem;
@@ -642,15 +527,5 @@
 		color: var(--danger);
 		font-size: 0.9rem;
 		font-weight: 700;
-	}
-
-	@media (min-width: 48rem) {
-		.word {
-			grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
-		}
-
-		.meaning {
-			grid-column: 3;
-		}
 	}
 </style>

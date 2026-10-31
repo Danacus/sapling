@@ -28,9 +28,9 @@ use sapling_domain::events::{
     TextDeleted, TextRevised, WordLookedUp, WordMarked,
 };
 use sapling_domain::types::{ChallengeResult, Conversation, ConversationExchange, Profile};
+use sapling_llm::gloss::MAX_GLOSS_WORDS;
 use sapling_llm::lesson::REQUEST_ITEMS;
 use sapling_llm::reading::{MAX_FOCUS_WORDS, MAX_TOPIC_CHARS};
-use sapling_llm::textbook::MAX_GLOSS_WORDS;
 use sapling_llm::{Endpoint, LlmError, ProgressStep, TokenUsage, MAX_ABOUT_CHARS};
 use sapling_srs::FsrsCardState;
 use sapling_sync::{BAD_PHRASE, PHRASE_LENGTH};
