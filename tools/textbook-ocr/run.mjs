@@ -10,17 +10,31 @@ const here = dirname(fileURLToPath(import.meta.url));
 const API = 'https://openrouter.ai/api/v1';
 const KEY = process.env.OPENROUTER_API_KEY;
 
-// Cheap vision models worth comparing. Ids drift: `--list` prints what
-// OpenRouter serves today, cheapest first, and unknown ids are skipped.
+// Cheap vision models worth comparing, one or two per family, all taking a
+// strict JSON schema; picked from `--list` on 2026-10-31 (estimated $/page in
+// the comments). Ids drift: `--list` prints what OpenRouter serves today, and
+// an id it no longer serves is skipped.
 const DEFAULT_MODELS = [
-	'google/gemini-2.5-flash-lite',
-	'google/gemini-2.5-flash',
-	'qwen/qwen2.5-vl-72b-instruct',
-	'qwen/qwen3-vl-235b-a22b-instruct',
-	'mistralai/mistral-small-3.2-24b-instruct',
-	'meta-llama/llama-4-maverick',
-	'openai/gpt-4.1-mini'
+	'z-ai/glm-5.3-flash', // 0.0003
+	'google/gemma-4-26b-a4b-it', // 0.0007
+	'xiaomi/mimo-v2.6-flash', // 0.0010
+	'bytedance-seed/seed-2.0-mini', // 0.0011
+	'deepseek/deepseek-v4.1-flash', // 0.0011
+	'anthropic/claude-haiku-5.5', // 0.0013
+	'openai/gpt-6-luna', // 0.0013
+	'qwen/qwen3.8-flash', // 0.0014
+	'nvidia/nemotron-3.5-super-vl', // 0.0015
+	'mistralai/mistral-small-2603', // 0.0017
+	'qwen/qwen3-vl-30b-a3b-instruct', // 0.0017
+	'google/gemini-3.1-flash-lite', // 0.0038
+	'google/gemini-3.5-flash-lite' // 0.0059
 ];
+
+// A page's rough size in tokens, for ranking models by what a page costs:
+// the image and the prompt in, the transcription out. Reasoning tokens come on
+// top, and the run records what each call actually cost.
+const PAGE_IN = 3000;
+const PAGE_OUT = 2000;
 
 const args = Object.fromEntries(
 	process.argv
@@ -34,28 +48,48 @@ const args = Object.fromEntries(
 		)
 );
 
+/** Models that read an image and write text over chat completions: no routers, aliases or batch tiers. */
 async function models() {
 	const res = await fetch(`${API}/models`);
 	const { data } = await res.json();
-	return data.filter((m) => m.architecture?.input_modalities?.includes('image'));
+	return data.filter(
+		(m) =>
+			m.architecture?.input_modalities?.includes('image') &&
+			m.architecture.output_modalities?.join() === 'text' &&
+			(m.endpoints ?? ['/api/v1/chat/completions']).includes('/api/v1/chat/completions') &&
+			!/:batch$|^~|^openrouter\//.test(m.id) &&
+			+m.pricing.prompt >= 0
+	);
 }
 
 if (args.list) {
-	const vision = await models();
-	vision
-		.map((m) => ({
-			id: m.id,
-			in: +m.pricing.prompt * 1e6,
-			out: +m.pricing.completion * 1e6,
-			img: +(m.pricing.image ?? 0)
-		}))
-		.sort((a, b) => a.in + a.out - (b.in + b.out))
-		.slice(0, 40)
+	const max = Number(args.max ?? 0.01);
+	(await models())
+		.map((m) => {
+			const params = m.supported_parameters ?? [];
+			return {
+				id: m.id,
+				page:
+					+m.pricing.prompt * PAGE_IN + +m.pricing.completion * PAGE_OUT + +(m.pricing.image ?? 0),
+				json: params.includes('structured_outputs')
+					? 'schema'
+					: params.includes('response_format')
+						? 'json'
+						: '-',
+				reasoning: params.includes('reasoning') ? 'reasoning' : '',
+				created: new Date(m.created * 1000).toISOString().slice(0, 10)
+			};
+		})
+		.filter((m) => m.page <= max)
+		.sort((a, b) => a.page - b.page)
 		.forEach((m) =>
 			console.log(
-				`${m.id.padEnd(50)} $${m.in.toFixed(2)}/M in  $${m.out.toFixed(2)}/M out  $${m.img.toFixed(4)}/img`
+				`${m.id.padEnd(50)} ~$${m.page.toFixed(4)}/page  ${m.json.padEnd(6)}  ${m.reasoning.padEnd(9)}  ${m.created}`
 			)
 		);
+	console.log(
+		`\n~$/page assumes ${PAGE_IN} tokens in, ${PAGE_OUT} out. --max <dollars> widens the list.`
+	);
 	process.exit(0);
 }
 if (!KEY) {
