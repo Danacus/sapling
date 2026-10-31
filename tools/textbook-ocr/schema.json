@@ -1,0 +1,129 @@
+{
+	"type": "object",
+	"additionalProperties": false,
+	"required": ["pages", "lessonStarts", "blocks"],
+	"properties": {
+		"pages": {
+			"description": "Every printed page visible in the image, left to right (a scan may hold a two-page spread).",
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": ["number", "lesson"],
+				"properties": {
+					"number": {
+						"description": "The printed page number, or null.",
+						"type": ["string", "null"]
+					},
+					"lesson": {
+						"description": "The lesson label in the running header or footer, as printed (\"LES 2\", \"3\"), or null.",
+						"type": ["string", "null"]
+					}
+				}
+			}
+		},
+		"lessonStarts": {
+			"description": "A lesson whose opening (number and title) is printed in this image.",
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": ["lesson", "title"],
+				"properties": {
+					"lesson": { "type": "string" },
+					"title": { "type": ["string", "null"] }
+				}
+			}
+		},
+		"blocks": {
+			"description": "The target-language content, in reading order. Everything else on the page is left out.",
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": ["kind", "lesson", "heading", "number", "continues", "lines", "words"],
+				"properties": {
+					"kind": {
+						"description": "dialogue: speakers taking turns, or one speaker's numbered passage. sentences: standalone target-language sentences or phrases (grammar examples, captions, phrase boxes, exercise questions). words: a vocabulary list.",
+						"type": "string",
+						"enum": ["dialogue", "sentences", "words"]
+					},
+					"lesson": {
+						"description": "The lesson this block belongs to, as labelled on its page, or null.",
+						"type": ["string", "null"]
+					},
+					"heading": {
+						"description": "The block's heading as printed, or null.",
+						"type": ["string", "null"]
+					},
+					"number": {
+						"description": "The block's number as printed (\"2\", \"3A\"), or null.",
+						"type": ["string", "null"]
+					},
+					"continues": {
+						"description": "True when this block is the continuation of one cut off at the end of the previous page.",
+						"type": "boolean"
+					},
+					"lines": {
+						"description": "For dialogue and sentences: one entry per spoken turn or sentence. Empty for words.",
+						"type": "array",
+						"items": {
+							"type": "object",
+							"additionalProperties": false,
+							"required": ["speaker", "text", "reading", "translation"],
+							"properties": {
+								"speaker": {
+									"description": "The speaker's name or label as printed (\"A\", \"Els\", \"Peter en Els\"); null when the line continues the previous speaker or has none.",
+									"type": ["string", "null"]
+								},
+								"text": {
+									"description": "The target-language text, copied exactly.",
+									"type": "string"
+								},
+								"reading": {
+									"description": "A printed pronunciation guide for this line (pinyin, furigana), or null.",
+									"type": ["string", "null"]
+								},
+								"translation": {
+									"description": "A printed translation of this line, or null.",
+									"type": ["string", "null"]
+								}
+							}
+						}
+					},
+					"words": {
+						"description": "For words: one entry per listed word. Empty otherwise.",
+						"type": "array",
+						"items": {
+							"type": "object",
+							"additionalProperties": false,
+							"required": ["term", "grammar", "reading", "meaning", "proper"],
+							"properties": {
+								"term": {
+									"description": "The headword as a learner would file it: without a leading article, without conjugations.",
+									"type": "string"
+								},
+								"grammar": {
+									"description": "Printed grammatical information: article, part of speech, conjugated forms (\"de\", \"v.\", \"ik kom, je komt, hij komt\"), or null.",
+									"type": ["string", "null"]
+								},
+								"reading": {
+									"description": "A printed pronunciation guide, or null.",
+									"type": ["string", "null"]
+								},
+								"meaning": {
+									"description": "A printed meaning or translation, or null when the list gives none.",
+									"type": ["string", "null"]
+								},
+								"proper": {
+									"description": "True for a proper noun (a name, a place).",
+									"type": "boolean"
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

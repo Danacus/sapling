@@ -1,0 +1,51 @@
+{
+	"image": "hsk1-p24.png",
+	"target": "Chinese (Mandarin, simplified)",
+	"native": "English",
+	"expected": {
+		"pages": [{ "number": "24", "lesson": null }],
+		"lessonStarts": [],
+		"blocks": [
+			{
+				"kind": "sentences",
+				"continues": true,
+				"lines": [{ "text": "哪本书？" }, { "text": "哪个人？" }, { "text": "你是哪国人？" }]
+			},
+			{
+				"kind": "sentences",
+				"number": "2",
+				"heading": "结构助词“的” The Structural Particle “的”",
+				"lines": [
+					{ "text": "李月是我的老师。" },
+					{ "text": "这是我的书。" },
+					{ "text": "她不是我同学，她是我朋友。" }
+				]
+			},
+			{
+				"kind": "sentences",
+				"number": "3",
+				"heading": "疑问助词“呢”（1） The Interrogative Particle “呢” (1)",
+				"lines": [
+					{ "text": "我不是老师，我是学生。你呢？" },
+					{ "text": "她叫李月。他呢？" },
+					{ "text": "我是美国人。你呢？" }
+				]
+			},
+			{
+				"kind": "sentences",
+				"number": "2",
+				"heading": "根据实际情况回答问题 Answer the questions according to the actual situations.",
+				"lines": [
+					{ "text": "你是哪国人？", "reading": "Nǐ shì nǎ guó rén?" },
+					{ "text": "你叫什么名字？", "reading": "Nǐ jiào shénme míngzi?" },
+					{ "text": "你的汉语老师是哪国人？", "reading": "Nǐ de Hànyǔ lǎoshī shì nǎ guó rén?" },
+					{
+						"text": "你的汉语老师叫什么名字？",
+						"reading": "Nǐ de Hànyǔ lǎoshī jiào shénme míngzi?"
+					},
+					{ "text": "你的中国朋友是谁？", "reading": "Nǐ de Zhōngguó péngyou shì shéi?" }
+				]
+			}
+		]
+	}
+}

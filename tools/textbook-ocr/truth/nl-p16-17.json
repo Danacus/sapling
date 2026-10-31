@@ -1,0 +1,48 @@
+{
+	"image": "nl-p16-17.png",
+	"target": "Dutch",
+	"native": "English",
+	"expected": {
+		"pages": [
+			{ "number": "16", "lesson": "DEEL 1 - LES 3B" },
+			{ "number": null, "lesson": "LES 3" }
+		],
+		"lessonStarts": [],
+		"blocks": [
+			{
+				"kind": "sentences",
+				"number": "3A",
+				"lines": [
+					{ "text": "Dit is Els en dat is Peter." },
+					{ "text": "Dit zijn Els en Peter en dat zijn Paolo en Bert." }
+				]
+			},
+			{
+				"kind": "sentences",
+				"heading": "IDENTIFICEREN [identifying]",
+				"lines": [
+					{ "text": "Dit is ..." },
+					{ "text": "Dit zijn ..." },
+					{ "text": "Dat is ..." },
+					{ "text": "Dat zijn ..." }
+				]
+			},
+			{
+				"kind": "sentences",
+				"number": "3B",
+				"lines": [
+					{ "text": "Dit is een vriend van Els." },
+					{ "text": "Dat is een vriendin van Peter." },
+					{ "text": "Dit is de vriend van Els." },
+					{ "text": "Dat is de vriendin van Peter." },
+					{ "text": "Dit is water." },
+					{ "text": "Dat is koffie." },
+					{ "text": "Dit is het water van Els." },
+					{ "text": "Dat is de koffie van Peter." },
+					{ "text": "Dit is een krant." },
+					{ "text": "Dat is een tijdschrift." }
+				]
+			}
+		]
+	}
+}

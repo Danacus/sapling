@@ -1,0 +1,120 @@
+{
+	"image": "nl-p14-15.png",
+	"target": "Dutch",
+	"native": "English",
+	"expected": {
+		"pages": [
+			{ "number": "14", "lesson": "DEEL 1 - LES 2" },
+			{ "number": null, "lesson": "LES 2" }
+		],
+		"lessonStarts": [],
+		"blocks": [
+			{
+				"kind": "dialogue",
+				"number": "2",
+				"lines": [
+					{ "speaker": "Els", "text": "Hallo ! Goedemorgen." },
+					{ "speaker": "een collega", "text": "Dag Els. Goedemorgen." }
+				]
+			},
+			{
+				"kind": "dialogue",
+				"number": "3",
+				"lines": [
+					{ "speaker": "An", "text": "Goedemiddag, Lisa !" },
+					{ "speaker": "Lisa", "text": "Ah ! An, goedemiddag." },
+					{ "speaker": "An", "text": "Lisa, dit is Frank, een ex-collega." },
+					{ "speaker": null, "text": "Frank, dit is Lisa, een vriendin." },
+					{ "speaker": "Lisa", "text": "Dag Frank." },
+					{ "speaker": "Frank", "text": "Dag Lisa." }
+				]
+			},
+			{
+				"kind": "dialogue",
+				"number": "4",
+				"lines": [
+					{ "speaker": "Els", "text": "Goedemorgen, professor Deman." },
+					{ "speaker": "prof. Deman", "text": "Dag Els en ..." },
+					{ "speaker": "Peter", "text": "Ik ben Peter, de vriend van Els." },
+					{ "speaker": "prof. Deman", "text": "Dag Peter." },
+					{ "speaker": "Peter", "text": "Goedemorgen." },
+					{ "speaker": "prof. Deman", "text": "Tot ziens." },
+					{ "speaker": "Peter en Els", "text": "Dag professor. Tot ziens." }
+				]
+			},
+			{
+				"kind": "dialogue",
+				"number": "5",
+				"lines": [
+					{ "speaker": "Tine", "text": "Ha, dag Liu. Goedenavond." },
+					{ "speaker": "Liu", "text": "Dag Tine." },
+					{ "speaker": "Tine", "text": "Liu, dit zijn Anja en Barbara." },
+					{ "speaker": "Anja, Barbara", "text": "Goedenavond, Liu." },
+					{ "speaker": "Liu", "text": "Dag Barbara, dag Anja." },
+					{ "speaker": "Tine", "text": "Liu komt uit China. Hij komt hier in Leuven studeren." },
+					{ "speaker": "Anja", "text": "Interessant." },
+					{ "speaker": null, "text": "En spreek je Nederlands, Liu ?" },
+					{ "speaker": "Liu", "text": "Een beetje." },
+					{ "speaker": "Tine", "text": "Dat is goed. Liu, tot ziens." },
+					{ "speaker": "Liu", "text": "Ja, dag Tine en ... Anja en Barbara." },
+					{ "speaker": "Anja, Barbara", "text": "Dag !" }
+				]
+			},
+			{
+				"kind": "sentences",
+				"heading": "GROETEN [greeting someone]",
+				"lines": [
+					{ "text": "Goedendag. Goedemorgen." },
+					{ "text": "Goedendag. Goedemiddag." },
+					{ "text": "Goedenavond." }
+				]
+			},
+			{
+				"kind": "sentences",
+				"heading": "BIJ ONTMOETEN [when meeting]",
+				"lines": [
+					{ "text": "Hallo !" },
+					{ "text": "Dag Els." },
+					{ "text": "Dag mevrouw." },
+					{ "text": "Dag meneer Maas." }
+				]
+			},
+			{
+				"kind": "sentences",
+				"heading": "BIJ WEGGAAN [when leaving]",
+				"lines": [
+					{ "text": "Dag !" },
+					{ "text": "Tot ziens !" },
+					{ "text": "Dag mevrouw. Tot ziens." },
+					{ "text": "Dag meneer Maas. Tot ziens." }
+				]
+			},
+			{
+				"kind": "words",
+				"heading": "WOORDENLIJST LES 2",
+				"words": [
+					{ "term": "collega", "grammar": "de" },
+					{ "term": "ex-collega", "grammar": "de" },
+					{ "term": "professor", "grammar": "de" },
+					{ "term": "vriend", "grammar": "de" },
+					{ "term": "straat", "grammar": "de" },
+					{ "term": "beetje", "grammar": "het" },
+					{ "term": "Nederlands", "grammar": "het" },
+					{ "term": "goed" },
+					{ "term": "interessant" },
+					{ "term": "hier" },
+					{ "term": "komen", "grammar": "ik kom, je komt, hij komt" },
+					{ "term": "spreken", "grammar": "ik spreek, je spreekt, hij spreekt" },
+					{ "term": "studeren", "grammar": "ik studeer, je studeert, hij studeert" },
+					{ "term": "goedemiddag" },
+					{ "term": "goedemorgen" },
+					{ "term": "goedenavond" },
+					{ "term": "goedendag" },
+					{ "term": "tot ziens" },
+					{ "term": "welkom" },
+					{ "term": "en" }
+				]
+			}
+		]
+	}
+}
