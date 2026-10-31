@@ -151,6 +151,18 @@
 		setTextbookModel(id === DEFAULT_TEXTBOOK_MODEL ? '' : id);
 	}
 
+	/**
+	 * The lesson's printed title; a bare label ("1", once a pronunciation
+	 * lesson's English title is gone) says too little alone, so it rides
+	 * behind the file's name.
+	 */
+	const defaultTitle = $derived.by(() => {
+		if (!review) return 'Untitled';
+		const printed = review.draft.title ?? '';
+		if (/\p{L}/u.test(printed)) return printed;
+		return [review.name, printed].filter(Boolean).join(' · ') || 'Untitled';
+	});
+
 	const linesToKeep = $derived(
 		review
 			? lineTexts.flatMap((text, i) => (kept[i] && text.trim() ? [{ text: text.trim() }] : []))
@@ -165,7 +177,7 @@
 		try {
 			const text: ReadingText = {
 				id: newUuid(),
-				title: title.trim() || draft.title || review.name || 'Untitled',
+				title: title.trim() || defaultTitle,
 				source: 'imported',
 				segments: linesToKeep,
 				createdAt: Date.now()
@@ -190,7 +202,7 @@
 		<input
 			class="input"
 			type="text"
-			placeholder={draft.title || review.name || 'Untitled'}
+			placeholder={defaultTitle}
 			disabled={adding}
 			bind:value={title}
 		/>

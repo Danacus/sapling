@@ -203,8 +203,15 @@ fn is_han_page(page: &TextbookPage) -> bool {
 }
 
 /// The clean-up every transcribed page gets, whatever the model did.
-pub fn tidy_page(page: TextbookPage) -> TextbookPage {
-    let han = is_han_page(&page);
+///
+/// `han_target` says the language being learned is written in Han or kana —
+/// Chinese, Japanese — which decides the script for **every** page of it. A
+/// page alone cannot be trusted to say so: a pronunciation lesson's tone
+/// tables and drill words ("ā á ǎ à", "xuéxiào") hold no character at all,
+/// and read page by page they looked like a Latin page and were kept. Without
+/// the flag (a host that cannot tell), a page with Han or kana on it counts.
+pub fn tidy_page(page: TextbookPage, han_target: bool) -> TextbookPage {
+    let han = han_target || is_han_page(&page);
     let blocks = page
         .blocks
         .into_iter()
@@ -239,6 +246,8 @@ pub fn tidy_page(page: TextbookPage) -> TextbookPage {
         .filter_map(|start| {
             Some(LessonStart {
                 lesson: non_blank(Some(&start.lesson))?,
+                // On a Chinese page a title is its characters: "Hello" printed
+                // under 你好 is a translation, "Nǐ hǎo" over it a reading.
                 title: non_blank(start.title.as_deref())
                     .map(|title| {
                         if han {
@@ -247,7 +256,7 @@ pub fn tidy_page(page: TextbookPage) -> TextbookPage {
                             title
                         }
                     })
-                    .filter(|title| has_words(title)),
+                    .filter(|title| has_words(title) && (!han || has_han_or_kana(title))),
             })
         })
         .collect();
@@ -315,6 +324,53 @@ mod tests {
         }
     }
 
+    /// Page-by-page detection only, as a host that cannot name the script.
+    fn tidy_page_test(page: TextbookPage) -> TextbookPage {
+        tidy_page(page, false)
+    }
+
+    #[test]
+    fn a_chinese_target_drops_the_pinyin_of_a_page_with_no_characters_on_it() {
+        // A pronunciation lesson: tone tables and drill words, no hanzi at all.
+        let drill = TextbookPage {
+            lesson_starts: vec![LessonStart {
+                lesson: "1".into(),
+                title: Some("Hello".into()),
+            }],
+            blocks: vec![
+                block(BlockKind::Sentences, &["ā á ǎ à", "ū ú ǔ ù", "ǖ ǘ ǚ ǜ"]),
+                block(BlockKind::Sentences, &["xuéxiào", "yóu yǒng", "shíjiān"]),
+            ],
+            ..TextbookPage::default()
+        };
+        let as_chinese = tidy_page(drill.clone(), true);
+        assert!(lines(&as_chinese).is_empty());
+        // The English under 你好 is not the lesson's title in Chinese.
+        assert_eq!(as_chinese.lesson_starts[0].title, None);
+        // Read alone, the page would look Latin; that is what the flag is for.
+        assert_eq!(lines(&tidy_page(drill, false)).len(), 6);
+
+        let mixed = tidy_page(
+            TextbookPage {
+                lesson_starts: vec![LessonStart {
+                    lesson: "1".into(),
+                    title: Some("Nǐ hǎo 你好 Hello".into()),
+                }],
+                blocks: vec![block(
+                    BlockKind::Sentences,
+                    &["汉语的音节一般由声母、韵母、声调三部分组成。", "bāng máng"],
+                )],
+                ..TextbookPage::default()
+            },
+            true,
+        );
+        assert_eq!(
+            lines(&mixed),
+            ["汉语的音节一般由声母、韵母、声调三部分组成。"]
+        );
+        assert_eq!(mixed.lesson_starts[0].title.as_deref(), Some("你好 Hello"));
+    }
+
     fn lines(page: &TextbookPage) -> Vec<&str> {
         page.blocks
             .iter()
@@ -338,7 +394,7 @@ mod tests {
 
     #[test]
     fn a_chinese_page_keeps_only_its_chinese() {
-        let tidied = tidy_page(page(vec![
+        let tidied = tidy_page_test(page(vec![
             block(
                 BlockKind::Dialogue,
                 &[
@@ -393,7 +449,7 @@ mod tests {
 
     #[test]
     fn a_latin_page_keeps_its_lines_and_its_accents() {
-        let tidied = tidy_page(page(vec![block(
+        let tidied = tidy_page_test(page(vec![block(
             BlockKind::Dialogue,
             &[
                 "Hallo ! Goedemorgen.",
@@ -442,7 +498,7 @@ mod tests {
             ..TextbookPage::default()
         };
         let second = page(vec![block(BlockKind::Dialogue, &["我叫李月。"])]);
-        let draft = assemble_textbook(&[tidy_page(first), tidy_page(second)]);
+        let draft = assemble_textbook(&[tidy_page_test(first), tidy_page_test(second)]);
         assert_eq!(draft.title.as_deref(), Some("3 · 你叫什么名字"));
         let texts: Vec<&str> = draft.segments.iter().map(|s| s.text.as_str()).collect();
         assert_eq!(texts, ["你叫什么名字？", "我叫李月。"]);

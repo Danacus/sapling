@@ -79,6 +79,30 @@ pub(crate) fn non_blank(text: Option<&str>) -> Option<&str> {
     text.map(str::trim).filter(|text| !text.is_empty())
 }
 
+/// Whether a language is written in Han characters or kana — Chinese in any of
+/// its names, Cantonese, Japanese — which is what a textbook page's clean-up
+/// keys on (`textbook.rs`): such a language's text is its characters, and a
+/// line of pinyin or romaji on its page is a reading, never the text.
+pub(crate) fn writes_in_han(language: &str) -> bool {
+    let lowered = language.trim().to_lowercase();
+    is_mandarin(language)
+        || lowered == "ja"
+        || lowered.starts_with("ja-")
+        || lowered == "yue"
+        || lowered.starts_with("yue-")
+        || [
+            "japanese",
+            "cantonese",
+            "日本語",
+            "粵語",
+            "粤语",
+            "廣東話",
+            "广东话",
+        ]
+        .iter()
+        .any(|name| lowered.contains(name))
+}
+
 /// Whether the mock writes its Mandarin fixtures rather than its Spanish ones.
 pub(crate) fn is_mandarin(language: &str) -> bool {
     let language = language.trim().to_lowercase();
@@ -92,6 +116,26 @@ pub(crate) fn is_mandarin(language: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn han_languages_are_named_every_way_a_profile_names_them() {
+        for language in [
+            "Chinese",
+            "Mandarin Chinese",
+            "zh-Hans",
+            "中文",
+            "Japanese",
+            "ja",
+            "日本語",
+            "Cantonese",
+            "yue-HK",
+        ] {
+            assert!(writes_in_han(language), "{language}");
+        }
+        for language in ["Dutch", "Spanish", "Korean", "ko", "Vietnamese", "nl-BE"] {
+            assert!(!writes_in_han(language), "{language}");
+        }
+    }
 
     #[test]
     fn the_level_is_read_off_the_library_at_each_threshold() {

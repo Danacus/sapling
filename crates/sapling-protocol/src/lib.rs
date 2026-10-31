@@ -510,7 +510,10 @@ backend! {
         /// like `importSource`.
         assembleTextbook(pages: Vec<TextbookPage>) -> TextbookDraft {
             let pages: Vec<TextbookPage> =
-                pages.into_iter().map(sapling_import::textbook::tidy_page).collect();
+                pages
+                    .into_iter()
+                    .map(|page| sapling_import::textbook::tidy_page(page, false))
+                    .collect();
             Ok::<_, Error>(sapling_import::textbook::assemble_textbook(&pages))
         }
 
