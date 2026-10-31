@@ -11,6 +11,7 @@ const MODEL_STORAGE_KEY = 'll.openrouter.model';
 const BASE_URL_STORAGE_KEY = 'll.llm.baseUrl';
 const REASONING_EFFORT_STORAGE_KEY = 'll.llm.reasoningEffort';
 const REQUEST_ITEMS_STORAGE_KEY = 'll.llm.requestItems';
+const TEXTBOOK_MODEL_STORAGE_KEY = 'll.llm.textbookModel';
 
 /** Model used when the learner has not picked one. */
 export const DEFAULT_MODEL = 'google/gemini-3.7-flash';
@@ -81,6 +82,31 @@ export function setModel(model: string): void {
 		return;
 	}
 	write(MODEL_STORAGE_KEY, trimmed);
+}
+
+/**
+ * The model that reads textbook pages. It must see images, which the learner's
+ * own model may not, so it is a setting of its own. Measured on real scans
+ * (`tools/textbook-ocr`): Gemini 3.1 Flash Lite was the most accurate of the
+ * cheap vision models, Claude Haiku 5.5 a close second. Both are OpenRouter
+ * ids, so another endpoint falls back to the learner's model.
+ */
+export const DEFAULT_TEXTBOOK_MODEL = 'google/gemini-3.1-flash-lite';
+export const TEXTBOOK_MODEL_SUGGESTIONS: readonly string[] = [
+	DEFAULT_TEXTBOOK_MODEL,
+	'anthropic/claude-haiku-5.5'
+];
+
+/** The textbook model the learner picked, or `undefined` for the default. */
+export function getTextbookModel(): string | undefined {
+	return read(TEXTBOOK_MODEL_STORAGE_KEY)?.trim() || undefined;
+}
+
+/** Stores the textbook model. A blank value restores the default. */
+export function setTextbookModel(model: string): void {
+	const trimmed = model.trim();
+	if (trimmed) write(TEXTBOOK_MODEL_STORAGE_KEY, trimmed);
+	else remove(TEXTBOOK_MODEL_STORAGE_KEY);
 }
 
 /**

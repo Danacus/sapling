@@ -59,6 +59,12 @@ export interface CallOptions {
 	onProgress?: (step: ProgressStep) => void;
 	/** For the calls that run tools (`sendChatMessage`, `sendTurn`, `addWords`). */
 	tools?: ToolContext;
+	/**
+	 * A model for this call instead of the learner's own, on the same endpoint
+	 * and key: the textbook import reads pages with a model that sees images.
+	 * Blank is the learner's.
+	 */
+	model?: string;
 }
 
 function toolHost(ctx: ToolContext): ToolHost {
@@ -71,11 +77,11 @@ function toolHost(ctx: ToolContext): ToolHost {
 	};
 }
 
-function endpoint(): string | undefined {
+function endpoint(model?: string): string | undefined {
 	if (isMockMode()) return undefined;
 	const live: Endpoint = {
 		apiKey: getApiKey() ?? '',
-		model: getModel() || DEFAULT_MODEL,
+		model: model?.trim() || getModel() || DEFAULT_MODEL,
 		baseUrl: getBaseUrl()
 	};
 	return JSON.stringify(live);
@@ -120,7 +126,7 @@ export async function callLlm<M extends keyof Llm>(
 		answer = await llm(
 			method,
 			JSON.stringify([args]),
-			endpoint(),
+			endpoint(opts.model),
 			poster(opts.signal),
 			progress && ((step: string) => progress(JSON.parse(step) as ProgressStep)),
 			opts.tools && toolHost(opts.tools)

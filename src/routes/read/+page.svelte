@@ -1,12 +1,14 @@
 <!--
   The library: every text the learner has kept, as a gallery of cards, and
-  three ways to one more behind three buttons in the header. The library is
+  four ways to one more behind four buttons in the header. The library is
   the page; adding is asked for, so each button opens a drawer under the header
   and nothing opens one by itself — not even on an empty library, whose one
   line points up at the buttons instead.
 
   Video and Text are free and local (`VideoImport`, `TextImport`: the core's
-  `importSource` cuts, `addText` stores). Write one for me is a paid call run as
+  `importSource` cuts, `addText` stores). Textbook reads a lesson's pages with a
+  vision model as the `textbook-import` task and stores nothing until the
+  learner has reviewed it (`TextbookImport`). Write one for me is a paid call run as
   the `read-generate` task, which also saves, so a text lands whether or not the
   learner stayed. Both the open drawer (`?tab=`, absent is closed) and the
   filter (`?show=`, absent is all) are the URL, independently, so Home can open
@@ -32,6 +34,7 @@
 	import { isVideo, libraryHref, showFrom, shown, tabFrom } from './compose';
 	import type { Show, Tab } from './compose';
 	import MediaCard from './MediaCard.svelte';
+	import TextbookImport from './TextbookImport.svelte';
 	import TextImport from './TextImport.svelte';
 	import VideoImport from './VideoImport.svelte';
 
@@ -39,6 +42,7 @@
 	const TABS: readonly { id: Tab; label: string; short: string; heading: string }[] = [
 		{ id: 'video', label: 'Video', short: 'Video', heading: 'Add a video' },
 		{ id: 'text', label: 'Text', short: 'Text', heading: 'Add a text' },
+		{ id: 'textbook', label: 'Textbook', short: 'Book', heading: 'Import a textbook lesson' },
 		{ id: 'write', label: 'Write one for me', short: 'Write', heading: 'Write one for me' }
 	];
 
@@ -218,6 +222,11 @@
 								{#if id === 'video'}
 									<rect x="3.4" y="6.2" width="12.4" height="11.6" rx="2" />
 									<path d="m15.8 12 4.8-3.2v6.4L15.8 12z" />
+								{:else if id === 'textbook'}
+									<path
+										d="M12 6.6c-1.8-1.3-4.4-1.9-7.4-1.8v12.6c3-.1 5.6.5 7.4 1.8 1.8-1.3 4.4-1.9 7.4-1.8V4.8c-3-.1-5.6.5-7.4 1.8z"
+									/>
+									<path d="M12 6.6v12.6" />
 								{:else if id === 'text'}
 									<path
 										d="M6.4 3.6h7.6l4.6 4.6v11.4a.8.8 0 0 1-.8.8H6.4a.8.8 0 0 1-.8-.8V4.4a.8.8 0 0 1 .8-.8z"
@@ -279,6 +288,9 @@
 				</div>
 				<div class="pane" hidden={tab !== 'text'}>
 					<TextImport {busy} />
+				</div>
+				<div class="pane" hidden={tab !== 'textbook'}>
+					<TextbookImport {profile} {items} />
 				</div>
 
 				{#if tab === 'write'}
@@ -465,12 +477,12 @@
 
 	/* The adders ----------------------------------------------------------- */
 
-	/* Three ways onto one shelf. Each is a toggle for its drawer, so the open
+	/* Four ways onto one shelf. Each is a toggle for its drawer, so the open
 	   one is drawn pressed — inked in — and pressing it again closes it. */
 	.adders {
 		grid-column: 1 / -1;
 		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
+		grid-template-columns: repeat(4, minmax(0, 1fr));
 		gap: 0.5rem;
 	}
 

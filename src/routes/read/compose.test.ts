@@ -60,6 +60,7 @@ describe('tabFrom', () => {
 		expect(tabFrom('video')).toBe('video');
 		expect(tabFrom('text')).toBe('text');
 		expect(tabFrom('write')).toBe('write');
+		expect(tabFrom('textbook')).toBe('textbook');
 	});
 
 	it('is closed with no tab or an unknown one', () => {
