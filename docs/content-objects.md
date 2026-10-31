@@ -74,7 +74,7 @@ makes some entity use and which entity it ends:
 
 | field | meaning |
 |---|---|
-| `owner` | the entity that uses content: `text:<profileId>:<textId>` |
+| `owner` | the entity that uses content: `text:<profileId>:<textId>`, or `textbook:<profileId>:<textbookId>` |
 | `objects` | hashes this event makes `owner` use — one edge each |
 | `retire` | an owner that is gone for good (tombstones only) |
 
@@ -83,7 +83,14 @@ makes some entity use and which entity it ends:
 | `textAdded` with `content` | the text | `[content]` | — |
 | `textRevised` | the text | `[content]` | — |
 | `textDeleted` | — | — | the text |
+| `textbookAdded` | the book | `[content]` | — |
+| `textbookDeleted` | — | — | the book |
 | anything else, or inline `textAdded` | — | — | — |
+
+A textbook is always by reference: its chapters are one object
+(`TextbookContent { chapters }`), the same 1 MiB cap and the same verification
+as a text body. There is no `textbookRevised` yet; a book is replaced by
+deleting it and importing it again.
 
 The rule GC will apply (§8): **an object is live while some owner with an edge
 to it is not retired.** Edges and retirements are sets, so the picture is the

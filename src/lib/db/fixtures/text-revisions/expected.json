@@ -61,6 +61,8 @@
 		},
 		"text-never": null
 	},
+	"getTextbooks": [],
+	"getTextbook": {},
 	"missingObjects": [],
 	"clipsFor": {},
 	"getKnownTerms": [],

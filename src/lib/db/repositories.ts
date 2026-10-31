@@ -77,6 +77,12 @@ export const getText = forward('getText');
 export const clipsFor = forward('clipsFor');
 export const cuesFor = forward('cuesFor');
 export const deleteText = forward('deleteText');
+
+/** Textbooks: a book and its chapters, stored as one object (`core.md`). */
+export const addTextbook = forward('addTextbook');
+export const getTextbooks = forward('getTextbooks');
+export const getTextbook = forward('getTextbook');
+export const deleteTextbook = forward('deleteTextbook');
 export const markWord = forward('markWord');
 export const getKnownTerms = forward('getKnownTerms');
 export const recordLookup = forward('recordLookup');

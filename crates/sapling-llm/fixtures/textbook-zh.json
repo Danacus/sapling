@@ -123,8 +123,8 @@
         "kind": "dialogue",
         "lesson": "1",
         "heading": null,
-        "number": null,
-        "continues": true,
+        "number": "2",
+        "continues": false,
         "lines": [
           {
             "speaker": "B",

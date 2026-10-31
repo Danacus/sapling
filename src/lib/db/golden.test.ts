@@ -139,6 +139,7 @@ function idsIn(events: RawEvent[]) {
 			...of(['textAdded'], 'id'),
 			...of(['textDeleted', 'textRevised', 'wordLookedUp', 'studied'], 'textId')
 		]),
+		textbooks: unique([...of(['textbookAdded'], 'id'), ...of(['textbookDeleted'], 'textbookId')]),
 		conversations: unique([
 			...of(['conversationStarted'], 'id'),
 			...of(['turnAdded', 'conversationDeleted'], 'conversationId')
@@ -182,6 +183,8 @@ async function probe(backend: Backend, events: RawEvent[]): Promise<Record<strin
 		studySessions: await backend.studySessions(0),
 		getTexts: await backend.getTexts(),
 		getText: await byKey(ids.texts, (id) => backend.getText(id)),
+		getTextbooks: await backend.getTextbooks(),
+		getTextbook: await byKey(ids.textbooks, (id) => backend.getTextbook(id)),
 		missingObjects: await backend.missingObjects(),
 		clipsFor: await byKey(ids.terms, (term) => backend.clipsFor([term])),
 		getKnownTerms: [...(await backend.getKnownTerms())].sort(compare),
