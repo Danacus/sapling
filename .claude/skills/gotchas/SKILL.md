@@ -518,9 +518,12 @@ rewrite; a dated line about a real incident is worth more than a tidy rule.
 
 ## Content
 
-- **Never romanize a term in isolation.** `romanize/zh.ts` puts the *whole*
-  string through pinyin-pro and slices readings per character, because context
-  is what resolves polyphones (银行 háng vs 自行车 xíng).
+- **Readings come from pinyin-pro, never from the model.** The textbook
+  importer strips pinyin on purpose and a lesson's `…Romanization` is only the
+  fallback for languages with no romanizer — a view that waits for the model to
+  supply a reading shows none. Romanize a word *inside its line* where it has
+  one (`romanize/zh.ts` slices the whole string, because context resolves
+  polyphones: 银行 háng vs 自行车 xíng); a word with no line is romanized alone.
 - Old challenges keep playing as they were generated. Prompt and schema changes
   reach the pool **only via newly generated batches** — the most common cause of
   a "the fix didn't work" report.

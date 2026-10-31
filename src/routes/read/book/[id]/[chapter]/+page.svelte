@@ -28,7 +28,7 @@
 		type ReadingWord,
 		type TokenizeFn
 	} from '$lib/reading';
-	import { hasLocalRomanizer, loadRomanizer } from '$lib/romanize';
+	import { hasLocalRomanizer, loadRomanizer, type Romanizer } from '$lib/romanize';
 	import { targetTagOf } from '$lib/text';
 	import {
 		chapterName,
@@ -54,6 +54,7 @@
 	let items = $state<KnowledgeItem[]>([]);
 	let knownTerms = $state<string[]>([]);
 	let tokenize = $state<TokenizeFn>(tokenizeByTerms);
+	let romanizer = $state<Romanizer | null>(null);
 	const mode = getRomanizationMode();
 
 	$effect(() => {
@@ -70,9 +71,10 @@
 				loading = false;
 				if (!hasLocalRomanizer(targetTagOf(loadedProfile))) return;
 				void loadRomanizer(targetTagOf(loadedProfile))
-					.then((romanizer) => {
-						if (!cancelled && romanizer) {
-							tokenize = (source, terms) => romanizer.tokenize(source, terms);
+					.then((loaded) => {
+						if (!cancelled && loaded) {
+							romanizer = loaded;
+							tokenize = (source, terms) => loaded.tokenize(source, terms);
 						}
 					})
 					.catch(() => undefined);
@@ -130,6 +132,29 @@
 		}
 		return found;
 	});
+
+	/**
+	 * A listed word's reading, always from the local romanizer, never from the
+	 * book or the model: where the chapter's lines use it, the reading it has
+	 * there (context settles a polyphone); else the learner's own card's, if
+	 * they hold it (the stored reading is what tells two same-spelled cards
+	 * apart); else the word romanized on its own, as the garden shows one — a
+	 * list word the chapter's lines never use has no other context to give.
+	 */
+	function readingOf(term: string): string | undefined {
+		const key = wordKey(term);
+		const inContext = readings.get(key);
+		if (inContext) return inContext;
+		const held = items.find((item) => wordKey(item.term) === key)?.romanization?.trim();
+		if (held) return held;
+		if (!romanizer) return undefined;
+		const alone = romanizer
+			.tokenize(term.trim(), [term.trim()])
+			.map((token) => token.reading)
+			.filter(Boolean)
+			.join(' ');
+		return alone || undefined;
+	}
 
 	/** The chapter's vocabulary entries by spelling: the book's meaning for a tapped word. */
 	const listed = $derived(
@@ -189,7 +214,7 @@
 		const item = items.find((candidate) => wordKey(candidate.term) === key);
 		picked = {
 			term: word.term,
-			reading: readings.get(key) ?? null,
+			reading: readingOf(word.term) ?? null,
 			sentence: sentenceWith(word.term) ?? word.term,
 			...(item
 				? {
@@ -240,7 +265,7 @@
 
 	async function file(words: { word: Pick<TextbookWord, 'term' | 'notes'>; meaning: string }[]) {
 		const filed = words.flatMap(({ word, meaning }) => {
-			const entry = toNewWord(word, meaning, readings.get(wordKey(word.term)));
+			const entry = toNewWord(word, meaning, readingOf(word.term));
 			return entry ? [entry] : [];
 		});
 		if (filed.length === 0) return '';
@@ -457,7 +482,7 @@
 		<ul class="entries">
 			{#each section.words as word, w (w)}
 				{@const key = wordKey(word.term)}
-				{@const reading = readings.get(key)}
+				{@const reading = readingOf(word.term)}
 				{@const have = garden.has(key)}
 				{@const gloss = meaningOf(word)}
 				<li class="entry" class:held={have} class:open={picked?.term === word.term}>
