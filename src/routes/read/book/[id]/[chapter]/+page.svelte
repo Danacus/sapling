@@ -428,6 +428,18 @@
 		});
 	}
 
+	/**
+	 * A term too long for the term column — a phrase, a pair of forms, a long
+	 * compound — gets a row of its own, its meaning stacked under it. Counted
+	 * in characters with a CJK character as two, since it is twice as wide.
+	 */
+	function isLong(term: string): boolean {
+		let width = 0;
+		for (const char of term.trim())
+			width += /[\u3000-\u9fff\uac00-\ud7af\uf900-\ufaff]/u.test(char) ? 2 : 1;
+		return width > 12;
+	}
+
 	/** How many of a list's words are already in the learner's garden. */
 	function heldIn(s: number): number {
 		return (chapter?.sections[s].words ?? []).filter((word) => garden.has(wordKey(word.term)))
@@ -508,7 +520,12 @@
 				{@const reading = readingOf(word.term)}
 				{@const have = garden.has(key)}
 				{@const gloss = meaningOf(word)}
-				<li class="entry" class:held={have} class:open={picked?.term === word.term}>
+				<li
+					class="entry"
+					class:held={have}
+					class:long={isLong(word.term)}
+					class:open={picked?.term === word.term}
+				>
 					<button type="button" class="entry-term" onclick={() => pickListed(word)}>
 						{#if reading}<span class="entry-reading">{reading}</span>{/if}
 						<span class="entry-word" {lang}>{word.term}</span>
@@ -1034,7 +1051,9 @@
 	/* One grid for the list, so every meaning starts on the same line. */
 	.entries {
 		display: grid;
-		grid-template-columns: fit-content(9rem) minmax(0, 1fr) auto;
+		/* The meaning always keeps room for a few words; a long term does not
+		   widen the term column at all — it stacks (`.long`, below). */
+		grid-template-columns: fit-content(9rem) minmax(min(8rem, 50%), 1fr) auto;
 		column-gap: 1rem;
 		margin: 0;
 		padding: 0;
@@ -1076,6 +1095,7 @@
 	}
 
 	.entry-reading {
+		white-space: nowrap;
 		color: var(--text-muted);
 		font-size: 0.75rem;
 		font-weight: 500;
@@ -1087,6 +1107,36 @@
 		font-size: 1.3rem;
 		font-weight: 700;
 		line-height: 1.3;
+		overflow-wrap: break-word;
+		hyphens: auto;
+	}
+
+	.entry-term {
+		min-width: 0;
+		max-width: 100%;
+	}
+
+	/* A long term ("drieëntwintighonderd / tweeduizend driehonderd") spans
+	   the term and meaning columns, with the meaning on a line under it. It
+	   crosses the flexible track, so it never sizes the term column: the
+	   short terms keep their aligned meanings. */
+	.entry.long .entry-term {
+		grid-column: 1 / 3;
+	}
+
+	.entry.long .entry-gloss {
+		grid-column: 1 / 3;
+		grid-row: 2;
+		margin-top: 0.15rem;
+	}
+
+	.entry.long .entry-word {
+		font-size: 1.15rem;
+	}
+
+	.entry.long .entry-state {
+		grid-column: 3;
+		grid-row: 1 / 3;
 	}
 
 	.entry-gloss {
@@ -1114,7 +1164,7 @@
 
 	.entry-meaning {
 		min-width: 0;
-		overflow-wrap: anywhere;
+		overflow-wrap: break-word;
 	}
 
 	/* A meaning the book did not print: the learner's to check before filing it. */
