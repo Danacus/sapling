@@ -23,7 +23,7 @@ use sapling_import::textbook::{
 
 use crate::client::{ChatRequest, ErrorKind, Llm, LlmError, Message, Result, Transport};
 use crate::json::{fenced, parse_reply, strict_schema};
-use crate::{is_mandarin, LearnerProfile};
+use crate::{is_mandarin, writes_in_han, LearnerProfile};
 
 /// A transcribed page is a few thousand tokens at most; this leaves room for a
 /// model that thinks a little anyway.
@@ -206,9 +206,11 @@ pub fn page_request(args: &TranscribePageArgs) -> ChatRequest {
     }
 }
 
-/// The page as `sapling-import` keeps it, tidied.
-pub fn parse_page(raw: &str) -> Option<TextbookPage> {
-    parse_reply::<PageReply>(raw).map(|reply| tidy_page(reply.into()))
+/// The page as `sapling-import` keeps it, tidied for the target's script:
+/// `han_target` makes every page of a Chinese or Japanese book keep only its
+/// characters, a page of pinyin drills included.
+pub fn parse_page(raw: &str, han_target: bool) -> Option<TextbookPage> {
+    parse_reply::<PageReply>(raw).map(|reply| tidy_page(reply.into(), han_target))
 }
 
 fn mock_page(args: &TranscribePageArgs) -> String {
@@ -230,9 +232,10 @@ pub async fn transcribe_page<T: Transport>(
     args: &TranscribePageArgs,
 ) -> Result<TextbookPage> {
     let request = page_request(args);
+    let han_target = writes_in_han(&args.profile.target_language);
     for _ in 0..2 {
         let completion = llm.complete_or_mock(&request, || mock_page(args)).await?;
-        if let Some(page) = parse_page(&completion.content) {
+        if let Some(page) = parse_page(&completion.content, han_target) {
             return Ok(page);
         }
     }
@@ -324,6 +327,29 @@ mod tests {
                 "No, gracias."
             ]
         );
+    }
+
+    #[test]
+    fn a_page_of_pinyin_drills_in_a_chinese_book_leaves_nothing() {
+        let reply = json!({
+            "pages": [{ "number": "3", "lesson": null }],
+            "lessonStarts": [{ "lesson": "1", "title": "Hello" }],
+            "blocks": [{
+                "kind": "sentences", "lesson": null, "heading": "Pronunciation", "number": null,
+                "continues": false, "words": [],
+                "lines": [
+                    { "speaker": null, "text": "ā á ǎ à", "reading": null, "translation": null },
+                    { "speaker": null, "text": "xuéxiào", "reading": null, "translation": null },
+                    { "speaker": null, "text": "bāng máng", "reading": null, "translation": null }
+                ]
+            }]
+        })
+        .to_string();
+        let page = parse_page(&reply, true).unwrap();
+        assert!(lines(&page).is_empty());
+        assert_eq!(page.lesson_starts[0].title, None);
+        // A Dutch book's lines are its lines.
+        assert_eq!(lines(&parse_page(&reply, false).unwrap()).len(), 3);
     }
 
     #[test]
