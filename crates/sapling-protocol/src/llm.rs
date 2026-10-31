@@ -11,10 +11,11 @@ use sapling_import::textbook::TextbookPage;
 use sapling_llm::chat::{self, AssistantTurn, ChatArgs};
 use sapling_llm::conversation::{self, ScenarioArgs, TurnArgs, TurnResult};
 use sapling_llm::escalation::{self, EscalationArgs, EscalationReply};
+use sapling_llm::gloss::{self, GlossWordsArgs, GlossedWord};
 use sapling_llm::lesson::{self, BatchArgs, BatchResult};
 use sapling_llm::reading::TranslateLineArgs;
 use sapling_llm::reading::{self, GenerateTextArgs, GlossEntry, LookupWordArgs, ReadingTextDraft};
-use sapling_llm::textbook::{self, GlossWordsArgs, GlossedWord, TranscribePageArgs};
+use sapling_llm::textbook::{self, TranscribePageArgs};
 use sapling_llm::tools::{self as word_tools, AddWordsParams, LoopError, ToolContext, ToolOutcome};
 use sapling_llm::word_batch::{self, WordBatch, WordBatchArgs};
 use sapling_llm::{Llm, LlmError, Transport};
@@ -124,9 +125,9 @@ llm! {
         transcribePage(args: TranscribePageArgs) -> TextbookPage {
             textbook::transcribe_page(llm, &args)
         }
-        /// Meanings for listed words a textbook prints without them.
+        /// Meanings for the words a learner picked from a text, each in its sentence.
         glossWords(args: GlossWordsArgs) -> Vec<GlossedWord> {
-            textbook::gloss_words(llm, &args)
+            gloss::gloss_words(llm, &args)
         }
         /// A grid of everyday or topic words for "Check what you know".
         wordBatch(args: WordBatchArgs) -> WordBatch {

@@ -1,27 +1,32 @@
 //! A textbook's pages, transcribed, and the one lesson they become.
 //!
 //! A page arrives from the model (`sapling-llm`'s `textbook.rs`) as a
-//! [`TextbookPage`]: its target-language blocks in reading order — dialogues,
-//! standalone sentences, vocabulary lists — and nothing else on it. This
-//! module holds the two steps after that, both pure:
+//! [`TextbookPage`]: its target-language lines in reading order, block by
+//! block, and nothing else on it. The model's reply also sorts out speakers,
+//! printed pronunciation guides, translations and vocabulary lists — giving it
+//! somewhere to put them is what keeps them out of the lines — but none of
+//! that leaves `sapling-llm`: **a stored text is only the text** (`reading.md`),
+//! readings are the frontend's (`$lib/romanize`), and words are added from a
+//! stored text afterwards, not here.
 //!
-//! - [`tidy_page`]: the deterministic clean-up a reply gets whatever the model
-//!   did — a speaker's dialogue number and colon, a translation that repeats
-//!   the speaker, a sentence's "(1)" numbering, the spaces a Chinese or
-//!   Japanese textbook prints between words, blank and elided lines;
-//! - [`assemble_textbook`]: the pages of one lesson, in order, into what the
-//!   import stores and offers — a title, one untimed segment per dialogue line
-//!   or sentence, and the vocabulary list, one entry per term.
+//! This module holds the two steps after the model, both pure:
 //!
-//! Speakers, headings, readings and translations are kept on the page for the
-//! review screen but are not stored: a stored text is only the text
-//! (`reading.md`), and every reading and translation in the reader is derived.
-
-use std::collections::HashMap;
+//! - [`tidy_page`]: the deterministic clean-up every page gets whatever the
+//!   model did — a sentence's "(1)" numbering, an "A:" left on a line, the
+//!   spaces a Chinese or Japanese book prints between words, empty and elided
+//!   lines, and, on a page written in Han or kana, every pinyin run inside a
+//!   line and every line with no Han or kana in it at all (a pinyin guide or a
+//!   translation that landed as a line) — `pinyin.rs`; and what is not a
+//!   sentence: a frame to complete ("我……") and, on such a page, a bare label
+//!   with no punctuation (a warm-up word, a picture caption like "中国菜");
+//! - [`assemble_textbook`]: the pages of one lesson, in order, into a title
+//!   and one untimed segment per line.
 
 use sapling_domain::types::Segment;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+
+use crate::pinyin::{has_han_or_kana, is_han_or_kana, strip_pinyin};
 
 /// One transcribed image: possibly a two-page spread.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
@@ -33,7 +38,7 @@ pub struct TextbookPage {
     /// A lesson whose opening is printed in the image.
     #[serde(default)]
     pub lesson_starts: Vec<LessonStart>,
-    /// The target-language content, in reading order.
+    /// The target-language lines, block by block, in reading order.
     #[serde(default)]
     pub blocks: Vec<TextbookBlock>,
 }
@@ -66,64 +71,14 @@ pub enum BlockKind {
     Dialogue,
     /// Standalone sentences: grammar examples, captions, phrase boxes, exercise questions.
     Sentences,
-    /// A vocabulary list.
-    Words,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
 pub struct TextbookBlock {
     pub kind: BlockKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub lesson: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub heading: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub number: Option<String>,
-    /// Cut off at the end of the previous page and carried on here.
+    /// One entry per printed line, target language only.
     #[serde(default)]
-    pub continues: bool,
-    #[serde(default)]
-    pub lines: Vec<TextbookLine>,
-    #[serde(default)]
-    pub words: Vec<TextbookWord>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
-pub struct TextbookLine {
-    /// Absent where the line continues the previous speaker, or has none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub speaker: Option<String>,
-    pub text: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub reading: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub translation: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
-pub struct TextbookWord {
-    /// The bare headword: no article, no conjugations.
-    pub term: String,
-    /// The article, part of speech or forms the book prints with it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub notes: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub reading: Option<String>,
-    /// Absent where the list prints none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub meaning: Option<String>,
-    /// A name or a place.
-    #[serde(default)]
-    pub proper: bool,
+    pub lines: Vec<String>,
 }
 
 /// One lesson's pages, ready to review and store.
@@ -133,10 +88,8 @@ pub struct TextbookDraft {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub title: Option<String>,
-    /// One untimed segment per dialogue line or sentence, in reading order.
+    /// One untimed segment per line, in reading order.
     pub segments: Vec<Segment>,
-    /// The vocabulary lists, one entry per term, in the order first listed.
-    pub words: Vec<TextbookWord>,
 }
 
 /// Han, kana and CJK punctuation: the scripts a textbook may print with spaces
@@ -159,9 +112,8 @@ fn unspaced(c: char) -> bool {
 /// Whitespace collapsed to one space, and none left between two characters of
 /// a script written without spaces.
 pub fn tidy_text(text: &str) -> String {
-    let words: Vec<&str> = text.split_whitespace().collect();
     let mut out = String::new();
-    for word in words {
+    for word in text.split_whitespace() {
         let joins = match (out.chars().last(), word.chars().next()) {
             (Some(before), Some(after)) => unspaced(before) && unspaced(after),
             _ => true,
@@ -180,36 +132,6 @@ fn non_blank(text: Option<&str>) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// A dialogue's number ("1. Paolo", "3A. An") and a trailing colon ("A:") are
-/// not the speaker.
-fn tidy_speaker(speaker: Option<&str>) -> Option<String> {
-    let mut speaker = speaker?.trim();
-    let digits = speaker.find(|c: char| !c.is_ascii_digit()).unwrap_or(0);
-    if digits > 0 {
-        let rest = &speaker[digits..];
-        let rest = rest
-            .strip_prefix(|c: char| c.is_ascii_alphabetic())
-            .filter(|r| r.starts_with('.'))
-            .unwrap_or(rest);
-        if let Some(rest) = rest.strip_prefix('.') {
-            speaker = rest.trim_start();
-        }
-    }
-    let speaker = speaker.trim_end_matches([':', '：']).trim_end();
-    non_blank(Some(speaker))
-}
-
-/// "A: What's your name?" under speaker "A" is "What's your name?".
-fn tidy_translation(translation: Option<&str>, speaker: Option<&str>) -> Option<String> {
-    let translation = translation?.trim();
-    let unlabelled = speaker
-        .and_then(|speaker| translation.strip_prefix(speaker))
-        .and_then(|rest| rest.trim_start().strip_prefix([':', '：']))
-        .map(str::trim_start)
-        .unwrap_or(translation);
-    non_blank(Some(unlabelled))
-}
-
 /// A sentence's list number, "(1)" or "（1）", is the book's, not the sentence's.
 fn strip_numbering(text: &str) -> &str {
     let trimmed = text.trim_start();
@@ -226,64 +148,90 @@ fn strip_numbering(text: &str) -> &str {
         .unwrap_or(text)
 }
 
+/// A speaker label the model left on the line: one capital letter and a colon,
+/// "A: 你好" or "B：我叫李月。". A name is not stripped — "Els: Dag." could be
+/// either — only the lettered speakers textbooks use.
+fn strip_letter_speaker(text: &str) -> &str {
+    let trimmed = text.trim_start();
+    let mut chars = trimmed.chars();
+    match (
+        chars.next(),
+        chars.as_str().trim_start().strip_prefix([':', '：']),
+    ) {
+        (Some(letter), Some(rest)) if letter.is_ascii_uppercase() && !rest.trim().is_empty() => {
+            rest.trim_start()
+        }
+        _ => text,
+    }
+}
+
 /// A line that holds no word at all — "(...)", "……" — is an elision.
 fn has_words(text: &str) -> bool {
     text.chars().any(char::is_alphanumeric)
 }
 
+/// A frame to complete, not a sentence: a line ending in an ellipsis with at
+/// most three letters before it — "我……", "我的……", "B: ……". "Dag Els en
+/// ..." is a line someone says, and stays.
+fn is_frame(text: &str) -> bool {
+    let body = text.trim_end().trim_end_matches(['…', '.', '。', '⋯', ' ']);
+    body.len() < text.trim_end().len() && body.chars().filter(|c| c.is_alphanumeric()).count() <= 3
+}
+
+/// On a Chinese or Japanese page, a picture label or a warm-up word rather
+/// than a sentence: no punctuation at all, and at most four Han characters
+/// ("妈妈", "说汉语", "中国菜"). Asked only of a `sentences` block: a
+/// dialogue's line is said by someone, and a model that dropped its full stop
+/// ("我叫李月") must not cost the learner the line.
+fn is_label(text: &str) -> bool {
+    !text
+        .chars()
+        .any(|c| c.is_ascii_punctuation() || matches!(c as u32, 0x3000..=0x303F | 0xFF00..=0xFF65))
+        && text.chars().filter(|&c| is_han_or_kana(c)).count() <= 4
+}
+
+/// Whether the page is written in Han or kana: a couple of such characters
+/// anywhere in its lines. A Dutch or Spanish page has none.
+fn is_han_page(page: &TextbookPage) -> bool {
+    page.blocks
+        .iter()
+        .flat_map(|block| &block.lines)
+        .flat_map(|line| line.chars())
+        .filter(|&c| is_han_or_kana(c))
+        .nth(1)
+        .is_some()
+}
+
 /// The clean-up every transcribed page gets, whatever the model did.
 pub fn tidy_page(page: TextbookPage) -> TextbookPage {
+    let han = is_han_page(&page);
     let blocks = page
         .blocks
         .into_iter()
-        .map(|block| {
-            let lines = block
+        .map(|block| TextbookBlock {
+            lines: block
                 .lines
                 .into_iter()
                 .filter_map(|line| {
-                    let text = tidy_text(strip_numbering(&line.text));
-                    if !has_words(&text) {
-                        return None;
-                    }
-                    let speaker = match block.kind {
-                        BlockKind::Dialogue => tidy_speaker(line.speaker.as_deref()),
-                        _ => None,
+                    let line = strip_letter_speaker(strip_numbering(&line));
+                    let text = if han {
+                        tidy_text(&strip_pinyin(line))
+                    } else {
+                        tidy_text(line)
                     };
-                    let translation =
-                        tidy_translation(line.translation.as_deref(), line.speaker.as_deref())
-                            .and_then(|t| tidy_translation(Some(&t), speaker.as_deref()));
-                    Some(TextbookLine {
-                        speaker,
-                        text,
-                        reading: non_blank(line.reading.as_deref()),
-                        translation,
-                    })
+                    // On a Chinese page a line without a Chinese character is a
+                    // pinyin guide or a translation the model made a line of.
+                    let keep = has_words(&text)
+                        && !is_frame(&text)
+                        && (!han
+                            || (has_han_or_kana(&text)
+                                && !(block.kind == BlockKind::Sentences && is_label(&text))));
+                    keep.then_some(text)
                 })
-                .collect();
-            let words = block
-                .words
-                .into_iter()
-                .filter_map(|word| {
-                    let term = tidy_text(&word.term);
-                    has_words(&term).then(|| TextbookWord {
-                        term,
-                        notes: non_blank(word.notes.as_deref()),
-                        reading: non_blank(word.reading.as_deref()),
-                        meaning: non_blank(word.meaning.as_deref()),
-                        proper: word.proper,
-                    })
-                })
-                .collect();
-            TextbookBlock {
-                lesson: non_blank(block.lesson.as_deref()),
-                heading: non_blank(block.heading.as_deref()),
-                number: non_blank(block.number.as_deref()),
-                lines,
-                words,
-                ..block
-            }
+                .collect(),
+            ..block
         })
-        .filter(|block| !block.lines.is_empty() || !block.words.is_empty())
+        .filter(|block| !block.lines.is_empty())
         .collect();
     let lesson_starts = page
         .lesson_starts
@@ -291,7 +239,15 @@ pub fn tidy_page(page: TextbookPage) -> TextbookPage {
         .filter_map(|start| {
             Some(LessonStart {
                 lesson: non_blank(Some(&start.lesson))?,
-                title: non_blank(start.title.as_deref()),
+                title: non_blank(start.title.as_deref())
+                    .map(|title| {
+                        if han {
+                            tidy_text(&strip_pinyin(&title))
+                        } else {
+                            title
+                        }
+                    })
+                    .filter(|title| has_words(title)),
             })
         })
         .collect();
@@ -310,23 +266,14 @@ pub fn tidy_page(page: TextbookPage) -> TextbookPage {
     }
 }
 
-/// A word's identity in the list: its spelling, trimmed and lower-cased.
-fn word_key(term: &str) -> String {
-    term.trim().to_lowercase()
-}
-
-/// The pages of one lesson, in order, into its title, its segments and its
-/// vocabulary.
+/// The pages of one lesson, in order, into its title and its segments.
 ///
 /// - The title is the first lesson opening's title, prefixed with its label
 ///   where the title does not already say it ("3 · 你叫什么名字"), else the
 ///   label alone; absent when no page opens a lesson.
-/// - Every dialogue line and sentence becomes one untimed segment, in page
-///   order. A block that continues one from the previous page needs no
-///   joining: segments carry no headings, so it simply follows on.
-/// - A term listed twice — the same word on two pages, or in a list and again
-///   as a proper noun — is one entry, the first, with any field it lacked
-///   taken from the later one.
+/// - Every line becomes one untimed segment, in page order. A block that
+///   continues one from the previous page needs no joining: segments carry no
+///   headings, so it simply follows on.
 pub fn assemble_textbook(pages: &[TextbookPage]) -> TextbookDraft {
     let title = pages
         .iter()
@@ -337,78 +284,27 @@ pub fn assemble_textbook(pages: &[TextbookPage]) -> TextbookDraft {
             Some(title) => format!("{} · {title}", start.lesson),
             None => start.lesson.clone(),
         });
-
-    let mut segments = Vec::new();
-    let mut words: Vec<TextbookWord> = Vec::new();
-    let mut index: HashMap<String, usize> = HashMap::new();
-    for block in pages.iter().flat_map(|page| &page.blocks) {
-        match block.kind {
-            BlockKind::Words => {
-                for word in &block.words {
-                    let key = word_key(&word.term);
-                    match index.get(&key) {
-                        Some(&at) => {
-                            let kept = &mut words[at];
-                            kept.notes = kept.notes.take().or_else(|| word.notes.clone());
-                            kept.reading = kept.reading.take().or_else(|| word.reading.clone());
-                            kept.meaning = kept.meaning.take().or_else(|| word.meaning.clone());
-                            kept.proper |= word.proper;
-                        }
-                        None => {
-                            index.insert(key, words.len());
-                            words.push(word.clone());
-                        }
-                    }
-                }
-            }
-            BlockKind::Dialogue | BlockKind::Sentences => {
-                segments.extend(block.lines.iter().map(|line| Segment {
-                    text: line.text.clone(),
-                    start: None,
-                    end: None,
-                }));
-            }
-        }
-    }
-    TextbookDraft {
-        title,
-        segments,
-        words,
-    }
+    let segments = pages
+        .iter()
+        .flat_map(|page| &page.blocks)
+        .flat_map(|block| &block.lines)
+        .map(|line| Segment {
+            text: line.clone(),
+            start: None,
+            end: None,
+        })
+        .collect();
+    TextbookDraft { title, segments }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn line(speaker: Option<&str>, text: &str) -> TextbookLine {
-        TextbookLine {
-            speaker: speaker.map(str::to_owned),
-            text: text.into(),
-            ..TextbookLine::default()
-        }
-    }
-
-    fn word(term: &str) -> TextbookWord {
-        TextbookWord {
-            term: term.into(),
-            ..TextbookWord::default()
-        }
-    }
-
-    fn dialogue(lines: Vec<TextbookLine>) -> TextbookBlock {
+    fn block(kind: BlockKind, lines: &[&str]) -> TextbookBlock {
         TextbookBlock {
-            kind: BlockKind::Dialogue,
-            lines,
-            ..TextbookBlock::default()
-        }
-    }
-
-    fn words(words: Vec<TextbookWord>) -> TextbookBlock {
-        TextbookBlock {
-            kind: BlockKind::Words,
-            words,
-            ..TextbookBlock::default()
+            kind,
+            lines: lines.iter().map(|line| (*line).to_owned()).collect(),
         }
     }
 
@@ -417,6 +313,14 @@ mod tests {
             blocks,
             ..TextbookPage::default()
         }
+    }
+
+    fn lines(page: &TextbookPage) -> Vec<&str> {
+        page.blocks
+            .iter()
+            .flat_map(|b| &b.lines)
+            .map(String::as_str)
+            .collect()
     }
 
     #[test]
@@ -433,132 +337,116 @@ mod tests {
     }
 
     #[test]
-    fn a_speaker_loses_its_dialogue_number_and_colon() {
-        assert_eq!(tidy_speaker(Some("A:")).as_deref(), Some("A"));
-        assert_eq!(tidy_speaker(Some("1. Paolo")).as_deref(), Some("Paolo"));
-        assert_eq!(tidy_speaker(Some("3A. An")).as_deref(), Some("An"));
+    fn a_chinese_page_keeps_only_its_chinese() {
+        let tidied = tidy_page(page(vec![
+            block(
+                BlockKind::Dialogue,
+                &[
+                    // Pinyin printed above, copied as a line of its own.
+                    "Nǐ jiào shénme míngzi?",
+                    "你叫 什么 名字？",
+                    // Copied into the line, before or after it, or word by word.
+                    "Wǒ jiào Lǐ Yuè. 我叫李月。",
+                    "你好！Nǐ hǎo!",
+                    "你 nǐ 是 shì 学生 xuésheng 吗 ma？",
+                    // A translation that became a line.
+                    "What's your name?",
+                    "A: 你是哪国人？",
+                    // Its full stop dropped, but a dialogue line all the same.
+                    "我叫李月",
+                    "(...)",
+                ],
+            ),
+            block(
+                BlockKind::Sentences,
+                &["（1）我是 Peter 的朋友。", "Zhōngguó"],
+            ),
+            // Warm-up words and frames to complete are not sentences.
+            block(
+                BlockKind::Sentences,
+                &[
+                    "妈妈",
+                    "说 汉语",
+                    "中国菜",
+                    "我……",
+                    "我的……",
+                    "好！",
+                    "你会写汉字吗？",
+                ],
+            ),
+        ]));
         assert_eq!(
-            tidy_speaker(Some("prof. Deman")).as_deref(),
-            Some("prof. Deman")
+            lines(&tidied),
+            [
+                "你叫什么名字？",
+                "我叫李月。",
+                "你好！",
+                "你是学生吗？",
+                "你是哪国人？",
+                "我叫李月",
+                "我是 Peter 的朋友。",
+                "好！",
+                "你会写汉字吗？"
+            ]
         );
-        assert_eq!(
-            tidy_speaker(Some("Anja, Barbara：")).as_deref(),
-            Some("Anja, Barbara")
-        );
-        assert_eq!(tidy_speaker(Some(" : ")), None);
-        assert_eq!(tidy_speaker(None), None);
     }
 
     #[test]
-    fn a_translation_does_not_repeat_its_speaker() {
-        assert_eq!(
-            tidy_translation(Some("A: What's your name?"), Some("A")).as_deref(),
-            Some("What's your name?")
-        );
-        assert_eq!(
-            tidy_translation(Some("Away: gone"), Some("A")).as_deref(),
-            Some("Away: gone")
-        );
-    }
-
-    #[test]
-    fn tidying_a_page_cleans_lines_and_drops_what_is_left_empty() {
-        let tidied = tidy_page(TextbookPage {
-            blocks: vec![
-                dialogue(vec![
-                    TextbookLine {
-                        speaker: Some("A:".into()),
-                        text: "你叫 什么 名字？".into(),
-                        reading: Some(" Nǐ jiào shénme míngzi? ".into()),
-                        translation: Some("A: What's your name?".into()),
-                    },
-                    line(None, "(...)"),
-                    line(Some("2. Leen"), "  "),
-                ]),
-                TextbookBlock {
-                    kind: BlockKind::Sentences,
-                    lines: vec![line(Some("1"), "（1）李月是我的老师。")],
-                    ..TextbookBlock::default()
-                },
-                words(vec![word(" "), word("名字")]),
-                words(vec![]),
+    fn a_latin_page_keeps_its_lines_and_its_accents() {
+        let tidied = tidy_page(page(vec![block(
+            BlockKind::Dialogue,
+            &[
+                "Hallo ! Goedemorgen.",
+                "¿Qué desea?",
+                "Un café, por favor.",
+                "Dag Els en ...",
+                "Ik ...",
+                "  ",
+                "(...)",
+                // A bare word is a label only on a Chinese page.
+                "Goedenavond",
             ],
-            ..TextbookPage::default()
-        });
-        assert_eq!(tidied.blocks.len(), 3);
+        )]));
         assert_eq!(
-            tidied.blocks[0].lines,
-            [TextbookLine {
-                speaker: Some("A".into()),
-                text: "你叫什么名字？".into(),
-                reading: Some("Nǐ jiào shénme míngzi?".into()),
-                translation: Some("What's your name?".into()),
-            }]
+            lines(&tidied),
+            [
+                "Hallo ! Goedemorgen.",
+                "¿Qué desea?",
+                "Un café, por favor.",
+                "Dag Els en ...",
+                "Goedenavond"
+            ]
         );
-        // A sentence block has no speakers, and loses its numbering.
-        assert_eq!(tidied.blocks[1].lines, [line(None, "李月是我的老师。")]);
-        assert_eq!(tidied.blocks[2].words, [word("名字")]);
     }
 
     #[test]
-    fn a_lesson_is_its_lines_in_page_order_and_its_words_once_each() {
+    fn only_a_lettered_speaker_comes_off_a_line() {
+        assert_eq!(strip_letter_speaker("A: 你好"), "你好");
+        assert_eq!(strip_letter_speaker("B：我叫李月。"), "我叫李月。");
+        assert_eq!(strip_letter_speaker("Els: Dag."), "Els: Dag.");
+        assert_eq!(strip_letter_speaker("A:"), "A:");
+        assert_eq!(
+            strip_letter_speaker("Ah ! An, goedemiddag."),
+            "Ah ! An, goedemiddag."
+        );
+    }
+
+    #[test]
+    fn a_lesson_is_its_lines_in_page_order() {
         let first = TextbookPage {
             lesson_starts: vec![LessonStart {
                 lesson: "3".into(),
-                title: Some("你叫什么名字".into()),
+                title: Some("Nǐ jiào shénme míngzi 你叫什么名字".into()),
             }],
-            blocks: vec![
-                dialogue(vec![line(Some("A"), "你叫什么名字？")]),
-                words(vec![
-                    TextbookWord {
-                        term: "名字".into(),
-                        reading: Some("míngzi".into()),
-                        ..TextbookWord::default()
-                    },
-                    word("叫"),
-                ]),
-            ],
+            blocks: vec![block(BlockKind::Dialogue, &["你叫什么名字？"])],
             ..TextbookPage::default()
         };
-        let second = page(vec![
-            TextbookBlock {
-                continues: true,
-                ..dialogue(vec![line(Some("B"), "我叫李月。")])
-            },
-            words(vec![
-                TextbookWord {
-                    term: "名字".into(),
-                    meaning: Some("name".into()),
-                    ..TextbookWord::default()
-                },
-                TextbookWord {
-                    proper: true,
-                    ..word("李月")
-                },
-            ]),
-        ]);
-
-        let draft = assemble_textbook(&[first, second]);
+        let second = page(vec![block(BlockKind::Dialogue, &["我叫李月。"])]);
+        let draft = assemble_textbook(&[tidy_page(first), tidy_page(second)]);
         assert_eq!(draft.title.as_deref(), Some("3 · 你叫什么名字"));
         let texts: Vec<&str> = draft.segments.iter().map(|s| s.text.as_str()).collect();
         assert_eq!(texts, ["你叫什么名字？", "我叫李月。"]);
         assert!(draft.segments.iter().all(|s| s.start.is_none()));
-        assert_eq!(
-            draft.words,
-            [
-                TextbookWord {
-                    term: "名字".into(),
-                    reading: Some("míngzi".into()),
-                    meaning: Some("name".into()),
-                    ..TextbookWord::default()
-                },
-                word("叫"),
-                TextbookWord {
-                    proper: true,
-                    ..word("李月")
-                },
-            ]
-        );
     }
 
     #[test]
@@ -583,19 +471,5 @@ mod tests {
             Some("Les 4: Ik kom uit Italië")
         );
         assert_eq!(assemble_textbook(&[page(vec![])]).title, None);
-    }
-
-    #[test]
-    fn a_page_reads_back_from_the_json_the_model_writes() {
-        let page: TextbookPage = serde_json::from_str(
-            r#"{"pages":[{"number":"14","lesson":null}],"lessonStarts":[],
-                "blocks":[{"kind":"words","lesson":null,"heading":"New Words","number":null,
-                "continues":false,"lines":[],"words":[{"term":"叫","notes":"v.","reading":"jiào",
-                "meaning":"to call","proper":false}]}]}"#,
-        )
-        .unwrap();
-        assert_eq!(page.pages[0].number.as_deref(), Some("14"));
-        assert_eq!(page.blocks[0].kind, BlockKind::Words);
-        assert_eq!(page.blocks[0].words[0].notes.as_deref(), Some("v."));
     }
 }

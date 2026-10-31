@@ -1,17 +1,16 @@
-//! The two textbook calls: one scanned page transcribed into its
-//! target-language blocks, and meanings for the vocabulary a book lists
-//! without them.
+//! A scanned textbook page, transcribed into its target-language lines.
 //!
-//! **A transcriber, not an author.** The page prompt
-//! (`prompts/textbook-page.txt`) asks for what is printed and nothing else; it
-//! and the schema were measured on real pages before this was written
-//! (`tools/textbook-ocr`). What comes back is tidied by `sapling-import`
-//! ([`tidy_page`]) before anyone sees it, so a speaker's "A:" or the spaces
-//! between hanzi never depend on the model having followed every rule. The
-//! pages of a lesson are assembled there too (`assembleTextbook`), not here:
-//! this crate is the model calls and nothing after them.
-
-use std::collections::HashMap;
+//! **A transcriber, not an author.** The prompt (`prompts/textbook-page.txt`)
+//! asks for what is printed and nothing else; it and the schema were measured
+//! on real pages first (`tools/textbook-ocr`). The reply also has a place for
+//! what is *not* the text — a speaker, a printed pronunciation guide, a
+//! translation, a vocabulary list — because a model given nowhere to put the
+//! pinyin above a line puts it in the line. None of those leave this module:
+//! readings are the frontend's, a stored text is only the text, and words are
+//! added from a stored text afterwards. What does leave is tidied by
+//! `sapling-import` ([`tidy_page`]) first, so pinyin in a Chinese line or an
+//! "A:" never rests on the model having followed a rule; the pages of a lesson
+//! are assembled there too (`assembleTextbook`).
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -19,27 +18,21 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use sapling_import::textbook::{
-    tidy_page, BlockKind, LessonStart, PrintedPage, TextbookBlock, TextbookLine, TextbookPage,
-    TextbookWord,
+    tidy_page, BlockKind, LessonStart, PrintedPage, TextbookBlock, TextbookPage,
 };
 
 use crate::client::{ChatRequest, ErrorKind, Llm, LlmError, Message, Result, Transport};
-use crate::json::{fenced, fill, parse_reply, strict_schema};
-use crate::{is_mandarin, non_blank, LearnerProfile};
-
-/// The most words one gloss call asks about; a caller with more makes more calls.
-pub const MAX_GLOSS_WORDS: usize = 60;
+use crate::json::{fenced, parse_reply, strict_schema};
+use crate::{is_mandarin, LearnerProfile};
 
 /// A transcribed page is a few thousand tokens at most; this leaves room for a
 /// model that thinks a little anyway.
 const PAGE_MAX_TOKENS: u32 = 12_000;
 
 const PAGE_PROMPT: &str = include_str!("../prompts/textbook-page.txt");
-const GLOSS_PROMPT: &str = include_str!("../prompts/textbook-gloss.txt");
 
 const PAGES_ZH: &str = include_str!("../fixtures/textbook-zh.json");
 const PAGES_ES: &str = include_str!("../fixtures/textbook-es.json");
-const GLOSS_FIXTURE: &str = include_str!("../fixtures/textbook-gloss.json");
 
 #[derive(Debug, Clone, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -52,35 +45,7 @@ pub struct TranscribePageArgs {
     pub page: u32,
 }
 
-#[derive(Debug, Clone, Deserialize, TS)]
-pub struct GlossTerm {
-    pub term: String,
-    /// What the book prints beside it (an article, a part of speech), which picks the sense.
-    #[serde(default)]
-    #[ts(optional)]
-    pub notes: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, TS)]
-pub struct GlossWordsArgs {
-    pub profile: LearnerProfile,
-    pub words: Vec<GlossTerm>,
-}
-
-/// A meaning for a listed word. Never stored as such: the review screen puts
-/// it in the word's row and `add_words` files it.
-#[derive(Debug, Clone, PartialEq, Serialize, TS)]
-pub struct GlossedWord {
-    /// Exactly as asked.
-    pub term: String,
-    pub meaning: String,
-    /// Latin reading; absent for Latin-script targets.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub reading: Option<String>,
-}
-
-/* ---- The page reply: what the model is asked for ------------------------- */
+/* ---- The reply: what the model is asked for ------------------------------ */
 
 /// One transcribed image of a textbook page.
 #[derive(Deserialize, JsonSchema)]
@@ -105,6 +70,7 @@ struct PrintedPageReply {
 #[derive(Deserialize, JsonSchema)]
 struct LessonStartReply {
     lesson: String,
+    /// The lesson's title in the target language, without any pronunciation guide, or null.
     title: Option<String>,
 }
 
@@ -117,6 +83,7 @@ enum KindReply {
 }
 
 #[derive(Deserialize, JsonSchema)]
+#[allow(dead_code)]
 struct BlockReply {
     /// dialogue: speakers taking turns, or one speaker's numbered passage. sentences: standalone
     /// target-language sentences or phrases (grammar examples, captions, phrase boxes, exercise
@@ -137,19 +104,23 @@ struct BlockReply {
 }
 
 #[derive(Deserialize, JsonSchema)]
+#[allow(dead_code)]
 struct LineReply {
     /// The speaker's name or label as printed ("A", "Els", "Peter en Els"); null when the line
     /// continues the previous speaker or has none.
     speaker: Option<String>,
-    /// The target-language text, copied exactly.
+    /// The target-language text, copied exactly, in the target language's own script only:
+    /// never a pronunciation guide (pinyin, romanization, furigana), never a translation.
     text: String,
-    /// A printed pronunciation guide for this line (pinyin, furigana), or null.
+    /// A pronunciation guide printed above or beside this line (pinyin, furigana), or null.
+    /// It belongs here, never in `text`.
     reading: Option<String>,
     /// A printed translation of this line, or null.
     translation: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
+#[allow(dead_code)]
 struct WordReply {
     /// The headword as a learner would file it: without a leading article, without conjugations.
     term: String,
@@ -164,6 +135,8 @@ struct WordReply {
     proper: bool,
 }
 
+/// What leaves the module: the lines' text, the lesson openings and the page
+/// labels. Speakers, readings, translations and word lists stay behind.
 impl From<PageReply> for TextbookPage {
     fn from(reply: PageReply) -> Self {
         TextbookPage {
@@ -186,68 +159,26 @@ impl From<PageReply> for TextbookPage {
             blocks: reply
                 .blocks
                 .into_iter()
-                .map(|b| TextbookBlock {
-                    kind: match b.kind {
+                .filter_map(|b| {
+                    let kind = match b.kind {
                         KindReply::Dialogue => BlockKind::Dialogue,
                         KindReply::Sentences => BlockKind::Sentences,
-                        KindReply::Words => BlockKind::Words,
-                    },
-                    lesson: b.lesson,
-                    heading: b.heading,
-                    number: b.number,
-                    continues: b.continues,
-                    lines: b
-                        .lines
-                        .into_iter()
-                        .map(|l| TextbookLine {
-                            speaker: l.speaker,
-                            text: l.text,
-                            reading: l.reading,
-                            translation: l.translation,
-                        })
-                        .collect(),
-                    words: b
-                        .words
-                        .into_iter()
-                        .map(|w| TextbookWord {
-                            term: w.term,
-                            notes: w.notes,
-                            reading: w.reading,
-                            meaning: w.meaning,
-                            proper: w.proper,
-                        })
-                        .collect(),
+                        KindReply::Words => return None,
+                    };
+                    Some(TextbookBlock {
+                        kind,
+                        lines: b.lines.into_iter().map(|l| l.text).collect(),
+                    })
                 })
                 .collect(),
         }
     }
 }
 
-/* ---- The gloss reply ------------------------------------------------------ */
-
-#[derive(Deserialize, JsonSchema)]
-struct GlossReply {
-    words: Vec<GlossEntryReply>,
-}
-
-#[derive(Deserialize, JsonSchema)]
-struct GlossEntryReply {
-    term: String,
-    meaning: String,
-    reading: Option<String>,
-}
-
 #[derive(Serialize)]
 struct PagePayload<'a> {
     native: &'a str,
     target: &'a str,
-}
-
-#[derive(Serialize)]
-struct GlossPayload<'a> {
-    native: &'a str,
-    target: &'a str,
-    words: Vec<Value>,
 }
 
 fn bad(message: impl Into<String>) -> LlmError {
@@ -311,94 +242,6 @@ pub async fn transcribe_page<T: Transport>(
     )))
 }
 
-pub fn gloss_request(args: &GlossWordsArgs) -> ChatRequest {
-    let payload = GlossPayload {
-        native: &args.profile.native_language,
-        target: &args.profile.target_language,
-        words: args
-            .words
-            .iter()
-            .take(MAX_GLOSS_WORDS)
-            .map(|word| match non_blank(word.notes.as_deref()) {
-                Some(notes) => serde_json::json!({ "term": word.term.trim(), "notes": notes }),
-                None => serde_json::json!({ "term": word.term.trim() }),
-            })
-            .collect(),
-    };
-    ChatRequest {
-        messages: vec![
-            Message::System(GLOSS_PROMPT.trim_end().to_owned()),
-            Message::User(serde_json::to_string(&payload).expect("a payload serializes")),
-        ],
-        schema: Some(("textbook_gloss".to_owned(), strict_schema::<GlossReply>())),
-        temperature: Some(0.2),
-        ..ChatRequest::default()
-    }
-}
-
-/// The answers matched back to the words asked, by spelling. An answer for a
-/// word nobody asked about, or with no meaning, is dropped; so is a second
-/// answer for the same word. Only no usable answer at all is an error.
-pub fn parse_gloss(raw: &str, asked: &[GlossTerm]) -> Result<Vec<GlossedWord>> {
-    let unusable = || bad("The model did not give those words a meaning. Try again.");
-    let reply: GlossReply = parse_reply(raw).ok_or_else(unusable)?;
-    let key = |term: &str| term.trim().to_lowercase();
-    let mut wanted: HashMap<String, &str> = asked
-        .iter()
-        .take(MAX_GLOSS_WORDS)
-        .map(|word| (key(&word.term), word.term.trim()))
-        .collect();
-    let glossed: Vec<GlossedWord> = reply
-        .words
-        .into_iter()
-        .filter_map(|entry| {
-            let meaning = entry.meaning.trim();
-            if meaning.is_empty() {
-                return None;
-            }
-            let term = wanted.remove(&key(&entry.term))?;
-            Some(GlossedWord {
-                term: term.to_owned(),
-                meaning: meaning.to_owned(),
-                reading: non_blank(entry.reading.as_deref()).map(str::to_owned),
-            })
-        })
-        .collect();
-    if glossed.is_empty() {
-        return Err(unusable());
-    }
-    Ok(glossed)
-}
-
-fn mock_gloss(args: &GlossWordsArgs) -> String {
-    let template: Value = serde_json::from_str(GLOSS_FIXTURE).expect("a fixture is JSON");
-    let words: Vec<Value> = args
-        .words
-        .iter()
-        .take(MAX_GLOSS_WORDS)
-        .map(|word| {
-            let mut entry = template.clone();
-            fill(&mut entry, &[("term", word.term.trim())]);
-            entry
-        })
-        .collect();
-    fenced(&serde_json::json!({ "words": words }))
-}
-
-/// Meanings for listed words that print none. No words, no call.
-pub async fn gloss_words<T: Transport>(
-    llm: &Llm<T>,
-    args: &GlossWordsArgs,
-) -> Result<Vec<GlossedWord>> {
-    if args.words.iter().all(|word| word.term.trim().is_empty()) {
-        return Ok(Vec::new());
-    }
-    let completion = llm
-        .complete_or_mock(&gloss_request(args), || mock_gloss(args))
-        .await?;
-    parse_gloss(&completion.content, &args.words)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -406,20 +249,24 @@ mod tests {
     use pollster::block_on;
     use serde_json::json;
 
-    fn profile(target: &str) -> LearnerProfile {
-        LearnerProfile {
-            native_language: "English".into(),
-            target_language: target.into(),
-            about: None,
-        }
-    }
-
     fn page_args(target: &str, page: u32) -> TranscribePageArgs {
         TranscribePageArgs {
-            profile: profile(target),
+            profile: LearnerProfile {
+                native_language: "English".into(),
+                target_language: target.into(),
+                about: None,
+            },
             image: "data:image/jpeg;base64,AA==".into(),
             page,
         }
+    }
+
+    fn lines(page: &TextbookPage) -> Vec<&str> {
+        page.blocks
+            .iter()
+            .flat_map(|b| &b.lines)
+            .map(String::as_str)
+            .collect()
     }
 
     #[test]
@@ -437,40 +284,45 @@ mod tests {
         assert_eq!(request.temperature, Some(0.0));
         let (name, schema) = request.schema.unwrap();
         assert_eq!(name, "textbook_page");
-        // Strict: every key required, down to a word's.
-        let word = &schema["properties"]["blocks"]["items"]["properties"]["words"]["items"];
+        // Strict, and the line keeps its place for a reading, so pinyin has
+        // somewhere to go that is not the text.
+        let line = &schema["properties"]["blocks"]["items"]["properties"]["lines"]["items"];
         assert_eq!(
-            word["required"],
-            json!(["term", "notes", "reading", "meaning", "proper"])
+            line["required"],
+            json!(["speaker", "text", "reading", "translation"])
         );
     }
 
     #[test]
-    fn the_mock_reads_its_pages_in_turn_through_the_tidy() {
+    fn only_the_text_leaves_and_the_pinyin_does_not() {
         let fake = Fake::default();
         let llm = Llm::new(&fake, None);
         let first = block_on(transcribe_page(&llm, &page_args("Chinese", 1))).unwrap();
+        // The fixture carries a pinyin line, pinyin inside lines, an "A:" and
+        // a vocabulary list; none of them reach the page.
+        assert_eq!(
+            lines(&first),
+            ["你好！", "你好！我叫王明。", "我叫安娜。你是学生吗？"]
+        );
+        assert_eq!(first.lesson_starts[0].title.as_deref(), Some("你好"));
         let second = block_on(transcribe_page(&llm, &page_args("Chinese", 2))).unwrap();
-        let line = &first.blocks[0].lines[0];
-        assert_eq!(line.speaker.as_deref(), Some("A"));
-        assert_eq!(line.text, "你好！");
-        assert_eq!(line.translation.as_deref(), Some("Hello!"));
-        assert!(second.blocks[0].continues);
-        assert_eq!(second.blocks[1].lines[0].text, "他是老师吗？");
+        assert_eq!(
+            lines(&second),
+            ["是，我是学生。", "他是老师吗？", "你是中国人吗？"]
+        );
         // Page three wraps back to the first fixture page.
         let third = block_on(transcribe_page(&llm, &page_args("Chinese", 3))).unwrap();
         assert_eq!(third, first);
 
         let spanish = block_on(transcribe_page(&llm, &page_args("Spanish", 1))).unwrap();
-        let speakers: Vec<Option<&str>> = spanish.blocks[0]
-            .lines
-            .iter()
-            .map(|l| l.speaker.as_deref())
-            .collect();
-        // "1. Camarero" loses its number; "(...)" is gone.
         assert_eq!(
-            speakers,
-            [Some("Camarero"), Some("Ana"), Some("Camarero"), Some("Ana")]
+            lines(&spanish),
+            [
+                "Buenos días. ¿Qué desea?",
+                "Un café con leche, por favor.",
+                "¿Algo más?",
+                "No, gracias."
+            ]
         );
     }
 
@@ -489,86 +341,5 @@ mod tests {
         let error = block_on(transcribe_page(&live(&fake), &page_args("Dutch", 4))).unwrap_err();
         assert_eq!(error.kind, ErrorKind::BadResponse);
         assert!(error.message.contains("page 4"));
-    }
-
-    #[test]
-    fn glosses_match_back_by_spelling_and_drop_strays() {
-        let asked = vec![
-            GlossTerm {
-                term: "café".into(),
-                notes: Some("el".into()),
-            },
-            GlossTerm {
-                term: "Leche".into(),
-                notes: None,
-            },
-        ];
-        let raw = json!({ "words": [
-            { "term": "leche", "meaning": " milk ", "reading": null },
-            { "term": "café", "meaning": "coffee", "reading": " " },
-            { "term": "café", "meaning": "again", "reading": null },
-            { "term": "té", "meaning": "tea", "reading": null },
-        ] })
-        .to_string();
-        assert_eq!(
-            parse_gloss(&raw, &asked).unwrap(),
-            [
-                GlossedWord {
-                    term: "Leche".into(),
-                    meaning: "milk".into(),
-                    reading: None,
-                },
-                GlossedWord {
-                    term: "café".into(),
-                    meaning: "coffee".into(),
-                    reading: None,
-                },
-            ]
-        );
-        assert!(parse_gloss(r#"{"words":[]}"#, &asked).is_err());
-    }
-
-    #[test]
-    fn the_gloss_payload_carries_notes_where_there_are_some() {
-        let args = GlossWordsArgs {
-            profile: profile("Dutch"),
-            words: vec![
-                GlossTerm {
-                    term: " collega ".into(),
-                    notes: Some("de".into()),
-                },
-                GlossTerm {
-                    term: "goed".into(),
-                    notes: Some(" ".into()),
-                },
-            ],
-        };
-        let request = gloss_request(&args);
-        let Message::User(text) = &request.messages[1] else {
-            panic!("expected a user turn");
-        };
-        assert_eq!(
-            serde_json::from_str::<Value>(text).unwrap(),
-            json!({ "native": "English", "target": "Dutch", "words": [
-                { "term": "collega", "notes": "de" },
-                { "term": "goed" },
-            ] })
-        );
-        let fake = Fake::default();
-        let glossed = block_on(gloss_words(&Llm::new(&fake, None), &args)).unwrap();
-        assert_eq!(glossed[0].term, "collega");
-        assert_eq!(glossed[0].meaning, "(meaning of \"collega\")");
-    }
-
-    #[test]
-    fn no_words_is_no_call() {
-        let fake = Fake::default();
-        let args = GlossWordsArgs {
-            profile: profile("Dutch"),
-            words: vec![],
-        };
-        assert!(block_on(gloss_words(&live(&fake), &args))
-            .unwrap()
-            .is_empty());
     }
 }

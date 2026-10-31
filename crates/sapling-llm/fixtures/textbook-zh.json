@@ -1,7 +1,17 @@
 [
   {
-    "pages": [{ "number": "8", "lesson": null }],
-    "lessonStarts": [{ "lesson": "1", "title": "你好" }],
+    "pages": [
+      {
+        "number": "8",
+        "lesson": null
+      }
+    ],
+    "lessonStarts": [
+      {
+        "lesson": "1",
+        "title": "Nǐ hǎo 你好"
+      }
+    ],
     "blocks": [
       {
         "kind": "dialogue",
@@ -10,9 +20,36 @@
         "number": "1",
         "continues": false,
         "lines": [
-          { "speaker": "A:", "text": "你 好！", "reading": "Nǐ hǎo!", "translation": "A: Hello!" },
-          { "speaker": "B:", "text": "你好！我 叫 王明。", "reading": "Nǐ hǎo! Wǒ jiào Wáng Míng.", "translation": "Hello! My name is Wang Ming." },
-          { "speaker": "A:", "text": "我叫安娜。你是学生吗？", "reading": "Wǒ jiào Ānnà. Nǐ shì xuésheng ma?", "translation": "My name is Anna. Are you a student?" }
+          {
+            "speaker": "A:",
+            "text": "Nǐ hǎo!",
+            "reading": null,
+            "translation": null
+          },
+          {
+            "speaker": null,
+            "text": "你 好！",
+            "reading": null,
+            "translation": "A: Hello!"
+          },
+          {
+            "speaker": "B:",
+            "text": "Nǐ hǎo! Wǒ jiào Wáng Míng. 你好！我 叫 王明。",
+            "reading": null,
+            "translation": "Hello! My name is Wang Ming."
+          },
+          {
+            "speaker": null,
+            "text": "A: 我 wǒ 叫 jiào 安娜 Ānnà。你是学生吗 ma？",
+            "reading": null,
+            "translation": "My name is Anna. Are you a student?"
+          },
+          {
+            "speaker": null,
+            "text": "My name is Anna. Are you a student?",
+            "reading": null,
+            "translation": null
+          }
         ],
         "words": []
       },
@@ -24,10 +61,34 @@
         "continues": false,
         "lines": [],
         "words": [
-          { "term": "你好", "notes": "int.", "reading": "nǐ hǎo", "meaning": "hello", "proper": false },
-          { "term": "叫", "notes": "v.", "reading": "jiào", "meaning": "to be called", "proper": false },
-          { "term": "学生", "notes": "n.", "reading": "xuésheng", "meaning": "student", "proper": false },
-          { "term": "吗", "notes": "part.", "reading": "ma", "meaning": "question particle", "proper": false }
+          {
+            "term": "你好",
+            "notes": "int.",
+            "reading": "nǐ hǎo",
+            "meaning": "hello",
+            "proper": false
+          },
+          {
+            "term": "叫",
+            "notes": "v.",
+            "reading": "jiào",
+            "meaning": "to be called",
+            "proper": false
+          },
+          {
+            "term": "学生",
+            "notes": "n.",
+            "reading": "xuésheng",
+            "meaning": "student",
+            "proper": false
+          },
+          {
+            "term": "吗",
+            "notes": "part.",
+            "reading": "ma",
+            "meaning": "question particle",
+            "proper": false
+          }
         ]
       },
       {
@@ -37,12 +98,25 @@
         "number": null,
         "continues": false,
         "lines": [],
-        "words": [{ "term": "王明", "notes": null, "reading": "Wáng Míng", "meaning": "Wang Ming, a name", "proper": true }]
+        "words": [
+          {
+            "term": "王明",
+            "notes": null,
+            "reading": "Wáng Míng",
+            "meaning": "Wang Ming, a name",
+            "proper": true
+          }
+        ]
       }
     ]
   },
   {
-    "pages": [{ "number": "9", "lesson": "1" }],
+    "pages": [
+      {
+        "number": "9",
+        "lesson": "1"
+      }
+    ],
     "lessonStarts": [],
     "blocks": [
       {
@@ -51,7 +125,14 @@
         "heading": null,
         "number": null,
         "continues": true,
-        "lines": [{ "speaker": "B", "text": "是，我是学生。", "reading": "Shì, wǒ shì xuésheng.", "translation": "Yes, I am a student." }],
+        "lines": [
+          {
+            "speaker": "B",
+            "text": "是，我是学生。",
+            "reading": "Shì, wǒ shì xuésheng.",
+            "translation": "Yes, I am a student."
+          }
+        ],
         "words": []
       },
       {
@@ -61,8 +142,18 @@
         "number": "1",
         "continues": false,
         "lines": [
-          { "speaker": null, "text": "（1）他是老师吗？", "reading": null, "translation": null },
-          { "speaker": null, "text": "（2）你是中国人吗？", "reading": null, "translation": null }
+          {
+            "speaker": null,
+            "text": "（1）他是老师吗？Tā shì lǎoshī ma?",
+            "reading": null,
+            "translation": null
+          },
+          {
+            "speaker": null,
+            "text": "（2）你是中国人吗？",
+            "reading": "Nǐ shì Zhōngguó rén ma?",
+            "translation": null
+          }
         ],
         "words": []
       },
@@ -74,9 +165,27 @@
         "continues": false,
         "lines": [],
         "words": [
-          { "term": "是", "notes": "v.", "reading": "shì", "meaning": "to be", "proper": false },
-          { "term": "老师", "notes": "n.", "reading": "lǎoshī", "meaning": "teacher", "proper": false },
-          { "term": "学生", "notes": null, "reading": null, "meaning": null, "proper": false }
+          {
+            "term": "是",
+            "notes": "v.",
+            "reading": "shì",
+            "meaning": "to be",
+            "proper": false
+          },
+          {
+            "term": "老师",
+            "notes": "n.",
+            "reading": "lǎoshī",
+            "meaning": "teacher",
+            "proper": false
+          },
+          {
+            "term": "学生",
+            "notes": null,
+            "reading": null,
+            "meaning": null,
+            "proper": false
+          }
         ]
       }
     ]

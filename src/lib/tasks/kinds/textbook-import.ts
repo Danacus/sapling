@@ -4,24 +4,22 @@
  *
  * A task because it is a page of model calls that take seconds each, and the
  * composer must not freeze while they run. It **saves nothing**: what it
- * produces is a draft — the lesson's title, its segments, its word list with
- * a meaning for every word it could find one for — which lands in the
+ * produces is a draft — the lesson's title and its lines — which lands in the
  * Textbook drawer's review, and only the learner's Import there writes the
- * text and files the words. Like `captions`, a reload loses an unimported
- * draft; re-running it is one tap and costs a few cents.
+ * text. Words are added from the stored text afterwards, like any text's.
+ * Like `captions`, a reload loses an unimported draft; re-running it is one
+ * tap and costs a few cents.
  *
  * Pages are rendered and read three at a time, in page order in the result.
  * One page failing fails the task — a lesson with its middle page missing is
  * not a lesson — and the tray's Retry re-reads them all, which the saved
- * input (the files themselves) allows. Meanings for a list that printed none
- * are asked for afterwards; that failing is not the import failing, the words
- * just arrive without them for the learner to fill in.
+ * input (the files themselves) allows.
  */
 
 import { assembleTextbook } from '$lib/db';
 import type { LearnerProfile } from '$lib/db/generated/index';
-import { glossBatches, glossWords, openPages, transcribePage, withGlosses } from '$lib/textbook';
-import type { GlossedWord, TextbookDraft, TextbookPage } from '$lib/textbook';
+import { openPages, transcribePage } from '$lib/textbook';
+import type { TextbookDraft, TextbookPage } from '$lib/textbook';
 import type { TaskKindDef } from '../types';
 
 /** Pages read at once: the same three a page's translations use. */
@@ -44,8 +42,6 @@ export interface TextbookImportResult {
 	draft: TextbookDraft;
 	name: string;
 	pages: number;
-	/** Words still without a meaning after the gloss — the learner types those. */
-	unglossed: number;
 }
 
 function aborted(signal: AbortSignal): boolean {
@@ -98,46 +94,14 @@ export const textbookImportTask = {
 
 		ctx.step('assemble', 'Putting the lesson together');
 		const draft = await assembleTextbook(pages);
-		if (draft.segments.length === 0 && draft.words.length === 0) {
+		if (draft.segments.length === 0) {
 			throw new Error('There is nothing in the target language on those pages.');
 		}
-
-		let words = draft.words;
-		const bare = words.filter((word) => !word.meaning);
-		if (bare.length > 0) {
-			ctx.step('gloss', `Finding meanings for ${bare.length} word${bare.length === 1 ? '' : 's'}`);
-			const glosses: GlossedWord[] = [];
-			for (const batch of glossBatches(bare)) {
-				try {
-					glosses.push(
-						...(await glossWords(
-							{
-								profile: input.profile,
-								words: batch.map(({ term, notes }) => ({ term, ...(notes ? { notes } : {}) }))
-							},
-							{ signal: ctx.signal }
-						))
-					);
-				} catch (cause) {
-					// A missing meaning is the learner's to type; only a cancel stops here.
-					ctx.signal.throwIfAborted();
-					void cause;
-				}
-			}
-			words = withGlosses(words, glosses);
-		}
-
-		return {
-			draft: { ...draft, words },
-			name: input.name,
-			pages: wanted.length,
-			unglossed: words.filter((word) => !word.meaning).length
-		};
+		return { draft, name: input.name, pages: wanted.length };
 	},
 
 	summary(result) {
 		const lines = result.draft.segments.length;
-		const words = result.draft.words.length;
-		return `${lines} line${lines === 1 ? '' : 's'} and ${words} word${words === 1 ? '' : 's'} ready to review`;
+		return `${lines} line${lines === 1 ? '' : 's'} ready to review`;
 	}
 } satisfies TaskKindDef<TextbookImportInput, TextbookImportResult>;
