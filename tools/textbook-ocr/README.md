@@ -27,8 +27,11 @@ of the truth anything the prompt says to leave out.
 
 ## Run
 
+Node's built-in `fetch` ignores `HTTPS_PROXY`. Behind a proxy (a Claude Code
+cloud session, for one), prefix each command with `NODE_USE_ENV_PROXY=1`.
+
 ```sh
-node tools/textbook-ocr/run.mjs --list        # cheap vision models OpenRouter serves today
+node tools/textbook-ocr/run.mjs --list [--max 0.02]  # vision models under $0.01 (or --max) a page, cheapest first
 OPENROUTER_API_KEY=... node tools/textbook-ocr/run.mjs [--models a,b] [--pages hsk1-p14,nl-p14-15]
 node tools/textbook-ocr/score.mjs [--verbose]  # --verbose lists every missing and extra line
 ```
