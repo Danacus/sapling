@@ -29,10 +29,10 @@
 				"kind": "words",
 				"heading": "New Words",
 				"words": [
-					{ "term": "叫", "reading": "jiào", "grammar": "v.", "meaning": "to call, to be called" },
-					{ "term": "什么", "reading": "shénme", "grammar": "pron.", "meaning": "what" },
-					{ "term": "名字", "reading": "míngzi", "grammar": "n.", "meaning": "name" },
-					{ "term": "我", "reading": "wǒ", "grammar": "pron.", "meaning": "I, me" }
+					{ "term": "叫", "reading": "jiào", "notes": "v.", "meaning": "to call, to be called" },
+					{ "term": "什么", "reading": "shénme", "notes": "pron.", "meaning": "what" },
+					{ "term": "名字", "reading": "míngzi", "notes": "n.", "meaning": "name" },
+					{ "term": "我", "reading": "wǒ", "notes": "pron.", "meaning": "I, me" }
 				]
 			},
 			{

@@ -23,6 +23,6 @@ Rules:
 - Sentence frames to be completed ("Dit is ...", "我……") and lone connecting words between pictures ("en") are left out.
 - Words printed only as a picture-matching or warm-up task are not a vocabulary list; leave them out.
 - Elisions such as "(...)" are left out.
-- In a vocabulary list, `term` is the bare headword: "de collega" is term "collega", grammar "de"; "komen (ik kom, je komt, hij komt)" is term "komen", grammar "ik kom, je komt, hij komt".
+- In a vocabulary list, `term` is the bare headword: "de collega" is term "collega", notes "de"; "komen (ik kom, je komt, hij komt)" is term "komen", notes "ik kom, je komt, hij komt".
 - Bold or colour that marks a grammar point is ignored; copy the words.
 - Set `continues` when a block starts at the top of the page mid-dialogue or mid-list, without its heading.

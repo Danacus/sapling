@@ -30,8 +30,12 @@
 				"additionalProperties": false,
 				"required": ["lesson", "title"],
 				"properties": {
-					"lesson": { "type": "string" },
-					"title": { "type": ["string", "null"] }
+					"lesson": {
+						"type": "string"
+					},
+					"title": {
+						"type": ["string", "null"]
+					}
 				}
 			}
 		},
@@ -97,14 +101,14 @@
 						"items": {
 							"type": "object",
 							"additionalProperties": false,
-							"required": ["term", "grammar", "reading", "meaning", "proper"],
+							"required": ["term", "notes", "reading", "meaning", "proper"],
 							"properties": {
 								"term": {
 									"description": "The headword as a learner would file it: without a leading article, without conjugations.",
 									"type": "string"
 								},
-								"grammar": {
-									"description": "Printed grammatical information: article, part of speech, conjugated forms (\"de\", \"v.\", \"ik kom, je komt, hij komt\"), or null.",
+								"notes": {
+									"description": "Printed notes on the word: article, part of speech, conjugated forms (\"de\", \"v.\", \"ik kom, je komt, hij komt\"), or null.",
 									"type": ["string", "null"]
 								},
 								"reading": {
