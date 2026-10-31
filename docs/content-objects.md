@@ -181,6 +181,63 @@ edge, every owner of which is retired**, after a grace period. An object with
 no edges is never deleted — that is the safe side of every gap in §7. Clients
 apply the same rule locally, from the same function.
 
+### 8.1 What the sets guarantee, and what they do not
+
+Arrival order cannot make `edges` and `retired` inconsistent. Each event's
+contribution is `object_refs(event)` — a function of that event alone, never
+of what the relay already holds — and both tables are `INSERT OR IGNORE` into
+sets, so any order and any number of duplicates converge on the same rows. A
+retirement that lands before its edge just makes the edge dead on arrival.
+
+But the sets are **not rebuildable by the relay**. The Worker stores the event
+row and never parses the payload, and the declared fields are not kept on the
+row, so if a declaration never arrived or the tables were lost the relay
+cannot reconstruct them — and an event once pushed is never pushed again (until
+a `follow_room` re-push), so a lost declaration stays lost. Ways one is lost or
+wrong:
+
+- A page that names no objects (a lone `textDeleted`) skips
+  `/objects/missing`, so a client pushing to a relay that predates §5 has its
+  `retire` silently dropped. Worker-first deploys prevent it; it only leaks.
+- An older build declares nothing (§7). Leak only.
+- A buggy client declares a wrong `retire`. The relay cannot check it without
+  reading the payload. **This one is unsafe**: GC would delete a body still in
+  use.
+
+What *is* order-sensitive is GC reading the sets mid-flight. Dedup makes this
+race reachable:
+
+1. Device A deletes the only text whose body is `H`; every owner of `H` is
+   retired.
+2. Device B adds a new text with the same body — same bytes, same `H`. Its
+   `/objects/missing` says `H` is present, so B does not upload it.
+3. GC deletes `H`.
+4. B pushes its `textAdded`; the edge points at nothing. B holds the bytes but
+   never re-uploads them, so no other device can fetch the body.
+
+A grace period narrows the window but does not close it: the missing-check and
+the push are not atomic.
+
+### 8.2 Preconditions for building GC
+
+None of this is needed while nothing deletes: until then every gap above costs
+storage, never a body. All of it is needed before anything does.
+
+1. **The client log is the source of truth for the sets.** A reconcile step:
+   a client recomputes `object_refs` over its whole log and sends the union
+   (re-sending set members is always safe). That repairs dropped declarations
+   and lost tables without the Worker ever reading a payload. Optionally the
+   Worker also keeps the declared fields as columns on `events` (never
+   returned by pull), so the tables are a relay-side index it can rebuild —
+   still only as trustworthy as what clients declared.
+2. **`/push` closes the dedup race.** Its answer names every hash a new edge
+   references that `objects` lacks, and the client re-`PUT`s those before the
+   cycle counts as done. The grace period runs from a `lastSeen` stamp on the
+   edge that every insert refreshes, not from the retirement.
+3. **A `retire` is a claim, checked before deleting.** The reconcile pass
+   confirms each retirement against a `textDeleted` in the log; an unconfirmed
+   one keeps its objects. Clients collecting locally apply the same check.
+
 ## 9. Rollout
 
 Each step deploys alone, Worker first.
