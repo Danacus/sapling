@@ -1,0 +1,82 @@
+{
+	"image": "nl-p19-20.png",
+	"target": "Dutch",
+	"native": "English",
+	"expected": {
+		"pages": [
+			{ "number": "19", "lesson": "DEEL 1 - LES 3B" },
+			{ "number": null, "lesson": "LES 4" }
+		],
+		"lessonStarts": [{ "lesson": "LES 4", "title": "Ik kom uit Italië." }],
+		"blocks": [
+			{
+				"kind": "words",
+				"heading": "WOORDENLIJST LES 3",
+				"words": [
+					{ "term": "auto", "grammar": "de" },
+					{ "term": "baby", "grammar": "de" },
+					{ "term": "bus", "grammar": "de" },
+					{ "term": "identiteitskaart", "grammar": "de" },
+					{ "term": "jongen", "grammar": "de" },
+					{ "term": "koffie", "grammar": "de" },
+					{ "term": "krant", "grammar": "de" },
+					{ "term": "man", "grammar": "de" },
+					{ "term": "melk", "grammar": "de" },
+					{ "term": "taxi", "grammar": "de" },
+					{ "term": "thee", "grammar": "de" },
+					{ "term": "trein", "grammar": "de" },
+					{ "term": "vrouw", "grammar": "de" },
+					{ "term": "whisky", "grammar": "de" },
+					{ "term": "wijn", "grammar": "de" },
+					{ "term": "bier", "grammar": "het" },
+					{ "term": "fruitsap", "grammar": "het" },
+					{ "term": "kind", "grammar": "het" },
+					{ "term": "meisje", "grammar": "het" },
+					{ "term": "ticket", "grammar": "het" },
+					{ "term": "tijdschrift", "grammar": "het" },
+					{ "term": "vliegtuig", "grammar": "het" },
+					{ "term": "water", "grammar": "het" }
+				]
+			},
+			{
+				"kind": "dialogue",
+				"number": "1",
+				"lines": [
+					{ "speaker": "Paolo", "text": "Mijn naam is Paolo Sanseverino." },
+					{ "speaker": null, "text": "Ik kom uit Italië." },
+					{ "speaker": null, "text": "Ik ben geboren in Palermo." },
+					{ "speaker": null, "text": "Ik ben student economie." }
+				]
+			},
+			{
+				"kind": "dialogue",
+				"number": "2",
+				"lines": [
+					{ "speaker": "Leen", "text": "Ik ben Leen Maas." },
+					{ "speaker": null, "text": "Ik ben in Gent geboren." },
+					{ "speaker": null, "text": "Ik woon in Gent." },
+					{ "speaker": null, "text": "Ik ben studente." }
+				]
+			},
+			{
+				"kind": "dialogue",
+				"number": "3",
+				"lines": [
+					{ "speaker": "Bert", "text": "Mijn naam is Bert Sels." },
+					{ "speaker": null, "text": "Ik kom uit Oostende." },
+					{ "speaker": null, "text": "Ik ben in Oostende geboren." },
+					{ "speaker": null, "text": "Ik woon in Leuven." },
+					{ "speaker": null, "text": "Ik ben marketing manager bij een firma in Brussel." }
+				]
+			},
+			{
+				"kind": "dialogue",
+				"number": "4",
+				"lines": [
+					{ "speaker": "Kristien", "text": "Mijn naam is Kristien Verlinden." },
+					{ "speaker": null, "text": "Ik ben in Antwerpen geboren en ik woon in Antwerpen." }
+				]
+			}
+		]
+	}
+}

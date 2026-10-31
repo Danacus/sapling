@@ -1,0 +1,52 @@
+{
+	"image": "hsk1-p14.png",
+	"target": "Chinese (Mandarin, simplified)",
+	"native": "English",
+	"expected": {
+		"pages": [{ "number": "14", "lesson": "3" }],
+		"lessonStarts": [{ "lesson": "3", "title": "你叫什么名字" }],
+		"blocks": [
+			{
+				"kind": "dialogue",
+				"number": "1",
+				"heading": "在学校 In the school",
+				"lines": [
+					{
+						"speaker": "A",
+						"text": "你叫什么名字？",
+						"reading": "Nǐ jiào shénme míngzi?",
+						"translation": "What's your name?"
+					},
+					{
+						"speaker": "B",
+						"text": "我叫李月。",
+						"reading": "Wǒ jiào Lǐ Yuè.",
+						"translation": "My name is Li Yue."
+					}
+				]
+			},
+			{
+				"kind": "words",
+				"heading": "New Words",
+				"words": [
+					{ "term": "叫", "reading": "jiào", "grammar": "v.", "meaning": "to call, to be called" },
+					{ "term": "什么", "reading": "shénme", "grammar": "pron.", "meaning": "what" },
+					{ "term": "名字", "reading": "míngzi", "grammar": "n.", "meaning": "name" },
+					{ "term": "我", "reading": "wǒ", "grammar": "pron.", "meaning": "I, me" }
+				]
+			},
+			{
+				"kind": "words",
+				"heading": "Proper Noun",
+				"words": [
+					{
+						"term": "李月",
+						"reading": "Lǐ Yuè",
+						"meaning": "Li Yue, name of a person",
+						"proper": true
+					}
+				]
+			}
+		]
+	}
+}

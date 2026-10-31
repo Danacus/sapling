@@ -1,0 +1,47 @@
+# textbook-ocr
+
+Throwaway prototype: does a cheap vision model transcribe a scanned textbook
+page into the JSON a textbook import would need? Not part of the Sapling app,
+and nothing here is a contract. It runs on plain Node 22 with no dependencies.
+
+- `prompt.txt`: the transcription prompt (`{{target}}` and `{{native}}` filled per page)
+- `schema.json`: the reply, sent as a strict `json_schema` (plain JSON mode for a model that refuses it)
+- `truth/*.json`: the hand-written reply each test page should get
+- `pages/`: the page images, gitignored (scans of copyrighted books stay out of the repo)
+- `out/`: the replies, one file per model per page, gitignored
+
+## Pages
+
+Each `truth/<name>.json` names its image, which goes in `pages/`:
+
+| truth | image | book |
+|---|---|---|
+| `hsk1-p14` | `hsk1-p14.png` | HSK Standard Course 1, lesson 3 opening: dialogue, New Words, Proper Noun |
+| `hsk1-p24` | `hsk1-p24.png` | HSK 1 grammar notes with inline glosses, and exercise questions with pinyin |
+| `nl-p14-15` | `nl-p14-15.png` | Dutch course, Les 2: four dialogues, phrase boxes, a meaning-less word list |
+| `nl-p16-17` | `nl-p16-17.png` | Dutch, Les 3A/3B: picture captions only |
+| `nl-p19-20` | `nl-p19-20.png` | Dutch, Les 3 word list and the Les 4 opening: numbered monologues |
+
+To add a page, put the image in `pages/` and write its truth by hand. Leave out
+of the truth anything the prompt says to leave out.
+
+## Run
+
+```sh
+node tools/textbook-ocr/run.mjs --list        # cheap vision models OpenRouter serves today
+OPENROUTER_API_KEY=... node tools/textbook-ocr/run.mjs [--models a,b] [--pages hsk1-p14,nl-p14-15]
+node tools/textbook-ocr/score.mjs [--verbose]  # --verbose lists every missing and extra line
+```
+
+## What the scores mean
+
+Text is compared after NFKC, collapsed whitespace, no spaces inside CJK and none
+before `!?.,;:`. Everything else counts, so a wrong character is a miss.
+
+- `lineRecall`: share of expected dialogue and sentence lines found verbatim
+- `cer`: character error rate over all lines joined in reading order. A different order also counts against it.
+- `speaker`: of the lines found, how many have the right speaker, after a `null` speaker inherits the previous one
+- `reading`, `translation`: of the lines found that print one, how many match
+- `wordRecall`: share of expected vocabulary terms found (bare headword, no article)
+- `grammar`, `meaning`: of the words found, how many have the right article or forms, and meaning
+- `$/page`: OpenRouter's reported cost. `s/page`: wall time.
