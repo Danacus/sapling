@@ -108,10 +108,17 @@
 			{#each book.chapters as chapter, i (i)}
 				<li>
 					<a class="chapter" href={`/read/book/${book.id}/${i + 1}`}>
-						<span class="chapter-name">{chapterName(chapter)}</span>
-						<span class="chapter-meta"
-							>{[pagesOf(chapter), chapterSummary(chapter)].filter(Boolean).join(' · ')}</span
-						>
+						<span class="chapter-label">{chapter.label ?? ''}</span>
+						<span class="chapter-body">
+							<span class="chapter-name"
+								>{chapter.title?.trim() ||
+									(chapter.label ? `Lesson ${chapter.label}` : chapterName(chapter))}</span
+							>
+							{#if chapterSummary(chapter)}
+								<span class="chapter-meta">{chapterSummary(chapter)}</span>
+							{/if}
+						</span>
+						{#if pagesOf(chapter)}<span class="chapter-pages">{pagesOf(chapter)}</span>{/if}
 					</a>
 				</li>
 			{/each}
@@ -218,38 +225,62 @@
 		gap: 0.6rem;
 	}
 
+	/* A table of contents: the book's lesson numbers in a column of their own,
+	   the title, and the pages flush right, as a printed contents page sets them. */
 	.chapters {
 		margin: 0;
 		padding: 0;
 		list-style: none;
-		display: grid;
-		gap: 0.5rem;
+		border-top: 1px solid var(--border);
 	}
 
 	.chapter {
-		display: flex;
-		flex-direction: column;
-		gap: 0.15rem;
+		display: grid;
+		grid-template-columns: 2.25rem minmax(0, 1fr) auto;
+		align-items: baseline;
+		gap: 0.85rem;
 		min-height: 3.25rem;
-		padding: 0.75rem 0.95rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
-		background: var(--surface);
+		padding: 0.85rem 0.6rem;
+		border-bottom: 1px solid var(--border);
 		color: var(--text);
 		text-decoration: none;
 	}
 
 	.chapter:hover {
-		border-color: var(--text-muted);
+		background: color-mix(in srgb, var(--surface) 70%, transparent);
+	}
+
+	.chapter-label {
+		font-family: var(--font-display);
+		font-size: 1.5rem;
+		font-weight: 600;
+		line-height: 1;
+		color: var(--accent);
+		text-align: right;
+		font-variant-numeric: lining-nums;
+	}
+
+	.chapter-body {
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+		min-width: 0;
 	}
 
 	.chapter-name {
 		font-weight: 700;
-		font-size: 1.05rem;
+		font-size: 1.1rem;
+		overflow-wrap: anywhere;
 	}
 
-	.chapter-meta {
+	.chapter-meta,
+	.chapter-pages {
 		font-size: 0.82rem;
 		color: var(--text-muted);
+	}
+
+	.chapter-pages {
+		white-space: nowrap;
+		font-variant-numeric: tabular-nums;
 	}
 </style>
