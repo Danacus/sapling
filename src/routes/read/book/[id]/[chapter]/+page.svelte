@@ -866,6 +866,8 @@
 		max-height: calc(100dvh - 2 * var(--gutter));
 		overflow-y: auto;
 		overscroll-behavior: contain;
+		scrollbar-width: thin;
+		scrollbar-color: var(--border-strong) transparent;
 		padding: 0 1.15rem 1.25rem;
 		border: 1px solid var(--border);
 		border-radius: var(--radius-lg);
@@ -1113,7 +1115,12 @@
 
 	.entry-term {
 		min-width: 0;
-		max-width: 100%;
+	}
+
+	/* A short term is one unbroken word: CJK would otherwise break between
+	   any two characters and stand 什么 on end. Long ones stack and wrap. */
+	.entry:not(.long) .entry-word {
+		white-space: nowrap;
 	}
 
 	/* A long term ("drieëntwintighonderd / tweeduizend driehonderd") spans
