@@ -7,12 +7,14 @@
 use serde_json::{json, Value};
 
 use sapling_domain::types::ConversationScenario;
+use sapling_import::textbook::TextbookPage;
 use sapling_llm::chat::{self, AssistantTurn, ChatArgs};
 use sapling_llm::conversation::{self, ScenarioArgs, TurnArgs, TurnResult};
 use sapling_llm::escalation::{self, EscalationArgs, EscalationReply};
 use sapling_llm::lesson::{self, BatchArgs, BatchResult};
 use sapling_llm::reading::TranslateLineArgs;
 use sapling_llm::reading::{self, GenerateTextArgs, GlossEntry, LookupWordArgs, ReadingTextDraft};
+use sapling_llm::textbook::{self, GlossWordsArgs, GlossedWord, TranscribePageArgs};
 use sapling_llm::tools::{self as word_tools, AddWordsParams, LoopError, ToolContext, ToolOutcome};
 use sapling_llm::word_batch::{self, WordBatch, WordBatchArgs};
 use sapling_llm::{Llm, LlmError, Transport};
@@ -117,6 +119,14 @@ llm! {
         /// One segment in the learner's native language.
         translateLine(args: TranslateLineArgs) -> String {
             reading::translate_line(llm, &args)
+        }
+        /// One scanned textbook page: its target-language blocks, tidied.
+        transcribePage(args: TranscribePageArgs) -> TextbookPage {
+            textbook::transcribe_page(llm, &args)
+        }
+        /// Meanings for listed words a textbook prints without them.
+        glossWords(args: GlossWordsArgs) -> Vec<GlossedWord> {
+            textbook::gloss_words(llm, &args)
         }
         /// A grid of everyday or topic words for "Check what you know".
         wordBatch(args: WordBatchArgs) -> WordBatch {

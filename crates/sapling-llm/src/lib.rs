@@ -18,6 +18,7 @@ pub mod kinds;
 pub mod lesson;
 pub mod reading;
 pub mod text;
+pub mod textbook;
 pub mod tools;
 pub use sapling_challenges::generation as wire;
 pub mod word_batch;

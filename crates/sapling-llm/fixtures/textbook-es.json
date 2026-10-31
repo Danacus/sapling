@@ -1,0 +1,67 @@
+[
+  {
+    "pages": [{ "number": "12", "lesson": null }],
+    "lessonStarts": [{ "lesson": "Lección 1", "title": "En la cafetería" }],
+    "blocks": [
+      {
+        "kind": "dialogue",
+        "lesson": "Lección 1",
+        "heading": null,
+        "number": "1",
+        "continues": false,
+        "lines": [
+          { "speaker": "1. Camarero", "text": "Buenos días. ¿Qué desea?", "reading": null, "translation": null },
+          { "speaker": "Ana", "text": "Un café con leche, por favor.", "reading": null, "translation": null },
+          { "speaker": "Camarero", "text": "¿Algo más?", "reading": null, "translation": null },
+          { "speaker": "Ana", "text": "No, gracias.", "reading": null, "translation": null },
+          { "speaker": null, "text": "(...)", "reading": null, "translation": null }
+        ],
+        "words": []
+      },
+      {
+        "kind": "words",
+        "lesson": "Lección 1",
+        "heading": "VOCABULARIO",
+        "number": null,
+        "continues": false,
+        "lines": [],
+        "words": [
+          { "term": "café", "notes": "el", "reading": null, "meaning": null, "proper": false },
+          { "term": "leche", "notes": "la", "reading": null, "meaning": null, "proper": false },
+          { "term": "desear", "notes": "deseo, deseas, desea", "reading": null, "meaning": null, "proper": false },
+          { "term": "gracias", "notes": null, "reading": null, "meaning": null, "proper": false }
+        ]
+      }
+    ]
+  },
+  {
+    "pages": [{ "number": "13", "lesson": "Lección 1" }],
+    "lessonStarts": [],
+    "blocks": [
+      {
+        "kind": "sentences",
+        "lesson": "Lección 1",
+        "heading": "PEDIR [ordering]",
+        "number": null,
+        "continues": false,
+        "lines": [
+          { "speaker": null, "text": "Quiero un té, por favor.", "reading": null, "translation": null },
+          { "speaker": null, "text": "¿Me trae la cuenta?", "reading": null, "translation": null }
+        ],
+        "words": []
+      },
+      {
+        "kind": "words",
+        "lesson": "Lección 1",
+        "heading": "VOCABULARIO",
+        "number": null,
+        "continues": false,
+        "lines": [],
+        "words": [
+          { "term": "té", "notes": "el", "reading": null, "meaning": null, "proper": false },
+          { "term": "cuenta", "notes": "la", "reading": null, "meaning": null, "proper": false }
+        ]
+      }
+    ]
+  }
+]

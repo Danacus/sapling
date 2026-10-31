@@ -30,6 +30,7 @@ use sapling_domain::events::{
 use sapling_domain::types::{ChallengeResult, Conversation, ConversationExchange, Profile};
 use sapling_llm::lesson::REQUEST_ITEMS;
 use sapling_llm::reading::{MAX_FOCUS_WORDS, MAX_TOPIC_CHARS};
+use sapling_llm::textbook::MAX_GLOSS_WORDS;
 use sapling_llm::{Endpoint, LlmError, ProgressStep, TokenUsage, MAX_ABOUT_CHARS};
 use sapling_srs::FsrsCardState;
 use sapling_sync::{BAD_PHRASE, PHRASE_LENGTH};
@@ -150,7 +151,7 @@ fn llm(names: &[String]) -> String {
     }
     let _ = writeln!(
         out,
-        "] as const;\n\nexport const MAX_FOCUS_WORDS = {MAX_FOCUS_WORDS};\nexport const MAX_TOPIC_CHARS = {MAX_TOPIC_CHARS};\nexport const MAX_ABOUT_CHARS = {MAX_ABOUT_CHARS};\nexport const REQUEST_ITEMS = {REQUEST_ITEMS};"
+        "] as const;\n\nexport const MAX_FOCUS_WORDS = {MAX_FOCUS_WORDS};\nexport const MAX_TOPIC_CHARS = {MAX_TOPIC_CHARS};\nexport const MAX_ABOUT_CHARS = {MAX_ABOUT_CHARS};\nexport const REQUEST_ITEMS = {REQUEST_ITEMS};\nexport const MAX_GLOSS_WORDS = {MAX_GLOSS_WORDS};"
     );
     out
 }
