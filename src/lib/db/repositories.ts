@@ -89,6 +89,12 @@ export const recordStudy = forward('recordStudy');
  */
 export const importSource = forward('importSource');
 
+/**
+ * One lesson's transcribed textbook pages into its title, segments and word
+ * list — pure, like `importSource`: `sapling-import`'s `textbook.rs`.
+ */
+export const assembleTextbook = forward('assembleTextbook');
+
 export const addConversation = forward('addConversation');
 export const addExchange = forward('addExchange');
 export const getConversations = forward('getConversations');

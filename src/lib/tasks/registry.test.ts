@@ -18,6 +18,7 @@ const FAKE_INPUTS: { [K in TaskKind]: TaskInput<K> } = {
 	'top-up': { profile, topic: 'at the market' },
 	'read-generate': { profile, vocabulary: [], focus: [], wordCount: 0 },
 	captions: { videoId: 'abcdefghijk', lang: 'ja', name: 'Japanese', auto: false },
+	'textbook-import': { profile, files: [], from: 14, to: 21, name: 'HSK 1' },
 	'tts-model': 'Mandarin Chinese',
 	'asr-model': undefined
 };

@@ -9,6 +9,8 @@
 		accept: string;
 		icon: 'upload' | 'video' | 'subtitles';
 		disabled?: boolean;
+		/** Several files at once: a textbook's page images. */
+		multiple?: boolean;
 		onchange: (event: Event) => void;
 		/** The element, so a caller can empty it: no state assignment reaches a file input. */
 		input?: HTMLInputElement | null;
@@ -19,13 +21,22 @@
 		accept,
 		icon,
 		disabled = false,
+		multiple = false,
 		onchange,
 		input = $bindable(null)
 	}: Props = $props();
 </script>
 
 <label class="file-btn">
-	<input class="file-real" type="file" {accept} {disabled} bind:this={input} {onchange} />
+	<input
+		class="file-real"
+		type="file"
+		{accept}
+		{disabled}
+		{multiple}
+		bind:this={input}
+		{onchange}
+	/>
 	<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
 		{#if icon === 'video'}
 			<rect x="3.4" y="6.2" width="12.4" height="11.6" rx="2" />

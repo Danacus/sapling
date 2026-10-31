@@ -53,14 +53,16 @@ export function clock(ms: number): string {
 		: `${minutes}:${seconds}`;
 }
 
-export type Tab = 'video' | 'text' | 'write';
+export type Tab = 'video' | 'text' | 'textbook' | 'write';
 
 /**
  * The drawer a `?tab=` opens. No `tab`, or one nothing answers to, is a closed
  * drawer: the library is the page, and adding to it is something asked for.
  */
 export function tabFrom(value: string | null): Tab | undefined {
-	return value === 'video' || value === 'text' || value === 'write' ? value : undefined;
+	return value === 'video' || value === 'text' || value === 'textbook' || value === 'write'
+		? value
+		: undefined;
 }
 
 export type Show = 'all' | 'videos' | 'texts';

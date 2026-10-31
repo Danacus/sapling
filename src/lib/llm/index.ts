@@ -52,6 +52,7 @@ export type { CallOptions, LlmErrorKind, ToolContext } from './core';
 export {
 	MAX_ABOUT_CHARS,
 	MAX_FOCUS_WORDS,
+	MAX_GLOSS_WORDS,
 	MAX_TOPIC_CHARS,
 	REQUEST_ITEMS
 } from '$lib/db/generated/llm';
