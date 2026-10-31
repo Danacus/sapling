@@ -52,6 +52,7 @@ use sapling_domain::types::{
     ChallengeResult, Conversation, ConversationDetail, ConversationExchange, ConversationSummary,
     DailyActivity, GradeEntry, KnowledgeItem, Profile, ReadingText, StudySession,
 };
+use sapling_import::textbook::{TextbookDraft, TextbookPage};
 use sapling_import::ImportedSource;
 
 pub mod captions;
@@ -504,6 +505,15 @@ backend! {
         importSource(text: String) -> ImportedSource {
             Ok::<_, Error>(sapling_import::import_source(&text))
         }
+        /// One lesson's transcribed textbook pages, in order, into its title,
+        /// one untimed segment per dialogue line or sentence, and its
+        /// vocabulary, one entry per term. Each page is tidied first. Pure,
+        /// like `importSource`.
+        assembleTextbook(pages: Vec<TextbookPage>) -> TextbookDraft {
+            let pages: Vec<TextbookPage> =
+                pages.into_iter().map(sapling_import::textbook::tidy_page).collect();
+            Ok::<_, Error>(sapling_import::textbook::assemble_textbook(&pages))
+        }
 
         /* ---- Conversations ---------------------------------------------- */
 
@@ -715,6 +725,23 @@ mod tests {
         assert!(dispatch_json(&core, "getAllItems", "[null]").is_ok());
         assert!(dispatch_json(&core, "getAllItems", "[{\"withRecentGrades\": true}]").is_ok());
         assert!(dispatch_json(&core, "recordServe", "[\"c\", null]").is_ok());
+    }
+
+    #[test]
+    fn assemble_textbook_answers_without_the_database() {
+        let pages = r#"[[{"blocks":[{"kind":"dialogue","lines":[{"speaker":"A:","text":"你叫 什么？"}]},
+            {"kind":"words","words":[{"term":"叫","meaning":"to call"}]}]}]]"#;
+        let answer = dispatch_json(&silent_core(), "assembleTextbook", pages)
+            .unwrap()
+            .unwrap();
+        let value: Value = serde_json::from_str(&answer).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "segments": [{ "text": "你叫什么？" }],
+                "words": [{ "term": "叫", "meaning": "to call", "proper": false }]
+            })
+        );
     }
 
     #[test]

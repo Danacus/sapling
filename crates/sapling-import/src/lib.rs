@@ -4,6 +4,8 @@
 //! A plain library: no SQL, no clock, no I/O. Everything here is a function of
 //! the text's own bytes. [`import_source`] is the one entry point the protocol
 //! exposes (`importSource`); [`subtitles`] and [`paragraphs`] are its halves.
+//! [`textbook`] is the other way in: a textbook's transcribed pages, tidied and
+//! assembled into one lesson (`assembleTextbook`).
 //! What comes out is the stored shape itself — `sapling-domain`'s [`Segment`] —
 //! so the caller hands it to `addText` untouched: there is no model call and no
 //! re-cutting between the import and the store.
@@ -16,6 +18,7 @@ use ts_rs::TS;
 
 pub mod paragraphs;
 pub mod subtitles;
+pub mod textbook;
 
 pub use paragraphs::split_paragraphs;
 pub use subtitles::{detect_subtitle_format, parse_subtitles, Cue, SubtitleFormat};

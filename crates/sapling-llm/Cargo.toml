@@ -8,6 +8,8 @@ publish = false
 [dependencies]
 sapling-challenges = { path = "../sapling-challenges" }
 sapling-domain = { path = "../sapling-domain" }
+# A transcribed textbook page is `sapling-import`'s type; this crate fills it.
+sapling-import = { path = "../sapling-import" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 schemars = "1"

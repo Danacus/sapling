@@ -130,6 +130,12 @@ pub struct ToolCall {
 pub enum Message {
     System(String),
     User(String),
+    /// A user turn that shows the model pictures: `images` are URLs, a
+    /// `data:` URL included, sent after the text as `image_url` parts.
+    UserImages {
+        text: String,
+        images: Vec<String>,
+    },
     Assistant {
         content: String,
         tool_calls: Vec<ToolCall>,
@@ -145,6 +151,15 @@ impl Message {
         match self {
             Message::System(content) => json!({ "role": "system", "content": content }),
             Message::User(content) => json!({ "role": "user", "content": content }),
+            Message::UserImages { text, images } => {
+                let mut parts = vec![json!({ "type": "text", "text": text })];
+                parts.extend(
+                    images
+                        .iter()
+                        .map(|url| json!({ "type": "image_url", "image_url": { "url": url } })),
+                );
+                json!({ "role": "user", "content": parts })
+            }
             Message::Assistant {
                 content,
                 tool_calls,
@@ -186,6 +201,11 @@ pub struct ChatRequest {
     pub max_tokens: Option<u32>,
     /// Sent as both `reasoning_effort` and `reasoning.effort`: endpoints read one or the other.
     pub reasoning_effort: Option<String>,
+    /// Ask OpenRouter for no reasoning at all (`reasoning.enabled: false`), for
+    /// a call that only copies: a reasoning model left to think spends its
+    /// whole budget and returns nothing. A model that refuses is asked again
+    /// at low effort. Other endpoints are sent nothing for it.
+    pub reasoning_off: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, TS)]
@@ -310,6 +330,10 @@ impl<T: Transport> Llm<T> {
         }
 
         let mut body = request_body(&endpoint.model, request);
+        let mut reasoning_off = request.reasoning_off && base_url == OPENROUTER_BASE_URL;
+        if reasoning_off {
+            body["reasoning"] = json!({ "enabled": false });
+        }
         let url = format!("{base_url}/chat/completions");
         let mut with_schema = request.schema.is_some();
         let response = loop {
@@ -329,6 +353,12 @@ impl<T: Transport> Llm<T> {
                 .map_err(|detail| LlmError::stock(ErrorKind::Network, Some(&detail), None))?;
             if (200..300).contains(&response.status) {
                 break response;
+            }
+            // Some models cannot stop reasoning; let them think as little as they allow.
+            if reasoning_off && insists_on_reasoning(&response) {
+                reasoning_off = false;
+                body["reasoning"] = json!({ "effort": "low", "exclude": true });
+                continue;
             }
             // Some models reject structured outputs outright; ask once more without.
             if with_schema && rejects_schema(&response) {
@@ -448,6 +478,14 @@ fn rejects_schema(response: &HttpResponse) -> bool {
         ]
         .iter()
         .any(|needle| body.contains(needle))
+}
+
+fn insists_on_reasoning(response: &HttpResponse) -> bool {
+    response.status == 400
+        && response
+            .body
+            .to_lowercase()
+            .contains("reasoning is mandatory")
 }
 
 fn truncate(text: &str) -> String {
@@ -684,6 +722,64 @@ mod tests {
             }),
         );
         assert_eq!(ask(&llm, &hello()).unwrap_err().kind, ErrorKind::NoKey);
+    }
+
+    #[test]
+    fn an_image_turn_sends_its_text_then_its_pictures() {
+        let fake = Fake::replying("{}");
+        let request = ChatRequest {
+            messages: vec![Message::UserImages {
+                text: "page".into(),
+                images: vec!["data:image/jpeg;base64,AA==".into()],
+            }],
+            ..ChatRequest::default()
+        };
+        ask(&live(&fake), &request).unwrap();
+        assert_eq!(
+            fake.body(0)["messages"][0],
+            json!({ "role": "user", "content": [
+                { "type": "text", "text": "page" },
+                { "type": "image_url", "image_url": { "url": "data:image/jpeg;base64,AA==" } },
+            ] })
+        );
+    }
+
+    #[test]
+    fn reasoning_off_falls_back_to_low_where_a_model_insists() {
+        let fake = Fake::new(vec![
+            Ok(status(
+                400,
+                r#"{"error":{"message":"Reasoning is mandatory for this endpoint and cannot be disabled."}}"#,
+            )),
+            Ok(ok(
+                json!({ "choices": [{ "message": { "content": "{}" } }] }),
+            )),
+        ]);
+        let request = ChatRequest {
+            reasoning_off: true,
+            ..hello()
+        };
+        assert_eq!(ask(&live(&fake), &request).unwrap().content, "{}");
+        assert_eq!(fake.body(0)["reasoning"], json!({ "enabled": false }));
+        assert_eq!(
+            fake.body(1)["reasoning"],
+            json!({ "effort": "low", "exclude": true })
+        );
+    }
+
+    #[test]
+    fn reasoning_off_is_openrouters_alone() {
+        let fake = Fake::replying("{}");
+        let request = ChatRequest {
+            reasoning_off: true,
+            ..hello()
+        };
+        ask(
+            &with_base(&fake, Some("https://api.openai.com/v1")),
+            &request,
+        )
+        .unwrap();
+        assert!(fake.body(0).get("reasoning").is_none());
     }
 
     #[test]
