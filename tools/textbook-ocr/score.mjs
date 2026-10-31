@@ -117,7 +117,7 @@ function score(truth, result) {
 		translation: agreement(found, 'translation'),
 		wordRecall: wantWords.length ? foundWords.length / wantWords.length : null,
 		extraWords: Math.max(0, gotWords.size - foundWords.length),
-		grammar: agreement(foundWords, 'grammar'),
+		notes: agreement(foundWords, 'notes'),
 		meaning: agreement(foundWords, 'meaning'),
 		missing,
 		extra,
@@ -140,7 +140,7 @@ const COLS = [
 	'reading',
 	'translation',
 	'wordRecall',
-	'grammar',
+	'notes',
 	'meaning'
 ];
 const pct = (v) => (v == null ? '   -' : `${Math.round(v * 100)}`.padStart(4));

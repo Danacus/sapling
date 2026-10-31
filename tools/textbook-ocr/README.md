@@ -59,6 +59,6 @@ translation, and unwraps a reply that comes back inside an array.
 - `speaker`: of the lines found, how many have the right speaker, after a `null` speaker inherits the previous one
 - `reading`, `translation`: of the lines found that print one, how many match
 - `wordRecall`: share of expected vocabulary terms found (bare headword, no article)
-- `grammar`, `meaning`: of the words found, how many have the right article or forms, and meaning
+- `notes`, `meaning`: of the words found, how many have the right notes (article, part of speech, forms) and meaning
 - `$/page`: OpenRouter's reported cost. With your own provider key (BYOK), this is what the provider charged. `s/page`: wall time.
 - A failed call counts as an empty reply.
