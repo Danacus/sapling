@@ -4,8 +4,14 @@
 	"native": "English",
 	"expected": {
 		"pages": [
-			{ "number": "16", "lesson": "DEEL 1 - LES 3B" },
-			{ "number": null, "lesson": "LES 3" }
+			{
+				"number": "16",
+				"lesson": "DEEL 1 - LES 3B"
+			},
+			{
+				"number": null,
+				"lesson": "LES 3"
+			}
 		],
 		"lessonStarts": [],
 		"blocks": [
@@ -13,36 +19,57 @@
 				"kind": "sentences",
 				"number": "3A",
 				"lines": [
-					{ "text": "Dit is Els en dat is Peter." },
-					{ "text": "Dit zijn Els en Peter en dat zijn Paolo en Bert." }
-				]
-			},
-			{
-				"kind": "sentences",
-				"heading": "IDENTIFICEREN [identifying]",
-				"lines": [
-					{ "text": "Dit is ..." },
-					{ "text": "Dit zijn ..." },
-					{ "text": "Dat is ..." },
-					{ "text": "Dat zijn ..." }
+					{
+						"text": "Dit is Els"
+					},
+					{
+						"text": "dat is Peter."
+					},
+					{
+						"text": "Dit zijn Els en Peter"
+					},
+					{
+						"text": "dat zijn Paolo en Bert."
+					}
 				]
 			},
 			{
 				"kind": "sentences",
 				"number": "3B",
 				"lines": [
-					{ "text": "Dit is een vriend van Els." },
-					{ "text": "Dat is een vriendin van Peter." },
-					{ "text": "Dit is de vriend van Els." },
-					{ "text": "Dat is de vriendin van Peter." },
-					{ "text": "Dit is water." },
-					{ "text": "Dat is koffie." },
-					{ "text": "Dit is het water van Els." },
-					{ "text": "Dat is de koffie van Peter." },
-					{ "text": "Dit is een krant." },
-					{ "text": "Dat is een tijdschrift." }
+					{
+						"text": "Dit is een vriend van Els."
+					},
+					{
+						"text": "Dat is een vriendin van Peter."
+					},
+					{
+						"text": "Dit is de vriend van Els."
+					},
+					{
+						"text": "Dat is de vriendin van Peter."
+					},
+					{
+						"text": "Dit is water."
+					},
+					{
+						"text": "Dat is koffie."
+					},
+					{
+						"text": "Dit is het water van Els."
+					},
+					{
+						"text": "Dat is de koffie van Peter."
+					},
+					{
+						"text": "Dit is een krant."
+					},
+					{
+						"text": "Dat is een tijdschrift."
+					}
 				]
 			}
 		]
-	}
+	},
+	"note": "3A prints each sentence in pieces around the pictures ('Dit is Els' … 'en' … 'dat is Peter.'). Every model transcribes the pieces, which is what is printed; the lone 'en' is left out. The IDENTIFICEREN box holds sentence frames ('Dit is ...'), left out by the prompt."
 }
