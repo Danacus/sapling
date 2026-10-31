@@ -168,6 +168,17 @@
 	/** Garden spellings: a listed word in here needs no Add. */
 	const garden = $derived(new Set(items.map((item) => wordKey(item.term))));
 
+	/** The learner's own meaning for each garden spelling, first card wins. */
+	const gardenMeanings = $derived.by(() => {
+		const meanings = new Map<string, string>();
+		for (const item of items) {
+			const key = wordKey(item.term);
+			const meaning = item.meaning?.trim();
+			if (meaning && !meanings.has(key)) meanings.set(key, meaning);
+		}
+		return meanings;
+	});
+
 	/* ---- The word card ----------------------------------------------------- */
 
 	interface Picked {
@@ -297,9 +308,21 @@
 	let found = $state<Record<string, string>>({});
 	let finding = $state<number | undefined>(undefined);
 
-	/** A listed word's meaning: the book's, else one found this open. */
+	/**
+	 * A listed word's meaning: the book's, else the learner's own card's when
+	 * they hold the word, else one found this open.
+	 */
 	function meaningOf(word: TextbookWord): string {
-		return word.meaning ?? found[wordKey(word.term)] ?? '';
+		const key = wordKey(word.term);
+		return word.meaning ?? gardenMeanings.get(key) ?? found[key] ?? '';
+	}
+
+	/** Where a listed word's meaning came from, when the book printed none. */
+	function meaningSource(word: TextbookWord): 'book' | 'garden' | 'found' | undefined {
+		const key = wordKey(word.term);
+		if (word.meaning) return 'book';
+		if (gardenMeanings.has(key)) return 'garden';
+		return found[key] ? 'found' : undefined;
 	}
 
 	/** The words of a list Add all would file: not names, not held, with a meaning. */
@@ -494,11 +517,15 @@
 						{#if word.notes}<span class="entry-notes">{word.notes}</span>{/if}
 						{#if word.proper}<span class="tag">name</span>{/if}
 						{#if gloss}
+							{@const source = meaningSource(word)}
 							<span
 								class="entry-meaning"
-								class:found={!word.meaning}
-								title={word.meaning ? undefined : 'Found for you, not printed in the book'}
-								>{gloss}</span
+								class:found={source === 'found'}
+								title={source === 'garden'
+									? 'Your meaning, from your words'
+									: source === 'found'
+										? 'Found for you, not printed in the book'
+										: undefined}>{gloss}</span
 							>
 						{:else}
 							<span class="entry-meaning missing">No meaning printed</span>
