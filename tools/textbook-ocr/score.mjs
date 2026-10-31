@@ -21,6 +21,19 @@ export function norm(s) {
 		.trim();
 }
 const key = (s) => norm(s).toLowerCase();
+/** Matching ignores a sentence's closing punctuation; `cer` still counts it. */
+const matchKey = (s) => key(s).replace(/[。！？!?.,，、]+$/u, '');
+
+/**
+ * A line cut into its sentences, so a model that keeps a monologue as one line
+ * and one that keeps the book's line breaks are scored alike.
+ */
+function sentences(text) {
+	return norm(text)
+		.split(/(?<=[。！？])|(?<=[.!?]) (?=\p{Lu})/u)
+		.map((t) => t.trim())
+		.filter(Boolean);
+}
 
 function levenshtein(a, b) {
 	a = [...a];
@@ -35,15 +48,32 @@ function levenshtein(a, b) {
 	return prev[b.length];
 }
 
-/** Every dialogue/sentence line, speakers resolved through continuation. */
+/**
+ * The clean-up an importer would run on a reply anyway, so a model is not
+ * scored on it: a speaker's dialogue number and colon ("1. Paolo", "A:"), and a
+ * translation that repeats the speaker label ("A: What's your name?").
+ */
+export function tidy(line) {
+	const speaker =
+		line.speaker?.replace(/^\s*\d+[A-Za-z]?\.\s*/, '').replace(/\s*[:：]\s*$/, '') || null;
+	const label = speaker && speaker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	const translation = label
+		? (line.translation?.replace(new RegExp(`^\\s*${label}\\s*[:：]\\s*`), '') ?? null)
+		: line.translation;
+	return { ...line, speaker, translation };
+}
+
+/** Every dialogue/sentence line, tidied, speakers resolved through continuation. */
 function lines(blocks) {
 	const out = [];
 	for (const b of blocks ?? []) {
 		if (b.kind === 'words') continue;
 		let speaker = null;
-		for (const l of b.lines ?? []) {
+		for (const raw of b.lines ?? []) {
+			const l = tidy(raw);
 			if (l.speaker) speaker = l.speaker;
-			out.push({ ...l, speaker: b.kind === 'dialogue' ? speaker : null });
+			for (const text of sentences(l.text))
+				out.push({ ...l, text, speaker: b.kind === 'dialogue' ? speaker : null });
 		}
 	}
 	return out;
@@ -62,11 +92,11 @@ function score(truth, result) {
 	const want = lines(truth.expected.blocks);
 	const got = lines(result.blocks);
 	const pool = new Map();
-	got.forEach((g) => pool.set(key(g.text), [...(pool.get(key(g.text)) ?? []), g]));
-	const pairs = want.map((e) => [e, pool.get(key(e.text))?.shift()]);
+	got.forEach((g) => pool.set(matchKey(g.text), [...(pool.get(matchKey(g.text)) ?? []), g]));
+	const pairs = want.map((e) => [e, pool.get(matchKey(e.text))?.shift()]);
 	const found = pairs.filter(([, g]) => g);
-	const joinedWant = want.map((l) => norm(l.text)).join('\n');
-	const joinedGot = got.map((l) => norm(l.text)).join('\n');
+	const joinedWant = want.map((l) => l.text).join(' ');
+	const joinedGot = got.map((l) => l.text).join(' ');
 
 	const wantWords = words(truth.expected.blocks);
 	const gotWords = new Map(words(result.blocks).map((w) => [key(w.term), w]));
@@ -125,17 +155,21 @@ for (const dir of await readdir(join(here, 'out'))) {
 		const rec = JSON.parse(await readFile(join(here, 'out', dir, f), 'utf8'));
 		const truth = truths[rec.page];
 		if (!truth) continue;
-		cost += rec.usage?.cost ?? 0;
+		// With the learner's own provider key (BYOK) OpenRouter bills nothing
+		// and reports what the provider charged instead.
+		cost += rec.usage?.is_byok
+			? (rec.usage.cost_details?.upstream_inference_cost ?? 0)
+			: (rec.usage?.cost ?? 0);
 		ms += rec.ms;
 		if (!rec.structured) schemaless++;
-		if (rec.error) {
-			errors++;
-			continue;
-		}
-		const s = score(truth, rec.result);
+		// A failed call scores as an empty reply: nothing found.
+		if (rec.error) errors++;
+		// A reply wrapped in an array is unwrapped, as an importer would.
+		const result = Array.isArray(rec.result) ? rec.result[0] : rec.result;
+		const s = score(truth, rec.error ? { blocks: [] } : (result ?? { blocks: [] }));
 		per.push(s);
 		if (verbose) {
-			console.log(`\n${rec.model} · ${rec.page}`);
+			console.log(`\n${rec.model} · ${rec.page}${rec.error ? `  ERROR ${rec.error}` : ''}`);
 			console.log('  ' + COLS.map((c) => `${c} ${pct(s[c])}`).join('  '));
 			s.missing.forEach((t) => console.log(`  - missing  ${t}`));
 			s.extra.forEach((t) => console.log(`  + extra    ${t}`));
@@ -159,7 +193,7 @@ for (const dir of await readdir(join(here, 'out'))) {
 }
 
 console.log(
-	'\nPer page, averaged. lineRecall/speaker/…: % agreeing with truth; cer: character error rate (lower is better).\n'
+	'\nPer page, averaged; a failed call counts as an empty reply. lineRecall: % of expected sentences found; speaker/…: % agreeing with truth; cer: character error rate (lower is better).\n'
 );
 console.log(
 	`${'model'.padEnd(44)} ${COLS.map((c) => c.slice(0, 7).padStart(7)).join(' ')}    $/page    s/page  err`

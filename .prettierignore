@@ -30,3 +30,8 @@ crates
 Cargo.lock
 target
 src/lib/db/wasm
+
+# tools/textbook-ocr: model replies and page scans — gitignored, but prettier
+# walks the filesystem, not the index.
+tools/textbook-ocr/out
+tools/textbook-ocr/pages
