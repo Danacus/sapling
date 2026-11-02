@@ -13,6 +13,9 @@
 #   - @parcel/watcher — dev-time file watching (falls back to polling).
 #   - msgpackr-extract — native msgpack decode; msgpackr ships a JS path.
 #
+# protobufjs arrives under onnxruntime-web (the OCR spike) and its postinstall
+# only warns about a dependent's version scheme — nothing is built.
+#
 # workerd is the exception, and allowed on purpose: it is the Cloudflare
 # runtime `wrangler dev` executes the sync Worker in, and unlike the three
 # above it has no fallback — denying its postinstall leaves no binary to run,
@@ -24,4 +27,5 @@ allowBuilds:
   '@parcel/watcher': false
   esbuild: false
   msgpackr-extract: false
+  protobufjs: false
   workerd: true
