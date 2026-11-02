@@ -470,6 +470,14 @@
 	>
 		{reading ? 'Reading…' : error ? 'Try again' : 'Read the book'}
 	</button>
+
+	<!-- The page viewer: the same file, read as it prints, with nothing imported. -->
+	<a class="pages-link" href="/read/pdf">
+		Or open it page by page, your words marked on it
+		<svg class="arrow" viewBox="0 0 24 24" aria-hidden="true"
+			><path d="M4.8 12h14" /><path d="m13.4 6.6 5.4 5.4-5.4 5.4" /></svg
+		>
+	</a>
 {/if}
 
 {#if error}
@@ -479,6 +487,33 @@
 <style>
 	.upload {
 		margin-bottom: 0.9rem;
+	}
+
+	.pages-link {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.4rem;
+		min-height: 2.75rem;
+		margin-top: 0.5rem;
+		color: var(--text-muted);
+		font-size: 0.9rem;
+		font-weight: 700;
+		text-decoration: none;
+	}
+
+	.pages-link:hover {
+		color: var(--text);
+	}
+
+	.pages-link .arrow {
+		width: 1rem;
+		height: 1rem;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 2;
+		stroke-linecap: round;
+		stroke-linejoin: round;
 	}
 
 	.range {

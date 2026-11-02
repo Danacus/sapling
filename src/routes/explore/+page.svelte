@@ -19,6 +19,12 @@
 			kind: 'read'
 		},
 		{
+			title: 'Read a textbook',
+			copy: 'Open a PDF or photos of its pages and see the words you know marked on the page.',
+			href: '/read/pdf',
+			kind: 'pages'
+		},
+		{
 			title: 'Ask the assistant',
 			copy: 'Add, look up, edit, or organise words in plain language.',
 			href: '/chat',
@@ -69,6 +75,12 @@
 								><path d="M12 7.4C9.9 6 7 5.4 3.8 5.6v11.6c3.2-.2 6.1.4 8.2 1.8" /><path
 									d="M12 7.4c2.1-1.4 5-2 8.2-1.8v11.6c-3.2-.2-6.1.4-8.2 1.8"
 								/><path d="M12 7.4v11.6" /></svg
+							>
+						{:else if door.kind === 'pages'}
+							<svg viewBox="0 0 24 24"
+								><path d="M6.4 3.8h8l3.2 3.2v13.2H6.4Z" /><path d="M14.4 3.8V7h3.2" /><path
+									d="M9 11h6"
+								/><path d="M9 14.4h4" /><path d="M9 17.6h6" /></svg
 							>
 						{:else}
 							<svg viewBox="0 0 24 24"
@@ -214,6 +226,11 @@
 			grid-template-columns: repeat(2, minmax(0, 1fr));
 		}
 
+		/* An odd door out takes the whole row rather than leaving a hole. */
+		.door-wrap:last-child:nth-child(odd) {
+			grid-column: 1 / -1;
+		}
+
 		.door {
 			grid-template-columns: 1fr auto;
 			align-content: start;
@@ -229,9 +246,20 @@
 		}
 	}
 
+	/* Five doors on two full rows: three over two, on six tracks. */
 	@media (min-width: 72rem) {
 		.doors {
-			grid-template-columns: repeat(4, minmax(0, 1fr));
+			grid-template-columns: repeat(6, minmax(0, 1fr));
+		}
+
+		.door-wrap {
+			grid-column: span 2;
+		}
+
+		/* The second selector outranks the 48rem full-row rule for the fifth. */
+		.door-wrap:nth-child(n + 4),
+		.door-wrap:last-child:nth-child(odd) {
+			grid-column: span 3;
 		}
 	}
 
