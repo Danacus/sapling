@@ -5,7 +5,8 @@
 //! runs here, because WebKitGTK cannot run that WASM path at all. The `asr`
 //! module is SenseVoice dictation, which the browser has only as the Web Speech
 //! API — absent in WebKitGTK, absent in Firefox, and a round trip to a vendor
-//! where it exists. `tts::play` is the one piece that is a single webview's
+//! where it exists; it also cuts a whole recording into timed sentences with
+//! Silero VAD (`asr::segments`), for transcribing a video. `tts::play` is the one piece that is a single webview's
 //! problem: WebKitGTK's audio stack starts a second late per clip and its Web
 //! Audio output does not work at all, so a desktop host plays the clip too.
 //!

@@ -1,0 +1,18 @@
+[package]
+name = "sapling-media"
+version = "0.0.1"
+edition = "2021"
+description = "A local recording read natively on GStreamer: its length and size, its audio as 16 kHz mono PCM, and a grey crop of any frame."
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+# The system GStreamer, which the desktop shell already carries for WebKitGTK's
+# `<video>` — so this links nothing the app did not already load, and decodes
+# whatever the reader can play (hardware decoders included, through decodebin).
+# Not a default workspace member: the default devShell has no GStreamer.
+gstreamer = "0.24"
+gstreamer-app = "0.24"
+gstreamer-video = "0.24"
+gstreamer-pbutils = "0.24"

@@ -2,16 +2,19 @@
   The Video drawer: the recording first, its text following from it. A YouTube
   link lists its caption tracks by itself and a picked track becomes the
   subtitles; your own files — a recording and its subtitle file — are the
-  quieter second way, and at ≥48rem their own column. Stored as a reference
-  only: a video id, or a file's name.
+  quieter second way, and at ≥48rem their own column. On the desktop host a
+  recording with no subtitle file can be transcribed instead (the `transcribe`
+  task), and its result is a subtitle file like an uploaded one. Stored as a
+  reference only: a video id, or a file's name.
 -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { onDestroy, untrack } from 'svelte';
 
+	import { dictationCoversLanguage } from '$lib/asr';
 	import { addText, importSource } from '$lib/db';
 	import { newUuid } from '$lib/device';
-	import { listCaptions, rememberFile, videoIdFrom } from '$lib/media';
+	import { listCaptions, mediaAvailable, rememberFile, videoIdFrom } from '$lib/media';
 	import type { CaptionsListing, CaptionTrack } from '$lib/media';
 	import { SETTLED, rootOf, startTask, taskOutcome } from '$lib/tasks';
 	import { taskStore } from '$lib/tasks/store.svelte';
@@ -24,9 +27,27 @@
 	interface Props {
 		/** A written text is on its way; its arrival opens it, so an import waits. */
 		busy: boolean;
+		/** The target language's tag, for transcribing a recording. */
+		tag?: string;
 	}
 
-	let { busy }: Props = $props();
+	let { busy, tag }: Props = $props();
+
+	/** Whether this host can transcribe a recording in this language. */
+	let canTranscribe = $state(false);
+	$effect(() => {
+		const language = tag;
+		let stale = false;
+		void Promise.all([mediaAvailable(), dictationCoversLanguage(language)]).then(
+			([media, speech]) => {
+				if (!stale) canTranscribe = media && speech;
+			}
+		);
+		return () => {
+			stale = true;
+		};
+	});
+	const transcribing = $derived(taskStore.running.some((task) => task.kind === 'transcribe'));
 
 	let link = $state('');
 	const linkId = $derived(videoIdFrom(link));
@@ -94,8 +115,10 @@
 	const missing = $derived(
 		subtitles && !recording
 			? 'Add the video it belongs to: a YouTube link or a file.'
-			: mediaFile && !subtitles
-				? 'A recording needs its subtitles: upload a subtitle file.'
+			: mediaFile && !subtitles && !transcribing
+				? canTranscribe
+					? 'A recording needs its subtitles: upload a subtitle file or transcribe it.'
+					: 'A recording needs its subtitles: upload a subtitle file.'
 				: ''
 	);
 
@@ -179,6 +202,39 @@
 			error = '';
 			subtitles = { name: outcome.result.name, text: outcome.result.text, videoId };
 		} else if (outcome.status === 'failed') captionsError = outcome.error;
+	}
+
+	// Transcriptions this form started, task id → the file. A result for a file
+	// since replaced is dropped.
+	const transcriptions = new Map<string, File>();
+
+	$effect(() => {
+		const tasks = taskStore.tasks;
+		for (const task of tasks) {
+			if (handled.has(task.id)) continue;
+			const file = transcriptions.get(rootOf(tasks, task.id));
+			if (file === undefined) continue;
+			transcriptions.set(task.id, file);
+			if (!SETTLED.has(task.status)) continue;
+			handled.add(task.id);
+			void transcribed(task.id, file);
+		}
+	});
+
+	async function transcribed(id: string, file: File) {
+		const outcome = await taskOutcome('transcribe', id);
+		if (!outcome || left || mediaFile !== file) return;
+		if (outcome.status === 'done') {
+			error = '';
+			subtitles = { name: outcome.result.name, text: outcome.result.text };
+		} else if (outcome.status === 'failed') error = outcome.error;
+	}
+
+	function transcribe() {
+		if (!mediaFile || !tag || transcribing) return;
+		error = '';
+		const { id } = startTask('transcribe', { file: mediaFile, tag });
+		transcriptions.set(id, mediaFile);
 	}
 
 	function pickTrack(track: CaptionTrack) {
@@ -321,6 +377,16 @@
 				onchange={(event) => void uploadSubtitles(event)}
 			/>
 		</div>
+		{#if mediaFile && !subtitles && canTranscribe}
+			<button
+				type="button"
+				class="btn btn-ghost transcribe"
+				disabled={adding || transcribing}
+				onclick={transcribe}
+			>
+				{transcribing ? 'Transcribing…' : 'Transcribe the recording'}
+			</button>
+		{/if}
 		{#if mediaFile}
 			<p class="hint line">
 				Only its name is kept, so you'll pick the file again when you open this.
@@ -638,6 +704,10 @@
 
 	.own .line {
 		margin-bottom: 0;
+	}
+
+	.transcribe {
+		margin-bottom: 0.6rem;
 	}
 
 	.title-field {

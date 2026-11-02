@@ -41,6 +41,23 @@ export function usesInterWordSpaces(text: string): boolean {
 	return !NO_SPACE_SCRIPT.test(text);
 }
 
+/** Languages written without spaces between words, by primary subtag. */
+const SPACELESS = new Set(['zh', 'cmn', 'yue', 'wuu', 'nan', 'ja', 'th', 'lo', 'km', 'my']);
+
+/**
+ * Whether `text` is in the target language's kind of script: for a language
+ * written without spaces (Chinese, Japanese, Thai…) it must contain such a
+ * script; for any other it must not. A textbook prints the learner's own
+ * language beside the target — English glosses, pinyin — and so does a video's
+ * burnt-in subtitle box; this is what keeps them out of the page viewer's words
+ * and a transcript's screen reading alike.
+ */
+export function inTargetScript(text: string, tag: string | undefined): boolean {
+	if (!tag) return true;
+	const spaceless = SPACELESS.has(tag.toLowerCase().split('-')[0]);
+	return spaceless !== usesInterWordSpaces(text);
+}
+
 /**
  * True when `text` contains nothing but punctuation, symbols and whitespace.
  *

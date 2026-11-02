@@ -120,8 +120,9 @@ exposes exactly the three commands `WasmCore` exposes to the database Worker —
 `sapling-protocol`'s JSON entry points run on that thread (`CoreHandle::run`).
 `src/lib/db/tauri.ts` is one `invoke` per `Backend` call, chosen by
 `backend.ts` when `inTauri()`; every argument still goes through `toPlain()`,
-because `client.ts` owns the proxy for both transports. Speech adds eight more
-commands, captions two and OCR one, and each has a section below; OpenRouter's
+because `client.ts` owns the proxy for both transports. Speech adds nine more
+commands, captions two, OCR one and a local recording six (desktop only), and
+each has a section below; OpenRouter's
 sign-in adds one more and the opener plugin.
 
 `dispatch` and `commit_all` are `async` and wait on `spawn_blocking`, like the
@@ -668,6 +669,51 @@ cargo run --release -p sapling-ocr --example page -- page.ppm zh-server
 `tests/page.rs` checks the runtime answers and, where `zh-mobile` is installed
 in the app's directory, reads a blank page; `installs_the_models` (ignored)
 downloads every set.
+
+## A local recording
+
+*Transcribe the recording* (the Video drawer, for a picked file with no
+subtitle file) reads the file natively: `crates/sapling-media`, on the system
+GStreamer the shell already carries for WebKitGTK, desktop targets only (a
+phone has no GStreamer). It is a capability with no opinion — a file in,
+samples and rasters out; the orchestration is `src/lib/tasks/kinds/transcribe.ts`
+and the merge `sapling-import`'s `mergeTranscript`.
+
+**Why not the webview**, measured on WebKitGTK 2.52 / GStreamer 1.28 with a
+26-minute 1080p60 AV1/Opus file: `decodeAudioData` on a 16 kHz
+`OfflineAudioContext` took 285 s and ~800 MB, the whole file at once in
+stereo; and a seeked `<video>` drawn to a canvas (`drawImage`,
+`createImageBitmap`, `new VideoFrame`) read back blank or noise, and with
+`WEBKIT_DISABLE_DMABUF_RENDERER=1` a stale frame after every seek.
+
+**The commands**, behind the `media` feature (default on, `all(feature =
+"media", desktop)`):
+
+| command | takes | answers |
+|---|---|---|
+| `media_status` | — | whether GStreamer loads |
+| `media_stage` | an 8 MB chunk as a raw body; `sapling-media` (id), `sapling-offset` headers | — |
+| `media_probe` | `id` | `{ durationMs, width, height, audio }` |
+| `media_audio` | `id`, `fromMs`, `toMs` | 16 kHz mono 16-bit LE PCM, as bytes |
+| `media_frame` | `id`, `atMs`, `x`, `y`, `width`, `height` | two LE `u32`s (clamped size), then grey RGBA, as bytes |
+| `media_release` | `id` | — |
+
+The staged copy lives in `<app-cache>/media/<id>` until released, and the
+directory is swept at start. Audio decodes the whole file at ~280× real time
+(Opus). Frames come from one `decodebin` per file kept playing and walked
+forward, seeking only backwards or more than 3 s ahead, so their cost is the
+codec's: the AV1 file above decodes at ~5× real time with VA-API (aom alone,
+2.6×), H.264 at ~20×. Only the luma plane is read, so no colour conversion
+runs. `asr_segments` (Speech) takes the PCM and answers timed sentences through
+Silero VAD (`SILERO_VAD`, installed by `asr_download`).
+
+The whole run on that file, natively: speech 26 min in ~35 s; one or two
+frames per span read at ~0.6 s each (decode plus `zh-mobile` OCR of the bottom
+quarter); a video with no burnt-in subtitles stops reading after 20 spans.
+
+`tests/decode.rs` writes a small Matroska file with GStreamer itself (raw video
+and audio, no encoder needed) and checks the probe, an audio window and
+clamped crops; it skips where GStreamer cannot.
 
 ## OpenRouter sign-in
 

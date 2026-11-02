@@ -11,7 +11,9 @@ import type { OcrLine, OcrProgress } from '$lib/ocr';
 import type { ReadingWord } from '$lib/reading/annotate';
 // The module, not `$lib/reading`'s index, which pulls the model calls in.
 import { harvestWords, type WordCandidate } from '$lib/reading/harvest';
-import { usesInterWordSpaces } from '$lib/text';
+import { inTargetScript } from '$lib/text';
+
+export { inTargetScript };
 
 type Maturity = NonNullable<ReadingWord['maturity']>;
 
@@ -28,22 +30,6 @@ export const PICTURE_SCORE = 0.5;
 /** The lines of a page that are text, not pictures read as text. */
 export function textLinesOf(lines: readonly OcrLine[]): OcrLine[] {
 	return lines.filter((line) => line.score >= PICTURE_SCORE);
-}
-
-/** Languages written without spaces between words, by primary subtag. */
-const SPACELESS = new Set(['zh', 'cmn', 'yue', 'wuu', 'nan', 'ja', 'th', 'lo', 'km', 'my']);
-
-/**
- * Whether `text` is in the target language's kind of script: for a language
- * written without spaces (Chinese, Japanese, Thai…) it must contain such a
- * script; for any other it must not. A textbook prints the learner's own
- * language beside the target — English glosses, pinyin — and under a Chinese
- * tokenizer each of those runs is one token, a whole sentence long.
- */
-export function inTargetScript(text: string, tag: string | undefined): boolean {
-	if (!tag) return true;
-	const spaceless = SPACELESS.has(tag.toLowerCase().split('-')[0]);
-	return spaceless !== usesInterWordSpaces(text);
 }
 
 /**

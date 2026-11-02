@@ -31,7 +31,10 @@
  * way: not how a video is *played* but how its subtitle track is *obtained* —
  * the Rust core asks YouTube over a transport each host lends (a sandboxed
  * frame in a browser, `youtube-relay.ts`; the native host in Tauri), and the
- * file goes through the ordinary subtitle import door.
+ * file goes through the ordinary subtitle import door. `host-media.ts` and
+ * `transcribe.ts` are the same direction for a *local* recording on the
+ * desktop host: its audio and frames read natively, for a transcript the
+ * `transcribe` task makes and hands to that same door.
  *
  * Stateless like `$lib/reading`: **nothing here touches the store** (only
  * `captions.ts` reaches into `$lib/db`, for the wasm core). The one
@@ -53,6 +56,24 @@ export {
 } from './follow';
 export type { Timed } from './follow';
 export { forgetFile, objectUrl, rememberFile, takeFile } from './files';
+export {
+	mediaAudio,
+	mediaAvailable,
+	mediaFrame,
+	probeMedia,
+	releaseMedia,
+	stageMedia
+} from './host-media';
+export type { MediaInfo } from './host-media';
+export {
+	AUDIO_WINDOW_MS,
+	MIN_LINE_SCORE,
+	PROBE_SPANS,
+	framesFor,
+	keepSpans,
+	subtitleRect
+} from './transcribe';
+export type { Span } from './transcribe';
 export { deadPlayer } from './player';
 export { crossedStop, paddedSpan, SPAN_PAD_MS } from './span';
 export type { Player } from './player';

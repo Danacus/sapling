@@ -55,6 +55,11 @@
 //! with every character's x out, on the ONNX Runtime sherpa-onnx already links,
 //! every target. `src/lib/ocr/native.ts` is the other end.
 //!
+//! **A local recording is the last** (feature `media`, `sapling-media`, desktop
+//! targets only): a picked file staged in chunks, then its length, its audio
+//! as 16 kHz PCM and a grey crop of any frame, on the system GStreamer.
+//! `src/lib/media/host-media.ts` is the other end.
+//!
 //! **The third capability is a video's captions** (`sapling-captions`), and it
 //! is the smallest: the track list and one `json3` track over HTTP, which the
 //! window parses with the subtitle parser it already has. The browser relays
@@ -118,6 +123,8 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use sapling_captions::{native as captions, CaptionTrack, CaptionsListing};
+#[cfg(all(feature = "media", desktop))]
+use sapling_media::MediaHandle;
 #[cfg(feature = "ocr")]
 use sapling_ocr::OcrHandle;
 #[cfg(feature = "speech")]
@@ -182,9 +189,9 @@ fn derived_schema_version() -> u32 {
 
 // -- Native speech ----------------------------------------------------------
 //
-// Eight commands, and deliberately no more: is the voice here, put it here, say
+// Nine commands, and deliberately no more: is the voice here, put it here, say
 // this, make this sound, be quiet — and is dictation here, put it here, what
-// did I just say. Six of them are every host's; the two players are the
+// did I just say, what is said in this recording. Seven of them are every host's; the two players are the
 // desktop's alone, because a phone's WebView already has one. Everything about
 // *what* to speak, *which* languages dictate and what a transcript is then for
 // — the language mapping, the speaker table, the caches, the fallback to the
@@ -422,6 +429,134 @@ fn tts_stop(player: State<'_, Arc<PlayerHandle>>) {
     player.stop();
 }
 
+/// Every span of speech in a stretch of a recording, transcribed — samples in,
+/// timed sentences out. The PCM crosses as `asr_transcribe`'s does (raw on the
+/// desktop, a JSON array of numbers on Android).
+#[cfg(feature = "speech")]
+#[tauri::command]
+async fn asr_segments(
+    asr: State<'_, Arc<AsrHandle>>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<Vec<asr::segments::SpeechSegment>, String> {
+    let pcm: Vec<u8> = match request.body() {
+        tauri::ipc::InvokeBody::Raw(pcm) => pcm.clone(),
+        tauri::ipc::InvokeBody::Json(json) => serde_json::from_value(json.clone())
+            .map_err(|cause| format!("asr_segments takes the audio as bytes: {cause}"))?,
+    };
+    let handle = asr.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || handle.segments(&pcm))
+        .await
+        .map_err(|cause| format!("the recognizer could not run: {cause}"))?
+}
+
+// -- A local recording, read natively -----------------------------------------
+//
+// Desktop only: GStreamer is the desktop's (WebKitGTK plays through it), and a
+// phone has none. A picked file has no path, so its bytes are staged in chunks
+// and released after; the rest are questions about the staged file. What the
+// samples and frames are for is `src/lib/tasks/kinds/transcribe.ts`'s.
+
+/// Whether GStreamer loads here. `async` because its first init scans plugins.
+#[cfg(all(feature = "media", desktop))]
+#[tauri::command]
+async fn media_status() -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(sapling_media::available)
+        .await
+        .map_err(|cause| format!("the media status could not be read: {cause}"))
+}
+
+/// One chunk of a picked file, raw, at the offset its header says.
+#[cfg(all(feature = "media", desktop))]
+#[tauri::command]
+async fn media_stage(
+    media: State<'_, Arc<MediaHandle>>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<(), String> {
+    let header = |name: &str| {
+        request
+            .headers()
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned)
+            .ok_or_else(|| format!("media_stage needs a {name} header"))
+    };
+    let id = header("sapling-media")?;
+    let offset: u64 = header("sapling-offset")?
+        .parse()
+        .map_err(|_| "bad offset")?;
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("media_stage takes the chunk as a raw body".to_owned());
+    };
+    let bytes = bytes.clone();
+    let handle = media.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || handle.stage(&id, offset, &bytes))
+        .await
+        .map_err(|cause| format!("the file could not be staged: {cause}"))?
+}
+
+#[cfg(all(feature = "media", desktop))]
+#[tauri::command]
+async fn media_probe(
+    media: State<'_, Arc<MediaHandle>>,
+    id: String,
+) -> Result<sapling_media::MediaInfo, String> {
+    let handle = media.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || handle.probe(&id))
+        .await
+        .map_err(|cause| format!("the recording could not be read: {cause}"))?
+}
+
+/// 16 kHz mono 16-bit PCM of one stretch, as bytes.
+#[cfg(all(feature = "media", desktop))]
+#[tauri::command]
+async fn media_audio(
+    media: State<'_, Arc<MediaHandle>>,
+    id: String,
+    from_ms: f64,
+    to_ms: f64,
+) -> Result<tauri::ipc::Response, String> {
+    let handle = media.inner().clone();
+    let pcm = tauri::async_runtime::spawn_blocking(move || handle.audio(&id, from_ms, to_ms))
+        .await
+        .map_err(|cause| format!("the recording could not be read: {cause}"))??;
+    Ok(tauri::ipc::Response::new(pcm))
+}
+
+/// A grey RGBA crop of the frame at one moment, behind its size.
+#[cfg(all(feature = "media", desktop))]
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn media_frame(
+    media: State<'_, Arc<MediaHandle>>,
+    id: String,
+    at_ms: f64,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) -> Result<tauri::ipc::Response, String> {
+    let handle = media.inner().clone();
+    let rect = sapling_media::Rect {
+        x,
+        y,
+        width,
+        height,
+    };
+    let raster = tauri::async_runtime::spawn_blocking(move || handle.frame(&id, at_ms, rect))
+        .await
+        .map_err(|cause| format!("the recording could not be read: {cause}"))??;
+    Ok(tauri::ipc::Response::new(raster))
+}
+
+#[cfg(all(feature = "media", desktop))]
+#[tauri::command]
+async fn media_release(media: State<'_, Arc<MediaHandle>>, id: String) -> Result<(), String> {
+    let handle = media.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || handle.release(&id))
+        .await
+        .map_err(|cause| format!("the staged file could not be removed: {cause}"))
+}
+
 // -- A video's captions -----------------------------------------------------
 //
 // Two commands on every target and no managed state: each is two HTTP requests
@@ -541,9 +676,10 @@ fn oauth_listen(app: AppHandle) -> Result<u16, String> {
 }
 
 /// The command list. Persistence, captions and `oauth_listen` are every host's; **speech** adds
-/// eight, of which the two players are desktop-only — three arms, each written
+/// nine, of which the two players are desktop-only — three arms, each written
 /// out because `generate_handler!` takes a literal list and not a computed one —
-/// and **ocr** appends `ocr_page` to whichever arm is built.
+/// and **ocr** appends `ocr_page` and **media** (desktop only) its six to
+/// whichever arm is built.
 #[cfg(all(feature = "speech", desktop))]
 macro_rules! commands {
     ($($extra:ident),*) => {
@@ -559,6 +695,7 @@ macro_rules! commands {
             asr_status,
             asr_download,
             asr_transcribe,
+            asr_segments,
             captions_list,
             captions_fetch,
             oauth_listen
@@ -580,6 +717,7 @@ macro_rules! commands {
             asr_status,
             asr_download,
             asr_transcribe,
+            asr_segments,
             captions_list,
             captions_fetch,
             oauth_listen
@@ -647,6 +785,8 @@ pub fn run() {
             app.manage(Arc::new(PlayerHandle::new()));
             #[cfg(feature = "ocr")]
             app.manage(Arc::new(OcrHandle::new(&dir)));
+            #[cfg(all(feature = "media", desktop))]
+            app.manage(Arc::new(MediaHandle::new(&app.path().app_cache_dir()?)));
             // The one thing this host has to say about the microphone, and it
             // says it before the page can ask: WebKitGTK denies a
             // `getUserMedia` the application leaves unanswered, and neither
@@ -657,9 +797,28 @@ pub fn run() {
             }
             Ok(())
         });
-    #[cfg(feature = "ocr")]
+    #[cfg(all(feature = "ocr", feature = "media", desktop))]
+    let builder = builder.invoke_handler(commands!(
+        ocr_page,
+        media_status,
+        media_stage,
+        media_probe,
+        media_audio,
+        media_frame,
+        media_release
+    ));
+    #[cfg(all(feature = "ocr", not(all(feature = "media", desktop))))]
     let builder = builder.invoke_handler(commands!(ocr_page));
-    #[cfg(not(feature = "ocr"))]
+    #[cfg(all(not(feature = "ocr"), feature = "media", desktop))]
+    let builder = builder.invoke_handler(commands!(
+        media_status,
+        media_stage,
+        media_probe,
+        media_audio,
+        media_frame,
+        media_release
+    ));
+    #[cfg(all(not(feature = "ocr"), not(all(feature = "media", desktop))))]
     let builder = builder.invoke_handler(commands!());
     builder
         .run(tauri::generate_context!())

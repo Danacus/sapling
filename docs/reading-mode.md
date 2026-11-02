@@ -121,10 +121,15 @@ learner's route to a text is usually a video, and the subtitle file is the one
 artefact of it they need. **For a YouTube video they do not have to get it**:
 the app fetches the caption track itself and a link becomes a track through this
 same door (`.claude/rules/media.md`). For anything else they bring one — or the
-"Show transcript" panel copied.
+"Show transcript" panel copied — or, on the desktop host, have the recording
+**transcribed**: speech recognition times every line, the burnt-in subtitles
+read off sampled frames correct its characters wherever they agree with what
+was heard (`mergeTranscript`, `crates/sapling-import`'s `transcript.rs`), and
+the result is an SRT file through this same door.
 There is **one door**: the page hands whatever it has to the protocol's
 `importSource`, which recognises SRT, VTT, `json3` and the panel (its `format`,
-absent for prose) — the only `Backend` method that touches no table. The window
+absent for prose) — one of the two `Backend` methods that touch no table
+(`mergeTranscript` is the other). The window
 reaches Rust only through the protocol, so `$lib/reading` never calls it; the
 page and the `captions` task do.
 

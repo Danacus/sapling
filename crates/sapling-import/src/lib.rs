@@ -16,9 +16,11 @@ use ts_rs::TS;
 
 pub mod paragraphs;
 pub mod subtitles;
+pub mod transcript;
 
 pub use paragraphs::split_paragraphs;
 pub use subtitles::{detect_subtitle_format, parse_subtitles, Cue, SubtitleFormat};
+pub use transcript::{merged_transcript, MergedTranscript, TranscriptInput};
 
 /// A text on its way in, recognised and cut into the segments it is stored as.
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]

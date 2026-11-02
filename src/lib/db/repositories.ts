@@ -91,6 +91,8 @@ export const recordTextbookStudy = forward('recordTextbookStudy');
  * a table; it goes through here because that is where the window reaches Rust.
  */
 export const importSource = forward('importSource');
+/** A recording's subtitles from speech and the screen, as SRT; {@link Backend.mergeTranscript}. */
+export const mergeTranscript = forward('mergeTranscript');
 
 export const addConversation = forward('addConversation');
 export const addExchange = forward('addExchange');

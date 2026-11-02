@@ -37,15 +37,16 @@
 //! and "installed" is measured once and latched — an installed model does not
 //! uninstall itself while the process runs.
 //!
-//! ## One utterance, and no VAD
+//! ## Dictation has no VAD; a recording does
 //!
-//! Phase one is button-stopped: the learner presses stop, and only then does
-//! anything reach this module. sherpa-onnx ships Silero VAD and a streaming
-//! Zipformer, and either would live here — but the handler shape
-//! (`onTranscript(text, final)`) is what a future phase changes, not this
-//! seam's, and a recognizer that answers once is the simplest host command that
-//! honours the contract.
+//! Dictation is button-stopped: the learner presses stop, and only then does
+//! anything reach this module, so [`AsrHandle::transcribe`] is one utterance.
+//! A whole recording (a video's audio, for its subtitles) is cut into spans by
+//! Silero VAD first — [`AsrHandle::segments`], `segments.rs` — on the same
+//! loaded recognizer. The VAD is a 644 KB [`SILERO_VAD`] beside the model,
+//! installed by the same [`AsrHandle::install`].
 
+pub mod segments;
 pub mod sense_voice;
 
 use std::path::{Path, PathBuf};
@@ -54,7 +55,7 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::Serialize;
 
-use crate::specs::SENSE_VOICE;
+use crate::specs::{SENSE_VOICE, SILERO_VAD};
 use sapling_models::{self as models, available_threads, ModelSpec};
 use sense_voice::{SenseVoice, SenseVoiceConfig};
 
@@ -182,7 +183,8 @@ impl AsrHandle {
             .installing
             .lock()
             .map_err(|_| "the previous dictation-model download failed badly".to_owned())?;
-        self.spec.install(&self.dir, on_progress)
+        self.spec.install(&self.dir, on_progress)?;
+        SILERO_VAD.install(&self.dir, on_progress).map(|_| ())
     }
 
     /// Transcribes one utterance handed over as 16-bit little-endian mono PCM.
@@ -205,7 +207,28 @@ impl AsrHandle {
         if samples.is_empty() {
             return Ok(String::new());
         }
+        self.with_engine(|asr| asr.transcribe(&samples, SAMPLE_RATE))
+    }
 
+    /// Every span of speech in a stretch of a recording, as 16-bit LE mono PCM
+    /// at [`SAMPLE_RATE`], each transcribed; times are from its first sample.
+    pub fn segments(&self, pcm: &[u8]) -> Result<Vec<segments::SpeechSegment>, String> {
+        let samples = decode_pcm16(pcm)?;
+        if samples.is_empty() {
+            return Ok(Vec::new());
+        }
+        if !SILERO_VAD.installed_in(&self.dir) {
+            return Err("the voice-activity model is not downloaded yet".to_owned());
+        }
+        let vad = SILERO_VAD.path_in(&self.dir).to_string_lossy().into_owned();
+        self.with_engine(|asr| segments::segments(asr, &vad, &samples))
+    }
+
+    /// Runs `work` on the recognizer, loading it on the first call.
+    fn with_engine<T>(
+        &self,
+        work: impl FnOnce(&SenseVoice) -> Result<T, String>,
+    ) -> Result<T, String> {
         let mut engine = self
             .engine
             .lock()
@@ -216,9 +239,7 @@ impl AsrHandle {
             // can answer "warm" without waiting for this call to finish.
             self.loaded.store(true, Ordering::Relaxed);
         }
-        let asr = engine.as_ref().expect("the recognizer was just loaded");
-
-        asr.transcribe(&samples, SAMPLE_RATE)
+        work(engine.as_ref().expect("the recognizer was just loaded"))
     }
 
     /// Builds the recognizer over the installed files.
@@ -308,6 +329,16 @@ mod tests {
 
         assert_eq!(handle.transcribe(&[]).unwrap(), "");
         assert!(!handle.status().loaded);
+    }
+
+    #[test]
+    fn segments_of_nothing_are_none_and_without_a_vad_an_error() {
+        let handle = AsrHandle::new(Path::new("/nonexistent/sapling"));
+
+        assert_eq!(handle.segments(&[]).unwrap(), vec![]);
+        let failure = handle.segments(&[0x00, 0x10]).unwrap_err();
+        assert!(failure.contains("voice-activity"), "{failure}");
+        assert!(!handle.status().loaded, "no model was loaded for it");
     }
 
     #[test]

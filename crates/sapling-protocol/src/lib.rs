@@ -52,7 +52,7 @@ use sapling_domain::types::{
     ChallengeResult, Conversation, ConversationDetail, ConversationExchange, ConversationSummary,
     DailyActivity, GradeEntry, KnowledgeItem, Profile, ReadingText, StudySession,
 };
-use sapling_import::ImportedSource;
+use sapling_import::{ImportedSource, MergedTranscript, TranscriptInput};
 
 pub mod captions;
 pub mod challenges;
@@ -510,6 +510,14 @@ backend! {
         /// — it touches no table.
         importSource(text: String) -> ImportedSource {
             Ok::<_, Error>(sapling_import::import_source(&text))
+        }
+
+        /// A recording's subtitles from what was heard and what was read off
+        /// sampled frames: each heard span keeps its timing and takes the
+        /// screen's text where a line read during it overlaps what was heard.
+        /// Answers an SRT file for `importSource`. Touches no table.
+        mergeTranscript(input: TranscriptInput) -> MergedTranscript {
+            Ok::<_, Error>(sapling_import::merged_transcript(&input))
         }
 
         /* ---- Conversations ---------------------------------------------- */

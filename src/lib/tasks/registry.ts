@@ -8,7 +8,7 @@
  * one module in `./kinds/` and one line below.
  *
  * Import direction: the defs reach *down* into `$lib/session`, `$lib/reading`,
- * `$lib/llm`, `$lib/tts`, `$lib/asr`, `$lib/media` and `$lib/db`; nothing in
+ * `$lib/llm`, `$lib/tts`, `$lib/asr`, `$lib/media`, `$lib/ocr` and `$lib/db`; nothing in
  * those layers may import `$lib/tasks`, or a page's fire-and-forget would
  * become a cycle.
  */
@@ -17,6 +17,7 @@ import { asrModelTask } from './kinds/asr-model';
 import { captionsTask } from './kinds/captions';
 import { readGenerateTask } from './kinds/read-generate';
 import { topUpTask } from './kinds/top-up';
+import { transcribeTask } from './kinds/transcribe';
 import { ttsModelTask } from './kinds/tts-model';
 import type { InputOf, ResultOf } from './runner';
 import type { TaskRecord } from './types';
@@ -25,6 +26,7 @@ export const TASK_KINDS = {
 	'top-up': topUpTask,
 	'read-generate': readGenerateTask,
 	captions: captionsTask,
+	transcribe: transcribeTask,
 	'tts-model': ttsModelTask,
 	'asr-model': asrModelTask
 } as const;

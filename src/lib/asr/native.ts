@@ -171,6 +171,23 @@ async function transcribe(pcm: Uint8Array): Promise<string> {
 	return invoke<string>('asr_transcribe', pcm);
 }
 
+/** One span of speech `asr_segments` found, in ms from the first sample sent. */
+export interface HeardSpan {
+	startMs: number;
+	endMs: number;
+	text: string;
+}
+
+/**
+ * Every span of speech in a stretch of a recording (16 kHz 16-bit LE mono
+ * PCM, a raw body like {@link transcribe}'s), each transcribed. Needs the
+ * voice-activity model `installAsrModel` puts beside the recognizer.
+ */
+export async function heardSpans(pcm: Uint8Array): Promise<HeardSpan[]> {
+	const { invoke } = await tauri();
+	return invoke<HeardSpan[]>('asr_segments', pcm);
+}
+
 // -- The microphone ---------------------------------------------------------
 
 /** An open microphone and everything it has heard so far. */

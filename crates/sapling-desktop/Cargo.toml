@@ -45,11 +45,16 @@ path = "src/main.rs"
 # `tts_stop` on `all(feature = "speech", desktop)`. One `dep:` entry enables
 # both declarations; resolver 2 applies a target table's features only where
 # that target is being built.
-default = ["speech", "ocr"]
+default = ["speech", "ocr", "media"]
 speech = ["dep:sapling-speech"]
 # PP-OCRv5 on ONNX Runtime, every target — the runtime sherpa-onnx already links,
 # so it is not a second one (`sapling-ocr`'s manifest says how).
 ocr = ["dep:sapling-ocr"]
+# A local recording read on the system GStreamer (`sapling-media`), for
+# transcribing a video. The dependency is desktop-only (below): a phone has no
+# GStreamer, so on Android the feature enables nothing and the commands are not
+# compiled (`all(feature = "media", desktop)`).
+media = ["dep:sapling-media"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -107,6 +112,7 @@ sapling-speech = { path = "../sapling-speech", optional = true, default-features
 	"asr",
 	"playback",
 ] }
+sapling-media = { path = "../sapling-media", optional = true }
 
 # -- One Linux-only dependency, and it is a permission prompt ----------------
 #

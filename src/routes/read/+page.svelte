@@ -23,6 +23,7 @@
 	import { isMockMode } from '$lib/llm';
 	import { MAX_FOCUS_WORDS, MAX_TOPIC_CHARS } from '$lib/reading';
 	import { selectSessionItems } from '$lib/srs';
+	import { targetTagOf } from '$lib/text';
 	import { SETTLED, rootOf, startTask, taskOutcome } from '$lib/tasks';
 	import type { Task } from '$lib/tasks';
 	import { taskStore } from '$lib/tasks/store.svelte';
@@ -282,7 +283,7 @@
 				</div>
 
 				<div class="pane pane-video" hidden={tab !== 'video'}>
-					<VideoImport {busy} />
+					<VideoImport {busy} tag={targetTagOf(profile)} />
 				</div>
 				<div class="pane" hidden={tab !== 'text'}>
 					<TextImport {busy} />

@@ -4,6 +4,7 @@ import { TASK_KINDS } from './registry';
 import type { TaskInput, TaskKind } from './registry';
 import { captionsTask } from './kinds/captions';
 import { topUpTask } from './kinds/top-up';
+import { transcribeTask } from './kinds/transcribe';
 
 const profile: Profile = {
 	nativeLanguage: 'English',
@@ -18,6 +19,7 @@ const FAKE_INPUTS: { [K in TaskKind]: TaskInput<K> } = {
 	'top-up': { profile, topic: 'at the market' },
 	'read-generate': { profile, vocabulary: [], focus: [], wordCount: 0 },
 	captions: { videoId: 'abcdefghijk', lang: 'ja', name: 'Japanese', auto: false },
+	transcribe: { file: new File([], 'game.webm'), tag: 'zh-CN' },
 	'tts-model': 'Mandarin Chinese',
 	'asr-model': undefined
 };
@@ -84,5 +86,18 @@ describe('captions summary and title', () => {
 
 	it('cannot be cancelled, because a child process the host is waiting on cannot', () => {
 		expect(captionsTask.cancellable).toBe(false);
+	});
+});
+
+describe('transcribe summary and title', () => {
+	it('titles by the file and says where the lines came from', () => {
+		expect(transcribeTask.title({ file: new File([], 'game.webm'), tag: 'zh' })).toBe(
+			'Transcribe · game.webm'
+		);
+		const base = { name: 'game.webm (transcribed)', text: '' };
+		expect(transcribeTask.summary({ ...base, lines: 1, read: 0 })).toBe('1 line heard');
+		expect(transcribeTask.summary({ ...base, lines: 40, read: 31 })).toBe(
+			'40 lines, 31 read off the screen'
+		);
 	});
 });

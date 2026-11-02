@@ -15,15 +15,16 @@ members = [
 	"crates/sapling-speech",
 	"crates/sapling-ocr",
 	"crates/sapling-captions",
+	"crates/sapling-media",
 	"crates/sapling-desktop",
 ]
 # `pnpm core:test` and `pnpm core:check` are a bare `cargo test` / `cargo clippy
 # --all-targets` at the root, in the *default* shell, so a default member is a
 # crate that builds there.
 #
-# Only `sapling-desktop` is left out, and reached with `-p` instead (`pnpm
-# desktop:check` does): it links WebKitGTK, which only the `desktop` devShell
-# provides. `sapling-speech` is in with its default features, `tts` and `asr`:
+# Only `sapling-desktop` and `sapling-media` are left out, and reached with
+# `-p` instead (`pnpm desktop:check` does): they link WebKitGTK and GStreamer,
+# which only the `desktop` devShell provides. `sapling-speech` is in with its default features, `tts` and `asr`:
 # `sherpa-onnx-sys` fetches its prebuilt static library into `target/` at build
 # time, which needs nothing the default shell lacks — and so is `sapling-ocr`,
 # which links that same library's ONNX Runtime. Its `playback` feature

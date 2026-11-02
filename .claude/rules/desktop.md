@@ -5,6 +5,8 @@ paths:
   - 'crates/sapling-speech/**'
   - 'crates/sapling-models/**'
   - 'crates/sapling-captions/**'
+  - 'crates/sapling-media/**'
+  - 'src/lib/media/host-media.ts'
   - 'src/lib/db/tauri.ts'
   - 'src/lib/tts/native.ts'
   - 'src/lib/asr/native.ts'
@@ -19,7 +21,7 @@ not shipped — nothing in the web build or its gates depends on it. CI does run
 a protocol change that breaks the host fails the commit rather than waiting for
 someone to run the check by hand.
 
-- **The host is six crates, and only one of them knows about Tauri.**
+- **The host is seven crates, and only one of them knows about Tauri.**
   `sapling-desktop` is the glue: `main.rs`, `lib.rs` (the commands, the
   `commands!` arms, `setup`), `permissions.rs` and `oauth.rs`, and nothing else. What it
   lends lives beside it, free of Tauri so a CLI or another app can reuse it:
@@ -40,7 +42,10 @@ someone to run the check by hand.
   one as `json3` over an injected HTTP transport (`innertube.rs`: InnerTube
   `player` as the ANDROID client, then the track's timedtext URL), with a ureq
   transport behind its `native` feature (`native.rs`) — the wasm build lends
-  the browser's relay instead (`media.md`).
+  the browser's relay instead (`media.md`); **`sapling-media`** reads a local
+  recording on the system GStreamer — a picked file staged in chunks, its
+  length and size (`Discoverer`), its audio as 16 kHz mono PCM, a grey crop of
+  any frame — desktop targets only (below).
   A crate outside `sapling-desktop` cannot see Tauri's `desktop` cfg alias, so
   none of them uses it: where a target matters, the desktop manifest decides
   (a target-scoped dependency entry) and the crate exposes a feature.
@@ -122,6 +127,35 @@ someone to run the check by hand.
   pin once sherpa-onnx's ORT builds against that (ORT 1.31.1 still bundles
   1.22). Test binaries never call `setlocale`, so no test sees it.
 
+- **A local recording is the fifth capability, and the desktop's alone**
+  (`sapling-media`, feature `media`, default on, the dependency target-scoped
+  to desktop targets like `playback`, the commands gated `all(feature =
+  "media", desktop)`): a file in, samples and rasters out, no domain
+  knowledge. It is what *Transcribe the recording* rides on (`media.md`,
+  `tasks.md`). **The webview could not do it, measured** on WebKitGTK 2.52 /
+  GStreamer 1.28 with a 26-minute 1080p60 AV1/Opus file: `decodeAudioData` on
+  an `OfflineAudioContext` at 16 kHz took 285 s and ~800 MB (stereo, whole
+  file, linear in its length), and a seeked `<video>` drawn to a canvas —
+  `drawImage`, `createImageBitmap`, `new VideoFrame` — read back blank or noise
+  until `WEBKIT_DISABLE_DMABUF_RENDERER=1`, and even then a seek without play
+  drew a stale frame. Natively the audio decodes in ~5 s and frames come from
+  one `decodebin` per file kept playing and walked forward (a seek only
+  backwards or more than 3 s ahead), so the cost is the codec's: that AV1 file
+  decodes at ~5× real time on VA-API (aom alone is 2.6×), H.264 at ~20×. A
+  picked `File` has no path, so `media_stage` takes it in 8 MB raw chunks
+  (headers `sapling-media`, an id the window mints, and `sapling-offset`)
+  into `<app-cache>/media/<id>`, which `media_release` deletes and the handle
+  sweeps at start; `media_probe`, `media_audio` (an `ipc::Response` of PCM,
+  cut by timestamp) and `media_frame` (an `ipc::Response`: two LE `u32`s of
+  size, then RGBA with R = G = B = luma — the first plane of a planar format,
+  so `videoconvert` passes through and no colour conversion runs) ask about
+  it, and `media_status` says whether GStreamer loads at all. Other streams
+  stop undecoded at `decodebin`'s `autoplug-continue` (a container still
+  opens: anything a demuxer sinks continues), so reading the audio never
+  decodes the video. GStreamer is the one the shell already carries for
+  WebKitGTK, so nothing new is loaded; a phone has none, so Android has no
+  `media_*` command and the window's `mediaAvailable()` answers false there.
+
 - **OpenRouter's sign-in is one more command and one plugin, on every
   target.** `oauth_listen` binds a free loopback port and returns it; a thread
   (`oauth.rs`, Tauri-free and unit-tested over a real socket — std
@@ -142,12 +176,17 @@ someone to run the check by hand.
   checksum and unpack of a pinned archive — over the same `sapling-models`; the
   desktop's `speech` feature is simply the optional `sapling-speech` dependency,
   and splitting it would make four build configurations nobody would check.
+  Recognition also has **`asr_segments`**, a recording's stretch of PCM in and
+  timed sentences out: Silero VAD (`asr/segments.rs`: threshold 0.5, 0.25 s
+  minimum silence and speech, 8 s maximum span) cuts the spans and the same
+  loaded SenseVoice transcribes each; the VAD is a `ModelFile`
+  (`SILERO_VAD`, 644 KB) that `asr_download` installs beside the archive.
   **`sapling-models` is that shared floor**: the `ModelSpec` shape pinning URL,
   exact byte size, sha256 and the files that must exist, the one
   download-verify-stage-rename install and the ONNX thread count every engine
   wants. The specs themselves (`KOKORO`, `CANTONESE_VITS`, `SENSE_VOICE`) are
   `sapling-speech`'s `src/specs.rs`, beside their engines. A `ModelSpec` is the
-  *only* place a model is described, so swapping one is a constant change; the two progress keys are derived from `dir`
+  *only* place a model is described (a `ModelFile` for a single file, the VAD), so swapping one is a constant change; the two progress keys are derived from `dir`
   (`<dir>.tar.bz2` and `<dir> (unpacking)`), which is what
   `$lib/tasks/kinds/model-download` sums, so renaming a spec renames what a
   progress bar keys on.
@@ -212,10 +251,12 @@ someone to run the check by hand.
   Each command is `sapling_protocol::dispatch_json` (or `commit_facts_json`)
   inside `Database::core()?.run(…)`; the store underneath knows no method
   names.
-  **Speech adds exactly eight more, captions two and OCR one** — `tts_status`, `tts_download`,
-  `tts_synthesize`, `asr_status`, `asr_download`, `asr_transcribe` on every
-  target, `tts_play`, `tts_stop` on desktop targets only, and `captions_list`,
-  `captions_fetch` and `ocr_page` on every target — and they are not
+  **Speech adds exactly nine more, captions two, OCR one and media six** — `tts_status`, `tts_download`,
+  `tts_synthesize`, `asr_status`, `asr_download`, `asr_transcribe`,
+  `asr_segments` on every target, `tts_play`, `tts_stop` on desktop targets
+  only, `captions_list`, `captions_fetch` and `ocr_page` on every target, and
+  `media_status`, `media_stage`, `media_probe`, `media_audio`, `media_frame`,
+  `media_release` on desktop targets only — and they are not
   part of that protocol and never touch it. Audio crosses as bytes in every
   direction and never as JSON, wherever the IPC can carry bytes: `tts_synthesize`
   answers a `tauri::ipc::Response`, and `tts_play` and `asr_transcribe` take a
@@ -225,8 +266,8 @@ someone to run the check by hand.
   to parse. **Android has no raw body**: Tauri's IPC there is `postMessage`
   only (the WebView cannot expose a request body) and a `Uint8Array` arrives as
   `InvokeBody::Json`, an array of numbers — so every command that takes bytes
-  and exists on Android (`asr_transcribe`; `tts_play` does not) accepts both
-  forms, and a `Raw`-only match is a command that works on the desktop and
+  and exists on Android (`asr_transcribe`, `asr_segments`; `tts_play` and
+  `media_stage` do not) accepts both forms, and a `Raw`-only match is a command that works on the desktop and
   fails on every phone.
   `tts_play` takes bytes rather than text because the clip caches are the
   window's; if they ever move to the host, `tts_speak(text, sid, speed)`
@@ -309,7 +350,7 @@ someone to run the check by hand.
   (`src/lib/asr/index.ts`) holds every decision, not this module, exactly as
   `tts.ts` does for the voice.
 
-- **Every one of the six crates `forbid`s `unsafe_code`, and the voice is
+- **Every one of the seven crates `forbid`s `unsafe_code`, and the voice is
   k2-fsa's own crate.**
   `tts::kokoro` used to be the one exception — hand-rolled FFI, because the
   third-party `sherpa-rs` wrapper freed the rule-FST path string before
@@ -333,7 +374,8 @@ someone to run the check by hand.
   worth keeping, what a first download costs, where a clip plays), the dictation
   router (`asr/index.ts`, once, to decide whether there is a host to probe at
   all), the media player host (`media/youtube-host.ts`), the caption fetcher
-  (`media/captions.ts`), OpenRouter's sign-in (`ui/OpenRouterConnect.svelte`,
+  (`media/captions.ts`), the recording reader (`media/host-media.ts`, which
+  imports `@tauri-apps/api` lazily), OpenRouter's sign-in (`ui/OpenRouterConnect.svelte`,
   which imports `@tauri-apps/api` and the opener dynamically), and the settings
   screen's native-voice row. Nowhere else, and never a second implementation of
   the test. Everything host-specific stays behind a dynamic import gated on it
@@ -423,13 +465,13 @@ someone to run the check by hand.
   skipped** here because native synthesis runs at several times real time.
 
 - **The crate also builds for Android, in CI and nowhere else, and there it is
-  this host minus the *player*.** `docs/desktop.md` has the job; the contract is
+  this host minus the *player* and the recording reader.** `docs/desktop.md` has the job; the contract is
   that Android is not a second host. Persistence, the device id, the clock, the
   calendar **and all of speech** are the same code over the same app-data
   directory — the same sherpa-onnx, the same 365 MB Kokoro archive, the same
-  163 MB SenseVoice archive, the same six status/download/work commands — and
+  163 MB SenseVoice archive, the same seven status/download/work commands — and
   the same two caption commands. Only `sapling-speech`'s `playback` feature
-  (rodio) is target-scoped — a second `sapling-speech` entry under
+  (rodio) and `sapling-media` (GStreamer, which a phone does not have) are target-scoped — a second `sapling-speech` entry under
   `[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]`
   adds the feature, and resolver 2 applies it only where that target is built —
   and only `tts::play`, `tts_play` and `tts_stop` are gated
@@ -439,7 +481,7 @@ someone to run the check by hand.
   reverse — narrowing a synthesis or recognition gate back to `desktop` — is a
   bug nobody's compiler sees, and costs the phone its voice or its ears.
   `cargo tree -p sapling-desktop --target aarch64-linux-android` is how the
-  dependency half is checked: no `rodio`, no `cpal`, and `sapling-speech` with
+  dependency half is checked: no `rodio`, no `cpal`, no `sapling-media`, and `sapling-speech` with
   `tts` and `asr` only; everything else identical.
 - **Android's microphone permission is a manifest edit and nothing more.** wry's
   own `RustWebChromeClient.onPermissionRequest` already answers the WebView's
@@ -514,15 +556,15 @@ someone to run the check by hand.
   leaves the tree clean. The root `.gitignore` keeps only `gen/schemas/`, which
   `tauri-build` writes on every desktop build.
 
-- **`sapling-desktop` is a workspace member but not a *default* member; the
-  five it lends from are.** It links WebKitGTK, which only `nix develop
-  .#desktop` provides, and `pnpm core:check` / `pnpm core:test` are a bare
+- **`sapling-desktop` and `sapling-media` are workspace members but not
+  *default* members; the other five it lends from are.** They link WebKitGTK
+  and GStreamer, which only `nix develop .#desktop` provides, and `pnpm core:check` / `pnpm core:test` are a bare
   `cargo clippy`/`cargo test` in the *default* shell — which builds
   `sapling-speech` too, with its default `tts` and `asr`, and `sapling-ocr` (sherpa-onnx-sys
   fetches its static library into `target/`; nothing in that shell is missing).
   `playback` wants `alsa-lib` and stays out of it because no default member
   enables it. `pnpm desktop:check` reaches the rest with `-p sapling-desktop -p
-  sapling-speech -p sapling-captions -p sapling-ocr` in one invocation, so feature unification
+  sapling-speech -p sapling-captions -p sapling-ocr -p sapling-media` in one invocation, so feature unification
   builds speech *with* `playback` there and `sapling-captions` *with* `native`,
   which its `transcript` example needs (a live list-and-fetch, run by hand). Keep all of them rustfmt-clean — `cargo fmt --check` walks every
   member, default or not. New source files must be `git add`ed before nix can
@@ -537,7 +579,7 @@ someone to run the check by hand.
   because `sherpa-onnx-sys`'s build script would otherwise download it inside
   the sandbox and fail. The AppImage (`pnpm desktop:appimage`, the `appimage`
   CI job) is for every other Linux and is built with **Ubuntu's** toolchain
-  and apt WebKitGTK, never in the devShell — a binary linked under nix has a
+  and apt WebKitGTK (and GStreamer's `-dev` packages, for `sapling-media`), never in the devShell — a binary linked under nix has a
   `/nix/store` interpreter and runs nowhere else — with `bundleMediaFramework`
   on so the GStreamer plugins travel in the image. `docs/desktop.md`,
   "Packaging".
@@ -546,7 +588,8 @@ someone to run the check by hand.
   `sapling-speech`'s, as the persistence test is `sapling-store`'s — each test lives with the code it covers.
   `tests/voice.rs` synthesizes Mandarin, English and a mixed sentence against
   the *real* 365 MB model and asserts finite, audible samples of a plausible
-  length; `tests/dictation.rs` transcribes the `test_wavs/` that ship inside the
+  length; `tests/dictation.rs` transcribes (and, with the VAD installed, cuts
+  into timed spans) the `test_wavs/` that ship inside the
   *real* 163 MB recognition model and asserts what the words were, in Mandarin,
   English and Cantonese (the last by its particles — 唔, 嘅, 呢 — because what is
   worth checking is that the model switched language rather than transcribing bad

@@ -223,3 +223,33 @@ fn installs_the_model() {
     );
     assert_eq!(status.languages, LANGUAGES);
 }
+
+#[test]
+fn cuts_a_recording_into_timed_spans() {
+    let Some((handle, model)) = installed_handle() else {
+        return;
+    };
+    if !sapling_speech::specs::SILERO_VAD.installed_in(&app_data_dir().unwrap().join(ASR_DIR)) {
+        eprintln!("skipping: no voice-activity model installed");
+        return;
+    }
+    // Two utterances with two seconds of silence between them: the Mandarin one
+    // is one span, and everything after it starts past the gap (the English
+    // clip has a pause of its own, so it may be two).
+    let first = utterance(&model, "zh");
+    let gap = vec![0u8; SAMPLE_RATE as usize * 2 * 2];
+    let pcm = [first.as_slice(), &gap, &utterance(&model, "en")].concat();
+
+    let spans = handle.segments(&pcm).unwrap();
+
+    assert!(spans.len() >= 2, "{spans:?}");
+    assert_eq!(spans[0].text, "开饭时间早上9点至下午5点。");
+    let first_ms = (first.len() / 2) as f64 * 1000.0 / SAMPLE_RATE as f64;
+    assert!(spans[0].end_ms <= first_ms + 100.0, "{spans:?}");
+    assert!(spans[1].start_ms > first_ms + 1000.0, "{spans:?}");
+    assert!(
+        spans[1].text.starts_with("The tribal chieftain"),
+        "{spans:?}"
+    );
+    assert!(spans.iter().all(|span| span.end_ms > span.start_ms));
+}

@@ -80,7 +80,7 @@ fn joiner(before: &str, after: &str) -> &'static str {
 }
 
 /// Appends `piece` to `out`, spacing the seam by [`joiner`].
-fn push_joined(out: &mut String, piece: &str) {
+pub(crate) fn push_joined(out: &mut String, piece: &str) {
     let seam = joiner(out, piece);
     out.push_str(seam);
     out.push_str(piece);

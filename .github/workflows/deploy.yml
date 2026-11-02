@@ -7,9 +7,9 @@
 # here and the Pages git integration is switched off (see .claude/rules/deploy.md).
 #
 # `desktop`: `pnpm desktop:check` (clippy + the tests of `sapling-desktop`,
-# `sapling-speech` with its `playback` feature, and `sapling-captions` with its
-# `native` transport) in the second devShell, which is the only one that
-# provides WebKitGTK. It runs alongside
+# `sapling-speech` with its `playback` feature, `sapling-captions` with its
+# `native` transport, `sapling-ocr` and `sapling-media`) in the second devShell,
+# which is the only one that provides WebKitGTK and GStreamer. It runs alongside
 # `build` and does not gate the deploy: the web artifact has no dependency on
 # the crate, so a red desktop check says a protocol change broke the host, not
 # that the site is wrong — it fails the commit, not the deploy.
@@ -469,15 +469,17 @@ jobs:
       # image expects to find on the host (WebKitGTK itself is never bundled).
       # The GStreamer packages are for `bundleMediaFramework`: linuxdeploy's
       # GStreamer plugin copies the *system's* plugins into the image, so they
-      # have to be installed for there to be anything to copy. Runtime
-      # packages only — nothing here links GStreamer, and the `-dev` one drags
-      # in `libunwind-dev`, which conflicts with the runner image's
-      # `libunwind-14-dev` and fails the whole apt step.
+      # have to be installed for there to be anything to copy. The two `-dev`
+      # packages are `sapling-media`'s, which links GStreamer to read a local
+      # recording; they drag in `libunwind-dev`, which conflicts with the runner
+      # image's `libunwind-14-dev`, so that one is removed first.
       - name: Install Ubuntu's WebKitGTK and GStreamer
         run: |
           sudo apt-get update
+          sudo apt-get remove -y libunwind-14-dev || true
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev librsvg2-dev patchelf libasound2-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-plugins-bad gstreamer1.0-libav
 

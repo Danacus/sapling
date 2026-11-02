@@ -1,13 +1,13 @@
 //! Every model this crate downloads, pinned.
 //!
-//! A [`ModelSpec`] is the *only* place a model is described — URL, exact byte
+//! A [`ModelSpec`] (or, for a single file, a [`ModelFile`]) is the *only* place a model is described — URL, exact byte
 //! size, sha256 and the files that must exist — so swapping one is a constant
 //! change here. The shape, and the one install every spec goes through, are
 //! `sapling-models`'; the pins are speech's, and live beside the engines that
 //! read them. Ungated by feature on purpose: three constants cost nothing, and
 //! one list is what the pin tests below walk.
 
-use sapling_models::ModelSpec;
+use sapling_models::{ModelFile, ModelSpec};
 
 /// Kokoro multi-lang v1.1, fp32 — 103 speakers, Mandarin + English.
 ///
@@ -76,11 +76,31 @@ pub const SENSE_VOICE: ModelSpec = ModelSpec {
     files: &["model.int8.onnx", "tokens.txt"],
 };
 
+/// Silero VAD — one file, no archive — which cuts a whole recording into the
+/// spans SenseVoice transcribes one at a time (`asr::segments`). Dictation does
+/// not use it: a learner's press is already one utterance.
+pub const SILERO_VAD: ModelFile = ModelFile {
+    name: "silero_vad.onnx",
+    url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx",
+    bytes: 643_854,
+    sha256: "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
+};
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
     use super::*;
+
+    #[test]
+    fn the_vad_is_one_pinned_release_file() {
+        assert!(SILERO_VAD
+            .url
+            .starts_with("https://github.com/k2-fsa/sherpa-onnx/releases/download/"));
+        assert!(SILERO_VAD.url.ends_with(SILERO_VAD.name));
+        assert_eq!(SILERO_VAD.bytes, 643_854);
+        assert_eq!(SILERO_VAD.sha256.len(), 64);
+    }
 
     #[test]
     fn every_pin_names_an_immutable_release_asset() {
