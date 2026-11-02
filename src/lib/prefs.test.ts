@@ -58,6 +58,18 @@ describe('OCR model size preference', () => {
 		expect(getOcrModelSize()).toBe('mobile');
 	});
 
+	it('defaults to the accurate model on a Tauri host, which runs it natively', () => {
+		const host = globalThis as { window?: object };
+		host.window = { __TAURI_INTERNALS__: {} };
+		try {
+			expect(getOcrModelSize()).toBe('server');
+			setOcrModelSize('mobile');
+			expect(getOcrModelSize()).toBe('mobile');
+		} finally {
+			delete host.window;
+		}
+	});
+
 	it('round-trips both sizes', () => {
 		setOcrModelSize('server');
 		expect(getOcrModelSize()).toBe('server');

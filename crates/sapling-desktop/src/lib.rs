@@ -8,11 +8,11 @@
 //! domain-level protocol — `dispatch(method, argsJson)` in, JSON out.
 //!
 //! **This crate is a host and nothing else — and now only the Tauri half of
-//! one.** What it lends lives in four crates that know nothing about Tauri:
+//! one.** What it lends lives in five crates that know nothing about Tauri:
 //! `sapling-store` (the database file, the device id, the clock and the time
 //! zone), `sapling-speech` (the voice, dictation and the desktop's player),
-//! `sapling-models` (the pinned-archive install speech shares) and
-//! `sapling-captions` (YouTube's caption tracks). This file is the commands over them, the
+//! `sapling-ocr` (a page's text), `sapling-models` (the pinned install both
+//! share) and `sapling-captions` (YouTube's caption tracks). This file is the commands over them, the
 //! handler lists and `setup`; `permissions.rs` is the one thing that has to be
 //! Tauri glue because it answers a WebKitGTK signal, and `oauth.rs` is the
 //! loopback listener OpenRouter's sign-in returns to. The store hands out the
@@ -50,6 +50,10 @@
 //! One feature covers both because they are one dependency set (sherpa-onnx and
 //! the model download) over one shared `sapling-models`; the only thing either
 //! has to itself is the desktop's player.
+//!
+//! **OCR is another** (feature `ocr`, `sapling-ocr`): a page raster in, lines
+//! with every character's x out, on the ONNX Runtime sherpa-onnx already links,
+//! every target. `src/lib/ocr/native.ts` is the other end.
 //!
 //! **The third capability is a video's captions** (`sapling-captions`), and it
 //! is the smallest: the track list and one `json3` track over HTTP, which the
@@ -114,6 +118,8 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use sapling_captions::{native as captions, CaptionTrack, CaptionsListing};
+#[cfg(feature = "ocr")]
+use sapling_ocr::OcrHandle;
 #[cfg(feature = "speech")]
 use sapling_speech::asr::{self, AsrHandle};
 #[cfg(all(feature = "speech", desktop))]
@@ -438,6 +444,75 @@ async fn captions_fetch(video_id: String, track: CaptionTrack) -> Result<String,
         .map_err(|cause| format!("the captions could not be asked for: {cause}"))?
 }
 
+// -- OCR ----------------------------------------------------------------------
+
+#[cfg(feature = "ocr")]
+const OCR_PROGRESS_EVENT: &str = "ocr://progress";
+
+#[cfg(feature = "ocr")]
+#[derive(Clone, serde::Serialize)]
+struct OcrProgress {
+    stage: String,
+    done: u64,
+    total: u64,
+}
+
+/// One page's lines. The RGBA raster is the body — raw on the desktop, a JSON
+/// array of numbers on Android, as `asr_transcribe`'s audio — with its size and
+/// the model set in headers. Downloads the set's models on first use.
+#[cfg(feature = "ocr")]
+#[tauri::command]
+async fn ocr_page(
+    app: AppHandle,
+    ocr: State<'_, Arc<OcrHandle>>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<sapling_ocr::OcrResult, String> {
+    let header = |name: &str| {
+        request
+            .headers()
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned)
+            .ok_or_else(|| format!("ocr_page needs a {name} header"))
+    };
+    let width: usize = header("sapling-width")?.parse().map_err(|_| "bad width")?;
+    let height: usize = header("sapling-height")?
+        .parse()
+        .map_err(|_| "bad height")?;
+    let set = header("sapling-ocr-set")?;
+    let rgba: Vec<u8> = match request.body() {
+        tauri::ipc::InvokeBody::Raw(rgba) => rgba.clone(),
+        tauri::ipc::InvokeBody::Json(json) => serde_json::from_value(json.clone())
+            .map_err(|cause| format!("ocr_page takes the raster as bytes: {cause}"))?,
+    };
+    if rgba.len() != width * height * 4 {
+        return Err(format!(
+            "a {width}×{height} raster is not {} bytes",
+            rgba.len()
+        ));
+    }
+    let handle = ocr.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let raster = sapling_ocr::Raster {
+            data: &rgba,
+            width,
+            height,
+        };
+        handle.read_page(&raster, &set, &|stage: &str, done: u64, total: u64| {
+            let _ = app.emit(
+                OCR_PROGRESS_EVENT,
+                OcrProgress {
+                    stage: stage.to_owned(),
+                    done,
+                    total,
+                },
+            );
+        })
+    })
+    .await
+    .map_err(|cause| format!("the text reader could not run: {cause}"))?
+}
+
 // -- OpenRouter sign-in ------------------------------------------------------
 
 const OAUTH_CALLBACK_EVENT: &str = "oauth://callback";
@@ -467,10 +542,11 @@ fn oauth_listen(app: AppHandle) -> Result<u16, String> {
 
 /// The command list. Persistence, captions and `oauth_listen` are every host's; **speech** adds
 /// eight, of which the two players are desktop-only — three arms, each written
-/// out because `generate_handler!` takes a literal list and not a computed one.
+/// out because `generate_handler!` takes a literal list and not a computed one —
+/// and **ocr** appends `ocr_page` to whichever arm is built.
 #[cfg(all(feature = "speech", desktop))]
 macro_rules! commands {
-    () => {
+    ($($extra:ident),*) => {
         tauri::generate_handler![
             dispatch,
             commit_all,
@@ -486,13 +562,14 @@ macro_rules! commands {
             captions_list,
             captions_fetch,
             oauth_listen
+            $(, $extra)*
         ]
     };
 }
 
 #[cfg(all(feature = "speech", not(desktop)))]
 macro_rules! commands {
-    () => {
+    ($($extra:ident),*) => {
         tauri::generate_handler![
             dispatch,
             commit_all,
@@ -506,13 +583,14 @@ macro_rules! commands {
             captions_list,
             captions_fetch,
             oauth_listen
+            $(, $extra)*
         ]
     };
 }
 
 #[cfg(not(feature = "speech"))]
 macro_rules! commands {
-    () => {
+    ($($extra:ident),*) => {
         tauri::generate_handler![
             dispatch,
             commit_all,
@@ -520,6 +598,7 @@ macro_rules! commands {
             captions_list,
             captions_fetch,
             oauth_listen
+            $(, $extra)*
         ]
     };
 }
@@ -532,7 +611,7 @@ macro_rules! commands {
 /// desktop it expands to nothing and the binary calls this directly.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             // Tauri's per-app data directory: `~/.local/share/<identifier>` on
@@ -561,6 +640,8 @@ pub fn run() {
             }
             #[cfg(all(feature = "speech", desktop))]
             app.manage(Arc::new(PlayerHandle::new()));
+            #[cfg(feature = "ocr")]
+            app.manage(Arc::new(OcrHandle::new(&dir)));
             // The one thing this host has to say about the microphone, and it
             // says it before the page can ask: WebKitGTK denies a
             // `getUserMedia` the application leaves unanswered, and neither
@@ -570,8 +651,12 @@ pub fn run() {
                 permissions::connect(&window)?;
             }
             Ok(())
-        })
-        .invoke_handler(commands!())
+        });
+    #[cfg(feature = "ocr")]
+    let builder = builder.invoke_handler(commands!(ocr_page));
+    #[cfg(not(feature = "ocr"))]
+    let builder = builder.invoke_handler(commands!());
+    builder
         .run(tauri::generate_context!())
         .expect("the Tauri app runs");
 }

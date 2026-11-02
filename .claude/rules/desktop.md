@@ -19,7 +19,7 @@ not shipped — nothing in the web build or its gates depends on it. CI does run
 a protocol change that breaks the host fails the commit rather than waiting for
 someone to run the check by hand.
 
-- **The host is five crates, and only one of them knows about Tauri.**
+- **The host is six crates, and only one of them knows about Tauri.**
   `sapling-desktop` is the glue: `main.rs`, `lib.rs` (the commands, the
   `commands!` arms, `setup`), `permissions.rs` and `oauth.rs`, and nothing else. What it
   lends lives beside it, free of Tauri so a CLI or another app can reuse it:
@@ -28,11 +28,15 @@ someone to run the check by hand.
   file, the clock, `localDay` through chrono) and speaks no protocol:
   `CoreHandle::run` hands a closure the `Core` itself, and `dispatch` and
   `commit_all` are `sapling-protocol`'s JSON entry points called inside one;
-  **`sapling-models`** is the pinned-archive install (`ModelSpec`, download,
-  verify, stage, rename, `available_threads`) and knows nothing about speech;
+  **`sapling-models`** is the pinned install (`ModelSpec` for an archive:
+  download, verify, stage, rename; `ModelFile` for one file: download, verify,
+  rename from `.part`; `available_threads`) and knows nothing about speech or OCR;
   **`sapling-speech`** is the voice and dictation on sherpa-onnx, features `tts`
   and `asr` by default plus `playback` (rodio and `tts::play`), with the model
-  pins in `src/specs.rs`; **`sapling-captions`** lists a YouTube video's caption tracks and fetches
+  pins in `src/specs.rs`; **`sapling-ocr`** is the page viewer's OCR —
+  `src/lib/ocr/pipeline.ts` ported to `pipeline.rs` (same constants, same
+  `OcrLine`s), PP-OCRv5 on ONNX Runtime with every core, the pins in
+  `models.rs` by `models.ts`'s set ids; **`sapling-captions`** lists a YouTube video's caption tracks and fetches
   one as `json3` over an injected HTTP transport (`innertube.rs`: InnerTube
   `player` as the ANDROID client, then the track's timedtext URL), with a ureq
   transport behind its `native` feature (`native.rs`) — the wasm build lends
@@ -87,6 +91,28 @@ someone to run the check by hand.
   `async` and run on `spawn_blocking`, since each is a network round trip
   (two for a fetch, because a track's `baseUrl` is signed and expires, so the
   player is asked again).
+
+- **A page's text is the fourth capability, on every target** (`sapling-ocr`,
+  feature `ocr`, default on, and one command, `ocr_page`): an RGBA raster in,
+  lines with every character's x out — no domain knowledge, the same shape the
+  browser's worker answers, behind the same `ocrPage` (`src/lib/ocr/native.ts`,
+  imported dynamically on `inTauri()`). It is here because the webview is not
+  cross-origin isolated, so onnxruntime-web runs on one thread there (~7 s a
+  page), while native ORT reads one in 1.5 s (mobile) or 4.2 s (server) on 12
+  threads — so this host defaults the size preference to *Accurate*.
+  **There is one ONNX Runtime in the process, sherpa-onnx's** (1.28.2: static
+  on a desktop, `libonnxruntime.so` on Android): `ort` `=2.0.0-rc.15` with
+  `ort-sys`'s `disable-linking` links nothing, its `OrtGetApiBase` resolves to
+  sherpa's, and `api-28` must stay at or below that runtime's minor version —
+  moving the sherpa-onnx pin moves OCR's runtime too. rustc orders
+  `sherpa-onnx-sys` before `ort` on the link line, so `sapling-ocr` references
+  `OrtGetApiBase` itself (`link_runtime`) or a single-pass linker leaves it
+  undefined. The raster crosses as a raw body with `sapling-width`,
+  `sapling-height` and `sapling-ocr-set` headers (a JSON array on Android, as
+  `asr_transcribe`), progress is `ocr://progress` in the worker's stage names,
+  and only the newest request runs — an overtaken one answers `superseded`.
+  The models are `ModelFile`s downloaded on first use into `<app-data>/ocr/`;
+  a unit test checks the pins against `models.ts`.
 
 - **OpenRouter's sign-in is one more command and one plugin, on every
   target.** `oauth_listen` binds a free loopback port and returns it; a thread
@@ -178,10 +204,10 @@ someone to run the check by hand.
   Each command is `sapling_protocol::dispatch_json` (or `commit_facts_json`)
   inside `Database::core()?.run(…)`; the store underneath knows no method
   names.
-  **Speech adds exactly eight more, and captions two** — `tts_status`, `tts_download`,
+  **Speech adds exactly eight more, captions two and OCR one** — `tts_status`, `tts_download`,
   `tts_synthesize`, `asr_status`, `asr_download`, `asr_transcribe` on every
   target, `tts_play`, `tts_stop` on desktop targets only, and `captions_list`,
-  `captions_fetch` on every target — and they are not
+  `captions_fetch` and `ocr_page` on every target — and they are not
   part of that protocol and never touch it. Audio crosses as bytes in every
   direction and never as JSON, wherever the IPC can carry bytes: `tts_synthesize`
   answers a `tauri::ipc::Response`, and `tts_play` and `asr_transcribe` take a
@@ -275,7 +301,7 @@ someone to run the check by hand.
   (`src/lib/asr/index.ts`) holds every decision, not this module, exactly as
   `tts.ts` does for the voice.
 
-- **Every one of the five crates `forbid`s `unsafe_code`, and the voice is
+- **Every one of the six crates `forbid`s `unsafe_code`, and the voice is
   k2-fsa's own crate.**
   `tts::kokoro` used to be the one exception — hand-rolled FFI, because the
   third-party `sherpa-rs` wrapper freed the rule-FST path string before
@@ -481,14 +507,14 @@ someone to run the check by hand.
   `tauri-build` writes on every desktop build.
 
 - **`sapling-desktop` is a workspace member but not a *default* member; the
-  four it lends from are.** It links WebKitGTK, which only `nix develop
+  five it lends from are.** It links WebKitGTK, which only `nix develop
   .#desktop` provides, and `pnpm core:check` / `pnpm core:test` are a bare
   `cargo clippy`/`cargo test` in the *default* shell — which builds
-  `sapling-speech` too, with its default `tts` and `asr` (sherpa-onnx-sys
+  `sapling-speech` too, with its default `tts` and `asr`, and `sapling-ocr` (sherpa-onnx-sys
   fetches its static library into `target/`; nothing in that shell is missing).
   `playback` wants `alsa-lib` and stays out of it because no default member
   enables it. `pnpm desktop:check` reaches the rest with `-p sapling-desktop -p
-  sapling-speech -p sapling-captions` in one invocation, so feature unification
+  sapling-speech -p sapling-captions -p sapling-ocr` in one invocation, so feature unification
   builds speech *with* `playback` there and `sapling-captions` *with* `native`,
   which its `transcript` example needs (a live list-and-fetch, run by hand). Keep all of them rustfmt-clean — `cargo fmt --check` walks every
   member, default or not. New source files must be `git add`ed before nix can

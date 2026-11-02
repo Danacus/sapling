@@ -1,9 +1,9 @@
 /**
  * PP-OCR's pre- and post-processing, pure: an RGBA raster in, lines of text
  * with the x of every character boundary out. Inference is not here — the
- * engine runs the two models between these steps — so this is the part a Rust
- * crate would take over unchanged, with ONNX Runtime native on a Tauri host
- * and onnxruntime-web in a browser.
+ * engine runs the two models between these steps. This is the browser's;
+ * `crates/sapling-ocr`'s `pipeline.rs` is the same code for a Tauri host, with
+ * the same constants and output, and a change here is a change there.
  *
  * Two models, PP-OCRv5: a detector (DB) that answers a text-probability map,
  * and a recognizer (SVTR, CTC) that reads one line crop 48px tall. The

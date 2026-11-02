@@ -5,7 +5,11 @@
  * Two sizes. *Mobile* (5 MB + 16 MB) is ~9× faster in wasm and reads printed
  * textbook lines nearly as well; *server* (88 MB + 84 MB) reads more and is the
  * native host's natural pick. Measured on one HSK 1 page (1394×1837, 71 lines),
- * wasm, 4 threads in node: mobile 0.8 s det + 1.8 s rec, server 11.5 s + 12.5 s.
+ * wasm, 4 threads in node: mobile 0.8 s det + 1.8 s rec, server 11.5 s + 12.5 s;
+ * natively on 12 threads, 1.5 s and 4.2 s the page.
+ *
+ * A Tauri host downloads the same files by set id from `crates/sapling-ocr`'s
+ * `models.rs`, pinned by size and sha256; a test there checks it against this.
  */
 
 const WEBNN =

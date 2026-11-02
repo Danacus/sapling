@@ -3,9 +3,11 @@
  * worker, which downloads the models on first use (Cache API, kept across
  * visits) and answers lines of text with every character's x on the page.
  *
- * On a Tauri host this would be a native call instead — the same pipeline in
- * Rust over ONNX Runtime with all cores — behind the same `ocrPage`.
+ * On a Tauri host it is a native call instead (`native.ts`): the same pipeline
+ * in Rust over ONNX Runtime with all cores, behind the same `ocrPage`.
  */
+import { inTauri } from '$lib/platform';
+
 import type { ModelSet } from './models';
 import type { OcrLine, Raster } from './pipeline';
 import type { OcrBackend, OcrRequest, OcrResponse, OcrTimings } from './protocol';
@@ -68,6 +70,11 @@ export function ocrPage(
 	backend: OcrBackend,
 	onProgress?: (progress: OcrProgress) => void
 ): Promise<OcrResult> {
+	if (inTauri()) {
+		return import('./native').then(({ ocrPageNatively }) =>
+			ocrPageNatively(raster, set, onProgress)
+		);
+	}
 	const id = nextId++;
 	return new Promise((resolve, reject) => {
 		pending.set(id, { resolve, reject, onProgress });

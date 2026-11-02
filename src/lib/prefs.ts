@@ -12,6 +12,8 @@
  * non-browser context (SSR-less here, but tests still run in node).
  */
 
+import { inTauri } from './platform';
+
 const ROMANIZATION_MODE_KEY = 'll.romanizationMode';
 /** Superseded by {@link ROMANIZATION_MODE_KEY}; still read once, to migrate. */
 const SHOW_ROMANIZATION_KEY = 'll.showRomanization';
@@ -140,24 +142,26 @@ export function setListeningMode(on: boolean): void {
 
 /**
  * Which on-device text reader the page viewer runs (`$lib/ocr`): `'mobile'`
- * ("Fast", ~21 MB, the default — it reads a printed textbook page nearly as
- * well in a fraction of the time) or `'server'` ("Accurate", ~170 MB, slow in
- * a browser). A device choice, like the others here: what this machine can
- * afford to download and run.
+ * ("Fast", ~21 MB, the browser's default — it reads a printed textbook page
+ * nearly as well in a fraction of the time) or `'server'` ("Accurate",
+ * ~170 MB, slow in a browser and the default on a Tauri host, which runs it
+ * natively on every core). A device choice, like the others here: what this
+ * machine can afford to download and run.
  */
 export type OcrModelSize = 'mobile' | 'server';
 
 const OCR_MODEL_SIZES: readonly OcrModelSize[] = ['mobile', 'server'];
 
 export function getOcrModelSize(): OcrModelSize {
-	if (!hasStorage()) return 'mobile';
+	const fallback: OcrModelSize = inTauri() ? 'server' : 'mobile';
+	if (!hasStorage()) return fallback;
 	try {
 		const raw = localStorage.getItem(OCR_MODEL_SIZE_KEY);
 		return raw !== null && (OCR_MODEL_SIZES as readonly string[]).includes(raw)
 			? (raw as OcrModelSize)
-			: 'mobile';
+			: fallback;
 	} catch {
-		return 'mobile';
+		return fallback;
 	}
 }
 

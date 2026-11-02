@@ -45,8 +45,11 @@ path = "src/main.rs"
 # `tts_stop` on `all(feature = "speech", desktop)`. One `dep:` entry enables
 # both declarations; resolver 2 applies a target table's features only where
 # that target is being built.
-default = ["speech"]
+default = ["speech", "ocr"]
 speech = ["dep:sapling-speech"]
+# PP-OCRv5 on ONNX Runtime, every target — the runtime sherpa-onnx already links,
+# so it is not a second one (`sapling-ocr`'s manifest says how).
+ocr = ["dep:sapling-ocr"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -68,6 +71,8 @@ sapling-speech = { path = "../sapling-speech", optional = true, default-features
 	"tts",
 	"asr",
 ] }
+# The page viewer's OCR, natively: all cores instead of the webview's one.
+sapling-ocr = { path = "../sapling-ocr", optional = true }
 # `devtools` is on because this is a spike and the APK CI hands out is now a
 # *release* build: without it a release webview has no inspector at all, and the
 # only way anyone here sees a console on the phone is `chrome://inspect` over

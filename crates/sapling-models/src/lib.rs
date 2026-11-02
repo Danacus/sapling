@@ -1,13 +1,13 @@
-//! Where a native speech model comes from, how it gets here, and how much CPU
-//! it gets once it is here.
+//! Where a native model comes from, how it gets here, and how much CPU it gets
+//! once it is here.
 //!
-//! Two capabilities run ONNX on a native host — the voice (`sapling-speech`'s
-//! `tts`) and the SenseVoice recognizer (its `asr`) — and everything they share
+//! Three capabilities run ONNX on a native host — the voice (`sapling-speech`'s
+//! `tts`), the SenseVoice recognizer (its `asr`) and `sapling-ocr` — and everything they share
 //! about a *model on disk* lives here rather than being copied: the
 //! [`ModelSpec`] shape that pins URL, exact byte size and sha256, one
 //! download-verify-unpack-rename install, one "is it here and what does it
 //! cost" probe. The engines keep their own configuration, their own opinions
-//! and their own specs (`sapling_speech::specs`); none knows about the others,
+//! and their own specs (`sapling_speech::specs`, `sapling_ocr::models`); none knows about the others,
 //! and all of them call this. The crate knows nothing about speech, so the
 //! next thing that wants a pinned archive on disk can use it as it is.
 //!
@@ -16,6 +16,10 @@
 //! `src/lib/tts/models.ts` pins a third-party mirror commit. Native sherpa-onnx
 //! reads ordinary files, so a native host takes every model straight from
 //! k2-fsa's own release assets instead: no mirror in the trust path.
+//!
+//! A model that is not an archive — OCR's ONNX files and dictionaries — is a
+//! [`ModelFile`]: the same pin and the same verified download, then one rename
+//! from `<name>.part`, because there is nothing to unpack.
 //!
 //! Both numbers beside a URL are checked before anything is extracted, because
 //! a truncated `model.onnx` does not fail at load — it fails somewhere inside
@@ -206,70 +210,14 @@ impl ModelSpec {
 
     /// Streams the archive to `archive`, hashing as it goes.
     fn download(&self, archive: &Path, on_progress: OnProgress<'_>) -> Result<(), String> {
-        let step = self.download_step();
-        on_progress(&step, 0, self.bytes);
-
-        let mut response = ureq::get(self.url)
-            .call()
-            .map_err(|e| format!("could not reach {}: {e}", self.url))?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(format!("{}: HTTP {}", self.url, status.as_u16()));
-        }
-
-        let mut body = response.body_mut().as_reader();
-        let mut file = File::create(archive)
-            .map_err(|e| format!("could not create {}: {e}", archive.display()))?;
-
-        let mut hasher = Sha256::new();
-        let mut buffer = vec![0u8; 256 * 1024];
-        let mut loaded: u64 = 0;
-        let mut reported: u64 = 0;
-
-        loop {
-            let read = body
-                .read(&mut buffer)
-                .map_err(|e| format!("the download stopped early: {e}"))?;
-            if read == 0 {
-                break;
-            }
-            let chunk = &buffer[..read];
-            // Fail on the first byte past the pin rather than after another
-            // 300 MB of someone else's file.
-            loaded += read as u64;
-            if loaded > self.bytes {
-                return Err(format!(
-                    "{} is larger than the expected {} bytes",
-                    step, self.bytes
-                ));
-            }
-            hasher.update(chunk);
-            file.write_all(chunk)
-                .map_err(|e| format!("could not write {}: {e}", archive.display()))?;
-            if loaded - reported >= PROGRESS_STEP_BYTES {
-                reported = loaded;
-                on_progress(&step, loaded, self.bytes);
-            }
-        }
-
-        file.flush()
-            .map_err(|e| format!("could not write {}: {e}", archive.display()))?;
-        on_progress(&step, loaded, self.bytes);
-
-        if loaded != self.bytes {
-            return Err(format!(
-                "{}: expected {} bytes, got {loaded}",
-                step, self.bytes
-            ));
-        }
-        let digest = hex(&hasher.finalize());
-        if digest != self.sha256 {
-            return Err(format!(
-                "{}: expected sha256 {}, got {digest}",
-                step, self.sha256
-            ));
-        }
-        Ok(())
+        fetch(
+            self.url,
+            self.bytes,
+            self.sha256,
+            &self.download_step(),
+            archive,
+            on_progress,
+        )
     }
 
     /// Unpacks the verified archive into `staging`, where the archive's own
@@ -340,6 +288,121 @@ impl ModelSpec {
         let _ = fs::remove_dir_all(staging);
         Ok(())
     }
+}
+
+/// One pinned file that is used as it is downloaded — an ONNX model, a
+/// dictionary — where there is no archive to unpack.
+pub struct ModelFile {
+    /// Its name on disk, unique within its directory, and its progress key.
+    pub name: &'static str,
+    pub url: &'static str,
+    pub bytes: u64,
+    pub sha256: &'static str,
+}
+
+impl ModelFile {
+    pub fn path_in(&self, dir: &Path) -> PathBuf {
+        dir.join(self.name)
+    }
+
+    /// Present at its pinned size. The rename below is what makes size enough.
+    pub fn installed_in(&self, dir: &Path) -> bool {
+        fs::metadata(self.path_in(dir)).is_ok_and(|meta| meta.len() == self.bytes)
+    }
+
+    /// Downloads and verifies the file into `<name>.part`, then renames it into
+    /// place, so the live path is only ever absent or whole. Idempotent.
+    pub fn install(&self, dir: &Path, on_progress: OnProgress<'_>) -> Result<PathBuf, String> {
+        let live = self.path_in(dir);
+        if self.installed_in(dir) {
+            on_progress(self.name, self.bytes, self.bytes);
+            return Ok(live);
+        }
+        fs::create_dir_all(dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+        let part = dir.join(format!("{}.part", self.name));
+        fetch(
+            self.url,
+            self.bytes,
+            self.sha256,
+            self.name,
+            &part,
+            on_progress,
+        )
+        .and_then(|_| {
+            fs::rename(&part, &live)
+                .map_err(|e| format!("could not move {} into place: {e}", live.display()))
+        })
+        .inspect_err(|_| {
+            let _ = fs::remove_file(&part);
+        })?;
+        Ok(live)
+    }
+}
+
+/// Streams `url` to `dest`, failing on the first byte past `bytes` and on a
+/// size or sha256 that does not match the pin.
+fn fetch(
+    url: &str,
+    bytes: u64,
+    sha256: &str,
+    step: &str,
+    dest: &Path,
+    on_progress: OnProgress<'_>,
+) -> Result<(), String> {
+    on_progress(step, 0, bytes);
+
+    let mut response = ureq::get(url)
+        .call()
+        .map_err(|e| format!("could not reach {url}: {e}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("{url}: HTTP {}", status.as_u16()));
+    }
+
+    let mut body = response.body_mut().as_reader();
+    let mut file =
+        File::create(dest).map_err(|e| format!("could not create {}: {e}", dest.display()))?;
+
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 256 * 1024];
+    let mut loaded: u64 = 0;
+    let mut reported: u64 = 0;
+
+    loop {
+        let read = body
+            .read(&mut buffer)
+            .map_err(|e| format!("the download stopped early: {e}"))?;
+        if read == 0 {
+            break;
+        }
+        let chunk = &buffer[..read];
+        // Fail on the first byte past the pin rather than after another
+        // 300 MB of someone else's file.
+        loaded += read as u64;
+        if loaded > bytes {
+            return Err(format!("{step} is larger than the expected {bytes} bytes"));
+        }
+        hasher.update(chunk);
+        file.write_all(chunk)
+            .map_err(|e| format!("could not write {}: {e}", dest.display()))?;
+        if loaded - reported >= PROGRESS_STEP_BYTES {
+            reported = loaded;
+            on_progress(step, loaded, bytes);
+        }
+    }
+
+    file.flush()
+        .map_err(|e| format!("could not write {}: {e}", dest.display()))?;
+    on_progress(step, loaded, bytes);
+
+    if loaded != bytes {
+        return Err(format!("{step}: expected {bytes} bytes, got {loaded}"));
+    }
+    let digest = hex(&hasher.finalize());
+    if digest != sha256 {
+        return Err(format!("{step}: expected sha256 {sha256}, got {digest}"));
+    }
+    Ok(())
 }
 
 /// A `Read` that reports how far through the archive it is.
@@ -434,6 +497,27 @@ mod tests {
             FIXTURE.files.len() as u64 + 2,
             "one 3-byte file and the rest one byte each"
         );
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_single_file_is_installed_only_at_its_pinned_size() {
+        let file = ModelFile {
+            name: "fixture.onnx",
+            url: "https://example.invalid/fixture.onnx",
+            bytes: 3,
+            sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+        };
+        let root = std::env::temp_dir().join(format!("sapling-model-file-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        assert!(!file.installed_in(&root));
+        fs::write(file.path_in(&root), b"xy").unwrap();
+        assert!(!file.installed_in(&root), "truncated");
+        fs::write(file.path_in(&root), b"xyz").unwrap();
+        assert!(file.installed_in(&root));
 
         fs::remove_dir_all(&root).unwrap();
     }

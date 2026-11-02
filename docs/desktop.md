@@ -121,8 +121,8 @@ exposes exactly the three commands `WasmCore` exposes to the database Worker —
 `src/lib/db/tauri.ts` is one `invoke` per `Backend` call, chosen by
 `backend.ts` when `inTauri()`; every argument still goes through `toPlain()`,
 because `client.ts` owns the proxy for both transports. Speech adds eight more
-commands and captions two, and both have a section below; OpenRouter's sign-in
-adds one more and the opener plugin.
+commands, captions two and OCR one, and each has a section below; OpenRouter's
+sign-in adds one more and the opener plugin.
 
 `dispatch` and `commit_all` are `async` and wait on `spawn_blocking`, like the
 long speech commands: a synchronous Tauri command runs on the main thread,
@@ -622,6 +622,52 @@ can answer is checked by hand, live:
 ```sh
 cargo run -p sapling-captions --features native --example transcript -- <video_id> [lang] [--auto]
 ```
+
+## OCR
+
+The page viewer's text reader (`src/lib/ocr/`) runs natively here:
+`crates/sapling-ocr` is `pipeline.ts` in Rust — the same detector and
+recognizer pre/post-processing, constants and output — over ONNX Runtime with
+every core (`available_threads`, four on a phone), where the browser's worker
+gets one thread, because the window is not cross-origin isolated.
+
+**One ONNX Runtime, sherpa-onnx's.** `sherpa-onnx-sys` 1.13.8 already links
+ONNX Runtime 1.28.2 — `libonnxruntime.a` statically on a desktop,
+`libonnxruntime.so` from its Android archive (copied into the APK as for
+speech). `sapling-ocr` uses the `ort` crate (`=2.0.0-rc.15`) with `ort-sys`'s
+`disable-linking`, so `ort` brings no runtime of its own and its
+`OrtGetApiBase` resolves to sherpa's; `api-28` matches 1.28. rustc puts
+`sherpa-onnx-sys` ahead of `ort` on the link line, so `sapling-ocr` references
+`OrtGetApiBase` itself (`link_runtime`) to pull the symbol in first. **Moving
+the sherpa-onnx pin moves the runtime**: check its ORT version and keep `ort`'s
+`api-*` feature at or below it.
+
+**The command**, one, on every target, behind the `ocr` feature (default on):
+
+| command | takes | answers |
+|---|---|---|
+| `ocr_page` | the RGBA raster as the body; `sapling-width`, `sapling-height`, `sapling-ocr-set` headers | `{ lines, timings: { loadMs, pageMs }, backend }` |
+
+The body is raw on the desktop and a JSON array of numbers on Android, as
+`asr_transcribe`'s audio. Progress (`{stage, done, total}`, the worker's
+stages) is emitted on `ocr://progress`. One page at a time and only the newest:
+a request overtaken while it waited answers `superseded`, as the worker does.
+The first call for a set downloads its three files into `<app-data>/ocr/`
+(`sapling-models`' `ModelFile`: pinned size and sha256, `.part` then a rename);
+`crates/sapling-ocr/src/models.rs` holds the pins by the set ids `models.ts`
+uses, and a test there checks the two agree. On this host the model size
+defaults to *Accurate* (server).
+
+Measured on HSK 1 p.32 (1394×1837), 12 threads, warm: mobile 1.5 s, server
+4.2 s the page. By hand:
+
+```sh
+cargo run --release -p sapling-ocr --example page -- page.ppm zh-server
+```
+
+`tests/page.rs` checks the runtime answers and, where `zh-mobile` is installed
+in the app's directory, reads a blank page; `installs_the_models` (ignored)
+downloads every set.
 
 ## OpenRouter sign-in
 

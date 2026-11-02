@@ -13,6 +13,7 @@ members = [
 	"crates/sapling-store",
 	"crates/sapling-models",
 	"crates/sapling-speech",
+	"crates/sapling-ocr",
 	"crates/sapling-captions",
 	"crates/sapling-desktop",
 ]
@@ -24,7 +25,8 @@ members = [
 # desktop:check` does): it links WebKitGTK, which only the `desktop` devShell
 # provides. `sapling-speech` is in with its default features, `tts` and `asr`:
 # `sherpa-onnx-sys` fetches its prebuilt static library into `target/` at build
-# time, which needs nothing the default shell lacks. Its `playback` feature
+# time, which needs nothing the default shell lacks — and so is `sapling-ocr`,
+# which links that same library's ONNX Runtime. Its `playback` feature
 # (rodio, which wants `alsa-lib`) is not a default, and nothing among the
 # default members turns it on, so feature unification cannot pull ALSA in here;
 # `desktop:check` builds it alongside `sapling-desktop`, which does.
@@ -42,6 +44,7 @@ default-members = [
 	"crates/sapling-store",
 	"crates/sapling-models",
 	"crates/sapling-speech",
+	"crates/sapling-ocr",
 	"crates/sapling-captions",
 ]
 resolver = "2"

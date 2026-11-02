@@ -1,0 +1,25 @@
+[package]
+name = "sapling-ocr"
+version = "0.0.1"
+edition = "2021"
+description = "PP-OCRv5 on native ONNX Runtime: a page raster in, lines with every character's x out."
+publish = false
+
+[dependencies]
+sapling-models = { path = "../sapling-models" }
+serde = { version = "1", features = ["derive"] }
+
+# ONNX Runtime is the one sherpa-onnx already links (1.28.2, statically on a
+# desktop, `libonnxruntime.so` on Android), not a second copy: `ort-sys` with
+# `disable-linking` emits no link directives, so its `OrtGetApiBase` resolves
+# to sherpa's. The `api-*` feature must not exceed that runtime's minor
+# version, and both pins move together with `sapling-speech`'s sherpa-onnx.
+ort = { version = "=2.0.0-rc.15", default-features = false, features = [
+	"std",
+	"api-28",
+] }
+ort-sys = { version = "=2.0.0-rc.15", default-features = false, features = [
+	"disable-linking",
+] }
+# Only for the runtime it links; nothing here calls sherpa itself.
+sherpa-onnx-sys = "=1.13.8"
