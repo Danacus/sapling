@@ -12,6 +12,9 @@ node_modules
 # Pages project by the deploy workflow. Never part of the app's build.
 /embed/dist
 
+# The companion extension's build (`pnpm extension:build`), loaded into Firefox from here.
+/extension/dist
+
 # OS
 .DS_Store
 Thumbs.db

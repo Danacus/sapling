@@ -378,6 +378,7 @@
 			<p class="eyebrow">Sapling</p>
 			<h1>Garden</h1>
 		</div>
+		<a class="btn btn-ghost inbox-link" href="/words/inbox">Inbox</a>
 	</header>
 
 	{#if loading}
@@ -833,6 +834,10 @@
 
 	.identity {
 		min-width: 0;
+	}
+
+	.inbox-link {
+		margin-left: auto;
 	}
 
 	.eyebrow {

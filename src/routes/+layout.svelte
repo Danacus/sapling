@@ -5,6 +5,7 @@
 
 	import favicon from '$lib/assets/favicon.svg';
 	import { getProfile } from '$lib/db';
+	import { installExtensionBridge } from '$lib/extension/bridge';
 	import { REMOTES, syncRemotes } from '$lib/remotes';
 	import { preloadReloadGuard } from '$lib/ui/preload-reload';
 	import AppNav from '$lib/ui/AppNav.svelte';
@@ -125,6 +126,8 @@
 					return;
 				}
 				checking = false;
+				// The companion extension may ask now that the database answers.
+				installExtensionBridge();
 				// Fire-and-forget, strictly after the render gate: no remote may
 				// ever be something the app waits on.
 				if (!remotesKicked) {

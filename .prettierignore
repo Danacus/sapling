@@ -1,6 +1,7 @@
 node_modules
 /build
 /embed/dist
+/extension/dist
 /.svelte-kit
 pnpm-lock.yaml
 

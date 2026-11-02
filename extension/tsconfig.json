@@ -1,0 +1,19 @@
+{
+	// The extension's own typecheck: svelte-check covers `src/**` only, and this
+	// directory imports the app's tokenizer, romanizer and bridge protocol, so a
+	// change there must fail `pnpm check` here too.
+	"compilerOptions": {
+		"target": "esnext",
+		"module": "esnext",
+		"moduleResolution": "bundler",
+		"lib": ["esnext", "DOM", "DOM.Iterable"],
+		"types": ["vite/client"],
+		"paths": { "$lib/*": ["../src/lib/*"] },
+		"verbatimModuleSyntax": true,
+		"isolatedModules": true,
+		"strict": true,
+		"skipLibCheck": true,
+		"noEmit": true
+	},
+	"include": ["*.ts"]
+}

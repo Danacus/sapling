@@ -1,0 +1,16 @@
+/* The page script's highlights, inserted with scripting.insertCSS so the page's DOM stays untouched. */
+::highlight(sapling-new) {
+	text-decoration: underline 2px #4f9a5c;
+}
+
+::highlight(sapling-learning) {
+	text-decoration: underline 2px #d19a3a;
+}
+
+::highlight(sapling-known) {
+	text-decoration: underline 1px dotted #7f8b78;
+}
+
+::highlight(sapling-collected) {
+	background-color: rgb(120 160 220 / 0.25);
+}

@@ -49,7 +49,7 @@ export default defineConfig({
 		// has to keep agreeing with the client's forever, so it needs a test that
 		// `pnpm test` actually runs.
 		environment: 'node',
-		include: ['src/**/*.test.ts', 'worker/**/*.test.ts'],
+		include: ['src/**/*.test.ts', 'worker/**/*.test.ts', 'extension/**/*.test.ts'],
 		// The challenge decisions are synchronous calls into the wasm core, which
 		// the browser loads before the first page renders; here every file gets
 		// it instantiated up front instead.
