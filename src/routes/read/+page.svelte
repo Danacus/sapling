@@ -290,8 +290,8 @@
 				</div>
 				<div class="pane" hidden={tab !== 'textbook'}>
 					<p class="hint lead">
-						Open a textbook PDF, or photos of its pages, and read it as it prints with your words
-						marked on it. Nothing is kept.
+						Open a textbook PDF and read it as it prints with your words marked on it. Nothing is
+						kept.
 					</p>
 					<a class="btn btn-primary btn-block go" href="/read/pdf">Open the page viewer</a>
 				</div>

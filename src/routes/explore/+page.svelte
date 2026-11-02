@@ -20,7 +20,7 @@
 		},
 		{
 			title: 'Read a textbook',
-			copy: 'Open a PDF or photos of its pages and see the words you know marked on the page.',
+			copy: 'Open a textbook PDF and see the words you know marked on the page.',
 			href: '/read/pdf',
 			kind: 'pages'
 		},

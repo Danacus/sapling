@@ -1,8 +1,10 @@
 /**
  * The page viewer's bookkeeping, pure so it is tested in node: what the panel
- * counts on a page (the legend, the words not held yet), which pages the rail
- * shows, how the OCR worker's progress messages fold into the steps the
- * "Reading this page" card draws, and the few strings built from numbers.
+ * counts on a page (the legend, the words not held yet), where each word sits
+ * on the page, how the OCR worker's progress messages fold into the steps the
+ * "Reading this page" card draws, the zoom the toolbar, the wheel and a pinch
+ * ask for, the position remembered per file, and the few strings built from
+ * numbers.
  *
  * Nothing here draws, stores or calls anything. A page's words are the
  * reader's own `annotateSentence` tokens, one array per line, handed in.
@@ -45,10 +47,8 @@ export function forTarget(words: readonly ReadingWord[], tag: string | undefined
 }
 
 /** The title a file gives the page: its name without the extension. */
-export function fileTitle(files: readonly { name: string }[]): string {
-	if (files.length === 0) return '';
-	if (files.length > 1) return `${files.length} page images`;
-	const name = files[0].name.trim();
+export function fileTitle(file: { name: string }): string {
+	const name = file.name.trim();
 	const dot = name.lastIndexOf('.');
 	return dot > 0 ? name.slice(0, dot) : name;
 }
@@ -110,6 +110,207 @@ export function offsetOf(words: readonly ReadingWord[], index: number): number {
 /** The lines the recognizer was unsure of, by index (pictures are already gone). */
 export function unsureLines(lines: readonly OcrLine[]): number[] {
 	return lines.flatMap((line, l) => (line.score < UNSURE_SCORE ? [l] : []));
+}
+
+/* ---- Words on the page ------------------------------------------------------ */
+
+/** A rectangle as percentages of the page, so a zoom moves nothing. */
+export interface PageBox {
+	left: number;
+	top: number;
+	width: number;
+	height: number;
+}
+
+/** A line's box as percentages of the page it was read at (`size`, the raster's). */
+export function boxOf(line: OcrLine, size: { width: number; height: number }): PageBox {
+	return {
+		left: (line.box.x / size.width) * 100,
+		top: (line.box.y / size.height) * 100,
+		width: (line.box.w / size.width) * 100,
+		height: (line.box.h / size.height) * 100
+	};
+}
+
+export interface PlacedWord extends PageBox {
+	word: ReadingWord;
+	line: number;
+	/** The character offset into its line the word starts at. */
+	offset: number;
+}
+
+/**
+ * Every word with a key, placed over its glyphs: its line's box, cut at the
+ * x of its first and past its last character. A word with no edges recorded
+ * (an edge list shorter than the line) falls back to the line's own ends.
+ */
+export function placeWords(
+	lines: readonly OcrLine[],
+	words: readonly (readonly ReadingWord[])[],
+	size: { width: number; height: number }
+): PlacedWord[] {
+	const { width: W, height: H } = size;
+	const out: PlacedWord[] = [];
+	lines.forEach((line, l) => {
+		let at = 0;
+		for (const word of words[l] ?? []) {
+			const start = at;
+			at += word.text.length;
+			if (!word.key) continue;
+			const x0 = line.edges[start] ?? line.box.x;
+			const x1 = line.edges[at] ?? line.box.x + line.box.w;
+			out.push({
+				word,
+				line: l,
+				offset: start,
+				left: (x0 / W) * 100,
+				top: (line.box.y / H) * 100,
+				width: (Math.max(1, x1 - x0) / W) * 100,
+				height: (line.box.h / H) * 100
+			});
+		}
+	});
+	return out;
+}
+
+/* ---- Zoom ---------------------------------------------------------------------- */
+
+/** A fit pdf.js recomputes from the frame, or a scale (1 is 100%). */
+export type Zoom = 'page-fit' | 'page-width' | number;
+
+export const ZOOM_MIN = 0.25;
+export const ZOOM_MAX = 5;
+export const DEFAULT_ZOOM: Zoom = 'page-fit';
+
+/** The toolbar's choices, in the order the menu lists them. */
+export const ZOOM_PRESETS: readonly { zoom: Zoom; label: string }[] = [
+	{ zoom: 'page-fit', label: 'Fit page' },
+	{ zoom: 'page-width', label: 'Fit width' },
+	...[0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4].map((zoom) => ({ zoom, label: zoomLabel(zoom) }))
+];
+
+const SCALES = ZOOM_PRESETS.flatMap((preset) =>
+	typeof preset.zoom === 'number' ? [preset.zoom] : []
+);
+
+export function clampScale(scale: number): number {
+	return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, scale));
+}
+
+/** A scale as the toolbar prints it. */
+export function zoomLabel(scale: number): string {
+	return `${Math.round(scale * 100)}%`;
+}
+
+/** A stored or chosen zoom made into one the viewer takes; anything else is none. */
+export function parseZoom(value: unknown): Zoom | undefined {
+	if (value === 'page-fit' || value === 'page-width') return value;
+	const scale = typeof value === 'string' && value.trim() ? Number(value) : value;
+	if (typeof scale !== 'number' || !Number.isFinite(scale) || scale <= 0) return undefined;
+	return clampScale(scale);
+}
+
+/**
+ * What pdf.js reports (`scalechanging`: the scale, and the preset when one
+ * set it) as the zoom in effect: the fit, which a resize should refit, else
+ * the scale to two places, as pdf.js itself rounds it.
+ */
+export function zoomOf(scale: number, preset?: string): Zoom {
+	if (preset === 'page-fit' || preset === 'page-width') return preset;
+	return Math.round(scale * 100) / 100;
+}
+
+/** The menu's value for a zoom: a preset's own, or `custom` for a pinched scale. */
+export function zoomChoice(zoom: Zoom): string {
+	if (typeof zoom === 'string') return zoom;
+	return SCALES.includes(zoom) ? String(zoom) : 'custom';
+}
+
+/** One press of + or −: the next preset scale past this one, within the limits. */
+export function zoomStep(scale: number, direction: 1 | -1): number {
+	const next =
+		direction > 0
+			? SCALES.find((preset) => preset > scale * 1.01)
+			: [...SCALES].reverse().find((preset) => preset < scale / 1.01);
+	return clampScale(next ?? (direction > 0 ? ZOOM_MAX : ZOOM_MIN));
+}
+
+/**
+ * A Ctrl/⌘ wheel event (and a trackpad pinch, which browsers report as one)
+ * as a scale factor. Lines and pages are made pixels; each event is capped at
+ * 10px so a mouse notch (100px) is one ~10% step, while a pinch's few pixels
+ * stay as smooth as the fingers.
+ */
+export function wheelFactor(deltaY: number, deltaMode: number): number {
+	const px = deltaMode === 1 ? deltaY * 16 : deltaMode === 2 ? deltaY * 800 : deltaY;
+	return Math.exp(-Math.min(10, Math.max(-10, px)) / 100);
+}
+
+/**
+ * A stream of small factors folded into scales the viewer will actually take:
+ * pdf.js rounds a scale to 0.01, so a single pinch event at 50% would round
+ * back to where it started. The factor accumulates until it moves the rounded,
+ * clamped scale, which is then applied and the account cleared; pushing past a
+ * limit clears it too, so turning back is felt at once.
+ */
+export function accumulateZoom(
+	scale: number,
+	pending: number,
+	factor: number
+): { scale: number | undefined; pending: number } {
+	const wanted = scale * pending * factor;
+	const target = clampScale(Math.round(wanted * 100) / 100);
+	if (target !== Math.round(scale * 100) / 100) return { scale: target, pending: 1 };
+	if (wanted < ZOOM_MIN || wanted > ZOOM_MAX) return { scale: undefined, pending: 1 };
+	return { scale: undefined, pending: pending * factor };
+}
+
+/**
+ * A point on screen as the origin `PDFViewer.updateScale` takes. pdf.js
+ * subtracts the container's `offsetTop`/`offsetLeft` from the origin, which is
+ * the client position only when the container sits at the top left of the
+ * window; this one sits in a frame, so the point is made container-relative
+ * and the offsets pdf.js will subtract are added back.
+ */
+export function zoomOrigin(
+	client: { x: number; y: number },
+	rect: { left: number; top: number },
+	offset: { left: number; top: number }
+): [number, number] {
+	return [client.x - rect.left + offset.left, client.y - rect.top + offset.top];
+}
+
+/* ---- Where the learner was, per file and device -------------------------------- */
+
+export interface Position {
+	page: number;
+	zoom: Zoom;
+}
+
+const POSITION_KEY = 'll.pdfPosition.';
+
+/** A file's key: its name and size, since the book itself is never stored. */
+export function positionKey(file: { name: string; size: number }): string {
+	return `${POSITION_KEY}${file.size}:${file.name}`;
+}
+
+export function serializePosition(position: Position): string {
+	return JSON.stringify({ page: position.page, zoom: position.zoom });
+}
+
+/** A stored position read leniently: a bad zoom is the default, a bad page none at all. */
+export function parsePosition(raw: string | null | undefined): Position | undefined {
+	if (!raw) return undefined;
+	let value: unknown;
+	try {
+		value = JSON.parse(raw);
+	} catch {
+		return undefined;
+	}
+	if (!value || typeof value !== 'object') return undefined;
+	const { page, zoom } = value as { page?: unknown; zoom?: unknown };
+	if (typeof page !== 'number' || !Number.isInteger(page) || page < 1) return undefined;
+	return { page, zoom: parseZoom(zoom) ?? DEFAULT_ZOOM };
 }
 
 /* ---- Reading a page: the worker's progress, as steps ------------------------ */

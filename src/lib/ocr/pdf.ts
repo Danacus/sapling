@@ -1,19 +1,20 @@
 /**
- * A PDF (or a page image) as pages the viewer can draw and read: each page a
- * raster for the screen and for OCR, and — where the PDF has real text — the
- * lines pdf.js finds in it, in the same shape OCR answers, so the overlay
- * never knows which it got.
+ * A PDF as pages OCR can read. The screen is pdf.js's own viewer, over the
+ * same `PDFDocumentProxy` this opens (`proxy`, handed to `PDFViewer`); what
+ * this module adds is the reading side: each page rasterised at a fixed long
+ * side for OCR, and — where the PDF has real text — the lines pdf.js finds in
+ * it, in the same shape OCR answers, so the overlay never knows which it got.
  */
+import type { PDFDocumentProxy } from 'pdfjs-dist';
+
 import type { OcrLine, Raster } from './pipeline';
 
-/** The long side a page is drawn at: sharp on a laptop, and what OCR reads. */
+/** The long side a page is read at: what OCR is tuned for, whatever the zoom. */
 const LONG_SIDE = 1800;
 
 export interface ViewerPage {
 	raster: Raster;
-	/** The page as the screen shows it, at the raster's size. */
-	url: string;
-	/** pdf.js's text, empty for an image or a PDF whose text is drawn, not encoded. */
+	/** pdf.js's text, empty for a PDF whose text is drawn, not encoded. */
 	textLines: OcrLine[];
 }
 
@@ -21,6 +22,8 @@ export interface ViewerPage {
 const THUMB_SIDE = 160;
 
 export interface ViewerDocument {
+	/** The document itself, for `PDFViewer.setDocument`: one load, two readers. */
+	proxy: PDFDocumentProxy;
 	count: number;
 	page(n: number): Promise<ViewerPage>;
 	/** Page `n` small, as an object URL the caller revokes; no text, no raster. */
@@ -112,10 +115,32 @@ export function linesOfItems(
 		.map(({ text, box, edges, score }) => ({ text, box, edges, score }));
 }
 
-async function pdfDocument(file: File): Promise<ViewerDocument> {
+/** pdf.js with its worker configured; imported once, on first use. */
+async function pdfjsModule() {
 	const pdfjs = await import('pdfjs-dist');
 	const worker = await import('pdfjs-dist/build/pdf.worker.min.mjs?url');
 	pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
+	return pdfjs;
+}
+
+/**
+ * pdf.js's viewer components and the two enums its options take. The viewer
+ * module reads the API from `globalThis.pdfjsLib`, which loading pdf.js sets,
+ * so it is only ever imported after it.
+ */
+export async function viewerModule() {
+	const pdfjs = await pdfjsModule();
+	const viewer = await import('pdfjs-dist/web/pdf_viewer.mjs');
+	return {
+		...viewer,
+		AnnotationMode: pdfjs.AnnotationMode,
+		AnnotationEditorType: pdfjs.AnnotationEditorType,
+		TouchManager: pdfjs.TouchManager
+	};
+}
+
+export async function openPdf(file: File): Promise<ViewerDocument> {
+	const pdfjs = await pdfjsModule();
 	const doc = await pdfjs.getDocument({
 		data: new Uint8Array(await file.arrayBuffer()),
 		// The JBIG2 and JPEG 2000 decoders, which scans are often encoded in: from
@@ -123,6 +148,7 @@ async function pdfDocument(file: File): Promise<ViewerDocument> {
 		wasmUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/wasm/`
 	}).promise;
 	return {
+		proxy: doc,
 		count: doc.numPages,
 		async page(n) {
 			const page = await doc.getPage(n);
@@ -141,8 +167,8 @@ async function pdfDocument(file: File): Promise<ViewerDocument> {
 				(m) => pdfjs.Util.transform(viewport.transform, m),
 				viewport.scale
 			);
-			page.cleanup();
-			return { raster: rasterOf(canvas), url: await blobUrl(canvas), textLines };
+			// No `page.cleanup()`: the viewer is drawing the same page proxy.
+			return { raster: rasterOf(canvas), textLines };
 		},
 		async thumbnail(n) {
 			const page = await doc.getPage(n);
@@ -163,34 +189,6 @@ async function pdfDocument(file: File): Promise<ViewerDocument> {
 	};
 }
 
-async function imageDocument(files: File[]): Promise<ViewerDocument> {
-	return {
-		count: files.length,
-		async page(n) {
-			const bitmap = await createImageBitmap(files[n - 1]);
-			const scale = Math.min(1, LONG_SIDE / Math.max(bitmap.width, bitmap.height));
-			const canvas = canvasOf(bitmap.width * scale, bitmap.height * scale);
-			canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-			bitmap.close();
-			return { raster: rasterOf(canvas), url: await blobUrl(canvas), textLines: [] };
-		},
-		async thumbnail(n) {
-			const bitmap = await createImageBitmap(files[n - 1]);
-			const scale = Math.min(1, THUMB_SIDE / Math.max(bitmap.width, bitmap.height));
-			const canvas = canvasOf(bitmap.width * scale, bitmap.height * scale);
-			canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-			bitmap.close();
-			return blobUrl(canvas);
-		},
-		close() {}
-	};
-}
-
 export function isPdf(file: File): boolean {
 	return file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
-}
-
-/** One PDF, or one image per page. */
-export function openDocument(files: File[]): Promise<ViewerDocument> {
-	return files.length === 1 && isPdf(files[0]) ? pdfDocument(files[0]) : imageDocument(files);
 }

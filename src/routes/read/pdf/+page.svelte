@@ -1,20 +1,33 @@
 <!--
-  Spike: a page viewer with the learner's words annotated on the page itself.
-  A PDF or page images are drawn as they print; each page's text comes from
-  the PDF's own text layer where it has one, else from on-device OCR
-  (`$lib/ocr`, PP-OCRv5 in a worker). Either way a page is lines of text with
-  every character's x, so a word is underlined in place by the reader's own
-  annotation (by how well it is held) and opens the word card.
-  Nothing is stored: the file stays on the device, the page is read on open.
+  A PDF reader with the learner's words annotated on the page itself. The
+  book is pdf.js's own viewer (`PDFViewer`, `pdf_viewer.mjs`): every page in
+  one continuous scroll, virtualised and drawn by pdf.js's rendering queue,
+  zoomed from the toolbar, the keys, Ctrl/⌘+wheel, a trackpad or a two-finger
+  pinch, and panned by dragging with the mouse. Its text layer, annotation
+  layer, find and scripting are all off: what sits on a page is ours.
 
-  The book is open on the desk. At ≥48rem the page faces a panel — "On this
-  page" (the legend, the words not held yet), the word card docked in its
-  place when one is tapped, or the steps of reading a scanned page while OCR
-  runs — and at ≥72rem a rail of nearby pages joins on the left. A phone shows
-  one page at the width of the screen, a bar at its foot (turn, Page | Lines,
-  Words) and the reader's sheet for the card and the word list. Settings are
-  not on the screen: the script is the profile's, the backend and the source
-  are automatic, and the model size is a quiet device preference.
+  Each page's text comes from the PDF's own text layer where it has one, else
+  from on-device OCR (`$lib/ocr`, PP-OCRv5 in a worker), over a fixed raster
+  of the same `PDFDocumentProxy` (`$lib/ocr/pdf.ts`) whatever the zoom. Either
+  way a page is lines of text with every character's x, so a word is
+  underlined in place by the reader's own annotation (by how well it is held)
+  and opens the word card. The current page (`pagechanging`) and the one after
+  it are read; their overlays (`PageOverlay.svelte`) are mounted into
+  pdf.js's `div.page` in percentages, so a zoom moves nothing, and put back
+  whenever pdf.js resets the page. Nothing is stored but, per device, the
+  page and zoom last read in a file (`localStorage`, by name and size); the
+  file stays on the device and is read on open.
+
+  The book is open on a desk. At ≥48rem one slim toolbar runs over the desk,
+  the page faces a panel — "On this page" (the legend, the words not held
+  yet), the word card docked in its place when one is tapped, or the steps of
+  reading a scanned page while OCR runs — and a rail of thumbnails can join on
+  the left (open by default at ≥72rem); both toggle, and with both closed the
+  page takes the width. A phone shows the desk under a compact header, a bar
+  at its foot (turn, Page | Lines, Words) and the reader's sheet for the card
+  and the word list. Settings are not on the screen: the script is the
+  profile's, the backend and the source are automatic, and the model size is
+  a quiet device preference.
 
   Two annotations of every line are kept, tokenized alike so their indices
   agree: one in the learner's own `RomanizationMode` for anything drawn as
@@ -24,12 +37,17 @@
 -->
 <script lang="ts">
 	import { page as route } from '$app/state';
-	import { untrack } from 'svelte';
+	import { mount, unmount, untrack } from 'svelte';
+	import { SvelteMap } from 'svelte/reactivity';
+	// Injected only while this page is mounted, in a layer of its own: its
+	// `:root` and `.spread` rules would otherwise reach every screen after it.
+	import viewerCss from 'pdfjs-dist/web/pdf_viewer.css?inline';
+	import type { PDFViewer } from 'pdfjs-dist/web/pdf_viewer.mjs';
 
 	import { addWords } from '$lib/assistant';
 	import { getAllItems, getKnownTerms, getProfile, recordTextbookStudy } from '$lib/db';
-	import { modelSet, ocrPage, scriptFor, type OcrLine } from '$lib/ocr';
-	import { isPdf, openDocument, type ViewerDocument, type ViewerPage } from '$lib/ocr/pdf';
+	import { modelSet, ocrPage, scriptFor, type ModelSet, type OcrLine } from '$lib/ocr';
+	import { isPdf, openPdf, viewerModule, type ViewerDocument, type ViewerPage } from '$lib/ocr/pdf';
 	import { getOcrModelSize, getRomanizationMode } from '$lib/prefs';
 	import {
 		annotateSentence,
@@ -38,7 +56,6 @@
 		studyTracker,
 		tokenizeByTerms,
 		type AnnotateContext,
-		type ReadingWord,
 		type TokenizeFn
 	} from '$lib/reading';
 	import { syncRemotes } from '$lib/remotes';
@@ -49,8 +66,12 @@
 	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 	import FileSlot from '../FileSlot.svelte';
+	import PageOverlay from './PageOverlay.svelte';
 	import {
+		accumulateZoom,
+		boxOf,
 		clampPage,
+		DEFAULT_ZOOM,
 		downloadOf,
 		fileTitle,
 		foldProgress,
@@ -60,10 +81,25 @@
 		NO_STEPS,
 		notYetWords,
 		offsetOf,
+		parsePosition,
+		parseZoom,
+		placeWords,
+		positionKey,
+		serializePosition,
 		textLinesOf,
 		unsureLines,
+		wheelFactor,
 		wordAt,
-		type ReadingSteps
+		ZOOM_PRESETS,
+		zoomChoice,
+		zoomLabel,
+		zoomOf,
+		zoomOrigin,
+		zoomStep,
+		type PageBox,
+		type PlacedWord,
+		type ReadingSteps,
+		type Zoom
 	} from './viewer';
 
 	/* ---- The learner --------------------------------------------------------- */
@@ -102,6 +138,14 @@
 	/** `?debug` outlines every line the page was read as. */
 	const debug = $derived(route.url.searchParams.has('debug'));
 
+	// pdf.js's stylesheet, for as long as the viewer is on screen.
+	$effect(() => {
+		const style = document.createElement('style');
+		style.textContent = `@layer pdfjs {\n${viewerCss}\n}`;
+		document.head.append(style);
+		return () => style.remove();
+	});
+
 	/* ---- The viewport ---------------------------------------------------------- */
 
 	/**
@@ -127,85 +171,337 @@
 		};
 	});
 
-	let zoom = $state<'whole' | 'width'>('whole');
 	/** Page or Lines: a phone's choice; the spread always shows the page. */
 	let view = $state<'page' | 'lines'>('page');
 	const shownView = $derived(wide ? 'page' : view);
+
+	/** The rail follows the width until the learner says otherwise. */
+	let railChoice = $state<boolean | undefined>(undefined);
+	let panelOpen = $state(true);
+	const showRail = $derived(wide && (railChoice ?? broad));
+	const showPanel = $derived(wide && panelOpen);
 
 	/* ---- The document and the page ------------------------------------------ */
 
 	// Raw: a document is a handle, and the raster goes to a worker — a proxy cannot be cloned.
 	let doc = $state.raw<ViewerDocument | undefined>(undefined);
+	let file = $state.raw<File | undefined>(undefined);
 	let title = $state('');
-	let kind = $state('');
 	let pageNo = $state(1);
-	let shown = $state.raw<{ n: number; page: ViewerPage } | undefined>(undefined);
-	let drawing = $state(false);
 	let error = $state('');
 
-	async function pickFiles(event: Event) {
-		const input = event.currentTarget as HTMLInputElement;
-		const files = [...(input.files ?? [])];
-		input.value = '';
-		if (files.length === 0) return;
-		error = '';
+	/** The zoom in effect (a fit or a scale) and the scale it came to. */
+	let zoom = $state<Zoom>(DEFAULT_ZOOM);
+	let scale = $state(1);
+
+	function rememberedPosition(of: File) {
 		try {
-			const opened = await openDocument(files);
-			doc?.close();
-			ocrCache.clear();
+			return parsePosition(localStorage.getItem(positionKey(of)));
+		} catch {
+			return undefined;
+		}
+	}
+
+	let saveTimer: ReturnType<typeof setTimeout> | undefined;
+
+	/** The page and zoom, a beat after they settle: a pinch reports dozens a second. */
+	function savePosition() {
+		const of = file;
+		if (!of) return;
+		clearTimeout(saveTimer);
+		saveTimer = setTimeout(() => {
+			try {
+				localStorage.setItem(positionKey(of), serializePosition({ page: pageNo, zoom }));
+			} catch {
+				// A convenience; the book still opens at its first page.
+			}
+		}, 300);
+	}
+
+	async function pickFile(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		const picked = input.files?.[0];
+		input.value = '';
+		if (!picked) return;
+		error = '';
+		if (!isPdf(picked)) {
+			error = 'That is not a PDF.';
+			return;
+		}
+		try {
+			const opened = await openPdf(picked);
+			pageTexts.clear();
+			readErrors.clear();
 			clearThumbs();
 			rolls = new Map();
+			const position = rememberedPosition(picked);
+			file = picked;
+			title = fileTitle(picked);
+			pageNo = clampPage(position?.page ?? 1, opened.count);
+			zoom = position?.zoom ?? DEFAULT_ZOOM;
+			resetPageState();
 			doc = opened;
-			title = fileTitle(files);
-			kind =
-				files.length === 1 && isPdf(files[0])
-					? `PDF · ${opened.count} ${opened.count === 1 ? 'page' : 'pages'}`
-					: 'Page images';
-			turnTo(1);
 		} catch (cause) {
 			error = cause instanceof Error ? cause.message : 'Could not open that file.';
 		}
 	}
 
-	/** Every page change goes through here: the card and the meanings belong to a page. */
-	function turnTo(n: number) {
-		if (!doc) return;
-		pageNo = clampPage(n, doc.count, pageNo);
+	// A document is closed when another replaces it, or when the page goes.
+	$effect(() => {
+		const current = doc;
+		return () => current?.close();
+	});
+
+	/** The card and the meanings belong to a page: a new page starts without them. */
+	function resetPageState() {
 		picked = undefined;
 		sheet = false;
 		found = {};
 		glossError = '';
 	}
 
+	/** pdf.js says the current page changed — by a scroll, a jump or a pick. */
+	function arrive(n: number) {
+		if (n === pageNo) return;
+		pageNo = n;
+		resetPageState();
+		savePosition();
+	}
+
+	/** Every page change the learner asks for: pdf.js scrolls there and says so. */
+	function goTo(n: number) {
+		if (!doc || !pdfViewer) return;
+		pdfViewer.currentPageNumber = clampPage(n, doc.count, pageNo);
+	}
+
 	function commitPageInput(event: Event) {
 		const input = event.currentTarget as HTMLInputElement;
 		if (!doc) return;
-		turnTo(clampPage(Number(input.value), doc.count, pageNo));
+		goTo(clampPage(Number(input.value), doc.count, pageNo));
 		input.value = String(pageNo);
 	}
 
-	// Draw the page whenever the document or the page number changes.
+	/* ---- pdf.js's viewer ------------------------------------------------------ */
+
+	let containerEl = $state<HTMLDivElement | undefined>(undefined);
+	let viewerEl = $state<HTMLDivElement | undefined>(undefined);
+	// Raw: pdf.js owns the object; a proxy around it would break its private fields.
+	let pdfViewer = $state.raw<PDFViewer | undefined>(undefined);
+	let dragging = $state(false);
+
+	function setZoom(next: Zoom) {
+		if (pdfViewer) pdfViewer.currentScaleValue = String(next);
+	}
+
+	/**
+	 * One step of a continuous zoom (a wheel, a pinch), anchored at a point on
+	 * screen, through the factor account `accumulateZoom` keeps per gesture.
+	 */
+	function zoomAt(
+		viewer: PDFViewer,
+		container: HTMLElement,
+		pending: number,
+		factor: number,
+		client: { x: number; y: number },
+		pan?: [number, number]
+	): number {
+		const step = accumulateZoom(viewer.currentScale, pending, factor);
+		if (step.scale === undefined) {
+			if (pan) viewer.panBy(pan[0], pan[1]);
+			return step.pending;
+		}
+		viewer.updateScale({
+			scaleFactor: step.scale / viewer.currentScale,
+			origin: zoomOrigin(client, container.getBoundingClientRect(), {
+				left: container.offsetLeft,
+				top: container.offsetTop
+			}),
+			...(pan ? { pan } : {}),
+			drawingDelay: 400
+		});
+		return step.pending;
+	}
+
+	// The viewer, one per open document: built once the container is on screen,
+	// opened where this file was last left, and every gesture wired to it.
 	$effect(() => {
 		const current = doc;
-		const n = pageNo;
-		if (!current) return;
-		let cancelled = false;
-		drawing = true;
-		void current
-			.page(n)
-			.then((loaded) => {
-				if (cancelled) return URL.revokeObjectURL(loaded.url);
-				if (shown) URL.revokeObjectURL(shown.page.url);
-				shown = { n, page: loaded };
+		const container = containerEl;
+		const inner = viewerEl;
+		if (!current || !container || !inner) return;
+		const start = untrack(() => ({ page: pageNo, zoom }));
+		const abort = new AbortController();
+		const { signal } = abort;
+		let viewer: PDFViewer | undefined;
+		let touch: { destroy(): void } | undefined;
+		let observer: MutationObserver | undefined;
+		let resized: ResizeObserver | undefined;
+		let ready = false;
+
+		void viewerModule()
+			.then((kit) => {
+				if (signal.aborted) return;
+				const eventBus = new kit.EventBus();
+				// `abortSignal` is read by the constructor (its scroll and resize
+				// watchers) but missing from the typings.
+				const options: ConstructorParameters<typeof kit.PDFViewer>[0] & {
+					abortSignal: AbortSignal;
+				} = {
+					container,
+					viewer: inner,
+					eventBus,
+					abortSignal: signal,
+					textLayerMode: 0,
+					annotationMode: kit.AnnotationMode.DISABLE,
+					annotationEditorMode: kit.AnnotationEditorType.DISABLE,
+					enableAutoLinking: false
+				};
+				const built = new kit.PDFViewer(options);
+				viewer = built;
+				eventBus.on(
+					'pagesinit',
+					() => {
+						ready = true;
+						built.currentScaleValue = String(start.zoom);
+						built.currentPageNumber = clampPage(start.page, current.count);
+						attachOverlays();
+					},
+					{ signal }
+				);
+				eventBus.on(
+					'pagechanging',
+					({ pageNumber }: { pageNumber: number }) => {
+						if (ready) arrive(pageNumber);
+					},
+					{ signal }
+				);
+				eventBus.on(
+					'scalechanging',
+					({ scale: next, presetValue }: { scale: number; presetValue?: string }) => {
+						scale = next;
+						zoom = zoomOf(next, presetValue);
+						if (ready) savePosition();
+					},
+					{ signal }
+				);
+				built.setDocument(current.proxy);
+				pdfViewer = built;
+
+				// pdf.js resets a page (a zoom, a redraw, leaving its buffer) by
+				// emptying its div, our overlay with it: put it back each time.
+				observer = new MutationObserver(attachOverlays);
+				observer.observe(inner, { childList: true, subtree: true });
+
+				// A fit is a fit of the frame: refit when the frame changes (a panel
+				// toggled, the window resized).
+				let frame = 0;
+				resized = new ResizeObserver(() => {
+					cancelAnimationFrame(frame);
+					frame = requestAnimationFrame(() => {
+						if (ready && typeof zoom === 'string') built.currentScaleValue = zoom;
+					});
+				});
+				// The border box: a scrollbar appearing after a fit is not a resize.
+				resized.observe(container, { box: 'border-box' });
+
+				let pinchPending = 1;
+				touch = new kit.TouchManager({
+					container,
+					signal,
+					onPinchStart: () => {
+						pinchPending = 1;
+					},
+					onPinching: (
+						origin: [number, number],
+						previous: number,
+						distance: number,
+						dx: number,
+						dy: number
+					) => {
+						pinchPending = zoomAt(
+							built,
+							container,
+							pinchPending,
+							distance / previous,
+							{ x: origin[0], y: origin[1] },
+							[dx, dy]
+						);
+					},
+					onPanning: (dx: number, dy: number) => built.panBy(dx, dy)
+				});
 			})
 			.catch((cause) => {
-				if (!cancelled) error = cause instanceof Error ? cause.message : String(cause);
-			})
-			.finally(() => {
-				if (!cancelled) drawing = false;
+				if (!signal.aborted) error = cause instanceof Error ? cause.message : String(cause);
 			});
+
+		// Ctrl/⌘+wheel and a trackpad pinch (a wheel with ctrlKey) zoom the page,
+		// never the app; a plain wheel scrolls as it always does.
+		let wheelPending = 1;
+		const onWheel = (event: WheelEvent) => {
+			if (!(event.ctrlKey || event.metaKey) || !viewer) return;
+			event.preventDefault();
+			wheelPending = zoomAt(
+				viewer,
+				container,
+				wheelPending,
+				wheelFactor(event.deltaY, event.deltaMode),
+				{ x: event.clientX, y: event.clientY }
+			);
+		};
+		container.addEventListener('wheel', onWheel, { passive: false, signal });
+
+		// Drag to pan with the mouse. A press on a word is a click, and a press
+		// becomes a drag only once it has moved a few pixels.
+		let press: { id: number; x: number; y: number; left: number; top: number } | undefined;
+		container.addEventListener(
+			'pointerdown',
+			(event) => {
+				if (event.pointerType !== 'mouse' || event.button !== 0) return;
+				if ((event.target as Element | null)?.closest('button, a, input, select, textarea')) return;
+				press = {
+					id: event.pointerId,
+					x: event.clientX,
+					y: event.clientY,
+					left: container.scrollLeft,
+					top: container.scrollTop
+				};
+			},
+			{ signal }
+		);
+		container.addEventListener(
+			'pointermove',
+			(event) => {
+				if (!press || event.pointerId !== press.id) return;
+				const dx = event.clientX - press.x;
+				const dy = event.clientY - press.y;
+				if (!dragging) {
+					if (Math.hypot(dx, dy) < 4) return;
+					dragging = true;
+					container.setPointerCapture(press.id);
+				}
+				container.scrollLeft = press.left - dx;
+				container.scrollTop = press.top - dy;
+			},
+			{ signal }
+		);
+		const release = (event: PointerEvent) => {
+			if (!press || event.pointerId !== press.id) return;
+			if (container.hasPointerCapture(press.id)) container.releasePointerCapture(press.id);
+			press = undefined;
+			dragging = false;
+		};
+		container.addEventListener('pointerup', release, { signal });
+		container.addEventListener('pointercancel', release, { signal });
+
 		return () => {
-			cancelled = true;
+			abort.abort();
+			touch?.destroy();
+			observer?.disconnect();
+			resized?.disconnect();
+			unmountOverlays();
+			viewer?.setDocument(null);
+			pdfViewer = undefined;
+			dragging = false;
 		};
 	});
 
@@ -214,63 +510,105 @@
 	// The text reader's size is a setting (Settings → Reading printed pages).
 	const set = $derived(modelSet(script, getOcrModelSize()));
 
-	let lines = $state.raw<OcrLine[]>([]);
-	let reading = $state(false);
+	/** A page's text, and the size of the raster its boxes were measured on. */
+	interface PageText {
+		lines: OcrLine[];
+		size: { width: number; height: number };
+	}
+
+	/** Pages read, by page and model, for this open only. */
+	const pageTexts = new SvelteMap<string, PageText>();
+	const readErrors = new SvelteMap<string, string>();
+	const textKey = (n: number, models: ModelSet) => `${n}:${models.id}`;
+
+	const currentKey = $derived(textKey(pageNo, set));
+	const pageText = $derived(pageTexts.get(currentKey));
+	const known = $derived(pageText !== undefined);
+	const lines = $derived(pageText?.lines ?? []);
+	const pageError = $derived(readErrors.get(currentKey));
+
+	/** The page OCR is reading now, if any: its steps are the card's. */
+	let readingPage = $state<number | undefined>(undefined);
 	let steps = $state.raw<ReadingSteps>(NO_STEPS);
+	const reading = $derived(readingPage === pageNo && !known);
 	/** Model sets that have read a page this session: the worker holds them warm. */
 	const warm = new Set<string>();
 	let readerWarm = $state(false);
-
-	/** OCR answers by page and model, for this open only. */
-	const ocrCache = new Map<string, OcrLine[]>();
 
 	/** A text layer worth trusting: some letters, not just page numbers. */
 	function hasText(page: ViewerPage): boolean {
 		return page.textLines.reduce((n, line) => n + line.text.trim().length, 0) >= 20;
 	}
 
-	// Read the page: its own text where it has some, else OCR.
-	$effect(() => {
-		const current = shown;
-		const models = set;
-		if (!current) return;
-		let cancelled = false;
-		error = '';
-		if (hasText(current.page)) {
-			lines = current.page.textLines;
-			reading = false;
+	/**
+	 * Reads go one at a time, in the order asked — the current page, then the
+	 * one after it — and a queued read whose page is no longer wanted when its
+	 * turn comes is skipped, so flicking through a book reads the page it stops
+	 * on, not every page it passed.
+	 */
+	let chain: Promise<void> = Promise.resolve();
+	const queued = new Set<string>();
+	let wanted: { doc?: ViewerDocument; pages: number[]; models: string } = {
+		pages: [],
+		models: ''
+	};
+
+	function stillWanted(current: ViewerDocument, n: number, models: ModelSet): boolean {
+		return wanted.doc === current && wanted.models === models.id && wanted.pages.includes(n);
+	}
+
+	function enqueue(current: ViewerDocument, n: number, models: ModelSet) {
+		const key = textKey(n, models);
+		if (pageTexts.has(key) || queued.has(key)) return;
+		queued.add(key);
+		chain = chain.then(async () => {
+			try {
+				if (stillWanted(current, n, models) && !pageTexts.has(key)) {
+					await readPage(current, n, models, key);
+				}
+			} catch (cause) {
+				if (doc === current) {
+					readErrors.set(key, cause instanceof Error ? cause.message : String(cause));
+				}
+			} finally {
+				queued.delete(key);
+			}
+		});
+	}
+
+	async function readPage(current: ViewerDocument, n: number, models: ModelSet, key: string) {
+		const page = await current.page(n);
+		const size = { width: page.raster.width, height: page.raster.height };
+		if (hasText(page)) {
+			if (doc === current) pageTexts.set(key, { lines: page.textLines, size });
 			return;
 		}
-		const key = `${current.n}:${models.id}`;
-		const cached = ocrCache.get(key);
-		if (cached) {
-			lines = cached;
-			reading = false;
-			return;
-		}
-		lines = [];
-		reading = true;
+		if (!stillWanted(current, n, models)) return;
+		readingPage = n;
 		steps = NO_STEPS;
 		readerWarm = warm.has(models.id);
-		void ocrPage(current.page.raster, models, 'auto', (progress) => {
-			if (!cancelled) steps = foldProgress(steps, progress);
-		})
-			.then((result) => {
-				const text = textLinesOf(result.lines);
-				ocrCache.set(key, text);
-				warm.add(models.id);
-				if (cancelled) return;
-				lines = text;
-			})
-			.catch((cause) => {
-				if (!cancelled) error = cause instanceof Error ? cause.message : String(cause);
-			})
-			.finally(() => {
-				if (!cancelled) reading = false;
+		try {
+			const result = await ocrPage(page.raster, models, 'auto', (progress) => {
+				if (readingPage === n) steps = foldProgress(steps, progress);
 			});
-		return () => {
-			cancelled = true;
-		};
+			warm.add(models.id);
+			if (doc === current) pageTexts.set(key, { lines: textLinesOf(result.lines), size });
+		} finally {
+			if (readingPage === n) readingPage = undefined;
+		}
+	}
+
+	// Read the current page, then read ahead to the next.
+	$effect(() => {
+		const current = doc;
+		const n = pageNo;
+		const models = set;
+		if (!current) return;
+		const pages = [n, n + 1].filter((p) => p <= current.count);
+		wanted = { doc: current, pages, models: models.id };
+		untrack(() => {
+			for (const p of pages) enqueue(current, p, models);
+		});
 	});
 
 	const download = $derived(downloadOf(steps));
@@ -278,18 +616,16 @@
 
 	/* ---- Words on the page ----------------------------------------------------- */
 
-	/** Every line with every reading: what a word is. */
 	// Only words in the target's script are words here: a textbook's English
 	// glosses and pinyin are text on the page, not things to look up or count.
-	const fullWords = $derived(
-		lines.map((line) => forTarget(annotateSentence(line.text, tokenize, fullCtx), lang))
-	);
+	function annotateLines(of: readonly OcrLine[], context: AnnotateContext) {
+		return of.map((line) => forTarget(annotateSentence(line.text, tokenize, context), lang));
+	}
+
+	/** Every line with every reading: what a word is. */
+	const fullWords = $derived(annotateLines(lines, fullCtx));
 	/** Every line as the learner reads it: what is drawn as text. */
-	const shownWords = $derived(
-		mode === 'on'
-			? fullWords
-			: lines.map((line) => forTarget(annotateSentence(line.text, tokenize, ctx), lang))
-	);
+	const shownWords = $derived(mode === 'on' ? fullWords : annotateLines(lines, ctx));
 	/**
 	 * The lines the Lines view shows: those with a word in the target script.
 	 * The book's glosses, pinyin and page furniture stay on the page itself.
@@ -299,59 +635,95 @@
 	);
 	const hasReadings = $derived(shownWords.some((words) => words.some((word) => word.reading)));
 
-	interface Placed {
-		word: ReadingWord;
-		line: number;
-		offset: number;
-		/** Percentages of the page. */
-		left: number;
-		top: number;
-		width: number;
-		height: number;
-	}
-
-	const placed = $derived.by(() => {
-		const page = shown?.page;
-		if (!page) return [];
-		const { width: W, height: H } = page.raster;
-		const out: Placed[] = [];
-		lines.forEach((line, l) => {
-			let at = 0;
-			for (const word of fullWords[l] ?? []) {
-				const start = at;
-				at += word.text.length;
-				if (!word.key) continue;
-				const x0 = line.edges[start] ?? line.box.x;
-				const x1 = line.edges[at] ?? line.box.x + line.box.w;
-				out.push({
-					word,
-					line: l,
-					offset: start,
-					left: (x0 / W) * 100,
-					top: (line.box.y / H) * 100,
-					width: (Math.max(1, x1 - x0) / W) * 100,
-					height: (line.box.h / H) * 100
-				});
-			}
-		});
-		return out;
-	});
-
 	const legend = $derived(legendOf(fullWords));
 	const notYet = $derived(notYetWords(lines, fullWords));
 
-	function boxStyle(line: OcrLine, raster: { width: number; height: number }) {
+	/** The page read ahead, drawn on as soon as its text is in. */
+	const nextText = $derived(
+		doc && pageNo < doc.count ? pageTexts.get(textKey(pageNo + 1, set)) : undefined
+	);
+	const nextWords = $derived(nextText ? annotateLines(nextText.lines, fullCtx) : []);
+
+	interface OverlayData {
+		marks: PlacedWord[];
+		unsure: PageBox[];
+		debugLines: PageBox[];
+	}
+
+	function overlayOf(text: PageText, words: ReturnType<typeof annotateLines>): OverlayData {
 		return {
-			left: (line.box.x / raster.width) * 100,
-			top: (line.box.y / raster.height) * 100,
-			width: (line.box.w / raster.width) * 100,
-			height: (line.box.h / raster.height) * 100
+			marks: placeWords(text.lines, words, text.size),
+			unsure: unsureLines(text.lines).map((l) => boxOf(text.lines[l], text.size)),
+			debugLines: debug ? text.lines.map((line) => boxOf(line, text.size)) : []
 		};
 	}
 
-	function wordClass(word: ReadingWord): string {
-		return `w-${word.status}${word.maturity ? ` w-${word.maturity}` : ''}`;
+	/** What each page with a known text wears, by page number. */
+	const overlays = $derived.by(() => {
+		const out = new Map<number, OverlayData>();
+		if (pageText) out.set(pageNo, overlayOf(pageText, fullWords));
+		if (nextText) out.set(pageNo + 1, overlayOf(nextText, nextWords));
+		return out;
+	});
+
+	/** Mounted overlays, by page: each in a host div of ours that pdf.js's page holds. */
+	const mounted = new Map<number, { host: HTMLDivElement; instance: Record<string, unknown> }>();
+
+	function attachOverlays() {
+		const viewer = pdfViewer;
+		if (!viewer) return;
+		for (const [n, { host }] of mounted) {
+			const div = viewer.getPageView(n - 1)?.div as HTMLElement | undefined;
+			if (div && host.parentElement !== div) div.append(host);
+		}
 	}
+
+	function unmountOverlays() {
+		for (const { host, instance } of mounted.values()) {
+			void unmount(instance);
+			host.remove();
+		}
+		mounted.clear();
+	}
+
+	$effect(() => {
+		const viewer = pdfViewer;
+		const pages = [...overlays.keys()];
+		if (!viewer) return;
+		untrack(() => {
+			for (const [n, { host, instance }] of mounted) {
+				if (pages.includes(n)) continue;
+				void unmount(instance);
+				host.remove();
+				mounted.delete(n);
+			}
+			for (const n of pages) {
+				if (mounted.has(n)) continue;
+				const host = document.createElement('div');
+				host.style.cssText = 'position:absolute;inset:0;z-index:1;pointer-events:none';
+				const instance = mount(PageOverlay, {
+					target: host,
+					props: {
+						get marks() {
+							return overlays.get(n)?.marks ?? [];
+						},
+						get unsure() {
+							return overlays.get(n)?.unsure ?? [];
+						},
+						get debugLines() {
+							return overlays.get(n)?.debugLines ?? [];
+						},
+						get open() {
+							return n === pageNo && open ? { line: open.line, offset: open.offset } : undefined;
+						},
+						onpick: (line: number, offset: number) => pickOn(n, line, offset)
+					}
+				});
+				mounted.set(n, { host, instance });
+			}
+			attachOverlays();
+		});
+	});
 
 	/* ---- Meanings for the whole page ------------------------------------------ */
 
@@ -420,11 +792,27 @@
 
 	function pick(line: number, offset: number) {
 		picked = { line, offset };
+		if (wide) panelOpen = true;
 		const word = fullWords[line] ? wordAt(fullWords[line], offset)?.word : undefined;
 		meaning = word ? (found[termKey(word.text)] ?? '') : '';
 		explanation = '';
 		cardError = '';
 		addedNote = '';
+	}
+
+	/**
+	 * A word tapped on the page read ahead makes that page the current one —
+	 * in pdf.js too, without scrolling (its own `_setCurrentPageNumber`, which
+	 * says so through `pagechanging`) — so the card and the panel follow it.
+	 */
+	function pickOn(n: number, line: number, offset: number) {
+		if (n !== pageNo) {
+			(
+				pdfViewer as unknown as { _setCurrentPageNumber(n: number): boolean } | undefined
+			)?._setCurrentPageNumber(n);
+			arrive(n);
+		}
+		pick(line, offset);
 	}
 
 	function closeCard() {
@@ -525,7 +913,7 @@
 		return { destroy: () => observer.disconnect() };
 	}
 
-	// The current page stays in the rail's view as the learner turns pages,
+	// The current page stays in the rail's view as the learner reads on,
 	// scrolled inside the rail only — never the window.
 	$effect(() => {
 		const rail = railEl;
@@ -542,8 +930,8 @@
 	});
 
 	$effect(() => () => {
-		doc?.close();
 		clearThumbs();
+		clearTimeout(saveTimer);
 	});
 
 	/**
@@ -582,10 +970,61 @@
 		};
 	});
 
+	/**
+	 * The reader's keys. None while typing; ← → and PageUp/PageDown turn a
+	 * page (the book scrolls continuously, so a "page" key means the next
+	 * page, not the next screenful), Home/End the first and last, + − 0 the
+	 * zoom, [ and ] the rail and the panel, Esc the card, then the sheet.
+	 */
 	function onKey(event: KeyboardEvent) {
-		if (event.key !== 'Escape') return;
-		if (picked) closeCard();
-		else sheet = false;
+		if (event.key === 'Escape') {
+			if (picked) closeCard();
+			else sheet = false;
+			return;
+		}
+		if (!doc || !pdfViewer || event.ctrlKey || event.metaKey || event.altKey) return;
+		const target = event.target instanceof Element ? event.target : undefined;
+		if (
+			target?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')
+		)
+			return;
+		switch (event.key) {
+			case 'ArrowLeft':
+			case 'PageUp':
+				goTo(pageNo - 1);
+				break;
+			case 'ArrowRight':
+			case 'PageDown':
+				goTo(pageNo + 1);
+				break;
+			case 'Home':
+				goTo(1);
+				break;
+			case 'End':
+				goTo(doc.count);
+				break;
+			case '+':
+			case '=':
+				setZoom(zoomStep(scale, 1));
+				break;
+			case '-':
+				setZoom(zoomStep(scale, -1));
+				break;
+			case '0':
+				setZoom('page-fit');
+				break;
+			case '[':
+				if (!wide) return;
+				railChoice = !showRail;
+				break;
+			case ']':
+				if (!wide) return;
+				panelOpen = !panelOpen;
+				break;
+			default:
+				return;
+		}
+		event.preventDefault();
 	}
 </script>
 
@@ -595,7 +1034,9 @@
 	<title>Sapling · {title || 'Page viewer'}</title>
 </svelte:head>
 
-{#snippet icon(name: 'prev' | 'next' | 'close' | 'check' | 'lock' | 'plus' | 'open')}
+{#snippet icon(
+	name: 'prev' | 'next' | 'close' | 'check' | 'lock' | 'plus' | 'minus' | 'open' | 'rail'
+)}
 	<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
 		{#if name === 'prev'}<path d="m15 18-6-6 6-6" />
 		{:else if name === 'open'}<path
@@ -607,6 +1048,10 @@
 		{:else if name === 'lock'}<rect x="5" y="11" width="14" height="9" rx="2" /><path
 				d="M8 11V8a4 4 0 0 1 8 0v3"
 			/>
+		{:else if name === 'minus'}<path d="M5 12h14" />
+		{:else if name === 'rail'}<rect x="4" y="5" width="16" height="14" rx="2" /><path
+				d="M9.5 5v14"
+			/>
 		{:else}<path d="M12 5v14M5 12h14" />{/if}
 	</svg>
 {/snippet}
@@ -615,7 +1060,7 @@
      garden's underline. No whitespace between tokens: they reproduce the line. -->
 {#snippet tokens(l: number)}{#each shownWords[l] ?? [] as word, w (w)}{#if word.key}<button
 				type="button"
-				class="tok {wordClass(word)}"
+				class="tok w-{word.status}{word.maturity ? ` w-${word.maturity}` : ''}"
 				class:open={isOpen(l, w)}
 				onclick={() => pick(l, offsetOf(shownWords[l], w))}
 				>{#if word.reading}<ruby>{word.text}<rt>{word.reading}</rt></ruby
@@ -720,7 +1165,13 @@
 			{/if}
 		</ul>
 		<hr class="rule" />
-		{#if lines.length === 0}
+		{#if !known}
+			{#if pageError}
+				<p class="panel-copy">This page could not be read.</p>
+			{:else}
+				<div class="waiting-text"><Spinner /></div>
+			{/if}
+		{:else if lines.length === 0}
 			<p class="panel-copy">No text was found on this page.</p>
 		{:else if notYet.length === 0}
 			<p class="panel-copy">Every word on this page is in your garden.</p>
@@ -839,88 +1290,129 @@
 	{/if}
 {/snippet}
 
-<main class="shell shell-full">
+{#snippet pageField()}
+	{#if doc}
+		<label class="page-field">
+			<input
+				class="page-input"
+				type="text"
+				inputmode="numeric"
+				aria-label="Page number"
+				value={pageNo}
+				onchange={commitPageInput}
+				onkeydown={(event) => {
+					if (event.key === 'Enter') commitPageInput(event);
+				}}
+			/>
+			<span class="of">/ {doc.count}</span>
+		</label>
+	{/if}
+{/snippet}
+
+{#snippet openFile()}
+	<label class="icon-btn open-file" title="Open another PDF">
+		<input type="file" accept="application/pdf" aria-label="Open another PDF" onchange={pickFile} />
+		{@render icon('open')}
+	</label>
+{/snippet}
+
+<main class="shell shell-full" class:shell-desk={!!doc} class:has-doc={!!doc}>
 	<header class="topbar">
-		<BackLink href="/read" label="Back to your media" />
-		<div class="identity">
-			<p class="eyebrow">{doc ? kind : 'Page viewer'}</p>
-			<h1>{doc ? title : 'Open a book'}</h1>
-			{#if doc}<p class="where">Page {pageNo} of {doc.count}</p>{/if}
+		<div class="tb-start">
+			<BackLink href="/read" label="Back to your media" />
+			{#if doc && wide}
+				<button
+					type="button"
+					class="icon-btn tool"
+					aria-label="Pages"
+					aria-pressed={showRail}
+					title="Pages ([)"
+					onclick={() => (railChoice = !showRail)}>{@render icon('rail')}</button
+				>
+			{/if}
+			<h1 class="title">{doc ? title : 'Open a book'}</h1>
 		</div>
-		{#if doc}
-			<label class="icon-btn open-file" title="Open another file">
-				<input
-					type="file"
-					accept="application/pdf,image/*"
-					multiple
-					aria-label="Open another file"
-					onchange={pickFiles}
-				/>
-				{@render icon('open')}
-			</label>
-		{/if}
 		{#if doc && wide}
-			<nav class="stepper" aria-label="Pages">
-				<button
-					type="button"
-					class="icon-btn"
-					aria-label="Previous page"
-					disabled={pageNo <= 1}
-					onclick={() => turnTo(pageNo - 1)}>{@render icon('prev')}</button
-				>
-				<label class="page-field">
-					<span>Page</span>
-					<input
-						class="page-input"
-						type="text"
-						inputmode="numeric"
-						aria-label="Page number"
-						value={pageNo}
-						onchange={commitPageInput}
-						onkeydown={(event) => {
-							if (event.key === 'Enter') commitPageInput(event);
+			<div class="tb-centre">
+				<nav class="pager" aria-label="Pages">
+					<button
+						type="button"
+						class="icon-btn tool"
+						aria-label="Previous page"
+						disabled={pageNo <= 1}
+						onclick={() => goTo(pageNo - 1)}>{@render icon('prev')}</button
+					>
+					{@render pageField()}
+					<button
+						type="button"
+						class="icon-btn tool"
+						aria-label="Next page"
+						disabled={pageNo >= doc.count}
+						onclick={() => goTo(pageNo + 1)}>{@render icon('next')}</button
+					>
+				</nav>
+				<div class="zoom" role="group" aria-label="Zoom">
+					<button
+						type="button"
+						class="icon-btn tool"
+						aria-label="Zoom out"
+						title="Zoom out (−)"
+						onclick={() => setZoom(zoomStep(scale, -1))}>{@render icon('minus')}</button
+					>
+					<select
+						class="zoom-select"
+						aria-label="Zoom"
+						value={zoomChoice(zoom)}
+						onchange={(event) => {
+							const chosen = parseZoom(event.currentTarget.value);
+							if (chosen !== undefined) setZoom(chosen);
 						}}
-					/>
-					<span>of {doc.count}</span>
-				</label>
-				<button
-					type="button"
-					class="icon-btn"
-					aria-label="Next page"
-					disabled={pageNo >= doc.count}
-					onclick={() => turnTo(pageNo + 1)}>{@render icon('next')}</button
-				>
-			</nav>
-			<div class="segmented" role="group" aria-label="Zoom">
-				<button type="button" aria-pressed={zoom === 'whole'} onclick={() => (zoom = 'whole')}
-					>Whole page</button
-				>
-				<button type="button" aria-pressed={zoom === 'width'} onclick={() => (zoom = 'width')}
-					>Fit width</button
-				>
+					>
+						{#each ZOOM_PRESETS as preset (preset.zoom)}
+							<option value={String(preset.zoom)}>{preset.label}</option>
+						{/each}
+						{#if zoomChoice(zoom) === 'custom'}
+							<option value="custom" disabled>{zoomLabel(scale)}</option>
+						{/if}
+					</select>
+					<button
+						type="button"
+						class="icon-btn tool"
+						aria-label="Zoom in"
+						title="Zoom in (+)"
+						onclick={() => setZoom(zoomStep(scale, 1))}>{@render icon('plus')}</button
+					>
+				</div>
 			</div>
 		{/if}
+		<div class="tb-end">
+			{#if doc && wide}
+				<button
+					type="button"
+					class="words-toggle"
+					aria-pressed={showPanel}
+					title="Words on this page (])"
+					onclick={() => (panelOpen = !panelOpen)}
+					>Words <span class="badge">{known ? notYet.length : '…'}</span></button
+				>
+			{/if}
+			{#if doc}{@render openFile()}{/if}
+		</div>
 	</header>
 
-	{#if error}<p class="error banner" role="alert">{error}</p>{/if}
+	{#if error || pageError}<p class="error banner" role="alert">{error || pageError}</p>{/if}
 
 	{#if !doc}
 		<section class="empty">
 			<p>
-				Open a textbook PDF, or photos of its pages. A page with real text uses it; a scan, or a
-				page whose text is only drawn, is read on this device and never leaves it.
+				Open a textbook PDF. A page with real text uses it; a scan, or a page whose text is only
+				drawn, is read on this device and never leaves it.
 			</p>
-			<FileSlot
-				label="Open a PDF or page images"
-				accept="application/pdf,image/*"
-				icon="upload"
-				multiple
-				onchange={pickFiles}
-			/>
+			<FileSlot label="Open a PDF" accept="application/pdf" icon="upload" onchange={pickFile} />
 		</section>
 	{:else}
-		<div class="viewer" class:has-rail={broad}>
-			{#if broad}
+		<div class="viewer" class:has-rail={showRail} class:has-panel={showPanel}>
+			{#if showRail}
 				<aside class="rail" aria-label="Pages" bind:this={railEl}>
 					<span class="rail-label">Pages</span>
 					{#each pages as n (n)}
@@ -931,7 +1423,7 @@
 							aria-label={`Page ${n}`}
 							data-page={n}
 							use:lazyThumb={n}
-							onclick={() => turnTo(n)}
+							onclick={() => goTo(n)}
 						>
 							<span class="thumb-page">
 								{#if thumbs[n]}<img src={thumbs[n]} alt="" />{/if}
@@ -942,66 +1434,25 @@
 				</aside>
 			{/if}
 
-			<div class="stage" class:whole={zoom === 'whole'}>
+			<div class="stage">
+				<div class="viewport" class:dragging bind:this={containerEl}>
+					<div class="pdfViewer" bind:this={viewerEl}></div>
+				</div>
 				{#if shownView === 'lines'}
-					<div class="lines" class:has-ruby={hasReadings} {lang}>
-						{#each targetLines as l (l)}
-							<p class="line" class:unsure={unsure.includes(l)}>{@render tokens(l)}</p>
-						{:else}
-							{#if !reading}<p class="panel-copy">No text was found on this page.</p>{/if}
-						{/each}
-					</div>
-				{:else if shown}
-					{@const raster = shown.page.raster}
-					<figure
-						class="page"
-						class:stale={drawing}
-						style:aspect-ratio="{raster.width} / {raster.height}"
-						style:--ratio={raster.width / raster.height}
-					>
-						<img src={shown.page.url} alt={`Page ${shown.n}`} />
-						{#each unsure as l (l)}
-							{@const box = boxStyle(lines[l], raster)}
-							<span
-								class="unsure-box"
-								style:left="{box.left}%"
-								style:top="{box.top}%"
-								style:width="{box.width}%"
-								style:height="{box.height}%"
-							></span>
-						{/each}
-						{#if debug}
-							{#each lines as line, l (l)}
-								{@const box = boxStyle(line, raster)}
-								<span
-									class="line-box"
-									style:left="{box.left}%"
-									style:top="{box.top}%"
-									style:width="{box.width}%"
-									style:height="{box.height}%"
-								></span>
+					<div class="lines-layer">
+						<div class="lines" class:has-ruby={hasReadings} {lang}>
+							{#each targetLines as l (l)}
+								<p class="line" class:unsure={unsure.includes(l)}>{@render tokens(l)}</p>
+							{:else}
+								{#if known}<p class="panel-copy">No text was found on this page.</p>
+								{:else if !reading}<div class="waiting-text"><Spinner /></div>{/if}
 							{/each}
-						{/if}
-						{#each placed as at, i (i)}
-							<button
-								type="button"
-								class="w {wordClass(at.word)}"
-								class:open={open?.line === at.line && open.offset === at.offset}
-								style:left="{at.left}%"
-								style:top="{at.top}%"
-								style:width="{at.width}%"
-								style:height="{at.height}%"
-								aria-label={at.word.text}
-								onclick={() => pick(at.line, at.offset)}
-							></button>
-						{/each}
-					</figure>
-				{:else}
-					<div class="loading"><Spinner /></div>
+						</div>
+					</div>
 				{/if}
 			</div>
 
-			{#if wide}
+			{#if showPanel}
 				<aside class="panel" aria-label="Words on this page">
 					{#if reading}
 						<div class="panel-card">{@render steps_()}</div>
@@ -1041,13 +1492,23 @@
 				</div>
 			{/if}
 			<nav class="bottom-bar" aria-label="Page controls">
-				<button
-					type="button"
-					class="icon-btn"
-					aria-label="Previous page"
-					disabled={pageNo <= 1}
-					onclick={() => turnTo(pageNo - 1)}>{@render icon('prev')}</button
-				>
+				<div class="pager">
+					<button
+						type="button"
+						class="icon-btn"
+						aria-label="Previous page"
+						disabled={pageNo <= 1}
+						onclick={() => goTo(pageNo - 1)}>{@render icon('prev')}</button
+					>
+					{@render pageField()}
+					<button
+						type="button"
+						class="icon-btn"
+						aria-label="Next page"
+						disabled={pageNo >= doc.count}
+						onclick={() => goTo(pageNo + 1)}>{@render icon('next')}</button
+					>
+				</div>
 				<div class="segmented" role="group" aria-label="View">
 					<button type="button" aria-pressed={view === 'page'} onclick={() => (view = 'page')}
 						>Page</button
@@ -1063,14 +1524,7 @@
 					onclick={() => {
 						picked = undefined;
 						sheet = !sheet;
-					}}>Words · {notYet.length}</button
-				>
-				<button
-					type="button"
-					class="icon-btn"
-					aria-label="Next page"
-					disabled={pageNo >= doc.count}
-					onclick={() => turnTo(pageNo + 1)}>{@render icon('next')}</button
+					}}>Words · {known ? notYet.length : '…'}</button
 				>
 			</nav>
 		{/if}
@@ -1078,17 +1532,32 @@
 </main>
 
 <style>
-	/* The garden's three underlines, as the reader colours them. */
+	/* The garden's three underlines, as the reader colours them, and the desk
+	   the book lies on: a shade under the chrome, so the page is the brightest
+	   thing on screen in either theme. */
 	main {
 		--u-solid: var(--primary);
 		--u-young: color-mix(in srgb, var(--primary) 55%, var(--amber));
 		--u-new: var(--accent);
 		--paper-shadow: 0 10px 30px rgb(60 50 20 / 14%), 0 1px 3px rgb(60 50 20 / 12%);
+		--desk: color-mix(in srgb, var(--surface-alt) 82%, var(--text-muted));
 	}
 
-	/* Scroll room for the bar fixed at the phone's foot. */
+	:global(:root[data-theme='dark']) main {
+		--desk: color-mix(in srgb, var(--bg) 70%, black);
+		--paper-shadow: 0 10px 30px rgb(0 0 0 / 45%), 0 1px 3px rgb(0 0 0 / 40%);
+	}
+
+	/* The viewer is a frame at every width: the header, the desk taking what
+	   is left (pdf.js wants a container of definite size), and on a phone the
+	   bar at the foot. The window never scrolls; the desk, the rail and the
+	   panel scroll inside themselves, so nothing scrolls inside a scroll. */
 	.shell {
-		padding-block: var(--gutter) 7rem;
+		display: flex;
+		flex-direction: column;
+		height: 100dvh;
+		box-sizing: border-box;
+		padding-block: 0.5rem 0;
 	}
 
 	.ico {
@@ -1106,63 +1575,54 @@
 
 	.topbar {
 		display: flex;
-		flex-wrap: wrap;
+		flex: none;
 		align-items: center;
-		gap: 0.75rem 1.25rem;
-		margin-bottom: 1rem;
+		gap: 0.5rem;
+		min-height: 3rem;
+		margin-bottom: 0.5rem;
 	}
 
-	.identity {
-		flex: 1 1 12rem;
+	.tb-start {
+		display: flex;
+		flex: 1 1 auto;
+		align-items: center;
+		gap: 0.5rem;
 		min-width: 0;
 	}
 
-	/* The phone's header is the title and where you are; the eyebrow is the
-	   spread's. */
-	.eyebrow {
-		display: none;
-		margin: 0;
-		color: var(--text-muted);
-		font-size: 0.75rem;
-		font-weight: 700;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
+	.tb-end {
+		display: flex;
+		flex: none;
+		align-items: center;
+		justify-content: flex-end;
+		gap: 0.5rem;
 	}
 
-	.topbar h1 {
+	.title {
 		margin: 0;
-		font-size: 1.25rem;
-		line-height: 1.2;
+		min-width: 0;
 		overflow: hidden;
+		font-size: 1.05rem;
+		line-height: 1.2;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-	}
-
-	.where {
-		margin: 0.1rem 0 0;
-		color: var(--text-muted);
-		font-size: 0.85rem;
-	}
-
-	.stepper {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
 	}
 
 	.page-field {
 		display: flex;
 		align-items: center;
-		gap: 0.5rem;
+		gap: 0.35rem;
 		color: var(--text-muted);
-		font-size: 0.95rem;
+		font-size: 0.9rem;
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
 	}
 
 	.page-input {
-		width: 3.4rem;
-		height: 2.6rem;
-		border: 1px solid var(--border-strong);
-		border-radius: var(--radius);
+		width: 3rem;
+		height: 2.25rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
 		background: var(--surface);
 		color: var(--text);
 		font: inherit;
@@ -1229,7 +1689,7 @@
 
 	.segmented button {
 		min-height: 2.75rem;
-		padding: 0 0.9rem;
+		padding: 0 0.75rem;
 		border: 0;
 		background: transparent;
 		color: var(--text);
@@ -1261,7 +1721,8 @@
 	}
 
 	.error.banner {
-		margin: 0 0 1rem;
+		flex: none;
+		margin: 0 0 0.5rem;
 		max-width: var(--measure);
 	}
 
@@ -1269,6 +1730,7 @@
 		display: grid;
 		gap: 1rem;
 		max-width: var(--measure);
+		padding-top: 0.5rem;
 		color: var(--text-muted);
 	}
 
@@ -1276,104 +1738,88 @@
 		margin: 0;
 	}
 
-	.loading {
+	.waiting-text {
 		display: grid;
 		place-items: center;
-		min-height: 40dvh;
+		min-height: 6rem;
 	}
 
-	/* The page ------------------------------------------------------------------ */
+	/* The desk ------------------------------------------------------------------ */
 
 	.viewer {
 		display: grid;
+		flex: 1 1 auto;
+		min-height: 0;
+		grid-template-rows: minmax(0, 1fr);
 		gap: var(--gap);
 	}
 
+	/* Full-bleed on a phone: every pixel of the width is the page's. */
 	.stage {
-		display: flex;
-		justify-content: center;
-		min-width: 0;
-	}
-
-	.page {
 		position: relative;
-		width: 100%;
-		margin: 0;
-		border-radius: 2px;
-		background: #fff;
+		min-width: 0;
+		min-height: 0;
+		margin-inline: calc(-1 * var(--gutter));
+		overflow: hidden;
+		background: var(--desk);
+	}
+
+	/* pdf.js's scroll container, which must be absolutely positioned. A
+	   stacking context (z-index 0), so a page's shadow can sit under it.
+	   Pinch is ours (pan-x pan-y leaves the browser one-finger scrolling
+	   only); a mouse drag pans. */
+	.viewport {
+		position: absolute;
+		inset: 0;
+		z-index: 0;
+		overflow: auto;
+		overscroll-behavior: contain;
+		scrollbar-width: thin;
+		touch-action: pan-x pan-y;
+		user-select: none;
+		cursor: grab;
+		/* pdf.js's own page geometry, with a wider gap between pages. */
+		--page-margin: 1px auto 6px;
+	}
+
+	.viewport.dragging {
+		cursor: grabbing;
+	}
+
+	.pdfViewer {
+		padding-block: 0.5rem;
+	}
+
+	/* The page's paper shadow, on the content box: pdf.js's page border is
+	   9px of transparency its fit maths counts on, and a box-shadow on the
+	   page itself would float that far off the paper. */
+	.viewport :global(.page)::before {
+		content: '';
+		position: absolute;
+		inset: 0;
+		z-index: -1;
 		box-shadow: var(--paper-shadow);
-		transition: opacity 0.15s ease;
-	}
-
-	/* The next page is being drawn: the old one stays, quieter. */
-	.page.stale {
-		opacity: 0.6;
-	}
-
-	.page img {
-		display: block;
-		width: 100%;
-		height: 100%;
-		border-radius: inherit;
-	}
-
-	.line-box {
-		position: absolute;
-		border: 1px solid rgb(0 120 255 / 50%);
 		pointer-events: none;
 	}
 
-	/* A line the recognizer was unsure of: outlined, not interactive. */
-	.unsure-box {
+	/* Lines: the page reflowed as text, in the reader's voice, over the desk
+	   (pdf.js keeps its layout underneath, so the page is where it was). */
+	.lines-layer {
 		position: absolute;
-		border-radius: 3px;
-		outline: 1.5px dashed var(--accent);
-		outline-offset: 2px;
-		pointer-events: none;
+		inset: 0;
+		z-index: 1;
+		overflow-y: auto;
+		overscroll-behavior: contain;
+		padding: 1rem var(--gutter) 2rem;
+		background: var(--bg);
 	}
-
-	/* A word is a transparent button over the printed glyphs; the underline is
-	   its bottom edge, which descenders cross as they would a ruled line.
-	   Stronger than the reader's softened underlines: these sit on a printed
-	   page, not on our own type. */
-	.w {
-		position: absolute;
-		padding: 0;
-		border: 0;
-		border-radius: 2px;
-		background: transparent;
-		cursor: pointer;
-	}
-
-	.w:hover,
-	.w.open {
-		background: color-mix(in srgb, var(--primary) 18%, transparent);
-	}
-
-	.w:focus-visible {
-		outline: 2px solid var(--primary);
-		outline-offset: 1px;
-	}
-
-	.w.w-tracked {
-		border-bottom: 3px solid var(--u-solid);
-	}
-
-	.w.w-young {
-		border-bottom-color: var(--u-young);
-	}
-
-	.w.w-new {
-		border-bottom-color: var(--u-new);
-	}
-
-	/* Lines: the page reflowed as text, in the reader's voice ------------------- */
 
 	.lines {
 		display: grid;
 		gap: 0.5rem;
 		width: 100%;
 		max-width: var(--measure);
+		margin-inline: auto;
 	}
 
 	.line {
@@ -1819,17 +2265,21 @@
 	/* The phone: a bar at the foot, a sheet over it ---------------------------- */
 
 	.bottom-bar {
-		position: fixed;
-		z-index: 20;
-		left: 0;
-		right: 0;
-		bottom: 0;
 		display: flex;
+		flex: none;
 		align-items: center;
 		gap: 0.5rem;
+		margin-inline: calc(-1 * var(--gutter));
 		padding: 0.5rem var(--gutter) calc(0.5rem + env(safe-area-inset-bottom));
 		border-top: 1px solid var(--border);
 		background: var(--surface);
+	}
+
+	.pager {
+		display: flex;
+		flex: none;
+		align-items: center;
+		gap: 0.35rem;
 	}
 
 	.words-btn {
@@ -1837,6 +2287,15 @@
 		min-height: 2.75rem;
 		padding-inline: 0.75rem;
 		white-space: nowrap;
+	}
+
+	/* The bar is a phone's: three groups in 375px, so the turn buttons narrow. */
+	.bottom-bar .icon-btn {
+		width: 2.5rem;
+	}
+
+	.bottom-bar .page-input {
+		width: 2.6rem;
 	}
 
 	.sheet {
@@ -1885,58 +2344,149 @@
 
 	/* The spread ---------------------------------------------------------------- */
 
-	/* At ≥48rem the viewer is a frame, not a scroll: <main> is the viewport's
-	   height, the viewer row takes what the header leaves (minmax(0, 1fr), or a
-	   tall panel would push the row past the frame), and the rail, the page and
-	   the panel each scroll inside themselves. The window never scrolls, so there
-	   is never a scroll inside a scroll. */
+	/* At ≥48rem one slim toolbar over the desk — the title at its start, the
+	   page and the zoom centred, the panel's toggle and another file at its
+	   end — and the desk framed between a rail and a panel, either of which
+	   can be closed to give the page the width. */
 	@media (min-width: 48rem) {
 		.shell {
-			display: flex;
-			flex-direction: column;
-			height: 100dvh;
-			box-sizing: border-box;
-			padding-block: var(--gutter);
+			padding-block: 0.5rem var(--gutter);
 		}
 
 		.topbar {
-			margin-bottom: 1.5rem;
+			display: grid;
+			grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+			gap: 1rem;
+			min-height: 3rem;
+			margin-bottom: 0.75rem;
 		}
 
-		.eyebrow {
-			display: block;
+		.title {
+			color: var(--text-muted);
+			font-family: var(--font);
+			font-size: 0.92rem;
+			font-weight: 700;
 		}
 
-		.topbar h1 {
-			font-size: 1.75rem;
+		.tb-centre {
+			display: flex;
+			align-items: center;
+			gap: 1rem;
 		}
 
-		.where {
-			display: none;
+		/* The toolbar's own controls: 2.25rem, quieter than a page's buttons. */
+		.icon-btn.tool {
+			width: 2.25rem;
+			height: 2.25rem;
+			border-color: transparent;
+			background: transparent;
+			color: var(--text-muted);
+		}
+
+		.icon-btn.tool:hover:not(:disabled) {
+			border-color: var(--border);
+			background: var(--surface);
+			color: var(--text);
+		}
+
+		.icon-btn.tool[aria-pressed='true'] {
+			border-color: var(--border);
+			background: var(--surface-alt);
+			color: var(--text);
+		}
+
+		.zoom {
+			display: flex;
+			align-items: center;
+			gap: 0.15rem;
+		}
+
+		.zoom-select {
+			height: 2.25rem;
+			min-width: 6.5rem;
+			padding: 0 0.5rem;
+			border: 1px solid var(--border);
+			border-radius: var(--radius-sm);
+			background: var(--surface);
+			color: var(--text);
+			font: inherit;
+			font-size: 0.88rem;
+			font-variant-numeric: tabular-nums;
+			cursor: pointer;
+		}
+
+		.zoom-select:focus-visible {
+			outline: none;
+			box-shadow: var(--ring);
+		}
+
+		.words-toggle {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.45rem;
+			height: 2.25rem;
+			padding: 0 0.7rem;
+			border: 1px solid var(--border);
+			border-radius: var(--radius);
+			background: transparent;
+			color: var(--text-muted);
+			font: inherit;
+			font-size: 0.88rem;
+			font-weight: 700;
+			cursor: pointer;
+		}
+
+		.words-toggle:hover {
+			border-color: var(--border-strong);
+			color: var(--text);
+		}
+
+		.words-toggle[aria-pressed='true'] {
+			background: var(--surface-alt);
+			color: var(--text);
+		}
+
+		.words-toggle:focus-visible {
+			outline: none;
+			box-shadow: var(--ring);
+		}
+
+		.badge {
+			min-width: 1.4rem;
+			padding: 0.05rem 0.4rem;
+			border-radius: 999px;
+			background: var(--primary);
+			color: var(--text-inverse);
+			font-size: 0.78rem;
+			font-variant-numeric: tabular-nums;
+			text-align: center;
+		}
+
+		.tb-end .open-file {
+			width: 2.25rem;
+			height: 2.25rem;
 		}
 
 		.viewer {
-			flex: 1 1 auto;
-			min-height: 0;
+			grid-template-columns: minmax(0, 1fr);
+		}
+
+		.viewer.has-panel {
 			grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem);
-			grid-template-rows: minmax(0, 1fr);
 		}
 
-		/* The page's own scroll: Fit width can be taller than the frame. A size
-		   container, so Whole page can size the page from this height. */
+		.viewer.has-rail {
+			grid-template-columns: 6.5rem minmax(0, 1fr);
+		}
+
+		.viewer.has-rail.has-panel {
+			grid-template-columns: 6.5rem minmax(0, 1fr) minmax(16rem, 22rem);
+		}
+
 		.stage {
-			min-height: 0;
-			overflow-y: auto;
-			overscroll-behavior: contain;
-			scrollbar-width: thin;
-			container-type: size;
-			align-items: flex-start;
-			padding-bottom: 0.75rem;
-		}
-
-		/* Whole page: the page's height is the stage's. */
-		.stage.whole .page {
-			width: min(100%, calc(100cqh * var(--ratio, 0.7)));
+			margin-inline: 0;
+			border: 1px solid var(--border);
+			border-radius: var(--radius-lg);
 		}
 
 		/* The card scrolls inside itself, so a page of many words never pushes
@@ -1984,12 +2534,6 @@
 
 		.more[open] summary {
 			margin-bottom: 0.75rem;
-		}
-	}
-
-	@media (min-width: 72rem) {
-		.viewer.has-rail {
-			grid-template-columns: 6.5rem minmax(0, 1fr) minmax(18rem, 22rem);
 		}
 
 		/* The whole book, scrolling inside itself beside the page. Positioned, so
@@ -2074,6 +2618,22 @@
 
 		.thumb:focus-visible .thumb-page {
 			box-shadow: var(--ring);
+		}
+	}
+
+	@media (min-width: 72rem) {
+		/* A page is a picture: an open book takes the whole desk, as a recording
+		   does (`layout.md`). The panel and rail stay bounded columns. */
+		.shell-desk {
+			max-width: none;
+		}
+
+		.viewer.has-panel {
+			grid-template-columns: minmax(0, 1fr) minmax(18rem, 22rem);
+		}
+
+		.viewer.has-rail.has-panel {
+			grid-template-columns: 6.5rem minmax(0, 1fr) minmax(18rem, 22rem);
 		}
 	}
 </style>
