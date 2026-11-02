@@ -56,6 +56,7 @@
 		studyTracker,
 		tokenizeByTerms,
 		type AnnotateContext,
+		type ReadingWord,
 		type TokenizeFn
 	} from '$lib/reading';
 	import { syncRemotes } from '$lib/remotes';
@@ -63,8 +64,10 @@
 	import { targetTagOf, termKey } from '$lib/text';
 	import type { KnowledgeItem, Profile } from '$lib/types';
 	import BackLink from '$lib/ui/BackLink.svelte';
-	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
+	import WordCard, { BEDS } from '$lib/ui/WordCard.svelte';
+	import WordPopover from '$lib/ui/WordPopover.svelte';
+	import { revealDelta, stepWord } from '$lib/ui/word-nav';
 	import FileSlot from '../FileSlot.svelte';
 	import PageOverlay from './PageOverlay.svelte';
 	import {
@@ -378,6 +381,9 @@
 				eventBus.on(
 					'scalechanging',
 					({ scale: next, presetValue }: { scale: number; presetValue?: string }) => {
+						// pdf.js re-creates a page's contents on a zoom: the popover's
+						// word goes with them, so the card closes rather than drift.
+						if (next !== scale && wide) picked = undefined;
 						scale = next;
 						zoom = zoomOf(next, presetValue);
 						if (ready) savePosition();
@@ -770,7 +776,10 @@
 	/** A phone's sheet holds the word list (when no card is open over it). */
 	let sheet = $state(false);
 	let meaning = $state('');
+	let readingDraft = $state('');
 	let explanation = $state('');
+	/** The open word has a looked-up answer: the card asks nothing more. */
+	let answered = $state(false);
 	let looking = $state(false);
 	let adding = $state(false);
 	let cardError = $state('');
@@ -792,12 +801,70 @@
 
 	function pick(line: number, offset: number) {
 		picked = { line, offset };
-		if (wide) panelOpen = true;
 		const word = fullWords[line] ? wordAt(fullWords[line], offset)?.word : undefined;
 		meaning = word ? (found[termKey(word.text)] ?? '') : '';
+		readingDraft = word?.reading ?? '';
 		explanation = '';
+		answered = false;
 		cardError = '';
 		addedNote = '';
+	}
+
+	/** Whether the card offers a Reading field: a word not in Latin script, as the reader decides. */
+	const offersReading = $derived(
+		open !== undefined && /\p{L}/u.test(open.word.text) && !/\p{Script=Latin}/u.test(open.word.text)
+	);
+
+	function statusLine(word: ReadingWord): string {
+		if (word.status === 'tracked') return `In your garden · ${BEDS[word.maturity ?? 'new']}`;
+		if (word.status === 'known') return 'Marked known';
+		return 'Not in your garden';
+	}
+
+	/**
+	 * The open word's button on the page, for the popover to point at — found
+	 * after every render that could have replaced it. A word whose button is
+	 * gone closes its card.
+	 */
+	let anchorEl = $state<HTMLElement | null>(null);
+	$effect(() => {
+		const at = open;
+		const n = pageNo;
+		void overlays;
+		if (!at || !wide || !containerEl) {
+			anchorEl = null;
+			return;
+		}
+		const el = containerEl.querySelector<HTMLElement>(
+			`.page[data-page-number="${n}"] [data-word="${at.line}:${at.offset}"]`
+		);
+		anchorEl = el;
+		if (!el) picked = undefined;
+	});
+
+	/** ← and →, with a card open: the card moves to the page's previous or next word. */
+	function stepCard(dir: 1 | -1) {
+		if (!open) return;
+		const next = stepWord(fullWords, { line: open.line, word: open.index }, dir);
+		if (next) pick(next.line, offsetOf(fullWords[next.line], next.word));
+	}
+
+	/**
+	 * A row of *Not in your words yet*: its first occurrence on the page,
+	 * scrolled into view inside pdf.js's container — never the window — and
+	 * opened there. On a phone the sheet needs no anchor.
+	 */
+	function reveal(line: number, offset: number) {
+		const container = containerEl;
+		const el = container?.querySelector<HTMLElement>(
+			`.page[data-page-number="${pageNo}"] [data-word="${line}:${offset}"]`
+		);
+		if (wide && container && el) {
+			const delta = revealDelta(container.getBoundingClientRect(), el.getBoundingClientRect(), 48);
+			if (delta.x || delta.y)
+				container.scrollBy({ left: delta.x, top: delta.y, behavior: 'smooth' });
+		}
+		pick(line, offset);
 	}
 
 	/**
@@ -837,8 +904,11 @@
 				sentence: open.sentence
 			});
 			if (picked !== asked) return;
+			// Only into fields still empty: the learner's own typing stands.
 			if (!meaning.trim()) meaning = gloss.meaning;
+			if (!readingDraft.trim() && gloss.reading) readingDraft = gloss.reading;
 			explanation = gloss.explanation ?? '';
+			answered = true;
 		} catch (cause) {
 			cardError = cause instanceof Error ? cause.message : 'Could not look that up.';
 		} finally {
@@ -852,11 +922,13 @@
 		adding = true;
 		cardError = '';
 		try {
+			// The Reading field as the learner left it — prefilled from the token.
+			const reading = readingDraft.trim();
 			const outcome = await addWords([
 				{
 					term: word.text.trim(),
 					meaning: meaning.trim(),
-					...(word.reading?.trim() ? { romanization: word.reading.trim() } : {})
+					...(reading ? { romanization: reading } : {})
 				}
 			]);
 			addedNote = outcome.summary;
@@ -974,7 +1046,8 @@
 	 * The reader's keys. None while typing; ← → and PageUp/PageDown turn a
 	 * page (the book scrolls continuously, so a "page" key means the next
 	 * page, not the next screenful), Home/End the first and last, + − 0 the
-	 * zoom, [ and ] the rail and the panel, Esc the card, then the sheet.
+	 * zoom, [ and ] the rail and the panel, Esc the card, then the sheet. While
+	 * a card is open ← and → move it to the previous or next word instead.
 	 */
 	function onKey(event: KeyboardEvent) {
 		if (event.key === 'Escape') {
@@ -988,6 +1061,12 @@
 			target?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')
 		)
 			return;
+		// With a card open, ← and → walk the page's words instead of turning it.
+		if (open && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+			event.preventDefault();
+			stepCard(event.key === 'ArrowLeft' ? -1 : 1);
+			return;
+		}
 		switch (event.key) {
 			case 'ArrowLeft':
 			case 'PageUp':
@@ -1191,7 +1270,7 @@
 							class="icon-btn add"
 							aria-label={`Add ${word.term}`}
 							title="Open the word card"
-							onclick={() => pick(word.segment, word.offset)}>{@render icon('plus')}</button
+							onclick={() => reveal(word.segment, word.offset)}>{@render icon('plus')}</button
 						>
 					</li>
 				{/each}
@@ -1211,82 +1290,44 @@
 	</div>
 {/snippet}
 
-{#snippet card(docked: boolean)}
+<!-- On a phone the printed line is small: the sheet leads with it, reflowed big. -->
+{#snippet larger()}
+	{#if open}
+		<span class="handle" aria-hidden="true"></span>
+		<div class="context">
+			<span class="context-label">The line, larger</span>
+			<span class="larger" {lang}>{@render tokens(open.line)}</span>
+		</div>
+	{/if}
+{/snippet}
+
+<!-- The reader's card, with what the viewer has: no legacy unmark, no lapse. -->
+{#snippet card(compact: boolean)}
 	{#if open}
 		{@const word = open.word}
-		<div class="word-card" class:docked role="dialog" aria-label={`The word ${word.text}`}>
-			{#if !docked}
-				<!-- On a phone the printed line is small: it comes first, reflowed big. -->
-				<span class="handle" aria-hidden="true"></span>
-				<div class="context">
-					<span class="context-label">The line, larger</span>
-					<span class="larger" {lang}>{@render tokens(open.line)}</span>
-				</div>
-			{/if}
-			<div class="card-head">
-				<div class="card-title">
-					{#if word.reading}<span class="card-reading">{word.reading}</span>{/if}
-					<span class="card-term" {lang}>{word.text}</span>
-				</div>
-				<SpeakButton text={word.text} {lang} />
-				<button type="button" class="icon-btn close" aria-label="Close" onclick={closeCard}
-					>{@render icon('close')}</button
-				>
-			</div>
-			{#if docked}
-				<div class="context">
-					<span class="context-label">On the page</span>
-					<span class="context-line" {lang}
-						>{open.sentence.slice(0, open.offset)}<b>{word.text}</b>{open.sentence.slice(
-							open.offset + word.text.length
-						)}</span
-					>
-				</div>
-			{/if}
-			{#if word.status === 'tracked' && word.gloss}
-				<p class="card-meaning">{word.gloss.meaning}</p>
-				<p class="card-status">{@render icon('check')} In your words</p>
-			{:else}
-				{#if explanation}<p class="card-explanation">{explanation}</p>{/if}
-				<label class="field">
-					<span class="label">Meaning</span>
-					<input class="input" type="text" disabled={adding} bind:value={meaning} />
-				</label>
-				<div class="card-actions">
-					{#if !meaning.trim()}
-						<button
-							type="button"
-							class="btn btn-primary"
-							disabled={looking}
-							onclick={() => void lookUp()}
-						>
-							{looking ? 'Looking it up…' : 'What does this mean?'}
-						</button>
-					{:else}
-						<button
-							type="button"
-							class="btn btn-primary"
-							disabled={adding}
-							onclick={() => void addOpen()}
-						>
-							{adding ? 'Adding…' : 'Add to my words'}
-						</button>
-						{#if !explanation}
-							<button
-								type="button"
-								class="btn btn-ghost hairline"
-								disabled={looking}
-								onclick={() => void lookUp()}
-							>
-								{looking ? 'Looking it up…' : 'Explain'}
-							</button>
-						{/if}
-					{/if}
-				</div>
-				{#if cardError}<p class="error" role="alert">{cardError}</p>{/if}
-			{/if}
-			{#if addedNote}<p class="added" aria-live="polite">{addedNote}</p>{/if}
-		</div>
+		<WordCard
+			term={word.text}
+			reading={word.reading ?? undefined}
+			{lang}
+			status={word.status}
+			statusLine={statusLine(word)}
+			meaning={word.gloss?.meaning}
+			explanation={explanation || undefined}
+			{answered}
+			{offersReading}
+			bind:meaningDraft={meaning}
+			bind:readingDraft
+			nativeLanguage={profile?.nativeLanguage}
+			lookingUp={looking}
+			writing={adding}
+			error={cardError || undefined}
+			note={addedNote || undefined}
+			{compact}
+			context={compact ? undefined : larger}
+			onlookup={() => void lookUp()}
+			onadd={() => void addOpen()}
+			onclose={closeCard}
+		/>
 	{/if}
 {/snippet}
 
@@ -1456,14 +1497,6 @@
 				<aside class="panel" aria-label="Words on this page">
 					{#if reading}
 						<div class="panel-card">{@render steps_()}</div>
-					{:else if open}
-						<div class="panel-card flush">
-							{@render card(true)}
-							<details class="more">
-								<summary>On this page · {notYet.length} not in your garden</summary>
-								{@render onThisPage()}
-							</details>
-						</div>
 					{:else}
 						<div class="panel-card">{@render onThisPage()}</div>
 					{/if}
@@ -1476,7 +1509,9 @@
 				<div class="phone-reading">{@render steps_()}</div>
 			{/if}
 			{#if open}
-				<div class="sheet">{@render card(false)}</div>
+				<div class="sheet sheet-card" role="dialog" aria-label={`The word ${open.word.text}`}>
+					{@render card(false)}
+				</div>
 			{:else if sheet}
 				<div class="sheet" role="dialog" aria-label="On this page">
 					<div class="sheet-head">
@@ -1527,6 +1562,17 @@
 					}}>Words · {known ? notYet.length : '…'}</button
 				>
 			</nav>
+		{/if}
+
+		<!-- At 48rem the card is a popover at the word on the page, so the panel
+		     keeps *On this page*. Keyed on the position: another word is a fresh
+		     popover that takes focus again. -->
+		{#if wide && open && anchorEl}
+			{#key `${pageNo}:${open.line}:${open.offset}`}
+				<WordPopover anchor={anchorEl} label={`The word ${open.word.text}`} onclose={closeCard}
+					>{@render card(true)}</WordPopover
+				>
+			{/key}
 		{/if}
 	{/if}
 </main>
@@ -2146,14 +2192,10 @@
 		box-shadow: var(--ring);
 	}
 
-	/* The word card --------------------------------------------------------------- */
-
-	.word-card {
-		display: grid;
-		gap: 0.85rem;
-	}
+	/* The word card's sheet on a phone: the larger line, then the card ------- */
 
 	.handle {
+		display: block;
 		justify-self: center;
 		width: 2.5rem;
 		height: 0.3rem;
@@ -2177,89 +2219,23 @@
 		text-transform: uppercase;
 	}
 
-	.context-line {
-		font-size: 1.1rem;
-		line-height: 1.6;
-		overflow-wrap: anywhere;
-	}
-
-	.context-line b {
-		color: var(--primary-strong);
-	}
-
 	.larger {
 		font-size: 1.5rem;
 		line-height: 2.3;
 		overflow-wrap: anywhere;
 	}
 
-	.card-head {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
+	/* The card is a run of blocks with its own spacing, not grid items. */
+	.sheet.sheet-card {
+		display: block;
 	}
 
-	.card-title {
-		display: flex;
-		flex: 1;
-		flex-direction: column;
-		min-width: 0;
+	.sheet-card .handle {
+		margin: 0 auto 0.75rem;
 	}
 
-	.card-reading {
-		color: var(--text-muted);
-		font-size: 0.9rem;
-	}
-
-	.card-term {
-		font-size: 2rem;
-		line-height: 1.15;
-		overflow-wrap: anywhere;
-	}
-
-	.card-meaning {
-		margin: 0;
-		font-size: 1.1rem;
-	}
-
-	.card-status {
-		display: flex;
-		align-items: center;
-		gap: 0.35rem;
-		margin: 0;
-		color: var(--primary-strong);
-		font-size: 0.85rem;
-		font-weight: 700;
-	}
-
-	.card-explanation {
-		margin: 0;
-		color: var(--text-muted);
-		font-size: 0.95rem;
-		line-height: 1.5;
-	}
-
-	.word-card .field {
-		margin: 0;
-	}
-
-	.card-actions {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.6rem;
-	}
-
-	/* Full-width on a phone, where the thumb is; side by side on the spread. */
-	.card-actions .btn {
-		flex: 1 1 100%;
-		min-height: 2.75rem;
-	}
-
-	.added {
-		margin: 0;
-		color: var(--primary-strong);
-		font-size: 0.88rem;
-		font-weight: 700;
+	.sheet-card .context {
+		margin-bottom: 1rem;
 	}
 
 	/* The phone: a bar at the foot, a sheet over it ---------------------------- */
@@ -2508,32 +2484,6 @@
 			border: 1px solid var(--border);
 			border-radius: var(--radius-lg);
 			background: var(--surface);
-		}
-
-		.panel-card.flush {
-			display: grid;
-			gap: 1rem;
-		}
-
-		.card-actions .btn {
-			flex: 1 1 auto;
-		}
-
-		.more {
-			border-top: 1px solid var(--border);
-			padding-top: 0.85rem;
-		}
-
-		.more summary {
-			padding-block: 0.7rem;
-			color: var(--text-muted);
-			font-size: 0.9rem;
-			font-weight: 700;
-			cursor: pointer;
-		}
-
-		.more[open] summary {
-			margin-bottom: 0.75rem;
 		}
 
 		/* The whole book, scrolling inside itself beside the page. Positioned, so

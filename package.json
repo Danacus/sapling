@@ -50,6 +50,7 @@
 		"wrangler": "^4.127.0"
 	},
 	"dependencies": {
+		"@floating-ui/dom": "^1.8.0",
 		"@sqlite.org/sqlite-wasm": "3.53.0-build1",
 		"@tauri-apps/api": "^2.12.4",
 		"@tauri-apps/plugin-opener": "^2.7.2",

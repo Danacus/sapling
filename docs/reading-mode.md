@@ -301,9 +301,13 @@ language with no local romanizer shows none in the prose.
 ## 6. UI (`src/routes/read/`)
 
 Mobile-first, per `layout.md`. The reader is prose, so the text column is
-`--measure`; at ≥48rem the page becomes a spread — text on one side, the word
-card on the other (the doing and the state). On a phone the word card is a sheet
-pinned to the bottom.
+`--measure`; at ≥48rem the page becomes a spread — text on one side, the panel
+(confirmations, the recording form, the transcript) on the other. The word card
+is a popover anchored at the tapped word at ≥48rem — positioned by
+`@floating-ui/dom`, kept attached through every scroll container, closed by Esc
+or a click outside, ←/→ moving it along the page's words — and on a phone a
+sheet pinned to the bottom. It is one component (`$lib/ui/WordCard.svelte`)
+in the reader and the page viewer alike.
 
 Word rendering: each word is a `<button>` carrying its status class; readings
 are ruby (`RubyText`'s conventions — `ruby-position: over`, no ruby element for
@@ -414,8 +418,8 @@ under the same condition.
   reading, or the gloss's, whatever the `RomanizationMode`. Opening a card is the
   learner asking to have the word explained, and the mode governs the prose,
   which is where a crutch is a crutch.
-- **Every confirmation lives in the panel** — the same slot as the word card
-  (facing page on a desk, sheet at the foot of a phone), never `window.confirm`,
+- **Every confirmation lives in the panel** — a facing page on a desk, and on a
+  phone the same sheet as the word card — never `window.confirm`,
   never extra buttons in the header and never a line above the text. Delete
   (header) and the page's primary button (at the *end* of the page, where the
   learner is when they have read it) both open there; the header keeps one
@@ -562,8 +566,9 @@ At ≥48rem the view becomes a **frame**: the spread is `100dvh` less the shell'
 `padding-block`, header row `auto` and content row `minmax(0, 1fr)`, and the
 window does not scroll at all. The facing page is a **transcript** — every
 segment in a list, the current one highlighted and scrolled into view, each line
-a seek — which scrolls *inside itself* and wears the word card's own surface,
-because it takes the word card's slot and the card *replaces* it. (Its sticky
+a seek — which scrolls *inside itself* and wears the panel card's own surface,
+because it takes the panel's slot and a confirmation *replaces* it; a word card
+is the popover at the word and leaves it in place. (Its sticky
 heading is painted that same surface: in the page ground it read as a bar laid
 over the panel rather than as the panel's top edge.) The transcript is gated on
 `matchMedia`, not on CSS, because hiding a thousand buttons still builds a

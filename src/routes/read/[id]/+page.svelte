@@ -132,7 +132,6 @@
 		TokenizeFn
 	} from '$lib/reading';
 	import { hasLocalRomanizer, loadRomanizer } from '$lib/romanize';
-	import type { Maturity } from '$lib/challenges/serve';
 	import { Grade } from '$lib/srs';
 	import { syncRemotes } from '$lib/remotes';
 	import { cardKey, targetTagOf, usesInterWordSpaces } from '$lib/text';
@@ -140,11 +139,10 @@
 	import type { KnowledgeItem, Profile, ReadingText } from '$lib/types';
 	import { getRomanizationMode } from '$lib/prefs';
 	import BackLink from '$lib/ui/BackLink.svelte';
-	import SpeakButton from '$lib/ui/SpeakButton.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
-
-	/** The garden's own bed names, so one word means one thing across the app. */
-	const BEDS: Record<Maturity, string> = { new: 'sprouting', young: 'growing', solid: 'rooted' };
+	import WordCard, { BEDS } from '$lib/ui/WordCard.svelte';
+	import WordPopover from '$lib/ui/WordPopover.svelte';
+	import { stepWord } from '$lib/ui/word-nav';
 
 	let loading = $state(true);
 	let loadError = $state('');
@@ -228,11 +226,12 @@
 	let pageError = $state('');
 	let playing = $state(false);
 	/**
-	 * What the side panel shows when no word is open: a confirmation. One slot
-	 * for every card the page has — the word, "finished?", "delete?" — so a
-	 * confirmation never reshapes the header or lands above the text, and it
-	 * arrives where the eye already looks for a card (facing page on a desk,
-	 * sheet at the foot of a phone).
+	 * What the side panel holds: a confirmation, or the recording form. One slot
+	 * for all of them — "finished?", "delete?", the recordings — so a
+	 * confirmation never reshapes the header or lands above the text (facing
+	 * page on a desk, sheet at the foot of a phone). The word card is not one of
+	 * them at ≥48rem, where it is a popover at the word; on a phone it takes the
+	 * same sheet. Opening either closes the other.
 	 */
 	let panel = $state<'finish' | 'delete' | 'recording' | null>(null);
 
@@ -526,13 +525,47 @@
 	);
 
 	/**
-	 * Whether the panel is holding anything — a word card, or a confirmation.
+	 * Whether the panel is holding anything — a confirmation, or on a phone the
+	 * word card's sheet. At ≥48rem the card is a popover and leaves the panel to
+	 * the transcript.
 	 *
-	 * One predicate because three things turn on it and they must agree: the panel
-	 * itself, the transcript it displaces at ≥48rem, and the scroll room the
-	 * column reserves under the sheet on a phone.
+	 * One predicate because two things turn on it and they must agree: the panel
+	 * itself and the scroll room the column reserves under the sheet on a phone.
 	 */
-	const panelOpen = $derived(card !== null || panel !== null);
+	const panelOpen = $derived(panel !== null || (card !== null && !wide));
+
+	/**
+	 * The open word's own button, which the popover is anchored at — looked up
+	 * after every render that could have replaced it (a re-annotation, the line
+	 * moving on, the caption swapping in for the prose). A word whose button is
+	 * gone closes its card.
+	 */
+	let anchorEl = $state<HTMLElement | null>(null);
+	$effect(() => {
+		const at = selected;
+		void pageRange;
+		void lines;
+		void onScreen;
+		if (!at || !wide || !spreadEl) {
+			anchorEl = null;
+			return;
+		}
+		const el = spreadEl.querySelector<HTMLElement>(`[data-word="${at.line}:${at.word}"]`);
+		anchorEl = el;
+		if (!el) selected = null;
+	});
+
+	/** ← and →, with a card open: the card moves to the page's previous or next word. */
+	function stepCard(dir: 1 | -1): void {
+		if (!selected) return;
+		const next = stepWord(
+			lines.map((line) => line.words),
+			selected,
+			dir,
+			pageRange
+		);
+		if (next) open(next.line, next.word);
+	}
 
 	/**
 	 * The reading shown on the card.
@@ -567,10 +600,11 @@
 
 	/**
 	 * Whether the facing page shows the transcript: following, wide enough for a
-	 * facing page to exist, and nothing else claiming the slot. The card and the
-	 * confirmations *replace* it — one panel, whatever is in it.
+	 * facing page to exist, and no confirmation claiming the slot. A word card
+	 * leaves it in place — the card is a popover there — while a confirmation
+	 * *replaces* it: one panel, whatever is in it.
 	 */
-	const showTranscript = $derived(following && wide && !panelOpen);
+	const showTranscript = $derived(following && wide && panel === null);
 
 	/**
 	 * The grade each garden word last got *today*, by item id — the whole of this
@@ -1472,10 +1506,24 @@
 			close();
 			return;
 		}
-		if (!following || event.metaKey || event.ctrlKey || event.altKey) return;
+		if (event.metaKey || event.ctrlKey || event.altKey) return;
 
 		const focused = document.activeElement;
 		const tag = focused instanceof HTMLElement ? focused.tagName : '';
+		const typing =
+			tag === 'INPUT' ||
+			tag === 'TEXTAREA' ||
+			(focused instanceof HTMLElement && focused.isContentEditable);
+
+		// With a card open the arrows walk the page's words, in either view —
+		// ahead of the transport's ←/→, which have the rest of the time.
+		if (selected && !typing && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+			event.preventDefault();
+			stepCard(event.key === 'ArrowLeft' ? -1 : 1);
+			return;
+		}
+		if (!following) return;
+
 		// `IFRAME` is the YouTube case and is belt and braces: once the player has
 		// focus its own document gets the keystrokes and this handler is not called
 		// at all. Standing down while it is merely the active element costs nothing
@@ -1637,7 +1685,7 @@
 			{/if}
 
 			<!-- The text. Capped at the reading measure whatever the column allows:
-			     width buys the word card its own page, never a longer line. -->
+			     width buys the panel its own page, never a longer line. -->
 			<!-- `--film-width` is the measured width of the picture, handed to the
 			     caption rows below so they can match it. Absent until something has
 			     been measured, which is what lets the CSS fall back to `--measure`. -->
@@ -1741,6 +1789,7 @@
 										type="button"
 										class={wordClass(word)}
 										class:is-open={selected?.line === s && selected?.word === w}
+										data-word="{s}:{w}"
 										onclick={() => open(s, w)}
 										>{#if word.reading}<ruby>{word.text}<rt>{word.reading}</rt></ruby
 											>{:else}{word.text}{/if}</button
@@ -1939,10 +1988,12 @@
 				{/if}
 			</div>
 
-			<!-- The panel: the word card, or a confirmation in its place. A facing
-			     page at 48rem, a sheet at the foot of the phone below it — and, in the
-			     follow view with nothing open, the transcript, which the card
-			     *replaces* rather than sits beside: one slot, whatever it holds. -->
+			<!-- The panel: a confirmation, the recording form, or on a phone the
+			     word card. A facing page at 48rem, a sheet at the foot of the phone
+			     below it — and, in the follow view with no confirmation open, the
+			     transcript, which a confirmation *replaces* rather than sits beside:
+			     one slot, whatever it holds. At 48rem the word card is never here;
+			     it is the popover at the word, below. -->
 			<aside class="card-col" class:is-open={panelOpen}>
 				{#if panel === 'finish'}
 					<div class="word-card">
@@ -2096,127 +2147,8 @@
 							</button>
 						</div>
 					</div>
-				{:else if card}
-					<div class="word-card">
-						<div class="word-head">
-							<div class="word-id">
-								<p class="word-term">{card.text}</p>
-								{#if cardReading}<span class="rom">{cardReading}</span>{/if}
-							</div>
-							<SpeakButton text={card.text} {lang} />
-							<button type="button" class="close" aria-label="Close" onclick={close}>
-								<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-									<path d="m7 7 10 10M17 7 7 17" />
-								</svg>
-							</button>
-						</div>
-
-						<p class="word-status">{statusLine(card)}</p>
-
-						<!-- An untracked word's meaning is in its field below, where it can be
-						     corrected before it is filed; shown here too, it would be said
-						     twice. -->
-						{#if cardGloss && card.status === 'tracked'}
-							<p class="word-meaning">{cardGloss.meaning}</p>
-						{/if}
-
-						<!-- The lookup's longer answer: read-only, under the word and above
-						     the Meaning field it explains, which holds only the short gloss
-						     that gets filed. -->
-						{#if cardExplanation}
-							<p class="word-explanation">{cardExplanation}</p>
-						{/if}
-
-						<!-- A tracked word has no actions here: the garden is where it is
-						     managed, and a reading session is not the place to leave for it. -->
-						{#if card.status !== 'tracked'}
-							<hr class="stitch" />
-						{/if}
-
-						<!-- Every untracked word gets the same card: adding is the one way
-						     to keep a word, a known one included. -->
-						{#if card.status !== 'tracked'}
-							<!-- The card's main action while the word has no meaning behind
-							     it — and only on a press, because it is paid. Primary until
-							     the learner has a meaning of their own in the field, when Add
-							     takes over. Gone once answered: the answer is in the fields,
-							     and on every later open of this word. -->
-							{#if !cardGloss}
-								<button
-									type="button"
-									class="btn btn-block ask"
-									class:btn-primary={draftMeaning === ''}
-									class:btn-ghost={draftMeaning !== ''}
-									disabled={lookingUp}
-									aria-busy={lookingUp}
-									onclick={() => void lookUp()}
-								>
-									{lookingUp ? 'Looking it up…' : 'What does this mean?'}
-								</button>
-							{/if}
-							<!-- Always editable, lookup or not, in flight or failed: the
-							     answer is a suggestion, and a learner who knows the word
-							     types it and adds it without spending a call. -->
-							<div class="word-fields">
-								<label class="field">
-									<span class="label">Meaning</span>
-									<input
-										class="input"
-										type="text"
-										placeholder="In {profile?.nativeLanguage ?? 'your language'}"
-										disabled={writing}
-										bind:value={meaningDraft}
-										onkeydown={(event) => {
-											if (event.key === 'Enter') void addWord();
-										}}
-									/>
-								</label>
-								{#if offersReading}
-									<label class="field">
-										<span class="label">Reading</span>
-										<input
-											class="input"
-											type="text"
-											placeholder="In Latin letters"
-											disabled={writing}
-											bind:value={readingDraft}
-											onkeydown={(event) => {
-												if (event.key === 'Enter') void addWord();
-											}}
-										/>
-									</label>
-								{/if}
-							</div>
-							<div class="word-actions">
-								<button
-									type="button"
-									class="btn"
-									class:btn-primary={draftMeaning !== ''}
-									class:btn-ghost={draftMeaning === ''}
-									disabled={writing || draftMeaning === ''}
-									onclick={() => void addWord()}
-								>
-									Add to my words
-								</button>
-								<!-- Only a mark made before marking was retired: it can be
-								     taken back, and none is made here any more. -->
-								{#if card.status === 'known'}
-									<button
-										type="button"
-										class="btn btn-ghost"
-										disabled={writing}
-										onclick={() => void unmark()}
-									>
-										Unmark
-									</button>
-								{/if}
-							</div>
-						{/if}
-
-						{#if cardError}
-							<p class="error card-error" role="alert">{cardError}</p>
-						{/if}
-					</div>
+				{:else if card && !wide}
+					<div class="word-card">{@render wordCard(card, false)}</div>
 				{:else if showTranscript}
 					<!-- The whole text as a list, one row per segment, opposite the line
 					     being spoken: the spread's usual pairing, one thing on each page.
@@ -2243,6 +2175,47 @@
 					</div>
 				{/if}
 			</aside>
+
+			<!-- The card one tap opened, drawn the same in the popover and the sheet.
+			     Every untracked word gets the same card: adding is the one way to
+			     keep a word, a known one included; Unmark only takes back a mark
+			     made before marking was retired. -->
+			{#snippet wordCard(word: ReadingWord, compact: boolean)}
+				<WordCard
+					term={word.text}
+					reading={cardReading}
+					{lang}
+					status={word.status}
+					statusLine={statusLine(word)}
+					meaning={cardGloss?.meaning}
+					explanation={cardExplanation}
+					answered={cardGloss !== undefined}
+					{offersReading}
+					bind:meaningDraft
+					bind:readingDraft
+					nativeLanguage={profile?.nativeLanguage}
+					{lookingUp}
+					{writing}
+					error={cardError}
+					{compact}
+					onlookup={() => void lookUp()}
+					onadd={() => void addWord()}
+					onunmark={() => void unmark()}
+					onclose={close}
+				/>
+			{/snippet}
+
+			<!-- At 48rem the card is a popover at the word, so the panel keeps what
+			     it holds (the transcript, a confirmation). Inside the spread so it
+			     goes fullscreen with the picture; keyed on the position, so moving
+			     to another word is a fresh popover that takes focus again. -->
+			{#if card && wide && anchorEl && selected}
+				{#key `${selected.line}:${selected.word}`}
+					<WordPopover anchor={anchorEl} label={`The word ${card.text}`} onclose={() => close()}
+						>{@render wordCard(card, true)}</WordPopover
+					>
+				{/key}
+			{/if}
 		</div>
 	{/if}
 </main>
@@ -2931,12 +2904,13 @@
 		box-shadow: var(--ring);
 	}
 
-	/* The word card ------------------------------------------------------- */
+	/* The panel ----------------------------------------------------------- */
 
 	/*
-	  The base case is a phone, so the card is a sheet pinned to the foot of the
-	  viewport — the text stays where it was and the answer comes to the thumb.
-	  The wide layout below turns it back into a facing page.
+	  The base case is a phone, so the panel — a confirmation, or the word card
+	  — is a sheet pinned to the foot of the viewport: the text stays where it
+	  was and the answer comes to the thumb. The wide layout below turns it back
+	  into a facing page, and the word card into a popover at the word.
 	*/
 	.card-col.is-open {
 		position: fixed;
@@ -2971,16 +2945,6 @@
 		min-width: 0;
 	}
 
-	.word-term {
-		margin: 0;
-		font-family: var(--font-display);
-		font-size: 1.4rem;
-		font-weight: 700;
-		line-height: 1.2;
-		letter-spacing: -0.01em;
-		overflow-wrap: anywhere;
-	}
-
 	.close {
 		display: inline-flex;
 		align-items: center;
@@ -3007,50 +2971,8 @@
 		box-shadow: var(--ring);
 	}
 
-	.word-status {
-		margin: 0.5rem 0 0;
-		font-size: 0.78rem;
-		font-weight: 700;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
-		color: var(--text-muted);
-	}
-
-	.word-meaning {
-		margin: 0.3rem 0 0;
-		font-size: 1.02rem;
-		line-height: 1.45;
-	}
-
-	/* Prose, so it keeps the card's column and a reading line-height; muted a
-	   step so the editable gloss below stays the thing to act on. */
-	.word-explanation {
-		margin: 0.5rem 0 0;
-		font-size: 0.95rem;
-		line-height: 1.5;
-		color: var(--text-muted);
-	}
-
 	.word-card .stitch {
 		margin: 0.9rem 0;
-	}
-
-	/* The card's question, a full row of its own above the fields it fills. */
-	.ask {
-		margin-bottom: 0.85rem;
-		padding: 0.7rem 1rem;
-	}
-
-	/* Meaning and reading stacked on a phone; the card is one column at every
-	   width, so no breakpoint. */
-	.word-fields {
-		display: grid;
-		gap: 0.6rem;
-		margin-bottom: 0.85rem;
-	}
-
-	.word-fields .field {
-		margin: 0;
 	}
 
 	.word-actions {
@@ -3148,14 +3070,10 @@
 		font-weight: 700;
 	}
 
-	.card-error {
-		margin-top: 0.75rem;
-	}
-
 	@media (min-width: 48rem) {
 		/*
-		  The spread opens: the text on one page, the word card on the other, and
-		  the card follows the reader down instead of being scrolled past. Every
+		  The spread opens: the text on one page, the panel on the other, and a
+		  confirmation follows the reader down instead of being scrolled past. Every
 		  line here undoes one of the sheet's, which is the price of writing the
 		  phone as the base case rather than as the exception.
 		*/
@@ -3319,9 +3237,9 @@
 		}
 
 		/*
-		  The panel column holds one thing at a time and that thing fills it. The
-		  word card scrolls itself instead of sticking, because there is no longer
-		  a scrolling window for it to stick within.
+		  The panel column holds one thing at a time and that thing fills it. A
+		  confirmation scrolls itself instead of sticking, because there is no
+		  longer a scrolling window for it to stick within.
 		*/
 		.is-following .card-col {
 			display: flex;
@@ -3336,8 +3254,8 @@
 
 		/*
 		  The transcript is the one thing here that is taller than the frame on
-		  purpose, so it is the scroller — and it wears the word card's own skin,
-		  because it takes the word card's slot. Its heading is sticky against
+		  purpose, so it is the scroller — and it wears the panel card's own skin,
+		  because it shares the confirmations' slot. Its heading is sticky against
 		  that surface, not against the page: `--surface` is what `.word-card`
 		  paints, and a heading in `--bg` reads as a bar laid over the panel
 		  rather than as the panel's own top edge. The negative margins let it

@@ -655,8 +655,8 @@ Open questions:
   - a quiet **Previous page** link, which writes nothing.
 
 #### Tapping a word (the card)
-- Tapping a word opens its card in the **panel**. On wide screens the panel is the facing page; on a phone it is a sheet at the foot of the screen. Escape closes it.
-- **Every confirmation also lives in the panel**: finishing a page, deleting the text. There are never modal dialogs and never header changes.
+- Tapping a word opens its card. On wide screens it is a small popover anchored at the word (above it, or below when there is no room), which follows the text as it scrolls; on a phone it is a sheet at the foot of the screen. Escape or a click outside closes it and returns focus to the word; while it is open, ← and → move it to the previous or next word on the page.
+- **Every confirmation lives in the panel** (the facing page on wide screens, the sheet on a phone): finishing a page, deleting the text. There are never modal dialogs and never header changes.
 - **Every tap:**
   - records a "word looked up" fact (term, text, and the card if tracked);
   - pauses the recording when one is playing.
@@ -758,7 +758,7 @@ Behaviour:
 - **Wide layout (48rem and up):**
   - The view fits the screen: the window does not scroll, and the video takes whatever height is left.
   - The facing page is a **transcript**: every segment as a row, the current one highlighted and kept in view, each row a seek-and-play.
-  - A word card or confirmation *replaces* the transcript; there is only ever one panel.
+  - A confirmation *replaces* the transcript; there is only ever one panel. A word card is a popover at the word and leaves the transcript in place.
   - The transcript is not built at all on phones.
   - The caption matches the picture's measured width, but is never narrower than reading width.
 - **Extra-wide layout (72rem and up):** the page width cap is lifted for this view only. The video takes the width and the transcript stays 20–28rem. This is the app's one exception to "width never makes content bigger", and it applies only to a picture.

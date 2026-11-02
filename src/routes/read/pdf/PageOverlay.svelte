@@ -4,7 +4,8 @@
   recognizer was unsure of, and with `?debug` every line it read. Mounted by
   the page into pdf.js's own `div.page`, so everything is in percentages of
   the page and a zoom moves nothing; the colours (`--u-*`) are inherited from
-  the viewer's `<main>`.
+  the viewer's `<main>`. Each word carries `data-word="line:offset"`, which is
+  how the viewer finds the button its popover is anchored at.
 -->
 <script lang="ts">
 	import type { ReadingWord } from '$lib/reading';
@@ -56,6 +57,7 @@
 			style:width="{at.width}%"
 			style:height="{at.height}%"
 			aria-label={at.word.text}
+			data-word="{at.line}:{at.offset}"
 			onclick={() => onpick(at.line, at.offset)}
 		></button>
 	{/each}
