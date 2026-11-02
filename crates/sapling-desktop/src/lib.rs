@@ -611,6 +611,10 @@ macro_rules! commands {
 /// desktop it expands to nothing and the binary calls this directly.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // GTK applies the user's locale at init, and ONNX Runtime misparses the
+    // mobile OCR detector under a comma-decimal LC_NUMERIC (nl_BE: no lines).
+    #[cfg(target_os = "linux")]
+    std::env::set_var("LC_NUMERIC", "C");
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {

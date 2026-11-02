@@ -112,7 +112,11 @@ someone to run the check by hand.
   `asr_transcribe`), progress is `ocr://progress` in the worker's stage names,
   and only the newest request runs — an overtaken one answers `superseded`.
   The models are `ModelFile`s downloaded on first use into `<app-data>/ocr/`;
-  a unit test checks the pins against `models.ts`.
+  a unit test checks the pins against `models.ts`. **`run()` pins
+  `LC_NUMERIC=C` on Linux before GTK applies the user's locale**: under a
+  comma-decimal one (nl_BE) ORT misreads the mobile detector and it finds no
+  lines at all, while the server models and every test binary (which never
+  call `setlocale`) are unaffected.
 
 - **OpenRouter's sign-in is one more command and one plugin, on every
   target.** `oauth_listen` binds a free loopback port and returns it; a thread
