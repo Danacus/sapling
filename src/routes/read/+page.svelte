@@ -6,9 +6,8 @@
   line points up at the buttons instead.
 
   Video and Text are free and local (`VideoImport`, `TextImport`: the core's
-  `importSource` cuts, `addText` stores). Textbook reads a lesson's pages with a
-  vision model as the `textbook-import` task and stores nothing until the
-  learner has reviewed it (`TextbookImport`). Write one for me is a paid call run as
+  `importSource` cuts, `addText` stores). Textbook opens the page viewer
+  (`/read/pdf`), which stores nothing. Write one for me is a paid call run as
   the `read-generate` task, which also saves, so a text lands whether or not the
   learner stayed. Both the open drawer (`?tab=`, absent is closed) and the
   filter (`?show=`, absent is all) are the URL, independently, so Home can open
@@ -20,7 +19,7 @@
 	import { page } from '$app/state';
 	import { onDestroy } from 'svelte';
 
-	import { getAllItems, getKnownTerms, getProfile, getTextbooks, getTexts } from '$lib/db';
+	import { getAllItems, getKnownTerms, getProfile, getTexts } from '$lib/db';
 	import { isMockMode } from '$lib/llm';
 	import { MAX_FOCUS_WORDS, MAX_TOPIC_CHARS } from '$lib/reading';
 	import { selectSessionItems } from '$lib/srs';
@@ -28,14 +27,12 @@
 	import type { Task } from '$lib/tasks';
 	import { taskStore } from '$lib/tasks/store.svelte';
 	import type { KnowledgeItem, Profile, ReadingText } from '$lib/types';
-	import type { TextbookSummary } from '$lib/textbook';
 	import BackLink from '$lib/ui/BackLink.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	import { isVideo, libraryHref, showFrom, shown, tabFrom } from './compose';
 	import type { Show, Tab } from './compose';
 	import MediaCard from './MediaCard.svelte';
-	import TextbookImport from './TextbookImport.svelte';
 	import TextImport from './TextImport.svelte';
 	import VideoImport from './VideoImport.svelte';
 
@@ -43,7 +40,7 @@
 	const TABS: readonly { id: Tab; label: string; short: string; heading: string }[] = [
 		{ id: 'video', label: 'Video', short: 'Video', heading: 'Add a video' },
 		{ id: 'text', label: 'Text', short: 'Text', heading: 'Add a text' },
-		{ id: 'textbook', label: 'Textbook', short: 'Book', heading: 'Import a textbook lesson' },
+		{ id: 'textbook', label: 'Textbook', short: 'Book', heading: 'Read a textbook' },
 		{ id: 'write', label: 'Write one for me', short: 'Write', heading: 'Write one for me' }
 	];
 
@@ -55,7 +52,6 @@
 	let profile = $state<Profile | undefined>(undefined);
 	let items = $state<KnowledgeItem[]>([]);
 	let texts = $state<ReadingText[]>([]);
-	let books = $state<TextbookSummary[]>([]);
 	let mockMode = $state(false);
 
 	const tab = $derived(tabFrom(page.url.searchParams.get('tab')));
@@ -100,15 +96,14 @@
 		loading = true;
 		loadError = '';
 
-		Promise.all([getProfile(), getAllItems(), getTexts(), getTextbooks()])
-			.then(([loadedProfile, loadedItems, loadedTexts, loadedBooks]) => {
+		Promise.all([getProfile(), getAllItems(), getTexts()])
+			.then(([loadedProfile, loadedItems, loadedTexts]) => {
 				if (cancelled) return;
 				// `undefined` means the root layout is about to redirect to onboarding.
 				if (!loadedProfile) return;
 				profile = loadedProfile;
 				items = loadedItems;
 				texts = loadedTexts;
-				books = loadedBooks;
 				mockMode = isMockMode();
 				loading = false;
 			})
@@ -293,7 +288,11 @@
 					<TextImport {busy} />
 				</div>
 				<div class="pane" hidden={tab !== 'textbook'}>
-					<TextbookImport {profile} />
+					<p class="hint lead">
+						Open a textbook PDF, or photos of its pages, and read it as it prints with your words
+						marked on it. Nothing is kept.
+					</p>
+					<a class="btn btn-primary btn-block go" href="/read/pdf">Open the page viewer</a>
 				</div>
 
 				{#if tab === 'write'}
@@ -349,38 +348,6 @@
 					</div>
 				{/if}
 			</section>
-
-			{#if books.length > 0}
-				<!-- Books apart from the gallery: a book is chapters to work through,
-				     not one more thing to read, and it opens on its contents. -->
-				<section class="shelf ll-rise" style="animation-delay: 100ms" aria-labelledby="books-head">
-					<div class="shelf-bar">
-						<h2 id="books-head" class="shelf-head">
-							Textbooks <span class="shelf-count">{books.length}</span>
-						</h2>
-					</div>
-					<ul class="books">
-						{#each books as book (book.id)}
-							<li>
-								<a class="book" href={`/read/book/${book.id}`}>
-									<svg class="book-ico" viewBox="0 0 24 24" aria-hidden="true">
-										<path
-											d="M12 6.6c-1.8-1.3-4.4-1.9-7.4-1.8v12.6c3-.1 5.6.5 7.4 1.8 1.8-1.3 4.4-1.9 7.4-1.8V4.8c-3-.1-5.6.5-7.4 1.8z"
-										/>
-										<path d="M12 6.6v12.6" />
-									</svg>
-									<span class="book-text">
-										<span class="book-title">{book.title}</span>
-										<span class="book-meta"
-											>{book.chapters} chapter{book.chapters === 1 ? '' : 's'}</span
-										>
-									</span>
-								</a>
-							</li>
-						{/each}
-					</ul>
-				</section>
-			{/if}
 
 			<section class="shelf ll-rise" style="animation-delay: 120ms" aria-labelledby="shelf-head">
 				<div class="shelf-bar">
@@ -690,6 +657,10 @@
 		padding: 0.85rem 1.4rem;
 	}
 
+	.lead {
+		margin: 0 0 1rem;
+	}
+
 	.error {
 		margin: 0.9rem 0 0;
 		padding: 0.65rem 0.85rem;
@@ -778,70 +749,6 @@
 
 	/* A grid of many small cards — what `.shell-full` is for. Width buys
 	   columns, never a bigger card: two on a phone, three wide, four broad. */
-	.books {
-		margin: 0;
-		padding: 0;
-		list-style: none;
-		display: grid;
-		grid-template-columns: minmax(0, 1fr);
-		gap: 0.6rem;
-	}
-
-	.book {
-		display: flex;
-		align-items: center;
-		gap: 0.85rem;
-		min-height: 3.5rem;
-		padding: 0.75rem 0.95rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
-		background: var(--surface);
-		color: var(--text);
-		text-decoration: none;
-	}
-
-	.book:hover {
-		border-color: var(--text-muted);
-	}
-
-	.book-ico {
-		flex: none;
-		width: 1.6rem;
-		height: 1.6rem;
-		fill: none;
-		stroke: var(--accent);
-		stroke-width: 1.6;
-		stroke-linejoin: round;
-	}
-
-	.book-text {
-		display: flex;
-		flex-direction: column;
-		min-width: 0;
-	}
-
-	.book-title {
-		font-weight: 700;
-		overflow-wrap: anywhere;
-	}
-
-	.book-meta {
-		font-size: 0.82rem;
-		color: var(--text-muted);
-	}
-
-	@media (min-width: 48rem) {
-		.books {
-			grid-template-columns: repeat(2, minmax(0, 1fr));
-		}
-	}
-
-	@media (min-width: 72rem) {
-		.books {
-			grid-template-columns: repeat(3, minmax(0, 1fr));
-		}
-	}
-
 	.grid {
 		list-style: none;
 		display: grid;

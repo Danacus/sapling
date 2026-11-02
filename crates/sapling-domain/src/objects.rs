@@ -24,7 +24,7 @@ use sha2::{Digest, Sha256};
 use ts_rs::TS;
 
 use crate::events::{typed_event, Payload, RawEvent};
-use crate::types::{Chapter, Segment};
+use crate::types::Segment;
 
 /// The algorithm, as the name spells it. Another one is another prefix.
 pub const OBJECT_PREFIX: &str = "sha256:";
@@ -79,23 +79,6 @@ impl TextContent {
     /// The object: the canonical bytes and their name.
     pub fn to_object(&self) -> ContentObject {
         let bytes = serde_json::to_string(self).expect("a text body serialises");
-        ContentObject {
-            hash: object_hash(bytes.as_bytes()),
-            bytes,
-        }
-    }
-}
-
-/// A textbook's chapters as an object: `textbookAdded.content` names one.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TextbookContent {
-    pub chapters: Vec<Chapter>,
-}
-
-impl TextbookContent {
-    /// The object: the canonical bytes and their name.
-    pub fn to_object(&self) -> ContentObject {
-        let bytes = serde_json::to_string(self).expect("a textbook serialises");
         ContentObject {
             hash: object_hash(bytes.as_bytes()),
             bytes,

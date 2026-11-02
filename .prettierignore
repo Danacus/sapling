@@ -32,11 +32,6 @@ Cargo.lock
 target
 src/lib/db/wasm
 
-# tools/textbook-ocr: model replies and page scans — gitignored, but prettier
-# walks the filesystem, not the index.
-tools/textbook-ocr/out
-tools/textbook-ocr/pages
-
 # Design mockups (local, excluded in .git/info/exclude): exported HTML, not ours
 # to restyle — prettier walks the filesystem, not the index.
 .mockups

@@ -406,9 +406,9 @@ pub struct TextDeleted {
     pub text_id: String,
 }
 
-/// A textbook arrives: its title, the file it was read from by name, and its
-/// chapters as the object `content` names (a `TextbookContent`). Always by
-/// reference — there is no inline shape to stay compatible with.
+/// A textbook, its chapters the object `content` names. Nothing writes or
+/// materializes one; it stays typed so a logged row syncs and the relay learns
+/// its object's owner (`object_refs`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(rename = "TextbookAddedPayload")]
 #[serde(rename_all = "camelCase")]
@@ -427,7 +427,7 @@ pub struct TextbookAdded {
     pub created_at: f64,
 }
 
-/// Tombstone. The book goes, and the id can never come back.
+/// A textbook's tombstone, kept typed so the relay retires its object.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(rename = "TextbookDeletedPayload")]
 #[serde(rename_all = "camelCase")]

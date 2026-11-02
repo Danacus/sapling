@@ -87,10 +87,9 @@ makes some entity use and which entity it ends:
 | `textbookDeleted` | — | — | the book |
 | anything else, or inline `textAdded` | — | — | — |
 
-A textbook is always by reference: its chapters are one object
-(`TextbookContent { chapters }`), the same 1 MiB cap and the same verification
-as a text body. There is no `textbookRevised` yet; a book is replaced by
-deleting it and importing it again.
+`textbookAdded` and `textbookDeleted` are written and read by nothing; they
+stay typed so rows already in a log sync and the relay still collects the
+object a book names.
 
 The rule GC will apply (§8): **an object is live while some owner with an edge
 to it is not retired.** Edges and retirements are sets, so the picture is the

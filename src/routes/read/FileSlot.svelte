@@ -9,7 +9,7 @@
 		accept: string;
 		icon: 'upload' | 'video' | 'subtitles';
 		disabled?: boolean;
-		/** Several files at once: a textbook's page images. */
+		/** Several files at once: a book's page images. */
 		multiple?: boolean;
 		onchange: (event: Event) => void;
 		/** The element, so a caller can empty it: no state assignment reaches a file input. */

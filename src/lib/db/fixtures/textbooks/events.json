@@ -3,7 +3,7 @@
 		"deviceId": "fixture-device",
 		"now": 1710244800000,
 		"orderFree": true,
-		"note": "Four textbooks. book-held reads whole (getTextbooks lists it with its chapter count, getTextbook returns its chapters); book-waiting names an object that has not arrived and is returned by no read, and missingObjects lists it; book-gone is added then deleted; book-late's tombstone sits ahead of its textbookAdded in the log and still wins. The deleted books' objects are held and read by nothing."
+		"note": "Textbook rows are kept in the log and synced but materialize nothing: no read shows them, missingObjects asks for none of their objects (book-waiting's is not held), and the held objects are still exported."
 	},
 	"events": [
 		{

@@ -49,11 +49,9 @@ use sapling_db::{AnswerFiled, AnswerRecord, Clip, Core, Error, Result, ReviewOut
 use sapling_domain::events::{parse_payload, EventType, Payload, RawEvent, ResultOverturned};
 use sapling_domain::objects::ContentObject;
 use sapling_domain::types::{
-    ChallengeResult, Chapter, Conversation, ConversationDetail, ConversationExchange,
-    ConversationSummary, DailyActivity, GradeEntry, KnowledgeItem, Profile, ReadingText,
-    StudySession, Textbook, TextbookSummary,
+    ChallengeResult, Conversation, ConversationDetail, ConversationExchange, ConversationSummary,
+    DailyActivity, GradeEntry, KnowledgeItem, Profile, ReadingText, StudySession,
 };
-use sapling_import::textbook::TextbookPage;
 use sapling_import::ImportedSource;
 
 pub mod captions;
@@ -467,28 +465,6 @@ backend! {
             core.delete_text(&id)
         }
 
-        /* ---- Textbooks --------------------------------------------------- */
-
-        /// Stores one textbook, whole: its chapters as a content object and a
-        /// `textbookAdded` naming it, in one transaction. Refuses a book with no
-        /// title or chapter, or over 1 MiB.
-        addTextbook(book: Textbook) {
-            core.add_textbook(&book)
-        }
-        /// Every textbook whose chapters this device holds, newest first,
-        /// without the chapters: what the library lists.
-        getTextbooks() -> Vec<TextbookSummary> {
-            core.get_textbooks()
-        }
-        /// One textbook with its chapters, or `undefined` when it was deleted or
-        /// its chapters have not arrived yet.
-        getTextbook(id: String) -> Textbook | undefined {
-            core.get_textbook(&id)
-        }
-        /// Forgets one textbook. Tombstoned, like a text.
-        deleteTextbook(id: String) {
-            core.delete_textbook(&id)
-        }
         /// Marks a word known, or takes the mark back.
         ///
         /// Not a knowledge item: a marked word is one the learner does not need
@@ -528,13 +504,6 @@ backend! {
         /// — it touches no table.
         importSource(text: String) -> ImportedSource {
             Ok::<_, Error>(sapling_import::import_source(&text))
-        }
-        /// A whole book's transcribed pages, in order, into its chapters:
-        /// split where the lesson label changes, a continued block joined to
-        /// the one it continues, each titled by its opening. The pages come
-        /// tidied from `transcribePage`. Pure, like `importSource`.
-        assembleTextbook(pages: Vec<TextbookPage>) -> Vec<Chapter> {
-            Ok::<_, Error>(sapling_import::textbook::assemble_book(&pages))
         }
 
         /* ---- Conversations ---------------------------------------------- */
@@ -747,30 +716,6 @@ mod tests {
         assert!(dispatch_json(&core, "getAllItems", "[null]").is_ok());
         assert!(dispatch_json(&core, "getAllItems", "[{\"withRecentGrades\": true}]").is_ok());
         assert!(dispatch_json(&core, "recordServe", "[\"c\", null]").is_ok());
-    }
-
-    #[test]
-    fn assemble_textbook_answers_without_the_database() {
-        let pages = r#"[[
-            {"pages":[{"number":"14"}],"lessonStarts":[{"lesson":"3","title":"你叫什么名字"}],
-             "blocks":[{"lesson":"3","section":{"kind":"dialogue","lines":[{"speaker":"A","text":"你叫什么名字？"}]}}]},
-            {"pages":[{"number":"15"}],
-             "blocks":[{"continues":true,"section":{"kind":"dialogue","lines":[{"speaker":"B","text":"我叫李月。"}]}}]}
-        ]]"#;
-        let answer = dispatch_json(&silent_core(), "assembleTextbook", pages)
-            .unwrap()
-            .unwrap();
-        let value: Value = serde_json::from_str(&answer).unwrap();
-        assert_eq!(
-            value,
-            serde_json::json!([{
-                "label": "3", "title": "你叫什么名字", "firstPage": "14", "lastPage": "15",
-                "sections": [{ "kind": "dialogue", "lines": [
-                    { "speaker": "A", "text": "你叫什么名字？" },
-                    { "speaker": "B", "text": "我叫李月。" }
-                ], "words": [] }]
-            }])
-        );
     }
 
     #[test]

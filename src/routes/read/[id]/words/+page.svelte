@@ -1,6 +1,6 @@
 <!--
   The words of one text the learner does not have yet — a typed or imported
-  text, a textbook lesson, a video's transcript alike — to add several at once.
+  text, a video's transcript alike — to add several at once.
 
   The list is the reader's own: every segment through `annotateSentence` with
   the same tokenizer and the same garden, then `harvestWords` — so a word here

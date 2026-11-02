@@ -78,11 +78,6 @@ export const clipsFor = forward('clipsFor');
 export const cuesFor = forward('cuesFor');
 export const deleteText = forward('deleteText');
 
-/** Textbooks: a book and its chapters, stored as one object (`core.md`). */
-export const addTextbook = forward('addTextbook');
-export const getTextbooks = forward('getTextbooks');
-export const getTextbook = forward('getTextbook');
-export const deleteTextbook = forward('deleteTextbook');
 export const markWord = forward('markWord');
 export const getKnownTerms = forward('getKnownTerms');
 export const recordLookup = forward('recordLookup');
@@ -94,12 +89,6 @@ export const recordStudy = forward('recordStudy');
  * a table; it goes through here because that is where the window reaches Rust.
  */
 export const importSource = forward('importSource');
-
-/**
- * One lesson's transcribed textbook pages into its title, segments and word
- * list — pure, like `importSource`: `sapling-import`'s `textbook.rs`.
- */
-export const assembleTextbook = forward('assembleTextbook');
 
 export const addConversation = forward('addConversation');
 export const addExchange = forward('addExchange');
