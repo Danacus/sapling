@@ -17,8 +17,8 @@ use sapling_domain::day::LocalDay;
 use sapling_domain::events::{
     typed_event, ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted,
     ItemAdded, ItemDeleted, ItemReviewed, ItemUpdated, Payload, RawEvent, ResultOverturned,
-    ReviewAmended, Studied, SyncEvent, TextAdded, TextDeleted, TextRevised, WordLookedUp,
-    WordMarked, PATCHABLE_COLUMNS, PROFILE_ID, SCOPED_EVENT_TYPE,
+    ReviewAmended, Studied, SyncEvent, TextAdded, TextDeleted, TextMediaSet, TextRevised,
+    WordLookedUp, WordMarked, PATCHABLE_COLUMNS, PROFILE_ID, SCOPED_EVENT_TYPE,
 };
 use sapling_domain::types::{ChallengeResult, Conversation, ConversationExchange, Profile};
 use sapling_srs::{new_card_state, review_card, FsrsCardState, Grade, GOOD};
@@ -518,7 +518,7 @@ impl<'a> Materializer<'a> {
             return Ok(());
         }
         let media = match &p.media {
-            Some(media) => Param::text(serde_json::to_string(media)?),
+            Some(media) => Param::text(serde_json::to_string(std::slice::from_ref(media))?),
             None => Param::Null,
         };
         let segments = match &p.segments {
@@ -545,15 +545,41 @@ impl<'a> Materializer<'a> {
     /// revisions arrive in; a revision of a tombstoned text is inert. One that
     /// lands before its text waits in `textRevisions` and counts once it does.
     fn text_revised(&self, event: &SyncEvent, p: &TextRevised) -> Result<()> {
+        self.last_write(
+            event,
+            &p.text_id,
+            "textRevisions",
+            "content",
+            Param::text(&p.content),
+        )
+    }
+
+    /// `text_revised`'s rule over `textMedia`: the newest set's list replaces
+    /// the text's recordings, a set that lands first waits for its text.
+    fn text_media_set(&self, event: &SyncEvent, p: &TextMediaSet) -> Result<()> {
+        let media = Param::text(serde_json::to_string(&p.media)?);
+        self.last_write(event, &p.text_id, "textMedia", "media", media)
+    }
+
+    /// Keeps `value` in `table`'s row for `text_id` if `event` is newer by
+    /// `(at, device, event id)` than the one held there; inert on a tombstone.
+    fn last_write(
+        &self,
+        event: &SyncEvent,
+        text_id: &str,
+        table: &str,
+        column: &str,
+        value: Param,
+    ) -> Result<()> {
         if self.exists(
             "SELECT 1 FROM textTombstones WHERE textId = ?",
-            &[Param::text(&p.text_id)],
+            &[Param::text(text_id)],
         )? {
             return Ok(());
         }
         let held = self.sql.query(
-            "SELECT at, device, eventId FROM textRevisions WHERE textId = ?",
-            &[Param::text(&p.text_id)],
+            &format!("SELECT at, device, eventId FROM {table} WHERE textId = ?"),
+            &[Param::text(text_id)],
         )?;
         if let Some(held) = held.first() {
             let newer = event
@@ -567,11 +593,13 @@ impl<'a> Materializer<'a> {
             }
         }
         self.sql.exec(
-            "INSERT OR REPLACE INTO textRevisions (textId, content, at, device, eventId)
-             VALUES (?, ?, ?, ?, ?)",
+            &format!(
+                "INSERT OR REPLACE INTO {table} (textId, {column}, at, device, eventId)
+                 VALUES (?, ?, ?, ?, ?)"
+            ),
             &[
-                Param::text(&p.text_id),
-                Param::text(&p.content),
+                Param::text(text_id),
+                value,
                 Param::number(event.at),
                 Param::text(&event.device),
                 Param::text(&event.id),
@@ -587,6 +615,10 @@ impl<'a> Materializer<'a> {
         )?;
         self.sql.exec(
             "DELETE FROM textRevisions WHERE textId = ?",
+            std::slice::from_ref(&id),
+        )?;
+        self.sql.exec(
+            "DELETE FROM textMedia WHERE textId = ?",
             std::slice::from_ref(&id),
         )?;
         self.sql
@@ -738,6 +770,7 @@ impl<'a> Materializer<'a> {
             Payload::ResultOverturned(p) => self.result_overturned(p),
             Payload::Studied(p) => self.studied(&event.id, event.at, p),
             Payload::TextRevised(p) => self.text_revised(event, p),
+            Payload::TextMediaSet(p) => self.text_media_set(event, p),
             // Logged and synced for the relay's object bookkeeping; nothing
             // reads a textbook.
             Payload::TextbookAdded(_) | Payload::TextbookDeleted(_) => Ok(()),

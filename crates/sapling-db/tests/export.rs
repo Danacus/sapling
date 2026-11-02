@@ -44,7 +44,7 @@ fn with_a_text() -> Core {
             start: None,
             end: None,
         }],
-        media: None,
+        media: Vec::new(),
         created_at: 1.0,
     })
     .expect("add_text");

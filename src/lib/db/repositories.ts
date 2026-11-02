@@ -77,6 +77,7 @@ export const getText = forward('getText');
 export const clipsFor = forward('clipsFor');
 export const cuesFor = forward('cuesFor');
 export const deleteText = forward('deleteText');
+export const setTextMedia = forward('setTextMedia');
 
 export const markWord = forward('markWord');
 export const getKnownTerms = forward('getKnownTerms');

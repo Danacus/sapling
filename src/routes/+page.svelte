@@ -136,7 +136,7 @@
 			...texts.map((text) => ({
 				id: `reading-${text.id}`,
 				title: text.title,
-				meta: text.media ? 'Watch or read again' : 'Continue reading',
+				meta: text.media?.length ? 'Watch or read again' : 'Continue reading',
 				href: `/read/${text.id}`,
 				at: text.createdAt,
 				kind: 'reading' as const

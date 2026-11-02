@@ -870,10 +870,12 @@
 					"end": 3200
 				}
 			],
-			"media": {
-				"kind": "youtube",
-				"videoId": "dQw4w9WgXcQ"
-			},
+			"media": [
+				{
+					"kind": "youtube",
+					"videoId": "dQw4w9WgXcQ"
+				}
+			],
 			"createdAt": 1710065100000
 		},
 		{
@@ -924,10 +926,12 @@
 					"end": 3200
 				}
 			],
-			"media": {
-				"kind": "youtube",
-				"videoId": "dQw4w9WgXcQ"
-			},
+			"media": [
+				{
+					"kind": "youtube",
+					"videoId": "dQw4w9WgXcQ"
+				}
+			],
 			"createdAt": 1710065100000
 		},
 		"text-3": null

@@ -74,6 +74,14 @@ Reads are always taken under `TZ=UTC` (`getDailyActivity` buckets by local day,
   later device wins), an older revision arriving last and losing, an inline
   text revised to an object, a revision and a delete racing (deleted stays
   deleted), and a revision of a text never added (inert).
+- `text-media` — `textMediaSet` replacing a text's recordings whole,
+  last-write-wins by `(at, device, event id)` in both arrival orders: two
+  devices setting one text in the same millisecond (the later device wins),
+  an older empty set arriving last and losing; an import-time YouTube link
+  removed, so `clipsFor` stops finding its cue; a text imported with no
+  recording gaining a file from a set that arrives before it, then a set
+  naming two links (inert, it does not parse); a set and a delete racing
+  (deleted stays deleted); and a set on a text never added (inert).
 - `textbooks` — `textbookAdded` and `textbookDeleted` rows, some objects held
   and one not: the rows stay in the log (`pendingEvents`, `exportData`, the
   held objects exported with them), nothing materializes them, and

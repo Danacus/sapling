@@ -1,0 +1,261 @@
+{
+	"meta": {
+		"deviceId": "fixture-device",
+		"now": 1710244800000,
+		"orderFree": true,
+		"note": "textMediaSet replaces a text's recordings whole, last-write-wins by (at, device, event id) in either arrival order: two devices set text-a in the same millisecond (dev-b wins the tie) and an older empty set arrives last and loses; text-b's import-time YouTube link is removed, so clipsFor no longer finds it; text-c, imported with none, gains a file from a set that arrives before it, and a later set with two links is inert; text-gone is set and deleted concurrently and stays deleted; a set on a text never added is inert."
+	},
+	"events": [
+		{
+			"seq": 1,
+			"id": "ev-item",
+			"type": "itemAdded",
+			"at": 1710061199000,
+			"device": "dev-a",
+			"payload": {
+				"id": "item-zaocan",
+				"kind": "vocab",
+				"term": "早餐",
+				"meaning": "breakfast",
+				"introducedAt": 1710061199000
+			}
+		},
+		{
+			"seq": 2,
+			"id": "ev-add-a",
+			"type": "textAdded",
+			"at": 1710061200000,
+			"device": "dev-a",
+			"payload": {
+				"id": "text-a",
+				"title": "甲",
+				"source": "imported",
+				"segments": [
+					{
+						"text": "我们吃早餐吧。",
+						"start": 0,
+						"end": 1500
+					}
+				],
+				"media": {
+					"kind": "file",
+					"name": "a.mp4",
+					"type": "video/mp4"
+				},
+				"createdAt": 1710061200000
+			}
+		},
+		{
+			"seq": 3,
+			"id": "ev-set-a-dev-a",
+			"type": "textMediaSet",
+			"at": 1710061260000,
+			"device": "dev-a",
+			"payload": {
+				"textId": "text-a",
+				"media": [
+					{
+						"kind": "file",
+						"name": "a.mp4",
+						"type": "video/mp4"
+					},
+					{
+						"kind": "youtube",
+						"videoId": "vidAAAAAAAA"
+					}
+				]
+			}
+		},
+		{
+			"seq": 4,
+			"id": "ev-set-a-dev-b",
+			"type": "textMediaSet",
+			"at": 1710061260000,
+			"device": "dev-b",
+			"payload": {
+				"textId": "text-a",
+				"media": [
+					{
+						"kind": "youtube",
+						"videoId": "vidBBBBBBBB"
+					},
+					{
+						"kind": "file",
+						"name": "a.mp4",
+						"type": "video/mp4"
+					}
+				]
+			}
+		},
+		{
+			"seq": 5,
+			"id": "ev-set-a-old",
+			"type": "textMediaSet",
+			"at": 1710061230000,
+			"device": "dev-a",
+			"payload": {
+				"textId": "text-a",
+				"media": []
+			}
+		},
+		{
+			"seq": 6,
+			"id": "ev-add-b",
+			"type": "textAdded",
+			"at": 1710061201000,
+			"device": "dev-a",
+			"payload": {
+				"id": "text-b",
+				"title": "乙",
+				"source": "imported",
+				"segments": [
+					{
+						"text": "早餐很好吃。",
+						"start": 0,
+						"end": 1500
+					}
+				],
+				"media": {
+					"kind": "youtube",
+					"videoId": "vidCCCCCCCC"
+				},
+				"createdAt": 1710061201000
+			}
+		},
+		{
+			"seq": 7,
+			"id": "ev-set-b",
+			"type": "textMediaSet",
+			"at": 1710061290000,
+			"device": "dev-a",
+			"payload": {
+				"textId": "text-b",
+				"media": []
+			}
+		},
+		{
+			"seq": 8,
+			"id": "ev-set-c",
+			"type": "textMediaSet",
+			"at": 1710061202500,
+			"device": "dev-b",
+			"payload": {
+				"textId": "text-c",
+				"media": [
+					{
+						"kind": "file",
+						"name": "c.mp4",
+						"type": "video/mp4"
+					}
+				]
+			}
+		},
+		{
+			"seq": 9,
+			"id": "ev-add-c",
+			"type": "textAdded",
+			"at": 1710061202000,
+			"device": "dev-a",
+			"payload": {
+				"id": "text-c",
+				"title": "丙",
+				"source": "imported",
+				"segments": [
+					{
+						"text": "没有早餐。",
+						"start": 0,
+						"end": 1500
+					}
+				],
+				"createdAt": 1710061202000
+			}
+		},
+		{
+			"seq": 10,
+			"id": "ev-set-c-bad",
+			"type": "textMediaSet",
+			"at": 1710061295000,
+			"device": "dev-a",
+			"payload": {
+				"textId": "text-c",
+				"media": [
+					{
+						"kind": "youtube",
+						"videoId": "vidDDDDDDDD"
+					},
+					{
+						"kind": "youtube",
+						"videoId": "vidEEEEEEEE"
+					}
+				]
+			}
+		},
+		{
+			"seq": 11,
+			"id": "ev-add-gone",
+			"type": "textAdded",
+			"at": 1710061203000,
+			"device": "dev-a",
+			"payload": {
+				"id": "text-gone",
+				"title": "丁",
+				"source": "imported",
+				"segments": [
+					{
+						"text": "早餐。",
+						"start": 0,
+						"end": 1500
+					}
+				],
+				"media": {
+					"kind": "file",
+					"name": "d.mp4",
+					"type": "video/mp4"
+				},
+				"createdAt": 1710061203000
+			}
+		},
+		{
+			"seq": 12,
+			"id": "ev-set-gone",
+			"type": "textMediaSet",
+			"at": 1710061300000,
+			"device": "dev-b",
+			"payload": {
+				"textId": "text-gone",
+				"media": [
+					{
+						"kind": "youtube",
+						"videoId": "vidFFFFFFFF"
+					}
+				]
+			}
+		},
+		{
+			"seq": 13,
+			"id": "ev-del-gone",
+			"type": "textDeleted",
+			"at": 1710061299000,
+			"device": "dev-a",
+			"payload": {
+				"textId": "text-gone"
+			}
+		},
+		{
+			"seq": 14,
+			"id": "ev-set-never",
+			"type": "textMediaSet",
+			"at": 1710061204000,
+			"device": "dev-a",
+			"payload": {
+				"textId": "text-never",
+				"media": [
+					{
+						"kind": "youtube",
+						"videoId": "vidGGGGGGGG"
+					}
+				]
+			}
+		}
+	]
+}

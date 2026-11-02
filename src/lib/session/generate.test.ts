@@ -50,7 +50,7 @@ beforeEach(async () => {
 			{ text: 'Mi perro come mucho por la tarde.', start: 1000, end: 3000 },
 			{ text: 'Sin tiempo.' }
 		],
-		media: { kind: 'youtube', videoId: 'vid' },
+		media: [{ kind: 'youtube', videoId: 'vid' }],
 		createdAt: NOW - DAY
 	});
 });

@@ -137,10 +137,12 @@
 					"end": 3000
 				}
 			],
-			"media": {
-				"kind": "youtube",
-				"videoId": "vid-ref"
-			},
+			"media": [
+				{
+					"kind": "youtube",
+					"videoId": "vid-ref"
+				}
+			],
 			"createdAt": 1710061380000
 		},
 		{
@@ -166,10 +168,12 @@
 					"end": 2000
 				}
 			],
-			"media": {
-				"kind": "youtube",
-				"videoId": "vid-inline"
-			},
+			"media": [
+				{
+					"kind": "youtube",
+					"videoId": "vid-inline"
+				}
+			],
 			"createdAt": 1710061260000
 		}
 	],
@@ -185,10 +189,12 @@
 					"end": 2000
 				}
 			],
-			"media": {
-				"kind": "youtube",
-				"videoId": "vid-inline"
-			},
+			"media": [
+				{
+					"kind": "youtube",
+					"videoId": "vid-inline"
+				}
+			],
 			"createdAt": 1710061260000
 		},
 		"text-legacy": {
@@ -219,10 +225,12 @@
 					"end": 3000
 				}
 			],
-			"media": {
-				"kind": "youtube",
-				"videoId": "vid-ref"
-			},
+			"media": [
+				{
+					"kind": "youtube",
+					"videoId": "vid-ref"
+				}
+			],
 			"createdAt": 1710061380000
 		}
 	},

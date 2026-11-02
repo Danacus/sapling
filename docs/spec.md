@@ -543,15 +543,15 @@ Behaviour:
 
 #### Video
 - Importing is free and local: there is no model call and no task.
-- **A YouTube link** is the primary control. It is checked live; text that names no video says "That is not a YouTube link".
-  - Once the link names a video, its caption tracks are listed automatically (see *Fetching captions*), with a spinner while YouTube is asked and the failure inline with "Try again". The same video is never listed twice.
-  - Each track is a chip: its name, its language, and an *auto* tag for machine captions. Picking one fetches it.
-- **The subtitles** become a **source card**: format (SRT subtitles, WebVTT subtitles, YouTube transcript, YouTube captions), name, line count and duration, with a × to remove it (which brings the chips back). Fetched captions belong to their video and are dropped when the link names a different one.
-- **"Or use your own files"**, below and quieter: a video/audio file and a subtitle file (`.srt`, `.vtt`, `.json3`, `.json`, or a `.txt` transcript).
-  - A subtitle file is recognised by its *content*, never its extension. A file with no timings is refused, pointing at Text.
-  - A local recording needs a subtitle file. A YouTube link may take an uploaded subtitle file instead of a fetched track.
-  - The link and the recording file are mutually exclusive: using one clears the other.
-  - A chosen file shows "Only its name is kept, so you'll pick the file again when you open this".
+- Two questions, in order, then Import.
+- **Recording**: a **YouTube link** field and a **video/audio file**, side by side on a wide screen. Both are optional and both may be given — the same recording twice. Neither clears the other.
+  - The link is checked live; text that names no video says "That is not a YouTube link".
+  - A chosen file shows "Only its name is kept, so you'll pick the file again later", and a × removes it.
+- **Subtitles**: one slot for where the timed text comes from. Its options follow from the recordings given:
+  - the link's caption tracks, listed automatically once the link names a video (see *Fetching captions*), with a spinner while YouTube is asked and the failure inline with "Try again"; the same video is never listed twice. Each track is a chip — its name, its language, an *auto* tag for machine captions — and picking one fetches it;
+  - **Transcribe the file**, when a file is given and this host can transcribe the language (desktop only);
+  - **Upload a subtitle file** (`.srt`, `.vtt`, `.json3`, `.json`, or a `.txt` transcript), always. A subtitle file is recognised by its *content*, never its extension; a file with no timings is refused, pointing at Text.
+- A filled slot is a **source card** saying where it came from (*From YouTube* · "YouTube captions · zh", *Transcribed* · "Transcribed from ep1.mp4", *Uploaded* · the file's name), its format, line count and duration. Only its × empties it: adding, changing or removing a recording never drops the subtitles.
 - **Title** (optional). It defaults to the video's title, else the uploaded file's name without its extension, else the first line. The default is the field's placeholder.
 - **Import** is enabled once there is a recording and timed subtitles. A line under it says what is missing when only half is there. It stores the text and opens it immediately; a file recording is handed to the reader in memory, so the first open plays it without asking.
 
@@ -562,11 +562,12 @@ Behaviour:
 - **Import** stores the text and opens it immediately.
 
 Rules:
-- A stored text is **immutable**, and it is **only the text**: title, source (generated or imported), optional topic, optional recording reference, segments, and creation time.
+- A stored text is **immutable**, and it is **only the text**: title, source (generated or imported), optional topic, its recording references, segments, and creation time.
   - Segments are cut the way the source cut them: one per subtitle cue, with its start and end in milliseconds, or one per paragraph, untimed.
   - A segment has both times or neither.
   - No readings, translations, glossary or reading position is ever stored. Everything adaptive is worked out when the text is opened.
-- A recording is attached at import and never afterwards. The text can be deleted, but never edited.
+- A text has at most one YouTube link and one local file as its recording — the same recording both, with no offset between them. Either can be attached at import or added, replaced or removed later from the reader's **Recording** panel; the text itself can be deleted, but never edited.
+- With both, YouTube plays by default; **Play from file** switches this device to the file for that text, and the choice is remembered on this device only.
 - Only a **reference** to a recording is stored: a YouTube video id, or a local file's name and MIME type. Video bytes never enter the store or the synced log.
 - Texts sync between paired devices as events. Deleting a text removes it on every device, and a deleted text cannot come back.
 
@@ -786,6 +787,10 @@ Behaviour:
 - Because only the file name is stored, the file picked at import is kept in memory for the next open only (for the rest of the browser tab).
 - On every later open the stage shows "Choose `<name>` to play it here" with a picker. The line controls stay disabled and Read as text still works.
 - A file with a different name is accepted: the learner may have renamed or re-encoded it.
+
+#### Recording panel
+- **Recording** in the reader's header (any text with timed segments) opens the panel: the YouTube link field and the file (choose, replace, Remove). **Save** replaces the text's recordings on every device; Cancel leaves them.
+- With both a link and a file, YouTube plays. **Play from file**, under the line controls, plays the file instead; it is remembered per text on this device only. A file already picked in this tab plays without asking.
 
 Open questions:
 - The follow view grades only lapses (taps). Reading or watching a whole video never credits a Good.

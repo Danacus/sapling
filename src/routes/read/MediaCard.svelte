@@ -20,9 +20,10 @@
 </script>
 
 <script lang="ts">
+	import { youtubeOf } from '$lib/media';
 	import type { ReadingText } from '$lib/types';
 
-	import { SOURCE_NAMES, duration, excerpt, extent, sourceOf } from './compose';
+	import { SOURCE_NAMES, duration, excerpt, extent, isVideo, sourceOf } from './compose';
 
 	interface Props {
 		text: ReadingText;
@@ -31,15 +32,16 @@
 	let { text }: Props = $props();
 
 	const kind = $derived(sourceOf(text));
-	const videoId = $derived(text.media?.kind === 'youtube' ? text.media.videoId : undefined);
+	const videoId = $derived(youtubeOf(text.media));
+	const video = $derived(isVideo(text));
 	/** A thumbnail that failed (offline, blocked) falls back to the plain tile. */
 	let thumbFailed = $state(false);
-	const runs = $derived(text.media ? duration(text.segments) : undefined);
-	const opening = $derived(text.media ? '' : excerpt(text.segments));
+	const runs = $derived(video ? duration(text.segments) : undefined);
+	const opening = $derived(video ? '' : excerpt(text.segments));
 </script>
 
 <a class="media-card" href="/read/{text.id}">
-	<span class="tile" class:is-text={!text.media}>
+	<span class="tile" class:is-text={!video}>
 		{#if videoId && !thumbFailed}
 			<img
 				class="thumb"
@@ -49,7 +51,7 @@
 				referrerpolicy="no-referrer"
 				onerror={() => (thumbFailed = true)}
 			/>
-		{:else if text.media}
+		{:else if video}
 			<span class="still" aria-hidden="true">
 				<svg class="play" viewBox="0 0 24 24">
 					<path
@@ -61,7 +63,7 @@
 			<span class="excerpt" aria-hidden="true">{opening}</span>
 		{/if}
 
-		<span class="badge badge-{kind}" class:on-picture={!!text.media}>{SOURCE_NAMES[kind]}</span>
+		<span class="badge badge-{kind}" class:on-picture={video}>{SOURCE_NAMES[kind]}</span>
 		{#if runs}
 			<span class="runs">{runs}</span>
 		{/if}

@@ -1,9 +1,10 @@
-//! The event model: twenty immutable facts, and the only thing sync moves.
+//! The event model: immutable facts, and the only thing sync moves.
 //!
 //! The envelope `id` is the set-union key — an id already in `events` is never
 //! materialised twice — so no payload carries an id of its own. `at` is when
 //! the learner did the thing, and doubles as the last-write-wins input for the
-//! three overwrites (`profileUpdated`, `wordMarked`, `textRevised`) and the
+//! four overwrites (`profileUpdated`, `wordMarked`, `textRevised`,
+//! `textMediaSet`) and the
 //! per-field fold of `itemUpdated`; every other rule is order-independent by
 //! construction.
 //!
@@ -39,7 +40,7 @@ use ts_rs::TS;
 
 use crate::objects::is_object_hash;
 use crate::types::{
-    absent_or, ChallengeResult, Conversation, ConversationExchange, ItemKind, Profile,
+    absent_or, valid_media, ChallengeResult, Conversation, ConversationExchange, ItemKind, Profile,
     ReadingMedia, ReadingText, Segment, StudySource, TextSource, Verdict,
 };
 
@@ -69,10 +70,11 @@ pub enum EventType {
     TextRevised,
     TextbookAdded,
     TextbookDeleted,
+    TextMediaSet,
 }
 
 impl EventType {
-    pub const ALL: [EventType; 22] = [
+    pub const ALL: [EventType; 23] = [
         EventType::ItemAdded,
         EventType::ItemReviewed,
         EventType::ReviewAmended,
@@ -95,6 +97,7 @@ impl EventType {
         EventType::TextRevised,
         EventType::TextbookAdded,
         EventType::TextbookDeleted,
+        EventType::TextMediaSet,
     ];
 
     /// The wire name — the `type` column.
@@ -122,6 +125,7 @@ impl EventType {
             EventType::TextRevised => "textRevised",
             EventType::TextbookAdded => "textbookAdded",
             EventType::TextbookDeleted => "textbookDeleted",
+            EventType::TextMediaSet => "textMediaSet",
         }
     }
 
@@ -369,6 +373,16 @@ impl TextAdded {
         }
     }
 
+    /// The one recording a `textAdded` names: YouTube where there is one,
+    /// since it plays on every device. The rest goes in a `textMediaSet`.
+    pub fn first_media(media: &[ReadingMedia]) -> Option<ReadingMedia> {
+        media
+            .iter()
+            .find(|m| matches!(m, ReadingMedia::Youtube { .. }))
+            .or(media.first())
+            .cloned()
+    }
+
     /// The payload of a text whose body is the object `content`.
     pub fn by_reference(text: &ReadingText, content: String) -> TextAdded {
         TextAdded {
@@ -378,7 +392,7 @@ impl TextAdded {
             topic: text.topic.clone(),
             segments: None,
             content: Some(content),
-            media: text.media.clone(),
+            media: TextAdded::first_media(&text.media),
             created_at: text.created_at,
         }
     }
@@ -396,6 +410,20 @@ pub struct TextRevised {
     pub text_id: String,
     /// The new body: `sha256:<64 lowercase hex>`.
     pub content: String,
+}
+
+/// A text's recordings replaced whole: the list a read shows from now on, at
+/// most one of each kind ([`valid_media`]; a list that breaks it will not
+/// parse), empty for none. Last write wins by `(at, device, event id)` as
+/// `textRevised` breaks ties; a set on a deleted or unknown text is inert and
+/// stays in the log. A build that predates the type shows the `textAdded`
+/// media.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(rename = "TextMediaSetPayload")]
+#[serde(rename_all = "camelCase")]
+pub struct TextMediaSet {
+    pub text_id: String,
+    pub media: Vec<ReadingMedia>,
 }
 
 /// Tombstone. The text goes, and the id can never come back.
@@ -543,6 +571,7 @@ pub enum Payload {
     TextRevised(TextRevised),
     TextbookAdded(TextbookAdded),
     TextbookDeleted(TextbookDeleted),
+    TextMediaSet(TextMediaSet),
 }
 
 impl Payload {
@@ -570,6 +599,7 @@ impl Payload {
             Payload::TextRevised(_) => EventType::TextRevised,
             Payload::TextbookAdded(_) => EventType::TextbookAdded,
             Payload::TextbookDeleted(_) => EventType::TextbookDeleted,
+            Payload::TextMediaSet(_) => EventType::TextMediaSet,
         }
     }
 
@@ -618,6 +648,10 @@ pub fn parse_payload(kind: EventType, raw: &Value) -> Option<Payload> {
             .filter(|p| is_object_hash(&p.content))
             .map(Payload::TextbookAdded),
         EventType::TextbookDeleted => typed(raw, Payload::TextbookDeleted),
+        EventType::TextMediaSet => serde_json::from_value::<TextMediaSet>(raw.clone())
+            .ok()
+            .filter(|p| valid_media(&p.media))
+            .map(Payload::TextMediaSet),
     }
 }
 
@@ -907,7 +941,40 @@ mod tests {
                 json!({ "id": "b", "title": "HSK 1", "fileName": "hsk1.pdf", "content": HASH, "createdAt": 11 }),
             ),
             (EventType::TextbookDeleted, json!({ "textbookId": "b" })),
+            (
+                EventType::TextMediaSet,
+                json!({ "textId": "t", "media": [
+                    { "kind": "youtube", "videoId": "v" },
+                    { "kind": "file", "name": "a.mp4", "type": "video/mp4" }
+                ] }),
+            ),
         ]
+    }
+
+    #[test]
+    fn a_media_set_holds_at_most_one_of_each_kind() {
+        let set = |media: Value| {
+            parse_event(&json!({
+                "id": "e", "type": "textMediaSet", "at": 1, "device": "d",
+                "payload": { "textId": "t", "media": media }
+            }))
+        };
+        assert!(set(json!([])).is_some(), "none");
+        assert!(set(json!([{ "kind": "file", "name": "a.mp4" }])).is_some());
+        assert!(
+            set(json!([{ "kind": "youtube", "videoId": "a" }, { "kind": "youtube", "videoId": "b" }]))
+                .is_none(),
+            "two links"
+        );
+        assert!(
+            set(json!([{ "kind": "file", "name": "a" }, { "kind": "file", "name": "b" }]))
+                .is_none(),
+            "two files"
+        );
+        assert!(
+            set(json!({ "kind": "file", "name": "a" })).is_none(),
+            "not a list"
+        );
     }
 
     #[test]

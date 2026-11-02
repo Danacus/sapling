@@ -87,7 +87,7 @@ export function libraryHref(tab: Tab | undefined, show: Show): string {
 
 /** A video is a text with a recording behind it, a YouTube one or a file. */
 export function isVideo(text: Pick<ReadingText, 'media'>): boolean {
-	return text.media !== undefined;
+	return (text.media?.length ?? 0) > 0;
 }
 
 /** The texts a filter shows, in the order they came. */
@@ -100,7 +100,8 @@ export type SourceKind = 'youtube' | 'file' | 'imported' | 'generated';
 
 /** Where a text came from, as the card's corner badge says it. */
 export function sourceOf(text: Pick<ReadingText, 'media' | 'source'>): SourceKind {
-	if (text.media) return text.media.kind;
+	if (text.media?.some((m) => m.kind === 'youtube')) return 'youtube';
+	if (isVideo(text)) return 'file';
 	return text.source === 'generated' ? 'generated' : 'imported';
 }
 

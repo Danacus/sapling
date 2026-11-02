@@ -30,6 +30,7 @@ import {
 	recordLookup,
 	saveProfile,
 	setActiveProfile,
+	setTextMedia,
 	upsertItems
 } from '$lib/db';
 import { setBackendForTesting } from './backend';
@@ -265,13 +266,29 @@ describe('reading texts', () => {
 				{ text: '我想买书。', start: 1200, end: 3400 },
 				{ text: '好的。', start: 3400, end: 4000 }
 			],
-			media: { kind: 'file', name: 'lesson.mp4', type: 'video/mp4' },
+			media: [{ kind: 'file', name: 'lesson.mp4', type: 'video/mp4' }],
 			createdAt: 5000
 		};
 
 		await addText(imported);
 
 		expect(await getText('t3')).toEqual(imported);
+	});
+
+	it('replaces a text’s recordings whole, and keeps both kinds at once', async () => {
+		await addText(text('t1', '买书', 1000));
+		const both = [
+			{ kind: 'youtube', videoId: 'dQw4w9WgXcQ' } as const,
+			{ kind: 'file', name: 'lesson.mp4' } as const
+		];
+
+		await setTextMedia('t1', both);
+		expect((await getText('t1'))?.media).toEqual(both);
+
+		await setTextMedia('t1', []);
+		expect(await getText('t1')).not.toHaveProperty('media');
+
+		await expect(setTextMedia('t1', [both[0], both[0]])).rejects.toThrow();
 	});
 
 	it('leaves an unset media absent rather than null', async () => {

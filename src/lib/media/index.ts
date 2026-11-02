@@ -57,6 +57,16 @@ export {
 export type { Timed } from './follow';
 export { forgetFile, objectUrl, rememberFile, takeFile } from './files';
 export {
+	fileMedia,
+	fileOf,
+	playing,
+	prefersFile,
+	recordingsOf,
+	setPrefersFile,
+	youtubeOf
+} from './recordings';
+export type { FileMedia, RecordingKind } from './recordings';
+export {
 	mediaAudio,
 	mediaAvailable,
 	mediaFrame,

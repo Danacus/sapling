@@ -132,10 +132,12 @@
 					"end": 1000
 				}
 			],
-			"media": {
-				"kind": "youtube",
-				"videoId": "vid-held"
-			},
+			"media": [
+				{
+					"kind": "youtube",
+					"videoId": "vid-held"
+				}
+			],
 			"createdAt": 1710061260000
 		}
 	],
@@ -151,10 +153,12 @@
 					"end": 1000
 				}
 			],
-			"media": {
-				"kind": "youtube",
-				"videoId": "vid-held"
-			},
+			"media": [
+				{
+					"kind": "youtube",
+					"videoId": "vid-held"
+				}
+			],
 			"createdAt": 1710061260000
 		},
 		"text-revised": null,

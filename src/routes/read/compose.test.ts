@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import type { ReadingText } from '$lib/types';
+
 import {
 	EXCERPT_CHARS,
 	SOURCE_NAMES,
@@ -99,9 +101,10 @@ describe('libraryHref', () => {
 });
 
 describe('the filter', () => {
-	const youtube = { id: 'a', media: { kind: 'youtube', videoId: 'dQw4w9WgXcQ' } } as const;
-	const prose = { id: 'b', media: undefined };
-	const file = { id: 'c', media: { kind: 'file', name: 'ep1.mp4' } } as const;
+	type Shelved = Pick<ReadingText, 'id' | 'media'>;
+	const youtube: Shelved = { id: 'a', media: [{ kind: 'youtube', videoId: 'dQw4w9WgXcQ' }] };
+	const prose: Shelved = { id: 'b', media: undefined };
+	const file: Shelved = { id: 'c', media: [{ kind: 'file', name: 'ep1.mp4' }] };
 	const texts = [youtube, prose, file];
 
 	it('counts a YouTube link and a file alike as a video', () => {
@@ -123,10 +126,20 @@ describe('the filter', () => {
 
 describe('sourceOf', () => {
 	it('names the recording first, else where the text came from', () => {
-		expect(sourceOf({ source: 'imported', media: { kind: 'youtube', videoId: 'x' } })).toBe(
+		expect(sourceOf({ source: 'imported', media: [{ kind: 'youtube', videoId: 'x' }] })).toBe(
 			'youtube'
 		);
-		expect(sourceOf({ source: 'imported', media: { kind: 'file', name: 'a.mp4' } })).toBe('file');
+		expect(sourceOf({ source: 'imported', media: [{ kind: 'file', name: 'a.mp4' }] })).toBe('file');
+		expect(
+			sourceOf({
+				source: 'imported',
+				media: [
+					{ kind: 'file', name: 'a.mp4' },
+					{ kind: 'youtube', videoId: 'x' }
+				]
+			})
+		).toBe('youtube');
+		expect(sourceOf({ source: 'imported', media: [] })).toBe('imported');
 		expect(sourceOf({ source: 'imported' })).toBe('imported');
 		expect(sourceOf({ source: 'generated' })).toBe('generated');
 	});

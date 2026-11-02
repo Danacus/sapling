@@ -4,7 +4,7 @@ use std::cell::Cell;
 
 use sapling_db::clips::TIER_CAP;
 use sapling_db::{Clip, Core};
-use sapling_domain::types::{KnowledgeItem, ReadingText};
+use sapling_domain::types::{KnowledgeItem, ReadingMedia, ReadingText};
 use sapling_domain::Utc;
 use sapling_store::rusqlite_sql::RusqliteSql;
 use serde_json::{json, Value};
@@ -109,6 +109,48 @@ fn file_media_untimed_and_deleted_texts_never_match() {
     );
     core.delete_text("gone").expect("delete");
     assert!(clips(&core, &["car"], None).is_empty());
+}
+
+#[test]
+fn a_file_text_that_gains_a_youtube_link_matches_and_loses_it_again() {
+    let core = core();
+    let file = json!({ "kind": "file", "name": "ep1.mp4" });
+    add(
+        &core,
+        "t1",
+        file.clone(),
+        json!([{ "text": "the car", "start": 0, "end": 900 }]),
+    );
+    assert!(clips(&core, &["car"], None).is_empty());
+
+    let both: Vec<ReadingMedia> =
+        serde_json::from_value(json!([file, youtube("vid1")])).expect("media");
+    core.set_text_media("t1", &both).expect("set");
+    let found = clips(&core, &["car"], None);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].video_id, "vid1");
+
+    core.set_text_media("t1", &both[..1]).expect("set");
+    assert!(clips(&core, &["car"], None).is_empty());
+}
+
+#[test]
+fn a_text_imported_with_both_recordings_reads_both() {
+    let core = core();
+    add(
+        &core,
+        "t1",
+        json!([{ "kind": "file", "name": "ep1.mp4" }, youtube("vid1")]),
+        json!([{ "text": "the car", "start": 0, "end": 900 }]),
+    );
+    let text = core.get_text("t1").expect("read").expect("a text");
+    assert_eq!(text.media.len(), 2);
+    assert_eq!(clips(&core, &["car"], None)[0].video_id, "vid1");
+
+    let two_links: Vec<ReadingMedia> =
+        serde_json::from_value(json!([youtube("a"), youtube("b")])).expect("media");
+    assert!(core.set_text_media("t1", &two_links).is_err());
+    assert_eq!(core.get_text("t1").unwrap().unwrap().media.len(), 2);
 }
 
 #[test]

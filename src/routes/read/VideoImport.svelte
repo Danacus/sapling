@@ -1,11 +1,12 @@
 <!--
-  The Video drawer: the recording first, its text following from it. A YouTube
-  link lists its caption tracks by itself and a picked track becomes the
-  subtitles; your own files — a recording and its subtitle file — are the
-  quieter second way, and at ≥48rem their own column. On the desktop host a
-  recording with no subtitle file can be transcribed instead (the `transcribe`
-  task), and its result is a subtitle file like an uploaded one. Stored as a
-  reference only: a video id, or a file's name.
+  The Video drawer asks two questions, in order. **Recording**: a YouTube link
+  and a local file, side by side, either or both — both is one recording twice,
+  and neither ever clears the other. **Subtitles**: one slot for where the timed
+  text comes from, its options following from the recordings given — the link's
+  caption tracks, transcribing the file (the `transcribe` task, desktop host
+  only), or a subtitle file. A filled slot is changed only by the learner, never
+  by a recording coming or going: subtitles are text. Stored as references only:
+  a video id, a file's name.
 -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
@@ -14,11 +15,18 @@
 	import { dictationCoversLanguage } from '$lib/asr';
 	import { addText, importSource } from '$lib/db';
 	import { newUuid } from '$lib/device';
-	import { listCaptions, mediaAvailable, rememberFile, videoIdFrom } from '$lib/media';
+	import {
+		fileMedia,
+		listCaptions,
+		mediaAvailable,
+		recordingsOf,
+		rememberFile,
+		videoIdFrom
+	} from '$lib/media';
 	import type { CaptionsListing, CaptionTrack } from '$lib/media';
 	import { SETTLED, rootOf, startTask, taskOutcome } from '$lib/tasks';
 	import { taskStore } from '$lib/tasks/store.svelte';
-	import type { ImportedSource, ReadingMedia, ReadingText } from '$lib/types';
+	import type { ImportedSource, ReadingText } from '$lib/types';
 	import Spinner from '$lib/ui/Spinner.svelte';
 
 	import { FORMAT_NAMES, baseName, clock, firstLine, isTimed } from './compose';
@@ -47,14 +55,37 @@
 			stale = true;
 		};
 	});
-	const transcribing = $derived(taskStore.running.some((task) => task.kind === 'transcribe'));
+
+	/* The recording ------------------------------------------------------- */
 
 	let link = $state('');
 	const linkId = $derived(videoIdFrom(link));
 	let mediaFile = $state<File | undefined>(undefined);
 	let mediaInput = $state<HTMLInputElement | null>(null);
-	/** The timed text: a fetched track (with the video it is for) or an uploaded file. */
-	let subtitles = $state<{ name: string; text: string; videoId?: string } | undefined>(undefined);
+	const media = $derived(recordingsOf(linkId, mediaFile ? fileMedia(mediaFile) : undefined));
+
+	/* The subtitles: one slot ----------------------------------------------- */
+
+	type Origin = 'youtube' | 'transcribed' | 'uploaded';
+	const ORIGINS: Record<Origin, string> = {
+		youtube: 'From YouTube',
+		transcribed: 'Transcribed',
+		uploaded: 'Uploaded'
+	};
+	let subtitles = $state<{ origin: Origin; name: string; text: string } | undefined>(undefined);
+	/**
+	 * The task the slot is waiting on, by root id, and what to call its result.
+	 * Only that task's result fills the slot; anything the learner chose since
+	 * (an upload, another track, ✕) replaced or cleared it.
+	 */
+	let awaiting = $state<{ id: string; origin: Origin; name: string } | undefined>(undefined);
+	const waiting = $derived(
+		awaiting !== undefined &&
+			taskStore.tasks.some(
+				(task) => rootOf(taskStore.tasks, task.id) === awaiting?.id && !SETTLED.has(task.status)
+			)
+	);
+
 	let title = $state('');
 	let adding = $state(false);
 	let error = $state('');
@@ -64,7 +95,6 @@
 	let askedFor = $state<string | undefined>(undefined);
 	let looking = $state(false);
 	let captionsError = $state('');
-	const fetching = $derived(taskStore.running.some((task) => task.kind === 'captions'));
 
 	let left = false;
 	onDestroy(() => {
@@ -93,32 +123,19 @@
 
 	const plan = $derived(imported.result);
 	const timed = $derived(isTimed(plan.segments));
-	const recording = $derived<ReadingMedia | undefined>(
-		linkId
-			? { kind: 'youtube', videoId: linkId }
-			: mediaFile
-				? {
-						kind: 'file',
-						name: mediaFile.name,
-						...(mediaFile.type ? { type: mediaFile.type } : {})
-					}
-				: undefined
-	);
 	const tracks = $derived(linkId && listing?.id === linkId ? listing.tracks : []);
 	const defaultTitle = $derived(
 		(linkId && listing?.id === linkId ? listing.title : '') ||
-			(subtitles && !subtitles.videoId ? baseName(subtitles.name) : '') ||
 			(mediaFile ? baseName(mediaFile.name) : '') ||
+			(subtitles?.origin === 'uploaded' ? baseName(subtitles.name) : '') ||
 			firstLine(plan.segments)
 	);
 	/** What the dead Import button cannot say for itself. */
 	const missing = $derived(
-		subtitles && !recording
-			? 'Add the video it belongs to: a YouTube link or a file.'
-			: mediaFile && !subtitles && !transcribing
-				? canTranscribe
-					? 'A recording needs its subtitles: upload a subtitle file or transcribe it.'
-					: 'A recording needs its subtitles: upload a subtitle file.'
+		subtitles && media.length === 0
+			? 'Add the recording they belong to: a YouTube link or a file.'
+			: media.length > 0 && !subtitles && !waiting
+				? 'Choose where the subtitles come from.'
 				: ''
 	);
 
@@ -146,20 +163,27 @@
 		}
 	}
 
-	function enterLink(event: Event) {
-		link = (event.currentTarget as HTMLInputElement).value;
-		const id = videoIdFrom(link);
-		// Fetched captions belong to their video, not to whatever is linked next.
-		if (id && subtitles?.videoId && subtitles.videoId !== id) subtitles = undefined;
-		if (link.trim() === '') return;
-		// One recording: a link replaces the file (whose value only the element can clear).
+	function chooseRecording(event: Event) {
+		const file = (event.currentTarget as HTMLInputElement).files?.[0];
+		if (file) mediaFile = file;
+	}
+
+	// The browser owns a file input's value; emptied so the same file can be picked again.
+	function removeRecording() {
 		mediaFile = undefined;
 		if (mediaInput) mediaInput.value = '';
 	}
 
-	function chooseRecording(event: Event) {
-		mediaFile = (event.currentTarget as HTMLInputElement).files?.[0];
-		if (mediaFile) link = '';
+	/** Fills the slot by the learner's choice, and stops waiting on anything else. */
+	function fill(origin: Origin, name: string, text: string) {
+		awaiting = undefined;
+		error = '';
+		subtitles = { origin, name, text };
+	}
+
+	function clearSubtitles() {
+		awaiting = undefined;
+		subtitles = undefined;
 	}
 
 	async function uploadSubtitles(event: Event) {
@@ -170,82 +194,60 @@
 		error = '';
 		try {
 			const text = await file.text();
-			if ((await importSource(text)).format) subtitles = { name: file.name, text };
+			if ((await importSource(text)).format) fill('uploaded', file.name, text);
 			else error = 'That file has no timings. Plain text goes under Text.';
 		} catch {
 			error = 'Could not read that file.';
 		}
 	}
 
-	// Caption fetches this form started, task id → video id. Records, not
-	// promises: a Retry in the tray is a new record descending from ours.
-	const mine = new Map<string, string>();
+	// Records, not promises: a Retry in the tray is a new record descending from
+	// the one the slot is waiting on.
 	const handled = new Set<string>();
 
 	$effect(() => {
 		const tasks = taskStore.tasks;
+		const wanted = awaiting;
+		if (!wanted) return;
 		for (const task of tasks) {
-			if (handled.has(task.id)) continue;
-			const videoId = mine.get(rootOf(tasks, task.id));
-			if (videoId === undefined) continue;
-			mine.set(task.id, videoId);
-			if (!SETTLED.has(task.status)) continue;
+			if (handled.has(task.id) || !SETTLED.has(task.status)) continue;
+			if (rootOf(tasks, task.id) !== wanted.id) continue;
 			handled.add(task.id);
-			void landed(task.id, videoId);
+			void landed(task.id, task.kind, wanted);
 		}
 	});
 
-	async function landed(id: string, videoId: string) {
-		const outcome = await taskOutcome('captions', id);
-		if (!outcome || left) return;
-		if (outcome.status === 'done') {
-			error = '';
-			subtitles = { name: outcome.result.name, text: outcome.result.text, videoId };
-		} else if (outcome.status === 'failed') captionsError = outcome.error;
-	}
-
-	// Transcriptions this form started, task id → the file. A result for a file
-	// since replaced is dropped.
-	const transcriptions = new Map<string, File>();
-
-	$effect(() => {
-		const tasks = taskStore.tasks;
-		for (const task of tasks) {
-			if (handled.has(task.id)) continue;
-			const file = transcriptions.get(rootOf(tasks, task.id));
-			if (file === undefined) continue;
-			transcriptions.set(task.id, file);
-			if (!SETTLED.has(task.status)) continue;
-			handled.add(task.id);
-			void transcribed(task.id, file);
+	async function landed(id: string, kind: string, wanted: NonNullable<typeof awaiting>) {
+		const outcome =
+			kind === 'captions'
+				? await taskOutcome('captions', id)
+				: kind === 'transcribe'
+					? await taskOutcome('transcribe', id)
+					: undefined;
+		if (!outcome || left || awaiting !== wanted) return;
+		if (outcome.status === 'done') fill(wanted.origin, wanted.name, outcome.result.text);
+		else if (outcome.status === 'failed') {
+			if (kind === 'captions') captionsError = outcome.error;
+			else error = outcome.error;
 		}
-	});
-
-	async function transcribed(id: string, file: File) {
-		const outcome = await taskOutcome('transcribe', id);
-		if (!outcome || left || mediaFile !== file) return;
-		if (outcome.status === 'done') {
-			error = '';
-			subtitles = { name: outcome.result.name, text: outcome.result.text };
-		} else if (outcome.status === 'failed') error = outcome.error;
 	}
 
 	function transcribe() {
-		if (!mediaFile || !tag || transcribing) return;
+		if (!mediaFile || !tag || waiting) return;
 		error = '';
 		const { id } = startTask('transcribe', { file: mediaFile, tag });
-		transcriptions.set(id, mediaFile);
+		awaiting = { id, origin: 'transcribed', name: `Transcribed from ${mediaFile.name}` };
 	}
 
 	function pickTrack(track: CaptionTrack) {
-		if (!linkId || fetching) return;
+		if (!linkId || waiting) return;
 		captionsError = '';
 		const { id } = startTask('captions', { videoId: linkId, ...track });
-		mine.set(id, linkId);
+		awaiting = { id, origin: 'youtube', name: `YouTube captions · ${track.lang}` };
 	}
 
 	async function add() {
-		if (adding || busy || !recording) return;
+		if (adding || busy || media.length === 0) return;
 		const source = subtitles?.text ?? '';
 		// The effect's answer can trail a change; never import a stale cut.
 		const { segments } = imported.source === source ? imported.result : await importSource(source);
@@ -255,7 +257,6 @@
 		}
 
 		error = '';
-		const media = recording;
 		const text: ReadingText = {
 			id: newUuid(),
 			title: title.trim() || defaultTitle || 'Untitled',
@@ -264,11 +265,12 @@
 			media,
 			createdAt: Date.now()
 		};
+		const file = mediaFile;
 
 		adding = true;
 		try {
 			await addText(text);
-			if (media.kind === 'file' && mediaFile) rememberFile(text.id, mediaFile);
+			if (file) rememberFile(text.id, file);
 			if (!left) await goto(`/read/${text.id}`);
 		} catch (cause) {
 			error = cause instanceof Error ? cause.message : 'Could not import that video.';
@@ -279,23 +281,59 @@
 </script>
 
 <div class="video-form">
-	<div class="from-link">
-		<label class="field tight">
-			<span class="label">YouTube link</span>
-			<input
-				class="input"
-				type="url"
-				inputmode="url"
-				placeholder="https://www.youtube.com/watch?v=…"
-				disabled={adding}
-				value={link}
-				oninput={enterLink}
-			/>
-		</label>
-		{#if link.trim() && !linkId}
-			<p class="hint line">That is not a YouTube link.</p>
-		{/if}
+	<section class="step" aria-labelledby="step-recording">
+		<h3 class="step-head" id="step-recording">Recording</h3>
+		<div class="pair">
+			<div>
+				<label class="field tight">
+					<span class="label">YouTube link</span>
+					<input
+						class="input"
+						type="url"
+						inputmode="url"
+						placeholder="https://www.youtube.com/watch?v=…"
+						disabled={adding}
+						bind:value={link}
+					/>
+				</label>
+				{#if link.trim() && !linkId}
+					<p class="hint line">That is not a YouTube link.</p>
+				{/if}
+			</div>
+			<div class="field tight">
+				<span class="label">Video or audio file</span>
+				<div class="file-row">
+					<FileSlot
+						label={mediaFile ? mediaFile.name : 'Choose a file'}
+						accept="video/*,audio/*"
+						icon="video"
+						disabled={adding}
+						bind:input={mediaInput}
+						onchange={chooseRecording}
+					/>
+					{#if mediaFile}
+						<button
+							type="button"
+							class="source-drop"
+							aria-label="Remove {mediaFile.name}"
+							disabled={adding}
+							onclick={removeRecording}
+						>
+							<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+								<path d="m7 7 10 10M17 7 7 17" />
+							</svg>
+						</button>
+					{/if}
+				</div>
+				{#if mediaFile}
+					<p class="hint line">Only its name is kept, so you'll pick the file again later.</p>
+				{/if}
+			</div>
+		</div>
+	</section>
 
+	<section class="step" aria-labelledby="step-subtitles">
+		<h3 class="step-head" id="step-subtitles">Subtitles</h3>
 		{#if subtitles}
 			<div class="source-card ll-rise">
 				<svg class="ico source-mark" viewBox="0 0 24 24" aria-hidden="true">
@@ -303,96 +341,88 @@
 					<path d="M7 12.4h4.2M13.4 12.4H17M7 15.4h7M16.2 15.4H17" />
 				</svg>
 				<div class="source-id">
-					<p class="source-kind">{plan.format ? FORMAT_NAMES[plan.format] : 'Subtitles'}</p>
+					<p class="source-kind">{ORIGINS[subtitles.origin]}</p>
 					<p class="source-name">{subtitles.name}</p>
 					<p class="source-facts" class:trouble={imported.source === subtitles.text && !timed}>
 						{#if imported.source === subtitles.text && !timed}
 							Nothing to follow in that file
 						{:else}
-							{plan.cues} line{plan.cues === 1 ? '' : 's'}{plan.durationMs > 0
-								? ` · ${clock(plan.durationMs)}`
-								: ''}
+							{plan.format ? `${FORMAT_NAMES[plan.format]} · ` : ''}{plan.cues} line{plan.cues === 1
+								? ''
+								: 's'}{plan.durationMs > 0 ? ` · ${clock(plan.durationMs)}` : ''}
 						{/if}
 					</p>
 				</div>
 				<button
 					type="button"
 					class="source-drop"
-					aria-label="Remove {subtitles.name}"
+					aria-label="Change the subtitles"
 					disabled={adding}
-					onclick={() => (subtitles = undefined)}
+					onclick={clearSubtitles}
 				>
 					<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
 						<path d="m7 7 10 10M17 7 7 17" />
 					</svg>
 				</button>
 			</div>
-		{:else if fetching}
-			<p class="status"><Spinner /> Fetching captions…</p>
-		{:else if linkId && looking}
-			<p class="status"><Spinner /> Looking for captions…</p>
-		{:else if tracks.length > 0}
-			<p class="tracks-head">Pick the captions</p>
-			<ul class="tracks">
-				{#each tracks as track (`${track.auto}:${track.lang}:${track.name}`)}
-					<li>
-						<button type="button" class="track" disabled={adding} onclick={() => pickTrack(track)}>
-							<span class="track-name">{track.name}</span>
-							<span class="track-lang">{track.lang}</span>
-							{#if track.auto}<span class="track-auto">auto</span>{/if}
+		{:else if waiting}
+			<p class="status">
+				<Spinner />
+				{awaiting?.origin === 'transcribed' ? 'Transcribing…' : 'Fetching captions…'}
+			</p>
+		{:else}
+			{#if linkId && looking}
+				<p class="status"><Spinner /> Looking for captions…</p>
+			{:else if tracks.length > 0}
+				<p class="tracks-head">The video's captions</p>
+				<ul class="tracks">
+					{#each tracks as track (`${track.auto}:${track.lang}:${track.name}`)}
+						<li>
+							<button
+								type="button"
+								class="track"
+								disabled={adding}
+								onclick={() => pickTrack(track)}
+							>
+								<span class="track-name">{track.name}</span>
+								<span class="track-lang">{track.lang}</span>
+								{#if track.auto}<span class="track-auto">auto</span>{/if}
+							</button>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+			{#if captionsError && linkId}
+				<p class="error captions-error" role="alert">
+					{captionsError}
+					{#if !looking && listing?.id !== linkId}
+						<button type="button" class="retry" onclick={() => linkId && void listTracks(linkId)}>
+							Try again
 						</button>
-					</li>
-				{/each}
-			</ul>
-		{/if}
-
-		{#if captionsError && linkId}
-			<p class="error captions-error" role="alert">
-				{captionsError}
-				{#if !looking && listing?.id !== linkId}
-					<button type="button" class="retry" onclick={() => linkId && void listTracks(linkId)}>
-						Try again
+					{/if}
+				</p>
+			{/if}
+			<div class="file-row">
+				{#if mediaFile && canTranscribe}
+					<button
+						type="button"
+						class="btn btn-ghost transcribe"
+						disabled={adding}
+						onclick={transcribe}
+					>
+						Transcribe the file
 					</button>
 				{/if}
-			</p>
+				<FileSlot
+					label="Upload a subtitle file"
+					accept=".srt,.vtt,.json3,.json,.txt"
+					icon="subtitles"
+					disabled={adding}
+					onchange={(event) => void uploadSubtitles(event)}
+				/>
+			</div>
 		{/if}
-	</div>
-
-	<div class="own">
-		<p class="own-head">Or use your own files</p>
-		<div class="own-row">
-			<FileSlot
-				label={mediaFile ? mediaFile.name : 'Video or audio file'}
-				accept="video/*,audio/*"
-				icon="video"
-				disabled={adding}
-				bind:input={mediaInput}
-				onchange={chooseRecording}
-			/>
-			<FileSlot
-				label="Subtitle file"
-				accept=".srt,.vtt,.json3,.json,.txt"
-				icon="subtitles"
-				disabled={adding}
-				onchange={(event) => void uploadSubtitles(event)}
-			/>
-		</div>
-		{#if mediaFile && !subtitles && canTranscribe}
-			<button
-				type="button"
-				class="btn btn-ghost transcribe"
-				disabled={adding || transcribing}
-				onclick={transcribe}
-			>
-				{transcribing ? 'Transcribing…' : 'Transcribe the recording'}
-			</button>
-		{/if}
-		{#if mediaFile}
-			<p class="hint line">
-				Only its name is kept, so you'll pick the file again when you open this.
-			</p>
-		{/if}
-	</div>
+	</section>
 
 	<div class="finish">
 		<label class="field title-field">
@@ -409,7 +439,7 @@
 		<button
 			type="button"
 			class="btn btn-primary btn-block go"
-			disabled={adding || busy || fetching || !recording || !timed}
+			disabled={adding || busy || waiting || media.length === 0 || !timed}
 			onclick={() => void add()}
 		>
 			{adding ? 'Importing…' : error ? 'Try again' : 'Import'}
@@ -425,38 +455,50 @@
 </div>
 
 <style>
-	/* On a phone one stack, in the order a learner works down it. At ≥48rem the
-	   own-files way steps aside into a column of its own beside the link, the
-	   title and Import, behind a hairline — the markup order (and so the tab
-	   order) unchanged; `auto 1fr` rows let a tall right column grow the
-	   second row rather than push Import away from the link. */
+	/* Two questions, one after the other, then the import. The two recordings sit
+	   side by side at ≥48rem; on a phone, one stack in the order a learner works
+	   down it. */
+	.step {
+		margin: 0 0 1.1rem;
+	}
+
+	.step + .step {
+		padding-top: 0.9rem;
+		border-top: 1px dashed var(--border);
+	}
+
+	.step-head {
+		margin: 0 0 0.6rem;
+		font-size: 0.74rem;
+		font-weight: 700;
+		letter-spacing: 0.09em;
+		text-transform: uppercase;
+		color: var(--text-muted);
+	}
+
+	.pair {
+		display: grid;
+		gap: 0.25rem;
+	}
+
 	@media (min-width: 48rem) {
-		.video-form {
-			display: grid;
+		.pair {
 			grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-			grid-template-rows: auto 1fr;
-			grid-template-areas:
-				'link own'
-				'finish own';
-			column-gap: 1.75rem;
+			column-gap: 1.25rem;
 		}
+	}
 
-		.from-link {
-			grid-area: link;
-		}
+	.file-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem;
+		margin-bottom: 0.6rem;
+	}
 
-		.finish {
-			grid-area: finish;
-			align-self: start;
-		}
-
-		.video-form .own {
-			grid-area: own;
-			margin: 0;
-			padding: 0 0 0 1.75rem;
-			border-top: none;
-			border-left: 1px solid var(--border);
-		}
+	.file-row > :global(.file-btn) {
+		flex: 1 1 11rem;
+		min-width: 0;
 	}
 
 	.field.tight {
@@ -673,41 +715,8 @@
 		cursor: pointer;
 	}
 
-	/* Your own files: the second way, set apart and quieter ---------------- */
-
-	.own {
-		margin: 0.4rem 0 1.1rem;
-		padding-top: 0.9rem;
-		border-top: 1px dashed var(--border);
-	}
-
-	.own-head {
-		margin: 0 0 0.55rem;
-		font-size: 0.74rem;
-		font-weight: 700;
-		letter-spacing: 0.09em;
-		text-transform: uppercase;
-		color: var(--text-muted);
-	}
-
-	.own-row {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem;
-		margin-bottom: 0.6rem;
-	}
-
-	.own-row > :global(*) {
-		flex: 1 1 11rem;
-		min-width: 0;
-	}
-
-	.own .line {
-		margin-bottom: 0;
-	}
-
 	.transcribe {
-		margin-bottom: 0.6rem;
+		flex: 0 0 auto;
 	}
 
 	.title-field {

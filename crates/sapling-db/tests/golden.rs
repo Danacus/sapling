@@ -189,7 +189,13 @@ fn ids_in(events: &[Value]) -> Ids {
                 )),
         ),
         texts: unique(of(&["textAdded"], "id").chain(of(
-            &["textDeleted", "textRevised", "wordLookedUp", "studied"],
+            &[
+                "textDeleted",
+                "textRevised",
+                "textMediaSet",
+                "wordLookedUp",
+                "studied",
+            ],
             "textId",
         ))),
         conversations: unique(

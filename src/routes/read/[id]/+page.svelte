@@ -84,23 +84,33 @@
 		markWord,
 		recordLookup,
 		recordStudy,
+		setTextMedia,
 		updateItemAfterReview
 	} from '$lib/db';
 	import {
 		crossedPause,
+		fileMedia,
+		fileOf,
 		firstTimed,
+		forgetFile,
 		nextTimed,
 		objectUrl,
 		pauseAt,
+		playing as playingFrom,
+		prefersFile,
 		prevTimed,
+		recordingsOf,
 		rememberFile,
 		segmentAt,
+		setPrefersFile,
 		startOf,
 		takeFile,
+		videoIdFrom,
 		videoPlayer,
+		youtubeOf,
 		youtubePlayerForHost
 	} from '$lib/media';
-	import type { Player } from '$lib/media';
+	import type { FileMedia, Player } from '$lib/media';
 	import {
 		annotateSentence,
 		lookUpWord,
@@ -224,7 +234,7 @@
 	 * arrives where the eye already looks for a card (facing page on a desk,
 	 * sheet at the foot of a phone).
 	 */
-	let panel = $state<'finish' | 'delete' | null>(null);
+	let panel = $state<'finish' | 'delete' | 'recording' | null>(null);
 
 	/* The follow view ------------------------------------------------------- */
 
@@ -369,19 +379,28 @@
 		}))
 	);
 
+	/** This device plays the text from its file rather than YouTube (`setPrefersFile`). */
+	let preferFile = $state(false);
+	/** Which recording plays: YouTube unless the switch says file, or there is only a file. */
+	const playKind = $derived(playingFrom(text?.media, preferFile));
+	/** Both kinds are there, so the switch between them is worth showing. */
+	const hasBoth = $derived(
+		youtubeOf(text?.media) !== undefined && fileOf(text?.media) !== undefined
+	);
+
 	/**
 	 * Whether this text has a recording the reader can follow.
 	 *
-	 * A media of either kind — both are playable now, and which one it is decides
-	 * nothing beyond what gets mounted in the stage — and at least one timed
-	 * segment, because a player with nothing to highlight is a video in the wrong
-	 * app.
+	 * A recording of either kind — which one decides nothing beyond what gets
+	 * mounted in the stage — and at least one timed segment, because a player
+	 * with nothing to highlight is a video in the wrong app.
 	 */
-	const followable = $derived(text?.media !== undefined && firstTimed(segments) >= 0);
+	const timedText = $derived(firstTimed(segments) >= 0);
+	const followable = $derived(playKind !== undefined && timedText);
 
 	/** Which player the stage builds. The only place in the page that asks. */
-	const isYouTube = $derived(text?.media?.kind === 'youtube');
-	const videoId = $derived(text?.media?.kind === 'youtube' ? text.media.videoId : '');
+	const isYouTube = $derived(playKind === 'youtube');
+	const videoId = $derived(isYouTube ? (youtubeOf(text?.media) ?? '') : '');
 
 	/**
 	 * Which view, from `?view=`. Follow is the default for a text that can follow:
@@ -404,7 +423,7 @@
 	const nextIndex = $derived(nextTimed(segments, currentIndex));
 
 	/** What to ask for by name when the file is not in hand. */
-	const mediaName = $derived(text?.media?.kind === 'file' ? text.media.name : '');
+	const mediaName = $derived(fileOf(text?.media)?.name ?? '');
 
 	/**
 	 * Whether there is something to press the line controls against.
@@ -620,6 +639,7 @@
 					return;
 				}
 				text = loadedText;
+				preferFile = prefersFile(loadedText.id);
 				// The file the composer was just given, if this is the open straight
 				// after an import. On every later open it is `undefined` and the video
 				// slot shows the picker instead — a recording is never stored, only
@@ -968,6 +988,64 @@
 	function confirm(kind: 'finish' | 'delete') {
 		selected = null;
 		panel = kind;
+	}
+
+	/* The recordings, edited in the panel -------------------------------- */
+
+	/** The link field, prefilled with the stored video. */
+	let linkDraft = $state('');
+	/** The file as it will be stored: kept, picked anew, or `undefined` for none. */
+	let fileDraft = $state<FileMedia | undefined>(undefined);
+	/** A file picked in the panel, handed to the session cache on save. */
+	let pickedFile: File | undefined;
+	const linkDraftId = $derived(videoIdFrom(linkDraft));
+	const linkInvalid = $derived(linkDraft.trim() !== '' && linkDraftId === undefined);
+
+	function openRecording() {
+		if (!text) return;
+		linkDraft = youtubeOf(text.media) ?? '';
+		fileDraft = fileOf(text.media);
+		pickedFile = undefined;
+		selected = null;
+		panel = 'recording';
+	}
+
+	function pickRecordingFile(event: Event) {
+		const file = (event.currentTarget as HTMLInputElement).files?.[0];
+		if (!file) return;
+		pickedFile = file;
+		fileDraft = fileMedia(file);
+	}
+
+	async function saveRecording() {
+		if (!text || writing || linkInvalid) return;
+		writing = true;
+		pageError = '';
+		try {
+			await setTextMedia(text.id, recordingsOf(linkDraftId, fileDraft));
+			if (pickedFile) {
+				rememberFile(text.id, pickedFile);
+				mediaFile = pickedFile;
+			} else if (!fileDraft) {
+				forgetFile(text.id);
+				mediaFile = undefined;
+			}
+			mediaError = '';
+			const reloaded = await getText(text.id);
+			if (reloaded) text = reloaded;
+			panel = null;
+		} catch (cause) {
+			pageError = cause instanceof Error ? cause.message : 'Could not save the recording.';
+		} finally {
+			writing = false;
+		}
+	}
+
+	function choosePlayFile(on: boolean) {
+		if (!text) return;
+		preferFile = on;
+		mediaError = '';
+		setPrefersFile(text.id, on);
 	}
 
 	/**
@@ -1529,6 +1607,18 @@
 					<!-- Several words at once, from the whole text: its own page, in both
 					     views, since a video's transcript is as good a source as a page. -->
 					<a class="btn btn-ghost tool" href={`/read/${text.id}/words`}>Words</a>
+					<!-- Which recordings the timings belong to: a YouTube link, a file,
+					     or both. Only a timed text has anything for one to follow. -->
+					{#if timedText}
+						<button
+							type="button"
+							class="btn btn-ghost tool"
+							class:is-active={panel === 'recording'}
+							onclick={openRecording}
+						>
+							Recording
+						</button>
+					{/if}
 					<!-- Confirmation lives in the panel, never here: the header's shape
 					     stays the same whatever the learner is deciding. -->
 					<button
@@ -1771,6 +1861,17 @@
 							<input type="checkbox" bind:checked={autoPause} disabled={!playable} />
 							Stop at the end of each line
 						</label>
+						{#if hasBoth}
+							<!-- YouTube by default; the file is this device's choice, kept per text. -->
+							<label class="transport-opt">
+								<input
+									type="checkbox"
+									checked={preferFile}
+									onchange={(event) => choosePlayFile(event.currentTarget.checked)}
+								/>
+								Play from file
+							</label>
+						{/if}
 						{#if canFullscreen}
 							<button
 								type="button"
@@ -1897,6 +1998,75 @@
 								</button>
 							</div>
 						{/if}
+					</div>
+				{:else if panel === 'recording'}
+					<div class="word-card">
+						<div class="word-head">
+							<div class="word-id">
+								<p class="panel-title">Recording</p>
+							</div>
+							<button type="button" class="close" aria-label="Close" onclick={close}>
+								<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+									<path d="m7 7 10 10M17 7 7 17" />
+								</svg>
+							</button>
+						</div>
+						<label class="field">
+							<span class="label">YouTube link</span>
+							<input
+								class="input"
+								type="url"
+								inputmode="url"
+								placeholder="https://www.youtube.com/watch?v=…"
+								disabled={writing}
+								bind:value={linkDraft}
+							/>
+						</label>
+						{#if linkInvalid}
+							<p class="hint">That is not a YouTube link.</p>
+						{/if}
+						<div class="field">
+							<span class="label">Video or audio file</span>
+							{#if fileDraft}
+								<p class="panel-copy recording-file">
+									<strong>{fileDraft.name}</strong>
+									<button
+										type="button"
+										class="reveal"
+										disabled={writing}
+										onclick={() => {
+											fileDraft = undefined;
+											pickedFile = undefined;
+										}}
+									>
+										Remove
+									</button>
+								</p>
+							{/if}
+							<input
+								class="input file-input"
+								type="file"
+								accept="video/*,audio/*"
+								aria-label={fileDraft ? 'Replace the file' : 'Choose a file'}
+								disabled={writing}
+								onchange={pickRecordingFile}
+							/>
+							<p class="hint">Only its name is kept.</p>
+						</div>
+						<hr class="stitch" />
+						<div class="word-actions">
+							<button
+								type="button"
+								class="btn btn-primary"
+								disabled={writing || linkInvalid}
+								onclick={() => void saveRecording()}
+							>
+								{writing ? 'Saving…' : 'Save'}
+							</button>
+							<button type="button" class="btn btn-ghost" disabled={writing} onclick={close}>
+								Cancel
+							</button>
+						</div>
 					</div>
 				{:else if panel === 'delete'}
 					<div class="word-card">
@@ -2948,6 +3118,16 @@
 		font-size: 0.95rem;
 		line-height: 1.5;
 		color: var(--text-muted);
+	}
+
+	/* The stored file's name with its Remove beside it. */
+	.recording-file {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0.6rem;
+		margin: 0 0 0.5rem;
+		overflow-wrap: anywhere;
 	}
 
 	/* The looked-up count is a footnote to the line above it rather than a

@@ -34,6 +34,7 @@ since widened — survives a round trip through an older device untouched.
 | `profileUpdated` | the whole profile, replaced |
 | `textAdded` | a reading text: title, source, media and **exactly one** body — `segments` inline (every event written before content objects, `sentences` in the oldest) or `content`, the hash of an immutable object (`docs/content-objects.md`); both or neither does not parse |
 | `textRevised` | `{ textId, content }`: the text's body replaced by another object |
+| `textMediaSet` | `{ textId, media }`: the text's recordings replaced whole — at most one YouTube link and one file |
 | `textDeleted` | a tombstone — the text goes for good |
 
 A text's body travels beside the log as a **content object** — bytes named

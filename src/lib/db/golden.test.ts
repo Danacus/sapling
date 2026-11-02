@@ -137,7 +137,7 @@ function idsIn(events: RawEvent[]) {
 		]),
 		texts: unique([
 			...of(['textAdded'], 'id'),
-			...of(['textDeleted', 'textRevised', 'wordLookedUp', 'studied'], 'textId')
+			...of(['textDeleted', 'textRevised', 'textMediaSet', 'wordLookedUp', 'studied'], 'textId')
 		]),
 		conversations: unique([
 			...of(['conversationStarted'], 'id'),

@@ -31,15 +31,15 @@ use sapling_domain::day::LocalDay;
 use sapling_domain::events::{
     parse_envelope, ChallengeAdded, ChallengeReported, ChallengeServed, ConversationDeleted,
     EventType, ItemAdded, ItemDeleted, ItemFields, ItemReviewed, ItemUpdated, Payload, RawEvent,
-    ResultOverturned, ReviewAmended, Studied, SyncEvent, TextAdded, TextDeleted, WordLookedUp,
-    WordMarked, PROFILE_ID,
+    ResultOverturned, ReviewAmended, Studied, SyncEvent, TextAdded, TextDeleted, TextMediaSet,
+    WordLookedUp, WordMarked, PROFILE_ID,
 };
 use sapling_domain::objects::{object_refs, ContentObject, TextContent, MAX_OBJECT_BYTES};
 use sapling_domain::types::{
-    ChallengeResult, Conversation, ConversationDetail, ConversationExchange,
+    valid_media, ChallengeResult, Conversation, ConversationDetail, ConversationExchange,
     ConversationLearnerTurn, ConversationSummary, ConversationTeacherTurn, DailyActivity,
-    GradeEntry, HistoryEntry, KnowledgeItem, Profile, ReadingText, StudyMode, StudySession,
-    StudySource, Verdict,
+    GradeEntry, HistoryEntry, KnowledgeItem, Profile, ReadingMedia, ReadingText, StudyMode,
+    StudySession, StudySource, Verdict,
 };
 use sapling_srs::{item_srs, FsrsCardState, Grade};
 
@@ -307,6 +307,12 @@ fn result_from(row: &Row) -> Result<ChallengeResult> {
     })
 }
 
+/// A [`READABLE_TEXTS`] row's YouTube video id, from its list of recordings.
+const YOUTUBE_ID: &str = "(SELECT json_extract(m.value, '$.videoId') FROM json_each(t.media) m
+   WHERE json_extract(m.value, '$.kind') = 'youtube' LIMIT 1)";
+
+const TWO_OF_A_KIND: &str = "A text holds one YouTube link and one file at most.";
+
 /// One row of [`READABLE_TEXTS`], body resolved.
 fn text_from(row: &Row) -> Result<ReadingText> {
     Ok(ReadingText {
@@ -316,8 +322,8 @@ fn text_from(row: &Row) -> Result<ReadingText> {
         topic: row.opt_text("topic")?.map(str::to_owned),
         segments: parse_json(row.text("segments")?)?,
         media: match row.opt_text("media")? {
-            Some(media) => Some(parse_json(media)?),
-            None => None,
+            Some(media) => parse_json(media)?,
+            None => Vec::new(),
         },
         created_at: row.f64("createdAt")?,
     })
@@ -1192,6 +1198,9 @@ impl Core {
     /// points at. A body over [`MAX_OBJECT_BYTES`] is refused — no relay could
     /// hold it, and a text that could never sync is worse than one not kept.
     pub fn add_text(&self, text: &ReadingText) -> Result<()> {
+        if !valid_media(&text.media) {
+            return Err(Error(TWO_OF_A_KIND.into()));
+        }
         let object = TextContent {
             segments: text.segments.clone(),
         }
@@ -1201,10 +1210,31 @@ impl Core {
                 "This text is too long to keep: its body is over 1 MiB.".into(),
             ));
         }
-        let fact = Payload::TextAdded(TextAdded::by_reference(text, object.hash.clone()));
-        self.commit_with((self.clock)(), vec![fact], || {
+        let mut facts = vec![Payload::TextAdded(TextAdded::by_reference(
+            text,
+            object.hash.clone(),
+        ))];
+        // A `textAdded` names one recording; a second rides in a set beside it.
+        if text.media.len() > 1 {
+            facts.push(Payload::TextMediaSet(TextMediaSet {
+                text_id: text.id.clone(),
+                media: text.media.clone(),
+            }));
+        }
+        self.commit_with((self.clock)(), facts, || {
             self.store_object(&object).map(|_| ())
         })
+    }
+
+    /// Replaces a text's recordings — the whole list, empty for none.
+    pub fn set_text_media(&self, id: &str, media: &[ReadingMedia]) -> Result<()> {
+        if !valid_media(media) {
+            return Err(Error(TWO_OF_A_KIND.into()));
+        }
+        self.commit(Payload::TextMediaSet(TextMediaSet {
+            text_id: id.to_owned(),
+            media: media.to_vec(),
+        }))
     }
 
     /// Every text whose body this device can show, newest first. A text whose
@@ -1391,9 +1421,7 @@ impl Core {
     ) -> Result<Vec<Row>> {
         let matches = vec!["instr(lower(json_extract(s.value, '$.text')), ?) > 0"; terms.len()];
         let sql = format!(
-            "SELECT t.id AS textId, t.title AS title,
-                    CASE WHEN json_extract(t.media, '$.kind') = 'youtube'
-                         THEN json_extract(t.media, '$.videoId') END AS videoId,
+            "SELECT t.id AS textId, t.title AS title, {YOUTUBE_ID} AS videoId,
                     json_extract(s.value, '$.start') AS start,
                     json_extract(s.value, '$.end') AS end,
                     json_extract(s.value, '$.text') AS text
@@ -1403,9 +1431,9 @@ impl Core {
                AND ({})
              ORDER BY t.createdAt DESC, t.id, s.key{}",
             if youtube_only {
-                "json_extract(t.media, '$.kind') = 'youtube' AND "
+                format!("{YOUTUBE_ID} IS NOT NULL AND ")
             } else {
-                ""
+                String::new()
             },
             matches.join(" OR "),
             limit.map_or(String::new(), |n| format!(" LIMIT {n}"))

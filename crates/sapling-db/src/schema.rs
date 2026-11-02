@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS objects (hash TEXT PRIMARY KEY, bytes TEXT NOT NULL);
 -- written before objects carries it) or `content` (an object's hash). The body
 -- a read shows is the newest revision's, else this one, and a text whose
 -- current object is not in `objects` is shown by no read (`READABLE_TEXTS`).
+-- `media` is the `textAdded`'s recording as a JSON list of one, or NULL.
 CREATE TABLE IF NOT EXISTS texts (
   id TEXT PRIMARY KEY, title TEXT NOT NULL, source TEXT NOT NULL, topic TEXT,
   segments TEXT, content TEXT, media TEXT,
@@ -85,6 +86,12 @@ CREATE TABLE IF NOT EXISTS texts (
 -- `texts`, so a revision that lands before its text waits here.
 CREATE TABLE IF NOT EXISTS textRevisions (
   textId TEXT PRIMARY KEY, content TEXT NOT NULL, at REAL NOT NULL, device TEXT NOT NULL,
+  eventId TEXT NOT NULL);
+
+-- The winning `textMediaSet` per text, by `(at, device, eventId)`: the
+-- recordings as a JSON list, which replaces `texts.media` on every read.
+CREATE TABLE IF NOT EXISTS textMedia (
+  textId TEXT PRIMARY KEY, media TEXT NOT NULL, at REAL NOT NULL, device TEXT NOT NULL,
   eventId TEXT NOT NULL);
 
 CREATE TABLE IF NOT EXISTS textTombstones (textId TEXT PRIMARY KEY);
@@ -120,7 +127,8 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 ";
 
 /// Every text a read may show, its body resolved: a subquery with the
-/// `texts` columns and `segments` as JSON text. A text's current body is its
+/// `texts` columns, `segments` as JSON text and `media` the winning
+/// `textMediaSet`'s list, else the `textAdded`'s. A text's current body is its
 /// winning revision's object, else its own — inline segments or an object —
 /// and a text whose current object this device does not hold (or holds as
 /// something other than a body) is not here at all, so the library, the
@@ -128,11 +136,12 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 /// is what makes it appear; nothing is rebuilt.
 pub const READABLE_TEXTS: &str = "(
   SELECT t.id AS id, t.title AS title, t.source AS source, t.topic AS topic,
-         t.media AS media, t.createdAt AS createdAt,
+         coalesce(m.media, t.media) AS media, t.createdAt AS createdAt,
          CASE WHEN coalesce(r.content, t.content) IS NULL THEN t.segments
               ELSE json_extract(o.bytes, '$.segments') END AS segments
   FROM texts t
   LEFT JOIN textRevisions r ON r.textId = t.id
+  LEFT JOIN textMedia m ON m.textId = t.id
   LEFT JOIN objects o ON o.hash = coalesce(r.content, t.content)
   WHERE (coalesce(r.content, t.content) IS NULL AND t.segments IS NOT NULL)
      OR json_type(o.bytes, '$.segments') = 'array')";
@@ -218,7 +227,11 @@ pub fn review_key(item_id: &str, at: f64, device: &str) -> String {
 ///
 /// Bumped for 17 when `studied` gained `source` (its `textId` nullable now):
 /// an older build logged and skipped every textbook span it was sent.
-pub const DERIVED_SCHEMA_VERSION: u32 = 17;
+///
+/// Bumped for 18 when a text could hold two recordings: `texts.media` is a
+/// list, `textMedia` arrived, and an older build logged and skipped every
+/// `textMediaSet` it was sent.
+pub const DERIVED_SCHEMA_VERSION: u32 = 18;
 
 /// Every read table the materializer owns; `events`, `meta` and `objects`
 /// survive a rebuild.
@@ -228,7 +241,7 @@ pub const DERIVED_SCHEMA_VERSION: u32 = 17;
 /// made of reviews, lookups and added words as much as of answers. So were
 /// `textbooks` and `textbookTombstones`. A database from before still carries
 /// those tables; nothing reads or drops them.
-pub const DERIVED_TABLES: [&str; 18] = [
+pub const DERIVED_TABLES: [&str; 19] = [
     "items",
     "reviews",
     "challenges",
@@ -238,6 +251,7 @@ pub const DERIVED_TABLES: [&str; 18] = [
     "profile",
     "texts",
     "textRevisions",
+    "textMedia",
     "textTombstones",
     "wordMarks",
     "lookups",

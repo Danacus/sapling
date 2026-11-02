@@ -523,6 +523,35 @@ pub enum ReadingMedia {
     },
 }
 
+/// At most one recording of each kind.
+pub fn valid_media(media: &[ReadingMedia]) -> bool {
+    let count = |youtube: bool| {
+        media
+            .iter()
+            .filter(|m| matches!(m, ReadingMedia::Youtube { .. }) == youtube)
+            .count()
+    };
+    count(true) <= 1 && count(false) <= 1
+}
+
+/// A list, or one bare element read as a list of one.
+fn one_or_many<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany<T> {
+        Many(Vec<T>),
+        One(T),
+    }
+    Ok(match OneOrMany::deserialize(deserializer)? {
+        OneOrMany::Many(items) => items,
+        OneOrMany::One(item) => vec![item],
+    })
+}
+
 /// A text the learner reads (or listens to) for comprehension — written by the
 /// model from their vocabulary, or imported from a paste, a file or a video's
 /// subtitles.
@@ -558,16 +587,17 @@ pub struct ReadingText {
     /// The text as its source cut it — one per cue, or one per paragraph.
     #[serde(alias = "sentences")]
     pub segments: Vec<Segment>,
-    /// What the segment timings belong to, when the text was imported from
-    /// subtitles and the learner said which recording they came from. Attached
-    /// at import and never afterwards.
+    /// The recordings the segment timings belong to: at most one `youtube` and
+    /// one `file` ([`valid_media`]), the same recording both. Set at import and
+    /// replaced whole by `textMediaSet`. Absent is none; a single object (the
+    /// shape before a text could hold two) reads as a list of one.
     #[serde(
         default,
-        deserialize_with = "absent_or",
-        skip_serializing_if = "Option::is_none"
+        deserialize_with = "one_or_many",
+        skip_serializing_if = "Vec::is_empty"
     )]
-    #[ts(optional)]
-    pub media: Option<ReadingMedia>,
+    #[ts(as = "Option<Vec<ReadingMedia>>", optional)]
+    pub media: Vec<ReadingMedia>,
     /// Epoch milliseconds.
     pub created_at: f64,
 }
@@ -800,5 +830,34 @@ mod tests {
             json!({ "kind": "file", "name": "a.mp4", "type": "video/mp4" })
         );
         assert!(serde_json::from_value::<ReadingMedia>(json!({ "kind": "tape" })).is_err());
+    }
+
+    #[test]
+    fn a_text_reads_one_recording_or_a_list() {
+        let read = |media: Value| {
+            serde_json::from_value::<ReadingText>(json!({
+                "id": "t", "title": "T", "source": "imported", "segments": [],
+                "media": media, "createdAt": 1
+            }))
+            .map(|text| text.media)
+        };
+        let youtube = ReadingMedia::Youtube {
+            video_id: "v".into(),
+        };
+        assert_eq!(
+            read(json!({ "kind": "youtube", "videoId": "v" })).unwrap(),
+            vec![youtube.clone()]
+        );
+        assert_eq!(
+            read(
+                json!([{ "kind": "youtube", "videoId": "v" }, { "kind": "file", "name": "a.mp4" }])
+            )
+            .unwrap()
+            .len(),
+            2
+        );
+        assert!(read(json!(null)).is_err());
+        assert!(valid_media(std::slice::from_ref(&youtube)));
+        assert!(!valid_media(&[youtube.clone(), youtube]));
     }
 }

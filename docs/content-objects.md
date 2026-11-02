@@ -57,15 +57,25 @@ golden fixtures, mixed in one log.
 
 `textRevised { textId, content: H }` replaces a text's body. Last write by `at`
 wins, ties broken as the other last-write-wins rules break them; a revision of
-a tombstoned or unknown text is inert, kept in the log. The title, source,
-media and creation time are not revisable here. `reading.md`'s "a text is
+a tombstoned or unknown text is inert, kept in the log. The title, source
+and creation time are not revisable.
+
+`textMediaSet { textId, media: ReadingMedia[] }` replaces a text's recordings
+whole — at most one `youtube` and one `file`, the same recording both; a list
+with two of a kind does not parse, and an empty one removes them. Last write
+by `(at, device, event id)` wins, as for `textRevised`, and a set on a
+tombstoned or unknown text is inert. It names no object: a recording is a
+reference, never content. A build that predates it shows the `textAdded`'s
+media, which `addText` fills with the YouTube link where there is one.
+
+`reading.md`'s "a text is
 immutable" becomes "an object is immutable": anything that points into a text
 by position (`studied` spans, cue positions) points into whichever body is
 current.
 
 `textDeleted` is unchanged.
 
-All three may arrive wrapped in `profileEvent`, like every other type.
+All of them may arrive wrapped in `profileEvent`, like every other type.
 
 ## 4. Ownership metadata
 

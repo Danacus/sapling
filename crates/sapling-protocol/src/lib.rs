@@ -50,7 +50,7 @@ use sapling_domain::events::{parse_payload, EventType, Payload, RawEvent, Result
 use sapling_domain::objects::ContentObject;
 use sapling_domain::types::{
     ChallengeResult, Conversation, ConversationDetail, ConversationExchange, ConversationSummary,
-    DailyActivity, GradeEntry, KnowledgeItem, Profile, ReadingText, StudySession,
+    DailyActivity, GradeEntry, KnowledgeItem, Profile, ReadingMedia, ReadingText, StudySession,
 };
 use sapling_import::{ImportedSource, MergedTranscript, TranscriptInput};
 
@@ -429,11 +429,17 @@ backend! {
         /* ---- Reading texts, word marks and lookups ---------------------- */
 
         /// Stores one reading text, whole: its body as a content object and a
-        /// `textAdded` naming it, in one transaction. Title, source and media
-        /// are fixed once written; a deleted id never comes back. Refuses a
-        /// body over 1 MiB.
+        /// `textAdded` naming it, in one transaction (with a `textMediaSet`
+        /// beside it when there are two recordings). Title and source are
+        /// fixed once written; a deleted id never comes back. Refuses a body
+        /// over 1 MiB, and more than one recording of a kind.
         addText(text: ReadingText) {
             core.add_text(&text)
+        }
+        /// Replaces a text's recordings with `media` — at most one YouTube
+        /// link and one file, empty for none. Refuses a list with two of a kind.
+        setTextMedia(id: String, media: Vec<ReadingMedia>) {
+            core.set_text_media(&id, &media)
         }
         /// Every stored text whose body this device holds, newest first; a
         /// text whose content object has not arrived yet is left out.

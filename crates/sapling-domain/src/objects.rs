@@ -315,6 +315,8 @@ mod tests {
         assert!(object_refs(&inline).is_empty());
         let other = row("wordMarked", json!({ "term": "w", "known": true }));
         assert!(object_refs(&other).is_empty());
+        let media = row("textMediaSet", json!({ "textId": "t1", "media": [] }));
+        assert!(object_refs(&media).is_empty());
         // A row this build cannot type, and one with both bodies.
         assert!(object_refs(&row("textRenamed", json!({ "textId": "t1" }))).is_empty());
         let both = row(
