@@ -53,6 +53,10 @@ describe('harvestWords', () => {
 		expect(words[5].sentence).toBe('Dit is Els, een collega.');
 		// No reading for a Latin word: there never was one.
 		expect(words.every((w) => w.reading === null)).toBe(true);
+		// Where each is first used: the segment, and the offset into it.
+		expect([words[0].segment, words[0].offset]).toEqual([0, 4]);
+		expect([words[2].segment, words[2].offset]).toEqual([1, 0]);
+		expect([words[3].segment, words[3].offset]).toEqual([1, 4]);
 	});
 
 	it('leaves out garden words, keeps legacy known ones marked as such', () => {

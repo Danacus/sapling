@@ -32,6 +32,10 @@ export interface WordCandidate {
 	sentence: string;
 	/** A legacy "known" mark: shown, never ticked for the learner. */
 	known: boolean;
+	/** Where it is first used: the segment's index, so a page can open that occurrence. */
+	segment: number;
+	/** And the character offset into that segment. */
+	offset: number;
 }
 
 /** Letters in it: a number or a symbol is not a word to learn. */
@@ -46,7 +50,7 @@ function isWordLike(text: string): boolean {
  */
 export function harvestWords(segments: readonly AnnotatedSegment[]): WordCandidate[] {
 	const found = new Map<string, WordCandidate>();
-	for (const segment of segments) {
+	for (const [index, segment] of segments.entries()) {
 		let offset = 0;
 		for (const word of segment.words) {
 			const at = offset;
@@ -64,7 +68,9 @@ export function harvestWords(segments: readonly AnnotatedSegment[]): WordCandida
 				reading: word.reading,
 				count: 1,
 				sentence: sentenceAt(segment.text, at),
-				known: word.status === 'known'
+				known: word.status === 'known',
+				segment: index,
+				offset: at
 			});
 		}
 	}

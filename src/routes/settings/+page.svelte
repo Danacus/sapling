@@ -86,11 +86,14 @@
 	import {
 		applyTheme,
 		getListeningMode,
+		getOcrModelSize,
 		getRomanizationMode,
 		getThemeMode,
 		setListeningMode,
+		setOcrModelSize,
 		setRomanizationMode,
 		setThemeMode,
+		type OcrModelSize,
 		type RomanizationMode,
 		type ThemeMode
 	} from '$lib/prefs';
@@ -125,6 +128,7 @@
 	let themeMode = $state<ThemeMode>('system');
 	let romanizationMode = $state<RomanizationMode>('on');
 	let listeningMode = $state(true);
+	let ocrModelSize = $state<OcrModelSize>('mobile');
 
 	// Speech ----------------------------------------------------------------------
 	let ttsEngine = $state<TtsEngine>('kokoro');
@@ -253,6 +257,7 @@
 				requestItemsInput = storedItems === undefined ? '' : String(storedItems);
 				romanizationMode = getRomanizationMode();
 				listeningMode = getListeningMode();
+				ocrModelSize = getOcrModelSize();
 				themeMode = getThemeMode();
 
 				ttsEngine = getTtsEngine();
@@ -516,6 +521,11 @@
 	function setRomanization(mode: RomanizationMode) {
 		romanizationMode = mode;
 		setRomanizationMode(mode);
+	}
+
+	function chooseOcrModelSize(size: OcrModelSize) {
+		ocrModelSize = size;
+		setOcrModelSize(size);
 	}
 
 	function chooseTheme(mode: ThemeMode) {
@@ -859,6 +869,34 @@
 						{/each}
 					</div>
 					<p class="hint">Adaptive fades the reading as a word sticks.</p>
+				</div>
+
+				<div class="field">
+					<span class="label">Reading printed pages</span>
+					<div class="preset-row" role="group" aria-label="Reading printed pages">
+						<button
+							type="button"
+							class="chip"
+							class:selected={ocrModelSize === 'mobile'}
+							aria-pressed={ocrModelSize === 'mobile'}
+							onclick={() => chooseOcrModelSize('mobile')}
+						>
+							Fast
+						</button>
+						<button
+							type="button"
+							class="chip"
+							class:selected={ocrModelSize === 'server'}
+							aria-pressed={ocrModelSize === 'server'}
+							onclick={() => chooseOcrModelSize('server')}
+						>
+							Accurate
+						</button>
+					</div>
+					<p class="hint">
+						How a scanned page is read on this device. Accurate misreads less, but downloads 170 MB
+						once and takes several times longer a page.
+					</p>
 				</div>
 
 				<div class="switch-row">

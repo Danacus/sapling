@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { getThemeMode, setThemeMode } from './prefs';
+import { getOcrModelSize, getThemeMode, setOcrModelSize, setThemeMode } from './prefs';
 
 function fakeStorage() {
 	const map = new Map<string, string>();
@@ -50,5 +50,28 @@ describe('theme preference', () => {
 		delete globals.localStorage;
 		expect(getThemeMode()).toBe('system');
 		expect(() => setThemeMode('dark')).not.toThrow();
+	});
+});
+
+describe('OCR model size preference', () => {
+	it('defaults to the fast model', () => {
+		expect(getOcrModelSize()).toBe('mobile');
+	});
+
+	it('round-trips both sizes', () => {
+		setOcrModelSize('server');
+		expect(getOcrModelSize()).toBe('server');
+		setOcrModelSize('mobile');
+		expect(getOcrModelSize()).toBe('mobile');
+	});
+
+	it('ignores unsupported values and missing storage', () => {
+		localStorage.setItem('ll.ocrModelSize', 'huge');
+		expect(getOcrModelSize()).toBe('mobile');
+		setOcrModelSize('huge' as never);
+		expect(localStorage.getItem('ll.ocrModelSize')).toBe('huge');
+		delete globals.localStorage;
+		expect(getOcrModelSize()).toBe('mobile');
+		expect(() => setOcrModelSize('server')).not.toThrow();
 	});
 });

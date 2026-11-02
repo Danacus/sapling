@@ -18,6 +18,7 @@ const SHOW_ROMANIZATION_KEY = 'll.showRomanization';
 const LISTENING_MODE_KEY = 'll.listeningMode';
 const RECENT_TOPICS_KEY = 'll.recentTopics';
 const THEME_MODE_KEY = 'll.themeMode';
+const OCR_MODEL_SIZE_KEY = 'll.ocrModelSize';
 
 /** At most this many recent topics are remembered. */
 export const MAX_RECENT_TOPICS = 5;
@@ -132,6 +133,38 @@ export function setListeningMode(on: boolean): void {
 	if (!hasStorage()) return;
 	try {
 		localStorage.setItem(LISTENING_MODE_KEY, on ? '1' : '0');
+	} catch {
+		/* ignore: storage unavailable */
+	}
+}
+
+/**
+ * Which on-device text reader the page viewer runs (`$lib/ocr`): `'mobile'`
+ * ("Fast", ~21 MB, the default — it reads a printed textbook page nearly as
+ * well in a fraction of the time) or `'server'` ("Accurate", ~170 MB, slow in
+ * a browser). A device choice, like the others here: what this machine can
+ * afford to download and run.
+ */
+export type OcrModelSize = 'mobile' | 'server';
+
+const OCR_MODEL_SIZES: readonly OcrModelSize[] = ['mobile', 'server'];
+
+export function getOcrModelSize(): OcrModelSize {
+	if (!hasStorage()) return 'mobile';
+	try {
+		const raw = localStorage.getItem(OCR_MODEL_SIZE_KEY);
+		return raw !== null && (OCR_MODEL_SIZES as readonly string[]).includes(raw)
+			? (raw as OcrModelSize)
+			: 'mobile';
+	} catch {
+		return 'mobile';
+	}
+}
+
+export function setOcrModelSize(size: OcrModelSize): void {
+	if (!(OCR_MODEL_SIZES as readonly string[]).includes(size) || !hasStorage()) return;
+	try {
+		localStorage.setItem(OCR_MODEL_SIZE_KEY, size);
 	} catch {
 		/* ignore: storage unavailable */
 	}

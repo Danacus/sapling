@@ -35,3 +35,7 @@ src/lib/db/wasm
 # walks the filesystem, not the index.
 tools/textbook-ocr/out
 tools/textbook-ocr/pages
+
+# Design mockups (local, excluded in .git/info/exclude): exported HTML, not ours
+# to restyle — prettier walks the filesystem, not the index.
+.mockups

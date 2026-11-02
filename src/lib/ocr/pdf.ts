@@ -17,9 +17,14 @@ export interface ViewerPage {
 	textLines: OcrLine[];
 }
 
+/** The long side a thumbnail is drawn at: a rail of nearby pages, not reading. */
+const THUMB_SIDE = 160;
+
 export interface ViewerDocument {
 	count: number;
 	page(n: number): Promise<ViewerPage>;
+	/** Page `n` small, as an object URL the caller revokes; no text, no raster. */
+	thumbnail(n: number): Promise<string>;
 	close(): void;
 }
 
@@ -139,6 +144,19 @@ async function pdfDocument(file: File): Promise<ViewerDocument> {
 			page.cleanup();
 			return { raster: rasterOf(canvas), url: await blobUrl(canvas), textLines };
 		},
+		async thumbnail(n) {
+			const page = await doc.getPage(n);
+			const natural = page.getViewport({ scale: 1 });
+			const viewport = page.getViewport({
+				scale: THUMB_SIDE / Math.max(natural.width, natural.height)
+			});
+			const canvas = canvasOf(viewport.width, viewport.height);
+			const context = canvas.getContext('2d')!;
+			context.fillStyle = '#fff';
+			context.fillRect(0, 0, canvas.width, canvas.height);
+			await page.render({ canvas, canvasContext: context, viewport }).promise;
+			return blobUrl(canvas);
+		},
 		close() {
 			void doc.loadingTask.destroy();
 		}
@@ -155,6 +173,14 @@ async function imageDocument(files: File[]): Promise<ViewerDocument> {
 			canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
 			bitmap.close();
 			return { raster: rasterOf(canvas), url: await blobUrl(canvas), textLines: [] };
+		},
+		async thumbnail(n) {
+			const bitmap = await createImageBitmap(files[n - 1]);
+			const scale = Math.min(1, THUMB_SIDE / Math.max(bitmap.width, bitmap.height));
+			const canvas = canvasOf(bitmap.width * scale, bitmap.height * scale);
+			canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+			bitmap.close();
+			return blobUrl(canvas);
 		},
 		close() {}
 	};
