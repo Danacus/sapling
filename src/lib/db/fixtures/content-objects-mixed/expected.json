@@ -110,7 +110,16 @@
 			"added": 1
 		}
 	],
-	"studySessions": [],
+	"studySessions": [
+		{
+			"id": "words-1710061200000",
+			"at": 1710061200000,
+			"mode": "words",
+			"minutes": 0,
+			"answers": 0,
+			"words": 1
+		}
+	],
 	"getTexts": [
 		{
 			"id": "text-ref",

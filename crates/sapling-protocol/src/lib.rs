@@ -488,8 +488,14 @@ backend! {
         recordStudy(textId: String, at: f64, ms: f64) {
             core.record_study(&textId, at, ms)
         }
+        /// `recordStudy` for a span in the textbook page viewer, which names
+        /// no document.
+        recordTextbookStudy(at: f64, ms: f64) {
+            core.record_textbook_study(at, ms)
+        }
         /// Study time per mode (`input`: texts and recordings, `output`:
-        /// conversations, `practice`: answers) and whole local hour, for every
+        /// conversations, `practice`: answers, `textbook`: the page viewer,
+        /// `words`: words added) and whole local hour, for every
         /// hour starting at or after `since`, oldest first. Each `id` is
         /// `{mode}-{hour start}`, the same on every synced device, and every
         /// number is the hour's total. Folded from the base tables at read time.

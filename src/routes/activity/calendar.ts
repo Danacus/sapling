@@ -86,7 +86,9 @@ export function longestStreak(days: string[]): number {
 export const STUDY_MODES: Record<StudySession['mode'], string> = {
 	input: 'Reading & watching',
 	output: 'Conversation',
-	practice: 'Practice'
+	practice: 'Practice',
+	textbook: 'Textbook',
+	words: 'Words added'
 };
 
 /** The study log of one local day: its hourly sessions, oldest first. */
@@ -96,14 +98,15 @@ export function studyOn(sessions: StudySession[], day: string): StudySession[] {
 		.sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
 }
 
-/** A session's amount: answers for practice, minutes for the rest. */
+/** A session's amount: answers for practice, words for words, minutes for the rest. */
 export function studyAmount(session: StudySession): string {
 	if (session.mode === 'practice')
 		return `${session.answers} answer${session.answers === 1 ? '' : 's'}`;
+	if (session.mode === 'words') return `${session.words} word${session.words === 1 ? '' : 's'}`;
 	return `${session.minutes} min`;
 }
 
-/** Minutes of reading, watching and conversation across `sessions`, to 0.1. */
+/** Minutes of reading, watching, textbooks and conversation across `sessions`, to 0.1. */
 export function studyMinutes(sessions: StudySession[]): number {
 	return Math.round(sessions.reduce((sum, session) => sum + session.minutes, 0) * 10) / 10;
 }

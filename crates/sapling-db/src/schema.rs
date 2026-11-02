@@ -97,11 +97,14 @@ CREATE TABLE IF NOT EXISTS lookups (
   at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS lookups_term ON lookups(term, at);
 
--- One row per `studied` event: a span of active study on a text, `[at, at +
--- ms]`. Kept when the text is deleted — the time was spent either way, and a
--- total already handed to a leaderboard must not shrink.
+-- One row per `studied` event: a span of active study, `[at, at + ms]`, on a
+-- text (`source` 'text', `textId` set) or in the textbook page viewer
+-- ('textbook', no `textId`). Kept when the text is deleted — the time was
+-- spent either way, and a total already handed to a leaderboard must not
+-- shrink.
 CREATE TABLE IF NOT EXISTS studied (
-  id TEXT PRIMARY KEY, textId TEXT NOT NULL, at INTEGER NOT NULL, ms REAL NOT NULL);
+  id TEXT PRIMARY KEY, textId TEXT, source TEXT NOT NULL DEFAULT 'text',
+  at INTEGER NOT NULL, ms REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS studied_at ON studied(at);
 
 CREATE TABLE IF NOT EXISTS conversations (
@@ -212,7 +215,10 @@ pub fn review_key(item_id: &str, at: f64, device: &str) -> String {
 ///
 /// Bumped for 16 when textbooks arrived (`textbooks`, `textbookTombstones`):
 /// an older build logged and skipped every `textbookAdded` it was sent.
-pub const DERIVED_SCHEMA_VERSION: u32 = 16;
+///
+/// Bumped for 17 when `studied` gained `source` (its `textId` nullable now):
+/// an older build logged and skipped every textbook span it was sent.
+pub const DERIVED_SCHEMA_VERSION: u32 = 17;
 
 /// Every read table the materializer owns; `events`, `meta` and `objects`
 /// survive a rebuild.

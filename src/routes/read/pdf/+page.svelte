@@ -24,9 +24,10 @@
 -->
 <script lang="ts">
 	import { page as route } from '$app/state';
+	import { untrack } from 'svelte';
 
 	import { addWords } from '$lib/assistant';
-	import { getAllItems, getKnownTerms, getProfile } from '$lib/db';
+	import { getAllItems, getKnownTerms, getProfile, recordTextbookStudy } from '$lib/db';
 	import { modelSet, ocrPage, scriptFor, type OcrLine } from '$lib/ocr';
 	import { isPdf, openDocument, type ViewerDocument, type ViewerPage } from '$lib/ocr/pdf';
 	import { getOcrModelSize, getRomanizationMode } from '$lib/prefs';
@@ -34,11 +35,13 @@
 		annotateSentence,
 		glossWords,
 		lookUpWord,
+		studyTracker,
 		tokenizeByTerms,
 		type AnnotateContext,
 		type ReadingWord,
 		type TokenizeFn
 	} from '$lib/reading';
+	import { syncRemotes } from '$lib/remotes';
 	import { hasLocalRomanizer, loadRomanizer } from '$lib/romanize';
 	import { targetTagOf, termKey } from '$lib/text';
 	import type { KnowledgeItem, Profile } from '$lib/types';
@@ -541,6 +544,42 @@
 	$effect(() => () => {
 		doc?.close();
 		clearThumbs();
+	});
+
+	/**
+	 * Study time, wired as the reader wires it (`$lib/reading/study`): one
+	 * tracker per open document, its spans `studied` events that name no
+	 * document, since the viewer stores nothing. Nothing plays here.
+	 */
+	$effect(() => {
+		if (!doc) return;
+		const tracker = untrack(() =>
+			studyTracker({
+				now: Date.now,
+				visible: document.visibilityState === 'visible',
+				write: (span) => void recordTextbookStudy(span.at, span.ms).catch(() => {})
+			})
+		);
+		const input = () => tracker.signal({ kind: 'input' });
+		const visibility = () =>
+			tracker.signal({ kind: 'visible', visible: document.visibilityState === 'visible' });
+		const leave = () => tracker.signal({ kind: 'leave' });
+		const inputs = ['pointerdown', 'keydown', 'wheel', 'scroll', 'touchstart'] as const;
+		for (const kind of inputs) {
+			window.addEventListener(kind, input, { capture: true, passive: true });
+		}
+		document.addEventListener('visibilitychange', visibility);
+		window.addEventListener('pagehide', leave);
+		const tick = setInterval(() => tracker.signal({ kind: 'tick' }), 15_000);
+		return () => {
+			clearInterval(tick);
+			for (const kind of inputs) window.removeEventListener(kind, input, { capture: true });
+			document.removeEventListener('visibilitychange', visibility);
+			window.removeEventListener('pagehide', leave);
+			tracker.signal({ kind: 'leave' });
+			// As leaving a text does: the span's write was posted first, so the pass reads it.
+			void syncRemotes();
+		};
 	});
 
 	function onKey(event: KeyboardEvent) {

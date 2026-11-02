@@ -46,42 +46,48 @@
 			"at": 1710065100000,
 			"mode": "input",
 			"minutes": 11.5,
-			"answers": 0
+			"answers": 0,
+			"words": 0
 		},
 		{
 			"id": "practice-1710064800000",
 			"at": 1710066000000,
 			"mode": "practice",
 			"minutes": 0,
-			"answers": 2
+			"answers": 2,
+			"words": 0
 		},
 		{
 			"id": "input-1710068400000",
 			"at": 1710068400000,
 			"mode": "input",
 			"minutes": 10,
-			"answers": 0
+			"answers": 0,
+			"words": 0
 		},
 		{
 			"id": "practice-1710068400000",
 			"at": 1710068520000,
 			"mode": "practice",
 			"minutes": 0,
-			"answers": 1
+			"answers": 1,
+			"words": 0
 		},
 		{
 			"id": "output-1710068400000",
 			"at": 1710071760000,
 			"mode": "output",
 			"minutes": 4,
-			"answers": 0
+			"answers": 0,
+			"words": 0
 		},
 		{
 			"id": "output-1710072000000",
 			"at": 1710072000000,
 			"mode": "output",
 			"minutes": 3,
-			"answers": 0
+			"answers": 0,
+			"words": 0
 		}
 	],
 	"getTexts": [],

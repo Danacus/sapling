@@ -83,6 +83,8 @@ export const getKnownTerms = forward('getKnownTerms');
 export const recordLookup = forward('recordLookup');
 /** One closed span of active study on a text; {@link Backend.recordStudy}. */
 export const recordStudy = forward('recordStudy');
+/** One closed span in the textbook page viewer; {@link Backend.recordTextbookStudy}. */
+export const recordTextbookStudy = forward('recordTextbookStudy');
 /**
  * What an imported text is and the segments it is stored as — one timed
  * segment per subtitle cue, one untimed segment per paragraph of prose. Answered by the Rust core without touching

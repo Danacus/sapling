@@ -39,7 +39,7 @@ use sapling_domain::types::{
     ChallengeResult, Conversation, ConversationDetail, ConversationExchange,
     ConversationLearnerTurn, ConversationSummary, ConversationTeacherTurn, DailyActivity,
     GradeEntry, HistoryEntry, KnowledgeItem, Profile, ReadingText, StudyMode, StudySession,
-    Verdict,
+    StudySource, Verdict,
 };
 use sapling_srs::{item_srs, FsrsCardState, Grade};
 
@@ -168,7 +168,8 @@ const HOUR_MS: f64 = 3_600_000.0;
 struct Bucket {
     at: Option<f64>,
     ms: f64,
-    answers: f64,
+    /// Answers for practice, words added for words.
+    count: f64,
 }
 
 impl Bucket {
@@ -1041,7 +1042,21 @@ impl Core {
         self.commit_all_at(
             at,
             vec![Payload::Studied(Studied {
-                text_id: text_id.to_owned(),
+                text_id: Some(text_id.to_owned()),
+                source: StudySource::Text,
+                ms,
+            })],
+        )
+    }
+
+    /// [`Core::record_study`] for a span in the textbook page viewer, which
+    /// names no document.
+    pub fn record_textbook_study(&self, at: f64, ms: f64) -> Result<()> {
+        self.commit_all_at(
+            at,
+            vec![Payload::Studied(Studied {
+                text_id: None,
+                source: StudySource::Textbook,
                 ms,
             })],
         )
@@ -1052,18 +1067,30 @@ impl Core {
     ///
     /// Folded at read time from the base tables, as `get_daily_activity` is,
     /// and for the same reason: the hour is the host's (`LocalDay`), and the
-    /// tables are small. **Input** is the `studied` spans, each split across
-    /// the hours its wall-clock interval crosses. **Output** is conversation
+    /// tables are small. **Input** is the `studied` spans on texts, each split
+    /// across the hours its wall-clock interval crosses, and **textbook** the
+    /// page viewer's spans, split the same way. **Output** is conversation
     /// turns: a run of turns no more than five minutes apart counts from the
     /// first to the last plus a minute, split the same way. **Practice** is
-    /// answers counted into the hour they were given, with no minutes. An
-    /// hour whose minutes round to nothing is left out.
+    /// answers counted into the hour they were given, and **words** the words
+    /// added (`items.introducedAt`, as `get_daily_activity`'s `added`), both
+    /// with no minutes. Any other hour whose minutes round to nothing is left
+    /// out.
     pub fn study_sessions(&self, since: f64) -> Result<Vec<StudySession>> {
         let mut buckets: BTreeMap<(StudyMode, i64), Bucket> = BTreeMap::new();
 
-        for row in self.sql.query("SELECT at, ms FROM studied", &[])?.iter() {
+        for row in self
+            .sql
+            .query("SELECT at, ms, source FROM studied", &[])?
+            .iter()
+        {
             let at = row.f64("at")?;
-            self.spread(&mut buckets, StudyMode::Input, at, at + row.f64("ms")?);
+            let mode = if row.text("source")? == StudySource::Textbook.as_str() {
+                StudyMode::Textbook
+            } else {
+                StudyMode::Input
+            };
+            self.spread(&mut buckets, mode, at, at + row.f64("ms")?);
         }
 
         let turns: Vec<f64> = self
@@ -1093,7 +1120,22 @@ impl Core {
             let hour = self.day.local_hour(at) as i64;
             let bucket = buckets.entry((StudyMode::Practice, hour)).or_default();
             bucket.touch(at);
-            bucket.answers += 1.0;
+            bucket.count += 1.0;
+        }
+
+        for row in self
+            .sql
+            .query(
+                "SELECT introducedAt FROM items WHERE introducedAt IS NOT NULL",
+                &[],
+            )?
+            .iter()
+        {
+            let at = row.f64("introducedAt")?;
+            let hour = self.day.local_hour(at) as i64;
+            let bucket = buckets.entry((StudyMode::Words, hour)).or_default();
+            bucket.touch(at);
+            bucket.count += 1.0;
         }
 
         let mut sessions: Vec<StudySession> = buckets
@@ -1101,15 +1143,18 @@ impl Core {
             .filter(|((_, hour), _)| *hour as f64 >= since)
             .filter_map(|((mode, hour), bucket)| {
                 let minutes = minutes_of(bucket.ms);
-                if mode != StudyMode::Practice && minutes <= 0.0 {
+                let counted = matches!(mode, StudyMode::Practice | StudyMode::Words);
+                if !counted && minutes <= 0.0 {
                     return None;
                 }
+                let count = |of: StudyMode| if mode == of { bucket.count } else { 0.0 };
                 Some(StudySession {
                     id: format!("{}-{hour}", mode.as_str()),
                     at: bucket.at?,
                     mode,
                     minutes,
-                    answers: bucket.answers,
+                    answers: count(StudyMode::Practice),
+                    words: count(StudyMode::Words),
                 })
             })
             .collect();

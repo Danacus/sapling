@@ -391,11 +391,28 @@
 	],
 	"studySessions": [
 		{
+			"id": "words-1710061200000",
+			"at": 1710061200000,
+			"mode": "words",
+			"minutes": 0,
+			"answers": 0,
+			"words": 2
+		},
+		{
 			"id": "practice-1710061200000",
 			"at": 1710061800000,
 			"mode": "practice",
 			"minutes": 0,
-			"answers": 3
+			"answers": 3,
+			"words": 0
+		},
+		{
+			"id": "words-1710237600000",
+			"at": 1710237600000,
+			"mode": "words",
+			"minutes": 0,
+			"answers": 0,
+			"words": 1
 		}
 	],
 	"getTexts": [],

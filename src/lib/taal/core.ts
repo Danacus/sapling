@@ -12,7 +12,7 @@ import { isTaalCode as isCodeInCore, taal, type TaalHost } from '$lib/db/wasm/sa
 import { loadWindowCore } from '$lib/db/window-core';
 import { requester } from '$lib/sync/core';
 
-export { BAD_CODE, CARDS_PER_ANSWER, REFUSED } from '$lib/db/generated/taal';
+export { BAD_CODE, CARDS_PER_ANSWER, REFUSED, SECONDS_PER_WORD } from '$lib/db/generated/taal';
 
 /** Whether a typed or pasted text is a Taal connect code. */
 export function isTaalCode(raw: string): boolean {

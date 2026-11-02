@@ -1,5 +1,6 @@
 //! `record_study` and `study_sessions`: study time per mode and local hour,
-//! folded from the base tables — spans, conversation turns and answers.
+//! folded from the base tables — spans, conversation turns, answers and words
+//! added.
 
 use std::cell::Cell;
 
@@ -58,6 +59,19 @@ fn studied(id: &str, at: f64, ms: f64) -> Value {
     event(id, "studied", at, json!({ "textId": "t1", "ms": ms }))
 }
 
+fn textbook(id: &str, at: f64, ms: f64) -> Value {
+    event(id, "studied", at, json!({ "source": "textbook", "ms": ms }))
+}
+
+fn added(id: &str, at: f64) -> Value {
+    event(
+        id,
+        "itemAdded",
+        at,
+        json!({ "id": id, "kind": "vocab", "term": id, "meaning": "m", "introducedAt": at }),
+    )
+}
+
 fn answer(id: &str, at: f64) -> Value {
     event(
         id,
@@ -86,6 +100,14 @@ fn session(mode: StudyMode, hour: f64, at: f64, minutes: f64, answers: f64) -> S
         mode,
         minutes,
         answers,
+        words: 0.0,
+    }
+}
+
+fn words(hour: f64, at: f64, count: f64) -> StudySession {
+    StudySession {
+        words: count,
+        ..session(StudyMode::Words, hour, at, 0.0, 0.0)
     }
 }
 
@@ -260,4 +282,58 @@ fn a_span_outlives_its_text() {
     ])
     .expect("apply");
     assert_eq!(core.study_sessions(0.0).expect("read").len(), 1);
+}
+
+#[test]
+fn textbook_spans_are_their_own_mode_split_like_input() {
+    let core = open(Utc);
+    core.apply_remote(&[
+        textbook("b1", H10 + 50.0 * MIN, 20.0 * MIN),
+        studied("s1", H10 + 5.0 * MIN, 3.0 * MIN),
+    ])
+    .expect("apply");
+    assert_eq!(
+        core.study_sessions(0.0).expect("read"),
+        vec![
+            session(StudyMode::Input, H10, H10 + 5.0 * MIN, 3.0, 0.0),
+            session(StudyMode::Textbook, H10, H10 + 50.0 * MIN, 10.0, 0.0),
+            session(StudyMode::Textbook, H10 + HOUR, H10 + HOUR, 10.0, 0.0),
+        ]
+    );
+}
+
+#[test]
+fn record_textbook_study_logs_a_span_that_names_no_document() {
+    let core = open(Utc);
+    core.record_textbook_study(H10 + 5.0 * MIN, 3.0 * MIN)
+        .expect("record");
+    let events = core.pending_events(10).expect("pending");
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].kind, "studied");
+    assert_eq!(
+        events[0].payload,
+        json!({ "source": "textbook", "ms": 180000.0 })
+    );
+    assert_eq!(
+        core.study_sessions(0.0).expect("read"),
+        vec![session(StudyMode::Textbook, H10, H10 + 5.0 * MIN, 3.0, 0.0)]
+    );
+}
+
+#[test]
+fn words_added_are_counted_per_hour_with_no_minutes() {
+    let core = open(Utc);
+    core.apply_remote(&[
+        added("w1", H10 + 3.0 * MIN),
+        added("w2", H10 + 40.0 * MIN),
+        added("w3", H10 + HOUR + MIN),
+    ])
+    .expect("apply");
+    assert_eq!(
+        core.study_sessions(0.0).expect("read"),
+        vec![
+            words(H10, H10 + 3.0 * MIN, 2.0),
+            words(H10 + HOUR, H10 + HOUR + MIN, 1.0),
+        ]
+    );
 }

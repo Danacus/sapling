@@ -637,10 +637,11 @@ impl<'a> Materializer<'a> {
             return Ok(());
         }
         self.sql.exec(
-            "INSERT OR IGNORE INTO studied (id, textId, at, ms) VALUES (?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO studied (id, textId, source, at, ms) VALUES (?, ?, ?, ?, ?)",
             &[
                 Param::text(id),
-                Param::text(&p.text_id),
+                Param::opt_text(p.text_id.as_deref()),
+                Param::text(p.source.as_str()),
                 Param::number(at),
                 Param::number(p.ms),
             ],

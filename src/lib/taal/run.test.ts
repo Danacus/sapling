@@ -13,7 +13,7 @@ import type { TestBackend } from '$lib/db/backend.testing';
 
 const { setBackendForTesting } = await import('$lib/db/backend');
 const { makeTestBackend } = await import('$lib/db/backend.testing');
-const { createProfile, recordStudy, saveProfile, setActiveProfile } =
+const { createProfile, recordStudy, recordTextbookStudy, saveProfile, setActiveProfile } =
 	await import('$lib/db/repositories');
 const { pushTaal } = await import('./run');
 const { clearTaalCode, getPushedThrough, getTaalCode, lastTaalOutcome, setTaalCode } =
@@ -130,6 +130,26 @@ describe('pushTaal', () => {
 		expect(path).toMatch(new RegExp(`^sessions\\.\`${profile}-input-\\d+\`$`));
 		expect(getPushedThrough(CODE, profile)).toBeGreaterThanOrEqual(before);
 		expect(lastTaalOutcome()).toMatchObject({ status: 'ok', okAt: expect.any(Number) });
+	});
+
+	it('sends textbook time as Taal study minutes', async () => {
+		setTaalCode(CODE);
+		await recordTextbookStudy(inHourAgo(HOUR), 6 * 60_000);
+		const { sent, fetchImpl } = fakeTaal(200);
+
+		expect(await pushTaal(fetchImpl)).toMatchObject({ status: 'ok', sent: 1 });
+		const profile = await activeId();
+		const [path] = sent[0].body.writes[1].updateMask.fieldPaths;
+		expect(path).toMatch(new RegExp(`^sessions\\.\`${profile}-textbook-\\d+\`$`));
+		expect(sent[0].body.writes[1].update.fields).toMatchObject({
+			sessions: {
+				mapValue: {
+					fields: {
+						[path.slice(10, -1)]: { mapValue: { fields: { study: { integerValue: '6' } } } }
+					}
+				}
+			}
+		});
 	});
 
 	it('reads from the re-send margin after a whole push', async () => {

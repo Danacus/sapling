@@ -387,15 +387,41 @@ pub struct DailyActivity {
     pub added: f64,
 }
 
+/// Where a `studied` span was spent: on a stored text, or in the textbook page
+/// viewer.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum StudySource {
+    #[default]
+    Text,
+    Textbook,
+}
+
+impl StudySource {
+    pub fn is_text(&self) -> bool {
+        *self == StudySource::Text
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StudySource::Text => "text",
+            StudySource::Textbook => "textbook",
+        }
+    }
+}
+
 /// What kind of study a session was: taking the language in (reading a text,
-/// following its recording), putting it out (a conversation), or practice
-/// (answering challenges).
+/// following its recording), putting it out (a conversation), practice
+/// (answering challenges), reading a textbook in the page viewer, or adding
+/// words to the vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum StudyMode {
     Input,
     Output,
     Practice,
+    Textbook,
+    Words,
 }
 
 impl StudyMode {
@@ -404,6 +430,8 @@ impl StudyMode {
             StudyMode::Input => "input",
             StudyMode::Output => "output",
             StudyMode::Practice => "practice",
+            StudyMode::Textbook => "textbook",
+            StudyMode::Words => "words",
         }
     }
 }
@@ -421,11 +449,13 @@ pub struct StudySession {
     /// The earliest activity inside the hour.
     pub at: f64,
     pub mode: StudyMode,
-    /// Active minutes in the hour, to 0.1 — `0` for practice, which is counted
-    /// in answers instead.
+    /// Active minutes in the hour, to 0.1 — `0` for practice and words, which
+    /// are counted instead.
     pub minutes: f64,
     /// Challenges answered in the hour — practice only, `0` otherwise.
     pub answers: f64,
+    /// Words added in the hour — `words` mode only, `0` otherwise.
+    pub words: f64,
 }
 
 /* -------------------------------------------------------------------------- */

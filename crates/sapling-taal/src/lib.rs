@@ -9,7 +9,9 @@
 //! accept exactly that shape, so [`commit_request`] reproduces it field for
 //! field rather than re-deriving it. We do not use Taal's tracker: the core
 //! already folds study time per mode and local hour (`studySessions`), and
-//! what is sent here is that read, mapped.
+//! what is sent here is that read, mapped — the read stays neutral, and every
+//! weight a leaderboard puts on it ([`CARDS_PER_ANSWER`], [`SECONDS_PER_WORD`])
+//! lives here.
 //!
 //! Host-agnostic like `sapling-sync`. The HTTP request is a [`Transport`] and
 //! the study-time read a [`TaalStore`], both injected; the code, the profile,
@@ -55,6 +57,11 @@ pub const RESEND_MS: f64 = 48.0 * 3_600_000.0;
 /// a changed value reaches Taal on the next push for every hour inside the
 /// re-send window, and older hours keep the value they were sent with.
 pub const CARDS_PER_ANSWER: f64 = 1.0;
+
+/// Taal `study` seconds per word added to the vocabulary: choosing a word and
+/// what it means is study the clock never saw. Tunable like
+/// [`CARDS_PER_ANSWER`], and a changed value reaches Taal the same way.
+pub const SECONDS_PER_WORD: f64 = 30.0;
 
 /// The text a code that does not look like one answers.
 pub const BAD_CODE: &str = "This is not a Taal code.";
@@ -116,19 +123,23 @@ pub struct TaalSession {
     pub at: f64,
     pub input: f64,
     pub output: f64,
+    pub study: f64,
     pub cards: f64,
 }
 
 /// Maps one of the core's sessions onto Taal's modes. Reading and following a
-/// recording are `input`, a conversation `output`, and practice is cards —
-/// never `study` or `review` minutes, which would count it twice. The id is
-/// prefixed with `profile`: the core's ids are per profile, and two
-/// languages studied in the same hour must stay two sessions at Taal.
+/// recording are `input`, a conversation `output`, the textbook page viewer
+/// `study` minutes, words added `study` at [`SECONDS_PER_WORD`] each, and
+/// practice is cards — never `study` or `review` minutes, which would count it
+/// twice. The id is prefixed with `profile`: the core's ids are per profile,
+/// and two languages studied in the same hour must stay two sessions at Taal.
 pub fn to_taal(profile: &str, session: &StudySession) -> TaalSession {
-    let (mut input, mut output, mut cards) = (0.0, 0.0, 0.0);
+    let (mut input, mut output, mut study, mut cards) = (0.0, 0.0, 0.0, 0.0);
     match session.mode {
         StudyMode::Input => input = session.minutes,
         StudyMode::Output => output = session.minutes,
+        StudyMode::Textbook => study = session.minutes,
+        StudyMode::Words => study = session.words * SECONDS_PER_WORD / 60.0,
         StudyMode::Practice => cards = session.answers * CARDS_PER_ANSWER,
     }
     TaalSession {
@@ -136,6 +147,7 @@ pub fn to_taal(profile: &str, session: &StudySession) -> TaalSession {
         at: session.at.round(),
         input,
         output,
+        study,
         cards,
     }
 }
@@ -176,6 +188,7 @@ pub fn commit_request(code: &Code, sessions: &[TaalSession]) -> Request {
         for (name, value) in [
             ("input", session.input),
             ("output", session.output),
+            ("study", session.study),
             ("cards", session.cards),
         ] {
             if value > 0.0 {

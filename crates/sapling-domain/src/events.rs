@@ -40,7 +40,7 @@ use ts_rs::TS;
 use crate::objects::is_object_hash;
 use crate::types::{
     absent_or, ChallengeResult, Conversation, ConversationExchange, ItemKind, Profile,
-    ReadingMedia, ReadingText, Segment, TextSource, Verdict,
+    ReadingMedia, ReadingText, Segment, StudySource, TextSource, Verdict,
 };
 
 /// Every kind of fact the log holds.
@@ -490,18 +490,29 @@ pub struct ResultOverturned {
     pub verdict: Verdict,
 }
 
-/// One continuous span of active study on a text — reading it, or following
-/// its recording. The envelope `at` is when the span *started*, and `ms` is
-/// how long it was active, so the span is `[at, at + ms]` on the wall clock.
-/// Written once the span closes (idle, paused, hidden, left, or capped), never
-/// while it runs, so a span is one immutable fact and every device folds the
-/// same minutes out of it. A device whose build predates the type logs and
-/// skips it.
+/// One continuous span of active study — reading a text or following its
+/// recording, or reading in the textbook page viewer. The envelope `at` is
+/// when the span *started*, and `ms` is how long it was active, so the span is
+/// `[at, at + ms]` on the wall clock. Written once the span closes (idle,
+/// paused, hidden, left, or capped), never while it runs, so a span is one
+/// immutable fact and every device folds the same minutes out of it. A
+/// textbook span names no document: the page viewer stores nothing. A device
+/// whose build predates the type logs and skips it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(rename = "StudiedPayload")]
 #[serde(rename_all = "camelCase")]
 pub struct Studied {
-    pub text_id: String,
+    #[serde(
+        default,
+        deserialize_with = "absent_or",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional)]
+    pub text_id: Option<String>,
+    /// Absent is a text, as every span written before textbooks counted.
+    #[serde(default, skip_serializing_if = "StudySource::is_text")]
+    #[ts(as = "Option<StudySource>", optional)]
+    pub source: StudySource,
     /// Active milliseconds.
     pub ms: f64,
 }
@@ -888,6 +899,10 @@ mod tests {
             ),
             (EventType::Studied, json!({ "textId": "t", "ms": 90000 })),
             (
+                EventType::Studied,
+                json!({ "source": "textbook", "ms": 90000 }),
+            ),
+            (
                 EventType::TextbookAdded,
                 json!({ "id": "b", "title": "HSK 1", "fileName": "hsk1.pdf", "content": HASH, "createdAt": 11 }),
             ),
@@ -904,6 +919,38 @@ mod tests {
         assert!(parse_event(&added(json!(HASH))).is_some());
         assert!(parse_event(&added(json!("sha256:short"))).is_none());
         assert!(parse_event(&added(json!(HASH.to_uppercase()))).is_none());
+    }
+
+    #[test]
+    fn a_studied_span_is_a_text_unless_it_says_textbook() {
+        let studied = |payload: Value| {
+            let raw =
+                json!({ "id": "e", "type": "studied", "at": 1, "device": "d", "payload": payload });
+            parse_event(&raw).map(|event| event.payload)
+        };
+        let old = Studied {
+            text_id: Some("t".into()),
+            source: StudySource::Text,
+            ms: 90000.0,
+        };
+        assert_eq!(
+            studied(json!({ "textId": "t", "ms": 90000 })),
+            Some(Payload::Studied(old.clone()))
+        );
+        assert_eq!(
+            studied(json!({ "textId": "t", "source": "text", "ms": 90000 })),
+            Some(Payload::Studied(old))
+        );
+        assert_eq!(
+            studied(json!({ "source": "textbook", "ms": 90000 })),
+            Some(Payload::Studied(Studied {
+                text_id: None,
+                source: StudySource::Textbook,
+                ms: 90000.0,
+            }))
+        );
+        assert!(studied(json!({ "source": "pdf", "ms": 90000 })).is_none());
+        assert!(studied(json!({ "textId": null, "ms": 90000 })).is_none());
     }
 
     #[test]

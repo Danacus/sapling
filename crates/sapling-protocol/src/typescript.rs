@@ -34,7 +34,7 @@ use sapling_llm::reading::{MAX_FOCUS_WORDS, MAX_TOPIC_CHARS};
 use sapling_llm::{Endpoint, LlmError, ProgressStep, TokenUsage, MAX_ABOUT_CHARS};
 use sapling_srs::FsrsCardState;
 use sapling_sync::{BAD_PHRASE, PHRASE_LENGTH};
-use sapling_taal::{BAD_CODE, CARDS_PER_ANSWER, REFUSED};
+use sapling_taal::{BAD_CODE, CARDS_PER_ANSWER, REFUSED, SECONDS_PER_WORD};
 
 use crate::captions::{caption_methods, visit_caption_types};
 use crate::challenges::{challenge_methods, visit_challenge_types};
@@ -231,7 +231,7 @@ fn taal(names: &[String]) -> String {
     }
     let _ = writeln!(
         out,
-        "] as const;\n\nexport const CARDS_PER_ANSWER = {CARDS_PER_ANSWER:?};\nexport const BAD_CODE = {};\nexport const REFUSED = {};",
+        "] as const;\n\nexport const CARDS_PER_ANSWER = {CARDS_PER_ANSWER:?};\nexport const SECONDS_PER_WORD = {SECONDS_PER_WORD:?};\nexport const BAD_CODE = {};\nexport const REFUSED = {};",
         serde_json::to_string(BAD_CODE).expect("a string"),
         serde_json::to_string(REFUSED).expect("a string")
     );

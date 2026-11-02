@@ -25,6 +25,7 @@ fn session(mode: StudyMode, hour: f64, minutes: f64, answers: f64) -> StudySessi
         mode,
         minutes,
         answers,
+        words: 0.0,
     }
 }
 
@@ -148,6 +149,7 @@ fn the_request_is_send_to_taals_request() {
             at: 1_700_000_060_000.0,
             input: 12.5,
             output: 0.0,
+            study: 0.0,
             cards: 0.0,
         },
         TaalSession {
@@ -155,6 +157,7 @@ fn the_request_is_send_to_taals_request() {
             at: 1_700_000_000_000.0,
             input: 0.0,
             output: 3.0,
+            study: 2.5,
             cards: 7.0,
         },
     ];
@@ -189,6 +192,7 @@ fn the_request_is_send_to_taals_request() {
                         "we`ird\\id": { "mapValue": { "fields": {
                             "at": { "integerValue": "1700000000000" },
                             "output": { "integerValue": "3" },
+                            "study": { "doubleValue": 2.5 },
                             "cards": { "integerValue": "7" },
                         } } },
                     } } } },
@@ -219,21 +223,50 @@ fn modes_map_to_taals_and_ids_carry_the_profile() {
             at: hour + 60_000.0,
             input: 4.2,
             output: 0.0,
+            study: 0.0,
             cards: 0.0
         }
     );
+    let parts = |s: &TaalSession| (s.input, s.output, s.study, s.cards);
     let output = to_taal("p1", &session(StudyMode::Output, hour, 6.0, 0.0));
-    assert_eq!((output.input, output.output, output.cards), (0.0, 6.0, 0.0));
+    assert_eq!(parts(&output), (0.0, 6.0, 0.0, 0.0));
     let practice = to_taal("p2", &session(StudyMode::Practice, hour, 0.0, 9.0));
     assert_eq!(practice.id, format!("p2-practice-{hour}"));
+    assert_eq!(parts(&practice), (0.0, 0.0, 0.0, 9.0 * CARDS_PER_ANSWER));
+    let textbook = to_taal("p1", &session(StudyMode::Textbook, hour, 8.5, 0.0));
+    assert_eq!(textbook.id, format!("p1-textbook-{hour}"));
+    assert_eq!(parts(&textbook), (0.0, 0.0, 8.5, 0.0));
+    let mut added = session(StudyMode::Words, hour, 0.0, 0.0);
+    added.words = 5.0;
+    let words = to_taal("p1", &added);
+    assert_eq!(words.id, format!("p1-words-{hour}"));
     assert_eq!(
-        (practice.input, practice.output, practice.cards),
-        (0.0, 0.0, 9.0 * CARDS_PER_ANSWER)
+        parts(&words),
+        (0.0, 0.0, 5.0 * SECONDS_PER_WORD / 60.0, 0.0)
     );
     // `at` goes as whole milliseconds, an integer at Taal.
     let mut odd = session(StudyMode::Input, hour, 1.0, 0.0);
     odd.at = hour + 0.4;
     assert_eq!(to_taal("p1", &odd).at, hour);
+}
+
+#[test]
+fn words_added_reach_taal_as_study_minutes() {
+    let hour = NOW - DAY;
+    let mut added = session(StudyMode::Words, hour, 0.0, 0.0);
+    added.words = 5.0;
+    let fake = Fake::new(&[200]);
+    let outcome = run(&fake, &Store::of(vec![added]), &args(None));
+    assert_eq!(outcome.sent, 1);
+    let fields = &fake.bodies()[0]["writes"][1]["update"]["fields"]["sessions"]["mapValue"]
+        ["fields"][format!("p1-words-{hour}")]["mapValue"]["fields"];
+    assert_eq!(
+        fields,
+        &json!({
+            "at": { "integerValue": format!("{}", hour + 60_000.0) },
+            "study": { "doubleValue": 2.5 },
+        })
+    );
 }
 
 #[test]

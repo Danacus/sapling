@@ -21,8 +21,9 @@ describe('study log', () => {
 		mode: StudySession['mode'],
 		when: number,
 		minutes: number,
-		answers = 0
-	): StudySession => ({ id: `${mode}-${when}`, at: when, mode, minutes, answers });
+		answers = 0,
+		words = 0
+	): StudySession => ({ id: `${mode}-${when}`, at: when, mode, minutes, answers, words });
 
 	it("keeps one local day's sessions, oldest first", () => {
 		const late = session('input', at(13, 21, 10), 12.5);
@@ -31,15 +32,23 @@ describe('study log', () => {
 		expect(studyOn([late, other, early], '2024-03-13')).toEqual([early, late]);
 	});
 
-	it('reads practice as answers and the rest as minutes', () => {
+	it('reads practice as answers, words as words and the rest as minutes', () => {
 		expect(studyAmount(session('practice', at(13, 9), 0, 1))).toBe('1 answer');
 		expect(studyAmount(session('practice', at(13, 9), 0, 14))).toBe('14 answers');
 		expect(studyAmount(session('input', at(13, 9), 12.5))).toBe('12.5 min');
+		expect(studyAmount(session('textbook', at(13, 9), 4))).toBe('4 min');
+		expect(studyAmount(session('words', at(13, 9), 0, 0, 1))).toBe('1 word');
+		expect(studyAmount(session('words', at(13, 9), 0, 0, 6))).toBe('6 words');
 	});
 
 	it('totals the minutes to a tenth', () => {
-		const sessions = [session('input', at(13, 9), 0.1), session('output', at(13, 10), 0.2)];
-		expect(studyMinutes(sessions)).toBe(0.3);
+		const sessions = [
+			session('input', at(13, 9), 0.1),
+			session('output', at(13, 10), 0.2),
+			session('textbook', at(13, 11), 0.3),
+			session('words', at(13, 11), 0, 0, 5)
+		];
+		expect(studyMinutes(sessions)).toBe(0.6);
 	});
 });
 
