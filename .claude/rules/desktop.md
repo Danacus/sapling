@@ -113,10 +113,14 @@ someone to run the check by hand.
   and only the newest request runs — an overtaken one answers `superseded`.
   The models are `ModelFile`s downloaded on first use into `<app-data>/ocr/`;
   a unit test checks the pins against `models.ts`. **`run()` pins
-  `LC_NUMERIC=C` on Linux before GTK applies the user's locale**: under a
-  comma-decimal one (nl_BE) ORT misreads the mobile detector and it finds no
-  lines at all, while the server models and every test binary (which never
-  call `setlocale`) are unaffected.
+  `LC_NUMERIC=C` on Linux before GTK applies the user's locale**: ORT expands
+  `HardSwish` from ONNX's text function body (`HardSigmoid<alpha = 0.1666…,
+  beta = 0.5>`), and ONNX ≤ 1.22's parser reads those floats with
+  locale-aware `std::stof` — under a comma-decimal locale (nl_BE) both become
+  0, every `HardSwish` answers 0 and the mobile detector (PP-LCNet; the server
+  one has none) finds no lines. onnx/onnx#8111, fixed in ONNX 1.23; drop the
+  pin once sherpa-onnx's ORT builds against that (ORT 1.31.1 still bundles
+  1.22). Test binaries never call `setlocale`, so no test sees it.
 
 - **OpenRouter's sign-in is one more command and one plugin, on every
   target.** `oauth_listen` binds a free loopback port and returns it; a thread
